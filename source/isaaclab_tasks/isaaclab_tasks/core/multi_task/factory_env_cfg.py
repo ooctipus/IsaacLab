@@ -213,6 +213,7 @@ class FactoryCommandsCfg:
         task_table=mdp.FactoryResetStateTableCfg(
             kinematics=NewtonKinematicsBuildCfg(collapse_fixed_joints=False),
             geometry=FactoryGeometryCfg(
+                collision_samples=240,
                 held_asset_cfg=SceneEntityCfg("held_asset"),
                 board=BoardLibraryCfg(
                     board_asset_cfg=SceneEntityCfg("nistboard"),
@@ -258,9 +259,9 @@ class FactoryCommandsCfg:
                                 aperture_range=(0.002, 0.08),
                                 n_pairs_retained=512,
                             ),
-                            grasps_per_placement=8,
+                            outputs_per_input=8,
                         ),
-                        FactoryRobotSeedGenerateCfg(ik_seeds_per_grasp=4),
+                        FactoryRobotSeedGenerateCfg(outputs_per_input=4),
                     ),
                     solve=FactoryIKSolveCfg(
                         objectives=(
@@ -284,7 +285,7 @@ class FactoryCommandsCfg:
                             bounds={"x": (0.0, 1.0), "y": (-0.675, 0.675), "z": (-0.05, 1.0)}
                         ),
                         JointWithinLimitCfg(limit_ratio=0.8),
-                        CollisionCheckCfg(n_samples=240, max_pen=0.0005, self_max_pen=0.002, adjacency_hops=2),
+                        CollisionCheckCfg(max_pen=0.0005, self_max_pen=0.002, adjacency_hops=2),
                     ),
                     selection=FactoryFpsSelectionCfg(position_frame="fixed_asset"),
                 ),
@@ -308,9 +309,9 @@ class FactoryCommandsCfg:
                                 aperture_range=(0.002, 0.08),
                                 n_pairs_retained=512,
                             ),
-                            grasps_per_placement=8,
+                            outputs_per_input=8,
                         ),
-                        FactoryRobotSeedGenerateCfg(ik_seeds_per_grasp=4),
+                        FactoryRobotSeedGenerateCfg(outputs_per_input=4),
                         FactoryApproachTargetGenerateCfg(standoff_range=(0.03, 0.15), clearance=0.005),
                     ),
                     solve=FactoryIKSolveCfg(
@@ -335,7 +336,7 @@ class FactoryCommandsCfg:
                             bounds={"x": (0.0, 1.0), "y": (-0.675, 0.675), "z": (-0.05, 1.0)}
                         ),
                         JointWithinLimitCfg(limit_ratio=0.8),
-                        CollisionCheckCfg(n_samples=240, max_pen=0.0005, self_max_pen=0.002, adjacency_hops=2),
+                        CollisionCheckCfg(max_pen=0.0005, self_max_pen=0.002, adjacency_hops=2),
                     ),
                     selection=FactoryFpsSelectionCfg(position_frame="fixed_asset"),
                 ),
@@ -354,9 +355,9 @@ class FactoryCommandsCfg:
                                 aperture_range=(0.002, 0.08),
                                 n_pairs_retained=512,
                             ),
-                            grasps_per_placement=8,
+                            outputs_per_input=8,
                         ),
-                        FactoryRobotSeedGenerateCfg(ik_seeds_per_grasp=4),
+                        FactoryRobotSeedGenerateCfg(outputs_per_input=4),
                     ),
                     solve=FactoryIKSolveCfg(
                         objectives=(
@@ -380,7 +381,7 @@ class FactoryCommandsCfg:
                             bounds={"x": (0.0, 1.0), "y": (-0.675, 0.675), "z": (-0.05, 1.0)}
                         ),
                         JointWithinLimitCfg(limit_ratio=0.8),
-                        CollisionCheckCfg(n_samples=240, max_pen=0.0005, self_max_pen=0.002, adjacency_hops=2),
+                        CollisionCheckCfg(max_pen=0.0005, self_max_pen=0.002, adjacency_hops=2),
                     ),
                     selection=FactoryFpsSelectionCfg(position_frame="world", position_axes=(0, 1)),
                 ),
@@ -400,9 +401,9 @@ class FactoryCommandsCfg:
                                 aperture_range=(0.002, 0.08),
                                 n_pairs_retained=512,
                             ),
-                            grasps_per_placement=8,
+                            outputs_per_input=8,
                         ),
-                        FactoryRobotSeedGenerateCfg(ik_seeds_per_grasp=4),
+                        FactoryRobotSeedGenerateCfg(outputs_per_input=4),
                         FactoryApproachTargetGenerateCfg(standoff_range=(0.03, 0.15), clearance=0.005),
                     ),
                     solve=FactoryIKSolveCfg(
@@ -427,7 +428,7 @@ class FactoryCommandsCfg:
                             bounds={"x": (0.0, 1.0), "y": (-0.675, 0.675), "z": (-0.05, 1.0)}
                         ),
                         JointWithinLimitCfg(limit_ratio=0.8),
-                        CollisionCheckCfg(n_samples=240, max_pen=0.0005, self_max_pen=0.002, adjacency_hops=2),
+                        CollisionCheckCfg(max_pen=0.0005, self_max_pen=0.002, adjacency_hops=2),
                     ),
                     selection=FactoryFpsSelectionCfg(position_frame="world", position_axes=(0, 1)),
                 ),
@@ -453,9 +454,9 @@ class FactoryCommandsCfg:
                                 aperture_range=(0.002, 0.08),
                                 n_pairs_retained=512,
                             ),
-                            grasps_per_placement=8,
+                            outputs_per_input=8,
                         ),
-                        FactoryRobotSeedGenerateCfg(ik_seeds_per_grasp=4),
+                        FactoryRobotSeedGenerateCfg(outputs_per_input=4),
                     ),
                     solve=FactoryIKSolveCfg(
                         objectives=(
@@ -479,7 +480,7 @@ class FactoryCommandsCfg:
                             bounds={"x": (0.0, 1.0), "y": (-0.675, 0.675), "z": (-0.05, 1.0)}
                         ),
                         JointWithinLimitCfg(limit_ratio=0.8),
-                        CollisionCheckCfg(n_samples=240, max_pen=0.0005, self_max_pen=0.002, adjacency_hops=2),
+                        CollisionCheckCfg(max_pen=0.0005, self_max_pen=0.002, adjacency_hops=2),
                     ),
                     selection=FactoryFpsSelectionCfg(position_frame="world"),
                 ),

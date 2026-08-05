@@ -71,7 +71,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 def _roundtrip(env) -> None:
     # deferred imports: warp/newton must init under the running Kit app
     import warp as wp
-    from newton._src.sim.ik.ik_common import eval_fk_batched
+    from newton import eval_fk_batched
     from prototype_factory_grasp_sampled_ik import _resolve_bodies
     from prototype_factory_ik_solve import EE_BODY, compose_model
 

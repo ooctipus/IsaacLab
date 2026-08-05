@@ -209,7 +209,6 @@ def _precollect_from_builder(table_cfg, geometry_cfg, scene_cfg, device: str, re
         geometry_cfg,
         scene_cfg,
         device,
-        tuple(table_cfg.families),
         rng,
     )
     result = builder.build_family_table(int(table_cfg.rows_per_board), tuple(table_cfg.families), rng)

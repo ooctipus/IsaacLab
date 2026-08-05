@@ -136,10 +136,11 @@ class FactoryFamilyCandidates:
 
     @property
     def num_rows(self) -> int:
-        """Number of solved rows entering the criterion cascade."""
-        if self.joint_q is None:
-            raise RuntimeError("Factory criteria require solved candidate rows.")
-        return self.joint_q.shape[0]
+        """Number of candidates on the current generation or solve axis."""
+        for values in (self.joint_q, self.seed_arm, self.t_plus, self.held_pose):
+            if values is not None:
+                return values.shape[0]
+        return self.num_placements
 
     @property
     def device(self) -> str:
@@ -193,6 +194,8 @@ def _factory_compact_selected(execution, candidate_board_count: int) -> _Factory
     """Gather selected rows so raw solve, FK, criterion, and selection storage can die."""
     candidates = execution.candidates
     selected = execution.selected_indices
+    if selected is None:
+        raise TypeError("Factory task families require an explicit selection stage.")
     selected_boards = candidates.board_index[selected]
     generated = candidates.joint_q.shape[0]
     accepted = generated if execution.accepted_mask is None else int(execution.accepted_mask.sum())
@@ -224,28 +227,17 @@ class FactoryTaskTableBuilder:
         cfg: FactoryGeometryCfg,
         scene_cfg,
         device: str,
-        families: tuple[FactoryFamilyCfg, ...],
         rng: TaskTableRng,
     ) -> None:
-        from .cfg import CollisionCheckCfg
-
         self.cfg = cfg
         self.device = device
-        collision_cfgs = tuple(
-            criterion
-            for family in families
-            for criterion in family.criteria
-            if isinstance(criterion, CollisionCheckCfg)
-        )
-        if len(collision_cfgs) != len(families):
-            raise ValueError("Every Factory family must declare exactly one CollisionCheckCfg criterion.")
         robot_cfg = getattr(scene_cfg, cfg.robot.asset_cfg.name)
         self.kinematics = NewtonKinematics.from_articulation(kinematics_cfg, robot_cfg, device)
         self.geometry = FactoryGeometry(
             self.kinematics,
             cfg,
             scene_cfg,
-            max(value.n_samples for value in collision_cfgs),
+            cfg.collision_samples,
             rng.numpy,
         )
         self.grasp_samplers: dict[str, GraspPairSampler] = {}
@@ -288,7 +280,6 @@ class FactoryTaskTableBuilder:
     ) -> FactoryIKResult:
         """Build exact family quotas per board and retain only fully qualified boards."""
         from ..mdp.reset_state_task_table import factory_family_quotas
-        from .cfg import FactoryGraspTargetGenerateCfg, FactoryRobotSeedGenerateCfg
 
         quotas = factory_family_quotas(rows_per_board, families)
         board_count = self.cfg.board.num_boards
@@ -299,13 +290,9 @@ class FactoryTaskTableBuilder:
             if quota == 0:
                 selected_families.append(None)
                 continue
-            grasp_cfg = next(term for term in family.generate if isinstance(term, FactoryGraspTargetGenerateCfg))
-            seed_cfg = next(term for term in family.generate if isinstance(term, FactoryRobotSeedGenerateCfg))
             raw_per_board = math.ceil(quota * family.candidate_oversample)
-            placements_per_board = max(
-                1,
-                math.ceil(raw_per_board / (grasp_cfg.grasps_per_placement * seed_cfg.ik_seeds_per_grasp)),
-            )
+            outputs_per_placement = math.prod(term.outputs_per_input for term in family.generate)
+            placements_per_board = max(1, math.ceil(raw_per_board / outputs_per_placement))
             initial = FactoryFamilyCandidates(
                 kinematics=self.kinematics,
                 geometry=self.geometry,
@@ -833,9 +820,20 @@ def _factory_tag_index(candidates: FactoryFamilyCandidates, name: str) -> int:
     return index
 
 
+def _validate_factory_generation_count(cfg, candidates: FactoryFamilyCandidates, input_count: int) -> None:
+    """Require one generator to realize its declared candidate multiplier."""
+    expected = input_count * cfg.outputs_per_input
+    if candidates.num_rows != expected:
+        raise RuntimeError(
+            f"{type(cfg).__name__} declared {cfg.outputs_per_input} outputs per input, "
+            f"but produced {candidates.num_rows} rows from {input_count}."
+        )
+
+
 def factory_generate_assembly_pose(cfg, candidates: FactoryFamilyCandidates, rng: TaskTableRng):
     """Generate assembly-path held-object poses for one family."""
     del rng
+    input_count = candidates.num_rows
     values = candidates.placement_sampler.sample_assembly(cfg, candidates.num_placements, candidates.board_library)
     (
         candidates.held_pose,
@@ -852,12 +850,14 @@ def factory_generate_assembly_pose(cfg, candidates: FactoryFamilyCandidates, rng
     candidates.tag = tag_map[candidates.tag]
     candidates.allow_fixed_contact = torch.ones_like(candidates.tag, dtype=torch.bool)
     candidates.allow_board_contact = torch.zeros_like(candidates.tag, dtype=torch.bool)
+    _validate_factory_generation_count(cfg, candidates, input_count)
     return candidates
 
 
 def factory_generate_support_pose(cfg, candidates: FactoryFamilyCandidates, rng: TaskTableRng):
     """Generate board-supported held-object poses for one family."""
     del rng
+    input_count = candidates.num_rows
     values = candidates.placement_sampler.sample_support(
         cfg,
         candidates.num_placements,
@@ -873,12 +873,14 @@ def factory_generate_support_pose(cfg, candidates: FactoryFamilyCandidates, rng:
     ) = values
     candidates.allow_fixed_contact = torch.zeros_like(candidates.tag, dtype=torch.bool)
     candidates.allow_board_contact = torch.ones_like(candidates.tag, dtype=torch.bool)
+    _validate_factory_generation_count(cfg, candidates, input_count)
     return candidates
 
 
 def factory_generate_free_pose(cfg, candidates: FactoryFamilyCandidates, rng: TaskTableRng):
     """Generate free-space held-object poses for one family."""
     del rng
+    input_count = candidates.num_rows
     values = candidates.placement_sampler.sample_free(
         cfg,
         candidates.num_placements,
@@ -894,6 +896,7 @@ def factory_generate_free_pose(cfg, candidates: FactoryFamilyCandidates, rng: Ta
     ) = values
     candidates.allow_fixed_contact = torch.zeros_like(candidates.tag, dtype=torch.bool)
     candidates.allow_board_contact = torch.zeros_like(candidates.tag, dtype=torch.bool)
+    _validate_factory_generation_count(cfg, candidates, input_count)
     return candidates
 
 
@@ -901,12 +904,13 @@ def factory_generate_grasp_targets(cfg, candidates: FactoryFamilyCandidates, rng
     """Generate antipodal contact targets and expand placement-owned fields."""
     if candidates.held_pose is None:
         raise RuntimeError("Factory grasp generation requires a held-object pose generator first.")
+    input_count = candidates.num_rows
     key = repr(cfg.sampling.to_dict())
     sampler = candidates.grasp_samplers.get(key)
     if sampler is None:
         sampler = GraspPairSampler(candidates.geometry, cfg.sampling, rng.torch)
         candidates.grasp_samplers[key] = sampler
-    t_plus, t_minus, source, grasp_family = sampler.sample_targets(candidates.held_pose, cfg.grasps_per_placement)
+    t_plus, t_minus, source, grasp_family = sampler.sample_targets(candidates.held_pose, cfg.outputs_per_input)
     candidates.grasp_sampler = sampler
     candidates.t_plus = t_plus
     candidates.t_minus = t_minus
@@ -926,6 +930,7 @@ def factory_generate_grasp_targets(cfg, candidates: FactoryFamilyCandidates, rng
         "allow_board_contact",
     ):
         setattr(candidates, name, getattr(candidates, name)[source].contiguous())
+    _validate_factory_generation_count(cfg, candidates, input_count)
     return candidates
 
 
@@ -934,8 +939,9 @@ def factory_generate_robot_seeds(cfg, candidates: FactoryFamilyCandidates, rng: 
     del rng
     if candidates.grasp_sampler is None or candidates.t_plus is None or candidates.t_minus is None:
         raise RuntimeError("Factory robot-seed generation requires grasp targets first.")
+    input_count = candidates.num_rows
     t_plus, t_minus, seed_arm, source = candidates.grasp_sampler.seed_targets(
-        candidates.t_plus, candidates.t_minus, cfg.ik_seeds_per_grasp
+        candidates.t_plus, candidates.t_minus, cfg.outputs_per_input
     )
     candidates.t_plus = t_plus
     candidates.t_minus = t_minus
@@ -955,6 +961,7 @@ def factory_generate_robot_seeds(cfg, candidates: FactoryFamilyCandidates, rng: 
         "target_is_grasped",
     ):
         setattr(candidates, name, getattr(candidates, name)[source].contiguous())
+    _validate_factory_generation_count(cfg, candidates, input_count)
     return candidates
 
 
@@ -962,6 +969,7 @@ def factory_generate_approach_targets(cfg, candidates: FactoryFamilyCandidates, 
     """Offset generated grasp targets along each seed end-effector approach axis."""
     if candidates.seed_arm is None or candidates.t_plus is None or candidates.t_minus is None:
         raise RuntimeError("Factory approach generation requires robot seeds first.")
+    input_count = candidates.num_rows
     geometry = candidates.geometry
     count = candidates.seed_arm.shape[0]
     joint_q = factory_default_joint_q(geometry).expand(count, -1).clone()
@@ -978,6 +986,7 @@ def factory_generate_approach_targets(cfg, candidates: FactoryFamilyCandidates, 
     candidates.finger_targets = finger_target[:, None].expand(-1, len(geometry.finger_coords)).contiguous()
     candidates.target_is_grasped.zero_()
     candidates.gripper_clearance = cfg.clearance
+    _validate_factory_generation_count(cfg, candidates, input_count)
     return candidates
 
 

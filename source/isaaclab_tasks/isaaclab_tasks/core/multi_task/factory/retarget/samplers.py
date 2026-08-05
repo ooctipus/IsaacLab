@@ -497,9 +497,17 @@ class GraspPairSampler:
         self, t_plus: torch.Tensor, t_minus: torch.Tensor, ik_seeds_per_grasp: int
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Repeat targets across nearby arm seeds that span unconstrained roll."""
-        k = max(1, min(int(ik_seeds_per_grasp), int(self.tpl_feats.shape[0])))
+        template_count = int(self.tpl_feats.shape[0])
+        if type(ik_seeds_per_grasp) is not int or ik_seeds_per_grasp < 1:
+            raise ValueError("Factory ik_seeds_per_grasp must be a positive integer.")
+        if ik_seeds_per_grasp > template_count:
+            raise ValueError(
+                f"Factory ik_seeds_per_grasp ({ik_seeds_per_grasp}) exceeds the available seed templates "
+                f"({template_count})."
+            )
+        k = ik_seeds_per_grasp
         target_features = pair_features(t_plus, t_minus, self.cfg.seed_axis_scale)
-        pool_size = min(8 * k, int(self.tpl_feats.shape[0]))
+        pool_size = min(8 * k, template_count)
         distance_row_bytes = self.tpl_feats.shape[0] * self.tpl_feats.element_size()
         chunk_rows = max(1, _SEED_DISTANCE_WORKSPACE_BYTES // distance_row_bytes)
         seed_indices = torch.empty((t_plus.shape[0], k), dtype=torch.long, device=self.device)

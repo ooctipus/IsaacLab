@@ -29,9 +29,12 @@ from isaaclab_tasks.core.multi_task.factory.mdp.reset_state_task_table import (
     factory_family_quotas,
 )
 from isaaclab_tasks.core.multi_task.factory.retarget.cfg import (
+    CollisionCheckCfg,
     FactoryFamilyCfg,
+    FactoryGenerateCfg,
     FactoryGeometryCfg,
     FactoryGraspTargetGenerateCfg,
+    FactoryRobotSeedGenerateCfg,
 )
 from isaaclab_tasks.core.multi_task.factory.retarget.task_table_builder import _factory_joints_within_limit
 from isaaclab_tasks.core.multi_task.factory_env_cfg import FactoryResetAssetsCfg
@@ -68,6 +71,20 @@ def test_factory_joint_limits_map_dofs_to_generalized_coordinates() -> None:
     assert result.tolist() == [True, False, False]
 
 
+def test_factory_generate_terms_preserve_domain_cardinality_defaults() -> None:
+    """Factory alone owns candidate expansion and its useful defaults."""
+    assert FactoryGenerateCfg(class_type=lambda: None).outputs_per_input == 1
+    assert FactoryGraspTargetGenerateCfg().outputs_per_input == 8
+    assert FactoryRobotSeedGenerateCfg().outputs_per_input == 4
+
+
+@pytest.mark.parametrize("outputs_per_input", (0, -1, 1.5, True))
+def test_factory_generate_cfg_rejects_invalid_output_cardinality(outputs_per_input) -> None:
+    """Factory candidate multipliers fail at the domain configuration boundary."""
+    with pytest.raises(ValueError, match="outputs_per_input must be a positive integer"):
+        FactoryGenerateCfg(class_type=lambda: None, outputs_per_input=outputs_per_input)
+
+
 def test_grasp_seed_selection_preserves_unconstrained_roll() -> None:
     """Nearest geometric seeds must span roll about the pad-pair axis."""
     from isaaclab_tasks.core.multi_task.factory.retarget.samplers import GraspPairSampler, pair_features
@@ -92,7 +109,25 @@ def test_grasp_seed_selection_preserves_unconstrained_roll() -> None:
 
     _, _, seed_arm, _ = sampler.seed_targets(target_a, target_b, ik_seeds_per_grasp=4)
 
+    assert seed_arm.shape == (4, 1)
     assert set((seed_arm[:, 0].long() // 8).tolist()) == {0, 1, 2, 3}
+
+
+def test_grasp_seed_selection_rejects_cardinality_above_template_capacity() -> None:
+    """A declared expansion count must not be silently clamped to available templates."""
+    from isaaclab_tasks.core.multi_task.factory.retarget.samplers import GraspPairSampler, pair_features
+
+    sampler = object.__new__(GraspPairSampler)
+    sampler.device = torch.device("cpu")
+    sampler.cfg = SimpleNamespace(seed_axis_scale=0.3)
+    target_a = torch.tensor(((0.0, 0.05, 0.0),))
+    target_b = torch.tensor(((0.0, -0.05, 0.0),))
+    target_features = pair_features(target_a, target_b, sampler.cfg.seed_axis_scale)
+    sampler.tpl_feats = target_features.expand(3, -1).clone()
+    sampler.tpl_approach = torch.tensor(((0.0, 0.0, 1.0), (1.0, 0.0, 0.0), (0.0, 0.0, -1.0)))
+    sampler.tpl_arm = torch.arange(3, dtype=torch.float32).unsqueeze(-1)
+    with pytest.raises(ValueError, match="exceeds the available seed templates"):
+        sampler.seed_targets(target_a, target_b, ik_seeds_per_grasp=4)
 
 
 def test_grasp_seed_selection_chunks_pairwise_distance_without_changing_rows(monkeypatch) -> None:
@@ -190,12 +225,11 @@ def test_factory_table_builds_declared_entity_layout_without_mutating_config(mon
         received_device = None
         result = None
 
-        def __init__(self, kinematics_cfg, cfg, scene_cfg, device, families, rng) -> None:
+        def __init__(self, kinematics_cfg, cfg, scene_cfg, device, rng) -> None:
             type(self).received_kinematics_cfg = kinematics_cfg
             type(self).received_cfg = cfg
             type(self).received_scene = scene_cfg
             type(self).received_device = device
-            assert tuple(family.name for family in families) == ("assembly",)
             assert rng.torch.device == torch.device("cpu")
             self.geometry = _FakeModel()
 
@@ -515,8 +549,24 @@ def test_factory_architecture_rejects_removed_global_policy_and_facades() -> Non
     assert 'tag_indices["on_table"]' not in builder_source
     assert 'tag_indices["in_air"]' not in builder_source
     assert "reaching_" not in builder_source
-    assert {field.name for field in fields(FactoryGeometryCfg)}.isdisjoint({"scene", "device"})
-    assert "finger_squeeze" not in {field.name for field in fields(FactoryGraspTargetGenerateCfg)}
+    geometry_fields = {field.name for field in fields(FactoryGeometryCfg)}
+    grasp_fields = {field.name for field in fields(FactoryGraspTargetGenerateCfg)}
+    generate_fields = {field.name for field in fields(FactoryGenerateCfg)}
+    seed_fields = {field.name for field in fields(FactoryRobotSeedGenerateCfg)}
+    collision_fields = {field.name for field in fields(CollisionCheckCfg)}
+    assert geometry_fields.isdisjoint({"scene", "device"})
+    assert "collision_samples" in geometry_fields
+    assert generate_fields == {"class_type", "outputs_per_input"}
+    assert "n_samples" not in collision_fields
+    assert "finger_squeeze" not in grasp_fields
+    assert "grasps_per_placement" not in grasp_fields
+    assert "ik_seeds_per_grasp" not in seed_fields
+    assert all(
+        concrete not in builder_source
+        for concrete in ("CollisionCheckCfg", "FactoryGraspTargetGenerateCfg", "FactoryRobotSeedGenerateCfg")
+    )
+    assert "math.prod(term.outputs_per_input for term in family.generate)" in builder_source
+    assert "cfg.collision_samples" in builder_source
     assert {field.name for field in fields(FactoryResetStateTableCfg)}.isdisjoint({"nut_bounds", "finger_squeeze"})
     assert "IKObjectiveMeshCollisionCfg" not in environment_source + builder_source
     assert "refine_iterations" not in environment_source + cfg_source + builder_source

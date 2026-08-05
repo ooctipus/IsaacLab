@@ -41,12 +41,12 @@ class TaskTableRng:
 
 @dataclass(frozen=True, slots=True)
 class TaskFamilyExecution:
-    """Candidate data and cached accept/select results from one family."""
+    """Candidate data and cached acceptance plus optional selection from one family."""
 
     candidates: Any
     criterion_masks: tuple[torch.Tensor, ...]
     accepted_mask: torch.Tensor | None
-    selected_indices: torch.Tensor
+    selected_indices: torch.Tensor | None
 
 
 def make_task_table_rng(seed: int, device: str | torch.device) -> TaskTableRng:
@@ -113,14 +113,19 @@ def execute_task_family(
         accepted = torch.zeros(candidates.num_rows, dtype=torch.bool, device=candidates.device)
         accepted[active_rows] = True
     masks = tuple(masks_list)
-    selected = _callable(family.selection.class_type, "selection")(
-        family.selection,
-        candidates,
-        accepted,
-        target_count,
-        rng,
-    )
-    _validate_selection(selected, accepted)
+    selected = None
+    if family.selection is None:
+        if target_count is not None:
+            raise ValueError("Task families without selection do not accept a numeric target count.")
+    else:
+        selected = _callable(family.selection.class_type, "selection")(
+            family.selection,
+            candidates,
+            accepted,
+            target_count,
+            rng,
+        )
+        _validate_selection(selected, accepted)
     if _LOGGER.level != logging.NOTSET and _LOGGER.isEnabledFor(logging.INFO):
         _log_family_summary(family, candidates, masks, accepted, selected)
     return TaskFamilyExecution(candidates, masks, accepted, selected)
@@ -160,7 +165,7 @@ def _log_family_summary(
     candidates: Any,
     masks: tuple[torch.Tensor, ...],
     accepted: torch.Tensor | None,
-    selected: torch.Tensor,
+    selected: torch.Tensor | None,
 ) -> None:
     """Log one explicitly requested construction summary for a task family."""
     if accepted is None:
@@ -172,16 +177,17 @@ def _log_family_summary(
         counts = torch.stack((accepted.sum(), *((~mask).sum() for mask in masks))).detach().cpu().tolist()
         accepted_count = int(counts[0])
         failure_counts = tuple(int(value) for value in counts[1:])
+    selected_count = "n/a" if selected is None else str(selected.numel())
     failures = ", ".join(
         f"{_criterion_name(criterion)}={count}"
         for criterion, count in zip(family.criteria, failure_counts, strict=True)
     )
     _LOGGER.info(
-        "Task family %s: generated=%d accepted=%d selected=%d failures=[%s]",
+        "Task family %s: generated=%d accepted=%d selected=%s failures=[%s]",
         family.name,
         generated_count,
         accepted_count,
-        selected.numel(),
+        selected_count,
         failures,
     )
 

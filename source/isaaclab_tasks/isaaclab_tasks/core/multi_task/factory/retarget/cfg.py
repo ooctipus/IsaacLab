@@ -126,7 +126,19 @@ class GraspSamplingCfg:
 
 
 @configclass
-class FactoryAssemblyPoseGenerateCfg(StateCommandCfg.TaskTableCfg.GenerateTermCfg):
+class FactoryGenerateCfg(StateCommandCfg.TaskTableCfg.GenerateTermCfg):
+    """One Factory generator with an exact candidate-axis multiplier."""
+
+    outputs_per_input: int = 1
+
+    def __post_init__(self) -> None:
+        """Require a positive integral candidate multiplier."""
+        if type(self.outputs_per_input) is not int or self.outputs_per_input < 1:
+            raise ValueError("Factory generation outputs_per_input must be a positive integer.")
+
+
+@configclass
+class FactoryAssemblyPoseGenerateCfg(FactoryGenerateCfg):
     """Generate held-asset poses along the declared assembly path."""
 
     class_type: Callable | str = "{DIR}.task_table_builder:factory_generate_assembly_pose"
@@ -142,7 +154,7 @@ class FactoryAssemblyPoseGenerateCfg(StateCommandCfg.TaskTableCfg.GenerateTermCf
 
 
 @configclass
-class FactorySupportPoseGenerateCfg(StateCommandCfg.TaskTableCfg.GenerateTermCfg):
+class FactorySupportPoseGenerateCfg(FactoryGenerateCfg):
     """Generate held-asset poses supported by the board."""
 
     class_type: Callable | str = "{DIR}.task_table_builder:factory_generate_support_pose"
@@ -154,7 +166,7 @@ class FactorySupportPoseGenerateCfg(StateCommandCfg.TaskTableCfg.GenerateTermCfg
 
 
 @configclass
-class FactoryFreePoseGenerateCfg(StateCommandCfg.TaskTableCfg.GenerateTermCfg):
+class FactoryFreePoseGenerateCfg(FactoryGenerateCfg):
     """Generate free-space held-asset poses."""
 
     class_type: Callable | str = "{DIR}.task_table_builder:factory_generate_free_pose"
@@ -172,20 +184,20 @@ class FactoryFreePoseGenerateCfg(StateCommandCfg.TaskTableCfg.GenerateTermCfg):
 
 
 @configclass
-class FactoryGraspTargetGenerateCfg(StateCommandCfg.TaskTableCfg.GenerateTermCfg):
+class FactoryGraspTargetGenerateCfg(FactoryGenerateCfg):
     """Generate antipodal held-asset contact targets."""
 
     class_type: Callable | str = "{DIR}.task_table_builder:factory_generate_grasp_targets"
     sampling: GraspSamplingCfg = GraspSamplingCfg()
-    grasps_per_placement: int = 8
+    outputs_per_input: int = 8
 
 
 @configclass
-class FactoryRobotSeedGenerateCfg(StateCommandCfg.TaskTableCfg.GenerateTermCfg):
+class FactoryRobotSeedGenerateCfg(FactoryGenerateCfg):
     """Choose robot IK seeds for generated grasp targets."""
 
     class_type: Callable | str = "{DIR}.task_table_builder:factory_generate_robot_seeds"
-    ik_seeds_per_grasp: int = 4
+    outputs_per_input: int = 4
 
 
 @configclass
@@ -204,7 +216,7 @@ class FactoryIKSolveCfg(StateCommandCfg.TaskTableCfg.SolveCfg):
 
 
 @configclass
-class FactoryApproachTargetGenerateCfg(StateCommandCfg.TaskTableCfg.GenerateTermCfg):
+class FactoryApproachTargetGenerateCfg(FactoryGenerateCfg):
     """Offset grasp targets along the seed end-effector approach axis."""
 
     class_type: Callable | str = "{DIR}.task_table_builder:factory_generate_approach_targets"
@@ -228,9 +240,6 @@ class CollisionCheckCfg(StateCommandCfg.TaskTableCfg.CriterionCfg):
     """
 
     class_type: Callable | str = "{DIR}.task_table_builder:factory_collision_criterion"
-    n_samples: int = 240
-    """Surface probe points (FPS) per checked body set."""
-
     max_pen: float = 0.0005
     """Reject below ``-max_pen`` [m] min signed distance (unintended contacts)."""
 
@@ -291,6 +300,7 @@ class FactoryFpsSelectionCfg(StateCommandCfg.TaskTableCfg.SelectionCfg):
 class FactoryFamilyCfg(StateCommandCfg.TaskTableCfg.FamilyCfg):
     """One explicit Factory placement, solve, acceptance, and selection route."""
 
+    generate: tuple[FactoryGenerateCfg, ...] = ()
     fraction: float = 0.0
     candidate_oversample: float = 80.0
 
@@ -316,6 +326,9 @@ class FactoryRobotCfg:
 @configclass
 class FactoryGeometryCfg:
     """Shared Factory mechanics and geometry used by declared task families."""
+
+    collision_samples: int = 240
+    """Surface probe points retained per collision-checked body set."""
 
     obstacle_asset_names: list[str] = field(default_factory=lambda: ["table"])
     """Scene assets treated as STATIC collision obstacles, resolved from the
