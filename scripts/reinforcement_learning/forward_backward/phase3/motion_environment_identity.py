@@ -209,7 +209,9 @@ _SMPL_MODULES = (
     "isaaclab_tasks.core.multi_task.mdp.native_mujoco_action",
     "isaaclab_tasks.core.multi_task.mdp.native_mujoco_action_cfg",
     "isaaclab_tasks.core.multi_task.motion.robots.smpl.articulation",
-    "isaaclab_tasks.core.multi_task.motion.robots.smpl.frames",
+    # bfm-env-20260805 campaign patch: HEAD merged smpl frames into
+    # reference.py + reference_warp.py; hash the warp kernel module instead.
+    "isaaclab_tasks.core.multi_task.motion.robots.smpl.reference_warp",
     "isaaclab_tasks.core.multi_task.motion.robots.smpl.observations",
     "isaaclab_tasks.core.multi_task.motion.robots.smpl.reference",
     "isaaclab_tasks.core.multi_task.motion.robots.smpl.reset",
@@ -347,7 +349,9 @@ def _composition_python_sources(
             (
                 "isaaclab_assets.robots.smpl.smpl_constants",
                 "isaaclab_tasks.core.multi_task.motion.robots.smpl.articulation",
-                "isaaclab_tasks.core.multi_task.motion.robots.smpl.frames",
+                # bfm-env-20260805 campaign patch: smpl frames merged into
+                # reference.py + reference_warp.py at HEAD.
+                "isaaclab_tasks.core.multi_task.motion.robots.smpl.reference_warp",
                 "isaaclab_tasks.core.multi_task.motion.robots.smpl.reference",
             )
         )
