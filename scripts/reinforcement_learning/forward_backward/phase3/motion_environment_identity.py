@@ -304,6 +304,17 @@ def _module_source_path(module_name: str) -> Path:
     return matches.pop()
 
 
+def _native_skeleton_module(source_cfg: object) -> str:
+    """Name the coordinates module declaring the native source skeleton.
+
+    bfm-env-20260805 campaign patch: HEAD removed MotionSourceCfg.skeleton_factory;
+    native decoders own their skeleton in a sibling ``*_coordinates`` module.
+    """
+    module_name = f"{source_cfg.open_source.__module__}_coordinates"
+    _module_source_path(module_name)
+    return module_name
+
+
 def _python_sources(
     preset: str,
     importer_type: type,
@@ -341,14 +352,18 @@ def _composition_python_sources(
             )
         )
     source_cfg = table_cfg.source
+    # bfm-env-20260805 campaign patch: HEAD moved the per-robot construction
+    # factories under table_cfg.target_kinematics (target_factory + kinematics
+    # build cfg) and resolves source skeletons from the decoder's coordinates
+    # module instead of a MotionSourceCfg.skeleton_factory field.
     modules.extend(
         (
             importer_type.__module__,
-            table_cfg.frame_builder_factory.__module__,
+            table_cfg.target_kinematics.target_factory.__module__,
             frame_builder_type.__module__,
-            table_cfg.reference_kinematics_factory.__module__,
+            type(table_cfg.target_kinematics.kinematics).__module__,
             source_cfg.open_source.__module__,
-            source_cfg.skeleton_factory.__module__,
+            _native_skeleton_module(source_cfg),
         )
     )
     names = tuple(sorted(set(modules)))
@@ -639,7 +654,9 @@ def _resolved_configuration(cfg: object) -> dict[str, object]:
         ("sim", "device"),
         ("sim", "log_dir"),
         ("commands", "motion", "task_table", "source_artifact_root"),
-        ("commands", "motion", "task_table", "reference_artifact_root"),
+        # bfm-env-20260805 campaign patch: HEAD renamed reference_artifact_root
+        # to target_artifact_root on MotionTaskTableCfg.
+        ("commands", "motion", "task_table", "target_artifact_root"),
     ):
         _pop_configuration_path(projection, path)
 
@@ -776,10 +793,11 @@ def _resolved_axes(preset: str, cfg: object, frame_builder_type: type) -> dict[s
             "evaluation_content_sha256": source_cfg.evaluation.source_content_sha256,
         },
         "construction": {
-            "frame_builder_factory": _callable_name(table_cfg.frame_builder_factory),
+            # bfm-env-20260805 campaign patch: HEAD owns these under target_kinematics.
+            "frame_builder_factory": _callable_name(table_cfg.target_kinematics.target_factory),
             "frame_builder_type": _callable_name(frame_builder_type),
             "task_row_mode": table_cfg.task_row_mode,
-            "reference_kinematics_factory": _callable_name(table_cfg.reference_kinematics_factory),
+            "reference_kinematics_factory": _callable_name(type(table_cfg.target_kinematics.kinematics)),
         },
         "sampling": {
             "reset_sources": [[name, probability] for name, probability in payload_cfg.reset_sources],
@@ -835,7 +853,8 @@ def _resolved_composition(
             "source_fps_hz": source_cfg.source_fps,
             "license": source_cfg.license,
             "open_source": _callable_name(source_cfg.open_source),
-            "skeleton_factory": _callable_name(source_cfg.skeleton_factory),
+            # bfm-env-20260805 campaign patch: skeleton owned by the coordinates module.
+            "skeleton_factory": _native_skeleton_module(source_cfg),
             "skeleton_identity_sha256": _require_sha256(
                 "source skeleton identity",
                 source_skeleton.identity_sha256,
@@ -849,31 +868,31 @@ def _resolved_composition(
             "body_names": list(body_names),
         },
         "construction": {
-            "frame_builder_factory": _callable_name(table_cfg.frame_builder_factory),
+            # bfm-env-20260805 campaign patch: HEAD owns these under target_kinematics.
+            "frame_builder_factory": _callable_name(table_cfg.target_kinematics.target_factory),
             "frame_builder_type": _callable_name(frame_builder_type),
             "frame_builder_identity_sha256": _require_sha256(
                 "frame builder identity",
                 frame_builder_identity_sha256,
             ),
-            "reference_kinematics_factory": _callable_name(table_cfg.reference_kinematics_factory),
+            "reference_kinematics_factory": _callable_name(type(table_cfg.target_kinematics.kinematics)),
         },
     }
 
 
 def _validate_direct_dependency_types(preset: str, importer_type: type, frame_builder_type: type) -> None:
     """Require the importer and builder selected by one resolved preset."""
+    # bfm-env-20260805 campaign patch: HEAD renamed the frame builders and unified
+    # the two G1 builders into one G1FrameBuilder.
     from isaaclab_tasks.core.multi_task.motion.data.sources import CmuHumEnvSmplClips, LafanG1JoblibClips
-    from isaaclab_tasks.core.multi_task.motion.robots.g1.reference import (
-        G1LocalBodyPoseFrameBuilder,
-        G1PoseFrameBuilder,
-    )
-    from isaaclab_tasks.core.multi_task.motion.robots.smpl.reference import SmplGeneralizedCoordinateFrameBuilder
+    from isaaclab_tasks.core.multi_task.motion.robots.g1.reference import G1FrameBuilder
+    from isaaclab_tasks.core.multi_task.motion.robots.smpl.reference import SmplFrameBuilder
 
     expected_importer = LafanG1JoblibClips if preset == "g1_lafan" else CmuHumEnvSmplClips
     expected_builder = {
-        "smpl_cmu": SmplGeneralizedCoordinateFrameBuilder,
-        "g1_lafan": G1PoseFrameBuilder,
-        "g1_cmu": G1LocalBodyPoseFrameBuilder,
+        "smpl_cmu": SmplFrameBuilder,
+        "g1_lafan": G1FrameBuilder,
+        "g1_cmu": G1FrameBuilder,
     }[preset]
     if importer_type is not expected_importer or frame_builder_type is not expected_builder:
         raise ValueError("Motion importer or trajectory-builder type differs from the selected direct axes.")
@@ -967,7 +986,8 @@ def motion_environment_dependency_identity(
         "python_sources": _python_sources(
             preset,
             importer_type,
-            table_cfg.frame_builder_factory,
+            # bfm-env-20260805 campaign patch: factory moved under target_kinematics.
+            table_cfg.target_kinematics.target_factory,
             frame_builder_type,
         ),
         "robot_assets": dict(sorted(robot_assets.items())),

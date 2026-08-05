@@ -777,13 +777,16 @@ def _preset(env_cfg: object) -> str:
 
 
 def _native_types(preset: str) -> tuple[type, type]:
+    # bfm-env-20260805 campaign patch: frame builders were renamed at HEAD
+    # (G1PoseFrameBuilder -> G1FrameBuilder, SmplGeneralizedCoordinateFrameBuilder
+    # -> SmplFrameBuilder); the receipt harness must name the live classes.
     from isaaclab_tasks.core.multi_task.motion.data.sources import CmuHumEnvSmplClips, LafanG1JoblibClips
-    from isaaclab_tasks.core.multi_task.motion.robots.g1.reference import G1PoseFrameBuilder
-    from isaaclab_tasks.core.multi_task.motion.robots.smpl.reference import SmplGeneralizedCoordinateFrameBuilder
+    from isaaclab_tasks.core.multi_task.motion.robots.g1.reference import G1FrameBuilder
+    from isaaclab_tasks.core.multi_task.motion.robots.smpl.reference import SmplFrameBuilder
 
     if preset == "smpl_cmu":
-        return CmuHumEnvSmplClips, SmplGeneralizedCoordinateFrameBuilder
-    return LafanG1JoblibClips, G1PoseFrameBuilder
+        return CmuHumEnvSmplClips, SmplFrameBuilder
+    return LafanG1JoblibClips, G1FrameBuilder
 
 
 def _motion_table(env: object):
@@ -809,7 +812,7 @@ def _live_identity_evidence(
         cfg=configured_env_cfg,
         importer_type=importer_type,
         frame_builder_type=frame_builder_type,
-        reference_artifact_root=table_cfg.reference_artifact_root,
+        reference_artifact_root=table_cfg.target_artifact_root,
     )
     runner_path = inspect.getsourcefile(type(runner))
     if runner_path is None:
