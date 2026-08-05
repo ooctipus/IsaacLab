@@ -224,7 +224,7 @@ def test_launch_contract_rejects_identity_and_lifecycle_drift() -> None:
             "num_envs": 4,
             "steps_per_iteration": 2,
             "iterations": 4,
-            "random_action_transitions": 8,
+            "random_action_transitions": 12,
             "updates_per_group": 3,
             "expected_transitions": 32,
             "expected_update_groups": 2,
@@ -235,7 +235,7 @@ def test_launch_contract_rejects_identity_and_lifecycle_drift() -> None:
     runner = SimpleNamespace(
         tracking_curriculum=None,
         cfg={"num_steps_per_env": 2},
-        alg=SimpleNamespace(random_action_transitions=8),
+        alg=SimpleNamespace(random_action_transitions=12),
         num_updates_per_iteration=3,
     )
     agent = SimpleNamespace(tracking_curriculum=None, max_iterations=4)
@@ -469,7 +469,7 @@ def test_live_identity_uses_only_consolidated_environment_authority(monkeypatch:
         checkpoint_header=SimpleNamespace(schema_hash="1" * 64),
     )
     runner = SimpleNamespace(alg=algorithm)
-    table_cfg = SimpleNamespace(reference_artifact_root="/reference")
+    table_cfg = SimpleNamespace(target_artifact_root="/reference")
     env_cfg = SimpleNamespace(
         scene=SimpleNamespace(robot=object()),
         commands=SimpleNamespace(motion=SimpleNamespace(task_table=table_cfg)),
@@ -503,7 +503,7 @@ def test_prepare_callback_materializes_one_exclusive_live_identity_record(
             "steps_per_iteration": 2,
             "iterations": 4,
             "expected_transitions": 32,
-            "random_action_transitions": 8,
+            "random_action_transitions": 12,
             "updates_per_group": 3,
             "expected_update_groups": 2,
             "expected_update_calls": 6,
@@ -523,7 +523,7 @@ def test_prepare_callback_materializes_one_exclusive_live_identity_record(
     runner = SimpleNamespace(
         tracking_curriculum=None,
         cfg={"num_steps_per_env": 2},
-        alg=SimpleNamespace(random_action_transitions=8),
+        alg=SimpleNamespace(random_action_transitions=12),
         num_updates_per_iteration=3,
     )
     monkeypatch.setattr(module, "_preset", lambda _cfg: "smpl_cmu")
@@ -544,7 +544,7 @@ def test_prepare_callback_materializes_one_exclusive_live_identity_record(
             log_dir=tmp_path,
         )
     assert not (tmp_path / "phase3f_identity_freeze.json").exists()
-    runner.alg.random_action_transitions = 8
+    runner.alg.random_action_transitions = 12
 
     module.training_callback(
         stage="prepare",

@@ -135,7 +135,7 @@ def _profile() -> dict[str, object]:
             "steps_per_iteration": 2,
             "iterations": 4,
             "expected_transitions": 32,
-            "random_action_transitions": 8,
+            "random_action_transitions": 12,
             "updates_per_group": 3,
             "expected_update_groups": 2,
             "expected_update_calls": 6,
