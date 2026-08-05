@@ -52,7 +52,17 @@ def _positive_int(value: object, name: str) -> int:
 
 
 def expected_update_groups(collection: object) -> int:
-    """Return update-bearing iterations under the runner's strict post-seed rule."""
+    """Return update-bearing iterations under the runner's strict post-seed rule.
+
+    bfm-env-20260805 campaign patch: models the campaign rsl_rl pin (00debe1),
+    whose ForwardBackward.ready_to_update gate is
+    ``collected > random_action_transitions + num_envs`` evaluated after each
+    iteration's collection block (forward_backward.py:638-645). The previous
+    formula modeled the older fork's boundary and undercounted groups when the
+    warm-up boundary fell inside the run (smpl_cmu 102-iter smoke: 2 groups,
+    not 1). Verified against a measured run: iterations=102, transitions=51000,
+    update_calls=100.
+    """
     values = _mapping(collection, "collection")
     num_envs = _positive_int(values.get("num_envs"), "num_envs")
     steps = _positive_int(values.get("steps_per_iteration"), "steps_per_iteration")
@@ -61,7 +71,10 @@ def expected_update_groups(collection: object) -> int:
     if not isinstance(random_actions, int) or isinstance(random_actions, bool) or random_actions < 0:
         raise ValueError("random_action_transitions must be a non-negative integer.")
     block = num_envs * steps
-    return sum(iteration * block > random_actions for iteration in range(iterations))
+    return sum(
+        random_actions == 0 or (iteration + 1) * block > random_actions + num_envs
+        for iteration in range(iterations)
+    )
 
 
 def _expected_identity(profile: Mapping[str, object]) -> dict[str, object]:

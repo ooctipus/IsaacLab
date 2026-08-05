@@ -189,8 +189,8 @@
       },
       "collection": {
         "expected_transitions": 51000,
-        "expected_update_calls": 50,
-        "expected_update_groups": 1,
+        "expected_update_calls": 100,
+        "expected_update_groups": 2,
         "iterations": 102,
         "num_envs": 50,
         "random_action_transitions": 50000,
