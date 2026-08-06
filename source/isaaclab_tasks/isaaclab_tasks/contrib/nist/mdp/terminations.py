@@ -184,3 +184,33 @@ class progress_context(ManagerTermBase):
 
 def success_termination(env: ManagerBasedRLEnv, context: str = "progress_context") -> torch.Tensor:
     return env.termination_manager.get_term_cfg(context).func.is_success
+
+
+def assembly_contact_force(
+    env: ManagerBasedRLEnv,
+    threshold: float,
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("assembly_contact"),
+) -> torch.Tensor:
+    """Terminate when the held asset drives the fixed asset harder than the contact can take.
+
+    Reads the filtered pair force rather than the net force on the held asset: the
+    net force is dominated by the gripper holding it, which says nothing about the
+    thread. The threshold should sit below the load at which the contact settings
+    in use let the held asset pass through -- screened with the nut/bolt tunneling
+    example in Newton.
+
+    This bounds force-driven penetration only. Tunneling that comes from too coarse
+    a collision rate happens because the contact is never generated, so the force
+    reads low exactly when it fails; pair this with a check that the held asset has
+    not descended further than its screw phase allows.
+
+    Args:
+        threshold: Contact force magnitude that ends the episode [N].
+        sensor_cfg: The filtered contact sensor on the held asset.
+
+    Returns:
+        Per-environment termination flags, shape ``(num_envs,)``.
+    """
+    # (N, sensors, filters, 3) -> largest pair force per environment
+    forces = env.scene.sensors[sensor_cfg.name].data.force_matrix_w.torch
+    return torch.linalg.norm(forces, dim=-1).flatten(start_dim=1).max(dim=1)[0] > threshold

@@ -26,6 +26,7 @@ __all__ = [
     "out_of_bound",
     "abnormal_robot_state",
     "progress_context",
+    "assembly_contact_force",
     "success_termination",
     "CollisionAnalyzerCfg",
     "RESET_STRATEGIES",
@@ -56,7 +57,7 @@ from .rewards import (
     progress_reward,
     success_reward,
 )
-from .terminations import abnormal_robot_state, out_of_bound
+from .terminations import abnormal_robot_state, assembly_contact_force, out_of_bound
 from .terminations import progress_context, success_termination
 from isaaclab_tasks.contrib.nist.utils import (CollisionAnalyzerCfg)
 from isaaclab.envs.mdp import *

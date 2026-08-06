@@ -176,6 +176,11 @@ class FactoryTerminationsCfg:
 
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
 
+    assembly_contact_force = DoneTerm(
+        func=mdp.assembly_contact_force,
+        params={"threshold": 50.0, "sensor_cfg": SceneEntityCfg("assembly_contact")},
+    )
+
     oob = DoneTerm(
         func=mdp.out_of_bound,
         params={

@@ -12,6 +12,7 @@ Each scene class inherits from :class:`FactorySceneBase` and specifies the
 
 from isaaclab.assets import ArticulationCfg, RigidObjectCfg
 from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.sensors import ContactSensorCfg
 from isaaclab.utils.configclass import configclass
 
 from isaaclab_tasks.utils import PresetCfg
@@ -20,6 +21,25 @@ from . import factory_assets_cfg as assets
 from .factory_presets import (
     RobotArticulationCfg,
 )
+
+
+def assembly_contact_sensor(held: RigidObjectCfg, fixed: RigidObjectCfg) -> ContactSensorCfg:
+    """Contact sensor on the held asset, filtered to report only the fixed asset.
+
+    Filtering matters: the net force on the held asset is dominated by the gripper
+    holding it, so an unfiltered sensor cannot tell "the fingers are squeezing"
+    from "the thread is being driven through".
+    """
+    # The rigid body sits one level below the asset root, under a prim name that
+    # comes from inside the USD (``factory_nut_loose``, ``factory_bolt_loose``, ...),
+    # and the sensor matches Newton body labels rather than the spawn path. Match
+    # the child instead of naming it: each of these assets carries exactly one body.
+    return ContactSensorCfg(
+        prim_path=f"{held.prim_path}/.*",
+        filter_prim_paths_expr=[f"{fixed.prim_path}/.*"],
+        history_length=1,
+        update_period=0.0,
+    )
 
 
 @configclass
@@ -48,24 +68,28 @@ class FactorySceneBase(InteractiveSceneCfg):
 class NutThreadM4SceneCfg(FactorySceneBase):
     fixed_asset: RigidObjectCfg = assets.BOLT_M4_CFG
     held_asset: RigidObjectCfg = assets.NUT_M4_CFG
+    assembly_contact: ContactSensorCfg = assembly_contact_sensor(assets.NUT_M4_CFG, assets.BOLT_M4_CFG)
 
 
 @configclass
 class NutThreadM8SceneCfg(FactorySceneBase):
     fixed_asset: RigidObjectCfg = assets.BOLT_M8_CFG
     held_asset: RigidObjectCfg = assets.NUT_M8_CFG
+    assembly_contact: ContactSensorCfg = assembly_contact_sensor(assets.NUT_M8_CFG, assets.BOLT_M8_CFG)
 
 
 @configclass
 class NutThreadM12SceneCfg(FactorySceneBase):
     fixed_asset: RigidObjectCfg = assets.BOLT_M12_CFG
     held_asset: RigidObjectCfg = assets.NUT_M12_CFG
+    assembly_contact: ContactSensorCfg = assembly_contact_sensor(assets.NUT_M12_CFG, assets.BOLT_M12_CFG)
 
 
 @configclass
 class NutThreadM16SceneCfg(FactorySceneBase):
     fixed_asset: RigidObjectCfg = assets.BOLT_M16_CFG
     held_asset: RigidObjectCfg = assets.NUT_M16_CFG
+    assembly_contact: ContactSensorCfg = assembly_contact_sensor(assets.NUT_M16_CFG, assets.BOLT_M16_CFG)
 
 
 # ---------------------------------------------------------------------------
@@ -79,6 +103,7 @@ class GearMeshSmallSceneCfg(FactorySceneBase):
     held_asset: RigidObjectCfg = assets.SMALL_GEAR_CFG
     medium_gear: RigidObjectCfg = assets.MEDIUM_GEAR_CFG
     large_gear: RigidObjectCfg = assets.LARGE_GEAR_CFG
+    assembly_contact: ContactSensorCfg = assembly_contact_sensor(assets.SMALL_GEAR_CFG, assets.GEAR_BASE_CFG)
 
 
 @configclass
@@ -87,6 +112,7 @@ class GearMeshMediumSceneCfg(FactorySceneBase):
     held_asset: RigidObjectCfg = assets.MEDIUM_GEAR_CFG
     small_gear: RigidObjectCfg = assets.SMALL_GEAR_CFG
     large_gear: RigidObjectCfg = assets.LARGE_GEAR_CFG
+    assembly_contact: ContactSensorCfg = assembly_contact_sensor(assets.MEDIUM_GEAR_CFG, assets.GEAR_BASE_CFG)
 
 
 @configclass
@@ -95,6 +121,7 @@ class GearMeshLargeSceneCfg(FactorySceneBase):
     held_asset: RigidObjectCfg = assets.LARGE_GEAR_CFG
     small_gear: RigidObjectCfg = assets.SMALL_GEAR_CFG
     medium_gear: RigidObjectCfg = assets.MEDIUM_GEAR_CFG
+    assembly_contact: ContactSensorCfg = assembly_contact_sensor(assets.LARGE_GEAR_CFG, assets.GEAR_BASE_CFG)
 
 
 # ---------------------------------------------------------------------------
@@ -106,24 +133,28 @@ class GearMeshLargeSceneCfg(FactorySceneBase):
 class RodInsert4MMSceneCfg(FactorySceneBase):
     fixed_asset: RigidObjectCfg = assets.HOLE_4MM_CFG
     held_asset: RigidObjectCfg = assets.ROD_4MM_CFG
+    assembly_contact: ContactSensorCfg = assembly_contact_sensor(assets.ROD_4MM_CFG, assets.HOLE_4MM_CFG)
 
 
 @configclass
 class RodInsert8MMSceneCfg(FactorySceneBase):
     fixed_asset: RigidObjectCfg = assets.HOLE_8MM_CFG
     held_asset: RigidObjectCfg = assets.ROD_8MM_CFG
+    assembly_contact: ContactSensorCfg = assembly_contact_sensor(assets.ROD_8MM_CFG, assets.HOLE_8MM_CFG)
 
 
 @configclass
 class RodInsert12MMSceneCfg(FactorySceneBase):
     fixed_asset: RigidObjectCfg = assets.HOLE_12MM_CFG
     held_asset: RigidObjectCfg = assets.ROD_12MM_CFG
+    assembly_contact: ContactSensorCfg = assembly_contact_sensor(assets.ROD_12MM_CFG, assets.HOLE_12MM_CFG)
 
 
 @configclass
 class RodInsert16MMSceneCfg(FactorySceneBase):
     fixed_asset: RigidObjectCfg = assets.HOLE_16MM_CFG
     held_asset: RigidObjectCfg = assets.ROD_16MM_CFG
+    assembly_contact: ContactSensorCfg = assembly_contact_sensor(assets.ROD_16MM_CFG, assets.HOLE_16MM_CFG)
 
 
 # ---------------------------------------------------------------------------
@@ -135,24 +166,36 @@ class RodInsert16MMSceneCfg(FactorySceneBase):
 class PegInsert4MMSceneCfg(FactorySceneBase):
     fixed_asset: RigidObjectCfg = assets.RECTANGULAR_HOLE_4MM_CFG
     held_asset: RigidObjectCfg = assets.RECTANGULAR_PEG_4MM_CFG
+    assembly_contact: ContactSensorCfg = assembly_contact_sensor(
+        assets.RECTANGULAR_PEG_4MM_CFG, assets.RECTANGULAR_HOLE_4MM_CFG
+    )
 
 
 @configclass
 class PegInsert8MMSceneCfg(FactorySceneBase):
     fixed_asset: RigidObjectCfg = assets.RECTANGULAR_HOLE_8MM_CFG
     held_asset: RigidObjectCfg = assets.RECTANGULAR_PEG_8MM_CFG
+    assembly_contact: ContactSensorCfg = assembly_contact_sensor(
+        assets.RECTANGULAR_PEG_8MM_CFG, assets.RECTANGULAR_HOLE_8MM_CFG
+    )
 
 
 @configclass
 class PegInsert12MMSceneCfg(FactorySceneBase):
     fixed_asset: RigidObjectCfg = assets.RECTANGULAR_HOLE_12MM_CFG
     held_asset: RigidObjectCfg = assets.RECTANGULAR_PEG_12MM_CFG
+    assembly_contact: ContactSensorCfg = assembly_contact_sensor(
+        assets.RECTANGULAR_PEG_12MM_CFG, assets.RECTANGULAR_HOLE_12MM_CFG
+    )
 
 
 @configclass
 class PegInsert16MMSceneCfg(FactorySceneBase):
     fixed_asset: RigidObjectCfg = assets.RECTANGULAR_HOLE_16MM_CFG
     held_asset: RigidObjectCfg = assets.RECTANGULAR_PEG_16MM_CFG
+    assembly_contact: ContactSensorCfg = assembly_contact_sensor(
+        assets.RECTANGULAR_PEG_16MM_CFG, assets.RECTANGULAR_HOLE_16MM_CFG
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -164,30 +207,37 @@ class PegInsert16MMSceneCfg(FactorySceneBase):
 class ConnectorUSBASceneCfg(FactorySceneBase):
     fixed_asset: RigidObjectCfg = assets.USBA_SOCKET_CFG
     held_asset: RigidObjectCfg = assets.USBA_PLUG_CFG
+    assembly_contact: ContactSensorCfg = assembly_contact_sensor(assets.USBA_PLUG_CFG, assets.USBA_SOCKET_CFG)
 
 
 @configclass
 class ConnectorWaterproofSceneCfg(FactorySceneBase):
     fixed_asset: RigidObjectCfg = assets.WATERPROOF_SOCKET_CFG
     held_asset: RigidObjectCfg = assets.WATERPROOF_PLUG_CFG
+    assembly_contact: ContactSensorCfg = assembly_contact_sensor(
+        assets.WATERPROOF_PLUG_CFG, assets.WATERPROOF_SOCKET_CFG
+    )
 
 
 @configclass
 class ConnectorBNCSceneCfg(FactorySceneBase):
     fixed_asset: RigidObjectCfg = assets.BNC_SOCKET_CFG
     held_asset: RigidObjectCfg = assets.BNC_PLUG_CFG
+    assembly_contact: ContactSensorCfg = assembly_contact_sensor(assets.BNC_PLUG_CFG, assets.BNC_SOCKET_CFG)
 
 
 @configclass
 class ConnectorDSUBSceneCfg(FactorySceneBase):
     fixed_asset: RigidObjectCfg = assets.DSUB_SOCKET_CFG
     held_asset: RigidObjectCfg = assets.DSUB_PLUG_CFG
+    assembly_contact: ContactSensorCfg = assembly_contact_sensor(assets.DSUB_PLUG_CFG, assets.DSUB_SOCKET_CFG)
 
 
 @configclass
 class ConnectorRJ45SceneCfg(FactorySceneBase):
     fixed_asset: RigidObjectCfg = assets.RJ45_SOCKET_CFG
     held_asset: RigidObjectCfg = assets.RJ45_PLUG_CFG
+    assembly_contact: ContactSensorCfg = assembly_contact_sensor(assets.RJ45_PLUG_CFG, assets.RJ45_SOCKET_CFG)
 
 
 @configclass
