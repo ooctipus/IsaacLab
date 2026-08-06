@@ -250,7 +250,7 @@ class FactoryPhysicsCfg(PresetCfg):
     Selected via ``presets=physx`` (default) or ``presets=newton_mjwarp``. The PhysX
     variant keeps Factory's contact-rich solver tuning; the Newton variant follows Newton's
     reference ``example_nut_bolt_sdf`` (MuJoCo/Newton solver path): few constraint iterations
-    with many line-search iterations, ``impratio=1.0``, ``num_substeps=16`` (more than the
+    with many line-search iterations, ``impratio=1.0``, ``num_substeps=8`` (more than the
     demo's 5, for a smaller solver ``dt`` and stiffer stable contact), a small global shape
     gap, and Newton's SDF collision pipeline (rather than MuJoCo's internal contacts).
     Capacity knobs (``njmax``/``nconmax``) are kept larger than the bare nut/bolt demo since
@@ -287,7 +287,7 @@ class FactoryPhysicsCfg(PresetCfg):
             max_triangle_pairs=60_000_000,
             rigid_contact_max=5_000_000,
         ),
-        num_substeps=16,
+        num_substeps=8,
         debug_mode=False,
         use_cuda_graph=True,
     )
@@ -311,7 +311,11 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
     def __post_init__(self) -> None:
         """Post initialization."""
         # general settings
-        self.decimation = 8
+        # Collision runs once per sim step and the solver runs num_substeps inside it,
+        # so dt sets the collision rate: 0.01 s -> 100 Hz collide, x8 substeps ->
+        # 800 Hz solver. Decimation is halved alongside it so the policy still acts
+        # every 0.04 s; leaving it at 8 would have quietly halved the control rate.
+        self.decimation = 4
         self.episode_length_s = 14.0
         # simulation settings
         self.sim.dt = 0.04 / self.decimation

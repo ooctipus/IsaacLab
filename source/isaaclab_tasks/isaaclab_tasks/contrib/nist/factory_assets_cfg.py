@@ -71,6 +71,11 @@ ASSEMBLY_PLUG_COLLISION_PROPS_CFG = _PlugCollisionPropsCfg()
 # states (the reset acceptance gate cannot see the closed-finger pose); scoping ke/kd to
 # the nut/bolt shapes keeps threading stiff while robot/board/table contacts stay soft.
 # newton:contactStiffness/Damping map to shape ke/kd -> geom_solref = (2/kd, (kd/2)/sqrt(ke)).
+# MuJoCo's REFSAFE clamps the time constant to >= 2*dt, so a solver rate implies a
+# stiffness ceiling: kd <= solver_hz, and critical damping is ke = (kd/2)^2. At the
+# 800 Hz solver below that is kd=800, ke=1.6e5. Asking for more does not buy a stiffer
+# contact, only a silently clamped one. Screened against nut-through-thread on m16,
+# m12 and m8 under a 50 N press: worst penetration 0.14 of a thread pitch.
 # The friction fragment is REQUIRED: binding a material that authors no physics:*Friction
 # resolves the shape's friction to 0, and mu=0 contacts with condim=3 zero the pyramidal
 # row invweight -> efc_D is floored to 1/MJ_MINVAL (~1e15) -> the float32 Newton-solver
@@ -80,7 +85,7 @@ ASSEMBLY_CONTACT_MATERIAL_CFG = preset(
     default=None,
     newton_mjwarp=[
         UsdPhysicsRigidBodyMaterialCfg(static_friction=0.75, dynamic_friction=0.75),
-        NewtonMaterialCfg(contact_stiffness=2.56e6, contact_damping=3200.0),
+        NewtonMaterialCfg(contact_stiffness=1.6e5, contact_damping=800.0),
     ],
 )
 
