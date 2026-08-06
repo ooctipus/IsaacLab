@@ -85,7 +85,8 @@ def _run(args: argparse.Namespace) -> dict[str, object]:
         raise ValueError("Reward model source bundle SHA-256 differs from the frozen pin.")
 
     source_root = args.source_artifact_root.expanduser().resolve()
-    split_artifact = source_root / _TRAIN_SPLIT_ARTIFACT
+    # Deployment roots link their split artifacts (fb-current layout) — hash the resolved regular file.
+    split_artifact = (source_root / _TRAIN_SPLIT_ARTIFACT).resolve()
     split_sha256 = _sha256(split_artifact)
     if split_sha256 != _TRAIN_SPLIT_SHA256:
         raise ValueError("Control train split artifact SHA-256 differs from its registration pin.")
