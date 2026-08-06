@@ -13,6 +13,7 @@ For more information, please check information on `Omniverse Nucleus`_.
 .. _Omniverse Nucleus: https://docs.omniverse.nvidia.com/nucleus/latest/overview/overview.html
 """
 
+import contextlib
 import io
 import json
 import logging
@@ -372,14 +373,44 @@ def _remote_fingerprint(url: str) -> dict | None:
     return _REMOTE_FINGERPRINTS[url]
 
 
+def _publish_atomically(destination: str, data: bytes) -> None:
+    """Put ``data`` at ``destination`` without any reader ever seeing a partial file.
+
+    Writing straight to the destination truncates it in place, so a process that already
+    has the previous copy memory-mapped -- which is how USD reads crate files -- loses the
+    pages out from under itself and dies with SIGBUS or a segfault inside the mapping.
+    Multi-GPU runs hit this readily: every rank on a node shares the cache directory and
+    populates it at the same time. Writing a temporary file alongside and renaming keeps
+    the old inode alive for existing readers, and the rename itself is atomic on POSIX.
+
+    Args:
+        destination: Final path to publish to.
+        data: Bytes to write.
+
+    Raises:
+        OSError: If the temporary file cannot be written or renamed.
+    """
+    directory = os.path.dirname(destination)
+    os.makedirs(directory, exist_ok=True)
+    # same directory as the destination, so the rename cannot cross a filesystem boundary
+    handle, staged = tempfile.mkstemp(dir=directory, prefix=os.path.basename(destination) + ".", suffix=".partial")
+    try:
+        with os.fdopen(handle, "wb") as f:
+            f.write(data)
+        os.replace(staged, destination)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(staged)
+        raise
+
+
 def _write_mirror_fingerprint(url: str, mirrored: str) -> None:
     """Record the remote revision a freshly cached copy was taken from."""
     fingerprint = _remote_fingerprint(url)
     if fingerprint is None:
         return
     try:
-        with open(mirrored + _MIRROR_FINGERPRINT_SUFFIX, "w", encoding="utf-8") as f:
-            json.dump(fingerprint, f)
+        _publish_atomically(mirrored + _MIRROR_FINGERPRINT_SUFFIX, json.dumps(fingerprint).encode("utf-8"))
     except OSError as exc:
         # a copy we cannot annotate is simply re-fetched on the next run
         logger.debug("Unable to record the asset cache fingerprint for '%s': %s", url, exc)
@@ -446,9 +477,7 @@ def _store_mirror(url: str, data: bytes) -> None:
     if not mirrored:
         return
     try:
-        os.makedirs(os.path.dirname(mirrored), exist_ok=True)
-        with open(mirrored, "wb") as f:
-            f.write(data)
+        _publish_atomically(mirrored, data)
     except OSError as exc:
         logger.debug("Unable to cache the asset '%s' locally: %s", url, exc)
         return

@@ -9,6 +9,7 @@ from __future__ import annotations
 import importlib
 import json
 import logging
+import mmap
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -511,3 +512,28 @@ def test_newton_asset_dir_uses_environment_override(tmp_path, monkeypatch):
     finally:
         monkeypatch.delenv("NEWTON_ASSET_DIR", raising=False)
         importlib.reload(assets_utils)
+
+
+def test_cached_asset_is_published_without_disturbing_open_mappings(tmp_path):
+    """Test that refreshing a cached asset leaves an existing memory mapping readable.
+
+    USD reads crate files through ``mmap``, and every rank of a multi-GPU run shares the
+    cache directory. Rewriting a cached file in place truncates it under those mappings and
+    the reading process dies with ``SIGBUS``, so the refresh has to go through a rename.
+    """
+    destination = tmp_path / "nested" / "asset.usd"
+    assets_utils._publish_atomically(str(destination), b"A" * 65536)
+
+    with open(destination, "rb") as handle:
+        mapping = mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ)
+        try:
+            assets_utils._publish_atomically(str(destination), b"B" * 131072)
+
+            # the mapping still serves the copy it was opened on, rather than faulting
+            assert len(mapping) == 65536
+            assert mapping[65000:65004] == b"AAAA"
+        finally:
+            mapping.close()
+
+    assert destination.read_bytes() == b"B" * 131072
+    assert [entry.name for entry in destination.parent.iterdir()] == [destination.name]
