@@ -25,6 +25,7 @@ import inspect
 import json
 import math
 import os
+import random
 import traceback
 from collections.abc import Mapping
 from pathlib import Path
@@ -387,7 +388,6 @@ def _run(args: argparse.Namespace, request: _EvidenceRequest) -> tuple[dict[str,
     from motion_tracking_records import motion_tracking_metrics_to_dict
     from smpl_tracking_evaluation import (
         motion_tracking_refill_lane_count,
-        smpl_motion_tracking_evaluator,
         smpl_motion_tracking_evaluator_packed,
     )
     from tensordict import TensorDictBase
@@ -403,9 +403,12 @@ def _run(args: argparse.Namespace, request: _EvidenceRequest) -> tuple[dict[str,
     # (SmplGeneralizedCoordinateFrameBuilder -> SmplFrameBuilder).
     from isaaclab_tasks.core.multi_task.motion.robots.smpl.reference import SmplFrameBuilder
     from isaaclab_tasks.core.multi_task.motion_env_cfg import MotionImitationEnvCfg
+    from isaaclab_tasks.core.multi_task.mdp.native_mujoco_action import NativeMujocoControlAction
+    from isaaclab_tasks.core.multi_task.motion.mdp.commands import MotionStatePayload, MotionTaskTable
     from isaaclab_tasks.core.multi_task.rl.rsl_rl.forward_backward_expert import forward_backward_expert_buffer
     from isaaclab_tasks.core.multi_task.rl.rsl_rl.forward_backward_tracking import (
         forward_backward_evaluation_scope,
+        forward_backward_tracking_evaluator,
     )
     from isaaclab_tasks.utils import resolve_presets
 
@@ -512,15 +515,57 @@ def _run(args: argparse.Namespace, request: _EvidenceRequest) -> tuple[dict[str,
             reset_source_name="reference",
         ):
             if faithful:
+                # bfm-ab-20260805 campaign patch (pre-registered deviation iii):
+                # HEAD moved the 358-wide HumEnv projection from build-time table
+                # observations into the live expert buffer, so physical tables now
+                # carry reference frames and the oracle-era
+                # smpl_tracking_evaluation preconditions (projected-observation
+                # table, five-field projections with assignment_metric) no longer
+                # name the live schema. The protocol is unchanged: reset to source
+                # frame zero, one deterministic action per later source frame,
+                # exact uniform transport over the first 214 values of reached and
+                # target observations, clip-safe eight-frame contexts.
+                if (
+                    expert_cfg["clock"]["sampling_mode"] != "source_rows"
+                    or expert_cfg["clock"]["sampling_step_seconds"] is not None
+                ):
+                    raise ValueError("Faithful SMPL tracking requires literal source-row sampling.")
+                if not isinstance(command.table, MotionTaskTable) or not isinstance(
+                    command.payload, MotionStatePayload
+                ):
+                    raise TypeError("SMPL tracking requires MotionTaskTable and MotionStatePayload.")
+                if command.payload.table is not command.table:
+                    raise ValueError("SMPL tracking requires the payload to share the environment table.")
+                if expert.frames.shape[1] != 358 or expert.schema.expert_feature_width != 358:
+                    raise ValueError("SMPL tracking requires the native 358-wide expert observation route.")
+                control_action = env.unwrapped.action_manager.get_term("control")
+                if not isinstance(control_action, NativeMujocoControlAction) or control_action.action_dim != 69:
+                    raise TypeError("SMPL tracking requires the native 69-wide MuJoCo control action.")
                 evaluations = (
-                    smpl_motion_tracking_evaluator(
+                    forward_backward_tracking_evaluator(
                         model,
                         env,
                         expert,
                         expert.clip_ids,
-                        sampling_mode=expert_cfg["clock"]["sampling_mode"],
-                        sampling_step_seconds=expert_cfg["clock"]["sampling_step_seconds"],
-                        evaluation_seed=args.evaluation_seed,
+                        command=command,
+                        history_factory=lambda _observations: None,
+                        sequence_start_rows=command.table.clip_start_rows,
+                        projections=(
+                            {
+                                "metric_name": "emd",
+                                "target_name": "policy",
+                                "observation_name": "policy",
+                                "projection": (
+                                    "isaaclab_tasks.core.multi_task.motion.robots.smpl.observations"
+                                    ":smpl_humenv_tracking_pose"
+                                ),
+                            },
+                        ),
+                        context_window_length=8,
+                        include_reset_frame=False,
+                        allow_horizon_truncation=False,
+                        shuffle_assignments=False,
+                        assignment_rng=random.Random(args.evaluation_seed),
                     ),
                 )
             else:
@@ -573,7 +618,8 @@ def _run(args: argparse.Namespace, request: _EvidenceRequest) -> tuple[dict[str,
             "semantic_sha256": environment_semantic_sha256,
             "native_owner_hashes": native_environment_owner_hashes,
         }
-        evaluator = smpl_motion_tracking_evaluator if faithful else smpl_motion_tracking_evaluator_packed
+        # Faithful mode calls the shared HEAD evaluator directly (campaign patch above).
+        evaluator = forward_backward_tracking_evaluator if faithful else smpl_motion_tracking_evaluator_packed
         implementation = {
             "evaluator_sha256": _source_sha256(evaluator),
             "uniform_assignment_warp_sha256": _source_sha256(uniform_assignment_warp),
