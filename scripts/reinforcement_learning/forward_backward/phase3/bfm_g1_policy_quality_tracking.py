@@ -58,7 +58,7 @@ def _run(args: argparse.Namespace) -> dict[str, object]:
     from gpu_ownership import exclusive_physical_gpu_snapshot, validate_same_exclusive_gpu
     from motion_environment_identity import motion_runner_axes
     from motion_tracking_records import motion_tracking_metrics_to_dict
-    from rsl_rl.models.forward_backward_model import ForwardBackwardModel
+    from rsl_rl.algorithms.forward_backward import forward_backward_model_from_config
 
     from isaaclab.envs import ManagerBasedRLEnv
 
@@ -103,11 +103,12 @@ def _run(args: argparse.Namespace) -> dict[str, object]:
         construction_history = history_factory(observations)
         if construction_history is not None:
             observations = construction_history.decorate_current(observations)
-        model = ForwardBackwardModel.from_config(
+        model = forward_backward_model_from_config(
             observations,
             runner_values["obs_groups"],
             env.num_actions,
             runner_values["model"],
+            runner_values["value_helpers"],
         ).to(env.device)
         saved = torch.load(checkpoint, map_location=env.device, weights_only=True)
         if set(saved) != {"model_state_dict"}:

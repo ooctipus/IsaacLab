@@ -32,6 +32,7 @@ from typing import NamedTuple
 
 import torch
 from motion_environment_identity import motion_environment_axes, motion_runner_axes
+from rsl_rl.algorithms.forward_backward import forward_backward_model_from_config
 from rsl_rl.models.forward_backward_model import ForwardBackwardInferenceModel, ForwardBackwardModel
 from tensordict import TensorDictBase
 
@@ -459,11 +460,12 @@ def _run(args: argparse.Namespace, request: _EvidenceRequest) -> tuple[dict[str,
         observations, _reset_info = env.reset()
         if not isinstance(observations, TensorDictBase):
             raise TypeError("SMPL EMD requires TensorDict observations from the RSL VecEnv wrapper.")
-        model_template = ForwardBackwardModel.from_config(
+        model_template = forward_backward_model_from_config(
             observations,
             runner_values["obs_groups"],
             env.num_actions,
             runner_values["model"],
+            runner_values["value_helpers"],
         )
         if faithful:
             checkpoint = checkpoints[0]
