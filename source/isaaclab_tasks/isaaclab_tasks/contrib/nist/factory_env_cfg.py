@@ -207,7 +207,7 @@ class FactoryTerminationsCfg:
 
     wrist_limit = DoneTerm(
         func=mdp.joint_vel_out_of_manual_limit,
-        params={"asset_cfg": SceneEntityCfg("robot", joint_names="panda_joint7"), "max_velocity": 8.0},
+        params={"asset_cfg": SceneEntityCfg("robot", joint_names="panda_joint7"), "max_velocity": 4.0},
     )
 
     success = DoneTerm(func=mdp.success_termination)
@@ -296,7 +296,7 @@ class FactoryPhysicsCfg(PresetCfg):
         debug_mode=False,
         use_cuda_graph=True,
     )
-    physx = default
+    isaacsim_physx = default
 
 
 @configclass

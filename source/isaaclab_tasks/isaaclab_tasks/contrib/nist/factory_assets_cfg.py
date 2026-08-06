@@ -9,14 +9,21 @@ import isaaclab.sim as sim_utils
 from isaaclab.actuators.actuator_cfg import ImplicitActuatorCfg
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
 from isaaclab.sim.spawners.materials import UsdPhysicsRigidBodyMaterialCfg
+from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR
 from isaaclab.utils.configclass import configclass
 
 from isaaclab_tasks.utils import PresetCfg, preset
 
+from isaaclab_assets import ISAACLAB_ASSETS_DATA_DIR
+
 from .assembly_keypoints import NIST_BOARD_CFG
 
-ISAACLAB_NUCLEUS_DIR = "omniverse://isaac-dev.ov.nvidia.com/Isaac/IsaacLab"
-ASSET_DIR = f"{ISAACLAB_NUCLEUS_DIR}/Factory"
+# The NIST parts and the mount are vendored under ``source/isaaclab_assets/data``, so they are
+# read from disk. Sourcing them from an authenticated Nucleus server instead stalls headless
+# cluster jobs on an interactive device-flow login.
+ASSET_DIR = f"{ISAACLAB_ASSETS_DATA_DIR}/Assets/Props"
+# The robot is not vendored. It is served from the public asset root, which needs no login.
+ROBOT_ASSET_DIR = f"{ISAACLAB_NUCLEUS_DIR}/Factory"
 
 
 ASSEMBLY_SOCKET_RIGID_BODY_PROPS_CFG = sim_utils.RigidBodyPropertiesCfg(
@@ -194,7 +201,7 @@ FRANKA_DEFAULT_STATE_CFG = ArticulationCfg.InitialStateCfg(
 FRANKA_PANDA_PHYSX_CFG = ArticulationCfg(
     prim_path="/World/envs/env_.*/Robot",
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"{ASSET_DIR}/franka_mimic.usd",
+        usd_path=f"{ROBOT_ASSET_DIR}/franka_mimic.usd",
         activate_contact_sensors=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=True,
@@ -216,7 +223,7 @@ FRANKA_PANDA_PHYSX_CFG = ArticulationCfg(
 FRANKA_PANDA_NEWTON_CFG = ArticulationCfg(
     prim_path="/World/envs/env_.*/Robot",
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"{ASSET_DIR}/franka_mimic.usd",
+        usd_path=f"{ROBOT_ASSET_DIR}/franka_mimic.usd",
         activate_contact_sensors=True,
         # Newton/MuJoCo: leave gravity ON and compensate it per-body via mjc:gravcomp,
         # instead of PhysX's disable_gravity hack. gravcomp=1.0 = full compensation.
