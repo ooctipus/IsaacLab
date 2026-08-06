@@ -607,8 +607,12 @@ def _run(args: argparse.Namespace, request: _EvidenceRequest) -> tuple[dict[str,
         source_identity = {
             "split_artifact_sha256": source_cfg.evaluation.artifact_sha256,
             "source_content_sha256": source_index.source_content_sha256,
+            # bfm-ab-20260805 campaign patch: HEAD renamed the frame-builder
+            # identity into the route-family identity fields.
             "table_cache_identity": table.cache_identity,
-            "frame_builder_identity_sha256": table.frame_builder_identity_sha256,
+            "table_family_name": table.family_name,
+            "family_identity_sha256": table.family_identity_sha256,
+            "construction_identity_sha256": table.construction_identity_sha256,
             "expert_data_hash": expert.schema.data_hash,
             "expert_feature_schema_hash": expert.schema.feature_schema_hash,
             "expert_clip_offsets_hash": expert.schema.clip_offsets_hash,
