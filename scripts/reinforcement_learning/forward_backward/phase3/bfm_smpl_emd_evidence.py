@@ -399,7 +399,9 @@ def _run(args: argparse.Namespace, request: _EvidenceRequest) -> tuple[dict[str,
     from isaaclab_tasks.core.multi_task.metrics.impl import uniform_assignment_warp
     from isaaclab_tasks.core.multi_task.motion.config.agents import MotionForwardBackwardRunnerCfg
     from isaaclab_tasks.core.multi_task.motion.data.sources import CmuHumEnvSmplClips
-    from isaaclab_tasks.core.multi_task.motion.robots.smpl.reference import SmplGeneralizedCoordinateFrameBuilder
+    # bfm-ab-20260805 campaign patch: frame builders were renamed at HEAD
+    # (SmplGeneralizedCoordinateFrameBuilder -> SmplFrameBuilder).
+    from isaaclab_tasks.core.multi_task.motion.robots.smpl.reference import SmplFrameBuilder
     from isaaclab_tasks.core.multi_task.motion_env_cfg import MotionImitationEnvCfg
     from isaaclab_tasks.core.multi_task.rl.rsl_rl.forward_backward_expert import forward_backward_expert_buffer
     from isaaclab_tasks.core.multi_task.rl.rsl_rl.forward_backward_tracking import (
@@ -441,7 +443,7 @@ def _run(args: argparse.Namespace, request: _EvidenceRequest) -> tuple[dict[str,
         preset=_PROFILE,
         cfg=cfg,
         importer_type=CmuHumEnvSmplClips,
-        frame_builder_type=SmplGeneralizedCoordinateFrameBuilder,
+        frame_builder_type=SmplFrameBuilder,
         reference_artifact_root=table_cfg.target_artifact_root,
     )
     environment_semantic_sha256 = motion_environment_semantic_sha256(environment_dependency_identity)
