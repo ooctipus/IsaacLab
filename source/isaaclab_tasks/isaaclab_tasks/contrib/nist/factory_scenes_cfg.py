@@ -30,10 +30,12 @@ def assembly_contact_sensor(held: RigidObjectCfg, fixed: RigidObjectCfg) -> Cont
     holding it, so an unfiltered sensor cannot tell "the fingers are squeezing"
     from "the thread is being driven through".
     """
-    # The rigid body sits one level below the asset root, under a prim name that
-    # comes from inside the USD (``factory_nut_loose``, ``factory_bolt_loose``, ...),
-    # and the sensor matches Newton body labels rather than the spawn path. Match
-    # the child instead of naming it: each of these assets carries exactly one body.
+    # The rigid body sits one level below the asset root, under a prim name that comes
+    # from inside the USD (``factory_nut_loose``, ``factory_bolt_loose``, ...), so match
+    # the child rather than naming it. This relies on the body being the asset root's
+    # only child: PhysX uses the filter expression verbatim and requires exactly one
+    # match per environment, unlike the sensor path, which it narrows to prims carrying
+    # a contact-report API. Every assembly asset is authored that way.
     return ContactSensorCfg(
         prim_path=f"{held.prim_path}/.*",
         filter_prim_paths_expr=[f"{fixed.prim_path}/.*"],
