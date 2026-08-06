@@ -16,7 +16,7 @@ from isaaclab.utils.configclass import configclass
 # ``Offset`` lives in the shared util layer — pure rigid-body math, no
 # assembly semantics. Re-exported here for backwards compatibility with
 # call sites that ``from .assembly_keypoints import Offset``.
-from isaaclab_tasks.contrib.nist.utils.pose_offset import Offset
+from .utils.pose_offset import Offset
 
 __all__ = ["Offset"]
 
@@ -52,9 +52,9 @@ class NistBoardKeyPointsCfg:
     rod_16mm: Offset = Offset(pos=(0.1221, -0.2665, -0.0001), quat=(0.7071, -0.7071, 0.0, 0.0))
     hole_16mm: Offset = Offset(pos=(0.1221, -0.2665, -0.0001), quat=(0.7071, -0.7071, 0.0, 0.0))
 
-    large_gear: Offset = Offset(pos=(0.0474, -0.1713, -0.0002), quat=(-0.7071, 0.7071, 0.0, 0.0))
-    medium_gear: Offset = Offset(pos=(0.0427, -0.1718, -0.0002), quat=(0.78531, -0.6191, 0.0, 0.0))
-    small_gear: Offset = Offset(pos=(0.0474, -0.1713, -0.0002), quat=(-0.7071, 0.7071, 0.0, 0.0))
+    large_gear: Offset = Offset(pos=(0.0474, -0.1713, -0.0002), quat=(0.7071, -0.7071, 0.0, 0.0))
+    medium_gear: Offset = Offset(pos=(0.0459, -0.1714, -0.0002), quat=(0.73566, -0.67736, 0.0, 0.0))
+    small_gear: Offset = Offset(pos=(0.0474, -0.1713, -0.0002), quat=(0.7071, -0.7071, 0.0, 0.0))
     gear_base: Offset = Offset(pos=(0.0474, -0.1713, -0.0002), quat=(0.7071, -0.7071, 0.0, 0.0))
 
 

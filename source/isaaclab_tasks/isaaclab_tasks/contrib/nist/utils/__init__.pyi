@@ -10,11 +10,15 @@ __all__ = [
     "CollisionAnalyzer",
     "CollisionAnalyzerCfg",
     "Offset",
+    "FrontierSamplingStrategy",
+    "FrontierSamplingStrategyCfg",
     "RigidObjectHasher",
     "Sampler",
     "SamplerCfg",
     "SamplingStrategy",
     "SamplingStrategyCfg",
+    "StateLayout",
+    "StateLayoutCfg",
     "TermChoice",
     "UniformSamplingStrategy",
     "UniformSamplingStrategyCfg",
@@ -26,6 +30,7 @@ __all__ = [
     "sample_object_point_cloud",
     "sample_triangle_mesh_surface",
     "set_reset_state",
+    "temporary_seed",
 ]
 
 from .collision_analyzer import CollisionAnalyzer
@@ -40,10 +45,12 @@ from .mesh_ops import (
 from .pose_offset import Offset
 from .rigid_object_hasher import RigidObjectHasher
 from .event_combinators import ChainedResetTerms, TermChoice, reset_accumulator
-from .reset_state import get_reset_state, set_reset_state
+from .reset_state import get_reset_state, set_reset_state, temporary_seed
 from .sampling import (
     BetaSamplingStrategy,
     BetaSamplingStrategyCfg,
+    FrontierSamplingStrategy,
+    FrontierSamplingStrategyCfg,
     Sampler,
     SamplerCfg,
     SamplingStrategy,
@@ -51,3 +58,4 @@ from .sampling import (
     UniformSamplingStrategy,
     UniformSamplingStrategyCfg,
 )
+from .state_layout import StateLayout, StateLayoutCfg

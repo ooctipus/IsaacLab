@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Scene definitions for all 12 Factory task variants.
+"""Scene definitions for all 20 Factory task variants.
 
 Each scene class inherits from :class:`FactorySceneBase` and specifies the
 ``fixed_asset`` / ``held_asset`` pair (plus extra scene entities for gear tasks).
@@ -14,33 +14,45 @@ from isaaclab.assets import ArticulationCfg, RigidObjectCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils.configclass import configclass
 
-from isaaclab_tasks.contrib.nist import factory_assets_cfg as assets
-from isaaclab_tasks.utils import PresetCfg, preset
+from isaaclab_tasks.utils import PresetCfg
 
-_FRANKA_PANDA_PHYSX_CFG = assets.FRANKA_PANDA_PHYSX_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+from . import factory_assets_cfg as assets
+from .factory_presets import (
+    RobotArticulationCfg,
+)
 
 
 @configclass
 class FactorySceneBase(InteractiveSceneCfg):
-    """Shared scene assets for all Factory tasks."""
+    """Shared scene assets for all Factory tasks.
+
+    The ``robot`` is resolved from the active robot preset, which the shipped
+    task binds as the default; see :mod:`.factory_presets` for how to add a
+    robot.
+    """
 
     num_envs: int = 4096
     ground = assets.GROUND_CFG
     table = assets.TABLE_CFG
     nistboard = assets.NISTBOARD_CFG
-    robot: ArticulationCfg = preset(  # type: ignore[assignment]
-        default=_FRANKA_PANDA_PHYSX_CFG,
-        isaacsim_physx=_FRANKA_PANDA_PHYSX_CFG,
-        physx=_FRANKA_PANDA_PHYSX_CFG,
-        newton_mjwarp=assets.FRANKA_PANDA_NEWTON_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot"),
-    )
+    robot: ArticulationCfg = RobotArticulationCfg()  # type: ignore
     dome_light = assets.DOMELIGHT_CFG
+
+
+# ---------------------------------------------------------------------------
+# Nut threading (4 sizes)
+# ---------------------------------------------------------------------------
 
 
 @configclass
 class NutThreadM16SceneCfg(FactorySceneBase):
     fixed_asset: RigidObjectCfg = assets.BOLT_M16_CFG
     held_asset: RigidObjectCfg = assets.NUT_M16_CFG
+
+
+# ---------------------------------------------------------------------------
+# Gear mesh (3 sizes — all share the same base with 3 gear shafts)
+# ---------------------------------------------------------------------------
 
 
 @configclass
@@ -67,6 +79,11 @@ class GearMeshLargeSceneCfg(FactorySceneBase):
     medium_gear: RigidObjectCfg = assets.MEDIUM_GEAR_CFG
 
 
+# ---------------------------------------------------------------------------
+# Rod insert — round (4 sizes)
+# ---------------------------------------------------------------------------
+
+
 @configclass
 class RodInsert4MMSceneCfg(FactorySceneBase):
     fixed_asset: RigidObjectCfg = assets.HOLE_4MM_CFG
@@ -91,6 +108,11 @@ class RodInsert16MMSceneCfg(FactorySceneBase):
     held_asset: RigidObjectCfg = assets.ROD_16MM_CFG
 
 
+# ---------------------------------------------------------------------------
+# Peg insert — rectangular (4 sizes)
+# ---------------------------------------------------------------------------
+
+
 @configclass
 class PegInsert4MMSceneCfg(FactorySceneBase):
     fixed_asset: RigidObjectCfg = assets.RECTANGULAR_HOLE_4MM_CFG
@@ -113,6 +135,11 @@ class PegInsert12MMSceneCfg(FactorySceneBase):
 class PegInsert16MMSceneCfg(FactorySceneBase):
     fixed_asset: RigidObjectCfg = assets.RECTANGULAR_HOLE_16MM_CFG
     held_asset: RigidObjectCfg = assets.RECTANGULAR_PEG_16MM_CFG
+
+
+# ---------------------------------------------------------------------------
+# Connector insert (5 types)
+# ---------------------------------------------------------------------------
 
 
 @configclass

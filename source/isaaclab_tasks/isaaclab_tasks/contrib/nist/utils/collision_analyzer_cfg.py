@@ -3,6 +3,11 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
+# Copyright (c) 2024-2025, The Isaac Lab Project Developers.
+# All Rights Reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 from __future__ import annotations
 
 from dataclasses import MISSING
@@ -12,7 +17,7 @@ from isaaclab.managers import ManagerTermBaseCfg, SceneEntityCfg
 from isaaclab.utils.configclass import configclass
 
 if TYPE_CHECKING:
-    from isaaclab_tasks.contrib.nist.utils.collision_analyzer import CollisionAnalyzer
+    from .collision_analyzer import CollisionAnalyzer
 
 
 @configclass

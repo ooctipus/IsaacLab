@@ -12,11 +12,11 @@ import numpy as np
 import torch
 import warp as wp
 
-from isaaclab.sim.utils import resolve_matching_prims_from_source
+from isaaclab.sim.utils import get_first_matching_child_prim
 
-from isaaclab_tasks.contrib.nist.utils import mesh_ops as _mesh_ops
-from isaaclab_tasks.contrib.nist.utils.rigid_object_hasher import RigidObjectHasher
-from isaaclab_tasks.contrib.nist.utils.sdf import (
+from . import mesh_ops as _mesh_ops
+from .rigid_object_hasher import RigidObjectHasher
+from .sdf import (
     ColliderTransform,
     get_signed_distance_mega,
     pack_collider_transforms,
@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from isaaclab.assets import RigidObject
     from isaaclab.envs import ManagerBasedRLEnv
 
-    from isaaclab_tasks.contrib.nist.utils.collision_analyzer_cfg import CollisionAnalyzerCfg
+    from .collision_analyzer_cfg import CollisionAnalyzerCfg
 
 
 class CollisionAnalyzer:
@@ -51,22 +51,24 @@ class CollisionAnalyzer:
 
         self.body_ids = []
         self.local_pts = []
-        for body_name in body_names:
-            _, prim_path_pattern = resolve_matching_prims_from_source(
-                self.asset.cfg.prim_path,
+        for i, body_name in enumerate(body_names):
+            start = time.perf_counter()
+            prim = get_first_matching_child_prim(
+                self.asset.cfg.prim_path.replace(".*", "0", 1),
                 predicate=lambda p: p.GetName() == body_name and p.HasAPI(UsdPhysics.RigidBodyAPI),
-                expected_num_matches=1,
-            )[0]
+            )
             local_pts = _mesh_ops.sample_object_point_cloud(
                 num_envs=env.num_envs,
                 num_points=cfg.num_points,
-                prim_path_pattern=prim_path_pattern,
+                prim_path_pattern=str(prim.GetPath()).replace("env_0", "env_.*", 1),
                 device=device,
             )
             if local_pts is not None:
                 self.local_pts.append(local_pts.view(env.num_envs, 1, cfg.num_points, 3))
                 self.body_ids.append(self.asset.body_names.index(body_name))
+            pc_time = time.perf_counter() - start
         self.local_pts = torch.cat(self.local_pts, dim=1).contiguous()
+        self.body_ids_list = self.body_ids
         self._body_ids_i32 = torch.tensor(self.body_ids, dtype=torch.int32, device=device)
 
         num_obstacles = len(self.obstacles)
@@ -89,26 +91,26 @@ class CollisionAnalyzer:
         # owning body link and its static BODY-relative transform. The runtime pass
         # recomposes world transforms from live body poses instead of the root pose.
         art_flat: dict[int, dict[str, torch.Tensor]] = {}
-        self._meshes: dict[int, wp.Mesh] = {}
 
         for i, obstacle in enumerate(self.obstacles):
             start = time.perf_counter()
-            obs_h = RigidObjectHasher(num_envs, prim_path_pattern=obstacle.cfg.prim_path)
+            obs_h = RigidObjectHasher(num_envs, prim_path_pattern=obstacle.cfg.prim_path, device=device)
 
-            rel_pos_cpu = obs_h.collider_rel_pos
-            rel_mat_cpu = obs_h.collider_rel_mat
-            rel_mat_inv_cpu = obs_h.collider_rel_mat_inv
-            env_ids_cpu = obs_h.collider_prim_env_ids
-            hashes_cpu = obs_h.collider_prim_hashes
+            rel_pos_cpu = obs_h.get_val("collider_rel_pos")
+            rel_mat_cpu = obs_h.get_val("collider_rel_mat")
+            rel_mat_inv_cpu = obs_h.get_val("collider_rel_mat_inv")
+            env_ids_cpu = obs_h.get_val("collider_prim_env_ids")
+            hashes_cpu = obs_h.get_val("collider_prim_hashes")
 
             handles_flat: list[int] = []
             for j, prim in enumerate(obs_h.collider_prims):
                 p_hash = hashes_cpu[j].item()
-                if p_hash in self._meshes:
-                    handles_flat.append(self._meshes[p_hash].id)
+                mesh_store = obs_h.get_warp_mesh_store()
+                if p_hash in mesh_store:
+                    handles_flat.append(mesh_store[p_hash].id)
                 else:
                     wp_mesh = _mesh_ops.prim_to_warp_mesh(prim, device=device, relative_to_world=False)
-                    self._meshes[p_hash] = wp_mesh
+                    mesh_store[p_hash] = wp_mesh
                     handles_flat.append(wp_mesh.id)
 
             obs_flat_pos.append(rel_pos_cpu)
@@ -117,8 +119,8 @@ class CollisionAnalyzer:
             obs_flat_env_ids.append(env_ids_cpu)
             obs_flat_handles.append(handles_flat)
 
-            num_coll_per_obs_env[i] = torch.bincount(obs_h.collider_prim_env_ids, minlength=num_envs).to(device)
-            obstacle_root_scales[i] = obs_h.root_prim_scales.to(device)
+            num_coll_per_obs_env[i] = torch.bincount(obs_h.collider_prim_env_ids)
+            obstacle_root_scales[i] = obs_h.root_prim_scales
 
             if len(obstacle.body_names) > 1:
                 xform_cache = UsdGeom.XformCache()
@@ -249,7 +251,7 @@ class CollisionAnalyzer:
             self._articulated[obs_idx] = pack
 
         # Pre-allocate reusable buffers
-        num_bodies = len(self.body_ids)
+        num_bodies = len(self.body_ids_list)
         num_points = cfg.num_points
         max_output = num_envs * num_bodies * num_points
         self.wp_signs = wp.zeros(max_output, dtype=float, device=device)
@@ -257,7 +259,7 @@ class CollisionAnalyzer:
 
     def __call__(self, env: ManagerBasedRLEnv, env_ids: torch.Tensor):
         num_query_envs = len(env_ids)
-        num_bodies = len(self.body_ids)
+        num_bodies = len(self.body_ids_list)
         num_points = self.cfg.num_points
 
         for i, obs in enumerate(self.obstacles):
@@ -306,7 +308,7 @@ class CollisionAnalyzer:
                 self.wp_prim_counts,
                 float(self.cfg.max_dist),
                 self.cfg.min_dist != 0.0,
-                env.num_envs,
+                num_query_envs,
                 num_bodies,
                 num_points,
                 self.num_obstacles,

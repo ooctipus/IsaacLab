@@ -3,22 +3,104 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Assembly-variant presets for the Factory task."""
+"""PresetCfg definitions for Factory task-specific parameters.
+
+Each preset maps task variant names to the corresponding keypoint-derived values.
+The ``default`` field selects which variant is active when no CLI override is given.
+
+Task categories (12 total):
+  - ``nut_thread_m16`` — nut threading
+  - ``gear_mesh_{small,medium,large}`` — gear meshing
+  - ``rod_insert_{4,8,12,16}mm`` — round rod insertion
+  - ``peg_insert_{4,8,12,16}mm`` — rectangular peg insertion
+
+Robot-specific presets (``EndEffectorBodyCfg``, ``JointEffortNamesCfg``) map robot
+variant names (``franka``) to body/joint name strings.
+"""
 
 import math
+from dataclasses import MISSING
 
-from isaaclab.managers import SceneEntityCfg
+from isaaclab.assets import ArticulationCfg
 from isaaclab.utils.configclass import configclass
 
-from isaaclab_tasks.contrib.nist import assembly_keypoints as kpts
-from isaaclab_tasks.contrib.nist.assembly_profile_cfg import (
+from isaaclab_tasks.utils import PresetCfg
+
+from . import assembly_keypoints as kpts
+from .assembly_profile_cfg import (
     AssemblyProfileCfg,
     DiscreteYawCfg,
     IncrementalSegmentCfg,
     UniformPoseNoiseCfg,
     UniformYawCfg,
 )
-from isaaclab_tasks.utils import PresetCfg
+
+# ---------------------------------------------------------------------------
+# Robot-specific presets
+# ---------------------------------------------------------------------------
+
+
+@configclass
+class RobotArticulationCfg(PresetCfg):
+    """Full :class:`ArticulationCfg` for the robot asset at ``scene.robot``.
+
+    Required -- no sensible default exists, so resolving without picking a
+    robot preset leaves ``scene.robot`` as :data:`MISSING`.
+    """
+
+    default: ArticulationCfg = MISSING  # type: ignore[assignment]
+
+
+@configclass
+class RobotActionsCfg(PresetCfg):
+    """Action term group bound to the active robot.
+
+    Each robot preset assigns an :func:`isaaclab.utils.configclass`-decorated
+    actions cfg (typically with ``arm_action`` and ``gripper_action`` fields)
+    to a class attribute named after the robot.
+    """
+
+    default: object = MISSING  # type: ignore[assignment]
+
+
+@configclass
+class EndEffectorBodyCfg(PresetCfg):
+    """End-effector body name per robot variant."""
+
+    default: str = "end_effector"
+
+
+@configclass
+class GripperJointNamesCfg(PresetCfg):
+    """Joint name regex for gripper/finger joints per robot variant."""
+
+    default: list[str] | None = None
+
+
+@configclass
+class IKJointNamesCfg(PresetCfg):
+    """Joint name regex used by the IK solver in reset strategies."""
+
+    default: list[str] | None = None
+
+
+@configclass
+class GripperGraspOffsetCfg(PresetCfg):
+    """Gripper grasp frame offset relative to the end-effector link per robot variant."""
+
+    default: kpts.Offset = kpts.Offset()
+
+
+@configclass
+class JointEffortNamesCfg(PresetCfg):
+    """Joint name regex for the effort penalty per robot variant."""
+
+    default: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Task-specific presets
+# ---------------------------------------------------------------------------
 
 
 @configclass
@@ -48,10 +130,34 @@ class FixedAssetMapCfg(PresetCfg):
 
 
 @configclass
-class AssemblyTipCfg(PresetCfg):
+class HeldAssetTipCfg(PresetCfg):
     nut_thread_m16: kpts.Offset = kpts.BOLT_M16.bolt_tip_offset
 
     # Gear mesh — tip of the gear shaft on the base
+    gear_mesh_small: kpts.Offset = kpts.GEAR_BASE.small_gear_tip_offset
+    gear_mesh_medium: kpts.Offset = kpts.GEAR_BASE.medium_gear_tip_offset
+    gear_mesh_large: kpts.Offset = kpts.GEAR_BASE.large_gear_tip_offset
+
+    # Rod insert (round)
+    rod_insert_4mm: kpts.Offset = kpts.HOLE_4MM.hole_tip_offset
+    rod_insert_8mm: kpts.Offset = kpts.HOLE_8MM.hole_tip_offset
+    rod_insert_12mm: kpts.Offset = kpts.HOLE_12MM.hole_tip_offset
+    rod_insert_16mm: kpts.Offset = kpts.HOLE_16MM.hole_tip_offset
+
+    # Peg insert (rectangular)
+    peg_insert_4mm: kpts.Offset = kpts.RECTANGULAR_HOLE_4MM.hole_tip_offset
+    peg_insert_8mm: kpts.Offset = kpts.RECTANGULAR_HOLE_8MM.hole_tip_offset
+    peg_insert_12mm: kpts.Offset = kpts.RECTANGULAR_HOLE_12MM.hole_tip_offset
+    peg_insert_16mm: kpts.Offset = kpts.RECTANGULAR_HOLE_16MM.hole_tip_offset
+
+    default: kpts.Offset = nut_thread_m16
+
+
+@configclass
+class FixedAssetTipCfg(PresetCfg):
+    nut_thread_m16: kpts.Offset = kpts.BOLT_M16.bolt_tip_offset
+
+    # Gear mesh
     gear_mesh_small: kpts.Offset = kpts.GEAR_BASE.small_gear_tip_offset
     gear_mesh_medium: kpts.Offset = kpts.GEAR_BASE.medium_gear_tip_offset
     gear_mesh_large: kpts.Offset = kpts.GEAR_BASE.large_gear_tip_offset
@@ -416,38 +522,3 @@ class GraspedPoseRangeCfg(PresetCfg):
     peg_insert_16mm: dict = _INSERT_GRASPED_RANGE
 
     default: dict = nut_thread_m16
-
-
-@configclass
-class ResetAssetsCfg(PresetCfg):
-    """Scene entities the accumulator banks and restores for each assembly.
-
-    Anything omitted keeps whatever pose the previous episode left it in. The gear variants
-    put two spare gears on the board, and the board itself is re-placed every reset, so they
-    have to ride along or they end up seated against a board that has since moved.
-    """
-
-    default: list = ["nistboard", "fixed_asset", "held_asset", "robot"]
-    gear_mesh_small: list = ["nistboard", "fixed_asset", "held_asset", "robot", "medium_gear", "large_gear"]
-    gear_mesh_medium: list = ["nistboard", "fixed_asset", "held_asset", "robot", "small_gear", "large_gear"]
-    gear_mesh_large: list = ["nistboard", "fixed_asset", "held_asset", "robot", "small_gear", "medium_gear"]
-
-
-@configclass
-class HeldAssetObstaclesCfg(PresetCfg):
-    """Entities the held asset is checked against before a reset state is accepted.
-
-    A state that seats the held asset inside something not listed here is banked as valid.
-    PhysX pushes such a state apart; MuJoCo/Newton diverges to NaN instead, so the spare
-    gears have to be checked as well.
-    """
-
-    default: list = [
-        SceneEntityCfg("fixed_asset"),
-        SceneEntityCfg("robot"),
-        SceneEntityCfg("nistboard"),
-        SceneEntityCfg("table"),
-    ]
-    gear_mesh_small: list = default + [SceneEntityCfg("medium_gear"), SceneEntityCfg("large_gear")]
-    gear_mesh_medium: list = default + [SceneEntityCfg("small_gear"), SceneEntityCfg("large_gear")]
-    gear_mesh_large: list = default + [SceneEntityCfg("small_gear"), SceneEntityCfg("medium_gear")]

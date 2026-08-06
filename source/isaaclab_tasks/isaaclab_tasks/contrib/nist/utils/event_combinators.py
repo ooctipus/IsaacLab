@@ -32,10 +32,12 @@ from tqdm import tqdm
 
 from isaaclab.managers import EventTermCfg, ManagerTermBase
 
-from isaaclab_tasks.contrib.nist.utils import reset_state
-from isaaclab_tasks.contrib.nist.utils.grid_downsample import extract_features, grid_bucket_downsample
-from isaaclab_tasks.contrib.nist.utils.sampling import Sampler, SamplerCfg
-from isaaclab_tasks.utils.success_monitor import SuccessMonitorCfg
+from isaaclab_tasks.core.lift.mdp.events_cfg import SuccessMonitorCfg
+
+from . import reset_state
+from .grid_downsample import extract_features, grid_bucket_downsample
+from .sampling import Sampler, SamplerCfg
+from .state_layout import StateLayout
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
@@ -54,7 +56,7 @@ class reset_accumulator(ManagerTermBase):
 
     def __init__(self, cfg, env):
         super().__init__(cfg, env)
-        self.acceptance_conditions = [condition.func for condition in cfg.params["acceptance_conditions"].values()]
+        self.acceptance_conditions = cfg.params["acceptance_conditions"]
 
         # Filter to scene-resident assets: callers may include "optional" assets
         # that only exist for a subset of presets.
@@ -71,6 +73,8 @@ class reset_accumulator(ManagerTermBase):
         self.sampled_slots = torch.zeros(env.num_envs, device=env.device, dtype=torch.long)
         self.precollecting_phase = True
         self._sampling_cfg: SamplerCfg = cfg.params["sampling"]
+        if self._sampling_cfg.max_samples is None:
+            self._sampling_cfg.max_samples = env.num_envs
 
         self.state_tag_names: list[str] | None = None
         self.state_data = torch.zeros((oversample_capacity, state_dim), device=env.device)
@@ -133,8 +137,9 @@ class reset_accumulator(ManagerTermBase):
                 prev_size = state_size
                 reset_term.func(env, all_env_ids, **reset_term.params)
                 valid_mask = torch.ones(len(all_env_ids), dtype=torch.bool, device=env.device)
-                for condition in self.acceptance_conditions:
-                    valid_mask &= condition(env, all_env_ids)
+                for condition in self.acceptance_conditions.values():
+                    condition_func = condition if callable(condition) else condition.func
+                    valid_mask &= condition_func(env, all_env_ids)
 
                 valid_env_ids = all_env_ids[valid_mask]
                 if valid_env_ids.numel() > 0:
@@ -205,9 +210,20 @@ class reset_accumulator(ManagerTermBase):
 
         if env_ids.numel() > 0:
             if self._sampler is None:
-                self._sampler = self._sampling_cfg.class_type(self._sampling_cfg, self.monitor_success_rate)
+                coords = extract_features(self.state_data, self._state_fps_features)
+                n = int(coords.shape[0])
+                layout = StateLayout(
+                    coords=coords,
+                    spawn_index=torch.arange(n, device=coords.device, dtype=torch.long),
+                    target_index=None,
+                )
+                self._sampler = self._sampling_cfg.class_type(
+                    self._sampling_cfg, layout, env=env, success_rates=self.monitor_success_rate
+                )
 
-            probs, slot_idx = self._sampler.probabilities_and_sample(len(env_ids))
+            num_samples = self._sampling_cfg.max_samples if self._sampling_cfg.warp else len(env_ids)
+            probs, slot_idx = self._sampler.probabilities_and_sample(int(num_samples))
+            slot_idx = slot_idx[: len(env_ids)]
             self.sampled_slots[env_ids] = slot_idx
             reset_state.set_reset_state(env, self.state_data[slot_idx], env_ids, self.reset_assets, is_relative=True)
             if report and self.state_tag_names:
@@ -249,6 +265,8 @@ class TermChoice(ManagerTermBase):
         self.num_partitions = len(self.term_partitions)
         self.term_samples = torch.zeros((env.num_envs,), dtype=torch.long, device=env.device)
         self._sampling_cfg: SamplerCfg = cfg.params["sampling"]
+        if self._sampling_cfg.max_samples is None:
+            self._sampling_cfg.max_samples = env.num_envs
 
         # Need a monitor when the sampler has any non-uniform strategy, or when the user
         # explicitly requested reporting. Decided from the strategy configs because the monitor
@@ -264,7 +282,14 @@ class TermChoice(ManagerTermBase):
             self.success_monitor = None
             self.term_success_rate = torch.zeros(self.num_partitions, device=env.device)
 
-        self._sampler = self._sampling_cfg.class_type(self._sampling_cfg, self.term_success_rate)
+        layout = StateLayout(
+            coords=torch.zeros(self.num_partitions, 1, device=env.device),
+            spawn_index=torch.arange(self.num_partitions, device=env.device, dtype=torch.long),
+            target_index=None,
+        )
+        self._sampler = self._sampling_cfg.class_type(
+            self._sampling_cfg, layout, env=env, success_rates=self.term_success_rate
+        )
 
     def __call__(
         self,
@@ -287,8 +312,9 @@ class TermChoice(ManagerTermBase):
             success = env.termination_manager.get_term_cfg("progress_context").func.is_success
             self.success_monitor.success_update(self.term_samples[env_ids], success[env_ids])
 
-        probs, choices = self._sampler.probabilities_and_sample(len(env_ids))
-        self.term_samples[env_ids] = choices
+        num_samples = self._sampling_cfg.max_samples if self._sampling_cfg.warp else len(env_ids)
+        probs, choices = self._sampler.probabilities_and_sample(int(num_samples))
+        self.term_samples[env_ids] = choices[: len(env_ids)]
         if report:
             log.update(
                 {f"Metrics/SampleProb/{name}": probs[i].item() for i, name in enumerate(self.term_partitions.keys())}
