@@ -31,6 +31,7 @@ from .factory_presets import (
     HeldAssetObstaclesCfg,
     IKJointNamesCfg,
     ResetAssetsCfg,
+    RobotObstaclesCfg,
 )
 
 GRIPPER_GRASP_ASSET_IN_AIR = EventTerm(
@@ -266,11 +267,7 @@ ACCUMULATOR_RESET = EventTerm(
                 max_dist=0.5,
                 min_dist=-0.002,
                 asset_cfg=SceneEntityCfg("robot"),
-                obstacle_cfgs=[
-                    SceneEntityCfg("table"),
-                    SceneEntityCfg("nistboard"),
-                    SceneEntityCfg("fixed_asset"),
-                ],
+                obstacle_cfgs=RobotObstaclesCfg(),
             ),
         },
         "state_table_size": 32768,

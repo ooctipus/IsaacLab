@@ -727,3 +727,23 @@ class HeldAssetObstaclesCfg(PresetCfg):
     gear_mesh_small: list = default + [SceneEntityCfg("medium_gear"), SceneEntityCfg("large_gear")]
     gear_mesh_medium: list = default + [SceneEntityCfg("small_gear"), SceneEntityCfg("large_gear")]
     gear_mesh_large: list = default + [SceneEntityCfg("small_gear"), SceneEntityCfg("medium_gear")]
+
+
+@configclass
+class RobotObstaclesCfg(PresetCfg):
+    """Entities the robot is checked against before a reset state is accepted.
+
+    Same omission as :class:`HeldAssetObstaclesCfg`, on the arm rather than the part: a pose
+    that reaches the gripper into one of the spare gears is banked as valid because those
+    gears are not screened. It bites hardest on ``gear_mesh_medium``, whose shaft has a gear
+    on either side of it.
+    """
+
+    default: list = [
+        SceneEntityCfg("table"),
+        SceneEntityCfg("nistboard"),
+        SceneEntityCfg("fixed_asset"),
+    ]
+    gear_mesh_small: list = default + [SceneEntityCfg("medium_gear"), SceneEntityCfg("large_gear")]
+    gear_mesh_medium: list = default + [SceneEntityCfg("small_gear"), SceneEntityCfg("large_gear")]
+    gear_mesh_large: list = default + [SceneEntityCfg("small_gear"), SceneEntityCfg("medium_gear")]
