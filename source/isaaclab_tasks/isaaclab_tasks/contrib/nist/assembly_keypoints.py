@@ -251,7 +251,7 @@ class LargeGearKeyPointsCfg:
     center_axis_bottom: Offset = Offset(pos=(-0.0303, 0.0, 0.005))
     center_axis_top: Offset = Offset(pos=(-0.0303, 0.0, 0.03))
     grasp_point: Offset = Offset(pos=(-0.0303, 0.0, 0.022))
-    grasp_diameter: float = 0.03
+    grasp_diameter: float = 0.037
 
 
 # =============================================================================
