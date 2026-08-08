@@ -121,67 +121,49 @@ DOMELIGHT_CFG = AssetBaseCfg(
 
 
 FRANKA_ACTUATORS_CFG = {
-    "panda_shoulder": ImplicitActuatorCfg(  # type:ignore
-        joint_names_expr=["panda_joint[1-4]"],
-        effort_limit=87.0,
-        effort_limit_sim=870.0,
-        velocity_limit=2.175,
-        velocity_limit_sim=21.75,
-        stiffness=80.0,
-        damping=4.0,
-        armature=0.0,
+    # inspired by libfranka's joint_impedance_control.cpp
+    "panda_arm": ImplicitActuatorCfg(
+        joint_names_expr=["panda_joint[1-7]"],
+        effort_limit_sim={"panda_joint[1-4]": 87.0, "panda_joint[5-7]": 12.0},
+        velocity_limit={"panda_joint[1-4]": 2.175, "panda_joint[5-7]": 2.61},
+        velocity_limit_sim={"panda_joint[1-4]": 20.0, "panda_joint[5-7]": 25.0},
+        stiffness={
+            "panda_joint[1-4]": 600.0,
+            "panda_joint5": 250.0,
+            "panda_joint6": 150.0,
+            "panda_joint7": 50.0,
+        },
+        damping={
+            "panda_joint[1-4]": 50.0,
+            "panda_joint5": 30.0,
+            "panda_joint6": 25.0,
+            "panda_joint7": 15.0,
+        },
+        armature={
+            "panda_joint[1-2]": 0.6057,
+            "panda_joint[3-4]": 0.4625,
+            "panda_joint[5-7]": 0.2055,
+        },
     ),
-    "panda_forearm": ImplicitActuatorCfg(  # type:ignore
-        joint_names_expr=["panda_joint[5-7]"],
-        effort_limit=12.0,
-        effort_limit_sim=120.0,
-        velocity_limit=2.61,
-        velocity_limit_sim=26.1,
-        stiffness=80.0,
-        damping=4.0,
-        armature=0.0,
-    ),
-    "panda_hand": ImplicitActuatorCfg(  # type:ignore
-        joint_names_expr=["panda_finger_joint.*"],
-        effort_limit=40.0,
-        effort_limit_sim=400.0,
+    "panda_hand": ImplicitActuatorCfg(
+        joint_names_expr=["panda_finger_joint1"],
+        effort_limit_sim=70.0,
         velocity_limit=0.2,
         velocity_limit_sim=2.0,
-        stiffness=7500.0,
-        damping=173.0,
-        friction=0.1,
-        armature=0.0,
+        stiffness=350.0,
+        damping=175.0,
+        armature=0.1,
+    ),
+    "panda_finger2_passive": ImplicitActuatorCfg(
+        joint_names_expr=["panda_finger_joint2"],
+        effort_limit_sim=1.0,
+        velocity_limit=0.2,
+        velocity_limit_sim=2.0,
+        stiffness=0.0,
+        damping=0.0,
+        armature=0.1,
     ),
 }
-
-
-# FRANKA_ACTUATORS_CFG = {
-#     "panda_shoulder": ImplicitActuatorCfg(  # type:ignore
-#         joint_names_expr=["panda_joint[1-4]"],
-#         effort_limit_sim=87.0,
-#         velocity_limit_sim=2.175,
-#         stiffness=80.0,
-#         damping=4.0,
-#         armature=0.0,
-#     ),
-#     "panda_forearm": ImplicitActuatorCfg(  # type:ignore
-#         joint_names_expr=["panda_joint[5-7]"],
-#         effort_limit_sim=12.0,
-#         velocity_limit_sim=2.61,
-#         stiffness=80.0,
-#         damping=4.0,
-#         armature=0.0,
-#     ),
-#     "panda_hand": ImplicitActuatorCfg(  # type:ignore
-#         joint_names_expr=["panda_finger_joint.*"],
-#         effort_limit_sim=40.0,
-#         velocity_limit_sim=0.2,
-#         stiffness=7500.0,
-#         damping=173.0,
-#         friction=0.1,
-#         armature=0.0,
-#     ),
-# }
 
 FRANKA_DEFAULT_STATE_CFG = ArticulationCfg.InitialStateCfg(
     joint_pos={
@@ -229,8 +211,6 @@ FRANKA_PANDA_NEWTON_CFG = ArticulationCfg(
         # instead of PhysX's disable_gravity hack. gravcomp=1.0 = full compensation.
         rigid_props=sim_utils.MujocoRigidBodyPropertiesCfg(gravcomp=1.0),
         articulation_props=sim_utils.ArticulationRootPropertiesCfg(enabled_self_collisions=False),
-        # Convex-hull the robot colliders (esp. the ~8.2k-tri fingers) so they use the
-        # GJK convex path instead of the BVH triangle path against the SDF nut/bolt.
         collision_props=sim_utils.CollisionPropertiesCfg(
             contact_offset=0.005,
             rest_offset=0.0,
@@ -261,6 +241,8 @@ NISTBOARD_CFG = RigidObjectCfg(
         usd_path=f"{ASSET_DIR}/NIST/Taskboard/nistboard.usd",
         rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
         scale=(1.0, 1.0, 0.5),
+        physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
+        make_uninstanceable=True,
     ),
     init_state=RigidObjectCfg.InitialStateCfg(pos=(0.65 - x, 0.0 - y, 0.0206 - z), rot=(0.0, 1.0, 0.0, 0.0)),
 )

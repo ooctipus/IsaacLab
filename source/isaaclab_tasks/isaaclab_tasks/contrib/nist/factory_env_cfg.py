@@ -116,7 +116,7 @@ class FactoryEventCfg:
         mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("held_asset"),
-            "inertia_distribution_params": [0.001, 0.001],
+            "inertia_distribution_params": [0.00001, 0.00001],
             "operation": "add",
             "diagonal_only": True,
         },
@@ -147,12 +147,6 @@ class FactoryEventCfg:
     )
 
     reset_strategies = ACCUMULATOR_RESET
-
-    variable_gravity: EventTerm | None = EventTerm(
-        func=mdp.randomize_physics_scene_gravity,
-        mode="reset",
-        params={"operation": "abs", "gravity_distribution_params": ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0))},
-    )
 
 
 @configclass
@@ -202,45 +196,40 @@ class FactoryTerminationsCfg:
 
     abnormal = DoneTerm(
         func=mdp.joint_vel_out_of_limit,
-        params={"asset_cfg": SceneEntityCfg("robot", joint_names="panda_joint[1-6]")},
-    )
-
-    wrist_limit = DoneTerm(
-        func=mdp.joint_vel_out_of_manual_limit,
-        params={"asset_cfg": SceneEntityCfg("robot", joint_names="panda_joint7"), "max_velocity": 4.0},
+        params={"asset_cfg": SceneEntityCfg("robot", joint_names="panda_joint[1-7]")},
     )
 
     success = DoneTerm(func=mdp.success_termination)
 
 
-@configclass
-class FactoryCurriculumsCfg:
-    """Curriculum terms for Factory."""
+# @configclass
+# class FactoryCurriculumsCfg:
+#     """Curriculum terms for Factory."""
 
-    difficulty_scheduler = CurrTerm(
-        func=mdp.DifficultyScheduler,
-        params={
-            "max_difficulty": 10,
-            "success_rate_callback": preset(
-                default="env.event_manager.get_term_cfg('reset_strategies').func.monitor_success_rate",
-                accumulator="env.event_manager.get_term_cfg('reset_strategies').func.monitor_success_rate",
-                choice="env.event_manager.get_term_cfg('reset_strategies').func.terms['reset_strategies'].func.term_success_rate",
-            ),
-        },
-    )
+#     difficulty_scheduler = CurrTerm(
+#         func=mdp.DifficultyScheduler,
+#         params={
+#             "max_difficulty": 10,
+#             "success_rate_callback": preset(
+#                 default="env.event_manager.get_term_cfg('reset_strategies').func.monitor_success_rate",
+#                 accumulator="env.event_manager.get_term_cfg('reset_strategies').func.monitor_success_rate",
+#                 choice="env.event_manager.get_term_cfg('reset_strategies').func.terms['reset_strategies'].func.term_success_rate",
+#             ),
+#         },
+#     )
 
-    gravity_adr: CurrTerm | None = CurrTerm(
-        func=mdp.modify_term_cfg,
-        params={
-            "address": "events.variable_gravity.params.gravity_distribution_params",
-            "modify_fn": mdp.initial_final_interpolate_fn,
-            "modify_params": {
-                "initial_value": ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
-                "final_value": ((0.0, 0.0, -9.81), (0.0, 0.0, -9.81)),
-                "difficulty_term_str": "difficulty_scheduler",
-            },
-        },
-    )
+#     gravity_adr: CurrTerm | None = CurrTerm(
+#         func=mdp.modify_term_cfg,
+#         params={
+#             "address": "events.variable_gravity.params.gravity_distribution_params",
+#             "modify_fn": mdp.initial_final_interpolate_fn,
+#             "modify_params": {
+#                 "initial_value": ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+#                 "final_value": ((0.0, 0.0, -9.81), (0.0, 0.0, -9.81)),
+#                 "difficulty_term_str": "difficulty_scheduler",
+#             },
+#         },
+#     )
 
 
 ##
@@ -287,7 +276,7 @@ class FactoryPhysicsCfg(PresetCfg):
             # pressing parts together harder than an untrained one does. ``nconmax`` is left
             # alone -- no run has reported a contact overflow.
             njmax=3000,
-            nconmax=400,
+            nconmax=600,
             impratio=1.0,
             cone="pyramidal",
             update_data_interval=2,
@@ -296,8 +285,16 @@ class FactoryPhysicsCfg(PresetCfg):
         ),
         collision_cfg=NewtonCollisionPipelineCfg(
             broad_phase="sap",
-            max_triangle_pairs=60_000_000,
+            max_triangle_pairs=90_000_000,
+            # About 4.1k active reducer keys at 128 environments projects to 260k at 8192;
+            # after power-of-two rounding this factor allocates 2,097,152 slots.
+            contact_reduction_hashtable_size_factor=0.02,
             rigid_contact_max=5_000_000,
+            sdf_all_shapes=NewtonCollisionPipelineCfg.SDFAllShapesCfg(
+                sdf_max_resolution=256,
+                sdf_narrow_band_inner=-0.005,
+                sdf_narrow_band_outer=0.005,
+            ),
         ),
         num_substeps=8,
         debug_mode=False,
@@ -315,7 +312,6 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
     events: FactoryEventCfg = FactoryEventCfg()
     terminations: FactoryTerminationsCfg = FactoryTerminationsCfg()
     rewards: FactoryRewardsCfg = FactoryRewardsCfg()
-    curriculum: FactoryCurriculumsCfg = FactoryCurriculumsCfg()
     viewer: ViewerCfg = ViewerCfg(eye=(0.0, 0.8, 0.4), lookat=(0.0, 0.0, 0.4))
     actions: RobotActionsCfg = RobotActionsCfg()  # type: ignore
 
@@ -350,11 +346,6 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
         Called by :func:`~isaaclab_tasks.utils.hydra.register_task` after preset resolution,
         so it edits the already-resolved terms.
         """
-        # Training starts at zero gravity and lets the ADR curriculum ramp it to -9.81 as the
-        # difficulty rises. Evaluation is scored at full gravity, so both terms come off and the
-        # sim keeps its configured value.
-        self.events.variable_gravity = None
-        self.curriculum.gravity_adr = None
 
         # ``play`` reads the training default when ``--num_envs`` is omitted, and the training
         # default is sized for throughput, not for watching a policy.
