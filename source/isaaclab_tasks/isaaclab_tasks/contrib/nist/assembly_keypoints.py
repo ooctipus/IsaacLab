@@ -243,7 +243,7 @@ class MediumGearKeyPointsCfg:
     center_axis_bottom: Offset = Offset(pos=(0.02025, 0.0, 0.005))
     center_axis_top: Offset = Offset(pos=(0.02025, 0.0, 0.03))
     grasp_point: Offset = Offset(pos=(0.02025, 0.0, 0.022))
-    grasp_diameter: float = 0.03
+    grasp_diameter: float = 0.0295
 
 
 @configclass
@@ -437,7 +437,7 @@ class BNCSocketKeyPointsCfg:
 class DSUBPlugKeyPointsCfg:
     insertion_tip: Offset = Offset(pos=(0.0, 0.0, 0.0))
     grasp_point: Offset = Offset(pos=(0.0, 0.0, 0.0125))
-    grasp_diameter: float = 0.013
+    grasp_diameter: float = 0.0115
 
 
 @configclass
