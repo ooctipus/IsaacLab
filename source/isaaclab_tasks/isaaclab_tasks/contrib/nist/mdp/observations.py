@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from isaaclab.assets import Articulation, RigidObject
     from isaaclab.envs import ManagerBasedEnv, ManagerBasedRLEnv
 
-    from .util.pose_offset import Offset
+    from ..utils.pose_offset import Offset
 
 
 # ---------------------------------------------------------------------------
@@ -149,10 +149,15 @@ def asset_link_velocity_in_root_asset_frame(
     env: ManagerBasedEnv,
     target_asset_cfg: SceneEntityCfg,
     root_asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
-):
-    """Linear + angular velocity of ``target_asset``'s link, expressed in the root frame.
+    target_asset_offset: Offset | None = None,
+) -> torch.Tensor:
+    """Linear and angular velocity of a target keypoint expressed in the root frame.
 
-    Returns a ``[num_envs, 6]`` tensor — linear (3) + angular (3) in body frame.
+    The optional target offset moves the linear velocity from the selected link origin
+    to the offset point. It does not change angular velocity.
+
+    Returns a ``[num_envs, 6]`` tensor containing linear velocity [m/s] followed by
+    angular velocity [rad/s].
     """
     target_asset: RigidObject | Articulation = env.scene[target_asset_cfg.name]
     root_asset: RigidObject | Articulation = env.scene[root_asset_cfg.name]
@@ -162,6 +167,12 @@ def asset_link_velocity_in_root_asset_frame(
     root_quat = root_asset.data.root_quat_w.torch
     lin_vel_w = target_asset.data.body_lin_vel_w.torch[:, target_body_idx].view(-1, 3)
     ang_vel_w = target_asset.data.body_ang_vel_w.torch[:, target_body_idx].view(-1, 3)
+    if target_asset_offset is not None:
+        target_quat_w = target_asset.data.body_link_quat_w.torch[:, target_body_idx].view(-1, 4)
+        offset_pos_w = math_utils.quat_apply(
+            target_quat_w, target_asset_offset.pos_t(lin_vel_w.device).expand(lin_vel_w.shape[0], -1)
+        )
+        lin_vel_w = lin_vel_w + torch.cross(ang_vel_w, offset_pos_w, dim=-1)
 
     lin_vel_b = math_utils.quat_apply_inverse(root_quat, lin_vel_w)
     ang_vel_b = math_utils.quat_apply_inverse(root_quat, ang_vel_w)

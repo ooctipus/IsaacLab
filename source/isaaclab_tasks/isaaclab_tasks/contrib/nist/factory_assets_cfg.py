@@ -183,7 +183,7 @@ FRANKA_DEFAULT_STATE_CFG = ArticulationCfg.InitialStateCfg(
 FRANKA_PANDA_PHYSX_CFG = ArticulationCfg(
     prim_path="/World/envs/env_.*/Robot",
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"{ROBOT_ASSET_DIR}/franka_mimic.usd",
+        usd_path=f"{ISAACLAB_NUCLEUS_DIR}/Robots/FrankaEmika/franka_panda.usda",
         activate_contact_sensors=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=True,
@@ -205,7 +205,7 @@ FRANKA_PANDA_PHYSX_CFG = ArticulationCfg(
 FRANKA_PANDA_NEWTON_CFG = ArticulationCfg(
     prim_path="/World/envs/env_.*/Robot",
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"{ROBOT_ASSET_DIR}/franka_mimic.usd",
+        usd_path=f"{ISAACLAB_NUCLEUS_DIR}/Robots/FrankaEmika/franka_panda.usda",
         activate_contact_sensors=True,
         # Newton/MuJoCo: leave gravity ON and compensate it per-body via mjc:gravcomp,
         # instead of PhysX's disable_gravity hack. gravcomp=1.0 = full compensation.
@@ -240,7 +240,7 @@ NISTBOARD_CFG = RigidObjectCfg(
     spawn=sim_utils.UsdFileCfg(
         usd_path=f"{ASSET_DIR}/NIST/Taskboard/nistboard.usd",
         rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
-        scale=(1.0, 1.0, 0.5),
+        scale=(1.0, 1.0, 1.0),
         physics_material=ASSEMBLY_CONTACT_MATERIAL_CFG,
         make_uninstanceable=True,
     ),

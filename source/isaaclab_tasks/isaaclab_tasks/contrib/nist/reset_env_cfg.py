@@ -39,12 +39,21 @@ GRIPPER_GRASP_ASSET_IN_AIR = EventTerm(
     mode="reset",
     params={
         "terms": {
+            "reset_robot_joint": EventTerm(
+                func=mdp.reset_joints_by_offset,
+                mode="reset",
+                params={
+                    "position_range": (-0.0, 0.0),
+                    "velocity_range": (-0.0, 0.0),
+                    "asset_cfg": SceneEntityCfg("robot"),
+                },
+            ),
             "reset_asset_in_air": EventTerm(
                 func=mdp.reset_root_state_uniform,
                 mode="reset",
                 params={
                     "pose_range": {
-                        "x": (-0.15, 0.5),
+                        "x": (0.0, 0.5),
                         "y": (-0.5, 0.5),
                         "z": (0.015, 0.2),
                         "roll": (-1.57, 1.57),
@@ -65,23 +74,23 @@ GRIPPER_GRASP_ASSET_IN_AIR = EventTerm(
                         "x": (-0.005, 0.005),
                         "y": (-0.005, 0.005),
                         "z": (-0.015, 0.025),
-                        "roll": (3.141 - 0.1, 3.141 + 0.1),
+                        "roll": (-0.1, 0.1),
                         "pitch": (-0.5, 0.5),
                         "yaw": (-2.09, 2.09),
                     },
                     "robot_ik_cfg": SceneEntityCfg(
                         "robot", joint_names=IKJointNamesCfg(), body_names=EndEffectorBodyCfg()
                     ),
-                    "ik_iterations": (5, 30),
+                    "robot_ik_body_offset": GripperGraspOffsetCfg(),
+                    "upright_gripper": True,
+                    "ik_iterations": (1, 30),
                 },
             ),
             "grasp_held_asset": EventTerm(
                 func=mdp.grasp_held_asset,
                 mode="reset",
                 params={
-                    "robot_cfg": SceneEntityCfg(
-                        "robot", joint_names=GripperJointNamesCfg(), body_names=EndEffectorBodyCfg()
-                    ),
+                    "robot_cfg": SceneEntityCfg("robot", joint_names=GripperJointNamesCfg()),
                     "held_asset_diameter": HeldAssetGraspDiameterCfg(),
                 },
             ),
@@ -95,6 +104,15 @@ ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE = EventTerm(
     mode="reset",
     params={
         "terms": {
+            "reset_robot_joint": EventTerm(
+                func=mdp.reset_joints_by_offset,
+                mode="reset",
+                params={
+                    "position_range": (-0.0, 0.0),
+                    "velocity_range": (-0.0, 0.0),
+                    "asset_cfg": SceneEntityCfg("robot"),
+                },
+            ),
             "reset_held_asset_on_fixed_asset": EventTerm(
                 func=mdp.reset_held_asset_on_fixed_asset,
                 mode="reset",
@@ -116,13 +134,14 @@ ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE = EventTerm(
                         "x": (-0.005, 0.005),
                         "y": (-0.005, 0.005),
                         "z": (-0.015, 0.025),
-                        "roll": (3.141 - 0.1, 3.141 + 0.1),
+                        "roll": (-0.1, 0.1),
                         "pitch": (-1.0, 1.0),
                         "yaw": (-2.09, 2.09),
                     },
                     "robot_ik_cfg": SceneEntityCfg(
                         "robot", joint_names=IKJointNamesCfg(), body_names=EndEffectorBodyCfg()
                     ),
+                    "robot_ik_body_offset": GripperGraspOffsetCfg(),
                     "ik_iterations": (15, 25),
                 },
             ),
@@ -130,9 +149,7 @@ ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE = EventTerm(
                 func=mdp.grasp_held_asset,
                 mode="reset",
                 params={
-                    "robot_cfg": SceneEntityCfg(
-                        "robot", joint_names=GripperJointNamesCfg(), body_names=EndEffectorBodyCfg()
-                    ),
+                    "robot_cfg": SceneEntityCfg("robot", joint_names=GripperJointNamesCfg()),
                     "held_asset_diameter": HeldAssetGraspDiameterCfg(),
                 },
             ),
@@ -145,6 +162,15 @@ GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER = EventTerm(
     mode="reset",
     params={
         "terms": {
+            "reset_robot_joint": EventTerm(
+                func=mdp.reset_joints_by_offset,
+                mode="reset",
+                params={
+                    "position_range": (-0.0, 0.0),
+                    "velocity_range": (-0.0, 0.0),
+                    "asset_cfg": SceneEntityCfg("robot"),
+                },
+            ),
             "reset_end_effector_around_fixed_asset": EventTerm(
                 func=mdp.reset_end_effector_around_asset,
                 mode="reset",
@@ -155,6 +181,7 @@ GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER = EventTerm(
                     "robot_ik_cfg": SceneEntityCfg(
                         "robot", joint_names=IKJointNamesCfg(), body_names=EndEffectorBodyCfg()
                     ),
+                    "robot_ik_body_offset": GripperGraspOffsetCfg(),
                     "ik_iterations": (10, 20),
                 },
             ),
@@ -178,9 +205,7 @@ GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER = EventTerm(
                 func=mdp.grasp_held_asset,
                 mode="reset",
                 params={
-                    "robot_cfg": SceneEntityCfg(
-                        "robot", joint_names=GripperJointNamesCfg(), body_names=EndEffectorBodyCfg()
-                    ),
+                    "robot_cfg": SceneEntityCfg("robot", joint_names=GripperJointNamesCfg()),
                     "held_asset_diameter": HeldAssetGraspDiameterCfg(),
                     "flexible_angle": False,
                 },
@@ -266,7 +291,9 @@ ACCUMULATOR_RESET = EventTerm(
                 num_points=1024,
                 max_dist=0.5,
                 min_dist=-0.002,
-                asset_cfg=SceneEntityCfg("robot"),
+                asset_cfg=SceneEntityCfg(
+                    "robot", body_names="panda_link[2-7]|panda_hand|panda_(left|right)finger"
+                ),
                 obstacle_cfgs=RobotObstaclesCfg(),
             ),
         },

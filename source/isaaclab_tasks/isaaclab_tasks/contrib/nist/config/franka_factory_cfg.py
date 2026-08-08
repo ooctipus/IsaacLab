@@ -31,7 +31,7 @@ from ..factory_presets import (
     RobotArticulationCfg,
 )
 
-EndEffectorBodyCfg.default = "panda_fingertip_centered"
+EndEffectorBodyCfg.default = "panda_hand"
 GripperJointNamesCfg.default = ["panda_finger.*"]
 IKJointNamesCfg.default = ["panda_joint.*"]
 GripperGraspOffsetCfg.default = PANDA_HAND.gripper_center_grasp_point

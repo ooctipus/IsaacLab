@@ -41,17 +41,17 @@ class CollisionAnalyzer:
         self.asset: RigidObject = env.scene[cfg.asset_cfg.name]
         self.obstacles: list[RigidObject] = [env.scene[cfg.name] for cfg in cfg.obstacle_cfgs]
         device = env.device
-        body_names = (
-            self.asset.body_names
-            if cfg.asset_cfg.body_names is None
-            else [self.asset.body_names[i] for i in cfg.asset_cfg.body_ids]
-        )
-        if isinstance(body_names, str):
-            body_names = [body_names]
+        if cfg.asset_cfg.body_names is None:
+            body_names = self.asset.body_names
+            body_ids = list(range(len(body_names)))
+        else:
+            body_ids, body_names = self.asset.find_bodies(
+                cfg.asset_cfg.body_names, preserve_order=cfg.asset_cfg.preserve_order
+            )
 
         self.body_ids = []
         self.local_pts = []
-        for i, body_name in enumerate(body_names):
+        for body_id, body_name in zip(body_ids, body_names):
             start = time.perf_counter()
             prim = get_first_matching_child_prim(
                 self.asset.cfg.prim_path.replace(".*", "0", 1),
@@ -65,7 +65,7 @@ class CollisionAnalyzer:
             )
             if local_pts is not None:
                 self.local_pts.append(local_pts.view(env.num_envs, 1, cfg.num_points, 3))
-                self.body_ids.append(self.asset.body_names.index(body_name))
+                self.body_ids.append(body_id)
             pc_time = time.perf_counter() - start
         self.local_pts = torch.cat(self.local_pts, dim=1).contiguous()
         self.body_ids_list = self.body_ids

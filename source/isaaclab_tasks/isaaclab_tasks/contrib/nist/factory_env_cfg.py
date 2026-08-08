@@ -24,8 +24,8 @@ from .factory_presets import (
     EndEffectorBodyCfg,
     FactoryAssemblyProfileCfg,
     FixedAssetTipCfg,
+    GripperGraspOffsetCfg,
     HeldAssetAlignOffsetCfg,
-    HeldAssetTipCfg,
     JointEffortNamesCfg,
     RobotActionsCfg,
 )
@@ -44,6 +44,7 @@ class FactoryObservationsCfg:
             params={
                 "target_asset_cfg": SceneEntityCfg("robot", body_names=EndEffectorBodyCfg()),  # type:ignore
                 "root_asset_cfg": SceneEntityCfg("robot"),
+                "target_asset_offset": GripperGraspOffsetCfg(),
             },
         )
 
@@ -52,7 +53,7 @@ class FactoryObservationsCfg:
             params={
                 "target_asset_cfg": SceneEntityCfg("robot", body_names=EndEffectorBodyCfg()),  # type:ignore
                 "root_asset_cfg": SceneEntityCfg("robot"),
-                "target_asset_offset": HeldAssetTipCfg(),
+                "target_asset_offset": GripperGraspOffsetCfg(),
             },
         )
 
@@ -61,6 +62,7 @@ class FactoryObservationsCfg:
             params={
                 "target_asset_cfg": SceneEntityCfg("held_asset"),
                 "root_asset_cfg": SceneEntityCfg("fixed_asset"),
+                "target_asset_offset": HeldAssetAlignOffsetCfg(),
                 "root_asset_offset": FixedAssetTipCfg(),
             },
         )
@@ -71,6 +73,7 @@ class FactoryObservationsCfg:
                 "target_asset_cfg": SceneEntityCfg("fixed_asset"),
                 "root_asset_cfg": SceneEntityCfg("robot", body_names=EndEffectorBodyCfg()),  # type:ignore
                 "target_asset_offset": FixedAssetTipCfg(),
+                "root_asset_offset": GripperGraspOffsetCfg(),
             },
         )
 

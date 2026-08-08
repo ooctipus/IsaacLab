@@ -163,7 +163,7 @@ def reset_held_asset_in_gripper(
 
     end_effector_quat_w = wp.to_torch(robot.data.body_link_quat_w)[env_ids, holding_body_cfg.body_ids].view(-1, 4)
     end_effector_pos_w = wp.to_torch(robot.data.body_link_pos_w)[env_ids, holding_body_cfg.body_ids].view(-1, 3)
-    grasp_quat = gripper_grasp_offset.quat_t(env.device).expand(len(env_ids), -1)
+    grasp_pos_w, grasp_quat_w = gripper_grasp_offset.combine(end_effector_pos_w, end_effector_quat_w)
 
     # Randomize the grasp target (at the grasp point) BEFORE solving for the asset root, so the
     # pose noise pivots about the grasp point and the graspable frame stays coincident with the
@@ -172,9 +172,10 @@ def reset_held_asset_in_gripper(
     range_list = [held_asset_inhand_range.get(key, (0.0, 0.0)) for key in ["x", "y", "z", "roll", "pitch", "yaw"]]
     ranges = torch.tensor(range_list, device=env.device)
     samples = math_utils.sample_uniform(ranges[:, 0], ranges[:, 1], (len(env_ids), 6), device=env.device)
-    grasp_pos_w = end_effector_pos_w + samples[:, 0:3]
-    grasp_quat_w = math_utils.quat_mul(
-        math_utils.quat_mul(end_effector_quat_w, grasp_quat),
+    grasp_pos_w, grasp_quat_w = math_utils.combine_frame_transforms(
+        grasp_pos_w,
+        grasp_quat_w,
+        samples[:, :3],
         math_utils.quat_from_euler_xyz(samples[:, 3], samples[:, 4], samples[:, 5]),
     )
 
@@ -213,6 +214,7 @@ class reset_end_effector_around_asset(ManagerTermBase):
         fixed_asset_offset: Offset = cfg.params.get("fixed_asset_offset")  # type: ignore
         pose_range_b: dict[str, tuple[float, float]] = cfg.params.get("pose_range_b")  # type: ignore
         robot_ik_cfg: SceneEntityCfg = cfg.params.get("robot_ik_cfg", SceneEntityCfg("robot"))
+        robot_ik_body_offset: Offset = cfg.params.get("robot_ik_body_offset")  # type: ignore
 
         range_list = [pose_range_b.get(key, (0.0, 0.0)) for key in ["x", "y", "z", "roll", "pitch", "yaw"]]
         self.wrist_idx = 6
@@ -220,6 +222,7 @@ class reset_end_effector_around_asset(ManagerTermBase):
         self.fixed_asset: Articulation | RigidObject = env.scene[fixed_asset_cfg.name]
         self.fixed_asset_offset: Offset = fixed_asset_offset
         self.robot: Articulation = env.scene[robot_ik_cfg.name]
+        self.robot_ik_body_offset: Offset = robot_ik_body_offset
         self.joint_ids: list[int] | slice = robot_ik_cfg.joint_ids
 
         self.robot_ik_solver_cfg = DifferentialInverseKinematicsActionCfg(
@@ -241,22 +244,41 @@ class reset_end_effector_around_asset(ManagerTermBase):
         fixed_asset_offset: Offset,
         pose_range_b: dict[str, tuple[float, float]],
         robot_ik_cfg: SceneEntityCfg,
+        robot_ik_body_offset: Offset,
+        upright_gripper: bool = False,
         ik_iterations: tuple[int, int] = (5, 10),
     ) -> None:
         if self.solver is None:
             self.solver = self.robot_ik_solver_cfg.class_type(self.robot_ik_solver_cfg, env)
-        fixed_tip_pos_w, fixed_tip_quat_w = self.fixed_asset_offset.apply(self.fixed_asset)
+        fixed_keypoint_pos_w, fixed_keypoint_quat_w = self.fixed_asset_offset.apply(self.fixed_asset)
         samples = math_utils.sample_uniform(self.ranges[:, 0], self.ranges[:, 1], (len(env_ids), 6), device=env.device)
         pos_b, quat_b = self.solver._compute_frame_pose()
+        robot_root_pos_w = wp.to_torch(self.robot.data.root_link_pos_w)[env_ids]
+        robot_root_quat_w = wp.to_torch(self.robot.data.root_link_quat_w)[env_ids]
+        grasp_reference_quat_w = fixed_keypoint_quat_w[env_ids]
+        if upright_gripper:
+            grasp_reference_quat_b = math_utils.quat_mul(
+                math_utils.quat_inv(robot_root_quat_w), grasp_reference_quat_w
+            )
+            _, _, yaw = math_utils.euler_xyz_from_quat(grasp_reference_quat_b)
+            zero = torch.zeros_like(yaw)
+            grasp_reference_quat_w = math_utils.quat_mul(
+                robot_root_quat_w, math_utils.quat_from_euler_xyz(zero, zero, yaw)
+            )
         # for those non_reset_id, we will let ik solve for its current position
-        pos_w = fixed_tip_pos_w[env_ids] + samples[:, 0:3]
-        quat_w = math_utils.quat_from_euler_xyz(samples[:, 3], samples[:, 4], samples[:, 5])
+        grasp_pos_w, grasp_quat_w = math_utils.combine_frame_transforms(
+            fixed_keypoint_pos_w[env_ids],
+            grasp_reference_quat_w,
+            samples[:, :3],
+            math_utils.quat_from_euler_xyz(samples[:, 3], samples[:, 4], samples[:, 5]),
+        )
+        body_pos_w, body_quat_w = self.robot_ik_body_offset.subtract(grasp_pos_w, grasp_quat_w)
 
         pos_b[env_ids], quat_b[env_ids] = math_utils.subtract_frame_transforms(
-            wp.to_torch(self.robot.data.root_link_pos_w)[env_ids],
-            wp.to_torch(self.robot.data.root_link_quat_w)[env_ids],
-            pos_w,
-            quat_w,
+            robot_root_pos_w,
+            robot_root_quat_w,
+            body_pos_w,
+            body_quat_w,
         )
         self.solver.process_actions(torch.cat([pos_b, quat_b], dim=1))
 

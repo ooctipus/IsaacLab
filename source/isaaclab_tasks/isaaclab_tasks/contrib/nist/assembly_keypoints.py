@@ -473,8 +473,8 @@ class PandaHandKeyPointsCfg:
     for top-down grasps.
     """
 
-    gripper_center_grasp_point: Offset = Offset(pos=(0.0, 0.0, 0.107), quat=(0.0, 1.0, 0.0, 0.0))
-    gripper_tip_grasp_point: Offset = Offset(pos=(0.0, 0.0, 0.112), quat=(0.0, 1.0, 0.0, 0.0))
+    gripper_center_grasp_point: Offset = Offset(pos=(0.0, 0.0, 0.107), quat=(0.0, -1.0, 0.0, 0.0))
+    gripper_tip_grasp_point: Offset = Offset(pos=(0.0, 0.0, 0.112), quat=(0.0, -1.0, 0.0, 0.0))
 
 
 @configclass
