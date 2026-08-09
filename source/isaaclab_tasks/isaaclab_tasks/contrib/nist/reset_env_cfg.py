@@ -207,7 +207,7 @@ GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER = EventTerm(
                 params={
                     "robot_cfg": SceneEntityCfg("robot", joint_names=GripperJointNamesCfg()),
                     "held_asset_diameter": HeldAssetGraspDiameterCfg(),
-                    "flexible_angle": False,
+                    "flexible_angle": True,
                 },
             ),
         }
