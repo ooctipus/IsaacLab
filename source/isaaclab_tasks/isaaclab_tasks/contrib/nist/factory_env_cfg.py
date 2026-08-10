@@ -17,7 +17,7 @@ from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.utils.configclass import configclass
 
 from isaaclab_tasks.contrib.nist.utils import SamplerCfg, UniformSamplingStrategyCfg
-from isaaclab_tasks.utils import PresetCfg, preset
+from isaaclab_tasks.utils import PresetCfg
 
 from . import mdp
 from .factory_presets import (
@@ -113,7 +113,7 @@ class FactoryEventCfg:
 
     # (Octi): Held-asset angular-instability fix: its small rotational inertia (~0.012 kg·m²) under the
     # stiff contact (ke=1e7) lets contact torque run the angular velocity away exponentially → NaN
-    # (observed in the grasp_asset_in_air reset). Bump the diagonal inertia to damp it.
+    # (observed in the start_random reset). Bump the diagonal inertia to damp it.
     held_asset_inertia = EventTerm(
         func=mdp.randomize_rigid_body_inertia,
         mode="startup",
@@ -151,6 +151,12 @@ class FactoryEventCfg:
 
     reset_strategies = ACCUMULATOR_RESET
 
+    # variable_gravity: EventTerm | None = EventTerm(
+    #     func=mdp.randomize_physics_scene_gravity,
+    #     mode="reset",
+    #     params={"operation": "abs", "gravity_distribution_params": ((0.0, 0.0, -1.0), (0.0, 0.0, -1.0))},
+    # )
+
 
 @configclass
 class FactoryRewardsCfg:
@@ -182,7 +188,7 @@ class FactoryTerminationsCfg:
         func=mdp.out_of_bound,
         params={
             "asset_cfg": SceneEntityCfg("held_asset"),
-            "in_bound_range": {"x": (-0.0, 1.0), "y": (-0.675, 0.675), "z": (-0.05, 1.0)},
+            "in_bound_range": {"x": (0.0, 1.0), "y": (-0.675, 0.675), "z": (-0.05, 1.0)},
         },
     )
 
@@ -213,21 +219,17 @@ class FactoryTerminationsCfg:
 #         func=mdp.DifficultyScheduler,
 #         params={
 #             "max_difficulty": 10,
-#             "success_rate_callback": preset(
-#                 default="env.event_manager.get_term_cfg('reset_strategies').func.monitor_success_rate",
-#                 accumulator="env.event_manager.get_term_cfg('reset_strategies').func.monitor_success_rate",
-#                 choice="env.event_manager.get_term_cfg('reset_strategies').func.terms['reset_strategies'].func.term_success_rate",
-#             ),
+#             "success_rate_callback": "env.event_manager.get_term_cfg('reset_strategies').func.monitor_success_rate",
 #         },
 #     )
 
-#     gravity_adr: CurrTerm | None = CurrTerm(
+#     gravity_adr: CurrTerm = CurrTerm(
 #         func=mdp.modify_term_cfg,
 #         params={
 #             "address": "events.variable_gravity.params.gravity_distribution_params",
 #             "modify_fn": mdp.initial_final_interpolate_fn,
 #             "modify_params": {
-#                 "initial_value": ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+#                 "initial_value": ((0.0, 0.0, -1.0), (0.0, 0.0, -1.0)),
 #                 "final_value": ((0.0, 0.0, -9.81), (0.0, 0.0, -9.81)),
 #                 "difficulty_term_str": "difficulty_scheduler",
 #             },
@@ -317,6 +319,7 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
     rewards: FactoryRewardsCfg = FactoryRewardsCfg()
     viewer: ViewerCfg = ViewerCfg(eye=(0.0, 0.8, 0.4), lookat=(0.0, 0.0, 0.4))
     actions: RobotActionsCfg = RobotActionsCfg()  # type: ignore
+    # curriculum: FactoryCurriculumsCfg = FactoryCurriculumsCfg()
 
     # Post initialization
     def __post_init__(self) -> None:

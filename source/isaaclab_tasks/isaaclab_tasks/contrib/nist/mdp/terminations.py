@@ -10,7 +10,9 @@ The generic watchdog here:
 - :func:`out_of_bound` — env-origin-relative AABB containment check on a rigid
   asset's root position. Replaces the absolute-z ``root_height_below_minimum``
   used by terrain (which doesn't generalize to non-zero spawn heights) and
-  generalizes the manipulation-side held-asset bounds check.
+  generalizes the manipulation-side held-asset bounds check. :func:`in_bound`
+  is its reset-acceptance counterpart, shaped for the acceptance-condition
+  contract of :class:`~isaaclab_tasks.contrib.nist.utils.reset_accumulator`.
 """
 
 from __future__ import annotations
@@ -57,6 +59,16 @@ def out_of_bound(
 
     object_pos_local = wp.to_torch(object.data.root_pos_w) - env.scene.env_origins
     return ((object_pos_local < ranges[:, 0]) | (object_pos_local > ranges[:, 1])).any(dim=1)
+
+
+def in_bound(
+    env: ManagerBasedRLEnv,
+    env_ids: torch.Tensor,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    in_bound_range: dict[str, tuple[float, float]] = {},
+) -> torch.Tensor:
+    """Negation of :func:`out_of_bound` over ``env_ids``, shaped for reset acceptance."""
+    return ~out_of_bound(env, asset_cfg, in_bound_range)[env_ids]
 
 
 class progress_context(ManagerTermBase):

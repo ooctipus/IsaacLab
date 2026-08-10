@@ -68,6 +68,7 @@ class reset_accumulator(ManagerTermBase):
         self._state_fps_features = cfg.params.get("state_table_fps_features")
         self._state_tag_names_bind: str | None = cfg.params.get("state_tag_names_bind")
         self._tag_indices_bind: str | None = cfg.params.get("state_tag_indices_bind")
+        self._tag_weight_bind: str | None = cfg.params.get("state_tag_weight_bind")
 
         oversample_capacity = int(self._state_target_size * float(cfg.params.get("state_table_oversample_ratio", 1.0)))
         self.sampled_slots = torch.zeros(env.num_envs, device=env.device, dtype=torch.long)
@@ -84,7 +85,6 @@ class reset_accumulator(ManagerTermBase):
         self.monitor_success_rate: torch.Tensor | None = None
         self.success_monitor = None
         self._sampler: Sampler | None = None
-        self._wandb_3d_log_state: dict[str, object] = {}
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -104,22 +104,10 @@ class reset_accumulator(ManagerTermBase):
         state_table_fps_features: Callable | None = None,
         state_tag_names_bind: str | None = None,
         state_tag_indices_bind: str | None = None,
+        state_tag_weight_bind: str | None = None,
         report: bool = False,
         monitor_exclude_terms: list[str] | tuple[str, ...] = (),
-        wandb_3d_log: Callable[
-            [torch.Tensor, torch.Tensor, Sampler, dict[str, object], ManagerBasedRLEnv, list[str]], None
-        ]
-        | None = None,
-        wandb_3d_log_period: int = 100,
     ):
-        """Args (additional 3D-vis params):
-
-        wandb_3d_log: Optional caller-owned logging hook. Receives
-            ``(state_data, success_rates, sampler, log_state, env,
-            reset_assets)``. ``None`` (default) skips upload.
-        wandb_3d_log_period: Number of ``__call__`` invocations between
-            hook calls. Ignored when :paramref:`wandb_3d_log` is ``None``.
-        """
         if reset_assets and list(reset_assets) != self._requested_reset_assets:
             raise ValueError(
                 "reset_accumulator reset_assets changed after initialization. "
@@ -131,10 +119,20 @@ class reset_accumulator(ManagerTermBase):
             all_env_ids = torch.arange(env.num_envs, device=env.device)
             precollect_capacity = self.state_data.shape[0]
             target_size = min(self._state_target_size, precollect_capacity)
+            # Optional feedback: steer the reset-strategy partition sampler toward categories that
+            # are still behind the even per-category target, so pre-collection spends more envs on
+            # underfilled categories instead of overfilling the easy ones.
+            tag_weight = eval(self._tag_weight_bind) if self._tag_weight_bind is not None else None  # noqa: S307
+            num_tags = len(self.state_tag_names) if self.state_tag_names is not None else 0
             state_size = 0
             pbar = tqdm(total=precollect_capacity, desc="reset_accumulator")
             while state_size < precollect_capacity:
                 prev_size = state_size
+                if tag_weight is not None and num_tags > 0:
+                    filled = self.state_tag_indices[:state_size]
+                    counts = torch.bincount(filled[filled >= 0], minlength=num_tags).float()
+                    deficit = (precollect_capacity / num_tags - counts).clamp_min(0.0)
+                    tag_weight.copy_(deficit if deficit.any() else torch.ones_like(deficit))
                 reset_term.func(env, all_env_ids, **reset_term.params)
                 valid_mask = torch.ones(len(all_env_ids), dtype=torch.bool, device=env.device)
                 for condition in self.acceptance_conditions.values():
@@ -234,18 +232,6 @@ class reset_accumulator(ManagerTermBase):
         if report:
             env.extras.setdefault("log", {}).update(log)
 
-        if wandb_3d_log is not None and self._sampler is not None and not self.precollecting_phase:
-            self._wandb_3d_counter = getattr(self, "_wandb_3d_counter", 0) + 1
-            if self._wandb_3d_counter % wandb_3d_log_period == 0:
-                wandb_3d_log(
-                    self.state_data,
-                    self.monitor_success_rate,
-                    self._sampler,
-                    self._wandb_3d_log_state,
-                    env,
-                    self.reset_assets,
-                )
-
     def apply_sampled_slots(self, env_ids: torch.Tensor) -> None:
         """Realize each env's currently-assigned table slot state in the sim.
 
@@ -264,6 +250,7 @@ class TermChoice(ManagerTermBase):
         self.term_partitions: dict[str, EventTermCfg] = cfg.params["terms"]  # type: ignore
         self.num_partitions = len(self.term_partitions)
         self.term_samples = torch.zeros((env.num_envs,), dtype=torch.long, device=env.device)
+        self.sampling_weight = torch.ones(self.num_partitions, device=env.device)
         self._sampling_cfg: SamplerCfg = cfg.params["sampling"]
         if self._sampling_cfg.max_samples is None:
             self._sampling_cfg.max_samples = env.num_envs
@@ -313,7 +300,9 @@ class TermChoice(ManagerTermBase):
             self.success_monitor.success_update(self.term_samples[env_ids], success[env_ids])
 
         num_samples = self._sampling_cfg.max_samples if self._sampling_cfg.warp else len(env_ids)
-        probs, choices = self._sampler.probabilities_and_sample(int(num_samples))
+        probs = self._sampler.probabilities() * self.sampling_weight
+        probs = probs / probs.sum()
+        choices = self._sampler.sample(probs, int(num_samples))
         self.term_samples[env_ids] = choices[: len(env_ids)]
         if report:
             log.update(

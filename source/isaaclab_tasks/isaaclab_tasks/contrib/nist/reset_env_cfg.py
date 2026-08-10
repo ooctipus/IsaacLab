@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from isaaclab.managers import EventTermCfg as EventTerm
-from isaaclab.managers import SceneEntityCfg
+from isaaclab.managers import ManagerTermBaseCfg, SceneEntityCfg
 
 from isaaclab_tasks.contrib.nist.utils import (
     BetaSamplingStrategyCfg,
@@ -34,7 +34,7 @@ from .factory_presets import (
     RobotObstaclesCfg,
 )
 
-GRIPPER_GRASP_ASSET_IN_AIR = EventTerm(
+START_RANDOM = EventTerm(
     func=mdp.ChainedResetTerms,
     mode="reset",
     params={
@@ -99,7 +99,7 @@ GRIPPER_GRASP_ASSET_IN_AIR = EventTerm(
 )
 
 
-ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE = EventTerm(
+START_ASSEMBLED = EventTerm(
     func=mdp.ChainedResetTerms,
     mode="reset",
     params={
@@ -157,7 +157,7 @@ ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE = EventTerm(
     },
 )
 
-GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER = EventTerm(
+ASSET_NEAR_GRIPPER = EventTerm(
     func=mdp.ChainedResetTerms,
     mode="reset",
     params={
@@ -214,6 +214,10 @@ GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER = EventTerm(
     },
 )
 
+# Identical to ASSET_NEAR_GRIPPER but with a fixed grasp angle.
+ASSET_IN_GRIPPER = ASSET_NEAR_GRIPPER.copy()
+ASSET_IN_GRIPPER.params["terms"]["grasp_held_asset"].params["flexible_angle"] = False
+
 
 SCENE_RESET = EventTerm(
     func=mdp.ChainedResetTerms,
@@ -253,9 +257,10 @@ SCENE_RESET = EventTerm(
                 mode="reset",
                 params={
                     "terms": {
-                        "grasp_asset_in_air": GRIPPER_GRASP_ASSET_IN_AIR,
-                        "start_assembled": ASSEMBLE_FIRST_THEN_GRIPPER_CLOSE,
-                        "start_grasped_then_assembled": GRIPPER_CLOSE_FIRST_THEN_ASSET_IN_GRIPPER,
+                        "start_random": START_RANDOM,
+                        "start_assembled": START_ASSEMBLED,
+                        "start_grasped": ASSET_IN_GRIPPER,
+                        "start_near_grasped": ASSET_NEAR_GRIPPER,
                     },
                     "sampling": SamplerCfg(
                         strategies=[
@@ -291,15 +296,21 @@ ACCUMULATOR_RESET = EventTerm(
                 num_points=1024,
                 max_dist=0.5,
                 min_dist=-0.002,
-                asset_cfg=SceneEntityCfg(
-                    "robot", body_names="panda_link[2-7]|panda_hand|panda_(left|right)finger"
-                ),
+                asset_cfg=SceneEntityCfg("robot", body_names="panda_link[2-7]|panda_hand|panda_(left|right)finger"),
                 obstacle_cfgs=RobotObstaclesCfg(),
+            ),
+            "object_in_bound": ManagerTermBaseCfg(
+                func=mdp.in_bound,
+                params={
+                    "asset_cfg": SceneEntityCfg("held_asset"),
+                    "in_bound_range": {"x": (0.05, 1.0), "y": (-0.675, 0.675), "z": (-0.05, 1.0)},
+                },
             ),
         },
         "state_table_size": 32768,
         "state_tag_names_bind": "list(reset_term.func.terms['reset_strategies'].func.term_partitions.keys())",
         "state_tag_indices_bind": "reset_term.func.terms['reset_strategies'].func.term_samples",
+        "state_tag_weight_bind": "reset_term.func.terms['reset_strategies'].func.sampling_weight",
         "success_monitor_cfg": SuccessMonitorCfg(monitored_history_len=50),
         "sampling": SamplerCfg(
             strategies=[BetaSamplingStrategyCfg(target=0.66, kappa=1.0, weight=1.0, success_rate_bind="success_rates")],

@@ -21,6 +21,7 @@ __all__ = [
     "action_rate_l2_clamped",
     "action_l2_clamped",
     "out_of_bound",
+    "in_bound",
     "progress_context",
     "assembly_contact_force",
     "success_termination",
@@ -47,7 +48,7 @@ from .observations import (
 )
 from .rewards import action_l2_clamped, action_rate_l2_clamped
 from .rewards import success_reward
-from .terminations import assembly_contact_force, out_of_bound
+from .terminations import assembly_contact_force, in_bound, out_of_bound
 from .terminations import progress_context, success_termination
 from isaaclab_tasks.contrib.nist.utils import (CollisionAnalyzerCfg)
 from isaaclab.envs.mdp import *

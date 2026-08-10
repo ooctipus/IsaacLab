@@ -257,9 +257,7 @@ class reset_end_effector_around_asset(ManagerTermBase):
         robot_root_quat_w = wp.to_torch(self.robot.data.root_link_quat_w)[env_ids]
         grasp_reference_quat_w = fixed_keypoint_quat_w[env_ids]
         if upright_gripper:
-            grasp_reference_quat_b = math_utils.quat_mul(
-                math_utils.quat_inv(robot_root_quat_w), grasp_reference_quat_w
-            )
+            grasp_reference_quat_b = math_utils.quat_mul(math_utils.quat_inv(robot_root_quat_w), grasp_reference_quat_w)
             _, _, yaw = math_utils.euler_xyz_from_quat(grasp_reference_quat_b)
             zero = torch.zeros_like(yaw)
             grasp_reference_quat_w = math_utils.quat_mul(

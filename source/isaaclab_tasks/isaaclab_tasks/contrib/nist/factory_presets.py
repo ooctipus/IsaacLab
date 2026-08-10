@@ -632,25 +632,25 @@ class HeldAssetGraspMiddleCfg(PresetCfg):
 
 # Pose ranges reused across size variants within each category
 _NUT_GRASPED_RANGE = dict(
-    x=(-0.005, 0.005),
-    y=(-0.005, 0.005),
-    z=(0.00, 0.035),
+    x=(-0.15, 0.15),
+    y=(-0.15, 0.15),
+    z=(0.00 - 0.05, 0.035 + 0.1),
     roll=(0.0, 0.0),
     pitch=(-0.5, 0.5),
     yaw=(-2.09, 2.09),
 )
 _GEAR_GRASPED_RANGE = dict(
-    x=(-0.02, 0.02),
-    y=(-0.02, 0.02),
-    z=(0.035, 0.045),
+    x=(-0.15, 0.15),
+    y=(-0.15, 0.15),
+    z=(0.035 - 0.05, 0.045 + 0.1),
     roll=(0.0, 0.0),
     pitch=(-0.5, 0.5),
     yaw=(-2.09, 2.09),
 )
 _INSERT_GRASPED_RANGE = dict(
-    x=(-0.005, 0.005),
-    y=(-0.005, 0.005),
-    z=(0.047, 0.057),
+    x=(-0.15, 0.15),
+    y=(-0.15, 0.15),
+    z=(0.047- 0.05, 0.057 + 0.1),
     roll=(0.0, 0.0),
     pitch=(-0.5, 0.5),
     yaw=(-2.09, 2.09),
@@ -659,7 +659,7 @@ _INSERT_GRASPED_RANGE = dict(
 
 @configclass
 class GraspedPoseRangeCfg(PresetCfg):
-    """Pose range for the ``start_grasped_then_assembled`` reset strategy."""
+    """Pose range for the ``start_near_grasped`` reset strategy."""
 
     # Nut threading
     nut_thread_m4: dict = _NUT_GRASPED_RANGE
