@@ -20,10 +20,12 @@ from __future__ import annotations
 import itertools
 import json
 import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import PurePosixPath
 
 SPEC = "docker/cluster/multi_node.yaml"
 
@@ -40,6 +42,9 @@ POOL_TO_PLATFORM = {
     "groot-l40-ci-02": "ovx-l40",
     "groot-l40-ci-03": "ovx-l40",
     "isaac-dev-l40-03": "ovx-l40",
+    "isaac-lab-l40-06": "ovx-l40",
+    "isaac-lab-l40-07": "ovx-l40",
+    "isaac-lab-test-l40-07": "ovx-l40",
     # L40S
     "groot-l40s-01": "ovx-l40s",
     "groot-l40s-03": "ovx-l40s",
@@ -47,7 +52,7 @@ POOL_TO_PLATFORM = {
     "isaac-dex-l40s-02": "ovx-l40s",
     "isaac-dex-l40s-03": "ovx-l40s",
     "isaac-dex-l40s-04": "ovx-l40s",
-    "isaac-lab-l30s-03": "ovx-l40s",
+    "isaac-lab-l40s-03": "ovx-l40s",
     # GB200
     "groot-gb200-02": "gb200",
     # AGX Orin
@@ -55,6 +60,8 @@ POOL_TO_PLATFORM = {
     "isaac-nightly": "agx-orin-jp6",
     "isaac-sqa": "agx-orin-jp6-realsense",
 }
+
+WORKFLOW_PRIORITIES = frozenset({"HIGH", "NORMAL", "LOW"})
 
 CLUSTER_DEFAULTS = {
     "image": "factory",
@@ -163,6 +170,7 @@ class ParsedArgs:
     cluster: dict[str, str] = field(default_factory=lambda: dict(CLUSTER_DEFAULTS))
     cluster_overrides: set[str] = field(default_factory=set)
     pool: str = ""
+    priority: str | None = None
     fixed: dict[str, str] = field(default_factory=dict)
     sweep: dict[str, list[str]] = field(default_factory=dict)
     cli_flags: list[str] = field(default_factory=list)
@@ -170,7 +178,7 @@ class ParsedArgs:
     run_name: str = ""
 
 
-_CLUSTER_KEYS = set(CLUSTER_DEFAULTS) | {"pool", "run_name"}
+_CLUSTER_KEYS = set(CLUSTER_DEFAULTS) | {"pool", "priority", "run_name"}
 
 
 def _try_cluster_key(arg: str, next_arg: str | None, p: ParsedArgs) -> int:
@@ -194,6 +202,12 @@ def _try_cluster_key(arg: str, next_arg: str | None, p: ParsedArgs) -> int:
 def _set_cluster_key(key_bare: str, val: str, p: ParsedArgs):
     if key_bare == "pool":
         p.pool = val
+    elif key_bare == "priority":
+        priority = val.upper()
+        if priority not in WORKFLOW_PRIORITIES:
+            print(f"Error: priority must be one of {sorted(WORKFLOW_PRIORITIES)}, got '{val}'.", file=sys.stderr)
+            sys.exit(2)
+        p.priority = priority
     elif key_bare == "run_name":
         p.run_name = val
     elif key_bare in CLUSTER_DEFAULTS:
@@ -216,6 +230,15 @@ def _positive_cluster_int(p: ParsedArgs, key: str) -> int:
         print(f"Error: {key} must be positive, got '{value}'.", file=sys.stderr)
         sys.exit(2)
     return value
+
+
+def validate_image_script(script: str) -> str:
+    """Validate a Python script path owned by the submitted container image."""
+    path = PurePosixPath(script)
+    if path.is_absolute() or ".." in path.parts or re.fullmatch(r"[A-Za-z0-9_./-]+\.py", script) is None:
+        print(f"Error: invalid image script path '{script}'.", file=sys.stderr)
+        sys.exit(2)
+    return script
 
 
 def _parse_int_quantity(value: object) -> int:
@@ -415,7 +438,10 @@ def apply_auto_resources(p: ParsedArgs, nodes: list[PoolNodeResources] | None = 
             total_free = sum(free_gpus)
             full_node_gpu = max((node.allocatable_gpu for node in nodes), default=0)
             whole_free = sum(1 for node in nodes if full_node_gpu and node.available_gpu >= full_node_gpu)
-            print(f"Error: pool '{p.pool}' is full for num_gpu={num_gpu} num_node={num_node}. Not submitting.", file=sys.stderr)
+            print(
+                f"Error: pool '{p.pool}' is full for num_gpu={num_gpu} num_node={num_node}. Not submitting.",
+                file=sys.stderr,
+            )
             if total_free <= 0:
                 print("  Free now: 0 GPU free in this pool -- wait, or try another pool.", file=sys.stderr)
             elif max_free < num_gpu:
@@ -558,6 +584,13 @@ def build_fixed_str(fixed: dict[str, str]) -> str:
     return " ".join(f"{k}={v}" for k, v in fixed.items())
 
 
+def _workflow_submit_prefix(pool: str, priority: str | None) -> list[str]:
+    cmd = ["osmo", "workflow", "submit", SPEC, "--pool", pool]
+    if priority is not None:
+        cmd.extend(["--priority", priority])
+    return cmd + ["--set"]
+
+
 def build_cmd(
     script: str,
     pool: str,
@@ -567,6 +600,7 @@ def build_cmd(
     run_name: str,
     hydra_dels: list[str],
     cli_flags: list[str],
+    priority: str | None = None,
 ) -> list[str]:
     """Build the osmo command as a list of args (one element per shell token)."""
     combo_str = " ".join(f"{k}={v}" for k, v in combo.items())
@@ -577,20 +611,7 @@ def build_cmd(
     args_parts.extend(cli_flags)
     all_args = " ".join(p for p in args_parts if p)
 
-    return (
-        [
-            "osmo",
-            "workflow",
-            "submit",
-            SPEC,
-            "--pool",
-            pool,
-            "--set",
-            f"script={script}",
-        ]
-        + cluster_str.split()
-        + [f"args={all_args}"]
-    )
+    return _workflow_submit_prefix(pool, priority) + [f"script={script}"] + cluster_str.split() + [f"args={all_args}"]
 
 
 def launch_job(
@@ -602,9 +623,10 @@ def launch_job(
     run_name: str,
     hydra_dels: list[str],
     cli_flags: list[str],
+    priority: str | None = None,
     dry_run: bool = False,
 ):
-    cmd = build_cmd(script, pool, cluster_str, fixed_str, combo, run_name, hydra_dels, cli_flags)
+    cmd = build_cmd(script, pool, cluster_str, fixed_str, combo, run_name, hydra_dels, cli_flags, priority)
     print(f"LAUNCHING: {' '.join(cmd)}")
     if not dry_run:
         subprocess.run(cmd, check=False)
@@ -642,20 +664,7 @@ def do_pbt(script: str, p: ParsedArgs, dry_run: bool = False):
 
         all_args = " ".join(pbt_args + p.hydra_dels + p.cli_flags)
         args_quoted = f"args={all_args}"
-        cmd = (
-            [
-                "osmo",
-                "workflow",
-                "submit",
-                SPEC,
-                "--pool",
-                p.pool,
-                "--set",
-                f"script={script}",
-            ]
-            + cluster_str.split()
-            + [args_quoted]
-        )
+        cmd = _workflow_submit_prefix(p.pool, p.priority) + [f"script={script}"] + cluster_str.split() + [args_quoted]
         print(f"+ {' '.join(cmd)}")
         if not dry_run:
             subprocess.run(cmd, check=False)
@@ -670,7 +679,18 @@ def do_submit(script: str, p: ParsedArgs, dry_run: bool = False):
 
     for combo in combos:
         run_name = derive_run_name(p.run_name, combo)
-        launch_job(script, p.pool, cluster_str, fixed_str, combo, run_name, p.hydra_dels, p.cli_flags, dry_run=dry_run)
+        launch_job(
+            script,
+            p.pool,
+            cluster_str,
+            fixed_str,
+            combo,
+            run_name,
+            p.hydra_dels,
+            p.cli_flags,
+            priority=p.priority,
+            dry_run=dry_run,
+        )
 
 
 def main():
@@ -690,10 +710,7 @@ def main():
         if len(sys.argv) < 3:
             print(f"Usage: lib.py {mode} <script> [args...]", file=sys.stderr)
             sys.exit(1)
-        script = sys.argv[2]
-        if not os.path.isfile(script):
-            print(f"Script not found: {script}", file=sys.stderr)
-            sys.exit(1)
+        script = validate_image_script(sys.argv[2])
         p = parse_args(sys.argv[3:])
         if not os.path.isfile(SPEC):
             print(f"Spec file not found: {SPEC}", file=sys.stderr)
