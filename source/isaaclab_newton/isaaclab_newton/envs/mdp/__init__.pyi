@@ -6,6 +6,10 @@
 __all__ = [
     "NewtonInverseKinematicsAction",
     "NewtonInverseKinematicsActionCfg",
+    "solver_reset_required",
+    "zero_reward_on_solver_reset",
 ]
 
 from .actions import NewtonInverseKinematicsAction, NewtonInverseKinematicsActionCfg
+from .rewards import zero_reward_on_solver_reset
+from .terminations import solver_reset_required

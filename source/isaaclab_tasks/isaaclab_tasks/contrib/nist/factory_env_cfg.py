@@ -3,6 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
+from isaaclab_newton.envs import mdp as newton_mdp
 from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg, NewtonCollisionPipelineCfg
 from isaaclab_physx.physics import PhysxCfg
 
@@ -17,7 +18,7 @@ from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.utils.configclass import configclass
 
 from isaaclab_tasks.contrib.nist.utils import SamplerCfg, UniformSamplingStrategyCfg
-from isaaclab_tasks.utils import PresetCfg
+from isaaclab_tasks.utils import PresetCfg, preset
 
 from . import mdp
 from .factory_presets import (
@@ -171,6 +172,10 @@ class FactoryRewardsCfg:
     )
     early_termination = RewTerm(func=mdp.is_terminated_term, params={"term_keys": "abnormal"}, weight=-0.01)
     success_reward = RewTerm(func=mdp.success_reward, weight=100.0)
+    solver_reset_reward = preset(
+        default=None,
+        newton_mjwarp=RewTerm(func=newton_mdp.zero_reward_on_solver_reset, weight=1.0),
+    )
 
 
 @configclass
@@ -209,6 +214,10 @@ class FactoryTerminationsCfg:
     )
 
     success = DoneTerm(func=mdp.success_termination)
+    solver_reset_required = preset(
+        default=None,
+        newton_mjwarp=DoneTerm(func=newton_mdp.solver_reset_required),
+    )
 
 
 # @configclass

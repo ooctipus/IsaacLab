@@ -30,6 +30,7 @@ from types import SimpleNamespace
 import isaaclab_newton.physics.newton_manager as newton_manager_module
 import numpy as np
 import pytest
+import torch
 import warp as wp
 from isaaclab_newton.physics import (
     FeatherstoneSolverCfg,
@@ -934,6 +935,101 @@ def test_forward_consumes_existing_reset_masks(monkeypatch):
     assert solver_resets == [[False, True]]
     assert world_mask.numpy().tolist() == [False, False]
     assert fk_mask.numpy().tolist() == [False, False]
+
+
+@pytest.mark.parametrize(
+    "device",
+    [
+        "cpu",
+        pytest.param(
+            "cuda:0",
+            marks=pytest.mark.skipif(not wp.get_cuda_device_count(), reason="CUDA is unavailable"),
+            id="cuda-graph",
+        ),
+    ],
+)
+def test_mjwarp_detects_solver_reset_required_per_world(monkeypatch, device):
+    """One MJWarp kernel should reduce non-finite solver state to a per-world reset mask."""
+    qpos = np.zeros((4, 2), dtype=np.float32)
+    qvel = np.zeros((4, 2), dtype=np.float32)
+    qacc = np.zeros((4, 2), dtype=np.float32)
+    qfrc_actuator = np.zeros((4, 2), dtype=np.float32)
+    qacc_warmstart = np.zeros((4, 2), dtype=np.float32)
+    qfrc_applied = np.zeros((4, 2), dtype=np.float32)
+    ctrl = np.zeros((4, 2), dtype=np.float32)
+    act = np.zeros((4, 2), dtype=np.float32)
+    xfrc_applied = np.zeros((4, 1, 6), dtype=np.float32)
+    qacc[1, 0] = np.nan
+    xfrc_applied[2, 0, 4] = np.inf
+    qfrc_actuator[3, 1] = np.nan
+    data = SimpleNamespace(
+        qpos=wp.array(qpos, dtype=wp.float32, device=device),
+        qvel=wp.array(qvel, dtype=wp.float32, device=device),
+        qacc=wp.array(qacc, dtype=wp.float32, device=device),
+        qfrc_actuator=wp.array(qfrc_actuator, dtype=wp.float32, device=device),
+        qacc_warmstart=wp.array(qacc_warmstart, dtype=wp.float32, device=device),
+        qfrc_applied=wp.array(qfrc_applied, dtype=wp.float32, device=device),
+        ctrl=wp.array(ctrl, dtype=wp.float32, device=device),
+        act=wp.array(act, dtype=wp.float32, device=device),
+        xfrc_applied=wp.array(xfrc_applied, dtype=wp.spatial_vector, device=device),
+    )
+    reset_required = wp.zeros(4, dtype=wp.bool, device=device)
+    reset_required_torch = wp.to_torch(reset_required)
+
+    monkeypatch.setattr(NewtonManager, "_solver", SimpleNamespace(use_mujoco_cpu=False, mjw_data=data))
+    monkeypatch.setattr(NewtonManager, "_solver_reset_required", reset_required, raising=False)
+    monkeypatch.setattr(NewtonManager, "_solver_reset_required_torch", reset_required_torch, raising=False)
+
+    if device == "cpu":
+        NewtonMJWarpManager._update_solver_reset_required()
+    else:
+        NewtonMJWarpManager._update_solver_reset_required()
+        reset_required.zero_()
+        with wp.ScopedCapture(device=device) as capture:
+            NewtonMJWarpManager._update_solver_reset_required()
+        reset_required.zero_()
+        wp.capture_launch(capture.graph)
+        wp.synchronize_device(device)
+
+    torch.testing.assert_close(
+        NewtonManager.get_solver_reset_required(),
+        torch.tensor([False, True, True, True], device=device),
+    )
+
+
+@pytest.mark.parametrize(
+    ("method_name", "decimation", "solver_steps"),
+    [("_simulate_full", 3, 3), ("_simulate_physics_only", 3, 1)],
+)
+def test_solver_reset_check_runs_once_after_controller_step(monkeypatch, method_name, decimation, solver_steps):
+    """The divergence check should run once after all solver steps and before post-step consumers."""
+    events: list[str] = []
+    monkeypatch.setattr(NewtonMJWarpManager, "_decimation", decimation)
+    monkeypatch.setattr(NewtonMJWarpManager, "_solver_dt", 0.01)
+    monkeypatch.setattr(NewtonMJWarpManager, "_num_substeps", 2)
+    monkeypatch.setattr(NewtonMJWarpManager, "_needs_collision_pipeline", False)
+    monkeypatch.setattr(NewtonMJWarpManager, "_adapter", None)
+    monkeypatch.setattr(NewtonMJWarpManager, "_post_actuator_callbacks", [])
+    monkeypatch.setattr(NewtonMJWarpManager, "_post_step_callbacks", [lambda: events.append("callback")])
+    monkeypatch.setattr(
+        NewtonMJWarpManager,
+        "_run_solver_substeps",
+        classmethod(lambda cls, contacts: events.append("solver")),
+    )
+    monkeypatch.setattr(
+        NewtonMJWarpManager,
+        "_update_solver_reset_required",
+        classmethod(lambda cls: events.append("check")),
+    )
+    monkeypatch.setattr(
+        NewtonMJWarpManager,
+        "_update_sensors",
+        classmethod(lambda cls, contacts: events.append("sensors")),
+    )
+
+    getattr(NewtonMJWarpManager, method_name)()
+
+    assert events == ["solver"] * solver_steps + ["check", "callback", "sensors"]
 
 
 def test_forward_dispatches_active_mpm_reset_hook_through_base_manager(monkeypatch):

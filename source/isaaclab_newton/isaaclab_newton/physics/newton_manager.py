@@ -395,6 +395,8 @@ class NewtonManager(PhysicsManager):
     # Newton reserves the final slot for global entities in world -1.
     _world_reset_mask: wp.array | None = None  # (num_envs + 1,) wp.bool
     _fk_reset_mask: wp.array | None = None  # (articulation_count,) wp.bool — for eval_fk(mask=...)
+    _solver_reset_required: wp.array | None = None  # (num_envs,) wp.bool
+    _solver_reset_required_torch: torch.Tensor | None = None
     # Solver-specialized FK delegate. Bound in initialize_solver() to the active subclass's choice of FK implementation.
     _eval_fk: Callable[[wp.array | None, wp.array | None], None] = _eval_fk_unbound
     # Solver-specialized reset delegate. Like _eval_fk, this must dispatch correctly through the base manager.
@@ -1088,6 +1090,8 @@ class NewtonManager(PhysicsManager):
         # Per-world reset masks
         NewtonManager._world_reset_mask = None
         NewtonManager._fk_reset_mask = None
+        NewtonManager._solver_reset_required = None
+        NewtonManager._solver_reset_required_torch = None
         NewtonManager._graph = None
         NewtonManager._graph_capture_pending = False
         NewtonManager._sensor_tasks = {}
@@ -2054,6 +2058,15 @@ class NewtonManager(PhysicsManager):
         """
 
     @classmethod
+    def _update_solver_reset_required(cls) -> None:
+        """Update solver-specific per-world reset requirements after stepping.
+
+        The base implementation is a no-op. Solver managers may override this
+        hook with graph-safe work; it runs exactly once after all substeps and
+        decimation iterations in :meth:`step`.
+        """
+
+    @classmethod
     def _reset_solver_internals(cls, world_mask: wp.array | None) -> None:
         """Clear solver-internal state for environments reset since the last boundary.
 
@@ -2413,6 +2426,7 @@ class NewtonManager(PhysicsManager):
 
             cls._run_solver_substeps(contacts)
 
+        cls._update_solver_reset_required()
         for cb in cls._post_step_callbacks:
             cb()
         cls._update_sensors(contacts)
@@ -2431,6 +2445,7 @@ class NewtonManager(PhysicsManager):
             contacts = None
 
         cls._run_solver_substeps(contacts)
+        cls._update_solver_reset_required()
         for cb in cls._post_step_callbacks:
             cb()
         cls._update_sensors(contacts)
@@ -2475,6 +2490,23 @@ class NewtonManager(PhysicsManager):
     def get_contacts(cls) -> Contacts | None:
         """Get the current Newton contact buffer, if the active solver exposes one."""
         return cls._contacts
+
+    @classmethod
+    def get_solver_reset_required(cls) -> torch.Tensor:
+        """Return the live per-world mask of solver states requiring reset.
+
+        The active solver updates this cached tensor after its final substep.
+        It is currently provided by the MuJoCo Warp solver.
+
+        Returns:
+            Boolean reset-required flags, shape ``(num_envs,)``.
+
+        Raises:
+            RuntimeError: If the active Newton solver does not provide reset information.
+        """
+        if cls._solver_reset_required_torch is None:
+            raise RuntimeError("The active Newton solver does not provide a reset-required mask.")
+        return cls._solver_reset_required_torch
 
     @classmethod
     def _register_sensor_task(

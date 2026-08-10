@@ -22,6 +22,56 @@ from .newton_manager import NewtonManager
 logger = logging.getLogger(__name__)
 
 
+@wp.kernel(enable_backward=False)
+def _detect_solver_reset_required(
+    qpos: wp.array2d(dtype=wp.float32),
+    qvel: wp.array2d(dtype=wp.float32),
+    qacc: wp.array2d(dtype=wp.float32),
+    qfrc_actuator: wp.array2d(dtype=wp.float32),
+    qacc_warmstart: wp.array2d(dtype=wp.float32),
+    qfrc_applied: wp.array2d(dtype=wp.float32),
+    ctrl: wp.array2d(dtype=wp.float32),
+    act: wp.array2d(dtype=wp.float32),
+    xfrc_applied: wp.array2d(dtype=wp.spatial_vector),
+    reset_required: wp.array(dtype=wp.bool),
+):
+    """Reduce policy-facing and persistent MuJoCo state validity per world."""
+    world_id = wp.tid()
+    invalid = wp.bool(False)
+
+    for i in range(qpos.shape[1]):
+        if not wp.isfinite(qpos[world_id, i]):
+            invalid = True
+    for i in range(qvel.shape[1]):
+        if not wp.isfinite(qvel[world_id, i]):
+            invalid = True
+    for i in range(qacc.shape[1]):
+        if not wp.isfinite(qacc[world_id, i]):
+            invalid = True
+    for i in range(qfrc_actuator.shape[1]):
+        if not wp.isfinite(qfrc_actuator[world_id, i]):
+            invalid = True
+    for i in range(qacc_warmstart.shape[1]):
+        if not wp.isfinite(qacc_warmstart[world_id, i]):
+            invalid = True
+    for i in range(qfrc_applied.shape[1]):
+        if not wp.isfinite(qfrc_applied[world_id, i]):
+            invalid = True
+    for i in range(ctrl.shape[1]):
+        if not wp.isfinite(ctrl[world_id, i]):
+            invalid = True
+    for i in range(act.shape[1]):
+        if not wp.isfinite(act[world_id, i]):
+            invalid = True
+    for body_id in range(xfrc_applied.shape[1]):
+        force = xfrc_applied[world_id, body_id]
+        for component_id in range(6):
+            if not wp.isfinite(force[component_id]):
+                invalid = True
+
+    reset_required[world_id] = invalid
+
+
 class NewtonMJWarpManager(NewtonManager):
     """:class:`NewtonManager` specialization for the MuJoCo Warp solver.
 
@@ -53,6 +103,8 @@ class NewtonMJWarpManager(NewtonManager):
         NewtonManager._use_single_state = True
         NewtonManager._needs_collision_pipeline = not solver_cfg.use_mujoco_contacts
         NewtonManager._supports_rigid_body_force_input = True
+        NewtonManager._solver_reset_required = wp.zeros(model.world_count, dtype=wp.bool, device=model.device)
+        NewtonManager._solver_reset_required_torch = wp.to_torch(NewtonManager._solver_reset_required)
 
         cfg = PhysicsManager._cfg
         # Cross-config validation that needs both halves.
@@ -118,6 +170,60 @@ class NewtonMJWarpManager(NewtonManager):
         # flags=0 skips the joint-state reset to model defaults: IsaacLab owns
         # joint_q/joint_qd and has already written the authored reset pose.
         cls._solver.reset(cls._state_0, world_mask=world_mask, flags=0)
+
+    @classmethod
+    def _update_solver_reset_required(cls) -> None:
+        """Reduce MuJoCo state validity to one cached flag per world.
+
+        The GPU path is a single graph-safe Warp launch. The manager invokes it
+        once after all solver substeps and decimation iterations, so MDP terms
+        only read the resulting mask.
+        """
+        reset_required = NewtonManager._solver_reset_required
+        if reset_required is None:
+            return
+
+        solver = cls._solver
+        if solver.use_mujoco_cpu:
+            data = solver.mj_data
+            if data is None:
+                reset_required.zero_()
+                return
+            arrays = (
+                data.qpos,
+                data.qvel,
+                data.qacc,
+                data.qfrc_actuator,
+                data.qacc_warmstart,
+                data.qfrc_applied,
+                data.ctrl,
+                data.act,
+                data.xfrc_applied,
+            )
+            reset_required.fill_(any(not np.isfinite(array).all() for array in arrays))
+            return
+
+        data = solver.mjw_data
+        if data is None:
+            reset_required.zero_()
+            return
+        wp.launch(
+            _detect_solver_reset_required,
+            dim=reset_required.shape[0],
+            inputs=[
+                data.qpos,
+                data.qvel,
+                data.qacc,
+                data.qfrc_actuator,
+                data.qacc_warmstart,
+                data.qfrc_applied,
+                data.ctrl,
+                data.act,
+                data.xfrc_applied,
+            ],
+            outputs=[reset_required],
+            device=reset_required.device,
+        )
 
     @classmethod
     def _log_solver_debug(cls) -> None:
