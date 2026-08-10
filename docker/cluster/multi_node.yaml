@@ -29,12 +29,18 @@ workflow:
       environment:
         ACCEPT_EULA: Y
         NO_NUCLEUS: Y
+        OMNICLIENT_HUB_MODE: disabled
+        PXR_WORK_THREAD_LIMIT: "1"
         NCCL_DEBUG: WARN
         NCCL_ASYNC_ERROR_HANDLING: "1"
         TORCH_NCCL_ASYNC_ERROR_HANDLING: "1"
+        {% if platform in ["ovx-l40", "ovx-l40s"] %}
+        NCCL_NET: Socket
+        NCCL_SOCKET_IFNAME: eth0
+        {% endif %}
+        GLOO_SOCKET_IFNAME: eth0
       credentials:
         wandb:
-          WANDB_USERNAME: wandb_username
           WANDB_API_KEY: wandb_api_key
       files:
       - path: /tmp/run.sh
@@ -47,17 +53,12 @@ workflow:
           fi
 
           export WANDB_API_KEY="${WANDB_API_KEY}"
-          export WANDB_USERNAME=nvidia
           export OMP_NUM_THREADS=$(( {{ num_cpu }} / {{ num_gpu }} ))
           if [ "${OMP_NUM_THREADS}" -lt 1 ]; then
             export OMP_NUM_THREADS=1
           fi
           export MKL_NUM_THREADS="${OMP_NUM_THREADS}"
           export OPENBLAS_NUM_THREADS="${OMP_NUM_THREADS}"
-          # OmniHub state should not live in the shared Omniverse cache; it can break across jobs/containers.
-          export OMNICLIENT_HUB_CACHE_DIR="${TMPDIR:-/tmp}/omnihub-cache-${HOSTNAME:-cluster}"
-          mkdir -p "${OMNICLIENT_HUB_CACHE_DIR}"
-
           CLUSTER_CACHE_ROOT="{{ cluster_cache_root }}"
           if [ -z "${CLUSTER_CACHE_ROOT}" ]; then
             for candidate in /mnt/amlfs-*/home/{{ cache_user }}; do
@@ -103,29 +104,28 @@ workflow:
           fi
 
           {% if num_node > 1 %}
-          /workspace/isaaclab/isaaclab.sh train_multigpu \
-            --rl_library rsl_rl \
+          /workspace/isaaclab/_isaac_sim/python.sh -m torch.distributed.run \
             --nnodes {{ num_node }} \
             --nproc_per_node {{ num_gpu }} \
             --node_rank {{ item }} \
             --master_addr {{host:master}} \
             --master_port {{ master_port }} \
-            --workflow_id {{workflow_id}} \
-            {{ args }}
+            /workspace/isaaclab/{{ script }} \
+              --distributed \
+              {{ args }}
           {% elif num_gpu > 1 %}
-          /workspace/isaaclab/isaaclab.sh train_multigpu \
-            --rl_library rsl_rl \
+          /workspace/isaaclab/_isaac_sim/python.sh -m torch.distributed.run \
             --nnodes 1 \
             --nproc_per_node {{ num_gpu }} \
             --master_addr 127.0.0.1 \
             --master_port {{ master_port }} \
-            --workflow_id {{workflow_id}} \
-            {{ args }}
+            /workspace/isaaclab/{{ script }} \
+              --distributed \
+              {{ args }}
           {% else %}
-          /workspace/isaaclab/isaaclab.sh train \
-            --rl_library rsl_rl \
-            --workflow_id {{workflow_id}} \
-            {{ args }}
+          /workspace/isaaclab/_isaac_sim/python.sh \
+            /workspace/isaaclab/{{ script }} \
+              {{ args }}
           {% endif %}
       - path: /tmp/config.json
         contents: |
@@ -147,4 +147,5 @@ default-values:
   platform: dgx-h100
   cache_user: zhengyuz
   cluster_cache_root: ""
+  script: scripts/reinforcement_learning/rsl_rl/train.py
   args:
