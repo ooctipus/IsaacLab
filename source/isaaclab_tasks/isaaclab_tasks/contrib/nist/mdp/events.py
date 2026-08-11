@@ -17,8 +17,8 @@ from isaaclab.managers import EventTermCfg, ManagerTermBase, SceneEntityCfg
 from isaaclab.utils import math as math_utils
 
 from ..assembly_keypoints import NIST_BOARD_CFG
-from ..assembly_profile import AssemblyProfile
-from ..assembly_profile_cfg import AssemblyProfileCfg
+from ..assembly_profile import AssemblyProfile, UniformPoseNoise
+from ..assembly_profile_cfg import AssemblyProfileCfg, UniformPoseNoiseCfg
 
 if TYPE_CHECKING:
     from isaaclab.assets import Articulation, RigidObject
@@ -102,6 +102,7 @@ def reset_board_under_fixed_asset(env: ManagerBasedRLEnv, env_ids: torch.Tensor,
 
 
 _PROFILE_CACHE: dict[int, AssemblyProfile] = {}
+_POSE_NOISE_CACHE: dict[int, UniformPoseNoise] = {}
 
 
 def _sweep_assembly_fraction(lo: float, hi: float, step: float = 0.001) -> Generator[tuple[float, float]]:
@@ -123,12 +124,39 @@ def reset_held_asset_on_fixed_asset(
     assembly_fraction_range: tuple[float, float],
     fixed_asset_cfg: SceneEntityCfg,
     held_asset_cfg: SceneEntityCfg,
+    pose_noise: UniformPoseNoiseCfg | None = None,
     debug_term: bool = False,
 ):
+    """Seat the held asset somewhere along the assembly path of the fixed asset.
+
+    Samples a fraction of the way along ``assembly_profile`` — ``0`` fully assembled, ``1`` at the
+    point where the held asset enters the fixed one — and writes the held asset so its
+    ``held_asset_align_offset`` lands on the sampled pose.
+
+    Args:
+        assembly_profile: Geometry of the assembly path, in the fixed asset frame.
+        held_asset_align_offset: Point on the held asset placed on the path, e.g. the peg tip.
+        assembly_fraction_range: ``(lo, hi)`` fraction range to sample. Values above ``1`` continue
+            past the entry along the same direction.
+        fixed_asset_cfg: The asset the path is measured against.
+        held_asset_cfg: The asset being placed.
+        pose_noise: Extra uniform pose noise on top of the sampled path pose, in the fixed asset
+            frame — position [m] and euler angles [rad]. ``None`` places exactly on the path. The
+            profile's own per-segment ``start_sampler`` still applies; this stacks on top of it.
+        debug_term: Sweep the fraction range back and forth, rendering each step, instead of
+            drawing one sample. Development aid only.
+    """
     profile = _PROFILE_CACHE.get(id(assembly_profile))
     if profile is None:
         profile = assembly_profile.class_type(assembly_profile)
         _PROFILE_CACHE[id(assembly_profile)] = profile
+
+    noise = None
+    if pose_noise is not None:
+        noise = _POSE_NOISE_CACHE.get(id(pose_noise))
+        if noise is None:
+            noise = pose_noise.class_type(pose_noise)
+            _POSE_NOISE_CACHE[id(pose_noise)] = noise
 
     fixed_asset: RigidObject = env.scene[fixed_asset_cfg.name]
     held_asset: Articulation = env.scene[held_asset_cfg.name]
@@ -136,6 +164,12 @@ def reset_held_asset_on_fixed_asset(
     fractions = _sweep_assembly_fraction(*assembly_fraction_range) if debug_term else iter([assembly_fraction_range])
     for frac_range in fractions:
         pos_offset, quat_offset = profile.sample(frac_range, len(env_ids), env.device)
+        if noise is not None:
+            # Same convention as the profile's own start samplers: the align point is displaced in
+            # the fixed asset frame and the part is tilted about that displaced point.
+            noise_pos, noise_quat = noise(len(env_ids), env.device)
+            pos_offset = pos_offset + noise_pos
+            quat_offset = math_utils.quat_mul(noise_quat, quat_offset)
         fixed_root_pos_w = wp.to_torch(fixed_asset.data.root_pos_w)
         fixed_root_quat_w = wp.to_torch(fixed_asset.data.root_quat_w)
         pos, quat = math_utils.combine_frame_transforms(
@@ -209,6 +243,13 @@ def grasp_held_asset(
 
 
 class reset_end_effector_around_asset(ManagerTermBase):
+    """Drive the gripper onto a sampled pose around an asset with a differential IK solve.
+
+    Reports whether each solve actually landed on its target through :attr:`is_valid`, which
+    :class:`~isaaclab_tasks.contrib.nist.utils.ChainedResetTerms` collects and the reset
+    accumulator uses to reject the state instead of banking a missed grasp.
+    """
+
     def __init__(self, cfg: EventTermCfg, env: ManagerBasedRLEnv):
         fixed_asset_cfg: SceneEntityCfg = cfg.params.get("fixed_asset_cfg")  # type: ignore
         fixed_asset_offset: Offset = cfg.params.get("fixed_asset_offset")  # type: ignore
@@ -235,6 +276,8 @@ class reset_end_effector_around_asset(ManagerTermBase):
         self.solver: DifferentialInverseKinematicsAction = None  # type: ignore
         self.grasp_angle_range = (0.3, 0.7)
         self.is_physx = "physx" in env.sim.physics_manager.__name__.lower()
+        self.is_valid = torch.ones(env.num_envs, dtype=torch.bool, device=env.device)
+        """Whether the last solve for each env reached its target within ``pose_tolerance``."""
 
     def __call__(
         self,
@@ -247,7 +290,27 @@ class reset_end_effector_around_asset(ManagerTermBase):
         robot_ik_body_offset: Offset,
         upright_gripper: bool = False,
         ik_iterations: tuple[int, int] = (5, 10),
+        pose_tolerance: tuple[float, float] | None = None,
     ) -> None:
+        """Solve the gripper onto a pose sampled around ``fixed_asset_offset``.
+
+        Args:
+            fixed_asset_cfg: Asset the target pose is sampled around. Not necessarily the fixed
+                asset — the strategies that grasp a part already on the board point this at the
+                held asset.
+            fixed_asset_offset: Keypoint on that asset the sample is centered on.
+            pose_range_b: Per-axis ``(min, max)`` sample ranges about the keypoint, keys
+                ``x``/``y``/``z`` [m] and ``roll``/``pitch``/``yaw`` [rad].
+            robot_ik_cfg: The robot, its IK joints and the body being solved for.
+            robot_ik_body_offset: Grasp frame of the gripper relative to that body.
+            upright_gripper: Keep only the keypoint's yaw, so the sample is taken about a frame
+                that is upright in the robot root frame rather than tilted with the asset.
+            ik_iterations: ``(lo, hi)`` range the per-env iteration count is drawn from. Each
+                iteration takes a quarter step, so the residual shrinks by ~0.75 per iteration.
+            pose_tolerance: ``(position [m], orientation [rad])`` residual above which the solve is
+                reported through :attr:`is_valid` as having missed. ``None`` reports every solve as
+                valid, keeping whatever pose the iteration budget reached.
+        """
         if self.solver is None:
             self.solver = self.robot_ik_solver_cfg.class_type(self.robot_ik_solver_cfg, env)
         fixed_keypoint_pos_w, fixed_keypoint_quat_w = self.fixed_asset_offset.apply(self.fixed_asset)
@@ -298,6 +361,17 @@ class reset_end_effector_around_asset(ManagerTermBase):
                 joint_ids=self.joint_ids,
                 env_ids=env_ids,  # type: ignore
             )
+
+        # A target near a workspace edge, a singularity, or a joint limit is one the DLS steps
+        # never reach however long they run, so the iteration budget alone does not guarantee the
+        # gripper ended up where it was sent. Measure the residual and let the caller drop the env.
+        if pose_tolerance is None:
+            self.is_valid[env_ids] = True
+        else:
+            reached_pos_b, reached_quat_b = self.solver._compute_frame_pose()
+            pos_error = torch.norm(reached_pos_b[env_ids] - pos_b[env_ids], dim=-1)
+            rot_error = math_utils.quat_error_magnitude(reached_quat_b[env_ids], quat_b[env_ids])
+            self.is_valid[env_ids] = (pos_error < pose_tolerance[0]) & (rot_error < pose_tolerance[1])
 
         # wrist_low  = self.robot.data.joint_pos_limits[env_ids, self.wrist_idx, 0]
         # wrist_high = self.robot.data.joint_pos_limits[env_ids, self.wrist_idx, 1]

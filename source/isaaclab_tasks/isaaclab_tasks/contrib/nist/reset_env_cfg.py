@@ -16,12 +16,14 @@ from isaaclab_tasks.core.lift.mdp.events_cfg import SuccessMonitorCfg
 from isaaclab_tasks.utils import preset
 
 from . import mdp
+from .assembly_profile_cfg import UniformPoseNoiseCfg
 from .factory_presets import (
+    GRASPED_POSE_RANGE,
+    GRASPED_POSE_RANGE_CENTERED,
     EndEffectorBodyCfg,
     FactoryAssemblyProfileCfg,
     FixedAssetMapCfg,
     FixedAssetTipCfg,
-    GraspedPoseRangeCfg,
     GripperGraspOffsetCfg,
     GripperJointNamesCfg,
     HeldAssetAlignOffsetCfg,
@@ -119,7 +121,9 @@ START_ASSEMBLED = EventTerm(
                 params={
                     "assembly_profile": FactoryAssemblyProfileCfg(),
                     "held_asset_align_offset": HeldAssetAlignOffsetCfg(),
-                    "assembly_fraction_range": (0.0, 1.1),
+                    # Stop at the entry: past it the part is no longer assembled, and that stretch
+                    # is what ``START_NEAR_ASSEMBLED`` below covers.
+                    "assembly_fraction_range": (0.0, 1.0),
                     "fixed_asset_cfg": SceneEntityCfg("fixed_asset"),
                     "held_asset_cfg": SceneEntityCfg("held_asset"),
                 },
@@ -142,7 +146,10 @@ START_ASSEMBLED = EventTerm(
                         "robot", joint_names=IKJointNamesCfg(), body_names=EndEffectorBodyCfg()
                     ),
                     "robot_ik_body_offset": GripperGraspOffsetCfg(),
-                    "ik_iterations": (15, 25),
+                    # The part is already seated, so the gripper has to arrive where it was sent or
+                    # it closes on nothing. Solve it out, and report the ones that still missed.
+                    "ik_iterations": (25, 35),
+                    "pose_tolerance": (0.001, 0.05),
                 },
             ),
             "grasp_held_asset": EventTerm(
@@ -157,7 +164,27 @@ START_ASSEMBLED = EventTerm(
     },
 )
 
-ASSET_NEAR_GRIPPER = EventTerm(
+
+# Identical to START_ASSEMBLED but drawn from just past the entry rather than along the seated path,
+# with pose noise around it: the held asset's insertion point sits at the mouth of the fixed asset,
+# aligned and a hair short of going in.
+START_NEAR_ASSEMBLED = START_ASSEMBLED.copy()
+START_NEAR_ASSEMBLED.params["terms"]["reset_held_asset_on_fixed_asset"].params.update(
+    assembly_fraction_range=(1.0, 1.1),
+    pose_noise=UniformPoseNoiseCfg(
+        x=(-0.002, 0.002),
+        y=(-0.002, 0.002),
+        z=(0.0, 0.01),
+        roll=(-0.3, 0.3),
+        pitch=(-0.3, 0.3),
+        yaw=(-0.5, 0.5),
+    ),
+)
+# Clear of the hole, the part has nothing under it, so the gripper has to be the thing holding it.
+# The flexible angle would leave it anywhere up to wide open, which drops the part on the first step.
+START_NEAR_ASSEMBLED.params["terms"]["grasp_held_asset"].params["flexible_angle"] = False
+
+start_near_grasped = EventTerm(
     func=mdp.ChainedResetTerms,
     mode="reset",
     params={
@@ -177,7 +204,7 @@ ASSET_NEAR_GRIPPER = EventTerm(
                 params={
                     "fixed_asset_cfg": SceneEntityCfg("fixed_asset"),
                     "fixed_asset_offset": FixedAssetTipCfg(),
-                    "pose_range_b": GraspedPoseRangeCfg(),
+                    "pose_range_b": GRASPED_POSE_RANGE,
                     "robot_ik_cfg": SceneEntityCfg(
                         "robot", joint_names=IKJointNamesCfg(), body_names=EndEffectorBodyCfg()
                     ),
@@ -214,9 +241,16 @@ ASSET_NEAR_GRIPPER = EventTerm(
     },
 )
 
-# Identical to ASSET_NEAR_GRIPPER but with a fixed grasp angle.
-ASSET_IN_GRIPPER = ASSET_NEAR_GRIPPER.copy()
+# Identical to start_near_grasped but with a fixed grasp angle.
+ASSET_IN_GRIPPER = start_near_grasped.copy()
 ASSET_IN_GRIPPER.params["terms"]["grasp_held_asset"].params["flexible_angle"] = False
+
+
+# Identical to ASSET_IN_GRIPPER but with the gripper sampled close to the fixed asset.
+GRASPED_NEAR_GOAL = ASSET_IN_GRIPPER.copy()
+GRASPED_NEAR_GOAL.params["terms"]["reset_end_effector_around_fixed_asset"].params["pose_range_b"] = (
+    GRASPED_POSE_RANGE_CENTERED
+)
 
 
 SCENE_RESET = EventTerm(
@@ -233,9 +267,6 @@ SCENE_RESET = EventTerm(
                     "asset_cfg": SceneEntityCfg("robot"),
                 },
             ),
-            # Fixed asset first: sample a filled uniform x-y patch (+ full yaw) about its nominal
-            # board pose. Deriving the board from a yaw-randomized center used to smear the fixed
-            # asset over a ring/donut; placing it directly avoids that. Tune the x-y extent.
             "reset_fixed_asset": EventTerm(
                 func=mdp.reset_fixed_asset_uniform,
                 mode="reset",
@@ -259,8 +290,10 @@ SCENE_RESET = EventTerm(
                     "terms": {
                         "start_random": START_RANDOM,
                         "start_assembled": START_ASSEMBLED,
+                        "start_near_assembled": START_NEAR_ASSEMBLED,
+                        "grasped_near_goal": GRASPED_NEAR_GOAL,
                         "start_grasped": ASSET_IN_GRIPPER,
-                        "start_near_grasped": ASSET_NEAR_GRIPPER,
+                        "start_near_grasped": start_near_grasped,
                     },
                     "sampling": SamplerCfg(
                         strategies=[

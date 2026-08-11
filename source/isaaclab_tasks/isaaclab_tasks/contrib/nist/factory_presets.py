@@ -26,7 +26,7 @@ from isaaclab.assets import ArticulationCfg
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils.configclass import configclass
 
-from isaaclab_tasks.utils import PresetCfg
+from isaaclab_tasks.utils import PresetCfg, preset
 
 from . import assembly_keypoints as kpts
 from .assembly_profile_cfg import (
@@ -340,93 +340,45 @@ class FactoryAssemblyProfileCfg(PresetCfg):
     peg_insert_4mm: AssemblyProfileCfg = AssemblyProfileCfg(
         segments=[
             IncrementalSegmentCfg(
-                fraction=(0.0, 0.7),
                 start_sampler=DiscreteYawCfg(yaws=[0.0, math.pi / 2, math.pi, 3 * math.pi / 2]),
                 start_pose=kpts.RECTANGULAR_HOLE_4MM.inserted_peg_base_offset,
                 distance=_dist(
                     kpts.RECTANGULAR_HOLE_4MM.inserted_peg_base_offset, kpts.RECTANGULAR_HOLE_4MM.hole_tip_offset
                 ),
-            ),
-            IncrementalSegmentCfg(
-                fraction=(0.7, 1.5),
-                start_sampler=UniformPoseNoiseCfg(
-                    x=(-0.01, 0.01), y=(-0.01, 0.01), roll=(-0.3, 0.3), pitch=(-0.3, 0.3), yaw=(-3.14, 3.14)
-                ),
-                start_pose=kpts.RECTANGULAR_HOLE_4MM.one_mm_above_hole_tip_offset,
-                distance=_dist(
-                    kpts.RECTANGULAR_HOLE_4MM.one_mm_above_hole_tip_offset,
-                    kpts.RECTANGULAR_HOLE_4MM.above_hole_tip_offset,
-                ),
-            ),
+            )
         ]
     )
     peg_insert_8mm: AssemblyProfileCfg = AssemblyProfileCfg(
         segments=[
             IncrementalSegmentCfg(
-                fraction=(0.0, 0.7),
                 start_sampler=DiscreteYawCfg(yaws=[0.0, math.pi]),
                 start_pose=kpts.RECTANGULAR_HOLE_8MM.inserted_peg_base_offset,
                 distance=_dist(
                     kpts.RECTANGULAR_HOLE_8MM.inserted_peg_base_offset, kpts.RECTANGULAR_HOLE_8MM.hole_tip_offset
                 ),
-            ),
-            IncrementalSegmentCfg(
-                fraction=(0.7, 1.5),
-                start_sampler=UniformPoseNoiseCfg(
-                    x=(-0.01, 0.01), y=(-0.01, 0.01), roll=(-0.3, 0.3), pitch=(-0.3, 0.3), yaw=(-3.14, 3.14)
-                ),
-                start_pose=kpts.RECTANGULAR_HOLE_8MM.one_mm_above_hole_tip_offset,
-                distance=_dist(
-                    kpts.RECTANGULAR_HOLE_8MM.one_mm_above_hole_tip_offset,
-                    kpts.RECTANGULAR_HOLE_8MM.above_hole_tip_offset,
-                ),
-            ),
+            )
         ]
     )
     peg_insert_12mm: AssemblyProfileCfg = AssemblyProfileCfg(
         segments=[
             IncrementalSegmentCfg(
-                fraction=(0.0, 0.7),
                 start_sampler=DiscreteYawCfg(yaws=[0.0, math.pi]),
                 start_pose=kpts.RECTANGULAR_HOLE_12MM.inserted_peg_base_offset,
                 distance=_dist(
                     kpts.RECTANGULAR_HOLE_12MM.inserted_peg_base_offset, kpts.RECTANGULAR_HOLE_12MM.hole_tip_offset
                 ),
-            ),
-            IncrementalSegmentCfg(
-                fraction=(0.7, 1.5),
-                start_sampler=UniformPoseNoiseCfg(
-                    x=(-0.01, 0.01), y=(-0.01, 0.01), roll=(-0.3, 0.3), pitch=(-0.3, 0.3), yaw=(-3.14, 3.14)
-                ),
-                start_pose=kpts.RECTANGULAR_HOLE_12MM.one_mm_above_hole_tip_offset,
-                distance=_dist(
-                    kpts.RECTANGULAR_HOLE_12MM.one_mm_above_hole_tip_offset,
-                    kpts.RECTANGULAR_HOLE_12MM.above_hole_tip_offset,
-                ),
-            ),
+            )
         ]
     )
     peg_insert_16mm: AssemblyProfileCfg = AssemblyProfileCfg(
         segments=[
             IncrementalSegmentCfg(
-                fraction=(0.0, 0.7),
                 start_sampler=DiscreteYawCfg(yaws=[0.0, math.pi]),
                 start_pose=kpts.RECTANGULAR_HOLE_16MM.inserted_peg_base_offset,
                 distance=_dist(
                     kpts.RECTANGULAR_HOLE_16MM.inserted_peg_base_offset, kpts.RECTANGULAR_HOLE_16MM.hole_tip_offset
                 ),
-            ),
-            IncrementalSegmentCfg(
-                fraction=(0.7, 1.5),
-                start_sampler=UniformPoseNoiseCfg(
-                    x=(-0.01, 0.01), y=(-0.01, 0.01), roll=(-0.3, 0.3), pitch=(-0.3, 0.3), yaw=(-3.14, 3.14)
-                ),
-                start_pose=kpts.RECTANGULAR_HOLE_16MM.one_mm_above_hole_tip_offset,
-                distance=_dist(
-                    kpts.RECTANGULAR_HOLE_16MM.one_mm_above_hole_tip_offset,
-                    kpts.RECTANGULAR_HOLE_16MM.above_hole_tip_offset,
-                ),
-            ),
+            )
         ]
     )
 
@@ -630,68 +582,97 @@ class HeldAssetGraspMiddleCfg(PresetCfg):
     default: kpts.Offset = nut_thread_m16
 
 
-# Pose ranges reused across size variants within each category
-_NUT_GRASPED_RANGE = dict(
-    x=(-0.15, 0.15),
-    y=(-0.15, 0.15),
-    z=(0.00 - 0.05, 0.035 + 0.1),
-    roll=(0.0, 0.0),
-    pitch=(-0.5, 0.5),
-    yaw=(-2.09, 2.09),
+def _end_effector_pose_range(
+    grasp_height: tuple[float, float],
+    x: tuple[float, float],
+    y: tuple[float, float],
+    z: tuple[float, float],
+    roll: tuple[float, float],
+    pitch: tuple[float, float],
+    yaw: tuple[float, float],
+) -> dict:
+    """How far the end effector may be randomized away from the target, for one variant.
+
+    ``z`` is measured from the bottom and the top of ``grasp_height`` [m], the stretch of the
+    held asset the gripper can close on. The rest are measured from the target grasp pose.
+    """
+    lowest_grasp, highest_grasp = grasp_height
+    return dict(
+        x=x,
+        y=y,
+        z=(lowest_grasp + z[0], highest_grasp + z[1]),
+        roll=roll,
+        pitch=pitch,
+        yaw=yaw,
+    )
+
+_WIDE_RANGE = dict(
+    x=(-0.15, 0.15), y=(-0.15, 0.15), z=(-0.05, 0.1), roll=(0.0, 0.0), pitch=(-0.5, 0.5), yaw=(-2.09, 2.09)
 )
-_GEAR_GRASPED_RANGE = dict(
-    x=(-0.15, 0.15),
-    y=(-0.15, 0.15),
-    z=(0.035 - 0.05, 0.045 + 0.1),
-    roll=(0.0, 0.0),
-    pitch=(-0.5, 0.5),
-    yaw=(-2.09, 2.09),
+
+_CENTERED_RANGE = dict(
+    x=(-0.025, 0.025), y=(-0.025, 0.025), z=(-0.025, 0.025), roll=(0.0, 0.0), pitch=(-0.25, 0.25), yaw=(-1.045, 1.045)
 )
-_INSERT_GRASPED_RANGE = dict(
-    x=(-0.15, 0.15),
-    y=(-0.15, 0.15),
-    z=(0.047- 0.05, 0.057 + 0.1),
-    roll=(0.0, 0.0),
-    pitch=(-0.5, 0.5),
-    yaw=(-2.09, 2.09),
-)
+
+
+_NUT_GRASP_HEIGHT = (0.000, 0.035)
+_GEAR_GRASP_HEIGHT = (0.035, 0.045)
+_INSERT_GRASP_HEIGHT = (0.047, 0.057)
 
 
 @configclass
-class GraspedPoseRangeCfg(PresetCfg):
-    """Pose range for the ``start_near_grasped`` reset strategy."""
+class _GraspHeightCfg(PresetCfg):
+    """Lowest and highest graspable point on the held asset [m], measured above the fixed asset tip.
+
+    The one per-variant input to :func:`_end_effector_pose_range`, so both pose-range tables
+    below are generated from it and a new assembly variant only has to be added once.
+    """
 
     # Nut threading
-    nut_thread_m4: dict = _NUT_GRASPED_RANGE
-    nut_thread_m8: dict = _NUT_GRASPED_RANGE
-    nut_thread_m12: dict = _NUT_GRASPED_RANGE
-    nut_thread_m16: dict = _NUT_GRASPED_RANGE
+    nut_thread_m4: tuple = _NUT_GRASP_HEIGHT
+    nut_thread_m8: tuple = _NUT_GRASP_HEIGHT
+    nut_thread_m12: tuple = _NUT_GRASP_HEIGHT
+    nut_thread_m16: tuple = _NUT_GRASP_HEIGHT
 
     # Gear mesh
-    gear_mesh_small: dict = _GEAR_GRASPED_RANGE
-    gear_mesh_medium: dict = _GEAR_GRASPED_RANGE
-    gear_mesh_large: dict = _GEAR_GRASPED_RANGE
+    gear_mesh_small: tuple = _GEAR_GRASP_HEIGHT
+    gear_mesh_medium: tuple = _GEAR_GRASP_HEIGHT
+    gear_mesh_large: tuple = _GEAR_GRASP_HEIGHT
 
     # Rod insert (round)
-    rod_insert_4mm: dict = _INSERT_GRASPED_RANGE
-    rod_insert_8mm: dict = _INSERT_GRASPED_RANGE
-    rod_insert_12mm: dict = _INSERT_GRASPED_RANGE
-    rod_insert_16mm: dict = _INSERT_GRASPED_RANGE
+    rod_insert_4mm: tuple = _INSERT_GRASP_HEIGHT
+    rod_insert_8mm: tuple = _INSERT_GRASP_HEIGHT
+    rod_insert_12mm: tuple = _INSERT_GRASP_HEIGHT
+    rod_insert_16mm: tuple = _INSERT_GRASP_HEIGHT
 
     # Peg insert (rectangular)
-    peg_insert_4mm: dict = _INSERT_GRASPED_RANGE
-    peg_insert_8mm: dict = _INSERT_GRASPED_RANGE
-    peg_insert_12mm: dict = _INSERT_GRASPED_RANGE
-    peg_insert_16mm: dict = _INSERT_GRASPED_RANGE
+    peg_insert_4mm: tuple = _INSERT_GRASP_HEIGHT
+    peg_insert_8mm: tuple = _INSERT_GRASP_HEIGHT
+    peg_insert_12mm: tuple = _INSERT_GRASP_HEIGHT
+    peg_insert_16mm: tuple = _INSERT_GRASP_HEIGHT
 
     # Connector insert
-    usba: dict = _INSERT_GRASPED_RANGE
-    waterproof: dict = _INSERT_GRASPED_RANGE
-    bnc: dict = _INSERT_GRASPED_RANGE
-    dsub: dict = _INSERT_GRASPED_RANGE
-    rj45: dict = _INSERT_GRASPED_RANGE
+    usba: tuple = _INSERT_GRASP_HEIGHT
+    waterproof: tuple = _INSERT_GRASP_HEIGHT
+    bnc: tuple = _INSERT_GRASP_HEIGHT
+    dsub: tuple = _INSERT_GRASP_HEIGHT
+    rj45: tuple = _INSERT_GRASP_HEIGHT
 
-    default: dict = nut_thread_m16
+    default: tuple = _NUT_GRASP_HEIGHT
+
+
+_GRASP_HEIGHTS = _GraspHeightCfg()
+_VARIANTS = _GRASP_HEIGHTS.__dataclass_fields__
+
+GRASPED_POSE_RANGE = preset(
+    **{name: _end_effector_pose_range(getattr(_GRASP_HEIGHTS, name), **_WIDE_RANGE) for name in _VARIANTS}
+)
+"""Pose range for the ``start_near_grasped`` reset strategy."""
+
+GRASPED_POSE_RANGE_CENTERED = preset(
+    **{name: _end_effector_pose_range(getattr(_GRASP_HEIGHTS, name), **_CENTERED_RANGE) for name in _VARIANTS}
+)
+"""Pose range for the ``grasped_near_goal`` reset strategy."""
 
 
 @configclass

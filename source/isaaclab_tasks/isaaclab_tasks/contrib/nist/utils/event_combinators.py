@@ -20,6 +20,14 @@ exposes ``.is_success``: a per-env bool tensor read at runtime to update
 the success monitor. Any domain (locomotion, manipulation, …) can satisfy
 this contract by registering a termination term named ``progress_context``
 whose function exposes an ``.is_success`` attribute.
+
+A second, optional contract runs the other way. A reset term whose function
+exposes a per-env bool ``.is_valid`` is reporting whether it managed to do
+what it was asked — an IK solve that reached its target, a placement that
+found room. :class:`ChainedResetTerms` and :class:`TermChoice` propagate it
+upward, and :class:`reset_accumulator` treats it as one more acceptance
+condition, so a strategy that failed on an env never reaches the state table.
+Terms that cannot fail simply omit the attribute.
 """
 
 from __future__ import annotations
@@ -135,6 +143,11 @@ class reset_accumulator(ManagerTermBase):
                     tag_weight.copy_(deficit if deficit.any() else torch.ones_like(deficit))
                 reset_term.func(env, all_env_ids, **reset_term.params)
                 valid_mask = torch.ones(len(all_env_ids), dtype=torch.bool, device=env.device)
+                # The strategy gets the first word: an env it could not place the way it was asked
+                # to is not worth screening for collisions, let alone banking.
+                reported = getattr(reset_term.func, "is_valid", None)
+                if reported is not None:
+                    valid_mask &= reported[all_env_ids]
                 for condition in self.acceptance_conditions.values():
                     condition_func = condition if callable(condition) else condition.func
                     valid_mask &= condition_func(env, all_env_ids)
@@ -251,6 +264,8 @@ class TermChoice(ManagerTermBase):
         self.num_partitions = len(self.term_partitions)
         self.term_samples = torch.zeros((env.num_envs,), dtype=torch.long, device=env.device)
         self.sampling_weight = torch.ones(self.num_partitions, device=env.device)
+        self.is_valid = torch.ones(env.num_envs, dtype=torch.bool, device=env.device)
+        """Whether the strategy each env drew reported success, per env, for the last call."""
         self._sampling_cfg: SamplerCfg = cfg.params["sampling"]
         if self._sampling_cfg.max_samples is None:
             self._sampling_cfg.max_samples = env.num_envs
@@ -309,10 +324,14 @@ class TermChoice(ManagerTermBase):
                 {f"Metrics/SampleProb/{name}": probs[i].item() for i, name in enumerate(self.term_partitions.keys())}
             )
 
+        self.is_valid[env_ids] = True
         for i, (_, term_cfg) in enumerate(self.term_partitions.items()):
             term_ids = env_ids[self.term_samples[env_ids] == i]
             if term_ids.numel() > 0:
                 term_cfg.func(env, term_ids, **term_cfg.params)
+                reported = getattr(term_cfg.func, "is_valid", None)
+                if reported is not None:
+                    self.is_valid[term_ids] = reported[term_ids]
 
         if report:
             env.extras.setdefault("log", {}).update(log)
@@ -322,6 +341,8 @@ class ChainedResetTerms(ManagerTermBase):
     def __init__(self, cfg: EventTermCfg, env: ManagerBasedRLEnv):
         super().__init__(cfg, env)
         self.terms: dict[str, EventTermCfg] = cfg.params["terms"]  # type: ignore
+        self.is_valid = torch.ones(env.num_envs, dtype=torch.bool, device=env.device)
+        """Whether every reporting term in the chain succeeded, per env, for the last call."""
 
     def __call__(
         self,
@@ -330,9 +351,14 @@ class ChainedResetTerms(ManagerTermBase):
         terms: dict[str, callable],
         probability: float = 1.0,
     ) -> None:
+        # Envs the chain skips keep the state they already had, which is as valid as it ever was.
+        self.is_valid[env_ids] = True
         keep = torch.rand(env_ids.size(0), device=env_ids.device) < probability
         if not keep.any():
             return
         env_ids_to_reset = env_ids[keep]
         for _, term in terms.items():
             term.func(env, env_ids_to_reset, **term.params)  # type: ignore
+            reported = getattr(term.func, "is_valid", None)
+            if reported is not None:
+                self.is_valid[env_ids_to_reset] &= reported[env_ids_to_reset]
