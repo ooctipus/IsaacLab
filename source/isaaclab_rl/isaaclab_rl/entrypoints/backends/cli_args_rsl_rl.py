@@ -38,13 +38,23 @@ def add_rsl_rl_args(parser: argparse.ArgumentParser):
     arg_group.add_argument(
         "--log_project_name", type=str, default=None, help="Name of the logging project when using wandb or neptune."
     )
-    arg_group.add_argument(
+    wandb_source_group = arg_group.add_mutually_exclusive_group()
+    wandb_source_group.add_argument(
         "--wandb_run_id",
         type=str,
         default=None,
         help=(
             "Run ID for Weights & Biases (wandb) to load a specific run. If not provided, will not load the run from"
             " wandb."
+        ),
+    )
+    wandb_source_group.add_argument(
+        "--wandb_run_name",
+        type=str,
+        default=None,
+        help=(
+            "Exact display name of a Weights & Biases run to load. The name must resolve to one run in the logging"
+            " project."
         ),
     )
     arg_group.add_argument(
@@ -110,21 +120,23 @@ def update_rsl_rl_cfg(agent_cfg: RslRlBaseRunnerCfg, args_cli: argparse.Namespac
         agent_cfg.wandb_project = args_cli.log_project_name
         agent_cfg.neptune_project = args_cli.log_project_name
 
-    if args_cli.wandb_run_id is not None:
+    if args_cli.wandb_run_id is not None or args_cli.wandb_run_name is not None:
         # User wants to sync from wandb
         from isaaclab.utils.wandb import get_model_checkpoint
 
         checkpoint_folder = get_model_checkpoint(
             run_id=args_cli.wandb_run_id,
+            run_name=args_cli.wandb_run_name,
             project=agent_cfg.wandb_project,
             checkpoint=args_cli.wandb_checkpoint_iteration,
             wandb_username=args_cli.wandb_username,
         )
+        resolved_run_id = os.path.basename(os.path.dirname(checkpoint_folder))
         agent_cfg.experiment_name = os.path.abspath(os.path.dirname(os.path.dirname(checkpoint_folder)))
-        agent_cfg.run_name = os.path.basename(os.path.dirname(checkpoint_folder))
+        agent_cfg.run_name = resolved_run_id
         agent_cfg.load_checkpoint = os.path.basename(checkpoint_folder)
-        agent_cfg.run_id = args_cli.wandb_run_id
-        agent_cfg.load_run = os.path.basename(os.path.dirname(checkpoint_folder))
+        agent_cfg.run_id = resolved_run_id
+        agent_cfg.load_run = resolved_run_id
         print(f"[INFO] Loading run from Weights & Biases: {agent_cfg.load_run}")
 
     return agent_cfg
