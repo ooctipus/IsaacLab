@@ -24,6 +24,7 @@ ARG ISAACSIM_ROOT_PATH_ARG=/isaac-sim
 COPY --chown=isaaclab:isaaclab source ${ISAACLAB_PATH}/source
 COPY --chown=isaaclab:isaaclab scripts ${ISAACLAB_PATH}/scripts
 COPY --chown=isaaclab:isaaclab tools ${ISAACLAB_PATH}/tools
+COPY --chown=isaaclab:isaaclab isaaclab.sh ${ISAACLAB_PATH}/isaaclab.sh
 
 # Recreate the Isaac Sim symlink and normalize shell line endings. Optionally
 # re-run the uv sync (skipped for plain source-only, enabled for --force-pip-only)

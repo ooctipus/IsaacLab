@@ -108,31 +108,29 @@ workflow:
           fi
 
           {% if num_node > 1 %}
-          python -m torch.distributed.run \
+          /workspace/isaaclab/isaaclab.sh train_multigpu \
+            --rl_library rsl_rl \
             --nnodes {{ num_node }} \
             --nproc_per_node {{ num_gpu }} \
             --node_rank {{ item }} \
             --master_addr {{host:master}} \
             --master_port {{ master_port }} \
-            /workspace/isaaclab/{{ script }} \
-              --distributed \
-              --workflow_id {{workflow_id}} \
-              {{ args }}
+            --workflow_id {{workflow_id}} \
+            {{ args }}
           {% elif num_gpu > 1 %}
-          python -m torch.distributed.run \
+          /workspace/isaaclab/isaaclab.sh train_multigpu \
+            --rl_library rsl_rl \
             --nnodes 1 \
             --nproc_per_node {{ num_gpu }} \
             --master_addr 127.0.0.1 \
             --master_port {{ master_port }} \
-            /workspace/isaaclab/{{ script }} \
-              --distributed \
-              --workflow_id {{workflow_id}} \
-              {{ args }}
+            --workflow_id {{workflow_id}} \
+            {{ args }}
           {% else %}
-          python \
-            /workspace/isaaclab/{{ script }} \
-              --workflow_id {{workflow_id}} \
-              {{ args }}
+          /workspace/isaaclab/isaaclab.sh train \
+            --rl_library rsl_rl \
+            --workflow_id {{workflow_id}} \
+            {{ args }}
           {% endif %}
 
           # Collect logs/checkpoints into the dataset output dir
@@ -160,5 +158,4 @@ default-values:
   dataset: isaac-lab-ppo-model
   cache_user: zhengyuz
   cluster_cache_root: ""
-  script: scripts/reinforcement_learning/rsl_rl/train.py
   args:
