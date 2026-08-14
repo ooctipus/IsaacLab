@@ -225,6 +225,7 @@ def add_common_train_args(
     parser.add_argument(
         "--max_iterations", type=max_iterations_type, default=None, help="RL Policy training iterations."
     )
+    parser.add_argument("--workflow_id", type=str, default=None, help="Cluster workflow ID.")
     parser.add_argument(
         "--export_io_descriptors",
         action="store_true",
