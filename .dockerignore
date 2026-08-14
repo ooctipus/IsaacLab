@@ -28,7 +28,7 @@ _isaac_sim
 docker/.isaac-lab-docker-history
 # ignore uv environment
 env_isaaclab
-.venv/
+.venv
 tools/wheel_builder/build/
 # ignore IDE and AI agent configs
 .claude/

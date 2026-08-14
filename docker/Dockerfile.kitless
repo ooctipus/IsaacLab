@@ -3,145 +3,168 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-# Kit-less image for GPU-accelerated training without Isaac Sim or Kit:
-# Newton physics, OVRTX rendering, and every core RL framework.
-ARG BASE_IMAGE_ARG=ubuntu:24.04
+# syntax=docker/dockerfile:1
+#
+# Kit-less Isaac Lab image: Newton backend only, no Isaac Sim.
+#
+# Unlike Dockerfile.base (which layers uv on top of the NGC Isaac Sim image and
+# inherits the bundled isaacsim/omni via --system-site-packages), this image
+# starts from a plain CUDA/Ubuntu base and lets uv manage its own CPython 3.12.
+# ``uv sync`` installs the default workspace (isaaclab* editable + newton main +
+# rsl_rl fork + torch cu128), which does not include the Isaac Sim pip package.
+# As a result PhysX, Kit rendering, RTX, and ROS workflows are unavailable; the
+# Newton physics backend (incl. MuJoCo-Warp) and the Newton visualizer work.
 
-FROM ghcr.io/astral-sh/uv:0.9.25@sha256:13e233d08517abdafac4ead26c16d881cd77504a2c40c38c905cf3a0d70131a6 AS uv
+# Base image: a CUDA/Ubuntu image is used so the NVIDIA container runtime exposes
+# the driver at run time. torch ``2.10.0+cu128`` bundles its own CUDA runtime, so
+# a ``-runtime`` (or even plain Ubuntu) base is sufficient; override via build-arg
+# if a different CUDA/Ubuntu combination is required.
+ARG KITLESS_BASE_IMAGE_ARG=nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04
+FROM ${KITLESS_BASE_IMAGE_ARG} AS base
 
-FROM ${BASE_IMAGE_ARG} AS builder
+# Set default RUN shell to bash
+SHELL ["/bin/bash", "-c"]
 
-SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+# Adds labels to the Dockerfile
+LABEL version="2.1.1"
+LABEL description="Kit-less Dockerfile for building and running Isaac Lab with the Newton backend (no Isaac Sim)."
 
-ARG ISAACLAB_PATH_ARG=/workspace/isaaclab
+# Arguments
+# Path to the Isaac Lab directory
+ARG ISAACLAB_PATH_ARG
 ENV ISAACLAB_PATH=${ISAACLAB_PATH_ARG}
-ENV DEBIAN_FRONTEND=noninteractive
-ENV LANG=C.UTF-8
-ENV VIRTUAL_ENV=${ISAACLAB_PATH_ARG}/.venv
-ENV PATH=${ISAACLAB_PATH_ARG}/.venv/bin:/usr/local/bin:${PATH}
-ENV UV_NO_CACHE=1
-ENV PIP_RETRIES=12
-ENV UV_HTTP_RETRIES=12
-
-# Native build tools remain confined to this stage.
-RUN apt-get update \
- && apt-get install -y --no-install-recommends \
-      build-essential \
-      ca-certificates \
-      cmake \
-      git \
-      libglib2.0-0 \
-      python3 \
-      python3-dev \
- && rm -rf /var/lib/apt/lists/*
-
-# Copy uv from its official versioned image instead of executing a mutable
-# installer URL during the build.
-COPY --from=uv /uv /uvx /usr/local/bin/
-
-WORKDIR ${ISAACLAB_PATH}
-
-# Copy the install inputs before the rest of the runtime tree so dependency
-# installation remains cached when only scripts or application code changes.
-COPY pyproject.toml uv.lock VERSION LICENSE LICENSE-mimic README.md ./
-COPY source/ source/
-COPY isaaclab.sh ./
-COPY tools/wheel_builder/uv-overrides.txt tools/wheel_builder/uv-overrides.txt
-
-# Same entry point as Dockerfile.base. The selectors are explicit because a bare
-# --install excludes `ov` and `visualizer`; both take `[all]` here. The standalone
-# importers are explicit wheel extras, so install them with the resolver overrides
-# that preserve Isaac Lab's dependency versions. The venv pins python3.12 to match
-# the runtime stage's libpython3.12, and isaaclab.sh resolves VIRTUAL_ENV first.
-RUN uv venv --python /usr/bin/python3.12 --seed --no-managed-python "${VIRTUAL_ENV}" \
- && chmod +x "${ISAACLAB_PATH}/isaaclab.sh" \
- && "${ISAACLAB_PATH}/isaaclab.sh" --install newton,rl[all],ov[all],visualizer[all] \
- && uv pip install \
-      --overrides "${ISAACLAB_PATH}/tools/wheel_builder/uv-overrides.txt" \
-      "isaacsim-asset-isolated>=6.0,<6.1" \
-      "tinyobjloader==2.0.0rc13" \
- && python -c "import importlib.metadata as m; \
-      names = {d.metadata['Name'].lower() for d in m.distributions()}; \
-      assert 'isaacsim' not in names; \
-      assert 'isaacsim-asset-isolated' in names; \
-      assert 'ovphysx' in names; \
-      assert 'ovrtx' in names; \
-      assert 'viser' in names; \
-      assert 'rerun-sdk' in names" \
- && test ! -e "${ISAACLAB_PATH}/_isaac_sim"
-
-# isaaclab.utils.assets parses apps/isaaclab.python.kit at import time to
-# resolve the Nucleus asset root, so apps/ is required even without Kit.
-COPY apps/ apps/
-COPY scripts/ scripts/
-COPY docs/licenses/ docs/licenses/
-COPY docker/docker-compose.yaml docker/docker-compose.yaml
-COPY docker/utils/volume_mounts.py docker/utils/volume_mounts.py
-
-
-FROM ${BASE_IMAGE_ARG} AS runtime
-
-SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-
-ARG ISAACLAB_PATH_ARG=/workspace/isaaclab
-ENV ISAACLAB_PATH=${ISAACLAB_PATH_ARG}
-ENV DEBIAN_FRONTEND=noninteractive
-ENV LANG=C.UTF-8
-# Build arg like Dockerfile.base, so the image home and the Compose mounts
-# derived from DOCKER_USER_HOME cannot drift apart.
-ARG DOCKER_USER_HOME_ARG=/home/isaaclab
+# Home dir of the runtime docker user, typically '/root'
+ARG DOCKER_USER_HOME_ARG
 ENV DOCKER_USER_HOME=${DOCKER_USER_HOME_ARG}
 ENV HOME=${DOCKER_USER_HOME}
-ENV VIRTUAL_ENV=${ISAACLAB_PATH_ARG}/.venv
-ENV PATH=${ISAACLAB_PATH_ARG}/.venv/bin:/usr/local/bin:${PATH}
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-ENV NVIDIA_VISIBLE_DEVICES=all
-ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics
 
-# Libraries ovrtx loads at init. GLVND splits these: libgl1 gives libGL.so.1,
-# but libOpenGL.so.0 and libEGL.so.1 need libopengl0 and libegl1. libxrender1 is
-# for the Newton GL viewer: pyglet's xlib backend resolves libXrender.so.1 via
-# ctypes at import time and nothing else in this list pulls it in transitively.
-RUN apt-get update \
- && apt-get install -y --no-install-recommends \
-      ca-certificates \
-      git \
-      libegl1 \
-      libgl1 \
-      libglib2.0-0 \
-      libgomp1 \
-      libopengl0 \
-      libpython3.12 \
-      libvulkan1 \
-      libx11-6 \
-      libxext6 \
-      libxrender1 \
-      python3 \
- && rm -rf /var/lib/apt/lists/* \
- && if getent passwd ubuntu >/dev/null; then userdel -r ubuntu; fi \
- && if getent group ubuntu >/dev/null; then groupdel ubuntu; fi \
- && groupadd --gid 1000 isaaclab \
- && useradd --uid 1000 --gid 1000 --home-dir "${HOME}" --create-home --shell /bin/bash isaaclab \
- && mkdir -p "${HOME}" \
- && chown -R isaaclab:isaaclab "${HOME}" \
- && chmod 750 "${HOME}"
+# Set environment variables
+ENV LANG=C.UTF-8
+ENV DEBIAN_FRONTEND=noninteractive
 
-COPY --from=builder /usr/local/bin/uv /usr/local/bin/uv
-COPY --from=builder /usr/local/bin/uvx /usr/local/bin/uvx
-COPY --from=builder --chown=isaaclab:isaaclab ${ISAACLAB_PATH} ${ISAACLAB_PATH}
+# Install uv-managed CPython into a shared, root-owned location (world-readable)
+# instead of the runtime user's home. This keeps the interpreter out of the
+# ``chown -R ${DOCKER_USER_HOME}`` below (it would otherwise copy-up thousands of
+# files on overlayfs) while still being usable by the non-root user's venv.
+ENV UV_PYTHON_INSTALL_DIR=/opt/uv/python
 
-# A fresh named volume inherits ownership from the image directory at its mount
-# path, so pre-create and chown them; derived from Compose to avoid duplication.
-RUN set -o pipefail \
- && export DOCKER_ISAACLAB_PATH="${ISAACLAB_PATH}" \
-           DOCKER_USER_HOME="${HOME}" \
- && dirs="$(python ${ISAACLAB_PATH}/docker/utils/volume_mounts.py \
-      --volumes_key x-kitless-isaac-lab-volumes | grep '^/')" \
- && mkdir -p ${dirs} \
- && chown -R isaaclab:isaaclab ${dirs}
+USER root
+
+# Install dependencies. ``ca-certificates`` is required for uv to fetch its
+# managed CPython build and resolve packages over HTTPS.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    build-essential \
+    ca-certificates \
+    libglib2.0-0 \
+    ncurses-term \
+    cmake \
+    git \
+    wget
+
+# arm64-only build deps (mirrors Dockerfile.base):
+# - imgui-bundle has no prebuilt arm64 wheel; needs GL/X11 dev headers.
+# - swig is required for the nlopt source build.
+# - libgmp-dev is required by pytetwild's fTetWild source build (no aarch64 wheel for 0.2.3).
+RUN if [ "$(dpkg --print-architecture)" = "arm64" ]; then \
+        apt-get update && \
+        apt-get install -y --no-install-recommends \
+        libgl1-mesa-dev libopengl-dev libglx-dev \
+        libx11-dev libxcursor-dev libxi-dev libxinerama-dev libxrandr-dev \
+        libgmp-dev \
+        swig; \
+    fi
+
+# Bring in the uv binary (pinned) used for the dependency install below.
+COPY --from=ghcr.io/astral-sh/uv:0.9.4 /uv /uvx /usr/local/bin/
+
+# copy files necessary for installing Isaac Lab and its dependencies
+# this way we minimize the chance of cache invalidation on file edits
+# (uv.lock + pyproject.toml + source/ are the inputs uv sync resolves against).
+# ``--chown=1000:1000`` (numeric, since the isaaclab user is created later) sets
+# ownership as the files are written, so we avoid a slow recursive ``chown`` over
+# source/ (incl. the bulky isaaclab_assets/data) on overlayfs.
+COPY --chown=1000:1000 ../isaaclab.* ../environment.yml ../pyproject.toml ../uv.lock ${ISAACLAB_PATH}/
+COPY --chown=1000:1000 ../tools/ ${ISAACLAB_PATH}/tools/
+COPY --chown=1000:1000 ../source/ ${ISAACLAB_PATH}/source/
+
+# Fix the line endings for the shell scripts (Windows git may add \r)
+RUN find ${ISAACLAB_PATH} -type f -name "*.sh" -exec sed -i 's/\r$//' {} +
+
+# Ensure isaaclab.sh has execute permissions
+RUN chmod +x ${ISAACLAB_PATH}/isaaclab.sh
+
+# Install the apt dependencies that extensions declare in their extension.toml.
+# This needs root and the ``toml`` module; ``uv run --no-project --with toml``
+# gives an ephemeral interpreter with toml without touching the project venv, so
+# we can build the venv later as the non-root user.
+RUN uv run --no-project --with toml python ${ISAACLAB_PATH}/tools/install_deps.py apt ${ISAACLAB_PATH}/source && \
+    apt-get -y autoremove && apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# for singularity usage, create the runtime cache directories and NVIDIA binary
+# placeholders so the image runs under singularity on clusters.
+RUN mkdir -p ${DOCKER_USER_HOME}/.cache/pip && \
+    mkdir -p ${DOCKER_USER_HOME}/.cache/nvidia/GLCache && \
+    mkdir -p ${DOCKER_USER_HOME}/.nv/ComputeCache && \
+    mkdir -p ${DOCKER_USER_HOME}/Documents && \
+    touch /bin/nvidia-smi && \
+    touch /bin/nvidia-debugdump && \
+    touch /bin/nvidia-persistenced && \
+    touch /bin/nvidia-cuda-mps-control && \
+    touch /bin/nvidia-cuda-mps-server && \
+    touch /etc/localtime && \
+    mkdir -p /var/run/nvidia-persistenced && \
+    touch /var/run/nvidia-persistenced/socket
+
+# aliasing isaaclab.sh and tensorboard for convenience
+RUN echo "export ISAACLAB_PATH=${ISAACLAB_PATH}" >> ${DOCKER_USER_HOME}/.bashrc && \
+    echo "alias isaaclab=${ISAACLAB_PATH}/isaaclab.sh" >> ${DOCKER_USER_HOME}/.bashrc && \
+    echo "alias tensorboard='${ISAACLAB_PATH}/.venv/bin/python -m tensorboard'" >> ${DOCKER_USER_HOME}/.bashrc && \
+    echo "export TZ=$(date +%Z)" >> ${DOCKER_USER_HOME}/.bashrc && \
+    echo "shopt -s histappend" >> ${DOCKER_USER_HOME}/.bashrc && \
+    echo "PROMPT_COMMAND='history -a'" >> ${DOCKER_USER_HOME}/.bashrc
+
+# Create the non-root runtime user. The source tree is already owned by uid 1000
+# (via COPY --chown above) and the heavy ``uv sync`` runs as this user below, so
+# the only thing left to chown is the small runtime home (${DOCKER_USER_HOME}) --
+# the uv-managed Python lives in /opt, not here. uid/gid 1000 match GitHub runner
+# bind mounts; --non-unique covers base images that already carry a 1000 user.
+RUN groupadd --non-unique --gid 1000 isaaclab \
+ && useradd --non-unique --uid 1000 --gid 1000 -M -l -s /bin/bash -d ${DOCKER_USER_HOME} isaaclab
+
+# Keep the runtime home closed to unrelated users and owned by the runtime user.
+# Also pre-create the uv-managed Python dir owned by uid 1000 so the venv step
+# below (run as isaaclab) can install CPython 3.12 into it.
+RUN chown -R isaaclab:isaaclab ${DOCKER_USER_HOME} && \
+    chmod 750 ${DOCKER_USER_HOME} && \
+    mkdir -p ${UV_PYTHON_INSTALL_DIR} && \
+    chown -R isaaclab:isaaclab ${UV_PYTHON_INSTALL_DIR}
+
+# Activate the uv environment for all shells. With ``VIRTUAL_ENV`` set and the
+# venv's bin on ``PATH``, ``isaaclab.sh`` selects ``$VIRTUAL_ENV/bin/python``
+# (there is no ``_isaac_sim`` to source), and bare ``python``/``pip`` resolve to
+# the uv environment.
+ENV UV_PROJECT_ENVIRONMENT=${ISAACLAB_PATH}/.venv
+ENV VIRTUAL_ENV=${ISAACLAB_PATH}/.venv
+ENV PATH=${ISAACLAB_PATH}/.venv/bin:${PATH}
 
 USER isaaclab
-WORKDIR ${ISAACLAB_PATH}
 
-CMD ["bash"]
+# Create the uv environment on uv's own managed CPython 3.12 (no bundled
+# interpreter to inherit, so no --system-site-packages) and install Isaac Lab
+# (Newton backend) + the locked dependency tree. ``--frozen`` installs exactly
+# what ``uv.lock`` pins; the default workspace excludes the Isaac Sim pip package
+# so this stays kit-less. The cache mount is owned by uid/gid 1000 so the
+# non-root user can populate it.
+RUN --mount=type=cache,target=${DOCKER_USER_HOME}/.cache/uv,uid=1000,gid=1000 \
+    cd ${ISAACLAB_PATH} && \
+    uv venv --python 3.12 ${ISAACLAB_PATH}/.venv && \
+    uv sync --frozen
+
+# copy the rest of the files
+COPY --chown=isaaclab:isaaclab ../ ${ISAACLAB_PATH}/
+
+# make working directory as the Isaac Lab directory
+# this is the default directory when the container is run
+WORKDIR ${ISAACLAB_PATH}
