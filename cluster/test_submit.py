@@ -10,6 +10,8 @@ Tests verify that the exact LAUNCHING output matches expected patterns,
 preserving the behavior observed in production terminal output.
 """
 
+from pathlib import Path
+
 import pytest
 from lib import (
     PoolNodeResources,
@@ -19,6 +21,7 @@ from lib import (
     derive_run_name,
     expand_preset_braces,
     parse_args,
+    validate_image_script,
 )
 
 # =============================================================================
@@ -59,6 +62,23 @@ class TestExpandPresetBraces:
         assert expand_preset_braces("a,b,c") == ["a,b,c"]
 
 
+class TestValidateImageScript:
+    @pytest.mark.parametrize(
+        "script",
+        ["scripts/reinforcement_learning/train.py", "scripts/reinforcement_learning/rsl_rl/train.py"],
+    )
+    def test_image_script_accepts_normalized_relative_python_paths(self, script):
+        assert validate_image_script(script) == script
+
+    @pytest.mark.parametrize(
+        "script",
+        ["/tmp/train.py", "../train.py", "scripts/train.sh", "scripts/train.py;touch_bad", "scripts/train $(bad).py"],
+    )
+    def test_image_script_rejects_unsafe_paths(self, script):
+        with pytest.raises(SystemExit):
+            validate_image_script(script)
+
+
 # =============================================================================
 # parse_args
 # =============================================================================
@@ -97,6 +117,24 @@ class TestParseArgs:
     def test_unknown_pool_exits(self):
         with pytest.raises(SystemExit):
             parse_args(["pool=nonexistent-pool"])
+
+    def test_misspelled_l30s_pool_exits(self):
+        with pytest.raises(SystemExit):
+            parse_args(["pool=isaac-lab-l30s-03"])
+
+    @pytest.mark.parametrize("args", [["priority=LOW"], ["--priority=low"], ["--priority", "LOW"]])
+    def test_priority_resolution_all_forms(self, args):
+        p = parse_args(args)
+        assert p.priority == "LOW"
+        assert "priority" not in p.fixed
+        assert "--priority" not in p.fixed
+
+    def test_default_priority_is_unset(self):
+        assert parse_args([]).priority is None
+
+    def test_invalid_priority_exits(self):
+        with pytest.raises(SystemExit):
+            parse_args(["priority=URGENT"])
 
     def test_preset_no_braces_is_fixed(self):
         p = parse_args(["presets=peg_insert_12mm"])
@@ -400,7 +438,16 @@ class TestIntegrationLaunchingOutput:
             buf = io.StringIO()
             with redirect_stdout(buf):
                 launch_job(
-                    script, p.pool, cluster_str, fixed_str, combo, run_name, p.hydra_dels, p.cli_flags, dry_run=True
+                    script,
+                    p.pool,
+                    cluster_str,
+                    fixed_str,
+                    combo,
+                    run_name,
+                    p.hydra_dels,
+                    p.cli_flags,
+                    priority=p.priority,
+                    dry_run=True,
                 )
             lines.append(buf.getvalue().strip())
         return lines
@@ -521,6 +568,15 @@ class TestIntegrationLaunchingOutput:
         assert "--num_envs=10240" in args_val
         assert "presets=peg_insert_12mm" in args_val
 
+    def test_low_priority_is_workflow_metadata(self):
+        launch = self._get_launches(["pool=isaac-lab-l40-06", "priority=LOW", "--task=Foo"])[0]
+        assert "--pool isaac-lab-l40-06 --priority LOW --set" in launch
+        assert "priority" not in launch.split(" args=", maxsplit=1)[1]
+
+    def test_default_priority_is_left_to_osmo(self):
+        launch = self._get_launches(["pool=isaac-lab-l40-06", "--task=Foo"])[0]
+        assert "--priority" not in launch
+
     @pytest.mark.parametrize(
         "pool,expected_platform",
         [
@@ -529,6 +585,9 @@ class TestIntegrationLaunchingOutput:
             ("isaac-dex-l40s-04", "ovx-l40s"),
             ("groot-gb200-02", "gb200"),
             ("isaac-dev-l40-03", "ovx-l40"),
+            ("isaac-lab-l40-06", "ovx-l40"),
+            ("isaac-lab-l40-07", "ovx-l40"),
+            ("isaac-lab-l40s-03", "ovx-l40s"),
         ],
     )
     def test_pool_to_platform_in_output(self, pool, expected_platform):
@@ -537,6 +596,53 @@ class TestIntegrationLaunchingOutput:
         self._assert_pool_platform_consistent(launches[0])
         assert f"platform={expected_platform}" in launches[0]
         assert f"--pool {pool}" in launches[0]
+
+
+class TestWorkflowSpecArchitecture:
+    @staticmethod
+    def _spec() -> str:
+        return (Path(__file__).resolve().parents[1] / "docker/cluster/multi_node.yaml").read_text()
+
+    def test_workflow_executes_the_selected_script(self):
+        spec = self._spec()
+        assert spec.count("/workspace/isaaclab/{{ script }}") == 3
+        assert "isaaclab.sh train" not in spec
+        assert "--workflow_id" not in spec
+
+    def test_workflow_uses_the_image_python_runtime(self):
+        assert self._spec().count("/workspace/isaaclab/_isaac_sim/python.sh") == 3
+
+    def test_workflow_uses_socket_nccl_only_on_ovx(self):
+        spec = self._spec()
+        conditional = '{% if platform in ["ovx-l40", "ovx-l40s"] %}'
+        assert conditional in spec
+        socket_block = spec.split(conditional, maxsplit=1)[1].split("{% endif %}", maxsplit=1)[0]
+        assert "NCCL_NET: Socket" in socket_block
+        assert "NCCL_SOCKET_IFNAME: eth0" in socket_block
+        assert "NCCL_NET: Socket" not in spec.split(conditional, maxsplit=1)[0]
+
+    def test_workflow_pins_gloo_to_the_pod_interface(self):
+        spec = self._spec()
+        assert "GLOO_SOCKET_IFNAME: eth0" in spec
+
+    def test_workflow_does_not_own_wandb_username(self):
+        assert "WANDB_USERNAME" not in self._spec()
+
+
+class TestManipulationResumeImageArchitecture:
+    def test_overlay_uses_canonical_wandb_sources(self):
+        dockerfile = (
+            Path(__file__).resolve().parents[1] / "docker/cluster/Dockerfile.manipulation-wandb-resume"
+        ).read_text()
+        assert (
+            "COPY source/isaaclab/isaaclab/utils/wandb.py "
+            "/workspace/isaaclab/source/isaaclab/isaaclab/utils/wandb.py" in dockerfile
+        )
+        assert (
+            "COPY source/isaaclab_rl/isaaclab_rl/entrypoints/backends/cli_args_rsl_rl.py "
+            "/workspace/isaaclab/scripts/reinforcement_learning/rsl_rl/cli_args.py" in dockerfile
+        )
+        assert ".patch" not in dockerfile
 
 
 if __name__ == "__main__":

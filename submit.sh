@@ -8,6 +8,7 @@ set -euo pipefail
 #   ./submit.sh [-s|--submit] <script> [key=val ...]
 #   ./submit.sh [-p|--pbt]    <script> [key=val ...]
 #   ./submit.sh [-c|--cancel] <prefix-N> <count>
+# Use priority=LOW for a preemptible workflow.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
