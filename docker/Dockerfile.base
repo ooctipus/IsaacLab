@@ -169,8 +169,8 @@ RUN chmod 755 ${ISAACSIM_ROOT_PATH} && \
 
 # Activate the uv environment for all shells. With ``VIRTUAL_ENV`` set and the
 # venv's bin on ``PATH``, ``isaaclab.sh`` selects ``$VIRTUAL_ENV/bin/python`` and
-# still sources ``_isaac_sim/setup_conda_env.sh`` for Isaac Sim's native libs, and
-# bare ``python``/``pip`` resolve to the uv environment.
+# still sources the Isaac Sim env setup script for native libs, and bare
+# ``python``/``pip`` resolve to the uv environment.
 ENV UV_PROJECT_ENVIRONMENT=${ISAACLAB_PATH}/.venv
 ENV VIRTUAL_ENV=${ISAACLAB_PATH}/.venv
 ENV PATH=${ISAACLAB_PATH}/.venv/bin:${PATH}
