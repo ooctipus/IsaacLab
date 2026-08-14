@@ -24,6 +24,9 @@ set -euo pipefail
 #   -p, --pip         Rebuild source + re-run pip install
 #   -d, --deps        Rebuild deps + source + pip (uses Docker cache)
 #   -a, --all         Full rebuild from scratch (no Docker cache)
+#       --kitless     Build the Newton-only image (no Isaac Sim) from
+#                     docker/Dockerfile.kitless. Override the base image with the
+#                     KITLESS_BASE_IMAGE env var.
 #       --skip-push   Build/tag only, don't push to NGC
 #   -h, --help        Show this help message
 #
@@ -33,6 +36,7 @@ set -euo pipefail
 #   ./buildnpush.sh v1.0 -p       # Source + pip rebuild (use after setup.py edits)
 #   ./buildnpush.sh v1.0 -d       # Deps rebuild
 #   ./buildnpush.sh v1.0 -a       # Full rebuild from scratch
+#   ./buildnpush.sh v1.0 --kitless -d  # Newton-only (kitless) deps rebuild
 #   ./buildnpush.sh tag oocti/isaaclab-manipulation:latest factory
 #   ./buildnpush.sh enter v1.0        # Enter container for v1.0
 #   ./buildnpush.sh --status          # Check current images
@@ -298,17 +302,27 @@ clean_all() {
 # Compute hash of dependency files
 # =============================================================================
 compute_deps_hash() {
-  # Hash files that affect the dependency/base image. This includes the Isaac Sim
-  # base image selection, Docker build recipe, package metadata, and extension apt deps.
+  # Hash files that affect the dependency/base image. With the uv-native install,
+  # the dependency tree is governed by uv.lock + the workspace pyproject.toml files;
+  # extension.toml is still hashed because the build installs apt deps declared
+  # there. Also covers the base image selection and Docker build recipe. The
+  # ``kitless`` marker + Dockerfile.kitless keep the kitless deps cache distinct
+  # from the Isaac Sim one even though both reuse the ``isaac-lab-deps:*`` names.
   {
-    for file in docker/.env.base docker/Dockerfile.base docker/docker-compose.yaml pyproject.toml environment.yml isaaclab.sh; do
+    if [ "${KITLESS:-0}" -eq 1 ]; then
+      echo "### build-mode: kitless"
+      build_recipe="docker/Dockerfile.kitless"
+    else
+      build_recipe="docker/Dockerfile.base"
+    fi
+    for file in docker/.env.base "${build_recipe}" docker/docker-compose.yaml pyproject.toml uv.lock isaaclab.sh; do
       if [ -f "$file" ]; then
         echo "### ${file}"
         cat "$file"
       fi
     done
 
-    find source \( -name "setup.py" -o -name "requirements.txt" -o -name "extension.toml" \) -type f 2>/dev/null | \
+    find source \( -name "pyproject.toml" -o -name "extension.toml" \) -type f 2>/dev/null | \
       sort | \
       while IFS= read -r file; do
         echo "### ${file}"
@@ -325,7 +339,12 @@ REBUILD_DEPS=0
 REBUILD_PIP=0
 REBUILD_SOURCE=0
 SKIP_PUSH=0
+KITLESS=0
 TAG=""
+
+# Base image for kitless builds (Newton backend, no Isaac Sim). Overridable via
+# the environment, e.g. ``KITLESS_BASE_IMAGE=ubuntu:22.04 ./buildnpush.sh ...``.
+KITLESS_BASE_IMAGE="${KITLESS_BASE_IMAGE:-nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04}"
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -364,6 +383,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-push)
       SKIP_PUSH=1
+      shift
+      ;;
+    --kitless)
+      KITLESS=1
       shift
       ;;
     -h|--help)
@@ -627,7 +650,24 @@ if [ "$SKIP_DEPS" -eq 0 ]; then
     unset ISAACLAB_NOCACHE 2>/dev/null || true
   fi
 
-  ./docker/container.py start --build
+  if [ "$KITLESS" -eq 1 ]; then
+    # Kitless (Newton-only, no Isaac Sim): build directly from Dockerfile.kitless
+    # instead of the Isaac-Sim docker-compose path. Tagged as ${BASE_IMAGE} so the
+    # rest of the cache/tag/push flow is identical to the Isaac Sim build.
+    echo "   🪶 Kitless build on ${KITLESS_BASE_IMAGE}"
+    source docker/.env.base
+    kitless_cache_flag=""
+    [ "$USE_CACHE" -eq 0 ] && kitless_cache_flag="--no-cache"
+    DOCKER_BUILDKIT=1 docker build ${kitless_cache_flag} \
+      -f docker/Dockerfile.kitless \
+      --build-arg KITLESS_BASE_IMAGE_ARG="${KITLESS_BASE_IMAGE}" \
+      --build-arg ISAACLAB_PATH_ARG="${DOCKER_ISAACLAB_PATH}" \
+      --build-arg DOCKER_USER_HOME_ARG="${DOCKER_USER_HOME}" \
+      -t "${BASE_IMAGE}" \
+      .
+  else
+    ./docker/container.py start --build
+  fi
 
   # Tag as deps image for future cache hits
   echo "🏷  Caching deps image as ${DEPS_IMAGE}"
