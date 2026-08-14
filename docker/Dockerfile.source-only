@@ -16,46 +16,24 @@ ENV ISAACLAB_PATH=${ISAACLAB_PATH_ARG}
 # Re-create the Isaac Sim symlink (may have been lost if deps image was migrated)
 ARG ISAACSIM_ROOT_PATH_ARG=/isaac-sim
 
-# Copy source files and local dependency overrides (deps already installed in base).
-# Keep the repo layout intact so editable installs resolve packages from source/.
+# Copy source files (deps already installed in the base/deps image).
+# Keep the repo layout intact so the uv editable installs created in
+# ``Dockerfile.base`` keep resolving the isaaclab_* packages from source/.
 # ``--chown=isaaclab:isaaclab`` matches the user/group set up in ``Dockerfile.base``
-# (uid/gid 1000) so editable ``pip install -e ...`` can write ``*.egg-info/`` back
-# into the source tree under the non-root runtime user.
+# (uid/gid 1000) so editable metadata can be written under the non-root user.
 COPY --chown=isaaclab:isaaclab source ${ISAACLAB_PATH}/source
-COPY --chown=isaaclab:isaaclab dep ${ISAACLAB_PATH}/dep
 COPY --chown=isaaclab:isaaclab scripts ${ISAACLAB_PATH}/scripts
 COPY --chown=isaaclab:isaaclab tools ${ISAACLAB_PATH}/tools
 
-# Optionally re-run pip install (skipped for source-only, enabled for --force-pip-only)
+# Recreate the Isaac Sim symlink and normalize shell line endings. Optionally
+# re-run the uv sync (skipped for plain source-only, enabled for --force-pip-only)
+# to pick up any dependency drift. ``UV_PROJECT_ENVIRONMENT``/``VIRTUAL_ENV`` are
+# inherited from the base image, so this targets the same ``.venv``; ``--frozen``
+# keeps it pinned to ``uv.lock`` and ``--inexact`` preserves the system-site
+# Isaac Sim packages uv does not manage.
 ARG RUN_PIP_INSTALL=0
 RUN ln -sfn ${ISAACSIM_ROOT_PATH_ARG} ${ISAACLAB_PATH}/_isaac_sim && \
     find ${ISAACLAB_PATH}/source -type f -name "*.sh" -exec sed -i 's/\r$//' {} + && \
     if [ "${RUN_PIP_INSTALL}" = "1" ]; then \
-      ${ISAACLAB_PATH}/isaaclab.sh -i rsl_rl; \
+      cd ${ISAACLAB_PATH} && uv sync --frozen --inexact; \
     fi
-
-# Override the PyPI ``rsl-rl-lib`` (pulled in by ``isaaclab_rl``) with the
-# local fork at ``dep/rsl_rl`` whenever it is present. This is the source of
-# truth for features like ``PPO(weight_decay=...)`` that aren't in the PyPI
-# release. ``--no-deps`` keeps the existing dependency tree intact;
-# ``--force-reinstall`` overwrites the PyPI build with the editable local
-# one. Runs unconditionally so ``-p/--pip`` (source-only) rebuilds pick it up.
-RUN if [ -d ${ISAACLAB_PATH}/dep/rsl_rl ]; then \
-      ${ISAACLAB_PATH}/isaaclab.sh -p -m pip install --no-deps --force-reinstall \
-        -e ${ISAACLAB_PATH}/dep/rsl_rl; \
-    fi
-
-# Make the editable ``dep/rsl_rl`` win import resolution against the
-# Isaac-Sim-bundled ``rsl_rl`` at
-# ``_isaac_sim/kit/python/lib/python3.12/site-packages/rsl_rl``. The bundled
-# site-packages directory is earlier on ``sys.path`` than ``~/.local`` where
-# pip's user-site install lands, so without prepending the source directory
-# to ``PYTHONPATH`` the bundled copy shadows the editable one. The
-# IsaacSim-bundled site-packages live behind a read-only mount in this
-# image, so removing the bundled tree isn't an option here.
-#
-# Set unconditionally even when ``dep/rsl_rl`` is absent on the host:
-# ``ENV`` cannot be gated on a runtime ``[ -d ... ]`` check, and Python
-# silently skips ``PYTHONPATH`` entries that don't exist on disk, so the
-# extra path is harmless when the fork isn't checked out.
-ENV PYTHONPATH=${ISAACLAB_PATH}/dep/rsl_rl
