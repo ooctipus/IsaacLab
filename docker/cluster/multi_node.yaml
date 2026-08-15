@@ -27,6 +27,7 @@ workflow:
       command: ["bash"]
       args: ["/tmp/run.sh"]
       environment:
+        OMNI_KIT_ACCEPT_EULA: "YES"
         ACCEPT_EULA: Y
         NO_NUCLEUS: Y
         OMNICLIENT_HUB_MODE: disabled
@@ -104,7 +105,7 @@ workflow:
           fi
 
           {% if num_node > 1 %}
-          /workspace/isaaclab/_isaac_sim/python.sh -m torch.distributed.run \
+          /workspace/isaaclab/isaaclab.sh -p -m torch.distributed.run \
             --nnodes {{ num_node }} \
             --nproc_per_node {{ num_gpu }} \
             --node_rank {{ item }} \
@@ -114,7 +115,7 @@ workflow:
               --distributed \
               {{ args }}
           {% elif num_gpu > 1 %}
-          /workspace/isaaclab/_isaac_sim/python.sh -m torch.distributed.run \
+          /workspace/isaaclab/isaaclab.sh -p -m torch.distributed.run \
             --nnodes 1 \
             --nproc_per_node {{ num_gpu }} \
             --master_addr 127.0.0.1 \
@@ -123,7 +124,7 @@ workflow:
               --distributed \
               {{ args }}
           {% else %}
-          /workspace/isaaclab/_isaac_sim/python.sh \
+          /workspace/isaaclab/isaaclab.sh -p \
             /workspace/isaaclab/{{ script }} \
               {{ args }}
           {% endif %}
