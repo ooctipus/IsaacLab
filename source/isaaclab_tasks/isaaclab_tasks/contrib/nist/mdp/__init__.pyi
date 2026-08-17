@@ -10,6 +10,7 @@ __all__ = [
     "reset_board_under_fixed_asset",
     "reset_held_asset_on_fixed_asset",
     "reset_held_asset_in_gripper",
+    "settle_held_asset",
     "grasp_held_asset",
     "reset_end_effector_around_asset",
     "reset_accumulator",
@@ -45,6 +46,7 @@ from .events import (
     reset_fixed_asset_uniform,
     reset_held_asset_in_gripper,
     reset_held_asset_on_fixed_asset,
+    settle_held_asset,
 )
 from .observations import (
     asset_link_velocity_in_root_asset_frame,

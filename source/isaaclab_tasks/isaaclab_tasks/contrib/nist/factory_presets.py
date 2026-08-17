@@ -34,7 +34,6 @@ from .assembly_profile_cfg import (
     DiscreteYawCfg,
     EndPointsSegmentCfg,
     IncrementalSegmentCfg,
-    UniformPoseNoiseCfg,
     UniformYawCfg,
 )
 
@@ -605,6 +604,7 @@ def _end_effector_pose_range(
         pitch=pitch,
         yaw=yaw,
     )
+
 
 _WIDE_RANGE = dict(
     x=(-0.15, 0.15), y=(-0.15, 0.15), z=(-0.05, 0.1), roll=(0.0, 0.0), pitch=(-0.5, 0.5), yaw=(-2.09, 2.09)

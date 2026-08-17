@@ -8,7 +8,6 @@ from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg, NewtonCollisionP
 from isaaclab_physx.physics import PhysxCfg
 
 from isaaclab.envs import ManagerBasedRLEnvCfg, ViewerCfg
-from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
@@ -304,6 +303,7 @@ class FactoryPhysicsCfg(PresetCfg):
             # after power-of-two rounding this factor allocates 2,097,152 slots.
             contact_reduction_hashtable_size_factor=0.02,
             rigid_contact_max=5_000_000,
+            speculative_config=NewtonCollisionPipelineCfg.SpeculativeContactCfg(max_speculative_extension=0.01),
             sdf_all_shapes=NewtonCollisionPipelineCfg.SDFAllShapesCfg(
                 sdf_max_resolution=256,
                 sdf_narrow_band_inner=-0.005,
@@ -342,7 +342,7 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
         self.episode_length_s = 14.0
         # simulation settings
         self.sim.dt = 0.04 / self.decimation
-        self.sim.render_interval = self.decimation
+        self.sim.render_interval = 1
         # Select the physics backend from the active preset (``presets=physx`` default, or
         # ``presets=newton_mjwarp`` for the kitless Newton/MuJoCo path). Previously this hardcoded
         # ``PhysxCfg`` here, which silently overrode ``presets=newton_mjwarp`` and forced Kit to launch.
@@ -377,5 +377,5 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
 
         scene_reset = reset.get("reset_term", self.events.reset_strategies)
         choice = scene_reset.params["terms"]["reset_strategies"].params
-        choice["terms"] = {"grasp_asset_in_air": choice["terms"]["grasp_asset_in_air"]}
+        choice["terms"] = {"start_random": choice["terms"]["start_random"]}
         choice["sampling"] = uniform

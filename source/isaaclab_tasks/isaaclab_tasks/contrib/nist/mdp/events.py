@@ -19,6 +19,7 @@ from isaaclab.utils import math as math_utils
 from ..assembly_keypoints import NIST_BOARD_CFG
 from ..assembly_profile import AssemblyProfile, UniformPoseNoise
 from ..assembly_profile_cfg import AssemblyProfileCfg, UniformPoseNoiseCfg
+from ..utils import reset_state
 
 if TYPE_CHECKING:
     from isaaclab.assets import Articulation, RigidObject
@@ -183,6 +184,58 @@ def reset_held_asset_on_fixed_asset(
             env.sim.render()
 
 
+def settle_held_asset(
+    env: ManagerBasedRLEnv,
+    env_ids: torch.Tensor,
+    held_asset_cfg: SceneEntityCfg,
+    scene_assets: list[str],
+    num_steps: int = 20,
+):
+    """Let the held asset fall and come to rest, then put the rest of the scene back.
+
+    A part released at a random orientation has only a handful of poses it can actually sit in, and
+    which ones those are is a property of its mesh. Simulating the fall finds them for every variant
+    at once, which is the whole reason to run physics here rather than author resting poses.
+
+    Physics advances the entire scene, not just ``env_ids``, so everything is snapshotted first and
+    written back after; only the settled pose survives, and only for ``env_ids``. Without that, a
+    strategy that runs after another one in the same reset would step that one's already-placed
+    environments too and bank them mid-fall.
+
+    Args:
+        held_asset_cfg: The asset to settle.
+        scene_assets: Scene entities to hold fixed across the settle. Anything left out keeps
+            whatever the physics did to it, so list everything the reset banks.
+        num_steps: Environment steps to simulate [-]. Has to cover both the fall and the topple
+            onto a stable face; at a 0.04 s step, 20 of them is 0.8 s.
+    """
+    held_asset: RigidObject = env.scene[held_asset_cfg.name]
+    all_env_ids = torch.arange(env.num_envs, device=env.device)
+    banked = sorted((set(env.scene._articulations) | set(env.scene._rigid_objects)) & set(scene_assets))
+    snapshot = reset_state.get_reset_state(env, all_env_ids, banked, is_relative=True)
+
+    # A solver that decimates internally advances a full environment step per call; one that does
+    # not needs the substeps run out, so that ``num_steps`` means the same span either way.
+    substeps = 1 if env.sim.physics_manager.handles_decimation() else env.cfg.decimation
+    for _ in range(num_steps * substeps):
+        env.sim.step(render=False)
+    env.scene.update(dt=env.step_dt)
+
+    settled_pose = torch.cat(
+        [
+            wp.to_torch(held_asset.data.root_link_pos_w)[env_ids],
+            wp.to_torch(held_asset.data.root_link_quat_w)[env_ids],
+        ],
+        dim=1,
+    ).clone()
+
+    reset_state.set_reset_state(env, snapshot, all_env_ids, banked, is_relative=True)
+    held_asset.write_root_link_pose_to_sim(settled_pose, env_ids=env_ids)
+    held_asset.write_root_com_velocity_to_sim(
+        torch.zeros_like(wp.to_torch(held_asset.data.root_vel_w)[env_ids]), env_ids=env_ids
+    )
+
+
 def reset_held_asset_in_gripper(
     env: ManagerBasedRLEnv,
     env_ids: torch.Tensor,
@@ -321,7 +374,17 @@ class reset_end_effector_around_asset(ManagerTermBase):
         grasp_reference_quat_w = fixed_keypoint_quat_w[env_ids]
         if upright_gripper:
             grasp_reference_quat_b = math_utils.quat_mul(math_utils.quat_inv(robot_root_quat_w), grasp_reference_quat_w)
-            _, _, yaw = math_utils.euler_xyz_from_quat(grasp_reference_quat_b)
+            # The jaws close along the reference frame's y, so its x has to lie along the part's
+            # long axis -- its local z for every variant here -- flattened into the horizontal
+            # plane. Reading the frame's own yaw instead only agrees with that while the part
+            # stands upright: once it is lying down the euler split puts the tilt in roll or pitch
+            # depending on which way it fell, the yaw comes out zero either way, and the gripper
+            # ends up closing along the part as often as across it. A part still standing on end
+            # projects to nothing, leaving the yaw free, which is what it should be.
+            long_axis_b = math_utils.quat_apply(
+                grasp_reference_quat_b, torch.tensor([0.0, 0.0, 1.0], device=env.device).expand(len(env_ids), 3)
+            )
+            yaw = torch.atan2(long_axis_b[:, 1], long_axis_b[:, 0])
             zero = torch.zeros_like(yaw)
             grasp_reference_quat_w = math_utils.quat_mul(
                 robot_root_quat_w, math_utils.quat_from_euler_xyz(zero, zero, yaw)

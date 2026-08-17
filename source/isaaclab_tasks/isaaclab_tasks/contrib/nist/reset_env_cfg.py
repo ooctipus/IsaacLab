@@ -50,7 +50,7 @@ START_RANDOM = EventTerm(
                     "asset_cfg": SceneEntityCfg("robot"),
                 },
             ),
-            "reset_asset_in_air": EventTerm(
+            "reset_held_asset": EventTerm(
                 func=mdp.reset_root_state_uniform,
                 mode="reset",
                 params={
@@ -66,7 +66,7 @@ START_RANDOM = EventTerm(
                     "asset_cfg": SceneEntityCfg("held_asset"),
                 },
             ),
-            "reset_end_effector_around_held_asset": EventTerm(
+            "reset_end_effector": EventTerm(
                 func=mdp.reset_end_effector_around_asset,
                 mode="reset",
                 params={
@@ -115,7 +115,7 @@ START_ASSEMBLED = EventTerm(
                     "asset_cfg": SceneEntityCfg("robot"),
                 },
             ),
-            "reset_held_asset_on_fixed_asset": EventTerm(
+            "reset_held_asset": EventTerm(
                 func=mdp.reset_held_asset_on_fixed_asset,
                 mode="reset",
                 params={
@@ -128,7 +128,7 @@ START_ASSEMBLED = EventTerm(
                     "held_asset_cfg": SceneEntityCfg("held_asset"),
                 },
             ),
-            "reset_end_effector_around_held_asset": EventTerm(
+            "reset_end_effector": EventTerm(
                 func=mdp.reset_end_effector_around_asset,
                 mode="reset",
                 params={
@@ -169,7 +169,7 @@ START_ASSEMBLED = EventTerm(
 # with pose noise around it: the held asset's insertion point sits at the mouth of the fixed asset,
 # aligned and a hair short of going in.
 START_NEAR_ASSEMBLED = START_ASSEMBLED.copy()
-START_NEAR_ASSEMBLED.params["terms"]["reset_held_asset_on_fixed_asset"].params.update(
+START_NEAR_ASSEMBLED.params["terms"]["reset_held_asset"].params.update(
     assembly_fraction_range=(1.0, 1.1),
     pose_noise=UniformPoseNoiseCfg(
         x=(-0.002, 0.002),
@@ -198,7 +198,7 @@ start_near_grasped = EventTerm(
                     "asset_cfg": SceneEntityCfg("robot"),
                 },
             ),
-            "reset_end_effector_around_fixed_asset": EventTerm(
+            "reset_end_effector": EventTerm(
                 func=mdp.reset_end_effector_around_asset,
                 mode="reset",
                 params={
@@ -212,7 +212,7 @@ start_near_grasped = EventTerm(
                     "ik_iterations": (10, 20),
                 },
             ),
-            "reset_held_asset_in_hand": EventTerm(
+            "reset_held_asset": EventTerm(
                 func=mdp.reset_held_asset_in_gripper,
                 mode="reset",
                 params={
@@ -222,8 +222,8 @@ start_near_grasped = EventTerm(
                     "held_asset_inhand_range": {
                         "x": (-0.005, 0.005),
                         "y": (-0.005, 0.005),
-                        "z": (-0.000, 0.005),
-                        "pitch": (-1.0, 1.0),
+                        "z": (-0.005, 0.005),
+                        "pitch": (-2.0, 2.0),
                     },
                     "gripper_grasp_offset": GripperGraspOffsetCfg(),
                 },
@@ -248,9 +248,37 @@ ASSET_IN_GRIPPER.params["terms"]["grasp_held_asset"].params["flexible_angle"] = 
 
 # Identical to ASSET_IN_GRIPPER but with the gripper sampled close to the fixed asset.
 GRASPED_NEAR_GOAL = ASSET_IN_GRIPPER.copy()
-GRASPED_NEAR_GOAL.params["terms"]["reset_end_effector_around_fixed_asset"].params["pose_range_b"] = (
-    GRASPED_POSE_RANGE_CENTERED
+GRASPED_NEAR_GOAL.params["terms"]["reset_end_effector"].params["pose_range_b"] = GRASPED_POSE_RANGE_CENTERED
+
+
+START_PICK = START_RANDOM.copy()
+_drop = START_PICK.params["terms"]["reset_held_asset"]
+_drop.params["pose_range"]["z"] = (0.03, 0.05)
+START_PICK.params["terms"]["reset_held_asset"] = EventTerm(
+    func=mdp.ChainedResetTerms,
+    mode="reset",
+    params={
+        "terms": {
+            "drop": _drop,
+            "settle": EventTerm(
+                func=mdp.settle_held_asset,
+                mode="reset",
+                params={
+                    "held_asset_cfg": SceneEntityCfg("held_asset"),
+                    "scene_assets": ResetAssetsCfg(),
+                    "num_steps": 20,
+                },
+            ),
+        }
+    },
 )
+START_PICK.params["terms"]["reset_end_effector"].params.update(
+    ik_iterations=(25, 35),
+    pose_tolerance=(0.001, 0.05),
+)
+START_PICK.params["terms"]["reset_end_effector"].params["pose_range_b"]["z"] = (0.00, 0.01)
+START_PICK.params["terms"]["reset_end_effector"].params["pose_range_b"]["yaw"] = (-0.3, 0.3)
+START_PICK.params["terms"]["grasp_held_asset"].params["flexible_angle"] = False
 
 
 SCENE_RESET = EventTerm(
@@ -291,6 +319,7 @@ SCENE_RESET = EventTerm(
                         "start_random": START_RANDOM,
                         "start_assembled": START_ASSEMBLED,
                         "start_near_assembled": START_NEAR_ASSEMBLED,
+                        "start_pick": START_PICK,
                         "grasped_near_goal": GRASPED_NEAR_GOAL,
                         "start_grasped": ASSET_IN_GRIPPER,
                         "start_near_grasped": start_near_grasped,
