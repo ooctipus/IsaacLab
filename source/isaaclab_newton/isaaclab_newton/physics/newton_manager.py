@@ -63,7 +63,9 @@ from newton import (
     CollisionPipeline,
     Contacts,
     Control,
+    GeoType,
     Heightfield,
+    Mesh,
     Model,
     ModelBuilder,
     ModelFlags,
@@ -1198,6 +1200,186 @@ class NewtonManager(PhysicsManager):
         The default implementation is a no-op.
         """
 
+    @staticmethod
+    def _configure_sdf_all_shapes(
+        builder: ModelBuilder, cfg: NewtonCollisionPipelineCfg.SDFAllShapesCfg
+    ) -> tuple[int, ...]:
+        """Provision every finite shape collider for the mesh-SDF narrow phase.
+
+        This runs at the final builder boundary, after USD import has completed
+        authored approximations such as ``convexHull``. Mesh and convex-mesh
+        sources are therefore preserved, while finite planes and analytic
+        primitives are tessellated in place. Existing body mass and inertia data
+        are intentionally left unchanged.
+
+        Args:
+            builder: Fully assembled Newton model builder.
+            cfg: Strict all-shapes SDF configuration.
+
+        Returns:
+            Shape indices that must have valid texture SDFs and collision edges
+            after model finalization.
+
+        Raises:
+            ValueError: If a colliding shape cannot satisfy the strict SDF contract.
+        """
+        primitive_meshes: dict[tuple[Any, ...], Mesh] = {}
+        sdf_shapes: list[int] = []
+        target_voxel_size = cfg.sdf_target_voxel_size
+        max_resolution = None if target_voxel_size is not None else cfg.sdf_max_resolution
+
+        for shape_index, shape_type_value in enumerate(builder.shape_type):
+            if not builder.shape_flags[shape_index] & ShapeFlags.COLLIDE_SHAPES:
+                continue
+
+            shape_type = GeoType(shape_type_value)
+            shape_label = builder.shape_label[shape_index] or f"shape {shape_index}"
+            shape_scale = tuple(float(value) for value in builder.shape_scale[shape_index])
+
+            if shape_type in (GeoType.MESH, GeoType.CONVEX_MESH):
+                if not isinstance(builder.shape_source[shape_index], Mesh):
+                    raise ValueError(
+                        f"Strict all-shapes SDF provisioning requires {shape_label!r} to have a valid mesh source."
+                    )
+            elif shape_type == GeoType.PLANE:
+                width, length = shape_scale[:2]
+                if width <= 0.0 or length <= 0.0:
+                    continue
+                half_thickness = 0.5 * cfg.plane_thickness
+                mesh_key = (shape_type, width, length, cfg.plane_thickness)
+                mesh = primitive_meshes.get(mesh_key)
+                if mesh is None:
+                    mesh = Mesh.create_box(
+                        0.5 * width,
+                        0.5 * length,
+                        half_thickness,
+                        duplicate_vertices=False,
+                        compute_normals=False,
+                        compute_uvs=False,
+                        compute_inertia=False,
+                    )
+                    primitive_meshes[mesh_key] = mesh
+                downward_shift = wp.transform(wp.vec3(0.0, 0.0, -half_thickness), wp.quat_identity())
+                builder.shape_transform[shape_index] = wp.transform_multiply(
+                    builder.shape_transform[shape_index], downward_shift
+                )
+                builder.shape_source[shape_index] = mesh
+                builder.shape_type[shape_index] = GeoType.MESH
+                builder.shape_scale[shape_index] = wp.vec3(1.0)
+            else:
+                if not all(np.isfinite(value) for value in shape_scale):
+                    raise ValueError(f"Strict all-shapes SDF provisioning found non-finite scale on {shape_label!r}.")
+                mesh_key = (shape_type, *shape_scale, cfg.primitive_mesh_segments)
+                mesh = primitive_meshes.get(mesh_key)
+                if mesh is None:
+                    if shape_type == GeoType.BOX and all(value > 0.0 for value in shape_scale):
+                        mesh = Mesh.create_box(
+                            *shape_scale,
+                            duplicate_vertices=False,
+                            compute_normals=False,
+                            compute_uvs=False,
+                            compute_inertia=False,
+                        )
+                    elif shape_type == GeoType.SPHERE and shape_scale[0] > 0.0:
+                        mesh = Mesh.create_sphere(
+                            shape_scale[0],
+                            num_latitudes=cfg.primitive_mesh_segments,
+                            num_longitudes=cfg.primitive_mesh_segments,
+                            compute_uvs=False,
+                            compute_inertia=False,
+                        )
+                    elif shape_type == GeoType.CAPSULE and shape_scale[0] > 0.0 and shape_scale[1] >= 0.0:
+                        mesh = Mesh.create_capsule(
+                            shape_scale[0],
+                            shape_scale[1],
+                            up_axis=Axis.Z,
+                            segments=cfg.primitive_mesh_segments,
+                            compute_uvs=False,
+                            compute_inertia=False,
+                        )
+                    elif shape_type == GeoType.ELLIPSOID and all(value > 0.0 for value in shape_scale):
+                        mesh = Mesh.create_ellipsoid(
+                            *shape_scale,
+                            num_latitudes=cfg.primitive_mesh_segments,
+                            num_longitudes=cfg.primitive_mesh_segments,
+                            compute_uvs=False,
+                            compute_inertia=False,
+                        )
+                    elif shape_type == GeoType.CYLINDER and shape_scale[0] > 0.0 and shape_scale[1] > 0.0:
+                        mesh = Mesh.create_cylinder(
+                            shape_scale[0],
+                            shape_scale[1],
+                            up_axis=Axis.Z,
+                            segments=cfg.primitive_mesh_segments,
+                            compute_uvs=False,
+                            compute_inertia=False,
+                        )
+                    elif shape_type == GeoType.CONE and shape_scale[0] > 0.0 and shape_scale[1] > 0.0:
+                        mesh = Mesh.create_cone(
+                            shape_scale[0],
+                            shape_scale[1],
+                            up_axis=Axis.Z,
+                            segments=cfg.primitive_mesh_segments,
+                            compute_uvs=False,
+                            compute_inertia=False,
+                        )
+                    else:
+                        raise ValueError(
+                            f"Strict all-shapes SDF provisioning cannot convert {shape_label!r} "
+                            f"with geometry type {shape_type.name} and scale {shape_scale}."
+                        )
+                    primitive_meshes[mesh_key] = mesh
+                builder.shape_source[shape_index] = mesh
+                builder.shape_type[shape_index] = GeoType.MESH
+                builder.shape_scale[shape_index] = wp.vec3(1.0)
+
+            builder.shape_sdf_narrow_band_range[shape_index] = (
+                cfg.sdf_narrow_band_inner,
+                cfg.sdf_narrow_band_outer,
+            )
+            builder.shape_sdf_target_voxel_size[shape_index] = target_voxel_size
+            builder.shape_sdf_max_resolution[shape_index] = max_resolution
+            builder.shape_force_sdf[shape_index] = False
+            builder.shape_sdf_texture_format[shape_index] = cfg.sdf_texture_format
+            builder.shape_sdf_padding[shape_index] = cfg.sdf_padding
+            sdf_shapes.append(shape_index)
+
+        return tuple(sdf_shapes)
+
+    @staticmethod
+    def _validate_sdf_all_shapes(model: Model, shape_indices: Sequence[int]) -> None:
+        """Verify strict SDF shapes have the resources Newton's SDF pair route requires.
+
+        Args:
+            model: Finalized Newton model.
+            shape_indices: Shape indices returned by :meth:`_configure_sdf_all_shapes`.
+
+        Raises:
+            RuntimeError: If texture construction failed or a shape has no collision edges.
+        """
+        if not shape_indices:
+            return
+
+        sdf_indices = model._shape_sdf_index.numpy()
+        edge_ranges = model.shape_edge_range.numpy()
+        textures = model._texture_sdf_coarse_textures
+        failures: list[str] = []
+        for shape_index in shape_indices:
+            sdf_index = int(sdf_indices[shape_index])
+            reasons: list[str] = []
+            if sdf_index < 0 or sdf_index >= len(textures) or textures[sdf_index] is None:
+                reasons.append("texture SDF was not built")
+            if int(edge_ranges[shape_index][1]) <= 0:
+                reasons.append("no collision edges were generated")
+            if reasons:
+                label = model.shape_label[shape_index] or f"shape {shape_index}"
+                failures.append(f"{shape_index}:{label} ({'; '.join(reasons)})")
+        if failures:
+            raise RuntimeError(
+                "Strict all-shapes SDF provisioning failed; refusing a non-SDF collision fallback: "
+                + ", ".join(failures)
+            )
+
     @classmethod
     def cl_register_site(cls, body_pattern: str | None, xform: wp.transform, *, per_world: bool = False) -> str:
         """Register a site request for injection into prototypes before replication.
@@ -1544,13 +1726,22 @@ class NewtonManager(PhysicsManager):
             cls._builder.request_state_attributes(*cls._pending_extended_state_attributes)
             NewtonManager._pending_extended_state_attributes = set()
         cls._prepare_builder_for_finalize(cls._builder)
+        sdf_shapes: tuple[int, ...] = ()
+        physics_cfg = PhysicsManager._cfg
+        if (
+            isinstance(physics_cfg, NewtonCfg)
+            and physics_cfg.collision_cfg is not None
+            and physics_cfg.collision_cfg.sdf_all_shapes is not None
+        ):
+            sdf_shapes = cls._configure_sdf_all_shapes(cls._builder, physics_cfg.collision_cfg.sdf_all_shapes)
+            logger.info("Provisioning %d colliding shapes for strict SDF collision", len(sdf_shapes))
         with Timer(name="newton_finalize_builder", msg="Finalize builder took:", activity="Finalizing physics model"):
             NewtonManager._model = cls._builder.finalize(device=device)
-            cfg = PhysicsManager._cfg
-            if isinstance(cfg, NewtonCfg) and cfg.soft_contact_cfg is not None:
-                cls._model.soft_contact_ke = float(cfg.soft_contact_cfg.soft_contact_ke)
-                cls._model.soft_contact_kd = float(cfg.soft_contact_cfg.soft_contact_kd)
-                cls._model.soft_contact_mu = float(cfg.soft_contact_cfg.soft_contact_mu)
+            cls._validate_sdf_all_shapes(cls._model, sdf_shapes)
+            if isinstance(physics_cfg, NewtonCfg) and physics_cfg.soft_contact_cfg is not None:
+                cls._model.soft_contact_ke = float(physics_cfg.soft_contact_cfg.soft_contact_ke)
+                cls._model.soft_contact_kd = float(physics_cfg.soft_contact_cfg.soft_contact_kd)
+                cls._model.soft_contact_mu = float(physics_cfg.soft_contact_cfg.soft_contact_mu)
             cls._model.set_gravity(cls._gravity_vector)
             cls._model.num_envs = cls._num_envs
 
@@ -2356,6 +2547,19 @@ class NewtonManager(PhysicsManager):
     # ------------------------------------------------------------------
 
     @classmethod
+    def _collide(cls, contacts: Contacts, completed_substeps: int = 0) -> None:
+        """Populate contacts using the exact time to the next collision refresh [s]."""
+        speculative_cfg = cls._collision_cfg.speculative_config if cls._collision_cfg is not None else None
+        if speculative_cfg is None:
+            cls._collision_pipeline.collide(cls._state_0, contacts)
+            return
+
+        collide_every = cls._collision_decimation
+        interval = collide_every if 0 < collide_every < cls._num_substeps else cls._num_substeps
+        remaining = cls._num_substeps - completed_substeps
+        cls._collision_pipeline.collide(cls._state_0, contacts)#, dt=min(interval, remaining) * cls._solver_dt)
+
+    @classmethod
     def _run_solver_substeps(cls, contacts) -> None:
         """Run ``num_substeps`` solver iterations, handling double-buffered state swap."""
         collide_every = cls._collision_decimation
@@ -2370,7 +2574,7 @@ class NewtonManager(PhysicsManager):
                 cls._step_solver(cls._state_0, cls._state_0, cls._control, contacts, cls._solver_dt)
                 cls._state_0.clear_forces()
                 if collide_mid_loop and (i + 1) % collide_every == 0 and i + 1 < cls._num_substeps:
-                    cls._collision_pipeline.collide(cls._state_0, contacts)
+                    cls._collide(contacts, completed_substeps=i + 1)
         else:
             cfg = PhysicsManager._cfg
             need_copy_on_last = cfg is not None and cls._num_substeps % 2 == 1
@@ -2384,7 +2588,7 @@ class NewtonManager(PhysicsManager):
                     NewtonManager._state_0, NewtonManager._state_1 = cls._state_1, cls._state_0
                 cls._state_0.clear_forces()
                 if collide_mid_loop and (i + 1) % collide_every == 0 and i + 1 < cls._num_substeps:
-                    cls._collision_pipeline.collide(cls._state_0, contacts)
+                    cls._collide(contacts, completed_substeps=i + 1)
 
     @classmethod
     def _update_sensors(cls, contacts) -> None:
@@ -2417,7 +2621,7 @@ class NewtonManager(PhysicsManager):
 
         for _ in range(cls._decimation):
             if cls._needs_collision_pipeline:
-                cls._collision_pipeline.collide(cls._state_0, cls._contacts)
+                cls._collide(cls._contacts)
 
             if cls._adapter is not None:
                 cls._adapter.step(cls._state_0, cls._control, physics_dt)
@@ -2439,7 +2643,7 @@ class NewtonManager(PhysicsManager):
         there are no actuators at all.
         """
         if cls._needs_collision_pipeline:
-            cls._collision_pipeline.collide(cls._state_0, cls._contacts)
+            cls._collide(cls._contacts)
             contacts = cls._contacts
         else:
             contacts = None

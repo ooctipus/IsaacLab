@@ -1309,21 +1309,23 @@ def test_mjwarp_internal_contacts_with_collision_cfg_raises():
 
 
 @pytest.mark.parametrize(
-    "num_substeps, collision_decimation, expected_mid_loop_collides",
+    "num_substeps, collision_decimation, expected_intervals",
     [
-        (8, 0, 0),  # Feature disabled.
-        (8, 2, 3),  # Re-collide after substeps 2, 4, 6 (skip last).
-        (8, 4, 1),  # Re-collide after substep 4 only.
-        (8, 7, 1),  # Re-collide after substep 7 only.
-        (8, 8, 0),  # Gated off (>= num_substeps).
+        (8, 0, [8]),
+        (8, 2, [2, 2, 2, 2]),
+        (8, 3, [3, 3, 2]),
+        (8, 4, [4, 4]),
+        (8, 5, [5, 3]),
+        (8, 7, [7, 1]),
+        (8, 8, [8]),
     ],
 )
-def test_collision_decimation_invokes_mid_loop_collide(num_substeps, collision_decimation, expected_mid_loop_collides):
-    """``_run_solver_substeps`` re-invokes ``collide`` at the expected substeps.
+def test_collision_decimation_invokes_mid_loop_collide(num_substeps, collision_decimation, expected_intervals):
+    """Collision calls receive the exact substep interval until their next refresh.
 
-    Wraps :attr:`NewtonManager._collision_pipeline.collide` with a counter and
-    runs one physics tick. The collide-call count is ``1`` (top-of-tick) plus
-    one per matching mid-loop substep, excluding the last substep.
+    Wraps :attr:`NewtonManager._collision_pipeline.collide` with a recorder and
+    runs one physics tick. Each supplied horizon ends at the next mid-loop
+    collision or the next tick's top-of-loop collision.
 
     The scene has a free-joint sphere falling onto a ground plane so the
     broadphase actually generates pairs — guards against a future change
@@ -1337,6 +1339,9 @@ def test_collision_decimation_invokes_mid_loop_collide(num_substeps, collision_d
             solver_cfg=MJWarpSolverCfg(use_mujoco_contacts=False),
             num_substeps=num_substeps,
             collision_decimation=collision_decimation,
+            collision_cfg=NewtonCollisionPipelineCfg(
+                speculative_config=NewtonCollisionPipelineCfg.SpeculativeContactCfg(max_speculative_extension=0.0)
+            ),
             use_cuda_graph=False,
         ),
     )
@@ -1356,12 +1361,12 @@ def test_collision_decimation_invokes_mid_loop_collide(num_substeps, collision_d
         # Wrap collide() with a counter — must run after sim.reset() so the
         # pipeline is allocated, and use_cuda_graph=False so the wrapped
         # Python callable isn't bypassed by a captured graph.
-        calls = {"n": 0}
+        horizons = []
         original_collide = NewtonManager._collision_pipeline.collide
 
-        def counting_collide(state, contacts):
-            calls["n"] += 1
-            return original_collide(state, contacts)
+        def counting_collide(state, contacts, *, dt=None):
+            horizons.append(dt)
+            return original_collide(state, contacts, dt=dt)
 
         NewtonManager._collision_pipeline.collide = counting_collide
         try:
@@ -1369,8 +1374,8 @@ def test_collision_decimation_invokes_mid_loop_collide(num_substeps, collision_d
         finally:
             NewtonManager._collision_pipeline.collide = original_collide
 
-        # Expect: 1 (top-of-tick) + expected_mid_loop_collides.
-        assert calls["n"] == 1 + expected_mid_loop_collides
+        expected_horizons = np.asarray(expected_intervals) * sim_cfg.dt / num_substeps
+        assert horizons == pytest.approx(expected_horizons)
 
 
 @pytest.mark.parametrize("use_single_state", [True, False], ids=["single_state", "double_state"])

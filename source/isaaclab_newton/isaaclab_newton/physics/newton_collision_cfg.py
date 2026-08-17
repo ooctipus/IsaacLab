@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any, Literal
 
 from isaaclab.utils.configclass import configclass
@@ -94,6 +95,99 @@ class NewtonCollisionPipelineCfg:
     .. _CollisionPipeline API: https://newton-physics.github.io/newton/api/_generated/newton.CollisionPipeline.html
     """
 
+    @configclass
+    class SpeculativeContactCfg:
+        """Configuration for velocity-predicted rigid-contact candidates.
+
+        Candidate generation extends collision search just far enough to retain
+        geometry predicted to touch before the next collision refresh. The
+        collision scheduler supplies that time horizon; this config only limits
+        how far [m] a search may expand.
+        """
+
+        max_speculative_extension: float = 0.1
+        """Maximum predictive collision-search extension [m]."""
+
+        def __post_init__(self) -> None:
+            if not math.isfinite(self.max_speculative_extension) or self.max_speculative_extension < 0.0:
+                raise ValueError(
+                    f"max_speculative_extension must be finite and nonnegative (got {self.max_speculative_extension})."
+                )
+
+    @configclass
+    class SDFAllShapesCfg:
+        """Strict SDF provisioning for every finite shape collider in the assembled model.
+
+        The manager applies this policy after USD-authored mesh approximations and
+        scene replication have completed. It tessellates analytic colliders, keeps
+        the resulting collision geometry, and requests a texture SDF for every
+        finite colliding shape before model finalization. Infinite planes remain
+        analytic half-spaces; unsupported finite geometry raises instead of
+        silently retaining a non-SDF collision path.
+        """
+
+        sdf_max_resolution: int | None = 64
+        """Maximum SDF grid dimension [dimensionless].
+
+        Must be positive, less than ``65536``, and divisible by 8. Ignored when
+        :attr:`sdf_target_voxel_size` is set.
+        """
+
+        sdf_target_voxel_size: float | None = None
+        """Target SDF voxel size [m].
+
+        When set, this takes precedence over :attr:`sdf_max_resolution`.
+        """
+
+        sdf_narrow_band_inner: float = -0.1
+        """Inner narrow-band distance for SDF generation [m]. Must be negative."""
+
+        sdf_narrow_band_outer: float = 0.1
+        """Outer narrow-band distance for SDF generation [m]. Must be positive."""
+
+        sdf_texture_format: Literal["uint8", "uint16", "float32"] = "uint16"
+        """Subgrid texture storage format for generated SDFs."""
+
+        sdf_padding: float | None = None
+        """SDF AABB padding [m]. When ``None``, each shape's contact gap is used."""
+
+        primitive_mesh_segments: int = 32
+        """Circumferential tessellation segments for curved analytic colliders."""
+
+        plane_thickness: float = 0.1
+        """Full thickness [m] of the downward slab replacing each finite collision plane."""
+
+        def __post_init__(self) -> None:
+            if self.sdf_max_resolution is None and self.sdf_target_voxel_size is None:
+                raise ValueError("Set sdf_max_resolution or sdf_target_voxel_size for strict SDF provisioning.")
+            if self.sdf_max_resolution is not None:
+                if self.sdf_max_resolution <= 0 or self.sdf_max_resolution >= (1 << 16):
+                    raise ValueError(
+                        f"sdf_max_resolution must be positive and less than {1 << 16} (got {self.sdf_max_resolution})."
+                    )
+                if self.sdf_max_resolution % 8 != 0:
+                    raise ValueError(f"sdf_max_resolution must be divisible by 8 (got {self.sdf_max_resolution}).")
+            if self.sdf_target_voxel_size is not None and (
+                not math.isfinite(self.sdf_target_voxel_size) or self.sdf_target_voxel_size <= 0.0
+            ):
+                raise ValueError(
+                    f"sdf_target_voxel_size must be finite and positive (got {self.sdf_target_voxel_size})."
+                )
+            if not (
+                math.isfinite(self.sdf_narrow_band_inner)
+                and math.isfinite(self.sdf_narrow_band_outer)
+                and self.sdf_narrow_band_inner < 0.0 < self.sdf_narrow_band_outer
+            ):
+                raise ValueError(
+                    "sdf_narrow_band_inner and sdf_narrow_band_outer must be finite and satisfy inner < 0 < outer."
+                )
+            if self.sdf_padding is not None and (not math.isfinite(self.sdf_padding) or self.sdf_padding < 0.0):
+                raise ValueError(f"sdf_padding must be finite and nonnegative (got {self.sdf_padding}).")
+            if self.primitive_mesh_segments < 8:
+                raise ValueError(f"primitive_mesh_segments must be at least 8 (got {self.primitive_mesh_segments}).")
+            if not math.isfinite(self.plane_thickness) or self.plane_thickness <= 0.0:
+                raise ValueError(f"plane_thickness must be finite and positive (got {self.plane_thickness}).")
+
     broad_phase: Literal["explicit", "nxn", "sap"] = "explicit"
     """Broad phase algorithm for collision detection.
 
@@ -134,6 +228,17 @@ class NewtonCollisionPipelineCfg:
     triangle-pair overflow warnings.
 
     Defaults to ``1_000_000`` (same as Newton's default).
+    """
+
+    contact_reduction_hashtable_size_factor: float = 0.25
+    """Multiplier [dimensionless] used to size the global contact-reduction hash table.
+
+    Newton multiplies :attr:`max_triangle_pairs` by this value and rounds the result up to a power of two.
+    Size it independently from the raw triangle-pair buffer using the measured peak number of active reduction
+    keys. Increase it when contact-reduction fill or insertion-failure warnings reflect real occupancy; reduce it
+    to save GPU memory only with sufficient measured headroom.
+
+    Defaults to ``0.25`` (same as Newton's default).
     """
 
     soft_contact_max: int | None = None
@@ -178,6 +283,29 @@ class NewtonCollisionPipelineCfg:
     Defaults to ``None`` (hydroelastic disabled, same as Newton's default).
     """
 
+    speculative_config: SpeculativeContactCfg | None = None
+    """Velocity-predicted rigid-contact candidate configuration.
+
+    The Newton manager derives the prediction horizon from the actual time to
+    the next collision refresh. ``None`` preserves Newton's discrete collision
+    path without predictive-search overhead.
+    """
+
+    sdf_all_shapes: SDFAllShapesCfg | None = None
+    """Strict post-approximation SDF policy for every finite shape collider.
+
+    When set, finite planes, analytic primitives, and boxes are tessellated into
+    triangle meshes, while meshes and convex meshes retain their imported geometry.
+    Every result receives a texture SDF request. A convex-hull or other USD-authored
+    mesh approximation is completed before this policy runs, so its resulting hull
+    is what Newton cooks into the SDF.
+
+    Infinite planes remain analytic because a finite texture cannot represent an
+    infinite half-space. Heightfields, Gaussian geometry, and malformed mesh sources
+    raise during model startup because they cannot satisfy the strict contract.
+    Defaults to ``None`` (preserve each collider's authored representation).
+    """
+
     def to_pipeline_args(self) -> dict[str, Any]:
         """Build keyword arguments for :class:`newton.CollisionPipeline`.
 
@@ -188,9 +316,14 @@ class NewtonCollisionPipelineCfg:
         Returns:
             Keyword arguments suitable for ``CollisionPipeline(model, **args)``.
         """
+        from newton import CollisionPipeline
         from newton.geometry import HydroelasticSDF
 
         cfg_dict = self.to_dict()
+        cfg_dict.pop("sdf_all_shapes", None)
+        speculative_cfg = cfg_dict.pop("speculative_config", None)
+        if speculative_cfg is not None:
+            cfg_dict["speculative_config"] = CollisionPipeline.SpeculativeContactConfig(**speculative_cfg)
         hydro_cfg = cfg_dict.pop("sdf_hydroelastic_config", None)
         if hydro_cfg is not None:
             cfg_dict["sdf_hydroelastic_config"] = HydroelasticSDF.Config(**hydro_cfg)
