@@ -14,6 +14,7 @@ import types
 
 import gymnasium as gym
 import pytest
+import torch
 
 from isaaclab_rl.entrypoints import PlaybackRequest, TrainingRequest, api, dispatch
 
@@ -273,6 +274,69 @@ def test_failed_rsl_training_restores_torch_backend_state(monkeypatch) -> None:
         train_rsl_rl.run([])
 
     assert _torch_backend_state() == caller_state
+
+
+def test_rsl_wandb_logger_uploads_environment_heatmap(monkeypatch) -> None:
+    """Render structured environment metrics once at the training iteration boundary."""
+    from isaaclab_rl.entrypoints.backends.train_rsl_rl import _HeatmapLogger
+
+    logged: dict[str, object] = {}
+
+    def image(figure):
+        axes = figure.axes[0]
+        logged["x_labels"] = [label.get_text() for label in axes.get_xticklabels()]
+        logged["y_labels"] = [label.get_text() for label in axes.get_yticklabels()]
+        return "wandb-image"
+
+    wandb = types.SimpleNamespace(
+        Image=image,
+        log=lambda payload, step: logged.update(payload=payload, step=step),
+    )
+    monkeypatch.setitem(sys.modules, "wandb", wandb)
+
+    base_logger = types.SimpleNamespace(
+        writer=object(),
+        log=lambda **kwargs: logged.update(base_iteration=kwargs["it"]),
+    )
+    env = types.SimpleNamespace(
+        unwrapped=types.SimpleNamespace(
+            extras={
+                "heatmap": {
+                    "Metrics/ResetSuccessRate": {
+                        "values": torch.tensor([[0.25, 0.75], [float("nan"), 1.0]]),
+                        "x_labels": ("asset_a", "asset_b"),
+                        "y_labels": ("reset_a", "reset_b"),
+                        "color_label": "Success rate",
+                        "vmax": 1.0,
+                    },
+                    "Metrics/ResetProbs": {
+                        "values": torch.tensor([[0.1, 0.4], [0.2, 0.3]]),
+                        "x_labels": ("asset_a", "asset_b"),
+                        "y_labels": ("reset_a", "reset_b"),
+                        "color_label": "Reset probability",
+                        "value_format": ".2%",
+                        "vmax": 0.4,
+                    },
+                }
+            }
+        )
+    )
+
+    logger = _HeatmapLogger(base_logger, env)
+    logger.log(it=250)
+
+    assert logged["base_iteration"] == 250
+    assert logged["step"] == 250
+    assert logged["payload"] == {
+        "Metrics/ResetProbs": "wandb-image",
+        "Metrics/ResetSuccessRate": "wandb-image",
+    }
+    assert logged["x_labels"] == ["asset_a", "asset_b"]
+    assert logged["y_labels"] == ["reset_a", "reset_b"]
+
+    logger.log(it=251)
+    assert logged["base_iteration"] == 251
+    assert logged["step"] == 250
 
 
 def test_skrl_training_restores_jax_backend(monkeypatch) -> None:

@@ -69,6 +69,59 @@ def _check_rsl_rl_version() -> str:
     return installed_version
 
 
+class _HeatmapLogger:
+    """Add environment heatmaps to an RSL-RL W&B logger."""
+
+    _INTERVAL = 250
+
+    def __init__(self, logger, env) -> None:
+        self._logger = logger
+        self._env = env
+
+    def __getattr__(self, name: str):
+        return getattr(self._logger, name)
+
+    def log(self, *args, **kwargs) -> None:
+        self._logger.log(*args, **kwargs)
+        iteration = kwargs["it"] if "it" in kwargs else args[0]
+        if self._logger.writer is None or iteration % self._INTERVAL:
+            return
+
+        heatmaps = self._env.unwrapped.extras.get("heatmap", {})
+        if not heatmaps:
+            return
+
+        import matplotlib.pyplot as plt
+
+        import wandb
+
+        images = {}
+        for tag, data in heatmaps.items():
+            values = data["values"].detach().float().cpu()
+            x_labels, y_labels = data["x_labels"], data["y_labels"]
+            color_label = data.get("color_label", "Value")
+            value_format = data.get("value_format", ".0%")
+            size = (max(8.0, 0.7 * len(x_labels)), max(4.0, 0.65 * len(y_labels)))
+            figure, axes = plt.subplots(figsize=size)
+            color_map = plt.get_cmap("RdYlGn").with_extremes(bad="#d9d9d9")
+            image = axes.imshow(values.numpy(), cmap=color_map, vmin=0.0, vmax=data.get("vmax", 1.0), aspect="auto")
+            axes.set_xticks(range(len(x_labels)), x_labels, rotation=60, ha="right", rotation_mode="anchor")
+            axes.set_yticks(range(len(y_labels)), y_labels)
+            axes.set_xlabel("Assembly asset")
+            axes.set_ylabel("Reset label")
+            for row in range(len(y_labels)):
+                for column in range(len(x_labels)):
+                    value = values[row, column]
+                    label = format(float(value), value_format) if value.isfinite() else "—"
+                    axes.text(column, row, label, ha="center", va="center", fontsize=6)
+            figure.colorbar(image, ax=axes, label=color_label)
+            figure.tight_layout()
+            images[tag] = wandb.Image(figure)
+            plt.close(figure)
+
+        wandb.log(images, step=iteration)
+
+
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     """Parse RSL-RL training arguments."""
     from isaaclab.utils.string import list_intersection, string_to_callable
@@ -214,6 +267,8 @@ def _run(args_cli: argparse.Namespace) -> None:
             else:
                 raise ValueError(f"Unsupported runner class: {agent_cfg.class_name}")
             report_activity(None)
+            if agent_cfg.logger == "wandb":
+                runner.logger = _HeatmapLogger(runner.logger, env)
 
             # configure_seed must run after runner construction so torch determinism does not disturb its initialization
             if args_cli.deterministic:
