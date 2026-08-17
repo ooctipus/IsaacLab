@@ -215,7 +215,7 @@ class MJWarpDebugOperationProvider:
             data = object.__getattribute__(target, "mjw_data")
             device = object.__getattribute__(object.__getattribute__(target, "model"), "device")
             with wp.ScopedDevice(device):
-                solver_context = originals[(modules.solver, "create_solver_context")](model, data)
+                solver_context = originals[(modules.solver, "_create_solver_context")](model, data)
                 collision_context = originals[(modules.collision_driver, "create_collision_context")](data.naconmax)
         except Exception as exc:
             raise DebugCaptureError(f"Failed to allocate deterministic MJWarp debug contexts: {exc}") from exc
@@ -231,9 +231,9 @@ class MJWarpDebugOperationProvider:
             include_private=True,
         )
         data_plan = DebugCapturePlan.build(data, root_name="mjwarp_data", include_private=True)
-        _require_complete_plan(solver_plan, "MJWarp SolverContext")
-        _require_complete_plan(collision_plan, "MJWarp CollisionContext")
-        _require_complete_plan(data_plan, "MJWarp Data")
+        _require_stable_plan(solver_plan, "MJWarp SolverContext")
+        _require_stable_plan(collision_plan, "MJWarp CollisionContext")
+        _require_stable_plan(data_plan, "MJWarp Data")
         _zero_context(solver_plan, solver_context)
         _zero_context(collision_plan, collision_context)
         solver_plan.validate_schema(solver_context)
@@ -456,7 +456,7 @@ class MJWarpDebugOperationProvider:
         assert self._snapshot is not None
 
         modules = self._modules
-        original_solver_factory = self._original_functions[(modules.solver, "create_solver_context")]
+        original_solver_factory = self._original_functions[(modules.solver, "_create_solver_context")]
         original_solver_solve = self._original_functions[(modules.solver, "solve")]
         original_collision = self._original_functions[(modules.collision_driver, "collision")]
         original_collision_factory = self._original_functions[(modules.collision_driver, "create_collision_context")]
@@ -485,9 +485,9 @@ class MJWarpDebugOperationProvider:
                 self._leave_runtime_boundary("solve")
 
         @functools.wraps(original_collision)
-        def collision(m, d):
+        def collision(m, d, awake_prev=None):
             if not self._matches_target(m, d):
-                return original_collision(m, d)
+                return original_collision(m, d, awake_prev)
             self._enter_runtime_boundary("collision")
             depth = getattr(self._collision_local, "depth", 0)
             self._collision_local.depth = depth + 1
@@ -495,7 +495,7 @@ class MJWarpDebugOperationProvider:
             self._snapshot.collision_context_valid = False
             self._snapshot.collision_completed = False
             try:
-                result = original_collision(m, d)
+                result = original_collision(m, d, awake_prev)
                 self._snapshot.collision_completed = True
                 return result
             finally:
@@ -510,7 +510,7 @@ class MJWarpDebugOperationProvider:
             return context
 
         wrappers: dict[tuple[ModuleType, str], object] = {
-            (modules.solver, "create_solver_context"): create_solver_context,
+            (modules.solver, "_create_solver_context"): create_solver_context,
             (modules.solver, "solve"): solve,
             (modules.collision_driver, "collision"): collision,
             (modules.collision_driver, "create_collision_context"): create_collision_context,
@@ -520,8 +520,8 @@ class MJWarpDebugOperationProvider:
             original_iteration = self._original_functions[(modules.solver, "_solver_iteration")]
 
             @functools.wraps(original_iteration)
-            def solver_iteration(m, d, ctx, step_size_cost, nsolving):
-                result = original_iteration(m, d, ctx, step_size_cost, nsolving)
+            def solver_iteration(m, d, ctx, nsolving, compact=False):
+                result = original_iteration(m, d, ctx, nsolving, compact=compact)
                 if self._matches_target(m, d):
                     self._scan_solver_iteration(ctx)
                     self._iteration_index += 1
@@ -767,9 +767,9 @@ def _validate_mjwarp_call_path(
 ) -> dict[tuple[ModuleType, str], object]:
     """Validate signatures and live global lookups before any mutation."""
     expected = {
-        (modules.solver, "create_solver_context"): ("m", "d"),
+        (modules.solver, "_create_solver_context"): ("m", "d"),
         (modules.solver, "solve"): ("m", "d"),
-        (modules.collision_driver, "collision"): ("m", "d"),
+        (modules.collision_driver, "collision"): ("m", "d", "awake_prev"),
         (modules.collision_driver, "create_collision_context"): ("naconmax",),
     }
     if scan_iterations:
@@ -777,8 +777,8 @@ def _validate_mjwarp_call_path(
             "m",
             "d",
             "ctx",
-            "step_size_cost",
             "nsolving",
+            "compact",
         )
 
     originals: dict[tuple[ModuleType, str], object] = {}
@@ -795,9 +795,12 @@ def _validate_mjwarp_call_path(
         originals[(module, name)] = function
 
     solver_body = inspect.unwrap(originals[(modules.solver, "solve")])
-    if solver_body.__globals__.get("create_solver_context") is not originals[(modules.solver, "create_solver_context")]:
+    if (
+        solver_body.__globals__.get("_create_solver_context")
+        is not originals[(modules.solver, "_create_solver_context")]
+    ):
         raise DebugCaptureError(
-            "MJWarp solver.solve no longer runtime-resolves solver.create_solver_context; "
+            "MJWarp solver.solve no longer runtime-resolves solver._create_solver_context; "
             "the pinned debug adapter must be updated."
         )
     collision_body = inspect.unwrap(originals[(modules.collision_driver, "collision")])
@@ -860,12 +863,12 @@ def _validate_scan_world_extents(
             )
 
 
-def _require_complete_plan(plan: DebugCapturePlan, provider_name: str) -> None:
-    """Require every discovered provider field to be allocated and capturable."""
-    incomplete = tuple(entry.display_path for entry in (*plan.unallocated, *plan.ignored))
-    if not plan.fields or incomplete:
+def _require_stable_plan(plan: DebugCapturePlan, provider_name: str) -> None:
+    """Require captured values and no unsupported provider leaves."""
+    unsupported = tuple(entry.display_path for entry in plan.ignored)
+    if not plan.fields or unsupported:
         raise DebugCaptureError(
-            f"{provider_name} discovery must produce a complete allocated schema; incomplete paths: {list(incomplete)}."
+            f"{provider_name} discovery must produce a capturable schema; unsupported paths: {list(unsupported)}."
         )
 
 
@@ -927,7 +930,10 @@ def _clone_dataclass_context(plan: DebugCapturePlan, context: object) -> object:
     planned_names = tuple(
         field.path[0] for field in plan.fields if len(field.path) == 1 and isinstance(field.path[0], str)
     )
-    if len(planned_names) != len(plan.fields) or set(planned_names) != set(field_names):
+    unallocated_names = tuple(
+        entry.path[0] for entry in plan.unallocated if len(entry.path) == 1 and isinstance(entry.path[0], str)
+    )
+    if len(planned_names) != len(plan.fields) or set((*planned_names, *unallocated_names)) != set(field_names):
         raise DebugSchemaError(
             "MJWarp SolverContext is no longer a flat dataclass of capturable fields; "
             "update the isolated operation provider before using iteration snapshots."
@@ -935,6 +941,7 @@ def _clone_dataclass_context(plan: DebugCapturePlan, context: object) -> object:
     values = {
         str(field.path[0]): clone_debug_value(field.validate(context), field.display_path) for field in plan.fields
     }
+    values.update((name, None) for name in unallocated_names)
     try:
         return type(context)(**values)
     except Exception as exc:
@@ -943,6 +950,8 @@ def _clone_dataclass_context(plan: DebugCapturePlan, context: object) -> object:
 
 def _clone_dataclass_tree(value: object, path: str) -> object:
     """Recursively clone a complete dataclass tree and every supported leaf."""
+    if value is None:
+        return None
     try:
         return clone_debug_value(value, path)
     except DebugCaptureError as leaf_error:

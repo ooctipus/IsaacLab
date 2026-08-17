@@ -74,7 +74,7 @@ from newton import (
 from newton.sensors import SensorContact as NewtonContactSensor
 from newton.sensors import SensorFrameTransform
 from newton.sensors import SensorIMU as NewtonSensorIMU
-from newton.solvers import SolverBase, SolverKamino
+from newton.solvers import SolverBase, SolverKamino, SolverMuJoCo
 from newton.usd import SchemaResolverNewton, SchemaResolverPhysx
 
 from pxr import Usd, UsdGeom
@@ -1098,6 +1098,8 @@ class NewtonManager(PhysicsManager):
                     logger.info("Newton CUDA graph captured (deferred relaxed mode, RTX-compatible)")
                 else:
                     logger.warning("Newton deferred CUDA graph capture failed; using eager execution")
+
+        cls._initialize_incident_recorder()
 
         # Reconcile authored state after any mutating graph warmup and before the requested physics step.
         if not state_reconciled:
@@ -2611,32 +2613,6 @@ class NewtonManager(PhysicsManager):
             raise RuntimeError("Registered debug incident triggers require NewtonCfg.debug_capture to be configured.")
         if debug_capture_cfg is not None:
             cls._prepare_debug_capture_providers()
-            solver_provider = cls._discover_solver_provider()
-            operation_provider = cls._resolve_debug_operation_provider(solver_provider, debug_capture_cfg)
-            try:
-                recorder = PhysicsIncidentRecorder(
-                    cls._model,
-                    debug_capture_cfg,
-                    state=cls._state_0,
-                    control=cls._control,
-                    solver=solver_provider,
-                    contacts=cls._contacts,
-                    triggers=dict(sorted(NewtonManager._debug_incident_triggers.items())),
-                    collision_pipeline=cls._collision_pipeline,
-                    scene_exporter=cls._make_scene_exporter() if debug_capture_cfg.record_scene else None,
-                    context_provider=PhysicsManager.get_debug_context,
-                    operation_provider=operation_provider,
-                )
-            except _OperationProviderCleanupError:
-                NewtonManager._debug_operation_provider_cleanup_pending = True
-                raise
-            NewtonManager._incident_recorder = recorder
-            NewtonManager._debug_operation_provider_cleanup_pending = False
-            logger.info(
-                "Physics incident recorder enabled: %d history snapshots%s",
-                cls._incident_recorder.history_length,
-                " (per-substep capture)" if cls._incident_recorder.capture_per_substep else "",
-            )
 
         # Skip the initial graph capture when the Newton actuator fast path is
         # active. Capturing here would use ``cls._decimation`` (still its default
@@ -2650,6 +2626,48 @@ class NewtonManager(PhysicsManager):
         # so we still need the start-time capture below.
         if not cls._use_newton_actuators_active:
             cls._capture_or_defer_graph()
+        waits_for_actuator_graph = (
+            cls._use_newton_actuators_active and cfg.use_cuda_graph and "cuda" in PhysicsManager._device
+        )
+        if not cls._graph_capture_pending and not waits_for_actuator_graph:
+            cls._initialize_incident_recorder()
+
+    @classmethod
+    def _initialize_incident_recorder(cls) -> None:
+        """Freeze debug schemas after solver warmup has allocated lazy buffers."""
+        if NewtonManager._incident_recorder is not None:
+            return
+        cfg = PhysicsManager._cfg
+        debug_capture_cfg = None if cfg is None else cfg.debug_capture
+        if debug_capture_cfg is None:
+            return
+
+        solver_provider = cls._discover_solver_provider()
+        operation_provider = cls._resolve_debug_operation_provider(solver_provider, debug_capture_cfg)
+        try:
+            recorder = PhysicsIncidentRecorder(
+                cls._model,
+                debug_capture_cfg,
+                state=cls._state_0,
+                control=cls._control,
+                solver=solver_provider,
+                contacts=cls._contacts,
+                triggers=dict(sorted(NewtonManager._debug_incident_triggers.items())),
+                collision_pipeline=cls._collision_pipeline,
+                scene_exporter=cls._make_scene_exporter() if debug_capture_cfg.record_scene else None,
+                context_provider=PhysicsManager.get_debug_context,
+                operation_provider=operation_provider,
+            )
+        except _OperationProviderCleanupError:
+            NewtonManager._debug_operation_provider_cleanup_pending = True
+            raise
+        NewtonManager._incident_recorder = recorder
+        NewtonManager._debug_operation_provider_cleanup_pending = False
+        logger.info(
+            "Physics incident recorder enabled: %d history snapshots%s",
+            recorder.history_length,
+            " (per-substep capture)" if recorder.capture_per_substep else "",
+        )
 
     @classmethod
     def _capture_or_defer_graph(cls) -> None:
@@ -3816,6 +3834,8 @@ class NewtonManager(PhysicsManager):
         cls._decimation = max(1, decimation)
         if cls._is_all_graphable():
             cls._capture_or_defer_graph()
+            if not cls._graph_capture_pending:
+                cls._initialize_incident_recorder()
 
     @classmethod
     def handles_decimation(cls) -> bool:

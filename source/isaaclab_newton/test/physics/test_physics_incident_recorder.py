@@ -17,7 +17,7 @@ import pytest
 import warp as wp
 from isaaclab_newton.physics import NewtonCfg, NewtonDebugCaptureCfg, NewtonDebugReplayCfg
 from isaaclab_newton.physics._debug_archive import load_archive
-from isaaclab_newton.physics._debug_capture import DebugCaptureError
+from isaaclab_newton.physics._debug_capture import DebugCaptureError, clone_debug_value
 from isaaclab_newton.physics._incident_recorder import PhysicsIncidentRecorder
 
 wp.init()
@@ -663,6 +663,38 @@ def test_explicit_frequency_requires_a_matching_world_start_anchor(tmp_path: Pat
         _recorder(model, _capture_cfg(tmp_path))
 
 
+def test_world_owner_array_partitions_frequency_without_start_anchor(tmp_path: Path):
+    """A Newton frequency with only an owner array still slices the failed world."""
+    model = _FakeModel(world_count=2)
+    model.constraint_mimic_coef0 = np.asarray([10.0, 20.0], dtype=np.float32)
+    model.constraint_mimic_world = _warp_int_array([0, 1])
+    model.attribute_frequency.update(
+        {
+            "constraint_mimic_coef0": "constraint_mimic",
+            "constraint_mimic_world": "constraint_mimic",
+        }
+    )
+    recorder = _recorder(
+        model,
+        _capture_cfg(tmp_path, record_model=True, detect_nonfinite_in=()),
+        triggers={"solver_reset": lambda _context: None},
+    )
+
+    _dispatch(
+        recorder,
+        model,
+        model.state(),
+        sim_time=0.0,
+        trigger_results={"solver_reset": _TriggerResult(reason="solver reset", world_ids=(1,))},
+    )
+
+    [archive] = _archives(tmp_path)
+    arrays, manifest = load_archive(archive)
+    np.testing.assert_array_equal(arrays["incident__model__constraint_mimic_coef0"], [20.0])
+    np.testing.assert_array_equal(arrays["incident__model__constraint_mimic_world"], [1])
+    assert manifest["metadata"]["incident"]["world_id"] == 1
+
+
 def test_explicit_frequency_extent_mismatch_fails_during_initialization(tmp_path: Path):
     """Declared entity ownership must exactly match its world-start extent."""
     model = _FakeModel(world_count=2)
@@ -689,6 +721,31 @@ def test_symbolic_nworld_extent_mismatch_fails_during_initialization(tmp_path: P
             _capture_cfg(tmp_path, record_solver=True),
             solver=_FakeMjWarpSolver(data),
         )
+
+
+def test_empty_mode_inactive_symbolic_world_buffer_is_captured_once(tmp_path: Path):
+    """An unallocated MJWarp mode buffer does not pretend to contain world rows."""
+    model = _FakeModel(world_count=2)
+    solver = _minimal_mjwarp_solver()
+    solver.mjw_data.cJ = wp.zeros((0, 0, 0), dtype=wp.float32, device="cpu")
+    recorder = _recorder(
+        model,
+        _capture_cfg(tmp_path, record_solver=True, detect_nonfinite_in=()),
+        solver=solver,
+        triggers={"solver_reset": lambda _context: None},
+    )
+
+    _dispatch(
+        recorder,
+        model,
+        model.state(),
+        sim_time=0.0,
+        trigger_results={"solver_reset": _TriggerResult(reason="solver reset", world_ids=(1,))},
+    )
+
+    [archive] = _archives(tmp_path)
+    arrays, _ = load_archive(archive)
+    assert arrays["incident__solver__mjw_data__cJ"].shape == (0, 0, 0)
 
 
 @pytest.mark.parametrize("invalid_world", [-2, 2])
@@ -844,9 +901,11 @@ def test_coupled_solver_mapping_schema_drift_fails_loudly(tmp_path: Path):
         solver=solvers,
     )
     solvers["soft"].new_workspace = np.asarray([9.0], dtype=np.float32)
+    state = model.state()
+    _inject_body_inf(state, 0)
 
     with pytest.raises(DebugCaptureError, match=r"solver\['soft'\]\.new_workspace"):
-        _dispatch(recorder, model, model.state(), sim_time=0.0)
+        _dispatch(recorder, model, state, sim_time=0.0)
 
 
 def test_initialization_warning_reports_complete_unrecorded_inventory(
@@ -880,6 +939,64 @@ def test_initialization_warning_reports_complete_unrecorded_inventory(
     assert "Complete capture inventory follows:" in caplog.text
     for expected in inventory:
         assert expected in caplog.text
+
+
+def test_readback_preflight_logs_exact_field_before_copy_failure(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The final breadcrumb identifies a field whose native copy fails."""
+    model = _FakeModel()
+    solver = _FakeSolver()
+
+    def fail_selected_field(value: object, path: str = "root") -> object:
+        if path == "incident.solver.adaptive_vector":
+            raise DebugCaptureError("simulated invalid native allocation")
+        return clone_debug_value(value, path)
+
+    monkeypatch.setattr("isaaclab_newton.physics._incident_recorder.clone_debug_value", fail_selected_field)
+    cfg = _capture_cfg(
+        tmp_path,
+        record_solver=True,
+        readback_preflight=True,
+        detect_nonfinite_in=("solver",),
+        detect_nonfinite_include_fields=("solver.adaptive_vector",),
+        include_fields=("solver.adaptive_vector",),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="isaaclab_newton.physics._incident_recorder"):
+        with pytest.raises(
+            DebugCaptureError,
+            match=r"readback preflight failed at 'incident\.solver\.adaptive_vector'",
+        ):
+            _recorder(model, cfg, solver=solver)
+
+    assert (
+        "Physics debug readback preflight: plan=incident; field=1/1; path=incident.solver.adaptive_vector"
+        in caplog.text
+    )
+
+
+def test_readback_preflight_probes_replay_selection(tmp_path: Path, caplog: pytest.LogCaptureFixture):
+    """Replay fields receive the same one-time clone and host-readback probe."""
+    model = _FakeModel()
+    replay = NewtonDebugReplayCfg(
+        enabled=True,
+        record_state=False,
+        record_control=False,
+        record_solver=True,
+        record_contacts=False,
+        record_operations=False,
+        include_fields=("solver.adaptive_vector",),
+    )
+    cfg = _capture_cfg(tmp_path, readback_preflight=True, replay=replay)
+
+    with caplog.at_level(logging.WARNING, logger="isaaclab_newton.physics._incident_recorder"):
+        _recorder(model, cfg, solver=_FakeSolver())
+
+    assert "plan=replay; field=1/1; path=replay.solver.adaptive_vector" in caplog.text
+    assert "readback preflight completed: plan=replay; fields=1" in caplog.text
 
 
 def test_bound_provider_schema_drift_fails_instead_of_dropping_the_field(tmp_path: Path):
@@ -1116,9 +1233,11 @@ def test_empty_workflow_context_rejects_late_keys(tmp_path: Path):
     context: dict[str, object] = {}
     recorder = _recorder(model, _capture_cfg(tmp_path), context_provider=lambda: dict(context))
     context["late_key"] = np.int64(1)
+    state = model.state()
+    _inject_body_inf(state, 0)
 
     with pytest.raises(DebugCaptureError, match=r"schema|late_key"):
-        _dispatch(recorder, model, model.state(), sim_time=0.0)
+        _dispatch(recorder, model, state, sim_time=0.0)
 
 
 def test_workflow_context_provider_failure_is_not_swallowed(tmp_path: Path):
@@ -1268,7 +1387,7 @@ def test_custom_trigger_exports_finite_world_and_global_scopes(tmp_path: Path):
     model = _FakeModel(world_count=2)
     recorder = _recorder(
         model,
-        _capture_cfg(tmp_path),
+        _capture_cfg(tmp_path, detect_nonfinite_in=()),
         triggers={"energy_spike": lambda _context: None},
     )
 
@@ -1299,6 +1418,22 @@ def test_custom_trigger_exports_finite_world_and_global_scopes(tmp_path: Path):
         expected_joint_rows = 4 if incident["global"] else 2
         assert arrays["history__state__joint_q"].shape[1] == expected_joint_rows
     assert scopes == {"global", "world000001"}
+
+
+def test_disabled_nonfinite_scan_skips_live_partitions(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Avoid host reads when only graph-safe incident triggers are active."""
+    model = _FakeModel(world_count=2)
+    recorder = _recorder(
+        model,
+        _capture_cfg(tmp_path, detect_nonfinite_in=()),
+        triggers={"solver_reset": lambda _context: None},
+    )
+
+    def fail_if_called(*_args) -> None:
+        raise AssertionError("disabled scans must not build live partitions")
+
+    monkeypatch.setattr(recorder, "_build_live_partitions", fail_if_called)
+    _dispatch(recorder, model, model.state(), sim_time=0.0, trigger_results={})
 
 
 def test_custom_trigger_suppresses_persistent_scope_until_rearmed(tmp_path: Path):
@@ -1571,10 +1706,10 @@ def test_collision_pipeline_replay_wraps_slices_and_rejects_schema_drift(tmp_pat
         drift_recorder.record_step_replay_pre(model.state())
 
 
-def test_real_mjwarp_contact_rows_are_sliced_but_ambiguous_hessian_is_full(
+def test_real_mjwarp_contact_and_hessian_rows_are_sliced(
     tmp_path: Path,
 ):
-    """Semantic contacts localize while unannotated qLD remains complete."""
+    """World-owned contacts and qLD retain only the failed world."""
     model = _FakeModel(world_count=2)
     solver = _minimal_mjwarp_solver()
     replay = NewtonDebugReplayCfg(
@@ -1618,8 +1753,8 @@ def test_real_mjwarp_contact_rows_are_sliced_but_ambiguous_hessian_is_full(
     )
     np.testing.assert_array_equal(arrays["incident__solver__mjw_data__nacon"], [2])
     qld = np.arange(8, dtype=np.float32).reshape(2, 2, 2)
-    np.testing.assert_array_equal(arrays["incident__solver__mjw_data__qLD"], qld)
-    np.testing.assert_array_equal(arrays["replay__pre__solver__mjw_data__qLD"], [qld])
+    np.testing.assert_array_equal(arrays["incident__solver__mjw_data__qLD"], qld[1:])
+    np.testing.assert_array_equal(arrays["replay__pre__solver__mjw_data__qLD"], [[qld[1]]])
     np.testing.assert_array_equal(
         arrays["replay__pre__solver__mjw_data__contact__dist"],
         [2.0, 3.0],

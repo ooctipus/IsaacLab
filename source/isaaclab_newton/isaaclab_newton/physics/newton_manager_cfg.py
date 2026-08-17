@@ -257,9 +257,19 @@ class NewtonDebugCaptureCfg:
     unregistered runtime resources.
     """
 
+    readback_preflight: bool = False
+    """Whether to synchronously read each selected field during initialization.
+
+    The recorder logs the field path before each read. If a native backend
+    terminates the process while accessing an invalid array, the last emitted
+    path identifies the failing field. Disable this expensive diagnostic after
+    narrowing the capture selection.
+    """
+
     detect_nonfinite_in: tuple[str, ...] = ("state",)
     """Incident providers scanned for NaN and infinity values.
 
+    An empty tuple disables automatic scans for trigger-only capture.
     Allowed names are ``"state"``, ``"model"``, ``"control"``, ``"contacts"``,
     ``"solver"``, ``"collision_pipeline"``, ``"context"``, and
     ``"operations"``. Recorded retained providers must also have their
@@ -382,8 +392,6 @@ def _validate_detect_nonfinite_in(capture: NewtonDebugCaptureCfg) -> None:
     providers = capture.detect_nonfinite_in
     if not isinstance(providers, tuple):
         raise TypeError("NewtonCfg.debug_capture.detect_nonfinite_in must be a tuple of strings.")
-    if not providers:
-        raise ValueError("NewtonCfg.debug_capture.detect_nonfinite_in must not be empty.")
     if any(not isinstance(provider, str) or not provider for provider in providers):
         raise ValueError("NewtonCfg.debug_capture.detect_nonfinite_in must contain only non-empty strings.")
     if len(set(providers)) != len(providers):
@@ -457,6 +465,7 @@ def _validate_debug_capture_cfg(
             "record_solver",
             "record_operations",
             "include_private_fields",
+            "readback_preflight",
             "capture_per_substep",
         ),
         "NewtonCfg.debug_capture",

@@ -186,6 +186,7 @@ class _WorldLayout:
             )
         self.world_count = int(world_count)
         self._starts: dict[str, np.ndarray] = {}
+        self._owners: dict[str, np.ndarray] = {}
         start_paths: dict[str, str] = {}
         suffix = "_world_start"
         for field in model_plan.fields:
@@ -236,6 +237,23 @@ class _WorldLayout:
         self._attribute_frequency = {
             name: _frequency_name(frequency) for name, frequency in frequency_map.items()
         }
+        for field in model_plan.fields:
+            if not field.path or any(not isinstance(step, str) for step in field.path):
+                continue
+            attribute_name = ":".join(str(step) for step in field.path)
+            frequency = self._attribute_frequency.get(attribute_name)
+            if frequency in self._starts or attribute_name.lower() != f"{frequency}_world":
+                continue
+            owners = debug_value_to_numpy(field.get(model), field.display_path)
+            if owners.ndim != 1 or not np.issubdtype(owners.dtype, np.integer):
+                raise DebugSchemaError(f"World owner array {field.display_path} must be a one-dimensional integer array.")
+            owners = owners.astype(np.int64, copy=False)
+            if np.any((owners < -1) | (owners >= self.world_count)):
+                raise DebugSchemaError(
+                    f"World owner array {field.display_path} contains an index outside "
+                    f"[-1, {self.world_count - 1}]."
+                )
+            self._owners[frequency] = owners
         self.validate_fields(model_plan.fields, composite_root=False)
 
     @property
@@ -245,6 +263,8 @@ class _WorldLayout:
 
     def frequency_for(self, field: DebugCaptureField, *, composite_root: bool = False) -> str | None:
         """Resolve and validate a field's explicit world ownership contract."""
+        if field.shape and field.shape[0] == 0:
+            return "once"
         symbolic = field.symbolic_shape
         if symbolic and symbolic[0] == "nworld":
             self._validate_owned_extent(
@@ -266,6 +286,8 @@ class _WorldLayout:
             path = path[1:]
         if not path or any(not isinstance(step, str) for step in path):
             return None
+        if str(path[-1]).endswith("_world_start"):
+            return "once"
 
         attribute_name = ":".join(str(step) for step in path)
         frequency = (
@@ -311,12 +333,15 @@ class _WorldLayout:
             expected = self.world_count
         else:
             starts = self._starts.get(frequency)
-            if starts is None:
+            owners = self._owners.get(frequency)
+            if starts is None and owners is None:
                 raise DebugSchemaError(
                     f"Explicit ownership {source} for '{field.display_path}' references frequency "
-                    f"'{frequency}' without a matching discovered '*_world_start' anchor."
+                    f"'{frequency}' without a matching discovered '*_world_start' or '*_world' ownership anchor."
                 )
-            expected = int(starts[-1])
+            expected = int(starts[-1]) if starts is not None else int(owners.size)
+            if starts is not None and isinstance(field.path[-1], str) and field.path[-1].endswith("_start"):
+                expected += 1
         actual = int(field.shape[0])
         if actual != expected:
             raise DebugSchemaError(
@@ -338,8 +363,16 @@ class _WorldLayout:
             return None
 
         starts = self._starts.get(frequency)
-        if starts is None or not (0 <= world_id < self.world_count):
+        owners = self._owners.get(frequency)
+        if not (0 <= world_id < self.world_count):
             return None
+        if starts is None:
+            if owners is None:
+                return None
+            selected = owners == world_id
+            if include_globals:
+                selected |= owners == -1
+            return np.flatnonzero(selected)
         local = np.arange(int(starts[world_id]), int(starts[world_id + 1]), dtype=np.int64)
         if not include_globals or starts.size != self.world_count + 2:
             return local
@@ -353,7 +386,8 @@ class _WorldLayout:
             return np.empty(0, dtype=np.int64)
         starts = self._starts.get(frequency)
         if starts is None:
-            return None
+            owners = self._owners.get(frequency)
+            return None if owners is None else np.flatnonzero(owners == -1)
         if starts.size != self.world_count + 2:
             return np.empty(0, dtype=np.int64)
         prefix = np.arange(0, int(starts[0]), dtype=np.int64)
@@ -365,7 +399,10 @@ class _WorldLayout:
         if frequency == "world":
             return first_dimension == self.world_count
         starts = self._starts.get(frequency)
-        return starts is not None and starts.size > 0 and int(starts[-1]) == first_dimension
+        if starts is not None:
+            return starts.size > 0 and int(starts[-1]) == first_dimension
+        owners = self._owners.get(frequency)
+        return owners is not None and owners.size == first_dimension
 
 
 class PhysicsIncidentRecorder:
@@ -438,6 +475,7 @@ class PhysicsIncidentRecorder:
             "record_operations",
             "capture_per_substep",
             "include_private_fields",
+            "readback_preflight",
         ):
             if not isinstance(object.__getattribute__(cfg, name), bool):
                 raise TypeError(f"{name} must be a bool.")
@@ -513,6 +551,7 @@ class PhysicsIncidentRecorder:
         )
         self._capture_per_substep = cfg.capture_per_substep
         self._include_private_fields = cfg.include_private_fields
+        self._readback_preflight = cfg.readback_preflight
         self._include_fields = _validate_pattern_tuple(cfg.include_fields, "include_fields", allow_empty=False)
         self._exclude_fields = _validate_pattern_tuple(cfg.exclude_fields, "exclude_fields", allow_empty=True)
         self._max_gpu_bytes = cfg.max_gpu_bytes
@@ -603,6 +642,8 @@ class PhysicsIncidentRecorder:
 
         self._incident_source = self._make_incident_source()
         self._incident_plan, self._incident_binding = self._bind_incident_plan(self._incident_source)
+        if self._readback_preflight:
+            self._preflight_readback("incident", self._incident_binding, self._incident_source)
         self._nonfinite_fields = self._bind_nonfinite_fields(self._incident_binding)
         self._build_live_partitions(self._incident_source, self._incident_binding)
 
@@ -620,6 +661,26 @@ class PhysicsIncidentRecorder:
         if self._replay_enabled:
             self._bind_replay_plan(self._make_replay_source(state, refresh=False))
         self._warn_capture_inventory()
+
+    def _preflight_readback(self, plan_name: str, binding: DebugCaptureBinding, source: object) -> None:
+        """Read selected fields individually with a path breadcrumb before each copy."""
+        field_count = len(binding.fields)
+        for index, field in enumerate(binding.fields, start=1):
+            logger.warning(
+                "Physics debug readback preflight: plan=%s; field=%d/%d; path=%s",
+                plan_name,
+                index,
+                field_count,
+                field.display_path,
+            )
+            try:
+                value = clone_debug_value(field.validate(source), field.display_path)
+                debug_value_to_numpy(value, field.display_path)
+            except DebugCaptureError as exc:
+                raise DebugCaptureError(
+                    f"Physics debug readback preflight failed at '{field.display_path}': {exc}"
+                ) from exc
+        logger.warning("Physics debug readback preflight completed: plan=%s; fields=%d", plan_name, field_count)
 
     def _warn_capture_inventory(self) -> None:
         """Warn once with every known ignored or unallocated resource."""
@@ -1039,8 +1100,6 @@ class PhysicsIncidentRecorder:
         if self._record_operations:
             self._operations = self._snapshot_operations()
             self._incident_source.operations = self._operations
-        self._incident_plan.validate_schema(self._incident_source)
-        self._incident_binding.validate(self._incident_source)
 
     def _handle_detection(
         self,
@@ -1164,6 +1223,9 @@ class PhysicsIncidentRecorder:
         self._active_global_incident = bool(global_bad)
 
     def _detect_nonfinite(self) -> tuple[set[int], bool, dict[str, list[str]]]:
+        if not self._nonfinite_fields:
+            return set(), False, {}
+
         bad_worlds: set[int] = set()
         global_bad = False
         scope_paths: dict[str, list[str]] = {}
@@ -1173,7 +1235,7 @@ class PhysicsIncidentRecorder:
             provider = field.path[0] if field.path and isinstance(field.path[0], str) else None
             if provider not in self._detect_nonfinite_in:
                 continue
-            value = field.get(self._incident_source)
+            value = field.validate(self._incident_source)
             mask = _nonfinite_mask(value)
             if mask is None or not _mask_any(mask):
                 continue
@@ -1413,6 +1475,8 @@ class PhysicsIncidentRecorder:
         binding: DebugCaptureBinding,
     ) -> tuple[DebugCaptureField, ...]:
         """Freeze strict scan-only fields from the recorded incident binding."""
+        if not self._detect_nonfinite_in:
+            return ()
         candidates = tuple(
             field
             for field in binding.fields
@@ -1932,6 +1996,8 @@ class PhysicsIncidentRecorder:
             if enabled:
                 _require_selected_provider(binding, provider)
         binding.validate(source)
+        if self._readback_preflight:
+            self._preflight_readback("replay", binding, source)
         partitions = self._build_live_partitions(source, binding)
         _validate_packed_replay_keys(binding, partitions)
         self._replay_partition_metadata = _partition_metadata(
@@ -2120,8 +2186,6 @@ def _validate_detect_nonfinite_in(providers: tuple[str, ...]) -> frozenset[str]:
     """Validate provider roots selected for non-finite detection."""
     if not isinstance(providers, tuple):
         raise TypeError("detect_nonfinite_in must be a tuple of provider names.")
-    if not providers:
-        raise ValueError("detect_nonfinite_in must not be empty.")
     if any(not isinstance(provider, str) or not provider for provider in providers):
         raise TypeError("detect_nonfinite_in must contain non-empty strings.")
     if len(set(providers)) != len(providers):

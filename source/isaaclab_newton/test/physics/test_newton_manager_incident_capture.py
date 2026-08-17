@@ -125,6 +125,52 @@ def test_initialize_solver_binds_recorder_after_solver_and_contacts(monkeypatch)
     assert captured["context"] == {"workflow_value": 7}
 
 
+def test_initialize_solver_freezes_recorder_after_graph_warmup(monkeypatch):
+    """Lazy solver buffers created by graph warmup belong to the frozen schema."""
+    events: list[str] = []
+    solver = _solver_instance()
+
+    class _Recorder:
+        history_length = 3
+        capture_per_substep = False
+
+        def __init__(self, _model, _cfg, **providers) -> None:
+            events.append("recorder")
+            assert providers["solver"].lazy_buffer == "allocated"
+
+    def _build_solver(cls, _model, _solver_cfg) -> None:
+        events.append("solver")
+        NewtonManager._solver = solver
+
+    def _capture_graph(cls) -> None:
+        events.append("graph")
+        solver.lazy_buffer = "allocated"
+
+    monkeypatch.setattr(newton_manager_module, "PhysicsIncidentRecorder", _Recorder)
+    monkeypatch.setattr(PhysicsManager, "_cfg", NewtonCfg(debug_capture=NewtonDebugCaptureCfg()), raising=False)
+    monkeypatch.setattr(PhysicsManager, "_sim", None, raising=False)
+    monkeypatch.setattr(PhysicsManager, "_device", "cuda:0", raising=False)
+    monkeypatch.setattr(NewtonManager, "_model", object(), raising=False)
+    monkeypatch.setattr(NewtonManager, "_state_0", object(), raising=False)
+    monkeypatch.setattr(NewtonManager, "_control", object(), raising=False)
+    monkeypatch.setattr(NewtonManager, "_incident_recorder", None, raising=False)
+    monkeypatch.setattr(NewtonManager, "_usdrt_stage", None, raising=False)
+    monkeypatch.setattr(NewtonManager, "_graph_capture_pending", False, raising=False)
+    monkeypatch.setattr(NewtonManager, "_use_newton_actuators_active", False, raising=False)
+    monkeypatch.setattr(NewtonManager, "_debug_operation_provider_cleanup_pending", False, raising=False)
+    monkeypatch.setattr(NewtonManager, "_debug_incident_triggers", {}, raising=False)
+    monkeypatch.setattr(NewtonManager, "_build_solver", classmethod(_build_solver))
+    monkeypatch.setattr(NewtonManager, "_initialize_contacts", classmethod(lambda cls: None))
+    monkeypatch.setattr(NewtonManager, "_eval_fk_impl", classmethod(lambda cls, *args: None))
+    monkeypatch.setattr(NewtonManager, "_mark_transforms_dirty", classmethod(lambda cls: None))
+    monkeypatch.setattr(NewtonManager, "_capture_or_defer_graph", classmethod(_capture_graph))
+    monkeypatch.setattr(NewtonManager, "get_physics_dt", classmethod(lambda cls: 0.02))
+
+    NewtonManager.initialize_solver()
+
+    assert events == ["solver", "graph", "recorder"]
+
+
 def test_initialize_solver_retains_provider_when_recorder_cleanup_fails(monkeypatch):
     """Manager retains the exact provider whose recorder cleanup must be retried."""
 
@@ -846,7 +892,10 @@ def test_post_solver_capture_precedes_force_clear(monkeypatch, use_single_state:
     )
 
     assert NewtonManager._run_solver_substeps(None, dispatch_time=0.0) is False
-    assert events == ["solve", "replay_post", "observe", "clear_forces"]
+    expected = ["solve"]
+    if not use_single_state:
+        expected.append("assign")
+    assert events == [*expected, "replay_post", "observe", "clear_forces"]
 
 
 @pytest.mark.parametrize(

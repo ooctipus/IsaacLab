@@ -315,7 +315,7 @@ def load_archive(
                         f"{archive_path}::{key}: object dtype {value.dtype!s} is forbidden; "
                         "archives must load with allow_pickle=False"
                     )
-                arrays[key] = np.array(value, copy=True, order="C", subok=False)
+                arrays[key] = _normalize_array(value)
     except DebugArchiveValidationError:
         raise
     except Exception as exc:
@@ -421,8 +421,29 @@ def _normalize_arrays(arrays: Mapping[str, Any], context: str) -> dict[str, np.n
             raise DebugArchiveValidationError(
                 f"{context}.{key}: object dtype {array.dtype!s} is forbidden because it requires pickle"
             )
-        normalized[key] = np.array(array, copy=True, order="C", subok=False)
+        normalized[key] = _normalize_array(array)
     return normalized
+
+
+def _normalize_array(array: np.ndarray) -> np.ndarray:
+    normalized = np.array(array, copy=True, order="C", subok=False)
+    if normalized.dtype.names is None:
+        return normalized
+
+    canonical = np.zeros(normalized.shape, dtype=normalized.dtype, order="C")
+    _copy_structured_fields(canonical, normalized)
+    return canonical
+
+
+def _copy_structured_fields(target: np.ndarray, source: np.ndarray) -> None:
+    assert target.dtype.names is not None
+    for name in target.dtype.names:
+        target_field = target[name]
+        source_field = source[name]
+        if target_field.dtype.names is None:
+            target_field[...] = source_field
+        else:
+            _copy_structured_fields(target_field, source_field)
 
 
 def _validate_array_key(key: object, context: str) -> None:
@@ -455,7 +476,7 @@ def _create_array_inventory(arrays: Mapping[str, np.ndarray]) -> dict[str, dict[
 
 
 def _array_sha256(array: np.ndarray) -> str:
-    contiguous = np.ascontiguousarray(array)
+    contiguous = _normalize_array(array) if array.dtype.names is not None else np.ascontiguousarray(array)
     # Flatten before exposing the byte view because ``memoryview.cast`` rejects
     # multidimensional arrays containing a zero-length dimension.
     byte_view = memoryview(contiguous.reshape(-1).view(np.uint8))
