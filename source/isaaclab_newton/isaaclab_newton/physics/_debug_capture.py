@@ -598,6 +598,11 @@ class _PlanBuilder:
                 if isinstance(key, bool) or not isinstance(key, (str, int))
             ]
             if invalid_keys:
+                if len(invalid_keys) == len(value) and all(
+                    isinstance(key, (types.ModuleType, type)) or callable(key) for key in invalid_keys
+                ):
+                    self._ignore(value, path, annotation, "mapping keyed by runtime resources")
+                    return
                 invalid_types = sorted({_qualified_type_name(type(key)) for key in invalid_keys})
                 raise DebugSchemaError(
                     f"Debug capture mapping at '{display_path}' has unsupported key types "

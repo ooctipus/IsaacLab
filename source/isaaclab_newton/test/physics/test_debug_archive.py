@@ -147,6 +147,22 @@ def test_archive_rejects_checksum_tampering(tmp_path):
         archive.load_archive(path)
 
 
+def test_archive_canonicalizes_structured_padding_before_hashing(tmp_path):
+    """Structured padding does not make a freshly written archive fail validation."""
+    dtype = np.dtype({"names": ["flag", "value"], "formats": ["u1", "<f4"], "offsets": [0, 4], "itemsize": 8})
+    values = np.empty(2, dtype=dtype)
+    values.view(np.uint8).fill(0xA5)
+    values["flag"] = [1, 2]
+    values["value"] = [3.0, 4.0]
+    path = tmp_path / "structured.npz"
+
+    archive.write_archive(path, {"values": values})
+
+    arrays, _ = archive.load_archive(path)
+    np.testing.assert_array_equal(arrays["values"]["flag"], [1, 2])
+    np.testing.assert_array_equal(arrays["values"]["value"], [3.0, 4.0])
+
+
 @pytest.mark.parametrize("change", ["missing", "extra"])
 def test_archive_rejects_member_inventory_tampering(tmp_path, change):
     """The manifest and physical NPZ member set must agree exactly."""
