@@ -107,8 +107,8 @@ def test_coupled_mapping_selects_mjwarp_solver_and_ignores_native_cpu(mjwarp_sol
         provider.close()
 
 
-def test_provider_schema_requires_complete_discovery_inventory():
-    """Provider roots fail policy when discovery finds unsupported or absent leaves."""
+def test_provider_schema_rejects_unsupported_leaves():
+    """Provider roots retain stable None fields but reject unsupported leaves."""
     root = SimpleNamespace(
         captured=np.ones(1, dtype=np.float32),
         missing=None,
@@ -116,9 +116,9 @@ def test_provider_schema_requires_complete_discovery_inventory():
     )
     plan = DebugCapturePlan.build(root, root_name="provider", include_private=True)
 
-    with pytest.raises(DebugCaptureError, match="provider\\.missing") as error:
-        mjwarp_debug_module._require_complete_plan(plan, "Test provider")
-    assert "provider.callback" in str(error.value)
+    with pytest.raises(DebugCaptureError, match="provider\\.callback") as error:
+        mjwarp_debug_module._require_stable_plan(plan, "Test provider")
+    assert "provider.missing" not in str(error.value)
 
 
 def test_symbolic_world_extent_must_match_runtime_data():
@@ -136,7 +136,7 @@ def test_bind_rejects_unmatched_scan_glob_without_mutation(mjwarp_solver):
     import mujoco_warp._src.solver as solver_module
 
     solver, _ = mjwarp_solver
-    original_factory = solver_module.create_solver_context
+    original_factory = solver_module._create_solver_context
     original_graph_conditional = solver.mjw_model.opt.graph_conditional
     provider = MJWarpDebugOperationProvider(
         first_nonfinite_include_fields=("mjwarp_solver_context.field_removed_upstream",)
@@ -145,7 +145,7 @@ def test_bind_rejects_unmatched_scan_glob_without_mutation(mjwarp_solver):
     with pytest.raises(DebugSchemaError, match="matched no fields"):
         provider.bind(solver)
 
-    assert solver_module.create_solver_context is original_factory
+    assert solver_module._create_solver_context is original_factory
     assert solver.mjw_model.opt.graph_conditional == original_graph_conditional
 
 
@@ -159,7 +159,7 @@ def test_pinned_contexts_are_auto_discovered_and_source_files_are_unchanged(mjwa
     hashes_before = tuple(_sha256(path) for path in source_paths)
     original_functions = (
         solver_module.solve,
-        solver_module.create_solver_context,
+        solver_module._create_solver_context,
         collision_module.collision,
         collision_module.create_collision_context,
     )
@@ -180,7 +180,8 @@ def test_pinned_contexts_are_auto_discovered_and_source_files_are_unchanged(mjwa
         (provider._collision_context_plan, initial.collision_context),
     ):
         assert plan is not None
-        assert {field.path[0] for field in plan.fields} == {field.name for field in dataclasses.fields(context)}
+        discovered = {field.path[0] for field in plan.fields} | {entry.path[0] for entry in plan.unallocated}
+        assert discovered == {field.name for field in dataclasses.fields(context)}
         assert all(np.count_nonzero(value) == 0 for value in plan.to_numpy(context).values())
 
     collision_paths = {field.display_path for field in provider._collision_context_plan.fields}
@@ -212,7 +213,7 @@ def test_pinned_contexts_are_auto_discovered_and_source_files_are_unchanged(mjwa
     assert not provider._scan_fields
     assert original_functions == (
         solver_module.solve,
-        solver_module.create_solver_context,
+        solver_module._create_solver_context,
         collision_module.collision,
         collision_module.create_collision_context,
     )
@@ -229,8 +230,8 @@ def test_iteration_scan_retains_first_bad_context_with_clean_paths(mjwarp_solver
     iteration_count = [0]
 
     @functools.wraps(original_iteration)
-    def inject_after_iteration(m, d, ctx, step_size_cost, nsolving):
-        result = original_iteration(m, d, ctx, step_size_cost, nsolving)
+    def inject_after_iteration(m, d, ctx, nsolving, compact=False):
+        result = original_iteration(m, d, ctx, nsolving, compact=compact)
         values = ctx.h.numpy()
         values[0, 0, 0] = np.nan
         ctx.h.assign(values)
@@ -325,7 +326,7 @@ def test_external_solver_factory_does_not_mutate_owned_snapshot(mjwarp_solver):
     try:
         initial_context = provider._snapshot.solver_context
         with wp.ScopedDevice(solver.model.device):
-            external = solver_module.create_solver_context(solver.mjw_model, solver.mjw_data)
+            external = solver_module._create_solver_context(solver.mjw_model, solver.mjw_data)
         assert external is not initial_context
         assert provider._snapshot.solver_context is initial_context
         assert not provider._snapshot.solver_context_valid
@@ -375,7 +376,7 @@ def test_solver_exception_keeps_context_valid_but_completion_false(mjwarp_solver
 
     @functools.wraps(original_solve)
     def raise_after_factory(m, d):
-        solver_module.create_solver_context(m, d)
+        solver_module._create_solver_context(m, d)
         raise RuntimeError("injected solve failure")
 
     monkeypatch.setattr(solver_module, "solve", raise_after_factory)
@@ -421,7 +422,7 @@ def test_context_schema_drift_fails_at_each_factory_boundary(mjwarp_solver):
     provider.bind(solver)
     try:
         with wp.ScopedDevice(solver.model.device):
-            changed = solver_module.create_solver_context(solver.mjw_model, solver.mjw_data)
+            changed = solver_module._create_solver_context(solver.mjw_model, solver.mjw_data)
             changed.h = wp.zeros((changed.h.shape[0], changed.h.shape[1] + 1, changed.h.shape[2]), dtype=float)
         with pytest.raises(DebugSchemaError, match="object graph no longer matches"):
             provider._accept_solver_context(changed)

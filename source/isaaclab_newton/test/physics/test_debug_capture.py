@@ -327,6 +327,26 @@ def test_mapping_discovery_rejects_unsupported_key_types(key):
         capture.DebugCapturePlan.build({key: np.ones(1, dtype=np.float32)}, root_name="mapping")
 
 
+def test_mapping_keyed_by_runtime_resources_is_an_inventory_boundary():
+    """Module-keyed solver configuration is inventoried without traversing runtime objects."""
+    root = SimpleNamespace(_module_options={np: {"enable_backward": False}})
+
+    plan = capture.DebugCapturePlan.build(root, root_name="source", include_private=True)
+
+    assert plan.fields == ()
+    assert [(entry.display_path, entry.reason) for entry in plan.ignored] == [
+        ("source._module_options", "mapping keyed by runtime resources")
+    ]
+
+
+def test_mapping_mixing_runtime_and_capture_keys_is_rejected():
+    """A runtime-resource key cannot hide capturable entries in the same mapping."""
+    root = SimpleNamespace(_module_options={np: {}, "captured": np.ones(1, dtype=np.float32)})
+
+    with pytest.raises(capture.DebugSchemaError, match="unsupported key types"):
+        capture.DebugCapturePlan.build(root, root_name="source", include_private=True)
+
+
 def test_registered_container_types_are_recursed_at_every_nested_level():
     """Explicit registration makes ordinary nested framework containers discoverable."""
     capture.register_debug_container_type(_RegisteredContainer)

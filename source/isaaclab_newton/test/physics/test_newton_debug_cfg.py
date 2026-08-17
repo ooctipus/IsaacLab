@@ -38,6 +38,18 @@ def test_incident_operation_capture_is_opt_in():
     assert NewtonDebugCaptureCfg().record_operations is False
 
 
+def test_readback_preflight_is_explicit_and_disabled_by_default():
+    """Synchronous field probing adds no startup copies unless requested."""
+    assert NewtonDebugCaptureCfg().readback_preflight is False
+    assert NewtonCfg(debug_capture=NewtonDebugCaptureCfg(readback_preflight=True)).debug_capture.readback_preflight
+
+
+def test_readback_preflight_requires_a_boolean():
+    """A truthy non-boolean cannot silently enable synchronous provider copies."""
+    with pytest.raises(TypeError, match=r"readback_preflight.*bool"):
+        NewtonCfg(debug_capture=NewtonDebugCaptureCfg(readback_preflight=1))
+
+
 def test_incident_operation_capture_requires_a_boolean():
     """A truthy non-boolean cannot silently require an operation provider."""
     with pytest.raises(TypeError, match=r"record_operations.*bool"):
@@ -114,7 +126,6 @@ def test_nonfinite_detection_defaults_to_state():
     ("providers", "error_type", "message"),
     [
         (["state"], TypeError, "tuple of strings"),
-        ((), ValueError, "must not be empty"),
         (("state", "state"), ValueError, "duplicates"),
         (("unknown",), ValueError, "unsupported providers"),
         ((1,), ValueError, "non-empty strings"),
@@ -130,6 +141,13 @@ def test_nonfinite_detection_rejects_invalid_provider_selections(
 
     with pytest.raises(error_type, match=message):
         NewtonCfg(debug_capture=debug_capture)
+
+
+def test_empty_nonfinite_detection_enables_trigger_only_capture():
+    """An empty provider tuple avoids automatic scans when triggers own detection."""
+    cfg = NewtonCfg(debug_capture=NewtonDebugCaptureCfg(detect_nonfinite_in=()))
+
+    assert cfg.debug_capture.detect_nonfinite_in == ()
 
 
 @pytest.mark.parametrize(
