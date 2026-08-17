@@ -13,11 +13,12 @@ from typing import TYPE_CHECKING, TypeAlias
 
 import torch
 import warp as wp
-from newton import ModelBuilder
+from newton import ModelBuilder, ShapeFlags
 from newton._src.usd.schemas import SchemaResolverNewton, SchemaResolverPhysx
 
 from pxr import Usd
 
+from isaaclab import cloner
 from isaaclab.physics import PhysicsManager
 from isaaclab.sim.utils.newton_model_utils import replace_newton_builder_shape_colors
 
@@ -64,6 +65,19 @@ def copy_newton_clone_source(source_path: str, xform: wp.transform | None = None
     return builder
 
 
+def _select_mesh_variant_sources(
+    sources: Sequence[str], destinations: Sequence[str], variant_paths: Sequence[str]
+) -> tuple[str, ...]:
+    """Select clone sources whose destination owns a mesh-variant bank."""
+    return tuple(
+        dict.fromkeys(
+            source
+            for source, destination in zip(sources, destinations, strict=True)
+            if any(cloner.path.relativize(path, destination) == "" for path in variant_paths)
+        )
+    )
+
+
 @contextlib.contextmanager
 def newton_builder_world_hook(
     hook: Callable[[ModelBuilder, int, list[float], list[float]], None],
@@ -104,7 +118,7 @@ def _build_newton_builder_from_mapping(
     quaternions: torch.Tensor | None = None,
     up_axis: str = "Z",
     load_visual_shapes: bool = True,
-) -> tuple[ModelBuilder, object, dict, list, dict[str, ModelBuilder]]:
+) -> tuple[ModelBuilder, object, dict, list, dict[str, ModelBuilder], dict[str, ModelBuilder]]:
     """Build a Newton model builder from clone mapping inputs.
 
     Also returns the per-source builders (``{source_path: ModelBuilder}``) so the
@@ -147,6 +161,9 @@ def _build_newton_builder_from_mapping(
                 if any(pattern.fullmatch(child_path) for pattern in deformable_patterns):
                     deformable_ignore_paths.append(child_path)
 
+    # Variant banks switch collision geometry; ragged visual-only shapes stay outside strided views.
+    mesh_variant_sources = _select_mesh_variant_sources(sources, destinations, tuple(NewtonManager._mesh_variant_cfgs))
+
     source_builders = build_source_builders(
         stage,
         sources,
@@ -155,6 +172,20 @@ def _build_newton_builder_from_mapping(
         ignore_paths=deformable_ignore_paths or None,
         load_visual_shapes=load_visual_shapes,
     )
+    visual_source_builders = {}
+    if load_visual_shapes and mesh_variant_sources:
+        visual_source_builders = {source: source_builders[source] for source in mesh_variant_sources}
+        physics_variant_builders = build_source_builders(
+            stage,
+            mesh_variant_sources,
+            lambda: manager_cls.create_builder(up_axis=up_axis),
+            schema_resolvers,
+            ignore_paths=deformable_ignore_paths or None,
+            load_visual_shapes=False,
+        )
+        for source_builder in physics_variant_builders.values():
+            source_builder.shape_flags = [flags & ~ShapeFlags.VISIBLE for flags in source_builder.shape_flags]
+        source_builders.update(physics_variant_builders)
 
     # Inject registered sites into source builders (and global sites into main builder).
     global_sites, source_sites, root_sites = NewtonManager._cl_inject_sites(builder, source_builders)
@@ -169,7 +200,7 @@ def _build_newton_builder_from_mapping(
 
     site_index_map = {label: (idx, None) for label, idx in global_sites.items()}
     site_index_map.update((label, (None, per_world)) for label, per_world in local_site_map.items())
-    return builder, stage_info, site_index_map, world_xforms, source_builders
+    return builder, stage_info, site_index_map, world_xforms, source_builders, visual_source_builders
 
 
 def _renderer_wants_visual_shapes() -> bool:
@@ -295,16 +326,18 @@ class NewtonReplicateContext:
     def replicate(self) -> tuple[ModelBuilder, object, dict]:
         """Build the Newton model builder from queued mappings and optionally publish it."""
         sources, destinations, env_ids, mapping, positions, quaternions = self._merged_mapping()
-        builder, stage_info, site_index_map, world_xforms, source_builders = _build_newton_builder_from_mapping(
-            stage=self.stage,
-            sources=sources,
-            destinations=destinations,
-            env_ids=env_ids,
-            mapping=mapping,
-            positions=positions,
-            quaternions=quaternions,
-            up_axis=self.up_axis,
-            load_visual_shapes=self.load_visual_shapes,
+        builder, stage_info, site_index_map, world_xforms, source_builders, visual_source_builders = (
+            _build_newton_builder_from_mapping(
+                stage=self.stage,
+                sources=sources,
+                destinations=destinations,
+                env_ids=env_ids,
+                mapping=mapping,
+                positions=positions,
+                quaternions=quaternions,
+                up_axis=self.up_axis,
+                load_visual_shapes=self.load_visual_shapes,
+            )
         )
         fabric_body_bindings = rename_builder_labels(builder, sources, destinations, env_ids, mapping)
         if self.commit_to_manager:
@@ -312,6 +345,7 @@ class NewtonReplicateContext:
             NewtonManager._cl_fabric_body_bindings = fabric_body_bindings
             NewtonManager._world_xforms = world_xforms
             NewtonManager._cl_protos = source_builders
+            NewtonManager._cl_visual_protos = visual_source_builders
             NewtonManager.set_builder(builder)
             NewtonManager._num_envs = mapping.size(1)
         self._queue.clear()

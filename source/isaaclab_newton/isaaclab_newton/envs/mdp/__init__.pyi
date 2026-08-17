@@ -6,10 +6,12 @@
 __all__ = [
     "NewtonInverseKinematicsAction",
     "NewtonInverseKinematicsActionCfg",
+    "randomize_rigid_body_mesh",
     "solver_reset_required",
     "zero_reward_on_solver_reset",
 ]
 
 from .actions import NewtonInverseKinematicsAction, NewtonInverseKinematicsActionCfg
+from .events import randomize_rigid_body_mesh
 from .rewards import zero_reward_on_solver_reset
 from .terminations import solver_reset_required

@@ -352,18 +352,22 @@ def make_clone_plan(
     destinations_list: list[str] = []
     cfg_rows: dict[int, tuple[int, ...]] = {}
     row = 0
-    for cfg, spawn_cfg, destination, count in groups:
+    for group_index, (cfg, spawn_cfg, destination, count) in enumerate(groups):
         cfg_rows[id(cfg)] = tuple(range(row, row + count))
         group_mask = clone_mask[row : row + count]
         env_ids_assigned = group_mask.to(torch.int).argmax(dim=1).tolist()
         active = group_mask.any(dim=1).tolist()
-        paths = [
-            destination.format(env_id) if is_active else None for env_id, is_active in zip(env_ids_assigned, active)
-        ]
+        paths = []
+        for variant, (env_id, is_active) in enumerate(zip(env_ids_assigned, active)):
+            if is_active:
+                paths.append(destination.format(env_id))
+            elif getattr(cfg, "mesh_variants_enabled", False):
+                paths.append(f"/World/IsaacLabPrototypes/group_{group_index}/variant_{variant}")
+            else:
+                paths.append(None)
         for i, path in enumerate(paths):
             destinations_list.append(destination)
-            # Inactive prototypes fall back to env-i so the source path stays valid even
-            # when the variant has no active environment (matches the legacy behavior).
+            # Preserve the legacy env-index fallback for unstaged heterogeneous rows.
             sources_list.append(path if path is not None else destination.format(i))
         set_spawn_paths(spawn_cfg, paths)
         row += count

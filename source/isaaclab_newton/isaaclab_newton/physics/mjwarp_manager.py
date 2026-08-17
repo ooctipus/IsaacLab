@@ -16,6 +16,7 @@ from newton.solvers import SolverMuJoCo
 
 from isaaclab.physics import PhysicsManager
 
+from .mesh_variants import build_mesh_variant_sets
 from .mjwarp_manager_cfg import MJWarpSolverCfg
 from .newton_manager import NewtonManager
 
@@ -81,12 +82,22 @@ class NewtonMJWarpManager(NewtonManager):
     :attr:`NewtonCfg.debug_mode` is enabled.
     """
 
+    _supports_mesh_variants = True
+
     @classmethod
-    def _create_solver(cls, model: Model, solver_cfg: MJWarpSolverCfg) -> SolverMuJoCo:
+    def _create_solver(
+        cls,
+        model: Model,
+        solver_cfg: MJWarpSolverCfg,
+        *,
+        mesh_variant_sets: tuple[SolverMuJoCo.MeshVariantSet, ...] = (),
+    ) -> SolverMuJoCo:
         """Construct the configured MuJoCo Warp solver."""
         kwargs = cls._filter_solver_kwargs(SolverMuJoCo, solver_cfg)
         # ls_parallel is deprecated in newton; forwarding it (even as False) emits a warning.
         kwargs.pop("ls_parallel", None)
+        if mesh_variant_sets:
+            kwargs["mesh_variant_sets"] = mesh_variant_sets
         return SolverMuJoCo(model, **kwargs)
 
     @classmethod
@@ -99,7 +110,19 @@ class NewtonMJWarpManager(NewtonManager):
         :attr:`NewtonManager._needs_collision_pipeline` to
         ``True`` only when ``use_mujoco_contacts=False``.
         """
-        NewtonManager._solver = cls._create_solver(model, solver_cfg)
+        sim = PhysicsManager._sim
+        clone_plan = sim.get_clone_plan() if sim is not None else None
+        mesh_variant_sets, render_sets = build_mesh_variant_sets(
+            NewtonManager._mesh_variant_cfgs,
+            model,
+            NewtonManager._cl_protos,
+            clone_plan,
+            NewtonManager._cl_visual_protos,
+            NewtonManager._mesh_variant_resource_shapes,
+        )
+        NewtonManager._cl_visual_protos = {}
+        NewtonManager._mesh_variant_render_sets = render_sets
+        NewtonManager._solver = cls._create_solver(model, solver_cfg, mesh_variant_sets=mesh_variant_sets)
         NewtonManager._use_single_state = True
         NewtonManager._needs_collision_pipeline = not solver_cfg.use_mujoco_contacts
         NewtonManager._supports_rigid_body_force_input = True

@@ -341,8 +341,9 @@ def _spawn_from_usd_file(
             logger.warning(f"A prim already exists at prim path: '{prim_path}'.")
 
     # modify variants
-    if hasattr(cfg, "variants") and cfg.variants is not None:
-        select_usd_variants(prim_path, cfg.variants)
+    variants = getattr(cfg, "variants", None)
+    if variants is not None:
+        select_usd_variants(prim_path, variants)
 
     # make instance proxies editable before any override tries to author properties on them
     if getattr(cfg, "make_uninstanceable", False):

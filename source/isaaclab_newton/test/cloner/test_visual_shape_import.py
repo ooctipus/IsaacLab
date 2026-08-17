@@ -101,6 +101,21 @@ class TestClonerVisualShapeImport:
         # ...and the collider was visible either way, so skipping it changed nothing.
         assert list(builder.shape_flags) == flags_before
 
+    def test_variant_path_expression_selects_physics_source(self):
+        """The canonical environment regex must resolve to its clone destination."""
+        sources = ("/World/FixedM4", "/World/HeldM4", "/World/Robot")
+        destinations = (
+            "/World/envs/env_{}/FixedAsset",
+            "/World/envs/env_{}/HeldAsset",
+            "/World/envs/env_{}/Robot",
+        )
+        variant_paths = (
+            "/World/envs/env_[^/]+/FixedAsset",
+            "/World/envs/env_[^/]+/HeldAsset",
+        )
+
+        assert replicate_module._select_mesh_variant_sources(sources, destinations, variant_paths) == sources[:2]
+
 
 class _StubSim:
     def __init__(self, is_rendering: bool, can_render_rgb_array: bool, visual_shapes_required: bool = False):

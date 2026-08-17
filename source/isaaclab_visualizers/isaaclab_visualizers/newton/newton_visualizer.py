@@ -12,6 +12,7 @@ import logging
 import math
 import os
 import sys
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np  # noqa: F401 — used in type hints and colorization helpers
@@ -29,7 +30,8 @@ if __import__("sys").platform not in ("win32", "darwin") and not __import__("os"
     del _pyglet_headless_init
 
 from isaaclab_newton.physics import NewtonManager
-from newton.viewer import ViewerGL, ViewerRTX
+from newton import GeoType, Mesh, Model
+from newton.viewer import ViewerBase, ViewerGL, ViewerRTX
 from pyglet.math import Vec3 as PygletVec3
 
 from isaaclab.envs.utils.camera_colorizer import (
@@ -86,9 +88,191 @@ CONTACT_ARROW_LENGTH = 0.1
 """Length of synthesized contact arrows in meters."""
 
 if TYPE_CHECKING:
+    from isaaclab_newton.physics.mesh_variants import MeshVariantRenderSet
     from newton import State
 
     from isaaclab.scene_data import SceneDataProvider
+
+
+@wp.kernel(enable_backward=False)
+def _update_mesh_variant_instances(
+    body_q: wp.array(dtype=wp.transformf),
+    body_indices: wp.array(dtype=wp.int32),
+    selected_variants: wp.array(dtype=wp.int32),
+    visible_worlds: wp.array(dtype=wp.int32),
+    local_xforms: wp.array(dtype=wp.transformf),
+    local_scales: wp.array(dtype=wp.vec3f),
+    shape_variants: wp.array(dtype=wp.int32),
+    instance_count: int,
+    world_offsets: wp.array(dtype=wp.vec3f),
+    layer_xform: wp.transformf,
+    world_xforms: wp.array(dtype=wp.transformf),
+    world_scales: wp.array(dtype=wp.vec3f),
+):
+    tid = wp.tid()
+    shape = tid // instance_count
+    instance = tid - shape * instance_count
+    world = visible_worlds[instance]
+
+    xform = wp.transform_multiply(body_q[body_indices[world]], local_xforms[shape])
+    xform = wp.transform(xform.p + world_offsets[world], xform.q)
+    world_xforms[tid] = wp.transform_multiply(layer_xform, xform)
+
+    scale = wp.vec3(0.0)
+    if selected_variants[world] == shape_variants[shape]:
+        scale = local_scales[shape]
+    world_scales[tid] = scale
+
+
+@dataclass(slots=True)
+class _MeshVariantBatch:
+    name: str
+    mesh: str
+    collision: bool
+    xforms: wp.array(dtype=wp.transformf)
+    scales: wp.array(dtype=wp.vec3f)
+    colors: wp.array(dtype=wp.vec3f)
+    materials: wp.array(dtype=wp.vec4f)
+
+
+@dataclass(slots=True)
+class _MeshVariantGroup:
+    kernel_inputs: tuple
+    kernel_outputs: tuple[wp.array(dtype=wp.transformf), wp.array(dtype=wp.vec3f)]
+    batches: tuple[_MeshVariantBatch, ...]
+
+
+class _MeshVariantRenderer:
+    """Render reset-selectable shapes without adding them to the physics model."""
+
+    def __init__(
+        self,
+        viewer: NewtonViewerGL,
+        model: Model,
+        render_sets: tuple[MeshVariantRenderSet, ...],
+        selected_variants: tuple[wp.array(dtype=wp.int32), ...],
+        visible_worlds: list[int] | None,
+    ) -> None:
+        worlds = np.arange(model.world_count, dtype=np.int32) if visible_worlds is None else visible_worlds
+        worlds = wp.array(worlds, dtype=wp.int32, device=model.device)
+        instance_count = len(worlds)
+        groups = []
+
+        for set_index, (render_set, variant_ids) in enumerate(zip(render_sets, selected_variants, strict=True)):
+            shapes = tuple(
+                (variant, collision, shape)
+                for collision, variants in (
+                    (False, render_set.visual_variants),
+                    (True, render_set.collision_variants),
+                )
+                for variant, variant_shapes in enumerate(variants)
+                for shape in variant_shapes
+            )
+            if not shapes or instance_count == 0:
+                continue
+
+            local_xforms = wp.array(
+                [shape.transform for _, _, shape in shapes], dtype=wp.transformf, device=model.device
+            )
+            local_scales = []
+            shape_variants = wp.array([variant for variant, _, _ in shapes], dtype=wp.int32, device=model.device)
+            world_xforms = wp.empty(len(shapes) * instance_count, dtype=wp.transformf, device=model.device)
+            world_scales = wp.empty(len(shapes) * instance_count, dtype=wp.vec3, device=model.device)
+            batches = []
+
+            for shape_index, (_, collision, shape) in enumerate(shapes):
+                is_mesh = shape.geometry_type in (int(GeoType.MESH), int(GeoType.CONVEX_MESH))
+                mirror = is_mesh and np.prod(shape.scale) < 0.0
+                geometry_scale = (1.0, 1.0, 1.0) if is_mesh else shape.scale
+                mesh = viewer._populate_geometry(
+                    shape.geometry_type,
+                    geometry_scale,
+                    shape.thickness,
+                    shape.is_solid,
+                    geo_src=shape.source,
+                    mirror=mirror,
+                )
+                local_scales.append(shape.scale if is_mesh else (1.0, 1.0, 1.0))
+
+                if collision:
+                    color = viewer._collision_color_map(shape_index)
+                    roughness, metallic, textured = 0.3, 0.0, False
+                else:
+                    color = shape.color
+                    roughness = getattr(shape.source, "roughness", None)
+                    metallic = getattr(shape.source, "metallic", None)
+                    textured = (
+                        getattr(shape.source, "_uvs", None) is not None
+                        and getattr(shape.source, "texture", None) is not None
+                    )
+                start = shape_index * instance_count
+                stop = start + instance_count
+                batches.append(
+                    _MeshVariantBatch(
+                        name=f"/mesh_variants/set_{set_index}/shape_{shape_index}",
+                        mesh=mesh,
+                        collision=collision,
+                        xforms=world_xforms[start:stop],
+                        scales=world_scales[start:stop],
+                        colors=wp.full(instance_count, wp.vec3(*color), dtype=wp.vec3, device=model.device),
+                        materials=wp.full(
+                            instance_count,
+                            wp.vec4(
+                                0.5 if roughness is None else float(roughness),
+                                0.0 if metallic is None else float(metallic),
+                                0.0,
+                                float(textured),
+                            ),
+                            dtype=wp.vec4,
+                            device=model.device,
+                        ),
+                    )
+                )
+
+            groups.append(
+                _MeshVariantGroup(
+                    kernel_inputs=(
+                        render_set.body_indices,
+                        variant_ids,
+                        worlds,
+                        local_xforms,
+                        wp.array(local_scales, dtype=wp.vec3, device=model.device),
+                        shape_variants,
+                        instance_count,
+                    ),
+                    kernel_outputs=(world_xforms, world_scales),
+                    batches=tuple(batches),
+                )
+            )
+
+        self._groups = tuple(groups)
+        self._first_frame = True
+
+    def render(self, viewer: NewtonViewerGL, body_q: wp.array(dtype=wp.transformf)) -> None:
+        """Update and draw the selected variant for each visible world."""
+        layer_visible = not viewer._layer_force_hidden()
+        for group in self._groups:
+            if layer_visible and (viewer.show_visual or viewer.show_collision):
+                wp.launch(
+                    _update_mesh_variant_instances,
+                    dim=len(group.kernel_outputs[0]),
+                    inputs=[body_q, *group.kernel_inputs, viewer.world_offsets, viewer.layer.xform],
+                    outputs=group.kernel_outputs,
+                    device=viewer.device,
+                    record_tape=False,
+                )
+            for batch in group.batches:
+                visible = layer_visible and (viewer.show_collision if batch.collision else viewer.show_visual)
+                viewer.log_instances(
+                    batch.name,
+                    batch.mesh,
+                    batch.xforms,
+                    batch.scales,
+                    batch.colors if self._first_frame else None,
+                    batch.materials if self._first_frame else None,
+                    hidden=not visible,
+                )
+        self._first_frame = False
 
 
 def _imgui_optional_checkbox(imgui, label: str, value: bool, available: bool, tip: str) -> bool:
@@ -688,6 +872,7 @@ class NewtonViewerGL(_NewtonViewerUIMixin, ViewerGL):
         self._mpm_particle_flags_cache_key: tuple[int, int, int] | None = None
         self._mpm_particles_all_active = False
         self._live_plots_callback = None
+        self._mesh_variant_model_shapes: set[int] = set()
 
         from isaaclab.utils.backend_utils import FactoryBase
 
@@ -700,6 +885,42 @@ class NewtonViewerGL(_NewtonViewerUIMixin, ViewerGL):
             self._patch_image_logger()
 
         self.register_ui_callback(self._render_training_controls, position="side")
+
+    def set_mesh_variant_model_shapes(self, shape_indices: tuple[int, ...]) -> None:
+        """Hide model instances whose geometry is rendered by the variant sidecar."""
+        self._mesh_variant_model_shapes = set(shape_indices)
+
+    def _populate_shapes(self) -> None:
+        if not self._mesh_variant_model_shapes:
+            super()._populate_shapes()
+            return
+
+        model_flags = self.model.shape_flags
+        render_flags = model_flags.numpy().copy()
+        render_flags[list(self._mesh_variant_model_shapes)] = 0
+        self.model.shape_flags = wp.array(render_flags, dtype=wp.int32, device=model_flags.device)
+        try:
+            super()._populate_shapes()
+        finally:
+            self.model.shape_flags = model_flags
+
+    def _get_shape_isomesh(self, shape_idx: int) -> Mesh | None:
+        if shape_idx in self._mesh_variant_model_shapes:
+            return None
+        return super()._get_shape_isomesh(shape_idx)
+
+    def _compute_shape_offset_mesh(
+        self,
+        shape_idx: int,
+        mode: ViewerBase.SDFMarginMode,
+        margin_np: np.ndarray,
+        gap_np: np.ndarray,
+        type_np: np.ndarray,
+        scale_np: np.ndarray,
+    ) -> Mesh | None:
+        if shape_idx in self._mesh_variant_model_shapes:
+            return None
+        return super()._compute_shape_offset_mesh(shape_idx, mode, margin_np, gap_np, type_np, scale_np)
 
     def is_training_paused(self) -> bool:
         """Return whether simulation is paused by viewer controls."""
@@ -941,6 +1162,7 @@ class NewtonVisualizer(BaseVisualizer):
         self._scene_cameras: dict = {}
         self._scene_camera_names: list[str] = []
         self._active_camera_idx: int = 0
+        self._mesh_variant_renderer: _MeshVariantRenderer | None = None
 
     # ------------------------------------------------------------------
     # Shared lifecycle
@@ -1003,12 +1225,29 @@ class NewtonVisualizer(BaseVisualizer):
         self._viewer = self._create_viewer(runtime_headless, metadata)
 
         if self._viewer is not None:
+            render_sets = NewtonManager._get_mesh_variant_render_sets()
+            if render_sets and isinstance(self._viewer, NewtonViewerGL):
+                model_shapes = tuple(shape for render_set in render_sets for shape in render_set.model_shape_indices)
+                self._viewer.set_mesh_variant_model_shapes(model_shapes)
+            else:
+                render_sets = ()
             self._viewer.set_model(self._model)
             if self._picking_enabled:
                 # Keep Newton's public force path scoped to picking for this integration.
                 self._viewer.wind = None
             self._viewer.set_visible_worlds(self._resolved_visible_env_ids)
             self._viewer.set_world_offsets(self.cfg.world_spacing)
+            if render_sets:
+                selected_variants = tuple(
+                    NewtonManager._mesh_variant_ids(render_set.name) for render_set in render_sets
+                )
+                self._mesh_variant_renderer = _MeshVariantRenderer(
+                    self._viewer,
+                    self._model,
+                    render_sets,
+                    selected_variants,
+                    self._resolved_visible_env_ids,
+                )
             self._apply_camera_focal_length()
             initial_pose = self._resolve_initial_camera_pose()
             self._apply_camera_pose(initial_pose)
@@ -1110,6 +1349,8 @@ class NewtonVisualizer(BaseVisualizer):
                         if hasattr(body_q, "shape") and body_q.shape[0] == 0:
                             return
                         self._viewer.log_state(self._state)
+                        if self._mesh_variant_renderer is not None:
+                            self._mesh_variant_renderer.render(self._viewer, body_q)
                         contacts = NewtonManager.get_contacts()
                         if contacts is not None:
                             self._viewer.log_contacts(contacts, self._state)
@@ -1187,6 +1428,7 @@ class NewtonVisualizer(BaseVisualizer):
             self._viewer_picking_binding.deactivate()
         if self._viewer is not None:
             self._viewer = None
+        self._mesh_variant_renderer = None
         if self._camera_sensor is not None and self._camera_is_owned:
             evict_visualizer_camera(self._streaming_camera_key)
             remove_generated_prims(self._generated_camera_prim_paths)

@@ -22,7 +22,11 @@ from isaaclab_visualizers.newton import (
 )
 from isaaclab_visualizers.newton import newton_visualization_markers as newton_markers
 from isaaclab_visualizers.newton import newton_visualizer as newton_visualizer_module
-from isaaclab_visualizers.newton.newton_visualizer import NewtonViewerGL, _eye_lookat_to_pitch_yaw
+from isaaclab_visualizers.newton.newton_visualizer import (
+    NewtonViewerGL,
+    _eye_lookat_to_pitch_yaw,
+    _update_mesh_variant_instances,
+)
 from isaaclab_visualizers.newton_adapter import (
     VISUALIZER_INFINITE_PLANE_SIZE,
     apply_viewer_visible_worlds,
@@ -30,6 +34,7 @@ from isaaclab_visualizers.newton_adapter import (
     log_geo_with_expanded_plane_scale,
     resolve_visible_env_indices,
 )
+from newton.viewer import ViewerGL
 
 
 def test_expand_infinite_plane_scale_expands_non_positive_extents():
@@ -72,6 +77,63 @@ def test_log_geo_with_expanded_plane_scale_preserves_non_plane_scale():
 
     log_geo_with_expanded_plane_scale(_log_geo, 1, "box", 2, (0.0, 25.0), 0.0, True, hidden=True)
     assert calls == [("box", 2, (0.0, 25.0), 0.0, True, None, True)]
+
+
+def test_mesh_variant_instances_select_one_shape_per_world():
+    body_q = wp.array(
+        [(1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0), (2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)],
+        dtype=wp.transformf,
+        device="cpu",
+    )
+    body_indices = wp.array((0, 1), dtype=wp.int32, device="cpu")
+    selected_variants = wp.array((0, 1), dtype=wp.int32, device="cpu")
+    visible_worlds = wp.array((0, 1), dtype=wp.int32, device="cpu")
+    local_xforms = wp.array([(0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0)] * 2, dtype=wp.transformf, device="cpu")
+    local_scales = wp.array(((1.0, 1.0, 1.0), (2.0, 2.0, 2.0)), dtype=wp.vec3, device="cpu")
+    shape_variants = wp.array((0, 1), dtype=wp.int32, device="cpu")
+    world_offsets = wp.zeros(2, dtype=wp.vec3, device="cpu")
+    world_xforms = wp.empty(4, dtype=wp.transformf, device="cpu")
+    world_scales = wp.empty(4, dtype=wp.vec3, device="cpu")
+
+    wp.launch(
+        _update_mesh_variant_instances,
+        dim=4,
+        inputs=[
+            body_q,
+            body_indices,
+            selected_variants,
+            visible_worlds,
+            local_xforms,
+            local_scales,
+            shape_variants,
+            2,
+            world_offsets,
+            wp.transformf(),
+        ],
+        outputs=[world_xforms, world_scales],
+        device="cpu",
+        record_tape=False,
+    )
+
+    np.testing.assert_allclose(world_xforms.numpy()[:, :3], ((1, 1, 0), (2, 1, 0), (1, 1, 0), (2, 1, 0)))
+    np.testing.assert_allclose(world_scales.numpy(), ((1, 1, 1), (0, 0, 0), (0, 0, 0), (2, 2, 2)))
+
+
+def test_mesh_variant_sidecar_masks_stale_model_shapes(monkeypatch):
+    viewer = NewtonViewerGL.__new__(NewtonViewerGL)
+    viewer._mesh_variant_model_shapes = {1}
+    flags = wp.array((3, 3), dtype=wp.int32, device="cpu")
+    viewer.model = SimpleNamespace(shape_flags=flags)
+    populated_flags = []
+    monkeypatch.setattr(
+        ViewerGL, "_populate_shapes", lambda self: populated_flags.extend(self.model.shape_flags.numpy())
+    )
+
+    viewer._populate_shapes()
+
+    assert populated_flags == [3, 0]
+    assert viewer.model.shape_flags is flags
+    assert flags.numpy().tolist() == [3, 3]
 
 
 def test_resolve_visible_env_indices_truncates_explicit_list():
@@ -481,6 +543,7 @@ def _make_newton_visualizer(viewer, scene_data_provider=None):
     visualizer._scene_data_provider = scene_data_provider
     visualizer._resolved_visible_env_ids = None
     visualizer._live_plot_sources = []
+    visualizer._mesh_variant_renderer = None
     if viewer is not None:
         visualizer._viewer_picking_binding.bind(viewer)
     visualizer._log_camera_sensor_image = lambda: None

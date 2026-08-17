@@ -111,6 +111,7 @@ from isaaclab_newton.physics.xpbd_manager_cfg import XPBDSolverCfg
 
 if TYPE_CHECKING:
     from isaaclab_newton.actuators import NewtonActuatorAdapter
+    from isaaclab_newton.physics.mesh_variants import MeshVariantRenderSet
     from isaaclab_newton.physics.newton_collision_cfg import NewtonCollisionPipelineCfg
 
 logger = logging.getLogger(__name__)
@@ -392,6 +393,7 @@ class NewtonManager(PhysicsManager):
     _pending_extended_contact_attributes: set[str] = set()
     _report_contacts: bool = False
     _supports_contact_sensors: bool = True
+    _supports_mesh_variants: bool = False
 
     # Per-world reset masks (allocated in start_simulation, consumed in step/forward).
     # Newton reserves the final slot for global entities in world -1.
@@ -501,6 +503,10 @@ class NewtonManager(PhysicsManager):
     # path. Single-model consumers (e.g. batched Newton IK) finalize a single-env
     # model from these and resolve it via ``query.path_to_source``.
     _cl_protos: dict[str, ModelBuilder] = {}
+    _cl_visual_protos: dict[str, ModelBuilder] = {}
+    _mesh_variant_cfgs: dict[str, Any] = {}
+    _mesh_variant_resource_shapes: dict[str, tuple[tuple[int, ...], ...]] = {}
+    _mesh_variant_render_sets: tuple[MeshVariantRenderSet, ...] = ()
     _deformable_registry: list = []
     _per_world_builder_hooks: list[Callable[[ModelBuilder, int, list[float], list[float]], None]] = []
 
@@ -1133,6 +1139,10 @@ class NewtonManager(PhysicsManager):
         NewtonManager._cl_fabric_body_bindings = None
         NewtonManager._world_xforms = None
         NewtonManager._cl_protos = {}
+        NewtonManager._cl_visual_protos = {}
+        NewtonManager._mesh_variant_cfgs = {}
+        NewtonManager._mesh_variant_resource_shapes = {}
+        NewtonManager._mesh_variant_render_sets = ()
         NewtonManager._pending_extended_state_attributes = set()
         NewtonManager._pending_extended_contact_attributes = set()
         NewtonManager._views = []
@@ -1142,6 +1152,51 @@ class NewtonManager(PhysicsManager):
     def set_builder(cls, builder: ModelBuilder) -> None:
         """Set the Newton model builder."""
         NewtonManager._builder = builder
+
+    @classmethod
+    def _register_mesh_variant_cfg(cls, cfg: Any) -> str:
+        """Register a rigid-object cfg for precompiled mesh switching.
+
+        Args:
+            cfg: Rigid-object configuration participating in the active clone plan.
+
+        Returns:
+            Stable mesh variant set name.
+        """
+        name = cfg.prim_path
+        existing = NewtonManager._mesh_variant_cfgs.get(name)
+        if existing is not None and existing is not cfg:
+            raise ValueError(f"Multiple mesh-variant rigid objects use prim path {name!r}.")
+        NewtonManager._mesh_variant_cfgs[name] = cfg
+        return name
+
+    @classmethod
+    def _mesh_variant_ids(cls, name: str) -> wp.array[wp.int32]:
+        """Return selected mesh variant ids for every environment."""
+        solver = NewtonManager._solver
+        if solver is None or not hasattr(solver, "mesh_variant_ids"):
+            raise RuntimeError("Mesh variants require an initialized Newton MJWarp solver.")
+        return solver.mesh_variant_ids(name)
+
+    @classmethod
+    def _get_mesh_variant_render_sets(cls) -> tuple[MeshVariantRenderSet, ...]:
+        """Return render geometry for reset-selectable mesh variants."""
+        return NewtonManager._mesh_variant_render_sets
+
+    @classmethod
+    def _set_mesh_variant_index(
+        cls,
+        name: str,
+        *,
+        variant_ids: wp.array[wp.int32],
+        env_ids: wp.array[wp.int32],
+    ) -> None:
+        """Select compiled mesh variants over environment indices."""
+        solver = NewtonManager._solver
+        if solver is None or not hasattr(solver, "set_mesh_variant_index"):
+            raise RuntimeError("Mesh variants require an initialized Newton MJWarp solver.")
+        solver.set_mesh_variant_index(name, variant_ids=variant_ids, world_ids=env_ids)
+        cls.invalidate_body_state(env_ids=env_ids)
 
     @classmethod
     def create_builder(cls, up_axis: str | None = None, **kwargs) -> ModelBuilder:
@@ -1726,6 +1781,13 @@ class NewtonManager(PhysicsManager):
             cls._builder.request_state_attributes(*cls._pending_extended_state_attributes)
             NewtonManager._pending_extended_state_attributes = set()
         cls._prepare_builder_for_finalize(cls._builder)
+        from .mesh_variants import _disable_mesh_variant_resources, _prepare_mesh_variant_resources
+
+        sim = PhysicsManager._sim
+        clone_plan = sim.get_clone_plan() if sim is not None else None
+        NewtonManager._mesh_variant_resource_shapes = _prepare_mesh_variant_resources(
+            NewtonManager._mesh_variant_cfgs, cls._builder, NewtonManager._cl_protos, clone_plan
+        )
         sdf_shapes: tuple[int, ...] = ()
         physics_cfg = PhysicsManager._cfg
         if (
@@ -1738,6 +1800,7 @@ class NewtonManager(PhysicsManager):
         with Timer(name="newton_finalize_builder", msg="Finalize builder took:", activity="Finalizing physics model"):
             NewtonManager._model = cls._builder.finalize(device=device)
             cls._validate_sdf_all_shapes(cls._model, sdf_shapes)
+            _disable_mesh_variant_resources(cls._model, NewtonManager._mesh_variant_resource_shapes)
             if isinstance(physics_cfg, NewtonCfg) and physics_cfg.soft_contact_cfg is not None:
                 cls._model.soft_contact_ke = float(physics_cfg.soft_contact_cfg.soft_contact_ke)
                 cls._model.soft_contact_kd = float(physics_cfg.soft_contact_cfg.soft_contact_kd)
@@ -2307,6 +2370,8 @@ class NewtonManager(PhysicsManager):
             NewtonManager._solver_dt = cls.get_physics_dt() / cls._num_substeps
             NewtonManager._collision_cfg = cfg.collision_cfg  # type: ignore[union-attr]
 
+            if NewtonManager._mesh_variant_cfgs and not cls._supports_mesh_variants:
+                raise ValueError("mesh_variants_enabled is supported only by the Newton MJWarp solver.")
             cls._build_solver(cls._model, cfg.solver_cfg)  # type: ignore[union-attr]
             if NewtonManager._solver is None:
                 raise RuntimeError(
@@ -2557,7 +2622,7 @@ class NewtonManager(PhysicsManager):
         collide_every = cls._collision_decimation
         interval = collide_every if 0 < collide_every < cls._num_substeps else cls._num_substeps
         remaining = cls._num_substeps - completed_substeps
-        cls._collision_pipeline.collide(cls._state_0, contacts)#, dt=min(interval, remaining) * cls._solver_dt)
+        cls._collision_pipeline.collide(cls._state_0, contacts, dt=min(interval, remaining) * cls._solver_dt)
 
     @classmethod
     def _run_solver_substeps(cls, contacts) -> None:
