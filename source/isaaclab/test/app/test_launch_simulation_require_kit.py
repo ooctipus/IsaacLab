@@ -16,6 +16,7 @@ taken. No Kit/GPU required.
 """
 
 import argparse
+import os
 
 import pytest
 
@@ -40,6 +41,29 @@ def test_default_stays_kitless_for_a_kitless_config(kit_branch_taken):
         pass
 
     assert kit_branch_taken == []
+
+
+def test_kitless_launch_disables_omniclient_hub_by_default(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("OMNICLIENT_HUB_MODE", raising=False)
+
+    with launch_simulation(cfg=PhysicsCfg(), launcher_args={}):
+        assert os.environ["OMNICLIENT_HUB_MODE"] == "disabled"
+
+
+def test_kitless_launch_preserves_explicit_omniclient_hub_mode(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("OMNICLIENT_HUB_MODE", "shared")
+
+    with launch_simulation(cfg=PhysicsCfg(), launcher_args={}):
+        assert os.environ["OMNICLIENT_HUB_MODE"] == "shared"
+
+
+def test_kit_launch_does_not_change_omniclient_hub_mode(kit_branch_taken, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("OMNICLIENT_HUB_MODE", raising=False)
+
+    with launch_simulation(cfg=PhysicsCfg(), launcher_args={"require_kit": True}):
+        assert "OMNICLIENT_HUB_MODE" not in os.environ
+
+    assert kit_branch_taken == [True]
 
 
 def test_require_kit_launches_kit_for_a_kitless_config(kit_branch_taken):

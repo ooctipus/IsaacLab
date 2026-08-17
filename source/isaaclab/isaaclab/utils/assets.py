@@ -404,6 +404,33 @@ def _publish_atomically(destination: str, data: bytes) -> None:
         raise
 
 
+def _copy_remote_atomically(source: str, destination: str) -> bool:
+    """Copy a remote file without exposing a partial ``destination`` to readers.
+
+    Args:
+        source: Remote file URL.
+        destination: Final local path for the downloaded file.
+
+    Returns:
+        Whether the remote copy completed successfully.
+    """
+    import omni.client  # noqa: PLC0415
+
+    directory = os.path.dirname(destination)
+    os.makedirs(directory, exist_ok=True)
+    handle, staged = tempfile.mkstemp(dir=directory, prefix=os.path.basename(destination) + ".", suffix=".partial")
+    os.close(handle)
+    try:
+        result = omni.client.copy(source, staged, omni.client.CopyBehavior.OVERWRITE)
+        if result != omni.client.Result.OK:
+            return False
+        os.replace(staged, destination)
+        return True
+    finally:
+        with contextlib.suppress(OSError):
+            os.unlink(staged)
+
+
 def _write_mirror_fingerprint(url: str, mirrored: str) -> None:
     """Record the remote revision a freshly cached copy was taken from."""
     fingerprint = _remote_fingerprint(url)
@@ -578,8 +605,7 @@ def retrieve_file_path(path: str, download_dir: str | None = None, force_downloa
             is_root_asset = local_root is None
             # an outdated local copy is re-fetched, so a changed remote asset is picked up
             if force_download or not _usable_mirror(cur_url, download_dir):
-                result = omni.client.copy(cur_url, target_path, omni.client.CopyBehavior.OVERWRITE)
-                if result != omni.client.Result.OK:
+                if not _copy_remote_atomically(cur_url, target_path):
                     if force_download or is_root_asset:
                         raise RuntimeError(f"Unable to copy file: '{cur_url}'. Is the Nucleus Server running?")
                     logger.debug("Skipping unavailable dependency: %s", cur_url)

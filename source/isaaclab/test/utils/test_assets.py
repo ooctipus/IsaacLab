@@ -354,6 +354,34 @@ def test_read_file_refetches_when_the_server_copy_changed(asset_cache, monkeypat
     assert json.loads(fingerprint.read_text(encoding="utf-8")) == current
 
 
+def test_retrieve_file_path_stages_remote_copy_before_publishing(asset_cache, monkeypatch):
+    """Test remote assets are copied beside the mirror before atomically replacing it."""
+    import omni.client
+
+    revision = {"hash": "def456", "version": "", "size": 11, "modified_time": "2026-07-29 10:00:00"}
+    copied_to: list[Path] = []
+
+    def fake_copy(url, destination, behavior):
+        assert url == _REMOTE_URL
+        assert behavior == omni.client.CopyBehavior.OVERWRITE
+        copied_to.append(Path(destination))
+        Path(destination).write_bytes(b"fresh bytes")
+        return omni.client.Result.OK
+
+    _serve(monkeypatch, {_REMOTE_URL: revision})
+    monkeypatch.setattr(omni.client, "copy", fake_copy)
+    monkeypatch.setattr(assets_utils, "_find_asset_dependencies", lambda _: set())
+
+    mirrored = Path(assets_utils._mirror_path(_REMOTE_URL, str(asset_cache)))
+    retrieved = assets_utils.retrieve_file_path(_REMOTE_URL)
+
+    assert Path(retrieved) == mirrored
+    assert copied_to[0].parent == mirrored.parent
+    assert copied_to[0] != mirrored
+    assert not copied_to[0].exists()
+    assert mirrored.read_bytes() == b"fresh bytes"
+
+
 def test_local_copy_without_a_recorded_revision_is_refetched(asset_cache, monkeypatch):
     """Test copies left by earlier versions are re-fetched once instead of trusted blindly."""
     _cache_asset(asset_cache, _REMOTE_URL, b"cached bytes", fingerprint=None)
