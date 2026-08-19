@@ -13,23 +13,59 @@ from isaaclab_tasks.utils import PresetCfg, preset
 
 
 @configclass
-class PointCloudModelCfg(RslRlMLPModelCfg):
-    """Configuration for the ordered Factory point-cloud encoder."""
+class SimBaModelCfg:
+    """Configuration for a SimBa model with optional observation-group encoders."""
 
     @configclass
-    class MLPCfg:
-        hidden_dims: list[int] = MISSING
-        """Hidden dimensions of the point-cloud MLP."""
+    class EncoderCfg:
+        class_name: str = MISSING
+        """Encoder class or constructor."""
 
         output_dim: int = MISSING
-        """Output dimension of the point-cloud MLP."""
+        """Output dimension of the encoder."""
+
+    @configclass
+    class MLPEncoderCfg(EncoderCfg):
+        class_name: str = "isaaclab_tasks.contrib.nistv2.config.agents.models:MLPEncoder"
+
+        hidden_dims: list[int] = MISSING
+        """Hidden dimensions of the encoder MLP."""
 
         activation: str = MISSING
-        """Activation function of the point-cloud MLP."""
+        """Activation function of the encoder MLP."""
 
-    class_name: str = "isaaclab_tasks.contrib.nistv2.config.agents.models:PointCloudModel"
-    point_cloud_group: str = "perception"
-    point_cloud_mlp_cfg: MLPCfg = MISSING
+        last_activation: str | None = None
+        """Optional activation after the encoder output layer."""
+
+    class_name: str = "isaaclab_tasks.contrib.nistv2.config.agents.models:SimBaModel"
+    """Model class name."""
+
+    hidden_dim: int = MISSING
+    """Width of the residual pathway."""
+
+    num_blocks: int = 2
+    """Number of residual blocks."""
+
+    expansion_factor: int = 4
+    """Expansion factor inside each residual block."""
+
+    activation: str = "relu"
+    """Activation function used inside each residual block."""
+
+    norm: bool = True
+    """Whether to apply layer normalization inside the SimBa head."""
+
+    obs_normalization: bool = False
+    """Whether to normalize observation groups that bypass encoders."""
+
+    encoder_normalization: bool = False
+    """Whether to normalize each encoder input independently."""
+
+    encoder_cfg: dict[str, EncoderCfg] | None = None
+    """Encoders keyed by observation group."""
+
+    distribution_cfg: RslRlMLPModelCfg.DistributionCfg | None = None
+    """Optional output-distribution configuration."""
 
 
 # Shared PPO hyper-parameters reused by both the plain-PPO and value-shift variants.
@@ -65,25 +101,29 @@ class FactoryPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         default={"actor": ["policy", "perception"], "critic": ["policy", "perception"]},
         actor_critic={"actor": ["policy", "perception"], "critic": ["policy", "perception"]},
     )  # type: ignore
-    actor = PointCloudModelCfg(
-        distribution_cfg=PointCloudModelCfg.GaussianDistributionCfg(init_std=1.0, std_type="scalar"),
+    actor = SimBaModelCfg(
+        distribution_cfg=RslRlMLPModelCfg.GaussianDistributionCfg(init_std=1.0, std_type="scalar"),
         obs_normalization=True,
-        point_cloud_mlp_cfg=PointCloudModelCfg.MLPCfg(
-            hidden_dims=[256],
-            output_dim=128,
-            activation="elu",
-        ),
-        hidden_dims=[512, 256, 128, 64],
-        activation="elu",
+        hidden_dim=256,
+        num_blocks=2,
+        expansion_factor=4,
+        activation="swish",
+        encoder_cfg={
+            "perception": SimBaModelCfg.MLPEncoderCfg(
+                hidden_dims=[256], output_dim=128, activation="elu", last_activation="elu"
+            )
+        },
     )
-    critic = PointCloudModelCfg(
+    critic = SimBaModelCfg(
         obs_normalization=True,
-        point_cloud_mlp_cfg=PointCloudModelCfg.MLPCfg(
-            hidden_dims=[256],
-            output_dim=128,
-            activation="elu",
-        ),
-        hidden_dims=[512, 256, 128, 64],
-        activation="elu",
+        hidden_dim=256,
+        num_blocks=2,
+        expansion_factor=4,
+        activation="swish",
+        encoder_cfg={
+            "perception": SimBaModelCfg.MLPEncoderCfg(
+                hidden_dims=[256], output_dim=128, activation="elu", last_activation="elu"
+            )
+        },
     )
     algorithm = PpoAlgorithmCfg()  # type: ignore

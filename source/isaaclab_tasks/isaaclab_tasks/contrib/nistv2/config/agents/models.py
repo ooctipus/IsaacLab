@@ -8,17 +8,89 @@
 from __future__ import annotations
 
 import copy
+import math
+from typing import Any
 
 import torch
 import torch.nn as nn
 from rsl_rl.models.mlp_model import MLPModel
-from rsl_rl.modules import HiddenState
-from rsl_rl.utils import resolve_nn_activation
+from rsl_rl.modules import MLP, EmpiricalNormalization, HiddenState
+from rsl_rl.modules.distribution import Distribution
+from rsl_rl.utils import resolve_callable, resolve_nn_activation
 from tensordict import TensorDict
 
 
-class PointCloudModel(MLPModel):
-    """Encode ordered asset point clouds before the policy MLP."""
+class MLPEncoder(nn.Module):
+    """Flatten an observation group and encode it with an MLP."""
+
+    def __init__(
+        self,
+        input_shape: tuple[int, ...],
+        output_dim: int,
+        hidden_dims: tuple[int, ...] | list[int],
+        activation: str = "elu",
+        last_activation: str | None = None,
+    ) -> None:
+        super().__init__()
+        if not input_shape:
+            raise ValueError("MLPEncoder requires a non-empty input shape.")
+        self.feature_rank = len(input_shape)
+        self.output_dim = output_dim
+        self.mlp = MLP(math.prod(input_shape), output_dim, hidden_dims, activation, last_activation)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.mlp(x.flatten(start_dim=-self.feature_rank))
+
+
+class SimBaBlock(nn.Module):
+    """Pre-normalized residual block used by SimBa."""
+
+    def __init__(self, hidden_dim: int, expansion_factor: int, activation: str, norm: bool) -> None:
+        super().__init__()
+        self.pre_norm = nn.LayerNorm(hidden_dim) if norm else nn.Identity()
+        self.layers = nn.Sequential(
+            nn.Linear(hidden_dim, expansion_factor * hidden_dim),
+            resolve_nn_activation(activation),
+            nn.Linear(expansion_factor * hidden_dim, hidden_dim),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x + self.layers(self.pre_norm(x))
+
+
+class SimBaNetwork(nn.Sequential):
+    """Residual MLP backbone from SimBa."""
+
+    def __init__(
+        self,
+        input_dim: int,
+        output_dim: int,
+        hidden_dim: int,
+        num_blocks: int = 2,
+        expansion_factor: int = 4,
+        activation: str = "relu",
+        norm: bool = True,
+    ) -> None:
+        layers: list[nn.Module] = [nn.Linear(input_dim, hidden_dim)]
+        layers.extend(SimBaBlock(hidden_dim, expansion_factor, activation, norm) for _ in range(num_blocks))
+        layers.extend((nn.LayerNorm(hidden_dim) if norm else nn.Identity(), nn.Linear(hidden_dim, output_dim)))
+        super().__init__(*layers)
+        self._init_weights()
+
+    def _init_weights(self) -> None:
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                fan_in = nn.init._calculate_correct_fan(module.weight, "fan_in")
+                nn.init.uniform_(module.weight, -1.0 / math.sqrt(fan_in), 1.0 / math.sqrt(fan_in))
+                nn.init.zeros_(module.bias)
+
+
+class SimBaModel(MLPModel):
+    """Compose observation-group encoders with a SimBa policy or value head.
+
+    Encoder classes receive ``input_shape`` plus their configuration fields and must return a tensor whose last
+    dimension is ``output_dim``. Groups without an encoder pass directly into the SimBa head.
+    """
 
     def __init__(
         self,
@@ -26,99 +98,142 @@ class PointCloudModel(MLPModel):
         obs_groups: dict[str, list[str]],
         obs_set: str,
         output_dim: int,
-        point_cloud_mlp_cfg: dict,
-        hidden_dims: tuple[int, ...] | list[int] = (256, 256, 256),
-        activation: str = "elu",
+        hidden_dim: int = 256,
+        num_blocks: int = 2,
+        expansion_factor: int = 4,
+        activation: str = "relu",
+        norm: bool = True,
         obs_normalization: bool = False,
+        encoder_normalization: bool = False,
         distribution_cfg: dict | None = None,
-        point_cloud_group: str = "perception",
+        encoder_cfg: dict[str, dict[str, Any]] | None = None,
     ) -> None:
-        """Initialize the point-cloud model.
+        nn.Module.__init__(self)
+        self._encoder_cfg = {group: dict(group_cfg) for group, group_cfg in (encoder_cfg or {}).items()}
+        self._encoder_output_dims = {
+            group: int(group_cfg["output_dim"]) for group, group_cfg in self._encoder_cfg.items()
+        }
+        self.obs_groups, self.obs_dim = self._get_obs_dim(obs, obs_groups, obs_set)
 
-        Args:
-            obs: Observation dictionary.
-            obs_groups: Mapping from model inputs to environment observation groups.
-            obs_set: Observation set used by this model.
-            output_dim: Model output dimension.
-            point_cloud_mlp_cfg: Point-cloud encoder configuration.
-            hidden_dims: Hidden dimensions of the policy or value MLP.
-            activation: Activation used by the policy or value MLP.
-            obs_normalization: Whether to normalize non-geometric observations.
-            distribution_cfg: Optional action-distribution configuration.
-            point_cloud_group: Observation group containing flattened xyz points.
-        """
-        self.point_cloud_group = point_cloud_group
-        self.point_latent_dim = point_cloud_mlp_cfg["output_dim"]
-        super().__init__(
-            obs,
-            obs_groups,
-            obs_set,
-            output_dim,
-            hidden_dims,
-            activation,
-            obs_normalization,
-            distribution_cfg,
+        self.obs_normalization = obs_normalization
+        self.obs_normalizer = (
+            EmpiricalNormalization(self.obs_dim) if obs_normalization and self.obs_dim else nn.Identity()
         )
-        self.point_cloud_dim = obs[point_cloud_group].shape[-1]
-        encoder_dims = [self.point_cloud_dim, *point_cloud_mlp_cfg["hidden_dims"], self.point_latent_dim]
-        encoder_layers: list[nn.Module] = []
-        for input_dim, layer_output_dim in zip(encoder_dims, encoder_dims[1:]):
-            encoder_layers.extend(
-                [nn.Linear(input_dim, layer_output_dim), resolve_nn_activation(point_cloud_mlp_cfg["activation"])]
-            )
-        self.point_encoder = nn.Sequential(*encoder_layers)
+
+        encoders: dict[str, nn.Module] = {}
+        for group in self.encoded_obs_groups:
+            group_cfg = dict(self._encoder_cfg[group])
+            encoder_class = resolve_callable(group_cfg.pop("class_name"))
+            encoder = encoder_class(input_shape=self.encoder_input_shapes[group], **group_cfg)
+            if not isinstance(encoder, nn.Module):
+                raise TypeError(f"Encoder for observation group {group!r} must be a torch module.")
+            encoders[group] = encoder
+        self.encoders = nn.ModuleDict(encoders)
+
+        self.encoder_normalization = encoder_normalization
+        self.encoder_normalizers = nn.ModuleDict(
+            {
+                group: EmpiricalNormalization(self.encoder_input_shapes[group])
+                if encoder_normalization
+                else nn.Identity()
+                for group in self.encoded_obs_groups
+            }
+        )
+
+        if distribution_cfg is not None:
+            distribution_cfg = dict(distribution_cfg)
+            distribution_class: type[Distribution] = resolve_callable(distribution_cfg.pop("class_name"))  # type: ignore
+            self.distribution: Distribution | None = distribution_class(output_dim, **distribution_cfg)
+            head_output_dim = self.distribution.input_dim
+        else:
+            self.distribution = None
+            head_output_dim = output_dim
+
+        self.mlp = SimBaNetwork(
+            self._get_latent_dim(),
+            head_output_dim,
+            hidden_dim,
+            num_blocks,
+            expansion_factor,
+            activation,
+            norm,
+        )
+        if self.distribution is not None:
+            self.distribution.init_mlp_weights(self.mlp)
 
     def get_latent(
         self, obs: TensorDict, masks: torch.Tensor | None = None, hidden_state: HiddenState = None
     ) -> torch.Tensor:
-        """Concatenate normalized state history with encoded scene geometry."""
-        point_latent = self.point_encoder(obs[self.point_cloud_group])
-        if not self.obs_groups:
-            return point_latent
-        return torch.cat((super().get_latent(obs, masks, hidden_state), point_latent), dim=-1)
+        """Concatenate normalized passthrough observations and encoded observations."""
+        parts = []
+        if self.obs_groups:
+            parts.append(self.obs_normalizer(torch.cat([obs[group] for group in self.obs_groups], dim=-1)))
+        parts.extend(
+            self.encoders[group](self.encoder_normalizers[group](obs[group])) for group in self.encoded_obs_groups
+        )
+        if not parts:
+            raise RuntimeError("SimBaModel requires at least one observation group.")
+        return torch.cat(parts, dim=-1)
+
+    def update_normalization(self, obs: TensorDict) -> None:
+        """Update passthrough and encoder-input normalization statistics."""
+        if self.obs_normalization and self.obs_groups:
+            self.obs_normalizer.update(torch.cat([obs[group] for group in self.obs_groups], dim=-1))  # type: ignore
+        if self.encoder_normalization:
+            for group in self.encoded_obs_groups:
+                self.encoder_normalizers[group].update(obs[group])  # type: ignore
 
     def as_jit(self) -> nn.Module:
         """Return a TorchScript-compatible inference model."""
-        return _TorchPointCloudModel(self)
+        return _TorchSimBaModel(self)
 
     def as_onnx(self, verbose: bool = False) -> nn.Module:
         """Return an ONNX-compatible inference model."""
-        return _OnnxPointCloudModel(self, verbose)
+        return _OnnxSimBaModel(self, verbose)
 
     def _get_obs_dim(self, obs: TensorDict, obs_groups: dict[str, list[str]], obs_set: str) -> tuple[list[str], int]:
         active_groups = obs_groups[obs_set]
-        if self.point_cloud_group not in active_groups:
-            raise ValueError(f"Observation set {obs_set!r} does not include {self.point_cloud_group!r}.")
+        missing = set(self._encoder_cfg).difference(active_groups)
+        if missing:
+            raise ValueError(f"Encoder groups are not present in observation set {obs_set!r}: {sorted(missing)}")
 
-        point_cloud = obs[self.point_cloud_group]
-        if point_cloud.ndim != 2:
-            raise ValueError(f"Point-cloud group {self.point_cloud_group!r} must be flattened per environment.")
-
-        state_groups = [group for group in active_groups if group != self.point_cloud_group]
-        state_dim = 0
-        for group in state_groups:
-            if obs[group].ndim != 2:
-                raise ValueError(f"State observation {group!r} must be one-dimensional per environment.")
-            state_dim += obs[group].shape[-1]
-        return state_groups, state_dim
+        passthrough_groups = []
+        passthrough_dim = 0
+        self.encoded_obs_groups: list[str] = []
+        self.encoder_input_shapes: dict[str, tuple[int, ...]] = {}
+        for group in active_groups:
+            shape = obs[group].shape
+            if group in self._encoder_cfg:
+                self.encoded_obs_groups.append(group)
+                self.encoder_input_shapes[group] = tuple(int(dim) for dim in shape[1:])
+            else:
+                if len(shape) != 2:
+                    raise ValueError(f"Observation group {group!r} must have an encoder or be flattened.")
+                passthrough_groups.append(group)
+                passthrough_dim += int(shape[-1])
+        return passthrough_groups, passthrough_dim
 
     def _get_latent_dim(self) -> int:
-        return self.obs_dim + self.point_latent_dim
+        return self.obs_dim + sum(self._encoder_output_dims[group] for group in self.encoded_obs_groups)
 
 
-class _TorchPointCloudModel(nn.Module):
-    def __init__(self, model: PointCloudModel) -> None:
+class _TorchSimBaModel(nn.Module):
+    def __init__(self, model: SimBaModel) -> None:
         super().__init__()
+        if len(model.encoded_obs_groups) != 1:
+            raise NotImplementedError("SimBa export currently requires exactly one encoded observation group.")
+        group = model.encoded_obs_groups[0]
         self.obs_normalizer = copy.deepcopy(model.obs_normalizer)
-        self.point_encoder = copy.deepcopy(model.point_encoder)
+        self.encoder_normalizer = copy.deepcopy(model.encoder_normalizers[group])
+        self.encoder = copy.deepcopy(model.encoders[group])
         self.mlp = copy.deepcopy(model.mlp)
         self.deterministic_output = (
             model.distribution.as_deterministic_output_module() if model.distribution is not None else nn.Identity()
         )
 
-    def forward(self, state: torch.Tensor, point_cloud: torch.Tensor) -> torch.Tensor:
-        """Run deterministic inference from state and point-cloud observations."""
-        latent = torch.cat((self.obs_normalizer(state), self.point_encoder(point_cloud)), dim=-1)
+    def forward(self, state: torch.Tensor, encoded_obs: torch.Tensor) -> torch.Tensor:
+        """Run deterministic inference from passthrough and encoded observations."""
+        latent = torch.cat((self.obs_normalizer(state), self.encoder(self.encoder_normalizer(encoded_obs))), dim=-1)
         return self.deterministic_output(self.mlp(latent))
 
     @torch.jit.export
@@ -127,22 +242,23 @@ class _TorchPointCloudModel(nn.Module):
         pass
 
 
-class _OnnxPointCloudModel(_TorchPointCloudModel):
-    def __init__(self, model: PointCloudModel, verbose: bool) -> None:
+class _OnnxSimBaModel(_TorchSimBaModel):
+    def __init__(self, model: SimBaModel, verbose: bool) -> None:
         super().__init__(model)
+        group = model.encoded_obs_groups[0]
         self.verbose = verbose
         self.state_dim = model.obs_dim
-        self.point_cloud_dim = model.point_cloud_dim
-        self.point_cloud_group = model.point_cloud_group
+        self.encoded_input_shape = model.encoder_input_shapes[group]
+        self.encoded_obs_group = group
 
     def get_dummy_inputs(self) -> tuple[torch.Tensor, torch.Tensor]:
-        """Return representative state and point-cloud inputs."""
-        return torch.zeros(1, self.state_dim), torch.zeros(1, self.point_cloud_dim)
+        """Return representative passthrough and encoded inputs."""
+        return torch.zeros(1, self.state_dim), torch.zeros(1, *self.encoded_input_shape)
 
     @property
     def input_names(self) -> list[str]:
         """Names of the ONNX inputs."""
-        return ["obs", self.point_cloud_group]
+        return ["obs", self.encoded_obs_group]
 
     @property
     def output_names(self) -> list[str]:
