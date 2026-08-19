@@ -63,11 +63,9 @@ class reset_accumulator(ManagerTermBase):
         self.state_cell_indices = torch.full((self._state_target_size,), -1, device=env.device, dtype=torch.long)
         self._num_cells = 1
         self._num_variants = 1
-        self._cell_counts = torch.ones(1, dtype=torch.long, device=env.device)
         self._variant_ids = torch.zeros(env.num_envs, dtype=torch.int32, device=env.device)
         self.cell_success_rate = torch.full((1, 1), torch.nan, device=env.device)
         self.cell_probabilities = torch.full((1, 1), torch.nan, device=env.device)
-        self._pending_outcomes = torch.zeros((2, 1), device=env.device)
 
         self._success_monitor_cfg: SuccessMonitorCfg = cfg.params["success_monitor_cfg"]
         self.monitor_success_rate: torch.Tensor | None = None
@@ -100,9 +98,10 @@ class reset_accumulator(ManagerTermBase):
             self._precollect(env, reset_term)
 
         if self.success_monitor is None:
+            n_slots = self.state_data.shape[0]
             monitor_cfg = self._success_monitor_cfg
-            self.success_monitor = monitor_cfg.class_type(monitor_cfg, 1, self._num_cells, env.device)
-            self.monitor_success_rate = torch.zeros(len(self.state_data), device=env.device)
+            self.success_monitor = monitor_cfg.class_type(monitor_cfg, 1, n_slots, env.device)
+            self.monitor_success_rate = self.success_monitor.success_rate
 
         progress = env.termination_manager.get_term_cfg("progress_context").func
         monitor_ids = env_ids
@@ -116,9 +115,7 @@ class reset_accumulator(ManagerTermBase):
         if monitor_ids.numel() > 0:
             monitor_ids = monitor_ids[self.sampled_slots[monitor_ids] >= 0]
         if monitor_ids.numel() > 0:
-            cells = self.state_cell_indices[self.sampled_slots[monitor_ids]]
-            self._pending_outcomes[0].scatter_add_(0, cells, progress.is_success[monitor_ids].float())
-            self._pending_outcomes[1].scatter_add_(0, cells, torch.ones_like(cells, dtype=torch.float))
+            self.success_monitor.success_update(self.sampled_slots[monitor_ids], progress.is_success[monitor_ids])
 
         log: dict[str, float] = {}
         if report:
@@ -220,8 +217,6 @@ class reset_accumulator(ManagerTermBase):
         self.state_data = self.state_data[order].contiguous()
         self.state_cell_indices = self.state_cell_indices[order].contiguous()
         counts = torch.bincount(self.state_cell_indices, minlength=self._num_cells)
-        self._cell_counts = counts
-        self._pending_outcomes = torch.zeros((2, self._num_cells), device=env.device)
         populated_counts = counts[counts > 0]
         print(
             f"[reset_accumulator] joint cells: {int((counts > 0).sum())}/{self._num_cells}, "
@@ -233,57 +228,26 @@ class reset_accumulator(ManagerTermBase):
     def _sample_marginally_balanced(self, num_samples: int) -> tuple[torch.Tensor, torch.Tensor]:
         """Balance label and asset marginals without flattening their joint curriculum."""
         probabilities = self._sampler.probabilities()
-        cell_counts = getattr(self, "_cell_counts", None)
-        if cell_counts is None:
-            cell_counts = torch.bincount(self.state_cell_indices, minlength=self._num_cells)
-        probabilities.div_(cell_counts[self.state_cell_indices].clamp_min(1))
         raw_cell_probabilities = probabilities.new_zeros(self._num_cells)
         raw_cell_probabilities.scatter_add_(0, self.state_cell_indices, probabilities)
         cell_probabilities = raw_cell_probabilities.view_as(self.cell_probabilities).clone()
         for _ in range(4):
-            row_sums = cell_probabilities.sum(dim=1, keepdim=True)
-            active_rows = (row_sums > 0).sum().clamp_min(1)
-            cell_probabilities.div_(torch.where(row_sums > 0, row_sums * active_rows, torch.ones_like(row_sums)))
-            column_sums = cell_probabilities.sum(dim=0, keepdim=True)
-            active_columns = (column_sums > 0).sum().clamp_min(1)
-            cell_probabilities.div_(
-                torch.where(column_sums > 0, column_sums * active_columns, torch.ones_like(column_sums))
-            )
+            cell_probabilities.div_(cell_probabilities.sum(dim=1, keepdim=True) * cell_probabilities.shape[0])
+            cell_probabilities.div_(cell_probabilities.sum(dim=0, keepdim=True) * cell_probabilities.shape[1])
 
-        cell_probabilities.div_(cell_probabilities.sum())
         self.cell_probabilities.copy_(cell_probabilities)
-        probabilities.copy_(
-            cell_probabilities.flatten()[self.state_cell_indices] / cell_counts[self.state_cell_indices].clamp_min(1)
-        )
-        probabilities.div_(probabilities.sum())
+        cell_scale = cell_probabilities.flatten().div_(raw_cell_probabilities)
+        probabilities.mul_(cell_scale[self.state_cell_indices]).div_(probabilities.sum())
         return probabilities, self._sampler.sample(probabilities, num_samples)
 
     def _update_cell_success_rate(self) -> None:
-        rates = self.success_monitor.success_rate.clone()
-        rates[self.success_monitor.success_size == 0] = torch.nan
+        successes = self.success_monitor.success_buf.sum(dim=1)
+        episodes = self.success_monitor.success_size.to(successes.dtype)
+        cell_successes = successes.new_zeros(self._num_cells).scatter_add_(0, self.state_cell_indices, successes)
+        cell_episodes = episodes.new_zeros(self._num_cells).scatter_add_(0, self.state_cell_indices, episodes)
+        rates = cell_successes / cell_episodes.clamp_min(1.0)
+        rates[cell_episodes == 0] = torch.nan
         self.cell_success_rate.copy_(rates.view_as(self.cell_success_rate))
-
-    def synchronize(self) -> None:
-        """Merge cell outcomes across workers once per rollout."""
-        if self.success_monitor is None:
-            return
-        if torch.distributed.is_available() and torch.distributed.is_initialized():
-            torch.distributed.all_reduce(self._pending_outcomes)
-
-        successes, episodes = self._pending_outcomes
-        history = self._success_monitor_cfg.monitored_history_len
-        new_weight = episodes.clamp(max=history)
-        old_count = self.success_monitor.success_size.float()
-        old_weight = torch.minimum(old_count, (history - new_weight).clamp_min(0.0))
-        total_weight = old_weight + new_weight
-        batch_successes = successes * new_weight / episodes.clamp_min(1.0)
-        combined_successes = self.success_monitor.success_rate * old_weight + batch_successes
-        measured = total_weight > 0
-        self.success_monitor.success_rate[measured] = combined_successes[measured] / total_weight[measured]
-        self.success_monitor.success_size.copy_(total_weight.long())
-        self.monitor_success_rate.copy_(self.success_monitor.success_rate[self.state_cell_indices])
-        self._pending_outcomes.zero_()
-        self._update_cell_success_rate()
 
     def apply_sampled_slots(self, env_ids: torch.Tensor) -> None:
         """Restore the assigned table slots for the requested environments."""

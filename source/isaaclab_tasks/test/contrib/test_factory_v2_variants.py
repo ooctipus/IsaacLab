@@ -913,8 +913,8 @@ def test_accumulator_reports_adaptive_cell_probabilities() -> None:
     accumulator.cell_success_rate = torch.empty((2, 3))
     accumulator.cell_probabilities = torch.empty((2, 3))
     accumulator.success_monitor = SimpleNamespace(
-        success_rate=torch.zeros(6),
-        success_size=torch.zeros(6, dtype=torch.long),
+        success_buf=torch.zeros((24, 1)),
+        success_size=torch.zeros(24, dtype=torch.long),
         get_mean_success_rate=lambda: 0.0,
     )
     env = SimpleNamespace(
@@ -943,19 +943,30 @@ def test_accumulator_reports_adaptive_cell_probabilities() -> None:
     expected = torch.zeros(6).scatter_add_(0, accumulator.state_cell_indices, sampled["probabilities"]).view(2, 3)
     actual = env.extras["heatmap"]["Metrics/ResetProbs"]["values"]
     torch.testing.assert_close(actual, expected)
+    torch.testing.assert_close(sampled["probabilities"][0] / sampled["probabilities"][1], torch.tensor(20.0))
     assert not torch.allclose(actual, torch.full_like(actual, 1.0 / 6))
     torch.testing.assert_close(actual.sum(dim=1), torch.full((2,), 1.0 / 2), atol=2e-4, rtol=0.0)
     torch.testing.assert_close(actual.sum(dim=0), torch.full((3,), 1.0 / 3))
 
 
-def test_accumulator_success_grid_reads_cell_monitor() -> None:
-    """Expose globally synchronized cell rates without weighting them by local bank size."""
+def test_accumulator_success_grid_pools_outcomes_by_label_and_asset() -> None:
+    """Compute each grid cell from the episodes actually measured in that cell."""
     accumulator = reset_accumulator.__new__(reset_accumulator)
+    accumulator.state_cell_indices = torch.tensor([0, 0, 1, 2, 3, 3])
     accumulator._num_cells = 4
     accumulator.cell_success_rate = torch.empty((2, 2))
     accumulator.success_monitor = SimpleNamespace(
-        success_rate=torch.tensor([0.5, 1.0, 0.0, 0.25]),
-        success_size=torch.tensor([4, 1, 0, 4]),
+        success_buf=torch.tensor(
+            [
+                [1.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+            ]
+        ),
+        success_size=torch.tensor([3, 1, 1, 0, 2, 2]),
     )
 
     accumulator._update_cell_success_rate()
@@ -965,38 +976,32 @@ def test_accumulator_success_grid_reads_cell_monitor() -> None:
     torch.testing.assert_close(accumulator.cell_success_rate[1, 1], torch.tensor(0.25))
 
 
-def test_accumulator_synchronizes_compact_cell_outcomes(monkeypatch) -> None:
-    """Reduce one outcome tensor and publish the same curriculum rates to every local slot."""
+def test_accumulator_success_monitor_tracks_every_state_slot() -> None:
+    """Give every stored pose an independent curriculum history."""
+
+    class Monitor:
+        def __init__(self, cfg, num_partitions: int, partition_size: int, device: str):
+            self.partition_size = partition_size
+            self.success_rate = torch.zeros(num_partitions * partition_size, device=device)
+
     accumulator = reset_accumulator.__new__(reset_accumulator)
-    accumulator._success_monitor_cfg = SuccessMonitorCfg(monitored_history_len=3)
-    accumulator._pending_outcomes = torch.tensor([[2.0, 0.0, 1.0], [2.0, 0.0, 2.0]])
-    accumulator.state_cell_indices = torch.tensor([0, 0, 1, 2])
-    accumulator.monitor_success_rate = torch.zeros(4)
-    accumulator.cell_success_rate = torch.empty((1, 3))
-    accumulator.success_monitor = SimpleNamespace(
-        success_rate=torch.zeros(3),
-        success_size=torch.zeros(3, dtype=torch.long),
+    accumulator.precollecting_phase = False
+    accumulator._requested_reset_assets = []
+    accumulator.reset_assets = []
+    accumulator.state_data = torch.empty((24, 0))
+    accumulator.sampled_slots = torch.full((8,), -1, dtype=torch.long)
+    accumulator.success_monitor = None
+    accumulator._success_monitor_cfg = SimpleNamespace(class_type=Monitor)
+    env = SimpleNamespace(
+        device="cpu",
+        termination_manager=SimpleNamespace(get_term_cfg=lambda _: SimpleNamespace(func=SimpleNamespace())),
     )
-    remote = torch.tensor([[0.0, 1.0, 1.0], [1.0, 1.0, 1.0]])
-    reductions = 0
 
-    def all_reduce(values: torch.Tensor) -> None:
-        nonlocal reductions
-        reductions += 1
-        values.add_(remote)
+    accumulator(env, torch.empty(0, dtype=torch.long), [], {}, 24, SuccessMonitorCfg(), SamplerCfg())
 
-    monkeypatch.setattr(torch.distributed, "is_available", lambda: True)
-    monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
-    monkeypatch.setattr(torch.distributed, "all_reduce", all_reduce)
-
-    accumulator.synchronize()
-
-    expected = torch.tensor([2.0 / 3.0, 1.0, 2.0 / 3.0])
-    torch.testing.assert_close(accumulator.success_monitor.success_rate, expected)
-    torch.testing.assert_close(accumulator.monitor_success_rate, expected[accumulator.state_cell_indices])
-    torch.testing.assert_close(accumulator.cell_success_rate, expected.view(1, 3))
-    assert reductions == 1
-    assert not accumulator._pending_outcomes.any()
+    assert accumulator.success_monitor.partition_size == 24
+    assert accumulator.monitor_success_rate is accumulator.success_monitor.success_rate
+    assert "synchronize" not in reset_accumulator.__dict__
 
 
 def test_accumulator_exposes_only_the_requested_metric_schema() -> None:

@@ -96,10 +96,6 @@ class ManagerTermBase(ABC):
         """
         pass
 
-    def synchronize(self) -> None:
-        """Synchronize state shared across training workers."""
-        pass
-
     def serialize(self) -> dict:
         """General serialization call. Includes the configuration dict."""
         return {"cfg": class_to_dict(self.cfg)}

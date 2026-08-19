@@ -26,15 +26,6 @@ class _FakeEnv:
     def __init__(self):
         self.unwrapped = self
         self.obs_buf = {"policy": torch.tensor([[1.0, 2.0], [3.0, 4.0]])}
-        self.event_manager = _FakeEventManager()
-
-
-class _FakeEventManager:
-    def __init__(self) -> None:
-        self.synchronizations = 0
-
-    def synchronize(self) -> None:
-        self.synchronizations += 1
 
 
 def _make_wrapper(env: _FakeEnv, num_envs: int = 2) -> RslRlVecEnvWrapper:
@@ -77,16 +68,6 @@ def test_get_observations_does_not_use_private_environment_methods():
     wrapper = _make_wrapper(env)
 
     wrapper.get_observations()
-
-
-def test_synchronize_training_state_delegates_to_event_manager():
-    """The rollout boundary should reach environment-owned class terms."""
-    env = _FakeEnv()
-    wrapper = _make_wrapper(env)
-
-    wrapper.synchronize_training_state()
-
-    assert env.event_manager.synchronizations == 1
 
 
 def test_direct_rl_env_stores_the_observation_buffer():

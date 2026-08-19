@@ -173,12 +173,6 @@ class RslRlVecEnvWrapper(VecEnv):
         """Returns the current observations of the environment."""
         return TensorDict(self.unwrapped.obs_buf, batch_size=[self.num_envs])
 
-    def synchronize_training_state(self) -> None:
-        """Synchronize manager-owned training state after a rollout."""
-        event_manager = getattr(self.unwrapped, "event_manager", None)
-        if event_manager is not None:
-            event_manager.synchronize()
-
     def step(self, actions: torch.Tensor) -> tuple[TensorDict, torch.Tensor, torch.Tensor, dict]:
         # clip actions
         if self.clip_actions is not None:
