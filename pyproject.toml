@@ -433,7 +433,7 @@ isaaclab = { path = "source/isaaclab", editable = true }
 "isaaclab-tasks-experimental" = { path = "source/isaaclab_tasks_experimental", editable = true }
 "isaaclab-teleop" = { path = "source/isaaclab_teleop", editable = true }
 "isaaclab-visualizers" = { path = "source/isaaclab_visualizers", editable = true }
-rsl-rl-lib = { git = "https://github.com/ooctipus/rsl_rl.git", rev = "45585084e6b25a3d84da46219950c1abd1e2282b" }
+rsl-rl-lib = { git = "https://github.com/ooctipus/rsl_rl.git", rev = "211bab5afe2209a343f223b82c2d3e16f99b6bd3" }
 torch = [
     { index = "pytorch-cu128", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
     { index = "pytorch-cu128", marker = "sys_platform == 'win32'" },
