@@ -203,7 +203,6 @@ def _run(args_cli: argparse.Namespace) -> None:
 
                 seed = agent_cfg.seed + global_rank
                 env_cfg.seed = seed
-                agent_cfg.seed = seed
 
             log_root_path = os.path.abspath(os.path.join("logs", "rsl_rl", agent_cfg.experiment_name))
             print(f"[INFO] Logging experiment in directory: {log_root_path}")
@@ -211,6 +210,8 @@ def _run(args_cli: argparse.Namespace) -> None:
             print(f"Exact experiment name requested from command line: {log_dir}")
             if agent_cfg.run_name:
                 log_dir += f"_{agent_cfg.run_name}"
+            if args_cli.workflow_id:
+                log_dir += f"_{args_cli.workflow_id}"
             log_dir = os.path.join(log_root_path, log_dir)
             write_run_manifest(
                 log_dir,

@@ -152,6 +152,13 @@ class EventManager(ManagerBase):
         # nothing to log here
         return {}
 
+    def synchronize(self) -> None:
+        """Synchronize class-based event terms at a training boundary."""
+        for mode_cfg in self._mode_class_term_cfgs.values():
+            for term_cfg in mode_cfg:
+                if not inspect.isclass(term_cfg.func):
+                    term_cfg.func.synchronize()
+
     def apply(
         self,
         mode: str,

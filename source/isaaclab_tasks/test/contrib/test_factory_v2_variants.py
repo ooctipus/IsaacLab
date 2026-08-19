@@ -31,8 +31,8 @@ import isaaclab_tasks.contrib.nistv2.mdp.observations as factory_observations
 import isaaclab_tasks.contrib.nistv2.utils.collision_analyzer as factory_collision_analyzer
 from isaaclab_tasks.contrib.nistv2.assembly_profile import AssemblyProfile
 from isaaclab_tasks.contrib.nistv2.assembly_variants import ASSEMBLY_VARIANT_NAMES, ASSEMBLY_VARIANTS
-from isaaclab_tasks.contrib.nistv2.config.agents.models import PointCloudModel
-from isaaclab_tasks.contrib.nistv2.config.agents.rsl_rl_ppo_cfg import FactoryPPORunnerCfg
+from isaaclab_tasks.contrib.nistv2.config.agents.models import MLPEncoder, SimBaBlock, SimBaModel, SimBaNetwork
+from isaaclab_tasks.contrib.nistv2.config.agents.rsl_rl_ppo_cfg import FactoryPPORunnerCfg, SimBaModelCfg
 from isaaclab_tasks.contrib.nistv2.factory_env_cfg import FactoryObservationsCfg
 from isaaclab_tasks.contrib.nistv2.factory_scenes_cfg import FactorySceneCfg, _paired_clone_strategy
 from isaaclab_tasks.contrib.nistv2.mdp.assembly_variants import AssemblyVariantContext
@@ -395,37 +395,88 @@ def test_factory_agent_routes_perception_through_point_cloud_encoder() -> None:
         "actor": ["policy", "perception"],
         "critic": ["policy", "perception"],
     }
-    assert runner.actor.class_name.endswith(":PointCloudModel")
-    assert runner.critic.class_name.endswith(":PointCloudModel")
-    assert runner.actor.point_cloud_group == "perception"
-    assert runner.actor.point_cloud_mlp_cfg.hidden_dims == [256]
-    assert runner.actor.point_cloud_mlp_cfg.output_dim == 128
-    assert runner.actor.point_cloud_mlp_cfg.activation == "elu"
-    assert not hasattr(runner.actor, "point_hidden_dim")
-    assert not hasattr(runner.actor, "point_latent_dim")
+    assert runner.actor.class_name.endswith(":SimBaModel")
+    assert runner.critic.class_name.endswith(":SimBaModel")
+    assert runner.actor.hidden_dim == 256
+    assert runner.actor.num_blocks == 2
+    assert runner.actor.expansion_factor == 4
+    assert runner.actor.activation == "swish"
+    assert set(runner.actor.encoder_cfg) == {"perception"}
+    encoder_cfg = runner.actor.encoder_cfg["perception"]
+    assert isinstance(encoder_cfg, SimBaModelCfg.MLPEncoderCfg)
+    assert encoder_cfg.hidden_dims == [256]
+    assert encoder_cfg.output_dim == 128
+    assert encoder_cfg.activation == "elu"
+    assert encoder_cfg.last_activation == "elu"
+    assert not hasattr(runner.actor, "point_cloud_group")
+    serialized_encoder = runner.to_dict()["actor"]["encoder_cfg"]["perception"]
+    assert serialized_encoder["class_name"].endswith(":MLPEncoder")
     assert runner.algorithm.default.num_mini_batches == 4
 
 
-def test_point_cloud_encoder_uses_flattened_scene_mlp() -> None:
-    """Encode the stable ordered scene points without materializing per-point features."""
+def test_simba_model_combines_flattened_scene_mlp_with_residual_head() -> None:
+    """Encode ordered scene points once before the SimBa residual head."""
     batch_size, num_clouds, points_per_cloud = 4, 3, 5
     state = torch.randn(batch_size, 7)
     points = torch.randn(batch_size, num_clouds, points_per_cloud, 3)
     observations = TensorDict({"policy": state, "perception": points.flatten(1)}, batch_size=[batch_size])
-    model = PointCloudModel(
+    model = SimBaModel(
         observations,
         {"actor": ["policy", "perception"]},
         "actor",
         output_dim=2,
-        point_cloud_mlp_cfg={"hidden_dims": [16], "output_dim": 6, "activation": "elu"},
-        hidden_dims=[16],
+        hidden_dim=16,
+        num_blocks=2,
+        expansion_factor=4,
+        activation="swish",
         obs_normalization=False,
-        point_cloud_group="perception",
+        encoder_cfg={
+            "perception": {
+                "class_name": MLPEncoder,
+                "hidden_dims": [16],
+                "output_dim": 6,
+                "activation": "elu",
+                "last_activation": "elu",
+            }
+        },
     )
 
-    assert model.point_encoder[0].weight.shape == (16, num_clouds * points_per_cloud * 3)
-    assert model.point_encoder[2].weight.shape == (6, 16)
+    encoder = model.encoders["perception"]
+    assert isinstance(encoder, MLPEncoder)
+    assert encoder.mlp[0].weight.shape == (16, num_clouds * points_per_cloud * 3)
+    assert encoder.mlp[2].weight.shape == (6, 16)
+    assert isinstance(model.mlp, SimBaNetwork)
+    assert sum(isinstance(module, SimBaBlock) for module in model.mlp) == 2
     torch.testing.assert_close(torch.jit.script(model.as_jit())(state, observations["perception"]), model(observations))
+
+
+def test_simba_model_accepts_custom_encoder() -> None:
+    """Keep the SimBa head independent of the observation encoder implementation."""
+
+    class CustomEncoder(torch.nn.Module):
+        def __init__(self, input_shape: tuple[int, ...], output_dim: int) -> None:
+            super().__init__()
+            self.linear = torch.nn.Linear(int(np.prod(input_shape)), output_dim)
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            return self.linear(x.flatten(start_dim=1))
+
+    batch_size = 4
+    observations = TensorDict(
+        {"policy": torch.randn(batch_size, 7), "perception": torch.randn(batch_size, 2, 3)},
+        batch_size=[batch_size],
+    )
+    model = SimBaModel(
+        observations,
+        {"critic": ["policy", "perception"]},
+        "critic",
+        output_dim=1,
+        hidden_dim=16,
+        encoder_cfg={"perception": {"class_name": CustomEncoder, "output_dim": 5}},
+    )
+
+    assert isinstance(model.encoders["perception"], CustomEncoder)
+    assert model(observations).shape == (batch_size, 1)
 
 
 def test_scene_point_cloud_selects_live_variants_and_tracks_robot_links() -> None:
@@ -862,8 +913,8 @@ def test_accumulator_reports_adaptive_cell_probabilities() -> None:
     accumulator.cell_success_rate = torch.empty((2, 3))
     accumulator.cell_probabilities = torch.empty((2, 3))
     accumulator.success_monitor = SimpleNamespace(
-        success_buf=torch.zeros((24, 1)),
-        success_size=torch.zeros(24, dtype=torch.long),
+        success_rate=torch.zeros(6),
+        success_size=torch.zeros(6, dtype=torch.long),
         get_mean_success_rate=lambda: 0.0,
     )
     env = SimpleNamespace(
@@ -897,24 +948,14 @@ def test_accumulator_reports_adaptive_cell_probabilities() -> None:
     torch.testing.assert_close(actual.sum(dim=0), torch.full((3,), 1.0 / 3))
 
 
-def test_accumulator_success_grid_pools_outcomes_by_label_and_asset() -> None:
-    """Compute each grid cell from the episodes actually measured in that cell."""
+def test_accumulator_success_grid_reads_cell_monitor() -> None:
+    """Expose globally synchronized cell rates without weighting them by local bank size."""
     accumulator = reset_accumulator.__new__(reset_accumulator)
-    accumulator.state_cell_indices = torch.tensor([0, 0, 1, 2, 3, 3])
     accumulator._num_cells = 4
     accumulator.cell_success_rate = torch.empty((2, 2))
     accumulator.success_monitor = SimpleNamespace(
-        success_buf=torch.tensor(
-            [
-                [1.0, 1.0, 0.0],
-                [0.0, 0.0, 0.0],
-                [1.0, 0.0, 0.0],
-                [0.0, 0.0, 0.0],
-                [1.0, 0.0, 0.0],
-                [0.0, 0.0, 0.0],
-            ]
-        ),
-        success_size=torch.tensor([3, 1, 1, 0, 2, 2]),
+        success_rate=torch.tensor([0.5, 1.0, 0.0, 0.25]),
+        success_size=torch.tensor([4, 1, 0, 4]),
     )
 
     accumulator._update_cell_success_rate()
@@ -922,6 +963,40 @@ def test_accumulator_success_grid_pools_outcomes_by_label_and_asset() -> None:
     torch.testing.assert_close(accumulator.cell_success_rate[0], torch.tensor([0.5, 1.0]))
     assert torch.isnan(accumulator.cell_success_rate[1, 0])
     torch.testing.assert_close(accumulator.cell_success_rate[1, 1], torch.tensor(0.25))
+
+
+def test_accumulator_synchronizes_compact_cell_outcomes(monkeypatch) -> None:
+    """Reduce one outcome tensor and publish the same curriculum rates to every local slot."""
+    accumulator = reset_accumulator.__new__(reset_accumulator)
+    accumulator._success_monitor_cfg = SuccessMonitorCfg(monitored_history_len=3)
+    accumulator._pending_outcomes = torch.tensor([[2.0, 0.0, 1.0], [2.0, 0.0, 2.0]])
+    accumulator.state_cell_indices = torch.tensor([0, 0, 1, 2])
+    accumulator.monitor_success_rate = torch.zeros(4)
+    accumulator.cell_success_rate = torch.empty((1, 3))
+    accumulator.success_monitor = SimpleNamespace(
+        success_rate=torch.zeros(3),
+        success_size=torch.zeros(3, dtype=torch.long),
+    )
+    remote = torch.tensor([[0.0, 1.0, 1.0], [1.0, 1.0, 1.0]])
+    reductions = 0
+
+    def all_reduce(values: torch.Tensor) -> None:
+        nonlocal reductions
+        reductions += 1
+        values.add_(remote)
+
+    monkeypatch.setattr(torch.distributed, "is_available", lambda: True)
+    monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+    monkeypatch.setattr(torch.distributed, "all_reduce", all_reduce)
+
+    accumulator.synchronize()
+
+    expected = torch.tensor([2.0 / 3.0, 1.0, 2.0 / 3.0])
+    torch.testing.assert_close(accumulator.success_monitor.success_rate, expected)
+    torch.testing.assert_close(accumulator.monitor_success_rate, expected[accumulator.state_cell_indices])
+    torch.testing.assert_close(accumulator.cell_success_rate, expected.view(1, 3))
+    assert reductions == 1
+    assert not accumulator._pending_outcomes.any()
 
 
 def test_accumulator_exposes_only_the_requested_metric_schema() -> None:
