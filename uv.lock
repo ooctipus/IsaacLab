@@ -2109,8 +2109,8 @@ requires-dist = [
     { name = "rich", marker = "extra == 'sb3'" },
     { name = "rl-games", marker = "extra == 'rl-games'", git = "https://github.com/isaac-sim/rl_games.git?rev=python3.11" },
     { name = "robomimic", marker = "sys_platform == 'linux' and extra == 'mimic'", git = "https://github.com/ARISE-Initiative/robomimic.git?rev=v0.4.0" },
-    { name = "rsl-rl-lib", git = "https://github.com/ooctipus/rsl_rl.git?rev=211bab5afe2209a343f223b82c2d3e16f99b6bd3" },
-    { name = "rsl-rl-lib", marker = "extra == 'rsl-rl'", git = "https://github.com/ooctipus/rsl_rl.git?rev=211bab5afe2209a343f223b82c2d3e16f99b6bd3" },
+    { name = "rsl-rl-lib", git = "https://github.com/ooctipus/rsl_rl.git?rev=f797dec90d556060964835a903ff41652ed219ba" },
+    { name = "rsl-rl-lib", marker = "extra == 'rsl-rl'", git = "https://github.com/ooctipus/rsl_rl.git?rev=f797dec90d556060964835a903ff41652ed219ba" },
     { name = "scipy", specifier = ">=1.11.0" },
     { name = "skrl", marker = "extra == 'skrl'", specifier = ">=2.1.0" },
     { name = "sphinx", marker = "extra == 'test'", specifier = ">=7.0,<9" },
@@ -5058,7 +5058,7 @@ wheels = [
 [[package]]
 name = "rsl-rl-lib"
 version = "5.4.1"
-source = { git = "https://github.com/ooctipus/rsl_rl.git?rev=211bab5afe2209a343f223b82c2d3e16f99b6bd3#211bab5afe2209a343f223b82c2d3e16f99b6bd3" }
+source = { git = "https://github.com/ooctipus/rsl_rl.git?rev=f797dec90d556060964835a903ff41652ed219ba#f797dec90d556060964835a903ff41652ed219ba" }
 dependencies = [
     { name = "gitpython", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
     { name = "numpy", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },

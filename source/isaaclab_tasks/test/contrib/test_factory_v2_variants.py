@@ -17,6 +17,7 @@ import numpy as np
 import pytest
 import torch
 import warp as wp
+from rsl_rl.modules import commit_normalization
 from tensordict import TensorDict
 
 import isaaclab.utils.math as math_utils
@@ -477,6 +478,32 @@ def test_simba_model_accepts_custom_encoder() -> None:
 
     assert isinstance(model.encoders["perception"], CustomEncoder)
     assert model(observations).shape == (batch_size, 1)
+
+
+def test_simba_model_accumulates_all_normalized_groups() -> None:
+    """Keep passthrough and encoded observations on one committed rollout frame."""
+    observations = TensorDict(
+        {"policy": torch.arange(12, dtype=torch.float32).view(4, 3), "perception": torch.ones(4, 6)},
+        batch_size=[4],
+    )
+    model = SimBaModel(
+        observations,
+        {"actor": ["policy", "perception"]},
+        "actor",
+        output_dim=2,
+        hidden_dim=8,
+        obs_normalization=True,
+        encoder_normalization=True,
+        encoder_cfg={"perception": {"class_name": MLPEncoder, "hidden_dims": [8], "output_dim": 4}},
+    )
+
+    model.accumulate_normalization(observations)
+    assert model.obs_normalizer.count == 0
+    assert model.encoder_normalizers["perception"].count == 0
+
+    commit_normalization((model,))
+    torch.testing.assert_close(model.obs_normalizer.mean, observations["policy"].mean(0))
+    torch.testing.assert_close(model.encoder_normalizers["perception"].mean, observations["perception"].mean(0))
 
 
 def test_scene_point_cloud_selects_live_variants_and_tracks_robot_links() -> None:

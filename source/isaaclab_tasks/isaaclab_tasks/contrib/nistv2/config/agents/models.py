@@ -183,6 +183,14 @@ class SimBaModel(MLPModel):
             for group in self.encoded_obs_groups:
                 self.encoder_normalizers[group].update(obs[group])  # type: ignore
 
+    def accumulate_normalization(self, obs: TensorDict) -> None:
+        """Accumulate normalization statistics without changing the active frame."""
+        if self.obs_normalization and self.obs_groups:
+            self.obs_normalizer.accumulate(torch.cat([obs[group] for group in self.obs_groups], dim=-1))  # type: ignore
+        if self.encoder_normalization:
+            for group in self.encoded_obs_groups:
+                self.encoder_normalizers[group].accumulate(obs[group])  # type: ignore
+
     def as_jit(self) -> nn.Module:
         """Return a TorchScript-compatible inference model."""
         return _TorchSimBaModel(self)
