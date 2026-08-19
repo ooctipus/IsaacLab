@@ -2109,8 +2109,8 @@ requires-dist = [
     { name = "rich", marker = "extra == 'sb3'" },
     { name = "rl-games", marker = "extra == 'rl-games'", git = "https://github.com/isaac-sim/rl_games.git?rev=python3.11" },
     { name = "robomimic", marker = "sys_platform == 'linux' and extra == 'mimic'", git = "https://github.com/ARISE-Initiative/robomimic.git?rev=v0.4.0" },
-    { name = "rsl-rl-lib", specifier = "==5.4.1" },
-    { name = "rsl-rl-lib", marker = "extra == 'rsl-rl'", specifier = "==5.4.1" },
+    { name = "rsl-rl-lib", git = "https://github.com/ooctipus/rsl_rl.git?rev=45585084e6b25a3d84da46219950c1abd1e2282b" },
+    { name = "rsl-rl-lib", marker = "extra == 'rsl-rl'", git = "https://github.com/ooctipus/rsl_rl.git?rev=45585084e6b25a3d84da46219950c1abd1e2282b" },
     { name = "scipy", specifier = ">=1.11.0" },
     { name = "skrl", marker = "extra == 'skrl'", specifier = ">=2.1.0" },
     { name = "sphinx", marker = "extra == 'test'", specifier = ">=7.0,<9" },
@@ -5058,7 +5058,7 @@ wheels = [
 [[package]]
 name = "rsl-rl-lib"
 version = "5.4.1"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/ooctipus/rsl_rl.git?rev=45585084e6b25a3d84da46219950c1abd1e2282b#45585084e6b25a3d84da46219950c1abd1e2282b" }
 dependencies = [
     { name = "gitpython", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
     { name = "numpy", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
@@ -5070,10 +5070,6 @@ dependencies = [
     { name = "torch", version = "2.11.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
     { name = "torchvision", version = "0.26.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
     { name = "torchvision", version = "0.26.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/ab/7e/b4461227bd281aa9ddd3f82e59ebb4cc70eb82511ad6197a0821e878916c/rsl_rl_lib-5.4.1.tar.gz", hash = "sha256:d8857f9e9a1ef616ad7b7e19cd7a604afc81b9712e3f6d4929b68e131eacb394", size = 65933, upload-time = "2026-06-04T10:48:14.266Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a0/64/8f2d1b390d658b4a054c6800fe87bcd2aa537bfa99c7682bd44f9a971b05/rsl_rl_lib-5.4.1-py3-none-any.whl", hash = "sha256:064c7cec1960566ffe07741915e436c0598ecb906387205356f1554aac017934", size = 92911, upload-time = "2026-06-04T10:48:12.926Z" },
 ]
 
 [[package]]
