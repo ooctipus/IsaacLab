@@ -844,6 +844,11 @@ def _install_extra_feature(feature_name: str, selector: str = "") -> None:
         print_info(f"Installing RL framework extras: {extra}...")
         for framework in sorted(frameworks):
             _install_root_extra(framework)
+        # Override rsl-rl with local editable copy if present.
+        local_rsl_rl = ISAACLAB_ROOT / "dep" / "rsl_rl"
+        if "rsl-rl" in frameworks and local_rsl_rl.is_dir():
+            pip_cmd = get_pip_command(extract_python_exe())
+            run_command(pip_cmd + ["install", "--editable", str(local_rsl_rl)])
     elif feature_name == "tetrahedralization":
         if selector:
             print_warning(f"tetrahedralization does not support selectors (got {selector!r}).")
