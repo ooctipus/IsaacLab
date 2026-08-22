@@ -234,7 +234,9 @@ class InteractiveScene:
                         variant_counts.append(cloner.num_spawn_variants(child.spawn))
                 cfgs.append(child)
 
-        if self.cloner_cfg.clone_combinations and clone_asset_names:
+        if self.cloner_cfg.valid_set is not None:
+            self._clone_valid_set = torch.tensor(self.cloner_cfg.valid_set, dtype=torch.long, device=self.device)
+        elif self.cloner_cfg.clone_combinations and clone_asset_names:
             self._clone_valid_set = cloner.make_valid_clone_combinations(
                 clone_asset_names,
                 variant_counts,

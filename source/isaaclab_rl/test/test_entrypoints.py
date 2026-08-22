@@ -339,6 +339,70 @@ def test_rsl_wandb_logger_uploads_environment_heatmap(monkeypatch) -> None:
     assert logged["step"] == 250
 
 
+def test_rsl_wandb_logger_renders_count_heatmap(monkeypatch) -> None:
+    """Reduce raw episode counts and use compact cell labels without value annotations."""
+    from isaaclab_rl.entrypoints.backends.train_rsl_rl import _HeatmapLogger
+
+    logged: dict[str, object] = {}
+
+    def image(figure):
+        axes = figure.axes[0]
+        logged["title"] = axes.get_title()
+        logged["cell_labels"] = [text.get_text() for text in axes.texts]
+        logged["values"] = torch.as_tensor(axes.images[0].get_array().data.copy())
+        logged["mask"] = torch.as_tensor(axes.images[0].get_array().mask.copy())
+        return "wandb-image"
+
+    wandb = types.SimpleNamespace(
+        Image=image,
+        log=lambda payload, step: logged.update(payload=payload, step=step),
+    )
+    monkeypatch.setitem(sys.modules, "wandb", wandb)
+
+    base_logger = types.SimpleNamespace(writer=object(), log=lambda **_kwargs: None)
+    env = types.SimpleNamespace(
+        unwrapped=types.SimpleNamespace(
+            extras={
+                "heatmap": {
+                    "Metrics/AssetUnassembledRate": {
+                        "numerator": torch.tensor([[1, 0], [0, 2]]),
+                        "denominator": torch.tensor([[2, 0], [4, 2]]),
+                        "cell_labels": (("A", "B"), ("C", "D")),
+                        "color_label": "Still unassembled",
+                        "cmap": "RdYlGn_r",
+                        "vmax": 1.0,
+                    }
+                }
+            }
+        )
+    )
+
+    _HeatmapLogger(base_logger, env).log(it=250)
+
+    assert logged["title"] == "Metrics/AssetUnassembledRate"
+    assert logged["cell_labels"] == ["A", "B", "C", "D"]
+    torch.testing.assert_close(logged["values"], torch.tensor([[0.5, float("nan")], [0.0, 1.0]]), equal_nan=True)
+    torch.testing.assert_close(logged["mask"], torch.tensor([[False, True], [False, False]]))
+    assert logged["payload"] == {"Metrics/AssetUnassembledRate": "wandb-image"}
+    assert logged["step"] == 250
+
+
+def test_rsl_heatmap_count_ratio_broadcasts_scalar_denominator() -> None:
+    """Normalize reset-count tiles by one global sample count."""
+    from isaaclab_rl.entrypoints.backends.train_rsl_rl import _resolve_heatmap_values
+
+    values = _resolve_heatmap_values(
+        {
+            "Metrics/ResetProbs": {
+                "numerator": torch.tensor([[1, 3], [2, 2]]),
+                "denominator": torch.tensor(8),
+            }
+        }
+    )
+
+    torch.testing.assert_close(values["Metrics/ResetProbs"], torch.tensor([[0.125, 0.375], [0.25, 0.25]]))
+
+
 def test_skrl_training_restores_jax_backend(monkeypatch) -> None:
     """SKRL training removes the JAX backend setting it created after an exception."""
     skrl = pytest.importorskip("skrl")

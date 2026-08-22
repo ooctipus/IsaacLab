@@ -208,6 +208,17 @@ def test_solver_kwargs_include_newton_deterministic_mode(monkeypatch: pytest.Mon
     assert kwargs["deterministic"] == wp.DeterministicMode.GPU_TO_GPU
 
 
+def test_mjwarp_sleep_cfg_reaches_solver_constructor() -> None:
+    """MJWarp sleep settings should remain solver constructor arguments."""
+    cfg = MJWarpSolverCfg(enable_sleeping=True, nvmax=129, sleep_tolerance=0.002)
+
+    kwargs = NewtonManager._filter_solver_kwargs(SolverMuJoCo, cfg)
+
+    assert kwargs["enable_sleeping"] is True
+    assert kwargs["nvmax"] == 129
+    assert kwargs["sleep_tolerance"] == 0.002
+
+
 @pytest.mark.parametrize(
     "solver_cfg",
     [
@@ -902,6 +913,20 @@ def test_cuda_graph_capture_uses_simulation_device(monkeypatch):
 # ---------------------------------------------------------------------------
 # Manager state-refresh boundaries (no SimulationContext required)
 # ---------------------------------------------------------------------------
+
+
+def test_set_body_sleep_state_delegates_to_mjwarp(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The manager should pass device-resident selections through unchanged."""
+    calls: list[tuple[wp.array, wp.array, wp.array]] = []
+    solver = SimpleNamespace(set_body_sleep_state=lambda *args: calls.append(args))
+    body_ids = wp.array([[1, 2]], dtype=wp.int32, device="cpu")
+    asleep = wp.array([[True, False]], dtype=wp.bool, device="cpu")
+    env_ids = wp.array([0], dtype=wp.int32, device="cpu")
+    monkeypatch.setattr(NewtonManager, "_solver", solver, raising=False)
+
+    NewtonManager.set_body_sleep_state(body_ids, asleep, env_ids)
+
+    assert calls == [(body_ids, asleep, env_ids)]
 
 
 def test_forward_consumes_existing_reset_masks(monkeypatch):

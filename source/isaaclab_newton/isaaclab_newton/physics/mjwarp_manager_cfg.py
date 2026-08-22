@@ -55,6 +55,18 @@ class MJWarpSolverCfg(NewtonSolverCfg):
     use_mujoco_cpu: bool = False
     """Whether to use the pure MuJoCo backend instead of `mujoco_warp`."""
 
+    enable_sleeping: bool | None = None
+    """Whether to enable MuJoCo Warp sleeping.
+
+    If None, the solver uses the model setting or disables sleeping when the model has no setting.
+    """
+
+    nvmax: int | None = None
+    """Maximum active degrees of freedom per world when sleeping is enabled."""
+
+    sleep_tolerance: float | None = None
+    """Sleep velocity tolerance [m/s or rad/s, depending on joint type]."""
+
     disable_contacts: bool = False
     """Whether to disable contact computation in MuJoCo."""
 

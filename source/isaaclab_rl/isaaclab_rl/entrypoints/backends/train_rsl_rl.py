@@ -16,6 +16,7 @@ import platform
 import time
 from datetime import datetime
 
+import torch
 from packaging import version
 
 from isaaclab.app import add_launcher_args, report_activity
@@ -52,6 +53,38 @@ with contextlib.suppress(ImportError):
     import isaaclab_tasks_experimental  # noqa: F401
 
 
+def _resolve_heatmap_values(heatmaps: dict) -> dict[str, torch.Tensor]:
+    """Resolve local values and globally reduce count-based heatmaps."""
+    values = {}
+    count_data = []
+    packed_parts = []
+    offset = 0
+    for tag, data in heatmaps.items():
+        if "numerator" not in data:
+            values[tag] = data["values"]
+            continue
+
+        numerator = data["numerator"].detach().long().clone()
+        denominator = data["denominator"].detach().long().clone()
+        packed_parts.extend((numerator.flatten(), denominator.flatten()))
+        count_data.append((tag, numerator.shape, denominator.shape, offset, numerator.numel(), denominator.numel()))
+        offset += numerator.numel() + denominator.numel()
+
+    if not packed_parts:
+        return values
+
+    packed = torch.cat(packed_parts)
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
+        torch.distributed.all_reduce(packed)
+
+    for tag, numerator_shape, denominator_shape, start, numerator_size, denominator_size in count_data:
+        numerator = packed[start : start + numerator_size].view(numerator_shape)
+        denominator = packed[start + numerator_size : start + numerator_size + denominator_size].view(denominator_shape)
+        ratio = numerator.float() / denominator.float()
+        values[tag] = torch.where(denominator > 0, ratio, torch.nan)
+    return values
+
+
 def _check_rsl_rl_version() -> str:
     """Check that the installed RSL-RL version is supported."""
     installed_version = metadata.version("rsl-rl-lib")
@@ -84,11 +117,14 @@ class _HeatmapLogger:
     def log(self, *args, **kwargs) -> None:
         self._logger.log(*args, **kwargs)
         iteration = kwargs["it"] if "it" in kwargs else args[0]
-        if self._logger.writer is None or iteration % self._INTERVAL:
+        if iteration % self._INTERVAL:
             return
 
         heatmaps = self._env.unwrapped.extras.get("heatmap", {})
         if not heatmaps:
+            return
+        heatmap_values = _resolve_heatmap_values(heatmaps)
+        if self._logger.writer is None:
             return
 
         import matplotlib.pyplot as plt
@@ -97,25 +133,66 @@ class _HeatmapLogger:
 
         images = {}
         for tag, data in heatmaps.items():
-            values = data["values"].detach().float().cpu()
-            x_labels, y_labels = data["x_labels"], data["y_labels"]
+            values = heatmap_values[tag].detach().float().cpu()
+            if values.ndim != 2:
+                raise ValueError(f"Heatmap '{tag}' must be two-dimensional, got shape {tuple(values.shape)}.")
+            x_labels, y_labels = data.get("x_labels"), data.get("y_labels")
+            cell_labels = data.get("cell_labels")
             color_label = data.get("color_label", "Value")
             value_format = data.get("value_format", ".0%")
-            size = (max(8.0, 0.7 * len(x_labels)), max(4.0, 0.65 * len(y_labels)))
+            rows, columns = values.shape
+            size = data.get(
+                "figure_size",
+                (6.0, 5.0) if cell_labels is not None else (max(8.0, 0.7 * columns), max(4.0, 0.65 * rows)),
+            )
             figure, axes = plt.subplots(figsize=size)
-            color_map = plt.get_cmap("RdYlGn").with_extremes(bad="#d9d9d9")
-            image = axes.imshow(values.numpy(), cmap=color_map, vmin=0.0, vmax=data.get("vmax", 1.0), aspect="auto")
-            axes.set_xticks(range(len(x_labels)), x_labels, rotation=60, ha="right", rotation_mode="anchor")
-            axes.set_yticks(range(len(y_labels)), y_labels)
-            axes.set_xlabel("Assembly asset")
-            axes.set_ylabel("Reset label")
-            for row in range(len(y_labels)):
-                for column in range(len(x_labels)):
+            color_map = plt.get_cmap(data.get("cmap", "RdYlGn")).with_extremes(bad="#d9d9d9")
+            default_vmax = None if cell_labels is not None else 1.0
+            image = axes.imshow(
+                values.numpy(),
+                cmap=color_map,
+                vmin=data.get("vmin", 0.0),
+                vmax=data.get("vmax", default_vmax),
+                aspect=data.get("aspect", "equal" if cell_labels is not None else "auto"),
+            )
+            if x_labels is None:
+                axes.set_xticks([])
+            else:
+                axes.set_xticks(range(columns), x_labels, rotation=60, ha="right", rotation_mode="anchor")
+                axes.set_xlabel(data.get("x_label", "Assembly asset"))
+            if y_labels is None:
+                axes.set_yticks([])
+            else:
+                axes.set_yticks(range(rows), y_labels)
+                axes.set_ylabel(data.get("y_label", "Reset label"))
+            if cell_labels is not None:
+                axes.set_title(data.get("title", tag))
+            for row in range(rows):
+                for column in range(columns):
                     value = values[row, column]
-                    label = format(float(value), value_format) if value.isfinite() else "—"
-                    axes.text(column, row, label, ha="center", va="center", fontsize=6)
-            figure.colorbar(image, ax=axes, label=color_label)
-            figure.tight_layout()
+                    if cell_labels is not None:
+                        label = cell_labels[row][column]
+                    elif data.get("annotate_values", True):
+                        label = format(float(value), value_format) if value.isfinite() else "—"
+                    else:
+                        continue
+                    rgba = image.cmap(image.norm(float(value))) if value.isfinite() else color_map.get_bad()
+                    luminance = 0.2126 * rgba[0] + 0.7152 * rgba[1] + 0.0722 * rgba[2]
+                    axes.text(
+                        column,
+                        row,
+                        label,
+                        color="black" if luminance > 0.5 else "white",
+                        ha="center",
+                        va="center",
+                        fontsize=10 if cell_labels is not None else 6,
+                    )
+            colorbar = figure.colorbar(image, ax=axes, label=color_label)
+            if data.get("colorbar_percent", False):
+                from matplotlib.ticker import PercentFormatter
+
+                colorbar.ax.yaxis.set_major_formatter(PercentFormatter(xmax=1.0))
+            figure.tight_layout(pad=0.3 if cell_labels is not None else 1.08)
             images[tag] = wandb.Image(figure)
             plt.close(figure)
 

@@ -17,12 +17,13 @@ import numpy as np
 import pytest
 import torch
 import warp as wp
+from isaaclab_newton.physics import NewtonManager
 from rsl_rl.modules import commit_normalization
 from tensordict import TensorDict
 
 import isaaclab.utils.math as math_utils
 from isaaclab import cloner
-from isaaclab.managers import EventTermCfg, ManagerTermBase, ObservationTermCfg, SceneEntityCfg
+from isaaclab.managers import CurriculumTermCfg, EventTermCfg, ManagerTermBase, ObservationTermCfg, SceneEntityCfg
 
 import isaaclab_tasks  # noqa: F401
 import isaaclab_tasks.contrib.nist.mdp.observations as factory_observations
@@ -61,7 +62,18 @@ from isaaclab_tasks.contrib.nist.utils.variant_event_combinators import (
     variant_reset_accumulator,
 )
 from isaaclab_tasks.contrib.nist.variant_reset_env_cfg import VARIANT_ACCUMULATOR_RESET
+from isaaclab_tasks.contrib.nistv2.board_layout import (
+    FIXED_ASSET_NAME_BY_VARIANT,
+    HELD_ASSET_NAMES,
+    UNIQUE_FIXED_ASSET_NAMES,
+    clone_variant_rows,
+)
+from isaaclab_tasks.contrib.nistv2.factory_scene_cfg import FactoryBoardSceneCfg
+from isaaclab_tasks.contrib.nistv2.mdp.metrics import BoardMetrics
+from isaaclab_tasks.contrib.nistv2.mdp.reset import ASSEMBLED, TARGET, BalancedResetPlanner, board_reset
+from isaaclab_tasks.contrib.nistv2.newton_selection import NewtonBodySelectorCfg
 from isaaclab_tasks.core.lift.mdp.events_cfg import SuccessMonitorCfg
+from isaaclab_tasks.utils import SuccessMonitor
 
 
 class _MeshAsset:
@@ -127,13 +139,313 @@ def test_scene_uses_one_ordered_pair_bank() -> None:
     assert held_paths == [variant.held_asset.spawn.usd_path for variant in ASSEMBLY_VARIANTS]
 
 
-def test_variant_configuration_has_one_owner() -> None:
-    """Forbid restoring a package whose only purpose is selecting a config."""
+def test_full_board_package_owns_only_its_composition_and_runtime() -> None:
+    """Keep the assembly catalog and reusable Factory terms owned by NIST v1."""
     contrib_root = Path(__file__).parents[2] / "isaaclab_tasks" / "contrib"
-    assert not (contrib_root / "nistv2").exists()
+    package_root = contrib_root / "nistv2"
+    files = {
+        path.relative_to(package_root).as_posix() for path in package_root.rglob("*") if path.suffix in {".py", ".pyi"}
+    }
+    assert files == {
+        "__init__.py",
+        "board_layout.py",
+        "config/__init__.py",
+        "config/agents/__init__.py",
+        "config/agents/__init__.pyi",
+        "config/agents/rsl_rl_ppo_cfg.py",
+        "factory_env_cfg.py",
+        "factory_scene_cfg.py",
+        "mdp/__init__.py",
+        "mdp/__init__.pyi",
+        "mdp/assembly_state.py",
+        "mdp/metrics.py",
+        "mdp/reset.py",
+        "newton_selection.py",
+        "reset_env_cfg.py",
+    }
+    assert not {"assembly_variants.py", "assembly_profile.py", "factory_assets_cfg.py"}.intersection(files)
     assert [path.relative_to(contrib_root).as_posix() for path in contrib_root.rglob("factory_variant_env_cfg.py")] == [
         "nist/factory_variant_env_cfg.py"
     ]
+    scene_module = inspect.getmodule(FactoryBoardSceneCfg)
+    assert scene_module is not None
+    scene_source = inspect.getsource(scene_module)
+    assert "resolve_presets" not in scene_source
+    assert "def _fixed_asset_cfg" not in scene_source
+    assert "def _held_asset_cfg" not in scene_source
+
+
+def test_full_board_clone_rows_keep_every_world_homogeneous() -> None:
+    """Each source world carries the same twenty held meshes in a different permutation."""
+    rows = torch.tensor(clone_variant_rows())
+    held_rows = rows[:, -len(HELD_ASSET_NAMES) :]
+
+    assert rows.shape == (len(ASSEMBLY_VARIANTS), 3 + len(UNIQUE_FIXED_ASSET_NAMES) + len(HELD_ASSET_NAMES))
+    torch.testing.assert_close(held_rows.sort(dim=1).values, torch.arange(len(ASSEMBLY_VARIANTS)).expand_as(held_rows))
+    torch.testing.assert_close(
+        held_rows.sort(dim=0).values, torch.arange(len(ASSEMBLY_VARIANTS))[:, None].expand_as(held_rows)
+    )
+
+
+def test_full_board_scene_stages_every_held_variant_without_duplicate_fixtures() -> None:
+    """Build one canonical fixture per board location and all variants for every held slot."""
+    scene = FactoryBoardSceneCfg(num_envs=4)
+    fixed = [getattr(scene, name) for name in UNIQUE_FIXED_ASSET_NAMES]
+    held = [getattr(scene, name) for name in HELD_ASSET_NAMES]
+    cfgs = [scene.table, scene.nistboard, scene.robot, *fixed, *held]
+    for cfg in cfgs:
+        cfg.prim_path = cloner.expand_env_regex_ns(cfg.prim_path, scene.clone_cfg.clone_template)
+    plan = cloner.make_clone_plan(
+        cfgs,
+        num_clones=scene.num_envs,
+        env_spacing=scene.env_spacing,
+        device="cpu",
+        clone_strategy=scene.clone_cfg.clone_strategy,
+        valid_set=torch.tensor(scene.clone_cfg.valid_set),
+        env_template=scene.clone_cfg.clone_template,
+    )
+
+    assert len(UNIQUE_FIXED_ASSET_NAMES) == 18
+    assert FIXED_ASSET_NAME_BY_VARIANT[4:7] == ("fixed_gear_base",) * 3
+    assert plan.clone_mask.shape == (3 + len(fixed) + len(held) * len(ASSEMBLY_VARIANTS), 4)
+    torch.testing.assert_close(plan.clone_mask.sum(dim=0), torch.full((4,), len(cfgs)))
+    for asset in held:
+        assert asset.mesh_variants_enabled
+        assert asset.spawn.spawn_paths is not None
+        assert len(asset.spawn.spawn_paths) == len(ASSEMBLY_VARIANTS)
+        assert all(path is not None for path in asset.spawn.spawn_paths)
+
+
+def test_full_board_rl_cfg_uses_canonical_assembly_frames() -> None:
+    """Train from canonical held and fixed frames in the robot base frame."""
+    from isaaclab_tasks.contrib.nistv2.config.agents.rsl_rl_ppo_cfg import FactoryBoardPPORunnerCfg
+    from isaaclab_tasks.contrib.nistv2.factory_env_cfg import (
+        FactoryBoardEnvCfg,
+        FactoryBoardPhysicsCfg,
+        FactoryBoardRewardsCfg,
+        FactoryBoardTerminationsCfg,
+    )
+    from isaaclab_tasks.utils import PresetCfg
+
+    cfg = FactoryBoardEnvCfg()
+    runner = FactoryBoardPPORunnerCfg()
+    spec = gym.spec("IsaacContrib-Factory-Board-Reset-Franka")
+
+    assert FactoryBoardRewardsCfg.__bases__ == (object,)
+    assert FactoryBoardTerminationsCfg.__bases__ == (object,)
+    assert FactoryBoardPhysicsCfg.__bases__ == (PresetCfg,)
+    assert list(vars(cfg.rewards)) == [
+        "action_l2",
+        "action_rate_l2",
+        "joint_effort",
+        "early_termination",
+        "success_reward",
+        "solver_reset_reward",
+    ]
+    assert list(vars(cfg.terminations)) == [
+        "time_out",
+        "oob",
+        "progress_context",
+        "abnormal",
+        "success",
+        "solver_reset_required",
+    ]
+    assert spec.kwargs["rsl_rl_cfg_entry_point"].endswith("rsl_rl_ppo_cfg:FactoryBoardPPORunnerCfg")
+    assert spec.kwargs["rsl_rl_mlp_cfg_entry_point"].endswith("rsl_rl_ppo_cfg:FactoryPPORunnerCfg")
+    assert runner.obs_groups.default == {"actor": ["policy"], "critic": ["policy"]}
+    assert runner.actor.class_name.endswith(":SimBaModel")
+    assert runner.critic.class_name.endswith(":SimBaModel")
+    assert runner.actor.encoder_cfg is None
+    assert runner.critic.encoder_cfg is None
+    assert cfg.sim.physics.newton_mjwarp.solver_cfg.nconmax == 2400
+    assert cfg.observations.policy.history_length == 5
+    assert not hasattr(cfg.observations.policy, "held_asset_in_fixed_asset_frame")
+    assert not hasattr(cfg.observations.policy, "fixed_asset_in_end_effector_frame")
+    assert cfg.observations.policy.joint_pos.func is not None
+    assert cfg.observations.policy.joint_vel.func is not None
+    assert cfg.observations.policy.assembly_frames_in_robot_root_frame.func is not None
+    assert list(vars(cfg.curriculum)) == ["metrics"]
+    assert cfg.curriculum.metrics.func is not None
+    assert not hasattr(cfg.observations, "perception")
+    assert cfg.episode_length_s == 14.0 * len(ASSEMBLY_VARIANTS)
+
+    reset_params = cfg.events.reset_board.params
+    monitor_cfg = reset_params["success_monitor_cfg"]
+    sampler_cfg = reset_params["sampling"]
+    assert monitor_cfg.monitored_history_len == 50
+    assert sampler_cfg.eps == 1.0e-4
+    assert len(sampler_cfg.strategies) == 1
+    assert sampler_cfg.strategies[0].target == 0.66
+    assert sampler_cfg.strategies[0].kappa == 1.0
+    assert sampler_cfg.strategies[0].success_rate_bind == "success_rates"
+
+
+def test_newton_body_selector_preserves_requested_order_and_aliases() -> None:
+    """Resolve an ordered dense body table while allowing shared fixture bodies."""
+    model = SimpleNamespace(
+        world_count=2,
+        body_label=[
+            "/World/Ground",
+            "/World/envs/env_0/held_00/mesh_a",
+            "/World/envs/env_0/fixed_gear_base/base",
+            "/World/envs/env_1/held_00/mesh_b",
+            "/World/envs/env_1/fixed_gear_base/base",
+        ],
+        body_world=np.array([-1, 0, 0, 1, 1], dtype=np.int32),
+    )
+    selection = NewtonBodySelectorCfg(
+        path=(r".*/held_00(?:/.*)?", r".*/fixed_gear_base(?:/.*)?", r".*/fixed_gear_base(?:/.*)?")
+    ).resolve(model)
+
+    assert selection.ids == ((1, 2, 2), (3, 4, 4))
+
+
+def test_newton_body_selector_rejects_incomplete_worlds() -> None:
+    """Fail before training if a requested body is absent from any world."""
+    model = SimpleNamespace(
+        world_count=2,
+        body_label=["/World/envs/env_0/held_00/mesh"],
+        body_world=np.array([0], dtype=np.int32),
+    )
+
+    with pytest.raises(ValueError, match="matched no body in world 1"):
+        NewtonBodySelectorCfg(path=r".*/held_00(?:/.*)?").resolve(model)
+
+
+def test_full_board_reset_planner_balances_accepted_marginals() -> None:
+    """Balance stored states softly while preserving all per-slot reset choices."""
+    torch.manual_seed(7)
+    planner = BalancedResetPlanner("cpu")
+    coarse_counts = torch.zeros(3, dtype=torch.long)
+    for _ in range(128):
+        unfinished_before = planner.unfinished_counts.clone()
+        labels_before = planner.label_counts.clone()
+        plan = planner.sample(512)
+        torch.testing.assert_close(planner.unfinished_counts, unfinished_before)
+        torch.testing.assert_close(planner.label_counts, labels_before)
+        rows = torch.arange(len(plan.target_slot))
+        assert plan.unfinished[rows, plan.target_slot].all()
+        assert (plan.slot_state[~plan.unfinished] == ASSEMBLED).all()
+        assert (plan.slot_state[rows, plan.target_slot] == TARGET).all()
+        coarse = plan.slot_state[plan.slot_state < ASSEMBLED].long()
+        coarse_counts += torch.bincount(coarse, minlength=3)
+        planner.accept(plan, rows)
+
+    assert planner.unfinished_counts.sum() == 65536
+    assert planner.label_counts.sum() == 65536
+    assert planner.unfinished_counts.max() < planner.unfinished_counts.min() * 1.1
+    assert planner.label_counts.max() < planner.label_counts.min() * 1.1
+    assert coarse_counts.max() < coarse_counts.min() * 1.05
+
+
+def test_full_board_reset_updates_and_samples_monitor_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Use reset-buffer row ids directly for success monitoring and sampling."""
+
+    class Sampler:
+        def probabilities_and_sample(self, count: int) -> tuple[torch.Tensor, torch.Tensor]:
+            self.count = count
+            return torch.full((4,), 0.25), torch.tensor([3, 0, 2])[:count]
+
+    reset = board_reset.__new__(board_reset)
+    reset._ready = True
+    reset._capacity = 4
+    reset.success_monitor = SuccessMonitor(SuccessMonitorCfg(monitored_history_len=4), 1, 4, "cpu")
+    reset._sampler = Sampler()
+    reset.sampled_state = torch.tensor([2, -1, 1])
+    reset.unfinished_count = torch.zeros(3, dtype=torch.uint8)
+    reset.target_slot = torch.zeros(3, dtype=torch.uint8)
+    reset.target_label = torch.zeros(3, dtype=torch.uint8)
+    reset.variant_ids = torch.zeros((3, 20), dtype=torch.uint8)
+    reset.slot_state = torch.zeros((3, 20), dtype=torch.uint8)
+    reset._slot_asleep = torch.zeros((3, 20), dtype=torch.bool)
+    reset._slot_asleep_warp = wp.from_torch(reset._slot_asleep)
+    reset._held_body_ids = object()
+    reset.initial_unfinished = torch.zeros((3, 20), dtype=torch.bool)
+    reset.sample_counts = torch.zeros(20, dtype=torch.long)
+    reset.sample_total = torch.zeros((), dtype=torch.long)
+    reset.revision = 0
+    reset._unfinished_count = torch.tensor([1, 2, 3, 4], dtype=torch.uint8)
+    reset._target_slot = torch.zeros(4, dtype=torch.uint8)
+    reset._target_label = torch.zeros(4, dtype=torch.uint8)
+    reset._variant_ids = torch.arange(20, dtype=torch.uint8).repeat(4, 1)
+    reset._slot_state = torch.zeros((4, 20), dtype=torch.uint8)
+    written = {}
+    reset._write_state = lambda env_ids, state_ids: written.update(env_ids=env_ids.clone(), state_ids=state_ids.clone())
+
+    progress = SimpleNamespace(is_success=torch.tensor([True, True, False]))
+    env = SimpleNamespace(
+        device="cpu",
+        extras={},
+        termination_manager=SimpleNamespace(get_term_cfg=lambda name: SimpleNamespace(func=progress)),
+    )
+    env_ids = torch.arange(3)
+    monkeypatch.setattr(NewtonManager, "set_body_sleep_state", lambda *args: None)
+    reset(
+        env,
+        env_ids,
+        None,
+        None,
+        None,
+        4,
+        success_monitor_cfg=SuccessMonitorCfg(),
+        sampling=SamplerCfg(),
+    )
+
+    torch.testing.assert_close(reset.success_monitor.success_size, torch.tensor([0, 1, 1, 0]))
+    torch.testing.assert_close(reset.success_monitor.success_rate, torch.tensor([0.0, 0.0, 1.0, 0.0]))
+    assert reset._sampler.count == 3
+    torch.testing.assert_close(reset.sampled_state, torch.tensor([3, 0, 2]))
+    torch.testing.assert_close(reset.unfinished_count, torch.tensor([4, 1, 3], dtype=torch.uint8))
+    torch.testing.assert_close(reset.sample_counts[:4], torch.tensor([1, 0, 1, 1]))
+    assert reset.sample_total == 3
+    torch.testing.assert_close(written["state_ids"], torch.tensor([3, 0, 2]))
+
+
+def test_full_board_metrics_attribute_terminal_outcomes_to_initial_state() -> None:
+    """Group whole-board and per-asset outcomes by the reset that started each episode."""
+    reset = board_reset.__new__(board_reset)
+    reset.sample_counts = torch.arange(1, 21)
+    reset.sample_total = reset.sample_counts.sum()
+    reset.unfinished_count = torch.tensor([1, 2, 2], dtype=torch.uint8)
+    reset.initial_unfinished = torch.zeros((3, 20), dtype=torch.bool)
+    reset.initial_unfinished[0, 0] = True
+    reset.initial_unfinished[1, :2] = True
+    reset.initial_unfinished[2, 1:3] = True
+
+    asset_assembled = torch.ones((3, 20), dtype=torch.bool)
+    asset_assembled[1, 1] = False
+    asset_assembled[2, 1] = False
+    state = SimpleNamespace(all_success=torch.tensor([True, False, False]), asset_assembled=asset_assembled)
+    terms = {
+        "reset_board": SimpleNamespace(func=reset),
+        "assembly_state": SimpleNamespace(func=state),
+    }
+    env = SimpleNamespace(
+        device="cpu",
+        num_envs=3,
+        event_manager=SimpleNamespace(get_term_cfg=lambda name: terms[name]),
+        episode_length_buf=torch.ones(3, dtype=torch.long),
+        reset_buf=torch.ones(3, dtype=torch.bool),
+        extras={},
+    )
+
+    metrics = BoardMetrics(CurriculumTermCfg(func=BoardMetrics), env)
+    metrics(env, torch.arange(3))
+    heatmaps = env.extras["heatmap"]
+
+    assert set(heatmaps) == {
+        "Metrics/ResetProbs",
+        "Metrics/ResetSuccessRate",
+        "Metrics/AssetUnassembledRate",
+    }
+    torch.testing.assert_close(heatmaps["Metrics/ResetSuccessRate"]["denominator"].flatten()[:2], torch.tensor([1, 2]))
+    torch.testing.assert_close(heatmaps["Metrics/ResetSuccessRate"]["numerator"].flatten()[:2], torch.tensor([1, 0]))
+    torch.testing.assert_close(
+        heatmaps["Metrics/AssetUnassembledRate"]["denominator"].flatten()[:3], torch.tensor([2, 2, 1])
+    )
+    torch.testing.assert_close(
+        heatmaps["Metrics/AssetUnassembledRate"]["numerator"].flatten()[:3], torch.tensor([0, 2, 0])
+    )
 
 
 def test_static_and_variant_event_compositions_remain_distinct() -> None:

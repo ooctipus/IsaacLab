@@ -152,6 +152,11 @@ class NewtonMJWarpManager(NewtonManager):
         """
         if cls._needs_collision_pipeline:
             super()._initialize_contacts()
+            solver = NewtonManager._solver
+            if solver is not None and NewtonManager._collision_pipeline is not None:
+                sleep_filter = solver.collision_sleep_filter
+                if sleep_filter is not None:
+                    NewtonManager._collision_pipeline.configure_sleep_filter(*sleep_filter)
             return
         if cls._solver is not None:
             NewtonManager._contacts = Contacts(

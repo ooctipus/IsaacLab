@@ -1199,6 +1199,19 @@ class NewtonManager(PhysicsManager):
         cls.invalidate_body_state(env_ids=env_ids)
 
     @classmethod
+    def set_body_sleep_state(
+        cls,
+        body_ids: wp.array2d[wp.int32],
+        asleep: wp.array2d[wp.bool],
+        env_ids: wp.array[wp.int32],
+    ) -> None:
+        """Set the body sleep state restored by the next Newton solver reset."""
+        solver = NewtonManager._solver
+        if solver is None or not hasattr(solver, "set_body_sleep_state"):
+            raise RuntimeError("Body sleep state requires an initialized Newton MJWarp solver with sleeping enabled.")
+        solver.set_body_sleep_state(body_ids, asleep, env_ids)
+
+    @classmethod
     def create_builder(cls, up_axis: str | None = None, **kwargs) -> ModelBuilder:
         """Create a :class:`ModelBuilder` configured with default settings.
 
