@@ -27,6 +27,7 @@ workflow:
       command: ["bash"]
       args: ["/tmp/run.sh"]
       environment:
+        ISAACLAB_WORKFLOW_ID: "{{workflow_id}}"
         OMNI_KIT_ACCEPT_EULA: "YES"
         ACCEPT_EULA: Y
         NO_NUCLEUS: Y

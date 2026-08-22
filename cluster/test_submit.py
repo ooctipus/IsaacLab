@@ -607,10 +607,16 @@ class TestWorkflowSpecArchitecture:
         spec = self._spec()
         assert spec.count("/workspace/isaaclab/{{ script }}") == 3
         assert "isaaclab.sh train" not in spec
-        assert "--workflow_id" not in spec
 
-    def test_workflow_uses_the_image_python_runtime(self):
-        assert self._spec().count("/workspace/isaaclab/_isaac_sim/python.sh") == 3
+    def test_workflow_exports_id_without_changing_script_arguments(self):
+        spec = self._spec()
+        assert "--workflow_id" not in spec
+        assert 'ISAACLAB_WORKFLOW_ID: "{{workflow_id}}"' in spec
+
+    def test_workflow_uses_the_managed_python_runtime(self):
+        spec = self._spec()
+        assert spec.count("/workspace/isaaclab/isaaclab.sh -p") == 3
+        assert "/workspace/isaaclab/_isaac_sim/python.sh" not in spec
 
     def test_workflow_uses_socket_nccl_only_on_ovx(self):
         spec = self._spec()
