@@ -3,7 +3,6 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-from isaaclab_newton.envs import mdp as newton_mdp
 from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg, NewtonCollisionPipelineCfg
 from isaaclab_physx.physics import PhysxCfg
 
@@ -90,72 +89,65 @@ class FactoryObservationsCfg:
     critic: PolicyCfg = PolicyCfg()
 
 
+HELD_ASSET_MATERIAL_EVENT = EventTerm(
+    func=mdp.randomize_rigid_body_material,  # type: ignore
+    mode="startup",
+    params={
+        "static_friction_range": (0.4, 1.0),
+        "dynamic_friction_range": (0.4, 1.0),
+        "restitution_range": (0.0, 0.0),
+        "num_buckets": 64,
+        "asset_cfg": SceneEntityCfg("held_asset"),
+    },
+)
+HELD_ASSET_INERTIA_EVENT = EventTerm(
+    func=mdp.randomize_rigid_body_inertia,
+    mode="startup",
+    params={
+        "asset_cfg": SceneEntityCfg("held_asset"),
+        "inertia_distribution_params": [0.00001, 0.00001],
+        "operation": "add",
+        "diagonal_only": True,
+    },
+)
+FIXED_ASSET_MATERIAL_EVENT = EventTerm(
+    func=mdp.randomize_rigid_body_material,  # type: ignore
+    mode="startup",
+    params={
+        "static_friction_range": (0.4, 1.0),
+        "dynamic_friction_range": (0.4, 1.0),
+        "restitution_range": (0.0, 0.0),
+        "num_buckets": 64,
+        "asset_cfg": SceneEntityCfg("fixed_asset"),
+    },
+)
+ROBOT_MATERIAL_EVENT = EventTerm(
+    func=mdp.randomize_rigid_body_material,  # type: ignore
+    mode="startup",
+    params={
+        "static_friction_range": (0.75, 0.75),
+        "dynamic_friction_range": (0.75, 0.75),
+        "restitution_range": (0.0, 0.0),
+        "num_buckets": 64,
+        "asset_cfg": SceneEntityCfg("robot"),
+    },
+)
+NEWTON_SOLVER_RESET_REWARD = RewTerm(
+    func="isaaclab_newton.envs.mdp:zero_reward_on_solver_reset",
+    weight=1.0,
+)
+NEWTON_SOLVER_RESET_TERMINATION = DoneTerm(func="isaaclab_newton.envs.mdp:solver_reset_required")
+
+
 @configclass
 class FactoryEventCfg:
-    """Events specifications for Factory"""
+    """Startup randomization and reset terms for one static assembly."""
 
-    # when nut dropped right above the bolt, it sometime can immediately success due to high speed it falls
-    # down can can may training in early stage very finicky. we uses less aggressive gravity for training
-    # and can make more aggressive later in the stage...
-
-    # mode: startup
-    held_asset_material = EventTerm(
-        func=mdp.randomize_rigid_body_material,  # type: ignore
-        mode="startup",
-        params={
-            "static_friction_range": (0.4, 1.0),
-            "dynamic_friction_range": (0.4, 1.0),
-            "restitution_range": (0.0, 0.0),
-            "num_buckets": 64,
-            "asset_cfg": SceneEntityCfg("held_asset"),
-        },
-    )
-
-    # (Octi): Held-asset angular-instability fix: its small rotational inertia (~0.012 kg·m²) under the
-    # stiff contact (ke=1e7) lets contact torque run the angular velocity away exponentially → NaN
-    # (observed in the start_random reset). Bump the diagonal inertia to damp it.
-    held_asset_inertia = EventTerm(
-        func=mdp.randomize_rigid_body_inertia,
-        mode="startup",
-        params={
-            "asset_cfg": SceneEntityCfg("held_asset"),
-            "inertia_distribution_params": [0.00001, 0.00001],
-            "operation": "add",
-            "diagonal_only": True,
-        },
-    )
-
-    fixed_asset_material = EventTerm(
-        func=mdp.randomize_rigid_body_material,  # type: ignore
-        mode="startup",
-        params={
-            "static_friction_range": (0.4, 1.0),
-            "dynamic_friction_range": (0.4, 1.0),
-            "restitution_range": (0.0, 0.0),
-            "num_buckets": 64,
-            "asset_cfg": SceneEntityCfg("fixed_asset"),
-        },
-    )
-
-    robot_material = EventTerm(
-        func=mdp.randomize_rigid_body_material,  # type: ignore
-        mode="startup",
-        params={
-            "static_friction_range": (0.75, 0.75),
-            "dynamic_friction_range": (0.75, 0.75),
-            "restitution_range": (0.0, 0.0),
-            "num_buckets": 64,
-            "asset_cfg": SceneEntityCfg("robot"),
-        },
-    )
-
+    held_asset_material = HELD_ASSET_MATERIAL_EVENT
+    held_asset_inertia = HELD_ASSET_INERTIA_EVENT
+    fixed_asset_material = FIXED_ASSET_MATERIAL_EVENT
+    robot_material = ROBOT_MATERIAL_EVENT
     reset_strategies = ACCUMULATOR_RESET
-
-    # variable_gravity: EventTerm | None = EventTerm(
-    #     func=mdp.randomize_physics_scene_gravity,
-    #     mode="reset",
-    #     params={"operation": "abs", "gravity_distribution_params": ((0.0, 0.0, -1.0), (0.0, 0.0, -1.0))},
-    # )
 
 
 @configclass
@@ -173,7 +165,7 @@ class FactoryRewardsCfg:
     success_reward = RewTerm(func=mdp.success_reward, weight=100.0)
     solver_reset_reward = preset(
         default=None,
-        newton_mjwarp=RewTerm(func=newton_mdp.zero_reward_on_solver_reset, weight=1.0),
+        newton_mjwarp=NEWTON_SOLVER_RESET_REWARD,
     )
 
 
@@ -215,39 +207,28 @@ class FactoryTerminationsCfg:
     success = DoneTerm(func=mdp.success_termination)
     solver_reset_required = preset(
         default=None,
-        newton_mjwarp=DoneTerm(func=newton_mdp.solver_reset_required),
+        newton_mjwarp=NEWTON_SOLVER_RESET_TERMINATION,
     )
-
-
-# @configclass
-# class FactoryCurriculumsCfg:
-#     """Curriculum terms for Factory."""
-
-#     difficulty_scheduler = CurrTerm(
-#         func=mdp.DifficultyScheduler,
-#         params={
-#             "max_difficulty": 10,
-#             "success_rate_callback": "env.event_manager.get_term_cfg('reset_strategies').func.monitor_success_rate",
-#         },
-#     )
-
-#     gravity_adr: CurrTerm = CurrTerm(
-#         func=mdp.modify_term_cfg,
-#         params={
-#             "address": "events.variable_gravity.params.gravity_distribution_params",
-#             "modify_fn": mdp.initial_final_interpolate_fn,
-#             "modify_params": {
-#                 "initial_value": ((0.0, 0.0, -1.0), (0.0, 0.0, -1.0)),
-#                 "final_value": ((0.0, 0.0, -9.81), (0.0, 0.0, -9.81)),
-#                 "difficulty_term_str": "difficulty_scheduler",
-#             },
-#         },
-#     )
 
 
 ##
 # Environment configuration
 ##
+
+
+@configclass
+class FactoryEnvCfg(ManagerBasedRLEnvCfg):
+    """Shared runtime configuration for Factory environment compositions."""
+
+    viewer: ViewerCfg = ViewerCfg(eye=(0.0, 0.8, 0.4), lookat=(0.0, 0.0, 0.4))
+    actions: RobotActionsCfg = RobotActionsCfg()  # type: ignore
+
+    def __post_init__(self) -> None:
+        self.decimation = 4
+        self.episode_length_s = 14.0
+        self.sim.dt = 0.04 / self.decimation
+        self.sim.physics_material.static_friction = 0.5
+        self.sim.physics_material.dynamic_friction = 0.5
 
 
 @configclass
@@ -318,7 +299,7 @@ class FactoryPhysicsCfg(PresetCfg):
 
 
 @configclass
-class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
+class FactoryBaseEnvCfg(FactoryEnvCfg):
     """Configuration for the base Factory environment."""
 
     scene: FactorySceneCfg = FactorySceneCfg()
@@ -326,30 +307,16 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
     events: FactoryEventCfg = FactoryEventCfg()
     terminations: FactoryTerminationsCfg = FactoryTerminationsCfg()
     rewards: FactoryRewardsCfg = FactoryRewardsCfg()
-    viewer: ViewerCfg = ViewerCfg(eye=(0.0, 0.8, 0.4), lookat=(0.0, 0.0, 0.4))
-    actions: RobotActionsCfg = RobotActionsCfg()  # type: ignore
-    # curriculum: FactoryCurriculumsCfg = FactoryCurriculumsCfg()
 
     # Post initialization
     def __post_init__(self) -> None:
         """Post initialization."""
-        # general settings
-        # Collision runs once per sim step and the solver runs num_substeps inside it,
-        # so dt sets the collision rate: 0.01 s -> 100 Hz collide, x8 substeps ->
-        # 800 Hz solver. Decimation is halved alongside it so the policy still acts
-        # every 0.04 s; leaving it at 8 would have quietly halved the control rate.
-        self.decimation = 4
-        self.episode_length_s = 14.0
-        # simulation settings
-        self.sim.dt = 0.04 / self.decimation
+        super().__post_init__()
         self.sim.render_interval = 1
         # Select the physics backend from the active preset (``presets=physx`` default, or
         # ``presets=newton_mjwarp`` for the kitless Newton/MuJoCo path). Previously this hardcoded
         # ``PhysxCfg`` here, which silently overrode ``presets=newton_mjwarp`` and forced Kit to launch.
         self.sim.physics = FactoryPhysicsCfg()
-
-        self.sim.physics_material.static_friction = 0.5
-        self.sim.physics_material.dynamic_friction = 0.5
 
     def play_mode(self) -> None:
         """Narrow the reset curriculum for evaluation.

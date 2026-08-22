@@ -3,6 +3,8 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
+"""Reset composition for the homogeneous Factory scene."""
+
 from __future__ import annotations
 
 from isaaclab.managers import EventTermCfg as EventTerm
@@ -51,7 +53,7 @@ START_RANDOM = EventTerm(
                 },
             ),
             "reset_end_effector": EventTerm(
-                func=mdp.reset_end_effector_around_asset,
+                func=mdp.reset_variant_end_effector_around_asset,
                 mode="reset",
                 params={
                     "fixed_asset_cfg": SceneEntityCfg("held_asset"),
@@ -73,7 +75,7 @@ START_RANDOM = EventTerm(
                 },
             ),
             "grasp_held_asset": EventTerm(
-                func=mdp.grasp_held_asset,
+                func=mdp.grasp_variant_held_asset,
                 mode="reset",
                 params={
                     "robot_cfg": SceneEntityCfg("robot", joint_names=GripperJointNamesCfg()),
@@ -99,7 +101,7 @@ START_ASSEMBLED = EventTerm(
                 },
             ),
             "reset_held_asset": EventTerm(
-                func=mdp.reset_held_asset_on_fixed_asset,
+                func=mdp.reset_variant_held_asset_on_fixed_asset,
                 mode="reset",
                 params={
                     # Stop at the entry: past it the part is no longer assembled, and that stretch
@@ -110,7 +112,7 @@ START_ASSEMBLED = EventTerm(
                 },
             ),
             "reset_end_effector": EventTerm(
-                func=mdp.reset_end_effector_around_asset,
+                func=mdp.reset_variant_end_effector_around_asset,
                 mode="reset",
                 params={
                     "fixed_asset_cfg": SceneEntityCfg("held_asset"),
@@ -134,7 +136,7 @@ START_ASSEMBLED = EventTerm(
                 },
             ),
             "grasp_held_asset": EventTerm(
-                func=mdp.grasp_held_asset,
+                func=mdp.grasp_variant_held_asset,
                 mode="reset",
                 params={
                     "robot_cfg": SceneEntityCfg("robot", joint_names=GripperJointNamesCfg()),
@@ -179,7 +181,7 @@ start_near_grasped = EventTerm(
                 },
             ),
             "reset_end_effector": EventTerm(
-                func=mdp.reset_end_effector_around_asset,
+                func=mdp.reset_variant_end_effector_around_asset,
                 mode="reset",
                 params={
                     "fixed_asset_cfg": SceneEntityCfg("fixed_asset"),
@@ -193,7 +195,7 @@ start_near_grasped = EventTerm(
                 },
             ),
             "reset_held_asset": EventTerm(
-                func=mdp.reset_held_asset_in_gripper,
+                func=mdp.reset_variant_held_asset_in_gripper,
                 mode="reset",
                 params={
                     "holding_body_cfg": SceneEntityCfg("robot", body_names=EndEffectorBodyCfg()),
@@ -208,7 +210,7 @@ start_near_grasped = EventTerm(
                 },
             ),
             "grasp_held_asset": EventTerm(
-                func=mdp.grasp_held_asset,
+                func=mdp.grasp_variant_held_asset,
                 mode="reset",
                 params={
                     "robot_cfg": SceneEntityCfg("robot", joint_names=GripperJointNamesCfg()),
@@ -233,7 +235,7 @@ START_PICK = START_RANDOM.copy()
 _drop = START_PICK.params["terms"]["reset_held_asset"]
 _drop.params["pose_range"]["z"] = (0.03, 0.05)
 _SETTLE_HELD_ASSET = EventTerm(
-    func=mdp.settle_held_asset,
+    func=mdp.sample_settled_asset_pose,
     mode="reset",
     params={
         "held_asset_cfg": SceneEntityCfg("held_asset"),
@@ -272,7 +274,7 @@ SCENE_RESET = EventTerm(
                 },
             ),
             "reset_fixed_asset": EventTerm(
-                func=mdp.reset_fixed_asset_uniform,
+                func=mdp.reset_variant_fixed_asset_uniform,
                 mode="reset",
                 params={
                     "pose_range": {"x": (0.075, 0.25), "y": (-0.25, 0.25), "yaw": (-3.14, 3.14)},
@@ -280,12 +282,12 @@ SCENE_RESET = EventTerm(
             ),
             # Board follows the placed fixed asset.
             "reset_board": EventTerm(
-                func=mdp.reset_board_under_fixed_asset,
+                func=mdp.reset_variant_board_under_fixed_asset,
                 mode="reset",
                 params={},
             ),
             "reset_strategies": EventTerm(
-                func=mdp.TermChoice,
+                func=mdp.PreparedTermChoice,
                 mode="reset",
                 params={
                     "terms": {
@@ -304,8 +306,8 @@ SCENE_RESET = EventTerm(
 )
 
 
-ACCUMULATOR_RESET = EventTerm(
-    func=mdp.reset_accumulator,
+VARIANT_ACCUMULATOR_RESET = EventTerm(
+    func=mdp.variant_reset_accumulator,
     mode="reset",
     params={
         "reset_assets": RESET_ASSETS,

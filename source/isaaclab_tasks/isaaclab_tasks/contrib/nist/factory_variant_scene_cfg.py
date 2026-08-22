@@ -16,6 +16,8 @@ from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import ContactSensorCfg
 from isaaclab.utils.configclass import configclass
 
+from isaaclab_tasks.utils import resolve_presets
+
 from . import factory_assets_cfg as assets
 from .assembly_variants import ASSEMBLY_VARIANTS
 from .factory_presets import RobotArticulationCfg
@@ -24,19 +26,20 @@ from .factory_presets import RobotArticulationCfg
 def _paired_clone_strategy(combinations: torch.Tensor, num_clones: int, device: str) -> torch.Tensor:
     varying = (combinations.amax(dim=0) != combinations.amin(dim=0)).nonzero().flatten()
     if varying.numel() != 2:
-        raise ValueError("Factory v2 expects two variant-bearing scene assets.")
+        raise ValueError("Factory variant scenes expect two variant-bearing assets.")
     paired = combinations[(combinations[:, varying] == combinations[:, varying[0], None]).all(dim=1)]
     return cloner.sequential(paired, num_clones, device)
 
 
 def _variant_spawner(configs: tuple[RigidObjectCfg, ...]) -> sim_utils.MultiAssetSpawnerCfg:
     return sim_utils.MultiAssetSpawnerCfg(
-        assets_cfg=[cfg.spawn.copy() for cfg in configs], activate_contact_sensors=True
+        assets_cfg=[resolve_presets(cfg.spawn.copy(), selected=("newton_mjwarp",)) for cfg in configs],
+        activate_contact_sensors=True,
     )
 
 
 @configclass
-class FactorySceneCfg(InteractiveSceneCfg):
+class FactoryVariantSceneCfg(InteractiveSceneCfg):
     """One scene layout shared by every assembly variant."""
 
     num_envs: int = 4096
@@ -46,7 +49,7 @@ class FactorySceneCfg(InteractiveSceneCfg):
     ground = assets.GROUND_CFG
     table = assets.TABLE_CFG
     nistboard = assets.NISTBOARD_CFG
-    robot: ArticulationCfg = RobotArticulationCfg()  # type: ignore
+    robot: ArticulationCfg = resolve_presets(RobotArticulationCfg(), selected=("newton_mjwarp",))  # type: ignore
     fixed_asset = RigidObjectCfg(
         prim_path="{ENV_REGEX_NS}/FixedAsset",
         spawn=_variant_spawner(tuple(variant.fixed_asset for variant in ASSEMBLY_VARIANTS)),

@@ -36,6 +36,8 @@ def get_reset_state(env, env_ids: Tensor, reset_assets: Sequence[str], is_relati
             if is_relative:
                 root_state = root_state.clone()
                 root_state[:, :3] -= env.scene.env_origins[env_ids]
+            if getattr(rigid_object, "num_mesh_variants", 0):
+                states.append(rigid_object.mesh_variant_ids.torch[env_ids, None].to(root_state.dtype))
             states.append(root_state)
     return torch.cat(states, dim=-1)
 
@@ -61,12 +63,19 @@ def set_reset_state(env, states: Tensor, env_ids: Tensor, reset_assets: Sequence
 
     for name, rigid_object in env.scene._rigid_objects.items():
         if name in reset_assets:
+            if getattr(rigid_object, "num_mesh_variants", 0):
+                variant_ids = states[:, offset].to(dtype=torch.int32)
+                rigid_object.write_mesh_variant_to_sim(variant_ids, env_ids)
+                offset += 1
             root_state = states[:, offset : offset + 13]
             if is_relative:
                 root_state = root_state.clone()
                 root_state[:, :3] += env.scene.env_origins[env_ids]
             rigid_object.write_root_state_to_sim(root_state, env_ids)
             offset += 13
+
+    if offset != states.shape[1]:
+        raise ValueError(f"Reset state has {states.shape[1]} values, but the scene consumed {offset}.")
 
 
 @contextmanager

@@ -3,70 +3,12 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-from dataclasses import MISSING
-
 from isaaclab.utils.configclass import configclass
 
 from isaaclab_rl.rsl_rl import RslRlMLPModelCfg, RslRlOnPolicyRunnerCfg, RslRlPpoAlgorithmCfg
 
+from isaaclab_tasks.contrib.nist.config.agents.models import SimBaModelCfg
 from isaaclab_tasks.utils import PresetCfg, preset
-
-
-@configclass
-class SimBaModelCfg:
-    """Configuration for a SimBa model with optional observation-group encoders."""
-
-    @configclass
-    class EncoderCfg:
-        class_name: str = MISSING
-        """Encoder class or constructor."""
-
-        output_dim: int = MISSING
-        """Output dimension of the encoder."""
-
-    @configclass
-    class MLPEncoderCfg(EncoderCfg):
-        class_name: str = "isaaclab_tasks.contrib.nistv2.config.agents.models:MLPEncoder"
-
-        hidden_dims: list[int] = MISSING
-        """Hidden dimensions of the encoder MLP."""
-
-        activation: str = MISSING
-        """Activation function of the encoder MLP."""
-
-        last_activation: str | None = None
-        """Optional activation after the encoder output layer."""
-
-    class_name: str = "isaaclab_tasks.contrib.nistv2.config.agents.models:SimBaModel"
-    """Model class name."""
-
-    hidden_dim: int = MISSING
-    """Width of the residual pathway."""
-
-    num_blocks: int = 2
-    """Number of residual blocks."""
-
-    expansion_factor: int = 4
-    """Expansion factor inside each residual block."""
-
-    activation: str = "relu"
-    """Activation function used inside each residual block."""
-
-    norm: bool = True
-    """Whether to apply layer normalization inside the SimBa head."""
-
-    obs_normalization: bool = False
-    """Whether to normalize observation groups that bypass encoders."""
-
-    encoder_normalization: bool = False
-    """Whether to normalize each encoder input independently."""
-
-    encoder_cfg: dict[str, EncoderCfg] | None = None
-    """Encoders keyed by observation group."""
-
-    distribution_cfg: RslRlMLPModelCfg.DistributionCfg | None = None
-    """Optional output-distribution configuration."""
-
 
 # Shared PPO hyper-parameters reused by both the plain-PPO and value-shift variants.
 _FACTORY_PPO_KWARGS = dict(

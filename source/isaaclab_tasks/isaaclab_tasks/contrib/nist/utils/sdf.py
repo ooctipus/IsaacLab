@@ -139,17 +139,19 @@ def get_signed_distance_mega(
     body_pos_w: wp.array(dtype=wp.vec3, ndim=2),
     body_quat_w: wp.array(dtype=wp.quat, ndim=2),
     body_ids: wp.array(dtype=wp.int32),
+    asset_rows: wp.array(dtype=wp.int32),
     local_pts: wp.array(dtype=wp.vec3, ndim=3),
     env_ids: wp.array(dtype=wp.int32),
     obs_root_pos: wp.array(dtype=wp.vec3, ndim=2),
     obs_root_quat: wp.array(dtype=wp.quat, ndim=2),
-    obs_root_scale: wp.array(dtype=wp.vec3, ndim=2),
+    obs_root_scale: wp.array(dtype=wp.vec3),
     colliders: wp.array(dtype=ColliderTransform),
     mesh_handles: wp.array(dtype=wp.uint64),
     prim_counts: wp.array(dtype=wp.int32),
+    obstacle_row_offsets: wp.array(dtype=wp.int32),
+    collider_rows: wp.array(dtype=wp.int32, ndim=2),
     max_dist: float,
     check_dist: bool,
-    num_envs_subset: int,
     num_bodies: int,
     num_points: int,
     num_obstacles: int,
@@ -172,26 +174,28 @@ def get_signed_distance_mega(
 
     env_id = env_ids[env_local]
     body_id = body_ids[body_local]
+    asset_row = asset_rows[env_id]
 
     query = compute_world_point(
         body_pos_w[env_id, body_id],
         body_quat_w[env_id, body_id],
-        local_pts[env_id, body_local, point_local],
+        local_pts[asset_row, body_local, point_local],
     )
 
     best = max_dist
     for obs_idx in range(num_obstacles):
+        collider_row = collider_rows[obs_idx, env_id]
+        packed_row = obstacle_row_offsets[obs_idx] + collider_row
         root_mat = compose_root_mat(
             obs_root_quat[obs_idx, env_id],
-            obs_root_scale[obs_idx, env_id],
+            obs_root_scale[packed_row],
         )
         root_mat_inv = wp.inverse(root_mat)
         root_pos = obs_root_pos[obs_idx, env_id]
 
-        prim_base = obs_idx * num_envs_subset * max_prims + env_local * max_prims
-        prim_count_id = obs_idx * num_envs_subset + env_local
+        prim_base = packed_row * max_prims
 
-        for p in range(prim_counts[prim_count_id]):
+        for p in range(prim_counts[packed_row]):
             index = prim_base + p
             mid = mesh_handles[index]
             if mid != wp.uint64(0):
