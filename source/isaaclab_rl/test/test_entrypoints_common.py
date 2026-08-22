@@ -197,6 +197,16 @@ def test_common_train_args_include_sensor_capture_options() -> None:
     assert args_cli.capture_env_sensors_format == "file"
 
 
+def test_common_train_args_read_workflow_id_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cluster metadata supplies the workflow ID without changing script arguments."""
+    monkeypatch.setenv("ISAACLAB_WORKFLOW_ID", "isaac-lab-12345")
+    parser = argparse.ArgumentParser()
+    add_common_train_args(parser, agent_default=None, agent_help="", include_agent=False)
+
+    assert parser.parse_args([]).workflow_id == "isaac-lab-12345"
+    assert parser.parse_args(["--workflow_id", "manual-id"]).workflow_id == "manual-id"
+
+
 def test_enable_cameras_for_video_enables_cameras_for_sensor_capture() -> None:
     """Sensor capture requires camera rendering even when normal video capture is disabled."""
     args_cli = argparse.Namespace(video=False, capture_env_sensors=1, enable_cameras=False)
