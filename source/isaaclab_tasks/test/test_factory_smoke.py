@@ -36,7 +36,14 @@ import torch
 import isaaclab_tasks  # noqa: F401 -- registers the gym tasks
 
 
-@pytest.mark.parametrize("task_name", ["IsaacContrib-Factory-Franka", "IsaacContrib-Factory-Variant-Franka"])
+@pytest.mark.parametrize(
+    "task_name",
+    [
+        "IsaacContrib-Factory-Franka",
+        "IsaacContrib-Factory-Variant-Franka",
+        "IsaacContrib-Factory-Board-Reset-Franka",
+    ],
+)
 def test_env_cfg_constructs(task_name: str) -> None:
     """The env cfg referenced by ``env_cfg_entry_point`` imports + constructs."""
     spec = gym.spec(task_name)
@@ -103,7 +110,14 @@ def test_factory_difficulty_scheduler_averages_ready_success_rates() -> None:
     torch.testing.assert_close(result, torch.tensor(0.3))
 
 
-@pytest.mark.parametrize("task_name", ["IsaacContrib-Factory-Franka", "IsaacContrib-Factory-Variant-Franka"])
+@pytest.mark.parametrize(
+    "task_name",
+    [
+        "IsaacContrib-Factory-Franka",
+        "IsaacContrib-Factory-Variant-Franka",
+        "IsaacContrib-Factory-Board-Reset-Franka",
+    ],
+)
 def test_env_cfg_to_dict_serialises(task_name: str) -> None:
     """``cfg.to_dict()`` produces a fully-flattened dict with no dataclass instances.
 

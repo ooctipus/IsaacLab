@@ -131,6 +131,13 @@ def test_contact_reduction_hashtable_size_factor_is_forwarded_to_collision_pipel
     assert cfg.to_pipeline_args()["contact_reduction_hashtable_size_factor"] == pytest.approx(0.02)
 
 
+def test_static_kinematic_pair_filter_is_forwarded_to_collision_pipeline():
+    """The immovable-pair policy reaches Newton's broad phase."""
+    cfg = NewtonCollisionPipelineCfg(include_static_kinematic_pairs=False)
+
+    assert cfg.to_pipeline_args()["include_static_kinematic_pairs"] is False
+
+
 def test_speculative_contact_config_is_converted_without_exposing_scheduler_timing():
     """The nested Newton config receives only the search cap; the manager owns its horizon."""
     cfg = NewtonCollisionPipelineCfg(
