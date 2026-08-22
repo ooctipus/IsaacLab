@@ -3,11 +3,11 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Factory task registration.
+"""Factory task registrations.
 
-A single gym environment is registered.  The task ships one robot, so the
-robot-specific fields bind the ``default`` of each robot preset and need no
-selector; the assembly is chosen through the preset system -- e.g.::
+The task ships one robot, so the robot-specific fields bind the ``default`` of
+each robot preset and need no selector; the assembly is chosen through the
+preset system -- e.g.::
 
     uv run isaaclab train --task IsaacContrib-Factory-Franka \
         presets=peg_insert_4mm physics=newton_mjwarp
@@ -31,6 +31,16 @@ gym.register(
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point": "isaaclab_tasks.contrib.nist.factory_env_cfg:FactoryBaseEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:FactoryPPORunnerCfg",
+    },
+)
+
+gym.register(
+    id="IsaacContrib-Factory-Video-Franka",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": "isaaclab_tasks.contrib.nist.factory_video_env_cfg:FactoryVideoEnvCfg",
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:FactoryPPORunnerCfg",
     },
 )
