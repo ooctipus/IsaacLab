@@ -6,6 +6,7 @@
 """Tests for handle_deprecated_rsl_rl_cfg across rsl-rl version boundaries."""
 
 from dataclasses import MISSING
+from types import SimpleNamespace
 
 import pytest
 
@@ -412,6 +413,12 @@ class TestV5:
         a = _mlp_model()
         a.stochastic = False
         cfg = _on_policy_runner(algorithm=_ppo_algo(), actor=a)
+        handle_deprecated_rsl_rl_cfg(cfg, "5.0.0")
+        assert cfg.actor.distribution_cfg is None
+
+    def test_custom_model_without_legacy_stochastic_fields(self):
+        model = SimpleNamespace(distribution_cfg=None)
+        cfg = _on_policy_runner(algorithm=_ppo_algo(), actor=model)
         handle_deprecated_rsl_rl_cfg(cfg, "5.0.0")
         assert cfg.actor.distribution_cfg is None
 
