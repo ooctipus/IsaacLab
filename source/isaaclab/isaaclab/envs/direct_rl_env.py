@@ -169,6 +169,7 @@ class DirectRLEnv(gym.Env):
                 self.event_manager.apply(mode="prestartup")
 
         self.video_recorders: list[VideoRecorder] = [VideoRecorder(cfg, self) for cfg in self.cfg.video_recorders]
+        self._render_video_recorders = [recorder for recorder in self.video_recorders if recorder.cfg.capture_on_render]
 
         # play the simulator to activate physics handles
         # note: this activates the physics simulation view that exposes TensorAPIs
@@ -186,8 +187,10 @@ class DirectRLEnv(gym.Env):
             self.scene.update(dt=self.physics_dt)
         # let the physics backend know about the env decimation so it can
         # fold the full loop into a single step() when possible
-        self.sim.physics_manager.set_decimation(self.cfg.decimation)
-        self._physics_handles_decimation = self.sim.physics_manager.handles_decimation()
+        self.sim.physics_manager.set_decimation(1 if self._render_video_recorders else self.cfg.decimation)
+        self._physics_handles_decimation = (
+            not self._render_video_recorders and self.sim.physics_manager.handles_decimation()
+        )
 
         # check if debug visualization is has been implemented by the environment
         source_code = inspect.getsource(self._set_debug_vis_impl)
@@ -407,6 +410,8 @@ class DirectRLEnv(gym.Env):
 
         # process actions
         self._pre_physics_step(action)
+        for recorder in self.video_recorders:
+            recorder.begin_step()
 
         # check if we need to do rendering within the physics loop
         # note: uses cached property to avoid settings lookup every step
@@ -422,6 +427,8 @@ class DirectRLEnv(gym.Env):
             # mirroring the per-sub-step check in the else branch.
             if self._sim_step_counter % self.cfg.sim.render_interval == 0 and is_rendering:
                 self.sim.render(skip_app_pumping=not self.render_enabled)
+                for recorder in self._render_video_recorders:
+                    recorder.capture_render()
             self.scene.update(dt=self.step_dt)
         else:
             for _ in range(self.cfg.decimation):
@@ -437,6 +444,8 @@ class DirectRLEnv(gym.Env):
                 # but standalone visualizers (Newton, Rerun, Viser) still update.
                 if self._sim_step_counter % self.cfg.sim.render_interval == 0 and is_rendering:
                     self.sim.render(skip_app_pumping=not self.render_enabled)
+                    for recorder in self._render_video_recorders:
+                        recorder.capture_render()
                 # update buffers at sim dt
                 self.scene.update(dt=self.physics_dt)
 
@@ -484,9 +493,9 @@ class DirectRLEnv(gym.Env):
             if "interval" in self.event_manager.available_modes:
                 self.event_manager.apply(mode="interval", dt=self.step_dt)
 
-        # advance video recorders (after render, before obs)
+        # finish video recorder steps before observations
         for recorder in self.video_recorders:
-            recorder.step()
+            recorder.end_step()
 
         # update observations
         self.obs_buf = self._get_observations()

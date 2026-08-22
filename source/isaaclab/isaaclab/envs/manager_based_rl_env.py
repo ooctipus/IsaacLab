@@ -208,6 +208,8 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
         self.action_manager.process_action(action.to(self.device))
 
         self.recorder_manager.record_pre_step()
+        for recorder in self.video_recorders:
+            recorder.begin_step()
 
         # check if we need to do rendering within the physics loop
         # note: uses cached property to avoid settings lookup every step
@@ -224,6 +226,8 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
             # mirroring the per-sub-step check in the else branch.
             if self._sim_step_counter % self.cfg.sim.render_interval == 0 and is_rendering:
                 self.sim.render(skip_app_pumping=not self.render_enabled)
+                for recorder in self._render_video_recorders:
+                    recorder.capture_render()
             self.scene.update(dt=self.step_dt)
         else:
             for _ in range(self.cfg.decimation):
@@ -240,6 +244,8 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
                 # but standalone visualizers (Newton, Rerun, Viser) still update.
                 if self._sim_step_counter % self.cfg.sim.render_interval == 0 and is_rendering:
                     self.sim.render(skip_app_pumping=not self.render_enabled)
+                    for recorder in self._render_video_recorders:
+                        recorder.capture_render()
                 # update buffers at sim dt
                 self.scene.update(dt=self.physics_dt)
 
@@ -307,9 +313,9 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
         # -- step interval events
         if "interval" in self.event_manager.available_modes:
             self.event_manager.apply(mode="interval", dt=self.step_dt)
-        # -- advance video recorders (after render and resets, before final obs)
+        # -- finish video recorder steps before final observations
         for recorder in self.video_recorders:
-            recorder.step()
+            recorder.end_step()
         # -- compute observations
         # note: done after reset to get the correct observations for reset envs
         self.obs_buf = self.observation_manager.compute(update_history=True)

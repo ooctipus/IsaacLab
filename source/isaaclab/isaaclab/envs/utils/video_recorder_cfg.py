@@ -62,6 +62,14 @@ class VideoRecorderCfg:
     video_length: int = 200
     """Number of env steps captured per clip."""
 
+    capture_on_render: bool = False
+    """Capture at each simulation render boundary while a clip is active.
+
+    The trigger, offset, and clip length remain measured in environment steps. When enabled,
+    :attr:`frame_stride` counts render boundaries and the automatic output frame rate follows
+    ``sim.dt * sim.render_interval``.
+    """
+
     video_interval: int = 0
     """Start a new clip every ``video_interval`` env steps after :attr:`step_offset`.
 
@@ -75,11 +83,11 @@ class VideoRecorderCfg:
     """
 
     frame_stride: int = 1
-    """Capture one frame every ``frame_stride`` env steps within a clip.  Defaults to 1
-    (capture every step).  Increase to sub-sample the recording — e.g. ``frame_stride=2``
-    records half as many frames, halving file size at the cost of temporal resolution.
-    A clip that captures ``video_length // frame_stride`` unique frames is still triggered
-    and closed after ``video_length`` env steps.
+    """Capture one frame every ``frame_stride`` capture points within a clip.
+
+    A capture point is an environment step by default or a render boundary when
+    :attr:`capture_on_render` is enabled. The clip still closes after :attr:`video_length`
+    environment steps.
     """
 
     output_filename_prefix: str = "clip"

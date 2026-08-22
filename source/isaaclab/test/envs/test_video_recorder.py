@@ -31,12 +31,12 @@ _FRAME = np.ones((8, 12, 3), dtype=np.uint8) * 128
 
 @pytest.fixture(autouse=True)
 def _patch_moviepy():
-    """Stub out ImageSequenceClip so tests run without moviepy installed.
+    """Stub out the ffmpeg writer so tests do not create videos.
 
     Tests that specifically validate the ImportError path re-patch to None
     inside their own context managers, which takes precedence over this stub.
     """
-    with patch("isaaclab.envs.utils.video_recorder.ImageSequenceClip", MagicMock()):
+    with patch("isaaclab.envs.utils.video_recorder.FFMPEG_VideoWriter", MagicMock()):
         yield
 
 
@@ -68,6 +68,9 @@ def _make_env(visualizers=(), sensors: dict | None = None):
     env = MagicMock()
     env.sim.visualizers = list(visualizers)
     env.scene.sensors = sensors or {}
+    env.physics_dt = 0.01
+    env.step_dt = 0.04
+    env.cfg.sim.render_interval = 1
     return env
 
 
@@ -101,7 +104,7 @@ def test_init_raises_value_error_for_unknown_source_kind():
 
 
 def test_init_raises_import_error_when_moviepy_missing():
-    with patch("isaaclab.envs.utils.video_recorder.ImageSequenceClip", None):
+    with patch("isaaclab.envs.utils.video_recorder.FFMPEG_VideoWriter", None):
         with pytest.raises(ImportError, match="moviepy"):
             VideoRecorder(_cfg(), _make_env())
 
@@ -120,7 +123,7 @@ def test_trigger_one_shot_fires_once():
     closed_count = [0]
 
     def counting_close():
-        recorder._frames = []
+        recorder._writer = None
         recorder._recording = False
         closed_count[0] += 1
 
@@ -142,7 +145,7 @@ def test_trigger_recurring_fires_periodically():
     def counting_close():
         close_count[0] += 1
         trigger_steps.append(recorder._step_count)
-        recorder._frames = []
+        recorder._writer = None
         recorder._recording = False
 
     with patch.object(recorder, "_close_clip", side_effect=counting_close):
@@ -193,6 +196,27 @@ def test_frame_stride_subsamples_frames():
         for _ in range(4):
             recorder.step()
     assert viz.render_calls == 2
+
+
+def test_capture_on_render_records_each_render_within_env_step():
+    viz = _FakeViz("kit")
+    recorder = VideoRecorder(
+        _cfg(source="visualizer:kit", capture_on_render=True, video_length=2), _make_env(visualizers=[viz])
+    )
+    with patch.object(recorder, "_close_clip") as mock_close:
+        for _ in range(2):
+            recorder.begin_step()
+            for _ in range(4):
+                recorder.capture_render()
+            recorder.end_step()
+
+    assert viz.render_calls == 8
+    mock_close.assert_called_once()
+
+
+def test_capture_on_render_uses_render_frame_rate():
+    recorder = VideoRecorder(_cfg(fps=None, capture_on_render=True, frame_stride=1), _make_env())
+    assert recorder._output_fps() == 100
 
 
 # ---------------------------------------------------------------------------
@@ -282,31 +306,38 @@ def test_sensor_source_missing_logs_and_returns_none(caplog):
 # ---------------------------------------------------------------------------
 
 
-def test_close_clip_writes_mp4_via_moviepy():
-    frames = [_FRAME.copy(), _FRAME.copy()]
+def test_frames_stream_to_ffmpeg_writer():
     recorder = VideoRecorder(_cfg(output_dir="/tmp/test_clips", fps=10), _make_env())
-    recorder._frames = frames
     recorder._recording = True
 
-    mock_clip = MagicMock()
-    with patch("isaaclab.envs.utils.video_recorder.ImageSequenceClip", return_value=mock_clip) as mock_cls:
+    writer = MagicMock()
+    with patch("isaaclab.envs.utils.video_recorder.FFMPEG_VideoWriter", return_value=writer) as writer_cls:
         with patch("isaaclab.envs.utils.video_recorder.os.makedirs"):
+            recorder._write_frame(_FRAME.copy())
+            recorder._write_frame(_FRAME.copy())
             recorder._close_clip()
 
-    mock_cls.assert_called_once_with(frames, fps=10)
-    mock_clip.write_videofile.assert_called_once()
+    writer_cls.assert_called_once_with(
+        "/tmp/test_clips/clip_0000.mp4",
+        (12, 8),
+        10,
+        codec="libx264",
+        preset="medium",
+        ffmpeg_params=["-crf", "18", "-pix_fmt", "yuv420p"],
+    )
+    assert writer.write_frame.call_count == 2
+    writer.close.assert_called_once()
     assert not recorder._recording
-    assert recorder._frames == []
+    assert recorder._writer is None
 
 
-def test_close_with_empty_frame_buffer_does_not_write():
+def test_close_without_frames_does_not_create_writer():
     recorder = VideoRecorder(_cfg(), _make_env())
     recorder._recording = True
-    recorder._frames = []
-    mock_cls = MagicMock()
-    with patch("isaaclab.envs.utils.video_recorder.ImageSequenceClip", mock_cls):
+    writer_cls = MagicMock()
+    with patch("isaaclab.envs.utils.video_recorder.FFMPEG_VideoWriter", writer_cls):
         recorder.close()
-    mock_cls.assert_not_called()
+    writer_cls.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -424,13 +455,12 @@ def test_keep_last_n_clips_prunes_old_clips():
     def fake_remove(path):
         removed.append(path)
 
-    mock_clip = MagicMock()
-    with patch("isaaclab.envs.utils.video_recorder.ImageSequenceClip", return_value=mock_clip):
+    with patch("isaaclab.envs.utils.video_recorder.FFMPEG_VideoWriter", return_value=MagicMock()):
         with patch("isaaclab.envs.utils.video_recorder.os.makedirs"):
             with patch("isaaclab.envs.utils.video_recorder.os.remove", side_effect=fake_remove):
                 for i in range(3):
-                    recorder._frames = [_FRAME.copy()]
                     recorder._recording = True
+                    recorder._write_frame(_FRAME.copy())
                     recorder._close_clip()
 
     # After 3 clips with keep_last_n_clips=2, clip index 0 should be removed.
@@ -443,19 +473,19 @@ def test_keep_last_n_clips_prunes_old_clips():
 
 
 def test_close_flushes_partial_clip():
-    """close() with non-empty _frames and _recording=True flushes the clip."""
+    """close() finalizes a writer opened by the first frame."""
     recorder = VideoRecorder(_cfg(output_dir="/tmp/test_partial", fps=10), _make_env())
-    recorder._frames = [_FRAME.copy()]
     recorder._recording = True
 
-    mock_clip = MagicMock()
-    with patch("isaaclab.envs.utils.video_recorder.ImageSequenceClip", return_value=mock_clip):
+    writer = MagicMock()
+    with patch("isaaclab.envs.utils.video_recorder.FFMPEG_VideoWriter", return_value=writer):
         with patch("isaaclab.envs.utils.video_recorder.os.makedirs"):
+            recorder._write_frame(_FRAME.copy())
             recorder.close()
 
-    mock_clip.write_videofile.assert_called_once()
+    writer.close.assert_called_once()
     assert not recorder._recording
-    assert recorder._frames == []
+    assert recorder._writer is None
 
 
 # ---------------------------------------------------------------------------
@@ -472,7 +502,7 @@ def test_trigger_one_shot_fires_once_no_disk_io():
     close_count = [0]
 
     def counting_close():
-        recorder._frames = []
+        recorder._writer = None
         recorder._recording = False
         close_count[0] += 1
 

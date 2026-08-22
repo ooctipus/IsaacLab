@@ -3,12 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Step-driven internal video recorder.
-
-Recording is triggered by env.step() calls, not by the Gym render loop.
-Frames are sourced from the configured visualizer or scene sensor and written
-to mp4 files via moviepy.
-"""
+"""Internal video recorder for visualizer and sensor frames."""
 
 from __future__ import annotations
 
@@ -19,9 +14,9 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 try:
-    from moviepy.editor import ImageSequenceClip
+    from moviepy.video.io.ffmpeg_writer import FFMPEG_VideoWriter
 except ImportError:
-    ImageSequenceClip = None  # type: ignore[assignment,misc]
+    FFMPEG_VideoWriter = None  # type: ignore[assignment,misc]
 
 if TYPE_CHECKING:
     from .video_recorder_cfg import VideoRecorderCfg
@@ -52,8 +47,9 @@ def _parse_source(source: str) -> tuple[str, str, str]:
 class VideoRecorder:
     """Records one video stream per :class:`VideoRecorderCfg` entry.
 
-    Instantiated by the env base class; ``step()`` is called once per env step
-    after physics and rendering have completed.
+    The environment brackets each step with :meth:`begin_step` and :meth:`end_step`.
+    Recorders configured with :attr:`~VideoRecorderCfg.capture_on_render` also receive
+    :meth:`capture_render` after each simulation render.
 
     Raises:
         ImportError: If ``moviepy`` is not installed.
@@ -70,25 +66,35 @@ class VideoRecorder:
                 f"Expected one of: {_VALID_SOURCE_KINDS}."
             )
 
-        if ImageSequenceClip is None:
+        if FFMPEG_VideoWriter is None:
             raise ImportError("moviepy is required for video recording. Install it with: pip install 'moviepy<2'")
 
         self.cfg = cfg
         self._env = env
-        self._frames: list[np.ndarray] = []
         self._step_count = 0
-        self._frames_step_count = 0
+        self._recording_step_count = 0
+        self._capture_count = 0
+        self._frame_count = 0
         self._clip_index = 0
         self._recording = False
+        self._writer = None
         # Set to True after the first unrecoverable frame-capture error so that
         # subsequent steps do not propagate the exception or repeat the log message.
         self._frame_error_logged: bool = False
 
     def step(self) -> None:
-        """Advance the recorder by one env step."""
+        """Capture one frame for a complete environment step.
+
+        This compatibility path is equivalent to calling :meth:`begin_step` followed by
+        :meth:`end_step`. Render-boundary recording requires the environment lifecycle API.
+        """
+        self.begin_step()
+        self.end_step()
+
+    def begin_step(self) -> None:
+        """Start one environment step and evaluate clip triggers."""
         self._step_count += 1
 
-        # Skip steps before the configured offset.
         if self._step_count <= self.cfg.step_offset:
             return
 
@@ -99,20 +105,28 @@ class VideoRecorder:
             if self._recording:
                 self._close_clip()
             self._recording = True
-            self._frames_step_count = 0
+            self._recording_step_count = 0
+            self._capture_count = 0
+            self._frame_count = 0
 
-        if self._recording:
-            self._frames_step_count += 1
-            if self._frames_step_count % self.cfg.frame_stride == 0:
-                frame = self._get_frame()
-                if frame is not None:
-                    self._frames.append(frame)
-            if self._frames_step_count >= self.cfg.video_length:
-                self._close_clip()
+    def capture_render(self) -> None:
+        """Capture the current frame at a simulation render boundary."""
+        if self.cfg.capture_on_render:
+            self._capture_frame()
+
+    def end_step(self) -> None:
+        """Finish one environment step and close a completed clip."""
+        if not self._recording:
+            return
+        if not self.cfg.capture_on_render:
+            self._capture_frame()
+        self._recording_step_count += 1
+        if self._recording_step_count >= self.cfg.video_length:
+            self._close_clip()
 
     def close(self) -> None:
-        """Flush any buffered frames and close the current clip."""
-        if self._recording and self._frames:
+        """Close the current clip."""
+        if self._recording:
             self._close_clip()
 
     # ------------------------------------------------------------------
@@ -123,6 +137,16 @@ class VideoRecorder:
         if self.cfg.video_interval <= 0:
             return effective_step == 1
         return (effective_step - 1) % self.cfg.video_interval == 0
+
+    def _capture_frame(self) -> None:
+        if not self._recording:
+            return
+        self._capture_count += 1
+        if self._capture_count % self.cfg.frame_stride != 0:
+            return
+        frame = self._get_frame()
+        if frame is not None:
+            self._write_frame(frame)
 
     def _get_frame(self) -> np.ndarray | None:
         if self._frame_error_logged:
@@ -300,25 +324,34 @@ class VideoRecorder:
     def _clip_path(self, index: int) -> str:
         return os.path.join(self._effective_output_dir(), f"{self.cfg.output_filename_prefix}_{index:04d}.mp4")
 
-    def _close_clip(self) -> None:
-        if not self._frames:
-            self._recording = False
-            return
-        try:
+    def _output_fps(self) -> int:
+        if self.cfg.fps is not None:
+            return self.cfg.fps
+        if self.cfg.capture_on_render:
+            physics_dt = getattr(self._env, "physics_dt", None)
+            sim_cfg = getattr(getattr(self._env, "cfg", None), "sim", None)
+            render_interval = getattr(sim_cfg, "render_interval", 1)
+            if physics_dt:
+                return max(1, round(1.0 / (physics_dt * render_interval * self.cfg.frame_stride)))
+        base_fps = self._env.metadata.get("render_fps") if hasattr(self._env, "metadata") else None
+        if base_fps is None:
+            step_dt = getattr(self._env, "step_dt", None)
+            base_fps = round(1.0 / step_dt) if step_dt else 30
+        return max(1, round(base_fps / self.cfg.frame_stride))
+
+    def _write_frame(self, frame: np.ndarray) -> None:
+        if self._writer is None:
             os.makedirs(self._effective_output_dir(), exist_ok=True)
-            path = self._clip_path(self._clip_index)
-            fps = self.cfg.fps
-            if fps is None:
-                base_fps = self._env.metadata.get("render_fps") if hasattr(self._env, "metadata") else None
-                if base_fps is None:
-                    step_dt = getattr(self._env, "step_dt", None)
-                    base_fps = round(1.0 / step_dt) if step_dt else 30
-                # frame_stride subsamples: one frame every N steps, so playback fps scales down.
-                fps = max(1, round(base_fps / self.cfg.frame_stride))
-            # Warn if the clip appears to be all-black (mean pixel < 2/255).
-            # This can happen with Kit+Newton when cubric is unavailable.
-            sample = self._frames[len(self._frames) // 2]
-            mean_pixel = float(np.mean(sample))
+            height, width = frame.shape[:2]
+            self._writer = FFMPEG_VideoWriter(
+                self._clip_path(self._clip_index),
+                (width, height),
+                self._output_fps(),
+                codec="libx264",
+                preset="medium",
+                ffmpeg_params=["-crf", "18", "-pix_fmt", "yuv420p"],
+            )
+            mean_pixel = float(np.mean(frame))
             if mean_pixel < 2.0:
                 logger.warning(
                     "[VideoRecorder] source=%r: sampled frame appears mostly black "
@@ -328,15 +361,25 @@ class VideoRecorder:
                     self.cfg.source,
                     mean_pixel,
                 )
-            clip = ImageSequenceClip(self._frames, fps=fps)
-            clip.write_videofile(path, codec="libx264", audio=False, logger=None)
-            logger.info("[VideoRecorder] Wrote %d frames to %s", len(self._frames), path)
+        self._writer.write_frame(frame)
+        self._frame_count += 1
+
+    def _close_clip(self) -> None:
+        writer = self._writer
+        if writer is None:
+            self._recording = False
+            return
+        try:
+            path = self._clip_path(self._clip_index)
+            writer.close()
+            logger.info("[VideoRecorder] Wrote %d frames to %s", self._frame_count, path)
             self._clip_index += 1
             self._maybe_delete_old_clips()
         except Exception:
             logger.exception("[VideoRecorder] Failed to write clip.")
         finally:
-            self._frames = []
+            self._writer = None
+            self._frame_count = 0
             self._recording = False
 
     def _maybe_delete_old_clips(self) -> None:
