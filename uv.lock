@@ -20,7 +20,7 @@ overrides = [
     { name = "coverage", specifier = ">=7.6.1" },
     { name = "mujoco", specifier = "~=3.11.0" },
     { name = "mujoco-warp", git = "https://github.com/ooctipus/mujoco_warp.git?rev=octi%2Foptimize-sparse-newton-solver" },
-    { name = "newton", extras = ["sim"], git = "https://github.com/ooctipus/newton.git?rev=4fb5c395b321dcc85b833eeaf915c4ee6d9c00d1" },
+    { name = "newton", extras = ["sim"], git = "https://github.com/ooctipus/newton.git?rev=6d802156204020c5cdfc469e2ba3a37688180d7a" },
     { name = "newton-usd-schemas", specifier = ">=0.5.0" },
     { name = "numpy", specifier = ">=2" },
     { name = "packaging", specifier = ">=20,<27" },
@@ -3392,7 +3392,7 @@ wheels = [
 [[package]]
 name = "newton"
 version = "1.6.0.dev0"
-source = { git = "https://github.com/ooctipus/newton.git?rev=4fb5c395b321dcc85b833eeaf915c4ee6d9c00d1#4fb5c395b321dcc85b833eeaf915c4ee6d9c00d1" }
+source = { git = "https://github.com/ooctipus/newton.git?rev=6d802156204020c5cdfc469e2ba3a37688180d7a#6d802156204020c5cdfc469e2ba3a37688180d7a" }
 dependencies = [
     { name = "warp-lang", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
 ]
