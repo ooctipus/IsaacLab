@@ -36,6 +36,17 @@ class FactoryObservationsCfg:
 
     @configclass
     class PolicyCfg(ObsGroup):
+        held_asset_in_fixed_asset_frame = ObsTerm(
+            func=mdp.target_asset_pose_in_root_asset_frame,
+            history_length=5,
+            params={
+                "target_asset_cfg": SceneEntityCfg("held_asset"),
+                "root_asset_cfg": SceneEntityCfg("fixed_asset"),
+                "target_asset_offset": "held_align",
+                "root_asset_offset": "fixed_tip",
+            },
+        )
+
         end_effector_vel_lin_ang_b = ObsTerm(
             func=mdp.asset_link_velocity_in_root_asset_frame,
             history_length=5,

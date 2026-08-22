@@ -358,8 +358,8 @@ def test_pose_observation_uses_one_offset_parameter_per_frame() -> None:
     assert "root_variant_offset" not in parameters
 
 
-def test_policy_observes_current_scene_geometry_without_repeating_its_history() -> None:
-    """Replace explicit assembly identity and poses with one compact geometry owner."""
+def test_policy_observes_scene_geometry_and_directed_mating_pose() -> None:
+    """Combine scene geometry with one directed mating-frame observation."""
     observations = FactoryObservationsCfg()
     policy = observations.policy
     perception = observations.perception
@@ -375,12 +375,19 @@ def test_policy_observes_current_scene_geometry_without_repeating_its_history() 
         "flatten": True,
     }
     assert perception.scene_point_cloud.history_length == 0
+    assert policy.held_asset_in_fixed_asset_frame.func is target_asset_pose_in_root_asset_frame
+    assert policy.held_asset_in_fixed_asset_frame.params == {
+        "target_asset_cfg": SceneEntityCfg("held_asset"),
+        "root_asset_cfg": SceneEntityCfg("fixed_asset"),
+        "target_asset_offset": "held_align",
+        "root_asset_offset": "fixed_tip",
+    }
+    assert policy.held_asset_in_fixed_asset_frame.history_length == 5
     assert policy.end_effector_vel_lin_ang_b.history_length == 5
     assert policy.joint_pos.history_length == 5
     assert policy.prev_action.history_length == 5
     assert policy.history_length is None
     assert not hasattr(policy, "end_effector_pose")
-    assert not hasattr(policy, "held_asset_in_fixed_asset_frame")
     assert not hasattr(policy, "fixed_asset_in_end_effector_frame")
     assert not hasattr(policy, "assembly_variant")
 
