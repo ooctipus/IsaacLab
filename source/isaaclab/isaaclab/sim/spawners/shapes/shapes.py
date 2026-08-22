@@ -368,10 +368,9 @@ def _spawn_geom_from_prim_type(
             material_path = f"{geom_prim_path}/{cfg.visual_material_path}"
         else:
             material_path = cfg.visual_material_path
-        # create material
-        cfg.visual_material.func(material_path, cfg.visual_material)
-        # apply material
-        bind_visual_material(mesh_prim_path, material_path, stage=stage)
+        material_prim = cfg.visual_material.func(material_path, cfg.visual_material)
+        if material_prim is not None:
+            bind_visual_material(mesh_prim_path, material_path, stage=stage)
     # apply physics material
     if cfg.physics_material is not None:
         if not cfg.physics_material_path.startswith("/"):

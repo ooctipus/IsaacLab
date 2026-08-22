@@ -16,6 +16,8 @@ simulation_app = AppLauncher(headless=True).app
 import numpy as np
 import pytest
 
+from pxr import UsdGeom
+
 import isaaclab.sim as sim_utils
 from isaaclab.sim import SimulationCfg, SimulationContext
 
@@ -105,6 +107,10 @@ def test_spawn_cuboid(sim):
     assert prim.GetPrimTypeInfo().GetTypeName() == "Mesh"
     assert len(prim.GetAttribute("points").Get()) == 8
     assert len(prim.GetAttribute("faceVertexCounts").Get()) == 12
+    mesh = UsdGeom.Mesh(prim)
+    assert mesh.GetSubdivisionSchemeAttr().Get() == UsdGeom.Tokens.none
+    assert mesh.GetNormalsInterpolation() == UsdGeom.Tokens.faceVarying
+    assert len(mesh.GetNormalsAttr().Get()) == 36
 
 
 def test_spawn_cuboid_with_edge_refinement(sim):

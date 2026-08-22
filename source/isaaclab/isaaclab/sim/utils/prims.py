@@ -18,7 +18,6 @@ import torch
 
 from isaaclab.utils.assets import check_file_path, retrieve_file_path
 from isaaclab.utils.string import to_camel_case
-from isaaclab.utils.version import has_kit
 
 from .queries import (
     find_matching_prim_paths,
@@ -812,9 +811,8 @@ def bind_visual_material(
     Raises:
         ValueError: If the provided prim paths do not exist on stage.
     """
-    if not has_kit():
-        return False
-    # get stage handle
+    from pxr import UsdShade  # noqa: PLC0415
+
     if stage is None:
         stage = get_current_stage()
 
@@ -824,25 +822,17 @@ def bind_visual_material(
     if not stage.GetPrimAtPath(material_path).IsValid():
         raise ValueError(f"Visual material '{material_path}' does not exist.")
 
-    # resolve token for weaker than descendants
-    # bind material command expects a string token
+    prim = stage.GetPrimAtPath(prim_path)
+    material = UsdShade.Material(stage.GetPrimAtPath(material_path))
     if stronger_than_descendants:
-        binding_strength = "strongerThanDescendants"
+        binding_strength = UsdShade.Tokens.strongerThanDescendants
     else:
-        binding_strength = "weakerThanDescendants"
-    # obtain material binding API
-    # note: we prefer using the command here as it is more robust than the USD API
-    import omni.kit.commands
-
-    success, _ = omni.kit.commands.execute(
-        "BindMaterialCommand",
-        prim_path=prim_path,
-        material_path=material_path,
-        strength=binding_strength,
-        stage=stage,
-    )
-    # return success
-    return bool(success)
+        binding_strength = UsdShade.Tokens.weakerThanDescendants
+    binding_api = UsdShade.MaterialBindingAPI(prim)
+    if not binding_api:
+        binding_api = UsdShade.MaterialBindingAPI.Apply(prim)
+    binding_api.Bind(material, bindingStrength=binding_strength)
+    return True
 
 
 @apply_nested

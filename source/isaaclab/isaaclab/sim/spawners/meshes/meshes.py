@@ -5,18 +5,16 @@
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING
 
 import numpy as np
 import trimesh
 import trimesh.transformations
 
-from pxr import Usd, UsdPhysics
+from pxr import Usd, UsdGeom, UsdPhysics
 
 from isaaclab.sim import schemas
 from isaaclab.sim.utils import bind_physics_material, bind_visual_material, clone, create_prim, get_current_stage
-from isaaclab.utils.version import has_kit
 
 from ..materials import (
     DeformableBodyMaterialBaseCfg,
@@ -28,9 +26,6 @@ from ..materials.physics_materials import spawn_physics_material
 
 if TYPE_CHECKING:
     from . import meshes_cfg
-
-# import logger
-logger = logging.getLogger(__name__)
 
 
 @clone
@@ -432,7 +427,13 @@ def _spawn_mesh_geom_from_mesh(
     geom_prim_path = prim_path + "/geometry"
     mesh_prim_path = geom_prim_path + "/mesh"
 
-    # create the mesh prim
+    # Preserve smooth surfaces while keeping shading discontinuities at sharp edges.
+    smooth_mesh = trimesh.graph.smooth_shade(mesh, angle=np.deg2rad(25.0), facet_minarea=None)
+    components = smooth_mesh.metadata.get("original_components", [np.arange(len(mesh.faces))])
+    face_order = np.concatenate([np.atleast_1d(component) for component in components])
+    corner_normals = np.empty((len(mesh.faces), 3, 3), dtype=np.float32)
+    corner_normals[face_order] = smooth_mesh.vertex_normals[smooth_mesh.faces]
+
     mesh_prim = create_prim(
         mesh_prim_path,
         prim_type="Mesh",
@@ -441,10 +442,13 @@ def _spawn_mesh_geom_from_mesh(
             "points": mesh.vertices,
             "faceVertexIndices": mesh.faces.flatten(),
             "faceVertexCounts": np.asarray([3] * len(mesh.faces)),
-            "subdivisionScheme": "bilinear",
+            "subdivisionScheme": "none",
         },
         stage=stage,
     )
+    mesh_schema = UsdGeom.Mesh(mesh_prim)
+    mesh_schema.CreateNormalsAttr(corner_normals.reshape(-1, 3))
+    mesh_schema.SetNormalsInterpolation(UsdGeom.Tokens.faceVarying)
 
     if cfg.deformable_props is not None:
         # apply deformable body properties
@@ -486,16 +490,12 @@ def _spawn_mesh_geom_from_mesh(
 
     # apply visual material
     if cfg.visual_material is not None:
-        if not has_kit():
-            logger.warning("Skipping visual material application for '%s' in kitless mode.", mesh_prim_path)
+        if not cfg.visual_material_path.startswith("/"):
+            material_path = f"{geom_prim_path}/{cfg.visual_material_path}"
         else:
-            if not cfg.visual_material_path.startswith("/"):
-                material_path = f"{geom_prim_path}/{cfg.visual_material_path}"
-            else:
-                material_path = cfg.visual_material_path
-            # create material
-            cfg.visual_material.func(material_path, cfg.visual_material)
-            # apply material
+            material_path = cfg.visual_material_path
+        material_prim = cfg.visual_material.func(material_path, cfg.visual_material)
+        if material_prim is not None:
             bind_visual_material(mesh_prim_path, material_path, stage=stage)
 
     # apply physics material
