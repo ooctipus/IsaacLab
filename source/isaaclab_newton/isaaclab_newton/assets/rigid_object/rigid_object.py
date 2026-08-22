@@ -407,6 +407,7 @@ class RigidObject(BaseRigidObject):
             skip_forward: Whether to skip invalidating cached data after the write. When True, the caller
                 must invalidate stale cached data before reading it back. Defaults to False.
         """
+        self._require_writable_root()
         # resolve all indices
         env_ids = self._resolve_env_ids(env_ids)
         self.assert_shape_and_dtype(root_pose, (env_ids.shape[0],), wp.transformf, "root_pose")
@@ -455,6 +456,7 @@ class RigidObject(BaseRigidObject):
             skip_forward: Whether to skip invalidating cached data after the write. When True, the caller
                 must invalidate stale cached data before reading it back. Defaults to False.
         """
+        self._require_writable_root()
         if env_mask is None:
             env_mask = self._ALL_ENV_MASK
         self.assert_shape_and_dtype_mask(root_pose, (env_mask,), wp.transformf, "root_pose")
@@ -504,6 +506,7 @@ class RigidObject(BaseRigidObject):
             skip_forward: Whether to skip invalidating cached data after the write. When True, the caller
                 must invalidate stale cached data before reading it back. Defaults to False.
         """
+        self._require_writable_root()
         # resolve all indices
         env_ids = self._resolve_env_ids(env_ids)
         self.assert_shape_and_dtype(root_pose, (env_ids.shape[0],), wp.transformf, "root_pose")
@@ -558,6 +561,7 @@ class RigidObject(BaseRigidObject):
             skip_forward: Whether to skip invalidating cached data after the write. When True, the caller
                 must invalidate stale cached data before reading it back. Defaults to False.
         """
+        self._require_writable_root()
         if env_mask is None:
             env_mask = self._ALL_ENV_MASK
         self.assert_shape_and_dtype_mask(root_pose, (env_mask,), wp.transformf, "root_pose")
@@ -612,6 +616,7 @@ class RigidObject(BaseRigidObject):
             skip_forward: Whether to skip invalidating cached data after the write. When True, the caller
                 must invalidate stale cached data before reading it back. Defaults to False.
         """
+        self._require_writable_root()
         # resolve all indices
         env_ids = self._resolve_env_ids(env_ids)
         self.assert_shape_and_dtype(root_velocity, (env_ids.shape[0],), wp.spatial_vectorf, "root_velocity")
@@ -665,6 +670,7 @@ class RigidObject(BaseRigidObject):
             skip_forward: Whether to skip invalidating cached data after the write. When True, the caller
                 must invalidate stale cached data before reading it back. Defaults to False.
         """
+        self._require_writable_root()
         if env_mask is None:
             env_mask = self._ALL_ENV_MASK
         self.assert_shape_and_dtype_mask(root_velocity, (env_mask,), wp.spatial_vectorf, "root_velocity")
@@ -718,6 +724,7 @@ class RigidObject(BaseRigidObject):
             skip_forward: Whether to skip invalidating cached data after the write. When True, the caller
                 must invalidate stale cached data before reading it back. Defaults to False.
         """
+        self._require_writable_root()
         # resolve all indices
         env_ids = self._resolve_env_ids(env_ids)
         self.assert_shape_and_dtype(root_velocity, (env_ids.shape[0],), wp.spatial_vectorf, "root_velocity")
@@ -776,6 +783,7 @@ class RigidObject(BaseRigidObject):
             skip_forward: Whether to skip invalidating cached data after the write. When True, the caller
                 must invalidate stale cached data before reading it back. Defaults to False.
         """
+        self._require_writable_root()
         if env_mask is None:
             env_mask = self._ALL_ENV_MASK
         self.assert_shape_and_dtype_mask(root_velocity, (env_mask,), wp.spatial_vectorf, "root_velocity")
@@ -1099,6 +1107,10 @@ class RigidObject(BaseRigidObject):
     """
     Internal helper.
     """
+
+    def _require_writable_root(self) -> None:
+        if self.root_view.is_fixed_base:
+            raise RuntimeError("Root pose and velocity writes are not supported for a fixed-root Newton RigidObject.")
 
     def _initialize_impl(self):
         def has_rigid_body_api(prim) -> bool:

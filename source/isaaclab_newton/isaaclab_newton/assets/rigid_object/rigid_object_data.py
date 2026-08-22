@@ -911,18 +911,10 @@ class RigidObjectData(BaseRigidObjectData):
         self._num_bodies = self._root_view.link_count
 
         # -- root properties
-        if self._root_view.is_fixed_base:
-            self._sim_bind_root_link_pose_w = self._root_view.get_root_transforms(SimulationManager.get_state_0())[
-                :, 0, 0
-            ]
-        else:
-            self._sim_bind_root_link_pose_w = self._root_view.get_root_transforms(SimulationManager.get_state_0())[:, 0]
+        self._sim_bind_root_link_pose_w = self._root_view.get_root_transforms(SimulationManager.get_state_0())[:, 0]
         self._sim_bind_root_com_vel_w = self._root_view.get_root_velocities(SimulationManager.get_state_0())
         if self._sim_bind_root_com_vel_w is not None:
-            if self._root_view.is_fixed_base:
-                self._sim_bind_root_com_vel_w = self._sim_bind_root_com_vel_w[:, 0, 0]
-            else:
-                self._sim_bind_root_com_vel_w = self._sim_bind_root_com_vel_w[:, 0]
+            self._sim_bind_root_com_vel_w = self._sim_bind_root_com_vel_w[:, 0]
         # -- body properties
         self._sim_bind_body_com_pos_b = self._root_view.get_attribute("body_com", SimulationManager.get_model())[:, 0]
         self._sim_bind_body_link_pose_w = self._root_view.get_link_transforms(SimulationManager.get_state_0())[:, 0]
@@ -963,15 +955,13 @@ class RigidObjectData(BaseRigidObjectData):
         # Initialize history for finite differencing. If the rigid object is fixed, the root com velocity is not
         # available, so we use zeros.
         if self._root_view.get_root_velocities(SimulationManager.get_state_0()) is None:
-            logger.warning(
-                "Failed to get root com velocity. If the rigid object is fixed, this is expected. "
-                "Setting root com velocity to zeros."
-            )
+            if not self._root_view.is_fixed_base:
+                logger.warning("Newton did not provide the root velocity; using zeros.")
             self._sim_bind_root_com_vel_w = wp.zeros(
                 (self._num_instances,), dtype=wp.spatial_vectorf, device=self.device
             )
             self._sim_bind_body_com_vel_w = wp.zeros(
-                (self._num_instances,), dtype=wp.spatial_vectorf, device=self.device
+                (self._num_instances, 1), dtype=wp.spatial_vectorf, device=self.device
             )
         # -- default root pose and velocity
         self._default_root_pose = wp.zeros((self._num_instances,), dtype=wp.transformf, device=self.device)
