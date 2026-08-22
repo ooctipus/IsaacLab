@@ -397,7 +397,7 @@ environments = [
 override-dependencies = [
     "numpy>=2",
     "mujoco~=3.11.0",
-    "mujoco-warp @ git+https://github.com/ooctipus/mujoco_warp.git@octi/optimize-sparse-newton-solver",
+    "mujoco-warp @ git+https://github.com/ooctipus/mujoco_warp.git@aeadefaf17c02f9a84198fd3bfe8cfe5865fc306",
     "newton[sim] @ git+https://github.com/ooctipus/newton.git@e59081c195be460c4de69fb98990aab40f969ae1",
     # Force the Newton-matched schemas over isaacsim's ==0.2.0 pin.
     "newton-usd-schemas>=0.5.0",
