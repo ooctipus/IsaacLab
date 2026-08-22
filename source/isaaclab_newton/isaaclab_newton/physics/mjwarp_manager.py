@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 
 import numpy as np
+import torch
 import warp as wp
 from newton import Contacts, Model
 from newton.solvers import SolverMuJoCo
@@ -247,6 +248,34 @@ class NewtonMJWarpManager(NewtonManager):
             outputs=[reset_required],
             device=reset_required.device,
         )
+
+    @classmethod
+    def _get_nonfinite_diagnostic_tensors(cls) -> dict[str, torch.Tensor]:
+        """Return zero-copy views of MJWarp state inspected after a failed transition."""
+        solver = cls._solver
+        data = solver.mj_data if solver.use_mujoco_cpu else solver.mjw_data
+        if data is None:
+            return {}
+
+        tensors = {}
+        for name in (
+            "qpos",
+            "qvel",
+            "qacc",
+            "qfrc_actuator",
+            "qacc_warmstart",
+            "qfrc_applied",
+            "ctrl",
+            "act",
+            "xfrc_applied",
+            "xpos",
+            "xquat",
+            "cvel",
+        ):
+            value = getattr(data, name, None)
+            if value is not None:
+                tensors[name] = torch.from_numpy(value) if isinstance(value, np.ndarray) else wp.to_torch(value)
+        return tensors
 
     @classmethod
     def _log_solver_debug(cls) -> None:

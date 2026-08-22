@@ -290,5 +290,9 @@ def _run(args_cli: argparse.Namespace) -> None:
                 )
                 print(f"Training time: {round(time.time() - start_time, 2)} seconds")
                 env.close()
+            except ValueError as exc:
+                if "NaN" in str(exc):
+                    env.print_nonfinite_diagnostics()
+                raise
             except KeyboardInterrupt:
                 pass

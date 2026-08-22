@@ -54,6 +54,7 @@ class reset_accumulator(ManagerTermBase):
         self._variant_context_name: str = cfg.params.get("variant_context", "assembly_variants")
 
         self.sampled_slots = torch.full((env.num_envs,), -1, device=env.device, dtype=torch.long)
+        self.sampled_cells = torch.full_like(self.sampled_slots, -1)
         self.precollecting_phase = True
         self._sampling_cfg: SamplerCfg = cfg.params["sampling"]
 
@@ -137,7 +138,14 @@ class reset_accumulator(ManagerTermBase):
 
             probs, slot_idx = self._sample_marginally_balanced(len(env_ids))
             self.sampled_slots[env_ids] = slot_idx
+            self.sampled_cells[env_ids] = self.state_cell_indices[slot_idx]
             reset_state.set_reset_state(env, self.state_data[slot_idx], env_ids, self.reset_assets, is_relative=True)
+            env.extras["diagnostics"] = {
+                "factory_reset_slot": self.sampled_slots,
+                "factory_reset_cell": self.sampled_cells,
+                "factory_reset_labels": tuple(self.state_tag_names),
+                "factory_asset_variants": self.variant_names,
+            }
 
         if report:
             env.extras.setdefault("log", {}).update(log)

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import contextlib
+import os
 from typing import TYPE_CHECKING
 
 import gymnasium as gym
@@ -190,6 +191,142 @@ class RslRlVecEnvWrapper(VecEnv):
 
     def close(self):  # noqa: D102
         return self.env.close()
+
+    def print_nonfinite_diagnostics(self, max_envs: int = 4) -> None:
+        """Print state associated with non-finite environment observations."""
+        env = self.unwrapped
+        obs_buf = env.obs_buf
+        failed_env_ids: list[torch.Tensor] = []
+
+        print(
+            f"[nonfinite] rank={os.getenv('RANK', '0')} device={self.device} "
+            f"step={getattr(env, 'common_step_counter', 'unknown')}",
+            flush=True,
+        )
+        for group_name, group_obs in obs_buf.items():
+            tensors = group_obs.items() if isinstance(group_obs, dict) else ((group_name, group_obs),)
+            for tensor_name, tensor in tensors:
+                invalid = ~torch.isfinite(tensor)
+                if not invalid.any():
+                    continue
+                locations = invalid.nonzero()[:32]
+                failed_env_ids.append(locations[:, 0])
+                print(
+                    f"[nonfinite] observation={group_name}/{tensor_name} shape={tuple(tensor.shape)} "
+                    f"count={int(invalid.sum())} locations={locations.cpu().tolist()}",
+                    flush=True,
+                )
+
+                if isinstance(group_obs, torch.Tensor):
+                    self._print_observation_terms(group_name, tensor, invalid)
+
+        if not failed_env_ids:
+            print("[nonfinite] no non-finite values remain in the environment observation buffer", flush=True)
+            return
+
+        env_ids = torch.unique(torch.cat(failed_env_ids))[:max_envs]
+        print(f"[nonfinite] affected_env_ids={env_ids.cpu().tolist()}", flush=True)
+        for name in ("episode_length_buf", "reset_buf", "reset_terminated", "reset_time_outs", "reward_buf"):
+            value = getattr(env, name, None)
+            if isinstance(value, torch.Tensor):
+                self._print_tensor(name, value, env_ids)
+
+        action_manager = getattr(env, "action_manager", None)
+        if action_manager is not None:
+            self._print_tensor("action", action_manager.action, env_ids)
+            self._print_tensor("previous_action", action_manager.prev_action, env_ids)
+
+        termination_manager = getattr(env, "termination_manager", None)
+        if termination_manager is not None:
+            for env_id in env_ids.cpu().tolist():
+                terms = {name: values[0] for name, values in termination_manager.get_active_iterable_terms(env_id)}
+                print(f"[nonfinite] env={env_id} terminations={terms}", flush=True)
+
+        context = getattr(env, "extras", {}).get("diagnostics", {})
+        for name, value in context.items():
+            if isinstance(value, torch.Tensor):
+                self._print_tensor(f"context.{name}", value, env_ids)
+            else:
+                print(f"[nonfinite] context.{name}={value}", flush=True)
+
+        scene = getattr(env, "scene", None)
+        if scene is not None:
+            for name, asset in (*scene.articulations.items(), *scene.rigid_objects.items()):
+                variant_ids = getattr(asset, "mesh_variant_ids", None)
+                if variant_ids is not None:
+                    self._print_tensor(f"{name}.mesh_variant_ids", variant_ids.torch, env_ids)
+                fields = ["root_state_w", "body_link_pose_w", "body_link_vel_w"]
+                if name in scene.articulations:
+                    fields += ["joint_pos", "joint_vel"]
+                for field in fields:
+                    try:
+                        value = getattr(asset.data, field).torch
+                        self._print_tensor(f"{name}.{field}", value, env_ids)
+                        if field == "root_state_w":
+                            self._print_tensor(f"{name}.root_quat_norm", value[:, 3:7].norm(dim=-1), env_ids)
+                        elif field == "body_link_pose_w":
+                            self._print_tensor(f"{name}.body_quat_norm", value[..., 3:7].norm(dim=-1), env_ids)
+                    except Exception as exc:
+                        print(f"[nonfinite] failed to read {name}.{field}: {exc}", flush=True)
+
+        physics_manager = getattr(getattr(env, "sim", None), "physics_manager", None)
+        get_solver_tensors = getattr(physics_manager, "_get_nonfinite_diagnostic_tensors", None)
+        if get_solver_tensors is not None:
+            try:
+                for name, value in get_solver_tensors().items():
+                    self._print_tensor(f"mjwarp.{name}", value, env_ids)
+            except Exception as exc:
+                print(f"[nonfinite] failed to read MJWarp state: {exc}", flush=True)
+        get_reset_mask = getattr(physics_manager, "get_solver_reset_required", None)
+        if get_reset_mask is not None:
+            try:
+                self._print_tensor("solver_reset_required", get_reset_mask(), env_ids)
+            except Exception as exc:
+                print(f"[nonfinite] failed to read solver reset mask: {exc}", flush=True)
+
+    def _print_observation_terms(self, group_name: str, tensor: torch.Tensor, invalid: torch.Tensor) -> None:
+        manager = getattr(self.unwrapped, "observation_manager", None)
+        if manager is None or not manager.group_obs_concatenate.get(group_name, False) or tensor.ndim != 2:
+            return
+
+        start = 0
+        for term_name, shape in zip(manager.active_terms[group_name], manager.group_obs_term_dim[group_name]):
+            width = shape[-1]
+            term_invalid = invalid[:, start : start + width]
+            if term_invalid.any():
+                locations = term_invalid.nonzero()[:32]
+                env_ids = torch.unique(locations[:, 0])[:4]
+                print(
+                    f"[nonfinite] term={group_name}/{term_name} columns={start}:{start + width} "
+                    f"count={int(term_invalid.sum())} locations={locations.cpu().tolist()}",
+                    flush=True,
+                )
+                self._print_tensor(f"observation.{group_name}.{term_name}", tensor[:, start : start + width], env_ids)
+            start += width
+
+    @staticmethod
+    def _print_tensor(name: str, tensor: torch.Tensor, env_ids: torch.Tensor) -> None:
+        selected = tensor[env_ids].detach()
+        flat = selected.reshape(selected.shape[0], -1)
+        if flat.is_floating_point() or flat.is_complex():
+            finite = torch.isfinite(flat)
+            finite_values = flat[finite]
+            value_range = (
+                f" min={float(finite_values.min()):.7g} max={float(finite_values.max()):.7g}"
+                f" abs_max={float(finite_values.abs().max()):.7g}"
+                if finite_values.numel()
+                else ""
+            )
+            invalid = (~finite).nonzero()[:32].cpu().tolist()
+        else:
+            value_range = ""
+            invalid = []
+        print(
+            f"[nonfinite] {name} shape={tuple(selected.shape)}{value_range} invalid={invalid}",
+            flush=True,
+        )
+        if flat.numel() <= 256:
+            print(f"[nonfinite] {name}.values={selected.cpu().tolist()}", flush=True)
 
     """
     Helper functions

@@ -997,6 +997,19 @@ def test_mjwarp_detects_solver_reset_required_per_world(monkeypatch, device):
     )
 
 
+def test_mjwarp_nonfinite_diagnostics_expose_raw_and_derived_state(monkeypatch):
+    qpos = wp.array(np.arange(6, dtype=np.float32).reshape(2, 3), device="cpu")
+    xquat = wp.array(np.arange(8, dtype=np.float32).reshape(2, 4), device="cpu")
+    data = SimpleNamespace(qpos=qpos, xquat=xquat)
+    monkeypatch.setattr(NewtonManager, "_solver", SimpleNamespace(use_mujoco_cpu=False, mjw_data=data))
+
+    tensors = NewtonMJWarpManager._get_nonfinite_diagnostic_tensors()
+
+    assert set(tensors) == {"qpos", "xquat"}
+    torch.testing.assert_close(tensors["qpos"], wp.to_torch(qpos))
+    torch.testing.assert_close(tensors["xquat"], wp.to_torch(xquat))
+
+
 @pytest.mark.parametrize(
     ("method_name", "decimation", "solver_steps"),
     [("_simulate_full", 3, 3), ("_simulate_physics_only", 3, 1)],
