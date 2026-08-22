@@ -940,6 +940,7 @@ def test_accumulator_reports_adaptive_cell_probabilities() -> None:
     accumulator.reset_assets = []
     accumulator.state_data = torch.empty((24, 0))
     accumulator.sampled_slots = torch.full((8,), -1, dtype=torch.long)
+    accumulator.sampled_cells = torch.full_like(accumulator.sampled_slots, -1)
     accumulator._num_cells = 6
     accumulator._num_variants = 3
     accumulator.state_tag_names = ["reset_a", "reset_b"]
