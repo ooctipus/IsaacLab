@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import gymnasium as gym
 import numpy as np
 import pytest
+import torch
 
 from isaaclab.envs import ManagerBasedRLEnv
 
@@ -48,6 +49,58 @@ def _make_env_with_policy_obs_terms(
     )
     env.action_manager = SimpleNamespace(action_term_dim=[0])
     return env
+
+
+def _make_step_env(reset_mask: torch.Tensor, manual_reset: bool = False) -> tuple[ManagerBasedRLEnv, list[str]]:
+    """Build an uninitialized environment with a recorded step lifecycle."""
+    events: list[str] = []
+    num_envs = len(reset_mask)
+    zeros = torch.zeros(num_envs, dtype=torch.bool)
+
+    env = object.__new__(ManagerBasedRLEnv)
+    env._is_closed = True
+    env.cfg = SimpleNamespace(
+        decimation=1,
+        sim=SimpleNamespace(dt=0.01, render_interval=1),
+        compute_final_obs=False,
+        num_rerenders_on_reset=0,
+    )
+    env.scene = SimpleNamespace(
+        num_envs=num_envs,
+        write_data_to_sim=lambda: None,
+        update=lambda dt: None,
+    )
+    env.sim = SimpleNamespace(
+        device="cpu",
+        is_rendering=False,
+        step=lambda render: None,
+        forward=lambda: events.append("forward"),
+        consume_reset_request=lambda: manual_reset,
+    )
+    env.action_manager = SimpleNamespace(process_action=lambda action: None, apply_action=lambda: None)
+    env.observation_manager = SimpleNamespace(compute=lambda **kwargs: events.append("observation") or {})
+    env.termination_manager = SimpleNamespace(compute=lambda: reset_mask, terminated=reset_mask, time_outs=zeros)
+    env.reward_manager = SimpleNamespace(compute=lambda dt: torch.zeros(num_envs))
+    env.command_manager = SimpleNamespace(compute=lambda dt: None)
+    env.event_manager = SimpleNamespace(available_modes=[])
+    env.recorder_manager = SimpleNamespace(
+        active_terms=[],
+        record_pre_step=lambda: None,
+        record_post_physics_decimation_step=lambda: None,
+        record_pre_reset=lambda env_ids: events.append("pre_reset"),
+        record_post_reset=lambda env_ids: events.append("post_reset"),
+    )
+    env.video_recorders = []
+    env._render_video_recorders = []
+    env._physics_handles_decimation = True
+    env._sim_step_counter = 0
+    env.episode_length_buf = torch.zeros(num_envs, dtype=torch.long)
+    env.common_step_counter = 0
+    env.render_enabled = False
+    env.has_rtx_sensors = False
+    env.extras = {}
+    env._reset_idx = lambda env_ids: events.append("reset")
+    return env, events
 
 
 def test_non_concatenated_obs_groups_contain_all_terms():
@@ -102,3 +155,28 @@ def test_obs_space_follows_clip_constraint():
             assert term_space.shape == expected_shapes[term_name]
             assert np.all(term_space.low == low)
             assert np.all(term_space.high == high)
+
+
+@pytest.mark.parametrize(
+    ("reset_mask", "manual_reset", "expected_rate", "expected_forward_calls"),
+    [
+        (torch.tensor([False, False]), False, 0.0, 0),
+        (torch.tensor([True, False]), False, 0.5, 1),
+        (torch.tensor([True, False]), True, 1.0, 1),
+    ],
+)
+def test_step_reconciles_reset_state_before_post_reset(
+    reset_mask: torch.Tensor, manual_reset: bool, expected_rate: float, expected_forward_calls: int
+):
+    """Finalize all same-step resets once before post-reset consumers run."""
+    env, events = _make_step_env(reset_mask, manual_reset)
+
+    env.step(torch.empty((len(reset_mask), 0)))
+
+    assert events.count("forward") == expected_forward_calls
+    if expected_forward_calls:
+        assert (
+            events.index("reset") < events.index("forward") < events.index("post_reset") < events.index("observation")
+        )
+    assert env.extras["info"]["reset_rate"] == expected_rate
+    assert env.extras["log"]["Info/ResetRate"] == expected_rate

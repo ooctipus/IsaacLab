@@ -261,6 +261,7 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
 
         # -- reset envs that terminated/timed-out and log the episode information
         reset_env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1).int()
+        manual_reset_ids = reset_env_ids[:0]
         if len(reset_env_ids) > 0:
             # capture the terminal observation before reset and expose it for Same-Step autoreset.
             if self.cfg.compute_final_obs:
@@ -269,14 +270,6 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
             self.recorder_manager.record_pre_reset(reset_env_ids)
 
             self._reset_idx(reset_env_ids)
-
-            # if sensors are added to the scene, make sure we render to reflect changes in reset
-            if self.render_enabled and is_rendering and self.has_rtx_sensors and self.cfg.num_rerenders_on_reset > 0:
-                for _ in range(self.cfg.num_rerenders_on_reset):
-                    self.sim.render()
-
-            # trigger recorder terms for post-reset calls
-            self.recorder_manager.record_post_reset(reset_env_ids)
 
         # -- handle episode reset requested from visualizer UI controls
         if self.sim.consume_reset_request():
@@ -290,7 +283,24 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
                 # mirror the recorder lifecycle used for normal resets
                 self.recorder_manager.record_pre_reset(manual_reset_ids)
                 self._reset_idx(manual_reset_ids)
-                self.recorder_manager.record_post_reset(manual_reset_ids)
+
+        num_reset_envs = reset_env_ids.numel() + manual_reset_ids.numel()
+        if num_reset_envs > 0:
+            # Reset writes invalidate derived body poses. Reconcile them before post-reset consumers read state.
+            self.sim.forward()
+
+        if len(reset_env_ids) > 0:
+            # if sensors are added to the scene, make sure we render to reflect changes in reset
+            if self.render_enabled and is_rendering and self.has_rtx_sensors and self.cfg.num_rerenders_on_reset > 0:
+                for _ in range(self.cfg.num_rerenders_on_reset):
+                    self.sim.render()
+            self.recorder_manager.record_post_reset(reset_env_ids)
+        if len(manual_reset_ids) > 0:
+            self.recorder_manager.record_post_reset(manual_reset_ids)
+
+        reset_rate = num_reset_envs / self.num_envs
+        self.extras.setdefault("info", {})["reset_rate"] = reset_rate
+        self.extras.setdefault("log", {})["Info/ResetRate"] = reset_rate
 
         # -- update command
         self.command_manager.compute(dt=self.step_dt)
