@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Homogeneous composition of the reusable Factory components."""
+"""Factory composition with reset-selectable assembly variants."""
 
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
@@ -12,9 +12,9 @@ from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.utils.configclass import configclass
 
-from isaaclab_tasks.contrib.nist import mdp
-from isaaclab_tasks.contrib.nist.assembly_variants import ASSEMBLY_VARIANT_NAMES
-from isaaclab_tasks.contrib.nist.factory_env_cfg import (
+from . import mdp
+from .assembly_variants import ASSEMBLY_VARIANT_NAMES
+from .factory_env_cfg import (
     FIXED_ASSET_MATERIAL_EVENT,
     HELD_ASSET_MATERIAL_EVENT,
     NEWTON_SOLVER_RESET_REWARD,
@@ -22,17 +22,17 @@ from isaaclab_tasks.contrib.nist.factory_env_cfg import (
     ROBOT_MATERIAL_EVENT,
     FactoryEnvCfg,
     FactoryPhysicsCfg,
+    FactoryRewardsCfg,
+    FactoryTerminationsCfg,
 )
-from isaaclab_tasks.contrib.nist.factory_env_cfg import FactoryRewardsCfg as FactoryRewardsBaseCfg
-from isaaclab_tasks.contrib.nist.factory_env_cfg import FactoryTerminationsCfg as FactoryTerminationsBaseCfg
-from isaaclab_tasks.contrib.nist.factory_presets import EndEffectorBodyCfg, GripperGraspOffsetCfg
-from isaaclab_tasks.contrib.nist.factory_variant_scene_cfg import FactoryVariantSceneCfg
-from isaaclab_tasks.contrib.nist.utils import SamplerCfg, UniformSamplingStrategyCfg
-from isaaclab_tasks.contrib.nist.variant_reset_env_cfg import VARIANT_ACCUMULATOR_RESET
+from .factory_presets import EndEffectorBodyCfg, GripperGraspOffsetCfg
+from .factory_variant_scene_cfg import FactoryVariantSceneCfg
+from .utils import SamplerCfg, UniformSamplingStrategyCfg
+from .variant_reset_env_cfg import VARIANT_ACCUMULATOR_RESET
 
 
 @configclass
-class FactoryObservationsCfg:
+class FactoryVariantObservationsCfg:
     """Policy state and scene geometry observations."""
 
     @configclass
@@ -88,7 +88,7 @@ class FactoryObservationsCfg:
 
 
 @configclass
-class FactoryEventCfg:
+class FactoryVariantEventCfg:
     """Add assembly selection to the shared Factory startup events."""
 
     assembly_variants = EventTerm(
@@ -107,14 +107,14 @@ class FactoryEventCfg:
 
 
 @configclass
-class FactoryRewardsCfg(FactoryRewardsBaseCfg):
-    """Use the Newton solver-reset reward in every V2 run."""
+class FactoryVariantRewardsCfg(FactoryRewardsCfg):
+    """Use the Newton solver-reset reward for variant runs."""
 
     solver_reset_reward = NEWTON_SOLVER_RESET_REWARD
 
 
 @configclass
-class FactoryTerminationsCfg(FactoryTerminationsBaseCfg):
+class FactoryVariantTerminationsCfg(FactoryTerminationsCfg):
     """Use variant geometry and Newton failure detection."""
 
     progress_context = DoneTerm(
@@ -129,14 +129,14 @@ class FactoryTerminationsCfg(FactoryTerminationsBaseCfg):
 
 
 @configclass
-class FactoryBaseEnvCfg(FactoryEnvCfg):
+class FactoryVariantEnvCfg(FactoryEnvCfg):
     """Factory environment with reset-selectable assembly pairs."""
 
     scene: FactoryVariantSceneCfg = FactoryVariantSceneCfg()
-    observations: FactoryObservationsCfg = FactoryObservationsCfg()
-    events: FactoryEventCfg = FactoryEventCfg()
-    terminations: FactoryTerminationsCfg = FactoryTerminationsCfg()
-    rewards: FactoryRewardsCfg = FactoryRewardsCfg()
+    observations: FactoryVariantObservationsCfg = FactoryVariantObservationsCfg()
+    events: FactoryVariantEventCfg = FactoryVariantEventCfg()
+    terminations: FactoryVariantTerminationsCfg = FactoryVariantTerminationsCfg()
+    rewards: FactoryVariantRewardsCfg = FactoryVariantRewardsCfg()
 
     def __post_init__(self) -> None:
         super().__post_init__()

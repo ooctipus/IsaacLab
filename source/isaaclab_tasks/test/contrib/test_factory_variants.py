@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Tests for the homogeneous Factory v2 assembly catalog."""
+"""Tests for the homogeneous Factory assembly catalog."""
 
 from __future__ import annotations
 
@@ -38,7 +38,12 @@ from isaaclab_tasks.contrib.nist.config.agents.models import (
     SimBaModelCfg,
     SimBaNetwork,
 )
+from isaaclab_tasks.contrib.nist.config.agents.rsl_rl_ppo_cfg import FactoryVariantPPORunnerCfg
 from isaaclab_tasks.contrib.nist.factory_env_cfg import FactoryBaseEnvCfg as StaticFactoryEnvCfg
+from isaaclab_tasks.contrib.nist.factory_variant_env_cfg import (
+    FactoryVariantEnvCfg,
+    FactoryVariantObservationsCfg,
+)
 from isaaclab_tasks.contrib.nist.factory_variant_scene_cfg import FactoryVariantSceneCfg, _paired_clone_strategy
 from isaaclab_tasks.contrib.nist.mdp.assembly_variants import AssemblyVariantContext
 from isaaclab_tasks.contrib.nist.mdp.observations import (
@@ -56,9 +61,6 @@ from isaaclab_tasks.contrib.nist.utils.variant_event_combinators import (
     variant_reset_accumulator,
 )
 from isaaclab_tasks.contrib.nist.variant_reset_env_cfg import VARIANT_ACCUMULATOR_RESET
-from isaaclab_tasks.contrib.nistv2.config.agents.rsl_rl_ppo_cfg import FactoryPPORunnerCfg
-from isaaclab_tasks.contrib.nistv2.factory_env_cfg import FactoryBaseEnvCfg as VariantFactoryEnvCfg
-from isaaclab_tasks.contrib.nistv2.factory_env_cfg import FactoryObservationsCfg
 from isaaclab_tasks.core.lift.mdp.events_cfg import SuccessMonitorCfg
 
 
@@ -96,10 +98,17 @@ def _variant_context() -> tuple[AssemblyVariantContext, _MeshAsset, _MeshAsset]:
     return AssemblyVariantContext(cfg, env), fixed, held
 
 
-def test_factory_v2_registers_its_own_environment() -> None:
-    """Keep v2 registration independent from the v1 task."""
-    spec = gym.spec("IsaacContrib-Factory-V2-Franka")
-    assert spec.kwargs["env_cfg_entry_point"] == "isaaclab_tasks.contrib.nistv2.factory_env_cfg:FactoryBaseEnvCfg"
+def test_factory_variant_uses_the_nist_composition_root() -> None:
+    """Register the variant task without preserving the former v2 API."""
+    spec = gym.spec("IsaacContrib-Factory-Variant-Franka")
+    assert spec.kwargs["env_cfg_entry_point"] == (
+        "isaaclab_tasks.contrib.nist.factory_variant_env_cfg:FactoryVariantEnvCfg"
+    )
+    assert spec.kwargs["rsl_rl_cfg_entry_point"].endswith("rsl_rl_ppo_cfg:FactoryVariantPPORunnerCfg")
+    assert not {
+        "IsaacContrib-Factory-V2-Franka",
+        "IsaacContrib-Factory-V2-Video-Franka",
+    }.intersection(gym.registry)
 
 
 def test_scene_uses_one_ordered_pair_bank() -> None:
@@ -118,37 +127,19 @@ def test_scene_uses_one_ordered_pair_bank() -> None:
     assert held_paths == [variant.held_asset.spawn.usd_path for variant in ASSEMBLY_VARIANTS]
 
 
-def test_v2_contains_only_environment_composition() -> None:
-    """Keep reusable implementation ownership in nist."""
-    package_root = Path(__file__).parents[2] / "isaaclab_tasks" / "contrib" / "nistv2"
-    actual = {
-        path.relative_to(package_root).as_posix()
-        for pattern in ("*.py", "*.pyi")
-        for path in package_root.rglob(pattern)
-    }
-    assert actual == {
-        "__init__.py",
-        "config/__init__.py",
-        "config/agents/__init__.py",
-        "config/agents/rsl_rl_ppo_cfg.py",
-        "factory_env_cfg.py",
-        "factory_video_env_cfg.py",
-    }
-
-    nist_root = package_root.parent / "nist"
-    reverse_dependencies = [
-        path.relative_to(nist_root)
-        for pattern in ("*.py", "*.pyi")
-        for path in nist_root.rglob(pattern)
-        if "isaaclab_tasks.contrib.nistv2" in path.read_text()
+def test_variant_configuration_has_one_owner() -> None:
+    """Forbid restoring a package whose only purpose is selecting a config."""
+    contrib_root = Path(__file__).parents[2] / "isaaclab_tasks" / "contrib"
+    assert not (contrib_root / "nistv2").exists()
+    assert [path.relative_to(contrib_root).as_posix() for path in contrib_root.rglob("factory_variant_env_cfg.py")] == [
+        "nist/factory_variant_env_cfg.py"
     ]
-    assert reverse_dependencies == []
 
 
 def test_static_and_variant_event_compositions_remain_distinct() -> None:
-    """Preserve V1 inertia setup and initialize V2 variants before dependent terms."""
+    """Preserve static inertia setup and initialize variants before dependent terms."""
     static = StaticFactoryEnvCfg()
-    variant = VariantFactoryEnvCfg()
+    variant = FactoryVariantEnvCfg()
 
     assert tuple(static.events.to_dict()) == (
         "held_asset_material",
@@ -412,7 +403,7 @@ def test_pose_observation_supports_v1_static_offsets_without_variant_context() -
 
 def test_policy_observes_scene_geometry_and_directed_mating_pose() -> None:
     """Combine scene geometry with one directed mating-frame observation."""
-    observations = FactoryObservationsCfg()
+    observations = FactoryVariantObservationsCfg()
     policy = observations.policy
     perception = observations.perception
 
@@ -446,8 +437,8 @@ def test_policy_observes_scene_geometry_and_directed_mating_pose() -> None:
 
 def test_factory_agent_routes_perception_through_point_cloud_encoder() -> None:
     """Keep geometry out of the state MLP and route it through the point-cloud encoder."""
-    observations = FactoryObservationsCfg()
-    runner = FactoryPPORunnerCfg()
+    observations = FactoryVariantObservationsCfg()
+    runner = FactoryVariantPPORunnerCfg()
 
     assert not hasattr(observations.policy, "scene_point_cloud")
     assert observations.perception.scene_point_cloud.func is scene_point_cloud_b

@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Video playback configuration for a single Factory V1 assembly."""
+"""Video playback configurations for Factory environments."""
 
 from isaaclab_visualizers.newton import NewtonRTXVisualizerCfg
 
@@ -13,6 +13,7 @@ from isaaclab.envs import VideoRecorderCfg
 from isaaclab.utils.configclass import configclass
 
 from .factory_env_cfg import FactoryBaseEnvCfg, FactoryEnvCfg
+from .factory_variant_env_cfg import FactoryVariantEnvCfg
 
 
 def configure_factory_video(cfg: FactoryEnvCfg, fps: int, output_prefix: str) -> None:
@@ -53,10 +54,21 @@ def configure_factory_video(cfg: FactoryEnvCfg, fps: int, output_prefix: str) ->
 
 @configclass
 class FactoryVideoEnvCfg(FactoryBaseEnvCfg):
-    """Record Factory V1 with the established wide studio camera."""
+    """Record a static Factory assembly with the established wide studio camera."""
 
     def play_mode(self) -> None:
         """Configure evaluation recording."""
         super().play_mode()
         self.events.reset_strategies.params["state_table_size"] = 64
         configure_factory_video(self, fps=30, output_prefix="assembly_40s")
+
+
+@configclass
+class FactoryVariantVideoEnvCfg(FactoryVariantEnvCfg):
+    """Record Factory variants with the established wide studio camera."""
+
+    def play_mode(self) -> None:
+        """Configure evaluation recording."""
+        super().play_mode()
+        self.sim.render_interval = 1
+        configure_factory_video(self, fps=100, output_prefix="factory_variant")
