@@ -22,7 +22,7 @@ _FORBIDDEN_PREFIXES = ("pxr", "omni", "carb", "isaacsim", "scipy")
 
 _FACTORY_TASKS = [
     "IsaacContrib-Factory-Franka",
-    "IsaacContrib-Factory-V2-Franka",
+    "IsaacContrib-Factory-Variant-Franka",
 ]
 
 
