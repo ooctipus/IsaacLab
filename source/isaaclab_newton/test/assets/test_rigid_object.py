@@ -155,6 +155,55 @@ def test_initialization(num_cubes, device):
 
 
 @pytest.mark.isaacsim_ci
+@pytest.mark.parametrize("device", test_devices())
+def test_fixed_root_initialization_and_reads(tmp_path, device):
+    """A fixed standalone rigid body is selectable and readable without solver degrees of freedom."""
+    from pxr import Usd, UsdGeom, UsdPhysics
+
+    asset_path = tmp_path / "fixed_cube.usda"
+    stage = Usd.Stage.CreateNew(str(asset_path))
+    asset = UsdGeom.Xform.Define(stage, "/Asset")
+    stage.SetDefaultPrim(asset.GetPrim())
+    body = UsdGeom.Cube.Define(stage, "/Asset/body")
+    body.CreateSizeAttr(0.1)
+    UsdPhysics.RigidBodyAPI.Apply(body.GetPrim())
+    UsdPhysics.CollisionAPI.Apply(body.GetPrim())
+    UsdPhysics.MassAPI.Apply(body.GetPrim()).CreateMassAttr(1.0)
+    stage.GetRootLayer().Save()
+
+    num_cubes = 2
+    origins = torch.tensor([(float(index), 0.0, 0.0) for index in range(num_cubes)], device=device)
+    with _newton_sim_context(device, gravity_enabled=False, auto_add_lighting=True) as sim:
+        sim._app_control_on_stop_handle = None
+        for index, origin in enumerate(origins):
+            sim_utils.create_prim(f"/World/Env_{index}", "Xform", translation=origin)
+        cube_object = RigidObject(
+            cfg=RigidObjectCfg(
+                prim_path="/World/Env_[^/]*/Object",
+                spawn=sim_utils.UsdFileCfg(usd_path=str(asset_path), fix_root_link=True),
+                init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 0.5)),
+            )
+        )
+
+        sim.reset()
+
+        assert cube_object.is_initialized
+        assert cube_object.root_view.is_fixed_base
+        assert SimulationManager.get_model().joint_dof_count == 0
+        assert cube_object.data.root_link_pose_w.torch.shape == (num_cubes, 7)
+        assert cube_object.data.body_link_pose_w.torch.shape == (num_cubes, 1, 7)
+        assert torch.isfinite(cube_object.data.root_link_pose_w.torch).all()
+        expected_pos = origins + torch.tensor([0.0, 0.0, 0.5], device=device)
+        torch.testing.assert_close(cube_object.data.root_pos_w.torch, expected_pos)
+        torch.testing.assert_close(cube_object.data.root_com_vel_w.torch, torch.zeros((num_cubes, 6), device=device))
+
+        with pytest.raises(RuntimeError, match="fixed-root Newton RigidObject"):
+            cube_object.write_root_pose_to_sim_index(root_pose=cube_object.data.root_link_pose_w.torch)
+        with pytest.raises(RuntimeError, match="fixed-root Newton RigidObject"):
+            cube_object.write_root_velocity_to_sim_index(root_velocity=cube_object.data.root_com_vel_w.torch)
+
+
+@pytest.mark.isaacsim_ci
 @pytest.mark.skip(reason="Newton does not support kinematic rigid bodies")
 @pytest.mark.parametrize("num_cubes", [1, 2])
 @pytest.mark.parametrize("device", test_devices())
