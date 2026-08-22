@@ -289,7 +289,8 @@ def apply_articulation_root_properties(
     reported but not authored.
 
     When fix_root_link is True, the active physics manager creates or enables the world joint and
-    returns the backend's final root prim. False only disables an existing joint.
+    returns the backend's final root prim. If no articulation root is authored, the unique writable
+    rigid body under ``prim_path`` is used as the anchor. False only disables an existing joint.
 
     Args:
         prim_path: The prim path whose subtree is searched for articulation roots.
@@ -302,7 +303,7 @@ def apply_articulation_root_properties(
 
     Raises:
         TypeError: If fragments contains a non-articulation fragment.
-        ValueError: If prim_path is invalid.
+        ValueError: If prim_path is invalid or a unique writable rigid-body anchor cannot be resolved.
         RuntimeError: If fixing cannot resolve the active backend or relocate the root.
         NotImplementedError: If the backend cannot fix the resolved root.
     """
@@ -337,7 +338,18 @@ def apply_articulation_root_properties(
         else:
             writable_roots.append(root)
 
-    if not roots and fragments:
+    if not roots and fix_root_link:
+        rigid_bodies, any_skipped = _resolve_fragment_targets(
+            prim_path, UsdPhysics.RigidBodyAPI, stage, apply_fresh=False
+        )
+        if any_skipped or len(rigid_bodies) != 1:
+            raise ValueError(
+                f"Cannot resolve a unique writable rigid body under '{prim_path}' to fix as the articulation root."
+            )
+        root = rigid_bodies[0]
+        UsdPhysics.ArticulationRootAPI.Apply(root)
+        writable_roots.append(root)
+    elif not roots and fragments:
         root = stage.GetPrimAtPath(prim_path)
         if root.IsInstance() or root.IsInstanceProxy():
             skipped_roots.append(root)

@@ -215,7 +215,7 @@ torchaudio = "2.11.0"
 ovphysx = "0.5.9"
 ovrtx = ">0.4.0,<0.4.1"
 ovstage = "0.1.0.346039"
-newton = "6d802156204020c5cdfc469e2ba3a37688180d7a"
+newton = "d9119f06ec21715baa031c730c51d50aa6ec6e3b"
 warp = "1.16.0"
 
 [tool.ruff]
@@ -398,7 +398,7 @@ override-dependencies = [
     "numpy>=2",
     "mujoco~=3.11.0",
     "mujoco-warp @ git+https://github.com/ooctipus/mujoco_warp.git@octi/optimize-sparse-newton-solver",
-    "newton[sim] @ git+https://github.com/ooctipus/newton.git@6d802156204020c5cdfc469e2ba3a37688180d7a",
+    "newton[sim] @ git+https://github.com/ooctipus/newton.git@d9119f06ec21715baa031c730c51d50aa6ec6e3b",
     # Force the Newton-matched schemas over isaacsim's ==0.2.0 pin.
     "newton-usd-schemas>=0.5.0",
     "torch==2.11.0",

@@ -217,6 +217,44 @@ def test_apply_articulation_root_properties_does_not_duplicate_instance_proxy_ro
 # -------------------------------------------------------------------------------------
 
 
+def test_apply_articulation_root_properties_fixes_unique_nested_rigid_body_without_root():
+    """A wrapper around one rigid body can request fixed-root topology without a pre-authored root."""
+    from isaaclab.sim.schemas import apply_articulation_root_properties
+
+    sim_utils.create_new_stage()
+    SimulationContext(SimulationCfg(dt=0.01))
+    stage = sim_utils.get_current_stage()
+    wrapper = _make_xform(stage, "/World/Asset")
+    body = _make_xform(stage, "/World/Asset/body")
+    UsdPhysics.RigidBodyAPI.Apply(body)
+
+    assert apply_articulation_root_properties("/World/Asset", [], stage, fix_root_link=True)
+
+    joints = [UsdPhysics.FixedJoint(prim) for prim in stage.Traverse() if prim.IsA(UsdPhysics.FixedJoint)]
+    assert len(joints) == 1
+    assert joints[0].GetBody1Rel().GetTargets() == [body.GetPath()]
+    assert wrapper.HasAPI(UsdPhysics.ArticulationRootAPI)
+    assert not body.HasAPI(UsdPhysics.ArticulationRootAPI)
+
+
+def test_apply_articulation_root_properties_rejects_ambiguous_nested_rigid_bodies():
+    """A wrapper with multiple rigid-body roots needs an explicit articulation root."""
+    from isaaclab.sim.schemas import apply_articulation_root_properties
+
+    sim_utils.create_new_stage()
+    SimulationContext(SimulationCfg(dt=0.01))
+    stage = sim_utils.get_current_stage()
+    _make_xform(stage, "/World/Asset")
+    for name in ("body_a", "body_b"):
+        UsdPhysics.RigidBodyAPI.Apply(_make_xform(stage, f"/World/Asset/{name}"))
+
+    with pytest.raises(ValueError, match="unique writable rigid body"):
+        apply_articulation_root_properties("/World/Asset", [], stage, fix_root_link=True)
+
+    assert not any(prim.HasAPI(UsdPhysics.ArticulationRootAPI) for prim in stage.Traverse())
+    assert not any(prim.IsA(UsdPhysics.FixedJoint) for prim in stage.Traverse())
+
+
 def test_apply_articulation_root_properties_toggles_existing_fixed_joint():
     from isaaclab_physx.sim.schemas import PhysxArticulationCfg
 
