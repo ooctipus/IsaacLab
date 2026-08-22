@@ -3,16 +3,17 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Factory task registrations.
+"""Static and reset-selectable Factory task registrations.
 
 The task ships one robot, so the robot-specific fields bind the ``default`` of
-each robot preset and need no selector; the assembly is chosen through the
-preset system -- e.g.::
+each robot preset and need no selector. The static task selects one assembly
+through the preset system -- e.g.::
 
     uv run isaaclab train --task IsaacContrib-Factory-Franka \
         presets=peg_insert_4mm physics=newton_mjwarp
 
-See :mod:`..factory_presets` for the robot registry and how to add new robots.
+The variant task samples the assembly pair at reset. See
+:mod:`..factory_presets` for the robot registry and how to add new robots.
 """
 
 import gymnasium as gym
@@ -42,5 +43,25 @@ gym.register(
     kwargs={
         "env_cfg_entry_point": "isaaclab_tasks.contrib.nist.factory_video_env_cfg:FactoryVideoEnvCfg",
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:FactoryPPORunnerCfg",
+    },
+)
+
+gym.register(
+    id="IsaacContrib-Factory-Variant-Franka",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": "isaaclab_tasks.contrib.nist.factory_variant_env_cfg:FactoryVariantEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:FactoryVariantPPORunnerCfg",
+    },
+)
+
+gym.register(
+    id="IsaacContrib-Factory-Variant-Video-Franka",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": "isaaclab_tasks.contrib.nist.factory_video_env_cfg:FactoryVariantVideoEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:FactoryVariantPPORunnerCfg",
     },
 )
