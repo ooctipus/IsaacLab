@@ -3,12 +3,13 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""RSL-RL models for Factory V2."""
+"""RSL-RL models shared by Factory task compositions."""
 
 from __future__ import annotations
 
 import copy
 import math
+from dataclasses import MISSING
 from typing import Any
 
 import torch
@@ -18,6 +19,38 @@ from rsl_rl.modules import MLP, EmpiricalNormalization, HiddenState
 from rsl_rl.modules.distribution import Distribution
 from rsl_rl.utils import resolve_callable, resolve_nn_activation
 from tensordict import TensorDict
+
+from isaaclab.utils.configclass import configclass
+
+from isaaclab_rl.rsl_rl import RslRlMLPModelCfg
+
+
+@configclass
+class SimBaModelCfg:
+    """SimBa model with optional encoders keyed by observation group."""
+
+    @configclass
+    class EncoderCfg:
+        class_name: str = MISSING
+        output_dim: int = MISSING
+
+    @configclass
+    class MLPEncoderCfg(EncoderCfg):
+        class_name: str = "isaaclab_tasks.contrib.nist.config.agents.models:MLPEncoder"
+        hidden_dims: list[int] = MISSING
+        activation: str = MISSING
+        last_activation: str | None = None
+
+    class_name: str = "isaaclab_tasks.contrib.nist.config.agents.models:SimBaModel"
+    hidden_dim: int = MISSING
+    num_blocks: int = 2
+    expansion_factor: int = 4
+    activation: str = "relu"
+    norm: bool = True
+    obs_normalization: bool = False
+    encoder_normalization: bool = False
+    encoder_cfg: dict[str, EncoderCfg] | None = None
+    distribution_cfg: RslRlMLPModelCfg.DistributionCfg | None = None
 
 
 class MLPEncoder(nn.Module):

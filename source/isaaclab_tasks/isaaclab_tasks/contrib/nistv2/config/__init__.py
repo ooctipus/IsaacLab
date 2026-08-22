@@ -7,13 +7,9 @@
 
 import gymnasium as gym
 
-from . import agents
+from isaaclab_tasks.contrib.nist.config import franka_factory_cfg as _franka_factory_cfg  # noqa: F401
 
-# Imported for its side effect: the module sets each robot-specific field on the
-# ``..factory_presets`` classes at import time, and the robot cannot resolve until it has
-# run. Keeping it here rather than in ``factory_presets`` leaves that module free of any
-# reference to a particular robot.
-from . import franka_factory_cfg as _franka_factory_cfg  # noqa: F401
+from . import agents
 
 gym.register(
     id="IsaacContrib-Factory-V2-Franka",

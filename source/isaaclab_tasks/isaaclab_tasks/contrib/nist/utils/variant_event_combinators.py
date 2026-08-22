@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Reset-state collection and composition for Factory V2."""
+"""Reset-state collection for homogeneous assembly variants."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
 
-class reset_accumulator(ManagerTermBase):
+class variant_reset_accumulator(ManagerTermBase):
     """Accumulate validated reset states into a shared state table and sample from it.
 
     During the pre-collection phase, reset states are generated and validated
@@ -90,12 +90,12 @@ class reset_accumulator(ManagerTermBase):
     ):
         if reset_assets and list(reset_assets) != self._requested_reset_assets:
             raise ValueError(
-                "reset_accumulator reset_assets changed after initialization. "
+                "variant_reset_accumulator reset_assets changed after initialization. "
                 f"Expected {self._requested_reset_assets}, got {list(reset_assets)}."
             )
         if self.precollecting_phase:
             if reset_term is None:
-                raise RuntimeError("reset_accumulator requires reset_term during precollection.")
+                raise RuntimeError("variant_reset_accumulator requires reset_term during precollection.")
             self._precollect(env, reset_term)
 
         if self.success_monitor is None:
@@ -176,7 +176,7 @@ class reset_accumulator(ManagerTermBase):
         self._num_variants = len(self.variant_names)
         self._num_cells = len(self.state_tag_names) * self._num_variants
         if self._state_target_size < self._num_cells:
-            raise ValueError("Factory V2 state_table_size must be at least the number of reset-label and asset cells.")
+            raise ValueError("state_table_size must cover every reset-label and assembly-variant cell.")
         self.cell_success_rate = torch.full(
             (len(self.state_tag_names), self._num_variants), torch.nan, device=env.device
         )
@@ -264,14 +264,14 @@ class reset_accumulator(ManagerTermBase):
         )
 
 
-class TermChoice(ManagerTermBase):
+class PreparedTermChoice(ManagerTermBase):
     """Dispatch one prepared reset partition per environment."""
 
     def __init__(self, cfg: EventTermCfg, env: ManagerBasedRLEnv):
         super().__init__(cfg, env)
         self.term_partitions: dict[str, EventTermCfg] = cfg.params["terms"]  # type: ignore
         if not self.term_partitions:
-            raise ValueError("TermChoice requires at least one reset partition.")
+            raise ValueError("PreparedTermChoice requires at least one reset partition.")
         self.term_samples = torch.zeros((env.num_envs,), dtype=torch.long, device=env.device)
         self.is_valid = torch.ones(env.num_envs, dtype=torch.bool, device=env.device)
         """Whether the strategy each env drew reported success, per env, for the last call."""
@@ -297,30 +297,3 @@ class TermChoice(ManagerTermBase):
     def prepare(self, samples: torch.Tensor) -> None:
         """Set the partition indices used by the next call."""
         self._next_samples.copy_(samples)
-
-
-class ChainedResetTerms(ManagerTermBase):
-    def __init__(self, cfg: EventTermCfg, env: ManagerBasedRLEnv):
-        super().__init__(cfg, env)
-        self.terms: dict[str, EventTermCfg] = cfg.params["terms"]  # type: ignore
-        self.is_valid = torch.ones(env.num_envs, dtype=torch.bool, device=env.device)
-        """Whether every reporting term in the chain succeeded, per env, for the last call."""
-
-    def __call__(
-        self,
-        env: ManagerBasedRLEnv,
-        env_ids: torch.Tensor,
-        terms: dict[str, callable],
-        probability: float = 1.0,
-    ) -> None:
-        # Envs the chain skips keep the state they already had, which is as valid as it ever was.
-        self.is_valid[env_ids] = True
-        keep = torch.rand(env_ids.size(0), device=env_ids.device) < probability
-        if not keep.any():
-            return
-        env_ids_to_reset = env_ids[keep]
-        for _, term in terms.items():
-            term.func(env, env_ids_to_reset, **term.params)  # type: ignore
-            reported = getattr(term.func, "is_valid", None)
-            if reported is not None:
-                self.is_valid[env_ids_to_reset] &= reported[env_ids_to_reset]

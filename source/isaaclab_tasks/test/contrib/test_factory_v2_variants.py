@@ -25,29 +25,40 @@ from isaaclab import cloner
 from isaaclab.managers import EventTermCfg, ManagerTermBase, ObservationTermCfg, SceneEntityCfg
 
 import isaaclab_tasks  # noqa: F401
-import isaaclab_tasks.contrib.nistv2.factory_presets as factory_presets
-import isaaclab_tasks.contrib.nistv2.factory_scenes_cfg as factory_scenes_cfg
-import isaaclab_tasks.contrib.nistv2.mdp.events as factory_events
-import isaaclab_tasks.contrib.nistv2.mdp.observations as factory_observations
-import isaaclab_tasks.contrib.nistv2.utils.collision_analyzer as factory_collision_analyzer
-from isaaclab_tasks.contrib.nistv2.assembly_profile import AssemblyProfile
-from isaaclab_tasks.contrib.nistv2.assembly_variants import ASSEMBLY_VARIANT_NAMES, ASSEMBLY_VARIANTS
-from isaaclab_tasks.contrib.nistv2.config.agents.models import MLPEncoder, SimBaBlock, SimBaModel, SimBaNetwork
-from isaaclab_tasks.contrib.nistv2.config.agents.rsl_rl_ppo_cfg import FactoryPPORunnerCfg, SimBaModelCfg
-from isaaclab_tasks.contrib.nistv2.factory_env_cfg import FactoryObservationsCfg
-from isaaclab_tasks.contrib.nistv2.factory_scenes_cfg import FactorySceneCfg, _paired_clone_strategy
-from isaaclab_tasks.contrib.nistv2.mdp.assembly_variants import AssemblyVariantContext
-from isaaclab_tasks.contrib.nistv2.mdp.observations import (
+import isaaclab_tasks.contrib.nist.mdp.observations as factory_observations
+import isaaclab_tasks.contrib.nist.mdp.variant_events as factory_events
+import isaaclab_tasks.contrib.nist.utils.collision_analyzer as factory_collision_analyzer
+import isaaclab_tasks.contrib.nist.utils.rigid_object_hasher as factory_rigid_object_hasher
+from isaaclab_tasks.contrib.nist.assembly_profile import AssemblyProfile
+from isaaclab_tasks.contrib.nist.assembly_variants import ASSEMBLY_VARIANT_NAMES, ASSEMBLY_VARIANTS
+from isaaclab_tasks.contrib.nist.config.agents.models import (
+    MLPEncoder,
+    SimBaBlock,
+    SimBaModel,
+    SimBaModelCfg,
+    SimBaNetwork,
+)
+from isaaclab_tasks.contrib.nist.factory_env_cfg import FactoryBaseEnvCfg as StaticFactoryEnvCfg
+from isaaclab_tasks.contrib.nist.factory_variant_scene_cfg import FactoryVariantSceneCfg, _paired_clone_strategy
+from isaaclab_tasks.contrib.nist.mdp.assembly_variants import AssemblyVariantContext
+from isaaclab_tasks.contrib.nist.mdp.observations import (
     _scene_point_cloud_in_root_frame,
     asset_link_velocity_in_root_asset_frame,
     scene_point_cloud_b,
     target_asset_pose_in_root_asset_frame,
 )
-from isaaclab_tasks.contrib.nistv2.reset_env_cfg import ACCUMULATOR_RESET
-from isaaclab_tasks.contrib.nistv2.utils import reset_state
-from isaaclab_tasks.contrib.nistv2.utils.event_combinators import ChainedResetTerms, TermChoice, reset_accumulator
-from isaaclab_tasks.contrib.nistv2.utils.pose_offset import Offset
-from isaaclab_tasks.contrib.nistv2.utils.sampling import SamplerCfg, UniformSamplingStrategyCfg
+from isaaclab_tasks.contrib.nist.utils import reset_state
+from isaaclab_tasks.contrib.nist.utils.event_combinators import ChainedResetTerms
+from isaaclab_tasks.contrib.nist.utils.pose_offset import Offset
+from isaaclab_tasks.contrib.nist.utils.sampling import SamplerCfg, UniformSamplingStrategyCfg
+from isaaclab_tasks.contrib.nist.utils.variant_event_combinators import (
+    PreparedTermChoice,
+    variant_reset_accumulator,
+)
+from isaaclab_tasks.contrib.nist.variant_reset_env_cfg import VARIANT_ACCUMULATOR_RESET
+from isaaclab_tasks.contrib.nistv2.config.agents.rsl_rl_ppo_cfg import FactoryPPORunnerCfg
+from isaaclab_tasks.contrib.nistv2.factory_env_cfg import FactoryBaseEnvCfg as VariantFactoryEnvCfg
+from isaaclab_tasks.contrib.nistv2.factory_env_cfg import FactoryObservationsCfg
 from isaaclab_tasks.core.lift.mdp.events_cfg import SuccessMonitorCfg
 
 
@@ -93,7 +104,7 @@ def test_factory_v2_registers_its_own_environment() -> None:
 
 def test_scene_uses_one_ordered_pair_bank() -> None:
     """Build only the fixed and held assets from the same 20-entry catalog."""
-    scene = FactorySceneCfg()
+    scene = FactoryVariantSceneCfg()
     assert len(ASSEMBLY_VARIANTS) == 20
     assert len(set(ASSEMBLY_VARIANT_NAMES)) == len(ASSEMBLY_VARIANTS)
     assert set(ASSEMBLY_VARIANT_NAMES).issuperset({"gear_mesh_small", "gear_mesh_medium", "gear_mesh_large"})
@@ -107,39 +118,54 @@ def test_scene_uses_one_ordered_pair_bank() -> None:
     assert held_paths == [variant.held_asset.spawn.usd_path for variant in ASSEMBLY_VARIANTS]
 
 
-def test_v2_has_one_scene_type_and_no_v1_dependency() -> None:
-    """Keep scene ownership in v2's single composition root."""
-    scene_types = {
-        name
-        for name, value in vars(factory_scenes_cfg).items()
-        if isinstance(value, type) and value.__module__ == factory_scenes_cfg.__name__
+def test_v2_contains_only_environment_composition() -> None:
+    """Keep reusable implementation ownership in nist."""
+    package_root = Path(__file__).parents[2] / "isaaclab_tasks" / "contrib" / "nistv2"
+    actual = {
+        path.relative_to(package_root).as_posix()
+        for pattern in ("*.py", "*.pyi")
+        for path in package_root.rglob(pattern)
     }
-    assert scene_types == {"FactorySceneCfg"}
+    assert actual == {
+        "__init__.py",
+        "config/__init__.py",
+        "config/agents/__init__.py",
+        "config/agents/rsl_rl_ppo_cfg.py",
+        "factory_env_cfg.py",
+        "factory_video_env_cfg.py",
+    }
 
-    package_root = Path(factory_scenes_cfg.__file__).parent
-    offenders = [
-        path.relative_to(package_root)
+    nist_root = package_root.parent / "nist"
+    reverse_dependencies = [
+        path.relative_to(nist_root)
         for pattern in ("*.py", "*.pyi")
-        for path in package_root.rglob(pattern)
-        if "isaaclab_tasks.contrib.nist." in path.read_text()
+        for path in nist_root.rglob(pattern)
+        if "isaaclab_tasks.contrib.nistv2" in path.read_text()
     ]
-    assert offenders == []
-    forbidden_symbols = ("spare_gear", "spare_assets", "spare_offsets", "spare_pose")
-    spare_owners = [
-        path.relative_to(package_root)
-        for pattern in ("*.py", "*.pyi")
-        for path in package_root.rglob(pattern)
-        if any(symbol in path.read_text() for symbol in forbidden_symbols)
-    ]
-    assert spare_owners == []
-    for obsolete in (
-        "FixedAssetMapCfg",
-        "HeldAssetTipCfg",
-        "ResetAssetsCfg",
-        "HeldAssetObstaclesCfg",
-        "RobotObstaclesCfg",
-    ):
-        assert not hasattr(factory_presets, obsolete)
+    assert reverse_dependencies == []
+
+
+def test_static_and_variant_event_compositions_remain_distinct() -> None:
+    """Preserve V1 inertia setup and initialize V2 variants before dependent terms."""
+    static = StaticFactoryEnvCfg()
+    variant = VariantFactoryEnvCfg()
+
+    assert tuple(static.events.to_dict()) == (
+        "held_asset_material",
+        "held_asset_inertia",
+        "fixed_asset_material",
+        "robot_material",
+        "reset_strategies",
+    )
+    assert tuple(variant.events.to_dict()) == (
+        "assembly_variants",
+        "held_asset_material",
+        "fixed_asset_material",
+        "robot_material",
+        "reset_strategies",
+    )
+    assert static.sim.render_interval == 1
+    assert variant.sim.render_interval == variant.decimation
 
 
 def test_clone_strategy_only_emits_matching_pair_indices() -> None:
@@ -157,7 +183,7 @@ def test_clone_strategy_only_emits_matching_pair_indices() -> None:
 
 def test_four_world_plan_stages_complete_variant_bank() -> None:
     """Keep every variant source available without adding live worlds."""
-    scene = FactorySceneCfg(num_envs=4)
+    scene = FactoryVariantSceneCfg(num_envs=4)
     for asset in (scene.fixed_asset, scene.held_asset):
         asset.prim_path = cloner.expand_env_regex_ns(asset.prim_path, scene.clone_cfg.clone_template)
     plan = cloner.make_clone_plan(
@@ -249,9 +275,9 @@ def test_reset_partition_defaults_to_first_choice() -> None:
         "first": EventTermCfg(func=select_first, mode="reset"),
         "second": EventTermCfg(func=select_second, mode="reset"),
     }
-    cfg = EventTermCfg(func=TermChoice, mode="reset", params={"terms": terms})
+    cfg = EventTermCfg(func=PreparedTermChoice, mode="reset", params={"terms": terms})
     env = SimpleNamespace(num_envs=4, device="cpu")
-    choice = TermChoice(cfg, env)
+    choice = PreparedTermChoice(cfg, env)
     env_ids = torch.arange(4)
 
     choice(env, env_ids, terms)
@@ -356,6 +382,32 @@ def test_pose_observation_uses_one_offset_parameter_per_frame() -> None:
     assert "variant_context" not in parameters
     assert "target_variant_offset" not in parameters
     assert "root_variant_offset" not in parameters
+
+
+def test_pose_observation_supports_v1_static_offsets_without_variant_context() -> None:
+    """Keep the canonical observation usable by the static V1 composition."""
+    target_pose = wp.array([[[1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]]], dtype=wp.transformf, device="cpu")
+    root_pose = wp.array([[[0.2, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]]], dtype=wp.transformf, device="cpu")
+    env = SimpleNamespace(
+        num_envs=1,
+        device="cpu",
+        scene={
+            "target": SimpleNamespace(data=SimpleNamespace(body_link_pose_w=SimpleNamespace(warp=target_pose))),
+            "root": SimpleNamespace(data=SimpleNamespace(body_link_pose_w=SimpleNamespace(warp=root_pose))),
+        },
+    )
+    cfg = ObservationTermCfg(
+        func=target_asset_pose_in_root_asset_frame,
+        params={
+            "target_asset_cfg": SceneEntityCfg("target"),
+            "root_asset_cfg": SceneEntityCfg("root"),
+            "target_asset_offset": Offset(pos=(0.3, 0.0, 0.0)),
+            "root_asset_offset": Offset(pos=(0.1, 0.0, 0.0)),
+        },
+    )
+
+    output = target_asset_pose_in_root_asset_frame(cfg, env)(env, **cfg.params)
+    torch.testing.assert_close(output, torch.tensor([[1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]]))
 
 
 def test_policy_observes_scene_geometry_and_directed_mating_pose() -> None:
@@ -591,9 +643,10 @@ def test_articulation_mesh_queries_resolve_clone_sources(monkeypatch) -> None:
         resolved_paths.append(prim_path_pattern)
         raise ResolvedBody
 
-    for module in (factory_collision_analyzer, factory_observations):
-        monkeypatch.setattr(module, "resolve_matching_prims_from_source", resolve, raising=False)
-        monkeypatch.setattr(module, "RigidObjectHasher", stop_after_resolution)
+    monkeypatch.setattr(factory_collision_analyzer, "resolve_matching_prims_from_source", resolve)
+    monkeypatch.setattr(factory_collision_analyzer, "RigidObjectHasher", stop_after_resolution)
+    monkeypatch.setattr(factory_observations, "resolve_matching_prims_from_source", resolve)
+    monkeypatch.setattr(factory_rigid_object_hasher, "RigidObjectHasher", stop_after_resolution)
 
     asset = SimpleNamespace(
         body_names=["panda_link0"],
@@ -776,7 +829,7 @@ def test_settled_pose_bank_steps_only_during_bootstrap(monkeypatch) -> None:
         step_dt=0.04,
     )
     cfg = EventTermCfg(
-        func=factory_events.settle_held_asset,
+        func=factory_events.sample_settled_asset_pose,
         mode="reset",
         params={
             "held_asset_cfg": SceneEntityCfg("held_asset"),
@@ -798,7 +851,7 @@ def test_settled_pose_bank_steps_only_during_bootstrap(monkeypatch) -> None:
         held_asset.mesh_variant_ids.torch.copy_(original_variants)
 
     monkeypatch.setattr(factory_events.reset_state, "set_reset_state", restore)
-    term = factory_events.settle_held_asset(cfg, env)
+    term = factory_events.sample_settled_asset_pose(cfg, env)
     term(env, torch.tensor([0, 2]), **cfg.params)
 
     assert env.sim.steps == 2
@@ -819,18 +872,18 @@ def test_settled_pose_bank_steps_only_during_bootstrap(monkeypatch) -> None:
 
 def test_reset_table_tiles_the_label_asset_grid() -> None:
     """Keep enough production states to cover every reset-label and asset cell."""
-    reset_choice = ACCUMULATOR_RESET.params["reset_term"].params["terms"]["reset_strategies"]
+    reset_choice = VARIANT_ACCUMULATOR_RESET.params["reset_term"].params["terms"]["reset_strategies"]
     start_pick = reset_choice.params["terms"]["start_pick"]
     num_cells = len(reset_choice.params["terms"]) * len(ASSEMBLY_VARIANTS)
-    assert ACCUMULATOR_RESET.params["state_table_size"] >= num_cells
+    assert VARIANT_ACCUMULATOR_RESET.params["state_table_size"] >= num_cells
     assert set(reset_choice.params) == {"terms"}
-    assert "settling_term" not in ACCUMULATOR_RESET.params
-    assert start_pick.params["terms"]["reset_held_asset"].func is factory_events.settle_held_asset
+    assert "settling_term" not in VARIANT_ACCUMULATOR_RESET.params
+    assert start_pick.params["terms"]["reset_held_asset"].func is factory_events.sample_settled_asset_pose
     assert not {
         "state_tag_names_bind",
         "state_tag_indices_bind",
         "state_tag_weight_bind",
-    }.intersection(ACCUMULATOR_RESET.params)
+    }.intersection(VARIANT_ACCUMULATOR_RESET.params)
 
 
 def test_accumulator_starts_without_an_assigned_slot() -> None:
@@ -849,7 +902,7 @@ def test_accumulator_starts_without_an_assigned_slot() -> None:
         device="cpu",
         scene=SimpleNamespace(_articulations={}, _rigid_objects={}),
     )
-    accumulator = reset_accumulator(cfg, env)
+    accumulator = variant_reset_accumulator(cfg, env)
     assert torch.all(accumulator.sampled_slots == -1)
 
 
@@ -864,7 +917,7 @@ def test_accumulator_soft_balances_and_removes_precollection_terms(monkeypatch) 
             self.variant_ids.copy_(variant_ids)
 
     class Reset:
-        def __init__(self, choice: TermChoice):
+        def __init__(self, choice: PreparedTermChoice):
             self.terms = {"reset_strategies": SimpleNamespace(func=choice)}
             self.is_valid = torch.ones(1, dtype=torch.bool)
 
@@ -872,7 +925,7 @@ def test_accumulator_soft_balances_and_removes_precollection_terms(monkeypatch) 
             pass
 
     variants = Variants()
-    choice = TermChoice.__new__(TermChoice)
+    choice = PreparedTermChoice.__new__(PreparedTermChoice)
     choice.term_samples = torch.zeros(1, dtype=torch.long)
     choice._next_samples = torch.zeros(1, dtype=torch.long)
     choice.term_partitions = {"start_pick": SimpleNamespace()}
@@ -882,7 +935,7 @@ def test_accumulator_soft_balances_and_removes_precollection_terms(monkeypatch) 
         device="cpu",
         event_manager=SimpleNamespace(get_term_cfg=lambda name: SimpleNamespace(func=variants)),
     )
-    accumulator = reset_accumulator.__new__(reset_accumulator)
+    accumulator = variant_reset_accumulator.__new__(variant_reset_accumulator)
     accumulator._variant_context_name = "assembly_variants"
     accumulator._tag_term_name = "reset_strategies"
     accumulator._state_target_size = 3
@@ -911,16 +964,16 @@ def test_accumulator_soft_balances_and_removes_precollection_terms(monkeypatch) 
     torch.testing.assert_close(sampling_weights[0], torch.ones(2))
     assert 0.0 < sampling_weights[1][0] < sampling_weights[1][1]
     assert "reset_term" not in accumulator.cfg.params
-    assert inspect.signature(reset_accumulator.__call__).parameters["reset_term"].default is None
-    assert not hasattr(TermChoice, "release_temporary_state")
+    assert inspect.signature(variant_reset_accumulator.__call__).parameters["reset_term"].default is None
+    assert not hasattr(PreparedTermChoice, "release_temporary_state")
     assert not hasattr(ChainedResetTerms, "release_temporary_state")
-    assert not hasattr(factory_events.settle_held_asset, "release_temporary_state")
+    assert not hasattr(factory_events.sample_settled_asset_pose, "release_temporary_state")
     assert not accumulator.precollecting_phase
 
 
 def test_accumulator_reports_adaptive_cell_probabilities() -> None:
     """Report the effective curriculum distribution instead of flattening every grid cell."""
-    accumulator = reset_accumulator.__new__(reset_accumulator)
+    accumulator = variant_reset_accumulator.__new__(variant_reset_accumulator)
     accumulator.state_cell_indices = torch.arange(6).repeat_interleave(4)
     weights = torch.tensor([20.0, 1.0, 1.0, 1.0] * 6)
     weights[4:8] = 1.0
@@ -986,7 +1039,7 @@ def test_accumulator_reports_adaptive_cell_probabilities() -> None:
 
 def test_accumulator_success_grid_pools_outcomes_by_label_and_asset() -> None:
     """Compute each grid cell from the episodes actually measured in that cell."""
-    accumulator = reset_accumulator.__new__(reset_accumulator)
+    accumulator = variant_reset_accumulator.__new__(variant_reset_accumulator)
     accumulator.state_cell_indices = torch.tensor([0, 0, 1, 2, 3, 3])
     accumulator._num_cells = 4
     accumulator.cell_success_rate = torch.empty((2, 2))
@@ -1019,7 +1072,7 @@ def test_accumulator_success_monitor_tracks_every_state_slot() -> None:
             self.partition_size = partition_size
             self.success_rate = torch.zeros(num_partitions * partition_size, device=device)
 
-    accumulator = reset_accumulator.__new__(reset_accumulator)
+    accumulator = variant_reset_accumulator.__new__(variant_reset_accumulator)
     accumulator.precollecting_phase = False
     accumulator._requested_reset_assets = []
     accumulator.reset_assets = []
@@ -1036,11 +1089,11 @@ def test_accumulator_success_monitor_tracks_every_state_slot() -> None:
 
     assert accumulator.success_monitor.partition_size == 24
     assert accumulator.monitor_success_rate is accumulator.success_monitor.success_rate
-    assert "synchronize" not in reset_accumulator.__dict__
+    assert "synchronize" not in variant_reset_accumulator.__dict__
 
 
 def test_accumulator_exposes_only_the_requested_metric_schema() -> None:
     """Keep reset reporting to two grids and one scalar curve."""
-    source = inspect.getsource(reset_accumulator.__call__)
+    source = inspect.getsource(variant_reset_accumulator.__call__)
     metrics = set(re.findall(r"Metrics/[A-Za-z_/]+", source))
     assert metrics == {"Metrics/ResetSuccessRate", "Metrics/ResetProbs", "Metrics/success_rate"}

@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Runtime state for homogeneous Factory assembly variants."""
+"""Runtime state for reset-selectable assembly variants."""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ class AssemblyVariantContext(ManagerTermBase):
         super().__init__(cfg, env)
         names: tuple[str, ...] = cfg.params["variant_names"]
         if names != ASSEMBLY_VARIANT_NAMES:
-            raise ValueError("Factory v2 scene and assembly variant order differ.")
+            raise ValueError("Scene and assembly variant order differ.")
 
         self.variant_names = names
         self.fixed_asset: RigidObject = env.scene[cfg.params["fixed_asset_cfg"].name]

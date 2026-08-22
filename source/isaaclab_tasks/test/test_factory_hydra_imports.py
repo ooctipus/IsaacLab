@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Test that the Hydra-based resolve_task_config flow for factory_v1 tasks
+"""Test that the Hydra-based resolve_task_config flow for Factory tasks
 does not import forbidden backend modules before SimulationApp.
 
 This complements test_env_cfg_no_forbidden_imports.py (which tests
@@ -22,6 +22,7 @@ _FORBIDDEN_PREFIXES = ("pxr", "omni", "carb", "isaacsim", "scipy")
 
 _FACTORY_TASKS = [
     "IsaacContrib-Factory-Franka",
+    "IsaacContrib-Factory-V2-Franka",
 ]
 
 
