@@ -3,6 +3,8 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
+"""Reset terms for the homogeneous Factory scene."""
+
 from __future__ import annotations
 
 from collections.abc import Generator
@@ -29,7 +31,7 @@ if TYPE_CHECKING:
     from ..assembly_keypoints import Offset
 
 
-def reset_fixed_asset_uniform(
+def reset_variant_fixed_asset_uniform(
     env: ManagerBasedRLEnv,
     env_ids: torch.Tensor,
     pose_range: dict[str, tuple[float, float]],
@@ -40,7 +42,7 @@ def reset_fixed_asset_uniform(
     Samples ``pose_range`` about the pose the fixed asset would occupy on the board at its default
     placement, then writes it directly. Placing the fixed asset first (instead of deriving it from a
     yaw-randomized board) turns its distribution from a ring/donut into a filled uniform patch; the
-    board is seated under it afterward by :func:`reset_board_under_fixed_asset`.
+    board is seated under it afterward by :func:`reset_variant_board_under_fixed_asset`.
 
     Args:
         pose_range: Per-axis ``(min, max)`` sample ranges, keys ``x``/``y``/``z`` [m] and
@@ -68,13 +70,13 @@ def reset_fixed_asset_uniform(
     )
 
 
-def reset_board_under_fixed_asset(
+def reset_variant_board_under_fixed_asset(
     env: ManagerBasedRLEnv, env_ids: torch.Tensor, variant_context: str = "assembly_variants"
 ):
     """Seat the NIST board under the already-placed fixed asset.
 
     Inverse of the board-first placement: solves the board root so ``board ∘ keypoint`` matches the
-    fixed asset's current pose. Run after :func:`reset_fixed_asset_uniform`.
+    fixed asset's current pose. Run after :func:`reset_variant_fixed_asset_uniform`.
     """
     nistboard: RigidObject = env.scene["nistboard"]
     fixed_asset: Articulation | RigidObject = env.scene["fixed_asset"]
@@ -103,7 +105,7 @@ def _sweep_assembly_fraction(lo: float, hi: float, step: float = 0.001) -> Gener
         yield (frac, frac)
 
 
-def reset_held_asset_on_fixed_asset(
+def reset_variant_held_asset_on_fixed_asset(
     env: ManagerBasedRLEnv,
     env_ids: torch.Tensor,
     assembly_fraction_range: tuple[float, float],
@@ -163,7 +165,7 @@ def reset_held_asset_on_fixed_asset(
             env.sim.render()
 
 
-class settle_held_asset(ManagerTermBase):
+class sample_settled_asset_pose(ManagerTermBase):
     """Sample held-asset resting poses collected before reset-state generation."""
 
     def __init__(self, cfg: EventTermCfg, env: ManagerBasedRLEnv):
@@ -238,7 +240,7 @@ class settle_held_asset(ManagerTermBase):
         self._settled_poses = settled_poses.view(poses_per_variant, num_variants, 7).transpose(0, 1).contiguous()
 
 
-def reset_held_asset_in_gripper(
+def reset_variant_held_asset_in_gripper(
     env: ManagerBasedRLEnv,
     env_ids: torch.Tensor,
     holding_body_cfg: SceneEntityCfg,
@@ -277,7 +279,7 @@ def reset_held_asset_in_gripper(
     )  # type: ignore
 
 
-def grasp_held_asset(
+def grasp_variant_held_asset(
     env: ManagerBasedRLEnv,
     env_ids: torch.Tensor,
     robot_cfg: SceneEntityCfg,
@@ -298,11 +300,11 @@ def grasp_held_asset(
     robot.write_joint_position_to_sim(joint_pos, robot_cfg.joint_ids, env_ids)  # type: ignore
 
 
-class reset_end_effector_around_asset(ManagerTermBase):
+class reset_variant_end_effector_around_asset(ManagerTermBase):
     """Drive the gripper onto a sampled pose around an asset with a differential IK solve.
 
     Reports whether each solve actually landed on its target through :attr:`is_valid`, which
-    :class:`~isaaclab_tasks.contrib.nistv2.utils.ChainedResetTerms` collects and the reset
+    :class:`~isaaclab_tasks.contrib.nist.utils.ChainedResetTerms` collects and the reset
     accumulator uses to reject the state instead of banking a missed grasp.
     """
 

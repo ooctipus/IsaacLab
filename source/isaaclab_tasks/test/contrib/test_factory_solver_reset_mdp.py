@@ -12,6 +12,8 @@ import torch
 from isaaclab_newton.envs import mdp as newton_mdp
 from isaaclab_newton.envs.mdp import rewards as newton_rewards
 
+from isaaclab.utils.string import string_to_callable
+
 from isaaclab_tasks.contrib.nist import mdp
 from isaaclab_tasks.contrib.nist.factory_env_cfg import FactoryRewardsCfg, FactoryTerminationsCfg
 from isaaclab_tasks.utils.hydra import resolve_presets
@@ -37,14 +39,14 @@ def test_factory_cfg_wires_newton_solver_reset_and_reward_override():
     physx_terminations = resolve_presets(FactoryTerminationsCfg())
     physx_rewards = resolve_presets(FactoryRewardsCfg())
 
-    assert terminations.solver_reset_required.func is newton_mdp.solver_reset_required
+    assert string_to_callable(terminations.solver_reset_required.func) is newton_mdp.solver_reset_required
     assert physx_terminations.solver_reset_required is None
     assert not any(
         hasattr(terminations, name) for name in ("non_finite_robot", "non_finite_held_asset", "non_finite_fixed_asset")
     )
     assert rewards.joint_effort.func is mdp.joint_torques_l2
     assert rewards.early_termination.params["term_keys"] == "abnormal"
-    assert rewards.solver_reset_reward.func is newton_mdp.zero_reward_on_solver_reset
+    assert string_to_callable(rewards.solver_reset_reward.func) is newton_mdp.zero_reward_on_solver_reset
     assert rewards.solver_reset_reward.weight == 1.0
     assert list(vars(rewards))[-1] == "solver_reset_reward"
     assert physx_rewards.solver_reset_reward is None

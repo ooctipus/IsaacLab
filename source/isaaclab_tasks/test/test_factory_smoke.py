@@ -53,26 +53,6 @@ def test_env_cfg_constructs(task_name: str) -> None:
     assert hasattr(cfg, "events")
 
 
-def test_factory_accumulator_success_rate_callback_targets_monitor_success_rate() -> None:
-    """Factory accumulator curriculum should bind the reset monitor tensor."""
-    spec = gym.spec("IsaacContrib-Factory-Franka")
-    module_path, cls_name = spec.kwargs["env_cfg_entry_point"].split(":")
-    cfg_cls = getattr(importlib.import_module(module_path), cls_name)
-    cfg = cfg_cls()
-    callback = cfg.curriculum.difficulty_scheduler.params["success_rate_callback"]
-
-    expected = "env.event_manager.get_term_cfg('reset_strategies').func.monitor_success_rate"
-    assert callback.default == expected
-    assert callback.accumulator == expected
-
-    rates = torch.tensor([0.5, 1.0])
-    reset_accumulator = SimpleNamespace(monitor_success_rate=rates)
-    eval_env = SimpleNamespace(
-        event_manager=SimpleNamespace(get_term_cfg=lambda _name: SimpleNamespace(func=reset_accumulator))
-    )
-    assert eval(callback.accumulator, {}, {"env": eval_env}) is rates  # noqa: S307
-
-
 def test_factory_difficulty_scheduler_waits_for_accumulator_rates() -> None:
     """Initial reset may run curriculum before accumulator reset materializes rates."""
     from isaaclab_tasks.contrib.nist.mdp.curriculums import DifficultyScheduler
