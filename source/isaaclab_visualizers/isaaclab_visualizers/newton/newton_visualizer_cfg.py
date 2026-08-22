@@ -46,6 +46,15 @@ class NewtonVisualizerCfg(VisualizerCfg):
     update_frequency: int = 1
     """Visualizer update frequency (renders every N simulation frames)."""
 
+    camera_target_prim_path: str | None = None
+    """Prim path followed by the main camera, or ``None`` for a fixed world camera.
+
+    When set, :attr:`eye` and :attr:`lookat` are offsets [m] from the target prim.
+    """
+
+    camera_target_env_index: int = 0
+    """Environment index used to resolve :attr:`camera_target_prim_path`."""
+
     world_spacing: tuple[float, float, float] = (0.0, 0.0, 0.0)
     """Visual spacing between simulation worlds along each axis [m].
 
@@ -151,3 +160,12 @@ class NewtonRTXVisualizerCfg(NewtonVisualizerCfg):
     rtx_environment: str = "default"
     """OVRTX lighting environment.  One of ``"default"`` (dome + distant light),
     ``"studio"`` (three-point rig for cleaner highlights), or ``"none"``."""
+
+    rtx_default_light_rotation: tuple[float, float, float] | None = None
+    """XYZ rotation [deg] of the default RTX distant light, or ``None`` to use the viewer default."""
+
+    ground_color: tuple[float, float, float] | None = None
+    """Ground-plane color, or ``None`` to use the Newton RTX default."""
+
+    ground_roughness: float | None = None
+    """Ground-plane roughness, or ``None`` to use the Newton RTX default."""

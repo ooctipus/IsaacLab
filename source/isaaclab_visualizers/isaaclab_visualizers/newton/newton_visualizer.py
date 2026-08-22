@@ -147,7 +147,7 @@ class _MeshVariantRenderer:
 
     def __init__(
         self,
-        viewer: NewtonViewerGL,
+        viewer: NewtonViewerGL | NewtonViewerRTX,
         model: Model,
         render_sets: tuple[MeshVariantRenderSet, ...],
         selected_variants: tuple[wp.array(dtype=wp.int32), ...],
@@ -248,7 +248,7 @@ class _MeshVariantRenderer:
         self._groups = tuple(groups)
         self._first_frame = True
 
-    def render(self, viewer: NewtonViewerGL, body_q: wp.array(dtype=wp.transformf)) -> None:
+    def render(self, viewer: NewtonViewerGL | NewtonViewerRTX, body_q: wp.array(dtype=wp.transformf)) -> None:
         """Update and draw the selected variant for each visible world."""
         layer_visible = not viewer._layer_force_hidden()
         for group in self._groups:
@@ -335,6 +335,25 @@ class _NewtonViewerUIMixin:
     # contacts nor a ContactSensor exists in the scene, so the Show Contacts
     # checkbox can be greyed out in the UI.
     _contacts_available: bool = True
+
+    def set_mesh_variant_model_shapes(self, shape_indices: tuple[int, ...]) -> None:
+        """Hide model shapes rendered by the mesh-variant sidecar."""
+        self._mesh_variant_model_shapes = set(shape_indices)
+
+    def _populate_shapes(self) -> None:
+        variant_shapes = getattr(self, "_mesh_variant_model_shapes", ())
+        if not variant_shapes:
+            super()._populate_shapes()
+            return
+
+        model_flags = self.model.shape_flags
+        render_flags = model_flags.numpy().copy()
+        render_flags[list(variant_shapes)] = 0
+        self.model.shape_flags = wp.array(render_flags, dtype=wp.int32, device=model_flags.device)
+        try:
+            super()._populate_shapes()
+        finally:
+            self.model.shape_flags = model_flags
 
     def _register_isaaclab_ui_callbacks(self) -> None:
         """Register model-dependent Isaac Lab viewer controls."""
@@ -767,13 +786,25 @@ class NewtonViewerRTX(_NewtonViewerUIMixin, ViewerRTX):
         no existing Isaac Lab use case is affected by this constraint.
     """
 
-    def __init__(self, *args, metadata: dict | None = None, update_frequency: int = 1, **kwargs):
+    def __init__(
+        self,
+        *args,
+        metadata: dict | None = None,
+        update_frequency: int = 1,
+        default_light_rotation: tuple[float, float, float] | None = None,
+        ground_color: tuple[float, float, float] | None = None,
+        ground_roughness: float | None = None,
+        **kwargs,
+    ):
         """Initialize Newton RTX viewer wrapper state.
 
         Args:
             *args: Positional arguments forwarded to ``ViewerRTX``.
             metadata: Optional metadata shown in viewer panels.
             update_frequency: Viewer refresh cadence in simulation frames.
+            default_light_rotation: XYZ rotation [deg] of the default distant light.
+            ground_color: Ground-plane color override.
+            ground_roughness: Ground-plane roughness override.
             **kwargs: Keyword arguments forwarded to ``ViewerRTX``.
         """
         # Patch environment so OVRTX's CRenderApiLibLoader can find libovrtx.dylib.so.
@@ -800,7 +831,11 @@ class NewtonViewerRTX(_NewtonViewerUIMixin, ViewerRTX):
         self._reset_requested = False
         self._metadata = metadata or {}
         self._update_frequency = update_frequency
+        self._default_light_rotation = default_light_rotation
+        self._ground_color = ground_color
+        self._ground_roughness = ground_roughness
         self._color_edit3_prefers_sequence: bool | None = None
+        self._mesh_variant_model_shapes: set[int] = set()
 
         from isaaclab.utils.backend_utils import FactoryBase
 
@@ -813,6 +848,29 @@ class NewtonViewerRTX(_NewtonViewerUIMixin, ViewerRTX):
         # exist.  Register the training controls now (they are buffered by ViewerRTX until
         # the GUI is available); the panel patch is applied in _init_window() below.
         self.register_ui_callback(self._render_training_controls, position="side")
+
+    def _add_default_lights(self) -> None:
+        super()._add_default_lights()
+        if self._default_light_rotation is None:
+            return
+
+        from pxr import Gf, UsdGeom
+
+        light = UsdGeom.Xform(self.stage.GetPrimAtPath("/root/_RTXDistantLight"))
+        light.GetOrderedXformOps()[0].Set(Gf.Vec3f(*self._default_light_rotation))
+
+    def _apply_ground_material(self) -> None:
+        super()._apply_ground_material()
+        if self._ground_color is None and self._ground_roughness is None:
+            return
+
+        from pxr import Gf, UsdShade
+
+        surface = UsdShade.Shader(self.stage.GetPrimAtPath("/root/Materials/mat_ground/PreviewSurface"))
+        if self._ground_color is not None:
+            surface.GetInput("diffuseColor").Set(Gf.Vec3f(*self._ground_color))
+        if self._ground_roughness is not None:
+            surface.GetInput("roughness").Set(self._ground_roughness)
 
     def get_frame(self) -> np.ndarray:
         """Return the latest OVRTX LDR framebuffer as contiguous RGB pixels."""
@@ -885,24 +943,6 @@ class NewtonViewerGL(_NewtonViewerUIMixin, ViewerGL):
             self._patch_image_logger()
 
         self.register_ui_callback(self._render_training_controls, position="side")
-
-    def set_mesh_variant_model_shapes(self, shape_indices: tuple[int, ...]) -> None:
-        """Hide model instances whose geometry is rendered by the variant sidecar."""
-        self._mesh_variant_model_shapes = set(shape_indices)
-
-    def _populate_shapes(self) -> None:
-        if not self._mesh_variant_model_shapes:
-            super()._populate_shapes()
-            return
-
-        model_flags = self.model.shape_flags
-        render_flags = model_flags.numpy().copy()
-        render_flags[list(self._mesh_variant_model_shapes)] = 0
-        self.model.shape_flags = wp.array(render_flags, dtype=wp.int32, device=model_flags.device)
-        try:
-            super()._populate_shapes()
-        finally:
-            self.model.shape_flags = model_flags
 
     def _get_shape_isomesh(self, shape_idx: int) -> Mesh | None:
         if shape_idx in self._mesh_variant_model_shapes:
@@ -1226,7 +1266,7 @@ class NewtonVisualizer(BaseVisualizer):
 
         if self._viewer is not None:
             render_sets = NewtonManager._get_mesh_variant_render_sets()
-            if render_sets and isinstance(self._viewer, NewtonViewerGL):
+            if render_sets and isinstance(self._viewer, (NewtonViewerGL, NewtonViewerRTX)):
                 model_shapes = tuple(shape for render_set in render_sets for shape in render_set.model_shape_indices)
                 self._viewer.set_mesh_variant_model_shapes(model_shapes)
             else:
@@ -1356,9 +1396,7 @@ class NewtonVisualizer(BaseVisualizer):
                             self._viewer.log_contacts(contacts, self._state)
                         else:
                             self._log_scene_contact_sensor_arrows(num_envs)
-                        if self.cfg.enable_markers and not isinstance(self._viewer, NewtonViewerRTX):
-                            # ViewerRTX uses a USD stage whose prim paths are not set up
-                            # for the debug mesh overlays that markers require; skip for RTX.
+                        if self.cfg.enable_markers:
                             render_newton_visualization_markers(
                                 self._viewer, self._resolved_visible_env_ids, num_envs=num_envs
                             )
@@ -1516,7 +1554,20 @@ class NewtonVisualizer(BaseVisualizer):
         raise NotImplementedError
 
     def _pre_step(self) -> None:
-        """Per-frame hook called before the render block. No-op by default."""
+        """Update a configured follow camera before rendering."""
+        target_path = self.cfg.camera_target_prim_path
+        if target_path is None:
+            return
+        position = prim_world_positions(
+            self._scene_data_provider.get_usd_stage(),
+            target_path,
+            [self.cfg.camera_target_env_index],
+            scene=self._scene_data_provider.get_interactive_scene(),
+        )[0]
+        target = tuple(float(value) for value in position)
+        eye = tuple(target[i] + self.cfg.eye[i] for i in range(3))
+        lookat = tuple(target[i] + self.cfg.lookat[i] for i in range(3))
+        self._apply_camera_pose((eye, lookat))
 
     def render_rgb_array(self) -> np.ndarray | None:
         """Return the latest RGB frame as a uint8 array with shape ``(H, W, 3)``."""
@@ -2136,6 +2187,14 @@ class NewtonGLVisualizer(NewtonVisualizer):
             self._viewer.begin_frame(self._sim_time)
             try:
                 self._viewer.log_state(self._state)
+                if self._mesh_variant_renderer is not None:
+                    self._mesh_variant_renderer.render(self._viewer, self._state.body_q)
+                if self.cfg.enable_markers:
+                    render_newton_visualization_markers(
+                        self._viewer,
+                        self._resolved_visible_env_ids,
+                        num_envs=NewtonManager.get_num_envs(),
+                    )
             finally:
                 self._viewer.end_frame()
         return self._viewer.get_frame().numpy()
@@ -2325,6 +2384,9 @@ class NewtonRTXVisualizer(NewtonVisualizer):
             metadata=metadata,
             update_frequency=self.cfg.update_frequency,
             environment=self.cfg.rtx_environment,
+            default_light_rotation=self.cfg.rtx_default_light_rotation,
+            ground_color=self.cfg.ground_color,
+            ground_roughness=self.cfg.ground_roughness,
         )
 
     def _apply_camera_pose(
@@ -2354,6 +2416,7 @@ class NewtonRTXVisualizer(NewtonVisualizer):
             pass  # camera not yet created by ViewerRTX; retry next frame
 
     def _pre_step(self) -> None:
+        super()._pre_step()
         self._apply_rtx_fov_if_pending()
 
     def _pump_paused(self) -> None:
@@ -2395,6 +2458,14 @@ class NewtonRTXVisualizer(NewtonVisualizer):
             self._viewer.begin_frame(self._sim_time)
             try:
                 self._viewer.log_state(self._state)
+                if self._mesh_variant_renderer is not None:
+                    self._mesh_variant_renderer.render(self._viewer, self._state.body_q)
+                if self.cfg.enable_markers:
+                    render_newton_visualization_markers(
+                        self._viewer,
+                        self._resolved_visible_env_ids,
+                        num_envs=NewtonManager.get_num_envs(),
+                    )
             finally:
                 self._viewer.end_frame()
         return self._viewer.get_frame()

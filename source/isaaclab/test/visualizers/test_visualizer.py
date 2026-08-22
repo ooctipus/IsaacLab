@@ -170,6 +170,24 @@ def test_prim_world_positions_prefers_scene_articulation_state():
     assert torch.equal(positions, torch.tensor([[4.0, 5.0, 6.0], [1.0, 2.0, 3.0]]))
 
 
+def test_prim_world_positions_prefers_scene_rigid_object_state():
+    root_pos_w = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+    rigid_object = SimpleNamespace(
+        cfg=SimpleNamespace(prim_path="/World/envs/env_[^/]+/Object"),
+        body_names=["object"],
+        data=SimpleNamespace(
+            root_pos_w=SimpleNamespace(torch=root_pos_w),
+            body_pos_w=SimpleNamespace(torch=root_pos_w.unsqueeze(1)),
+        ),
+        find_bodies=lambda name, **_: ([0], [name]),
+    )
+    scene = SimpleNamespace(articulations={}, rigid_objects={"object": rigid_object})
+
+    positions = prim_world_positions(None, "/World/envs/*/Object", [1, 0], scene=scene)
+
+    assert torch.equal(positions, torch.tensor([[4.0, 5.0, 6.0], [1.0, 2.0, 3.0]]))
+
+
 def test_compute_visualized_env_ids_cap_only_returns_none():
     """Cap-only path: :meth:`_compute_visualized_env_ids` is ``None``.
 

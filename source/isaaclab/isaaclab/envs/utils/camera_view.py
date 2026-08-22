@@ -501,25 +501,25 @@ def _normalize_env0_path(path_template: str) -> str:
     return env_path_from_template(path_template, 0)
 
 
-def _scene_articulation_positions(scene: Any, prim_path_template: str, env_indices: list[int]) -> torch.Tensor | None:
-    """Resolve follow positions from scene articulation state when the path targets an asset/body."""
+def _scene_asset_positions(scene: Any, prim_path_template: str, env_indices: list[int]) -> torch.Tensor | None:
+    """Resolve follow positions from scene state when the path targets an asset or body."""
     follow_env0 = _normalize_env0_path(prim_path_template)
-    for asset in getattr(scene, "articulations", {}).values():
-        asset_path = _normalize_env0_path(getattr(asset.cfg, "prim_path", ""))
-        if not asset_path:
-            continue
-        if follow_env0 == asset_path:
-            return asset.data.root_pos_w.torch[env_indices].detach().cpu()
-        prefix = asset_path + "/"
-        if not follow_env0.startswith(prefix):
-            continue
-        body_name = follow_env0.removeprefix(prefix).split("/")[-1]
-        if body_name not in asset.body_names:
-            continue
-        body_ids, _ = asset.find_bodies(body_name)
-        if not body_ids:
-            continue
-        return asset.data.body_pos_w.torch[env_indices, int(body_ids[0])].detach().cpu()
+    for assets in (getattr(scene, "articulations", {}), getattr(scene, "rigid_objects", {})):
+        for asset in assets.values():
+            asset_path = _normalize_env0_path(getattr(asset.cfg, "prim_path", ""))
+            if not asset_path:
+                continue
+            if follow_env0 == asset_path:
+                return asset.data.root_pos_w.torch[env_indices].detach().cpu()
+            prefix = asset_path + "/"
+            if not follow_env0.startswith(prefix):
+                continue
+            body_name = follow_env0.removeprefix(prefix).split("/")[-1]
+            if body_name not in asset.body_names:
+                continue
+            body_ids, _ = asset.find_bodies(body_name)
+            if body_ids:
+                return asset.data.body_pos_w.torch[env_indices, int(body_ids[0])].detach().cpu()
     return None
 
 
@@ -528,11 +528,11 @@ def prim_world_positions(
 ) -> torch.Tensor:
     """Return world-space translations for concrete prim paths resolved from env ids.
 
-    Uses scene articulation state first when the target is an asset/body path,
+    Uses scene asset state first when the target is an asset/body path,
     then falls back to ``FrameView`` and USD for arbitrary prim paths.
     """
     if scene is not None:
-        positions_tensor = _scene_articulation_positions(scene, prim_path_template, env_indices)
+        positions_tensor = _scene_asset_positions(scene, prim_path_template, env_indices)
         if positions_tensor is not None:
             return positions_tensor
 

@@ -219,6 +219,8 @@ def test_newton_marker_registry_lifecycle(monkeypatch: pytest.MonkeyPatch):
         newton_markers.VisualizationMarkersCfg(prim_path="/Visuals/test", markers={}), visible=False
     )
     assert registry.groups == {marker.group_id: marker}
+    assert marker.group_id.startswith("/Visuals/test/marker_")
+    assert "::" not in marker.group_id
 
     # the context is torn down before markers close during interpreter shutdown
     _FakeSimulationContext.current = None
@@ -271,6 +273,30 @@ def test_newton_visualizer_set_camera_view_updates_active_viewer():
     assert viewer.camera.look_at_calls == [(0.0, 0.0, 1.0)]
     assert visualizer.cfg.eye == (1.0, 2.0, 3.0)
     assert visualizer.cfg.lookat == (0.0, 0.0, 1.0)
+
+
+def test_newton_visualizer_camera_follows_target_prim(monkeypatch):
+    visualizer = NewtonGLVisualizer(
+        NewtonGLVisualizerCfg(
+            eye=(0.5, 0.25, 0.1),
+            lookat=(0.0, 0.0, 0.05),
+            camera_target_prim_path="/World/envs/env_.*/Object",
+            camera_target_env_index=3,
+        )
+    )
+    visualizer._scene_data_provider = SimpleNamespace(
+        get_usd_stage=lambda: object(),
+        get_interactive_scene=lambda: object(),
+    )
+    visualizer._apply_camera_pose = Mock()
+    positions = Mock(return_value=torch.tensor([[1.0, 2.0, 3.0]]))
+    monkeypatch.setattr(newton_visualizer_module, "prim_world_positions", positions)
+
+    visualizer._pre_step()
+
+    positions.assert_called_once()
+    assert positions.call_args.args[1:3] == ("/World/envs/env_.*/Object", [3])
+    visualizer._apply_camera_pose.assert_called_once_with(((1.5, 2.25, 3.1), (1.0, 2.0, 3.05)))
 
 
 def test_newton_visualizer_auto_creates_streaming_camera_when_scene_camera_exists(monkeypatch):
@@ -649,6 +675,29 @@ def test_newton_visualizer_headless_renders_frame_on_demand(monkeypatch):
     assert viewer.logged_state is state
 
 
+def test_newton_rtx_visualizer_headless_renders_markers_on_demand(monkeypatch):
+    from isaaclab_newton.physics import NewtonManager
+
+    frame = np.zeros((4, 6, 3), dtype=np.uint8)
+    state = SimpleNamespace(body_q=_BodyQ())
+    viewer = _Viewer()
+    viewer.get_frame = lambda: frame
+    render_markers = Mock()
+    monkeypatch.setattr(NewtonManager, "get_num_envs", lambda: 1)
+    monkeypatch.setattr(newton_visualizer_module, "render_newton_visualization_markers", render_markers)
+
+    visualizer = NewtonRTXVisualizer(NewtonRTXVisualizerCfg(enable_markers=True))
+    visualizer._viewer = viewer
+    visualizer._runtime_headless = True
+    visualizer._state = state
+    visualizer._sim_time = 0.0
+    visualizer._resolved_visible_env_ids = [0]
+    visualizer._mesh_variant_renderer = None
+
+    assert visualizer.render_rgb_array() is frame
+    render_markers.assert_called_once_with(viewer, [0], num_envs=1)
+
+
 def test_newton_visualizer_contact_sensor_fallback_obeys_show_contacts(monkeypatch):
     from isaaclab_newton.physics import NewtonManager
 
@@ -713,6 +762,15 @@ def test_infer_newton_marker_cfg_missing_usd_falls_back_to_renderer_none():
     spec = _infer_newton_marker_cfg(UsdFileCfg("/nonexistent/missing.usd"))
 
     assert spec.renderer == "none"
+
+
+def test_infer_newton_marker_cfg_invisible_prototype_skips_rendering():
+    from isaaclab_visualizers.newton.newton_visualization_markers import _infer_newton_marker_cfg
+
+    cfg = UsdFileCfg("/assets/frame_prim.usd")
+    cfg.visible = False
+
+    assert _infer_newton_marker_cfg(cfg).renderer == "none"
 
 
 def test_infer_newton_marker_cfg_arrow_x_usd_still_maps_to_builtin_arrow():

@@ -58,7 +58,7 @@ class NewtonVisualizationMarkers:
 
     def __init__(self, cfg: VisualizationMarkersCfg, visible: bool = True):
         self.cfg = cfg
-        self.group_id = f"{cfg.prim_path}::{id(self)}"
+        self.group_id = f"{cfg.prim_path}/marker_{id(self)}"
         self.visible = visible
         self.translations: torch.Tensor | None = None
         self.orientations: torch.Tensor | None = None
@@ -164,6 +164,8 @@ class NewtonVisualizationMarkers:
         for proto_index, (name, marker_cfg) in enumerate(self.cfg.markers.items()):
             newton_cfg = self._marker_specs[name]
             batch_name = f"{self.group_id}/{name}"
+            if not getattr(marker_cfg, "visible", True):
+                continue
             if marker_indices is None:
                 if proto_index != 0:
                     self._hide_batch(viewer, name, newton_cfg)
@@ -265,6 +267,9 @@ class NewtonVisualizationMarkers:
 
 
 def _infer_newton_marker_cfg(marker_cfg: object) -> _NewtonMarkerSpec:
+    if not getattr(marker_cfg, "visible", True):
+        return _NewtonMarkerSpec(renderer="none")
+
     cfg_type = type(marker_cfg).__name__
 
     if cfg_type == "SphereCfg":
