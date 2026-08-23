@@ -19,7 +19,7 @@ prerelease-mode = "allow"
 overrides = [
     { name = "coverage", specifier = ">=7.6.1" },
     { name = "mujoco", specifier = "~=3.12.0" },
-    { name = "mujoco-warp", git = "https://github.com/ooctipus/mujoco_warp.git?rev=2c0eeecf918be0262943841d3fc7b775cc7800f4" },
+    { name = "mujoco-warp", git = "https://github.com/ooctipus/mujoco_warp.git?rev=ac258e2a4a8c5c554a140029f52812a01f5abb0c" },
     { name = "newton", extras = ["sim"], git = "https://github.com/ooctipus/newton.git?rev=1989a5177b17e050067c2c8432cd5848f702bb31" },
     { name = "newton-usd-schemas", specifier = ">=0.5.0" },
     { name = "numpy", specifier = ">=2" },
@@ -3300,7 +3300,7 @@ wheels = [
 [[package]]
 name = "mujoco-warp"
 version = "3.12.0"
-source = { git = "https://github.com/ooctipus/mujoco_warp.git?rev=2c0eeecf918be0262943841d3fc7b775cc7800f4#2c0eeecf918be0262943841d3fc7b775cc7800f4" }
+source = { git = "https://github.com/ooctipus/mujoco_warp.git?rev=ac258e2a4a8c5c554a140029f52812a01f5abb0c#ac258e2a4a8c5c554a140029f52812a01f5abb0c" }
 dependencies = [
     { name = "absl-py", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
     { name = "etils", extra = ["epath"], marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
