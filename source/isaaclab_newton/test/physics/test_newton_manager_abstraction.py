@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from inspect import signature
 from types import SimpleNamespace
+from unittest import mock
 
 import isaaclab_newton.physics.newton_manager as newton_manager_module
 import numpy as np
@@ -34,6 +35,7 @@ import pytest
 import warp as wp
 from isaaclab_newton.assets.articulation import articulation as articulation_module
 from isaaclab_newton.physics import (
+    FeatherPGSSolverCfg,
     FeatherstoneSolverCfg,
     KaminoDVICfg,
     KaminoDVISolverCfg,
@@ -44,6 +46,7 @@ from isaaclab_newton.physics import (
     MPMSolverCfg,
     NewtonCfg,
     NewtonCollisionPipelineCfg,
+    NewtonFeatherPGSManager,
     NewtonFeatherstoneManager,
     NewtonKaminoManager,
     NewtonManager,
@@ -58,7 +61,15 @@ from isaaclab_newton.physics import (
 )
 from isaaclab_newton.physics.mpm_manager import _make_solver_config
 from newton import JointTargetMode, JointType, ModelBuilder, ShapeFlags
-from newton.solvers import SolverFeatherstone, SolverImplicitMPM, SolverKamino, SolverMuJoCo, SolverVBD, SolverXPBD
+from newton.solvers import (
+    SolverFeatherPGS,
+    SolverFeatherstone,
+    SolverImplicitMPM,
+    SolverKamino,
+    SolverMuJoCo,
+    SolverVBD,
+    SolverXPBD,
+)
 
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.physics import PhysicsManager
@@ -112,6 +123,14 @@ SOLVER_MATRIX = [
         id="featherstone",
     ),
     pytest.param(
+        lambda: FeatherPGSSolverCfg(),
+        NewtonFeatherPGSManager,
+        SolverFeatherPGS,
+        False,
+        True,
+        id="feather_pgs",
+    ),
+    pytest.param(
         lambda: KaminoPADMMSolverCfg(use_collision_detector=True),
         NewtonKaminoManager,
         SolverKamino,
@@ -142,6 +161,7 @@ RIGID_BODY_FORCE_INPUT_SUPPORT = {
     NewtonVBDManager: True,
     NewtonXPBDManager: True,
     NewtonFeatherstoneManager: True,
+    NewtonFeatherPGSManager: True,
     NewtonKaminoManager: True,
     NewtonMPMManager: False,
 }
@@ -591,11 +611,28 @@ def test_mpm_register_builder_attributes_is_idempotent():
     assert builder.has_custom_attribute("mpm:young_modulus")
 
 
+def test_feather_pgs_register_builder_attributes_is_idempotent():
+    """The FeatherPGS manager owns registration without duplicating attributes."""
+    builder = mock.Mock()
+    builder.has_custom_attribute.side_effect = [False, True]
+
+    with mock.patch.object(SolverFeatherPGS, "register_custom_attributes") as register:
+        NewtonFeatherPGSManager._register_builder_attributes(builder)
+        NewtonFeatherPGSManager._register_builder_attributes(builder)
+
+    register.assert_called_once_with(builder)
+
+
 @pytest.mark.parametrize(
     ("manager", "active", "inactive"),
     [
         (NewtonMJWarpManager, "mujoco:condim", ("kamino:max_solver_iterations", "mpm:young_modulus")),
         (NewtonKaminoManager, "kamino:max_solver_iterations", ("mujoco:condim", "mpm:young_modulus")),
+        (
+            NewtonFeatherPGSManager,
+            "rigid_body_max_linear_velocity",
+            ("mujoco:condim", "kamino:max_solver_iterations", "mpm:young_modulus"),
+        ),
     ],
 )
 def test_rigid_solver_registers_only_its_builder_attributes(manager, active, inactive):
@@ -1025,6 +1062,7 @@ def test_forward_dispatches_active_mpm_reset_hook_through_base_manager(monkeypat
         NewtonXPBDManager,
         NewtonVBDManager,
         NewtonFeatherstoneManager,
+        NewtonFeatherPGSManager,
         NewtonKaminoManager,
         NewtonMPMManager,
     ],
@@ -1051,6 +1089,7 @@ def test_clear_resets_rigid_body_force_capability(monkeypatch):
         NewtonXPBDManager,
         NewtonVBDManager,
         NewtonFeatherstoneManager,
+        NewtonFeatherPGSManager,
         NewtonKaminoManager,
         NewtonMPMManager,
     ):
@@ -1158,6 +1197,7 @@ def test_abstract_create_solver_raises():
         NewtonXPBDManager,
         NewtonVBDManager,
         NewtonFeatherstoneManager,
+        NewtonFeatherPGSManager,
         NewtonKaminoManager,
         NewtonMPMManager,
     ],

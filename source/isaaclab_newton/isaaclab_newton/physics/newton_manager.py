@@ -385,6 +385,7 @@ class NewtonManager(PhysicsManager):
     _builder: ModelBuilder = None
     _model: Model = None
     _solver: SolverBase | None = None
+    _solver_update_contacts_accepts_state: bool = True
     _use_single_state: bool | None = None
     """Use only one state for both input and output for solver stepping. Requires solver support."""
     _state_0: State = None
@@ -1072,6 +1073,7 @@ class NewtonManager(PhysicsManager):
         NewtonManager._builder = None
         NewtonManager._model = None
         NewtonManager._solver = None
+        NewtonManager._solver_update_contacts_accepts_state = True
         NewtonManager._use_single_state = None
         NewtonManager._supports_rigid_body_force_input = False
         NewtonManager._state_0 = None
@@ -1612,6 +1614,20 @@ class NewtonManager(PhysicsManager):
             cls.sync_transforms_to_usd()
             cls.sync_cables_to_usd()
             cls.sync_particles_to_usd()
+
+    @staticmethod
+    def _solver_accepts_update_contacts_state(solver: SolverBase) -> bool:
+        """Return whether ``solver.update_contacts`` accepts the simulation state argument.
+
+        FeatherPGS takes ``(contacts)`` while MuJoCo takes ``(contacts, state=None)``.
+        """
+        try:
+            parameters = list(inspect.signature(solver.update_contacts).parameters.values())
+        except (TypeError, ValueError):
+            return True
+        if any(parameter.kind == inspect.Parameter.VAR_POSITIONAL for parameter in parameters):
+            return True
+        return len(parameters) >= 2
 
     @staticmethod
     def _initialize_fabric_body_prims(stage, fabric_hierarchy, usdrt, body_bindings: Sequence[tuple[str, int]]) -> None:
@@ -2191,6 +2207,9 @@ class NewtonManager(PhysicsManager):
                     "NewtonManager._use_single_state, NewtonManager._needs_collision_pipeline, and "
                     "NewtonManager._supports_rigid_body_force_input."
                 )
+            NewtonManager._solver_update_contacts_accepts_state = cls._solver_accepts_update_contacts_state(
+                NewtonManager._solver
+            )
             cls._initialize_contacts()
 
         # Picking callbacks must be registered after the concrete solver has
@@ -2457,7 +2476,10 @@ class NewtonManager(PhysicsManager):
                 sensor.update(cls._state_0)
         if cls._report_contacts:
             eval_contacts = contacts if contacts is not None else cls._contacts
-            cls._solver.update_contacts(eval_contacts, cls._state_0)
+            if NewtonManager._solver_update_contacts_accepts_state:
+                cls._solver.update_contacts(eval_contacts, cls._state_0)
+            else:
+                cls._solver.update_contacts(eval_contacts)
             for sensor in cls._newton_contact_sensors.values():
                 sensor.update(cls._state_0, eval_contacts)
 

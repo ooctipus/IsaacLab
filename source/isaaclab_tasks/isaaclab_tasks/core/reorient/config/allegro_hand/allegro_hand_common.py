@@ -9,7 +9,7 @@ Asset and marker configurations, joint/body name lists, backend physics
 presets, and the sim mixin. No task tunables.
 """
 
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
+from isaaclab_newton.physics import FeatherPGSSolverCfg, MJWarpSolverCfg, NewtonCfg
 from isaaclab_ov.physics import OvPhysxCfg
 from isaaclab_physx.physics import PhysxCfg
 
@@ -65,6 +65,21 @@ class PhysicsCfg(PresetCfg):
             update_data_interval=2,
         ),
         num_substeps=2,
+    )
+    feather_pgs = NewtonCfg(
+        solver_cfg=FeatherPGSSolverCfg(
+            enable_joint_limits=True,
+            enable_joint_velocity_limits=True,
+            pgs_iterations=16,
+            pgs_beta=0.02,
+            pgs_cfm=1.0e-5,
+            dense_max_constraints=64,
+            pgs_mode="matrix_free",
+            mf_max_constraints=512,
+        ),
+        num_substeps=12,
+        debug_mode=False,
+        use_cuda_graph=False,
     )
     ovphysx = OvPhysxCfg()
     physx = PhysxAutoCfg(isaacsim_physx=isaacsim_physx, ovphysx=ovphysx)

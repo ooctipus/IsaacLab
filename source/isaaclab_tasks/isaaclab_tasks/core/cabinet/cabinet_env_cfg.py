@@ -6,7 +6,7 @@
 
 from dataclasses import MISSING
 
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
+from isaaclab_newton.physics import FeatherPGSSolverCfg, MJWarpSolverCfg, NewtonCfg
 from isaaclab_ov.physics import OvPhysxCfg
 from isaaclab_physx.physics import PhysxCfg
 
@@ -118,6 +118,32 @@ class CabinetSimCfg(PresetCfg):
             debug_mode=False,
         ),
     )
+    feather_pgs: SimulationCfg = SimulationCfg(
+        dt=1 / 60,
+        render_interval=1,
+        physics=NewtonCfg(
+            solver_cfg=FeatherPGSSolverCfg(
+                pgs_mode="matrix_free",
+                update_mass_matrix_interval=1,
+                enable_joint_limits=True,
+                joint_limit_activation_gap=float("inf"),
+                pgs_iterations=8,
+                pgs_velocity_iterations=0,
+                dense_max_constraints=256,
+                mf_max_constraints=32,
+                hinv_jt_kernel="par_row",
+                pgs_warmstart=False,
+                pgs_omega=1.0,
+                pgs_beta=0.05,
+                pgs_cfm=1.0e-6,
+                serial_kernel_block_dim=64,
+                row_watermark=False,
+            ),
+            num_substeps=1,
+            debug_mode=False,
+            use_cuda_graph=True,
+        ),
+    )
     default: SimulationCfg = newton_mjwarp
 
 
@@ -133,6 +159,7 @@ class CabinetDecimationCfg(PresetCfg):
     ovphysx: int = isaacsim_physx
     physx: int = isaacsim_physx
     newton_mjwarp: int = 10
+    feather_pgs: int = 1
     default: int = newton_mjwarp
 
 

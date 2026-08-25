@@ -10,7 +10,7 @@ domain-randomization presets, and the sim mixins. No task tunables: reward
 scales and thresholds live inline in the workflow configuration files.
 """
 
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
+from isaaclab_newton.physics import FeatherPGSSolverCfg, MJWarpSolverCfg, NewtonCfg
 from isaaclab_ov.physics import OvPhysxCfg
 from isaaclab_physx.physics import PhysxCfg
 
@@ -229,6 +229,21 @@ class PhysicsCfg(PresetCfg):
             update_data_interval=2,
         ),
         num_substeps=2,
+    )
+    feather_pgs = NewtonCfg(
+        solver_cfg=FeatherPGSSolverCfg(
+            enable_joint_limits=True,
+            enable_joint_velocity_limits=True,
+            pgs_iterations=24,
+            pgs_beta=0.005,
+            pgs_cfm=5.0e-5,
+            pgs_omega=1.0,
+            pgs_mode="matrix_free",
+            mf_max_constraints=512,
+        ),
+        num_substeps=12,
+        debug_mode=False,
+        use_cuda_graph=False,
     )
     ovphysx = OvPhysxCfg()
     physx = PhysxAutoCfg(isaacsim_physx=isaacsim_physx, ovphysx=ovphysx)

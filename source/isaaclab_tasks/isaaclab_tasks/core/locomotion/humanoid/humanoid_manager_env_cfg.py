@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
+from isaaclab_newton.physics import FeatherPGSSolverCfg, MJWarpSolverCfg, NewtonCfg
 from isaaclab_ov.physics import OvPhysxCfg
 from isaaclab_physx.physics import PhysxCfg
 
@@ -60,6 +60,21 @@ class HumanoidPhysicsCfg(PresetCfg):
         ),
         num_substeps=2,
         debug_mode=False,
+    )
+    feather_pgs: NewtonCfg = NewtonCfg(
+        solver_cfg=FeatherPGSSolverCfg(
+            angular_damping=5.0,
+            enable_joint_limits=True,
+            pgs_iterations=24,
+            pgs_beta=0.002,
+            pgs_cfm=1.0e-4,
+            pgs_omega=0.5,
+            dense_max_constraints=64,
+            mf_max_constraints=512,
+        ),
+        num_substeps=1,
+        debug_mode=False,
+        use_cuda_graph=False,
     )
     default: NewtonCfg = newton_mjwarp
 
