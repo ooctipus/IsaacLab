@@ -31,7 +31,7 @@ from newton.selection import ArticulationView
 
 from .kernels import (
     build_implicit_dof_mask,
-    build_per_dof_env_mask_kernel,
+    gather_world_mask_kernel,
     set_mask_kernel,
     zero_at_indices_kernel,
 )
@@ -67,7 +67,13 @@ class NewtonActuatorAdapter:
         """Torch tensor owning the memory :attr:`implicit_dof_mask` aliases; keep referenced for the mask's lifetime."""
 
         computed_effort_view: wp.array
-        """This articulation's slice of the adapter's pre-clamp computed-effort buffer, ``(num_envs, num_joints)``."""
+        """Dense pre-clamp effort for this articulation, shape ``(num_instances, num_joints)``."""
+
+        computed_effort_src: wp.array | None
+        """Flat source buffer when :attr:`computed_effort_view` requires a gather, otherwise ``None``."""
+
+        computed_effort_gather_map: wp.array | None
+        """Absolute flat DOF indices for the gather path, otherwise ``None``."""
 
     def __init__(
         self,
@@ -77,12 +83,12 @@ class NewtonActuatorAdapter:
         dof_offset: int,
         device: str,
     ):
-        self.actuators = actuators
-        self.num_joints = num_joints
-
-        self._num_envs = num_envs
-        self._dof_offset = dof_offset
-        self._device = device
+        dof_world_id = wp.array(
+            np.repeat(np.arange(num_envs, dtype=np.int32), num_joints), dtype=wp.int32, device=device
+        )
+        self._initialize_flat(actuators, num_envs, device, num_envs * num_joints, dof_world_id)
+        self.num_joints: int | None = num_joints
+        self.computed_effort_2d = self._computed_effort.reshape((num_envs, num_joints))
 
         # Collect the set of local DOFs covered by some actuator. Only the
         # env-0 slice of each actuator's flat ``indices`` array is needed —
@@ -101,23 +107,77 @@ class NewtonActuatorAdapter:
         else:
             self.joint_indices = torch.tensor(sorted(managed), dtype=torch.int32, device=device)
 
-        self._states_a = [act.state() for act in actuators]
-        self._states_b = [act.state() for act in actuators]
+    @classmethod
+    def _from_flat(
+        cls,
+        actuators: list[Actuator],
+        world_count: int,
+        device: str,
+        *,
+        dof_count: int,
+        dof_world_id: wp.array,
+    ) -> NewtonActuatorAdapter:
+        """Create the internal Newton adapter from a model-global flat DOF layout."""
+        adapter = cls.__new__(cls)
+        adapter._initialize_flat(actuators, world_count, device, dof_count, dof_world_id)
+        adapter.num_joints = None
+        return adapter
 
-        # Pre-clamp computed effort buffer. Each Newton actuator scatter-adds
-        # its raw controller output to ``sim_control.joint_computed_f`` when
-        # ``control_computed_output_attr`` is set; we route that to this
-        # buffer so the post-actuator telemetry kernel can report the actual
-        # computed (pre-clamp) effort instead of mirroring ``joint_f``. The
-        # binding onto ``sim_control`` happens in :meth:`finalize`.
-        self._computed_effort = wp.zeros(
-            num_envs * num_joints,
-            dtype=wp.float32,
-            device=device,
-        )
-        self.computed_effort_2d = self._computed_effort.reshape((num_envs, num_joints))
-        for act in actuators:
-            act.control_computed_output_attr = "joint_computed_f"
+    def _initialize_flat(
+        self,
+        actuators: list[Actuator],
+        world_count: int,
+        device: str,
+        dof_count: int,
+        dof_world_id: wp.array,
+    ) -> None:
+        """Initialize shared state from an absolute DOF-to-world map."""
+        if not isinstance(dof_world_id, wp.array) or dof_world_id.dtype != wp.int32:
+            raise TypeError("dof_world_id must be a Warp array with dtype int32.")
+        if dof_world_id.shape != (dof_count,):
+            raise ValueError(f"dof_world_id must have shape ({dof_count},), got {dof_world_id.shape}.")
+        if dof_world_id.device != wp.get_device(device):
+            raise ValueError(f"dof_world_id must be on {device}, got {dof_world_id.device}.")
+        world_ids = dof_world_id.numpy()
+        invalid_world_ids = world_ids[(world_ids < -1) | (world_ids >= world_count)]
+        if invalid_world_ids.size:
+            raise ValueError(
+                f"dof_world_id entries must be -1 or in [0, {world_count});"
+                f" got {np.unique(invalid_world_ids)[:8].tolist()}."
+            )
+
+        if actuators:
+            all_indices = np.concatenate([actuator.indices.numpy() for actuator in actuators])
+            invalid_indices = all_indices[all_indices >= dof_count]
+            if invalid_indices.size:
+                raise ValueError(
+                    f"Newton actuator DOF indices must be in [0, {dof_count});"
+                    f" got {np.unique(invalid_indices)[:8].tolist()}."
+                )
+            duplicate_indices = np.flatnonzero(np.bincount(all_indices, minlength=dof_count) > 1)
+            if duplicate_indices.size:
+                raise ValueError(
+                    f"DOFs {duplicate_indices[:8].tolist()} are claimed by more than one actuator;"
+                    " every actuated DOF must have exactly one writer."
+                )
+
+        self.actuators = actuators
+        self._world_count = world_count
+        self._dof_count = dof_count
+        self._dof_world_id = dof_world_id
+        self._device = device
+        self._states_a = [actuator.state() for actuator in actuators]
+        self._states_b = [actuator.state() for actuator in actuators]
+        self._torch_controller_state = [
+            self._uses_torch_controller_state(getattr(state, "controller_state", None)) for state in self._states_a
+        ]
+        self._reset_world_mask = wp.zeros(world_count, dtype=wp.bool, device=device)
+        self._reset_dof_masks = [
+            wp.zeros(actuator.indices.shape[0], dtype=wp.bool, device=device) for actuator in actuators
+        ]
+        self._computed_effort = wp.zeros(dof_count, dtype=wp.float32, device=device)
+        for actuator in actuators:
+            actuator.control_computed_output_attr = "joint_computed_f"
 
     def finalize(self, sim_control: Any) -> None:
         """Bind the pre-clamp computed-effort buffer onto ``sim_control``.
@@ -153,7 +213,17 @@ class NewtonActuatorAdapter:
                 dim=act.indices.shape[0],
                 inputs=[sim_control.joint_f, act.indices],
             )
-        for act, sa, sb in zip(self.actuators, self._states_a, self._states_b):
+        for act, sa, sb, per_dof_mask, uses_torch_state in zip(
+            self.actuators,
+            self._states_a,
+            self._states_b,
+            self._reset_dof_masks,
+            self._torch_controller_state,
+        ):
+            if uses_torch_state:
+                self._reset_torch_controller_state(sa, per_dof_mask)
+                self._reset_torch_controller_state(sb, per_dof_mask)
+                per_dof_mask.zero_()
             act.step(sim_state, sim_control, sa, sb, dt=dt)
         self._swap_state_buffers()
 
@@ -170,44 +240,102 @@ class NewtonActuatorAdapter:
                 resets all environments. Otherwise expects a torch tensor
                 or sequence of int indices.
 
-        Newton's :meth:`Actuator.State.reset` expects a per-DOF boolean
-        mask of length ``num_actuators`` (= ``num_envs * dofs_per_actuator``),
-        not a per-env mask — each entry gates the corresponding column of
-        the actuator's state buffers (delay queue, controller integral,
-        etc.). We therefore build a per-actuator per-DOF mask from the
-        env mask before delegating to each state.
+        Newton's :meth:`Actuator.State.reset` expects one Boolean per actuator
+        index. The adapter projects model-world selection through its absolute
+        DOF-to-world map, so no uniform environment stride is required.
         """
         if env_ids is None or env_ids == slice(None):
-            for sa, sb in zip(self._states_a, self._states_b):
+            for sa, sb, per_dof_mask in zip(self._states_a, self._states_b, self._reset_dof_masks):
                 if sa is not None:
                     sa.reset(None)
                 if sb is not None:
                     sb.reset(None)
+                per_dof_mask.zero_()
             return
 
         if isinstance(env_ids, torch.Tensor):
             if env_ids.numel() == 0:
                 return
-            idx = wp.from_torch(env_ids.to(device=self._device).contiguous().to(torch.int32), dtype=wp.int32)
+            env_ids_torch = env_ids.to(device=self._device, dtype=torch.int32).contiguous()
         else:
             if len(env_ids) == 0:
                 return
-            idx = wp.array(list(env_ids), dtype=wp.int32, device=self._device)
-        env_mask = wp.zeros(self._num_envs, dtype=wp.bool, device=self._device)
-        wp.launch(set_mask_kernel, dim=idx.shape[0], inputs=[env_mask, idx], device=self._device)
+            env_ids_torch = torch.tensor(list(env_ids), dtype=torch.int32, device=self._device)
+        if bool(torch.any((env_ids_torch < 0) | (env_ids_torch >= self._world_count))):
+            raise IndexError(f"World indices must be in [0, {self._world_count}).")
+        idx = wp.from_torch(env_ids_torch, dtype=wp.int32)
+        self._reset_world_mask.zero_()
+        wp.launch(
+            set_mask_kernel,
+            dim=idx.shape[0],
+            inputs=[self._reset_world_mask, idx],
+            device=self._device,
+        )
+        self._reset_worlds(self._reset_world_mask)
+        for sa, sb, per_dof_mask, uses_torch_state in zip(
+            self._states_a,
+            self._states_b,
+            self._reset_dof_masks,
+            self._torch_controller_state,
+        ):
+            if uses_torch_state:
+                self._reset_torch_controller_state(sa, per_dof_mask)
+                self._reset_torch_controller_state(sb, per_dof_mask)
+                per_dof_mask.zero_()
 
-        for act, sa, sb in zip(self.actuators, self._states_a, self._states_b):
-            per_dof_mask = wp.zeros(act.indices.shape[0], dtype=wp.bool, device=self._device)
+    def _reset_worlds(self, world_mask: wp.array) -> None:
+        """Reset graph-safe actuator state from a fixed-shape model-world mask."""
+        if not isinstance(world_mask, wp.array) or world_mask.dtype != wp.bool:
+            raise TypeError("world_mask must be a Warp array with dtype bool.")
+        if world_mask.shape != (self._world_count,):
+            raise ValueError(f"world_mask must have shape ({self._world_count},), got {world_mask.shape}.")
+        if world_mask.device != wp.get_device(self._device):
+            raise ValueError(f"world_mask must be on {self._device}, got {world_mask.device}.")
+
+        for actuator, state_a, state_b, per_dof_mask, uses_torch_state in zip(
+            self.actuators,
+            self._states_a,
+            self._states_b,
+            self._reset_dof_masks,
+            self._torch_controller_state,
+        ):
             wp.launch(
-                build_per_dof_env_mask_kernel,
-                dim=act.indices.shape[0],
-                inputs=[act.indices, env_mask, self._dof_offset, self.num_joints, per_dof_mask],
+                gather_world_mask_kernel,
+                dim=actuator.indices.shape[0],
+                inputs=[actuator.indices, world_mask, self._dof_world_id, per_dof_mask],
                 device=self._device,
             )
-            if sa is not None:
-                sa.reset(per_dof_mask)
-            if sb is not None:
-                sb.reset(per_dof_mask)
+            self._reset_graphable_state(state_a, per_dof_mask, uses_torch_state)
+            self._reset_graphable_state(state_b, per_dof_mask, uses_torch_state)
+
+    @staticmethod
+    def _uses_torch_controller_state(controller_state: Any | None) -> bool:
+        """Return whether a controller state contains Torch-owned buffers."""
+        return controller_state is not None and any(
+            type(value).__module__.startswith("torch") for value in vars(controller_state).values() if value is not None
+        )
+
+    @staticmethod
+    def _reset_graphable_state(state: Any | None, mask: wp.array, uses_torch_state: bool) -> None:
+        """Reset state components that are safe inside a Warp graph."""
+        if state is None:
+            return
+        delay_state = getattr(state, "delay_state", None)
+        controller_state = getattr(state, "controller_state", None)
+        if delay_state is not None:
+            delay_state.reset(mask)
+        if controller_state is not None and not uses_torch_state:
+            controller_state.reset(mask)
+        if not hasattr(state, "delay_state") and not hasattr(state, "controller_state"):
+            state.reset(mask)
+
+    @staticmethod
+    def _reset_torch_controller_state(state: Any | None, mask: wp.array) -> None:
+        """Reset a Torch-owned controller at an eager execution boundary."""
+        controller_state = getattr(state, "controller_state", None)
+        if controller_state is not None:
+            with torch.inference_mode():
+                controller_state.reset(mask)
 
     def bind_articulation(
         self,
@@ -235,14 +363,63 @@ class NewtonActuatorAdapter:
         Returns:
             The bundled :class:`ArticulationBinding` for this articulation.
         """
+        if self.num_joints is None:
+            raise ValueError("Homogeneous binding is unavailable for a model-global heterogeneous adapter.")
+        dof_index_map = (
+            torch.arange(self._world_count, device=self._device, dtype=torch.long)[:, None] * self.num_joints
+            + dof_offset
+            + torch.arange(num_joints, device=self._device, dtype=torch.long)[None, :]
+        )
+        return self._bind_articulation_flat(
+            implicit_joint_indices=implicit_joint_indices,
+            dof_index_map=dof_index_map,
+        )
+
+    def _bind_articulation_flat(
+        self,
+        *,
+        implicit_joint_indices: Sequence[slice | torch.Tensor | None],
+        dof_index_map: torch.Tensor,
+    ) -> ArticulationBinding:
+        """Bind one articulation through explicit model-global DOF indices."""
+        if dof_index_map.ndim != 2:
+            raise ValueError(f"dof_index_map must be two-dimensional, got shape {tuple(dof_index_map.shape)}.")
+        dof_map = dof_index_map.to(device=self._device, dtype=torch.long).contiguous()
+        if bool(torch.any((dof_map < 0) | (dof_map >= self._dof_count))):
+            raise IndexError(f"dof_index_map entries must be in [0, {self._dof_count}).")
+        num_instances, num_joints = dof_map.shape
         implicit_dof_mask, implicit_dof_mask_owner = build_implicit_dof_mask(
             implicit_joint_indices, num_joints, self._device
         )
-        computed_effort_view = self.computed_effort_2d[:, dof_offset : dof_offset + num_joints]
+
+        contiguous_columns = num_joints == 0 or bool(
+            torch.all(dof_map == dof_map[:, :1] + torch.arange(num_joints, device=dof_map.device))
+        )
+        row_starts = dof_map[:, 0] if num_joints else torch.zeros(num_instances, dtype=torch.long, device=self._device)
+        row_strides = row_starts[1:] - row_starts[:-1]
+        uniform_rows = row_strides.numel() == 0 or bool(torch.all(row_strides == row_strides[0]))
+        computed_effort_src = None
+        computed_effort_gather_map = None
+        if contiguous_columns and uniform_rows:
+            row_stride = int(row_strides[0]) if row_strides.numel() else num_joints
+            computed_effort_view = wp.from_torch(
+                torch.as_strided(
+                    wp.to_torch(self._computed_effort),
+                    size=(num_instances, num_joints),
+                    stride=(row_stride, 1),
+                    storage_offset=int(row_starts[0]) if num_instances else 0,
+                )
+            )
+        else:
+            computed_effort_view = wp.zeros((num_instances, num_joints), dtype=wp.float32, device=self._device)
+            computed_effort_src = self._computed_effort
+            computed_effort_gather_map = wp.from_torch(dof_map.to(dtype=torch.int32))
         return self.ArticulationBinding(
             implicit_dof_mask=implicit_dof_mask,
             implicit_dof_mask_owner=implicit_dof_mask_owner,
             computed_effort_view=computed_effort_view,
+            computed_effort_src=computed_effort_src,
+            computed_effort_gather_map=computed_effort_gather_map,
         )
 
     @property

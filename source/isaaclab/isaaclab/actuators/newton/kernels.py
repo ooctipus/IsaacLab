@@ -11,8 +11,8 @@ import torch
 import warp as wp
 
 # ---------------------------------------------------------------------------
-# Adapter / per-actuator helper kernels: per-DOF zeroing, env-mask building,
-# and per-DOF env-mask projection (used by :meth:`NewtonActuatorAdapter.reset`).
+# Adapter / per-actuator helper kernels: per-DOF zeroing and world-mask
+# projection (used by :meth:`NewtonActuatorAdapter.reset`).
 # Parameter reads and writes go through Newton's selection API instead.
 # ---------------------------------------------------------------------------
 
@@ -32,30 +32,32 @@ def set_mask_kernel(mask: wp.array(dtype=wp.bool), indices: wp.array(dtype=wp.in
 
 
 @wp.kernel(enable_backward=False)
-def build_per_dof_env_mask_kernel(
+def gather_world_mask_kernel(
     indices: wp.array(dtype=wp.uint32),
-    env_mask: wp.array(dtype=wp.bool),
-    dof_offset: int,
-    num_joints: int,
+    world_mask: wp.array(dtype=wp.bool),
+    dof_world_id: wp.array(dtype=wp.int32),
     out_mask: wp.array(dtype=wp.bool),
 ):
-    """Build a per-DOF mask from a per-env mask, for one Newton actuator.
-
-    Newton's :meth:`Actuator.State.reset` expects a mask of length
-    ``num_actuators`` (= ``num_envs * dofs_per_actuator``). Each entry
-    gates the corresponding column of the actuator's state buffers. This
-    kernel maps a per-env boolean mask onto that per-DOF layout via the
-    actuator's flat ``indices``.
-    """
+    """Project a model-world reset mask onto one actuator's flat DOF slots."""
     i = wp.tid()
-    global_dof = int(indices[i]) - dof_offset
-    env = global_dof // num_joints
-    out_mask[i] = env_mask[env]
+    world = dof_world_id[wp.int32(indices[i])]
+    out_mask[i] = world >= 0 and world_mask[world]
 
 
 # ---------------------------------------------------------------------------
 # Articulation-level kernels: in-graph post-actuator hook.
 # ---------------------------------------------------------------------------
+
+
+@wp.kernel(enable_backward=False)
+def gather_computed_effort(
+    computed_effort_flat: wp.array(dtype=wp.float32),
+    dof_index_map: wp.array2d(dtype=wp.int32),
+    out: wp.array2d(dtype=wp.float32),
+):
+    """Gather flat pre-clamp effort into a dense articulation buffer."""
+    instance, joint = wp.tid()
+    out[instance, joint] = computed_effort_flat[dof_index_map[instance, joint]]
 
 
 @wp.kernel(enable_backward=False)

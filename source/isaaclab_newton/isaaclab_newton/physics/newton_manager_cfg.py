@@ -156,6 +156,14 @@ class NewtonCfg(PhysicsCfg):
     If set to False, the simulation performance will be severely degraded.
     """
 
+    require_cuda_graph: bool = False
+    """Whether failure to capture the requested physics-step CUDA graph should stop simulation.
+
+    Enable this for performance-critical workloads that must not silently use
+    eager execution. It requires :attr:`use_cuda_graph`, a CUDA device, and a
+    graph-compatible solver configuration.
+    """
+
     deterministic_mode: Literal["not_guaranteed", "run_to_run", "gpu_to_gpu"] = "not_guaranteed"
     """Determinism guarantee applied to the Newton solver and collision pipeline.
 
@@ -268,6 +276,8 @@ class NewtonCfg(PhysicsCfg):
         # previously silently overwritten.
         if self.class_type is not None:
             raise TypeError("Cannot manually set NewtonCfg.class_type; it is auto-derived from solver_cfg.class_type.")
+        if self.require_cuda_graph and not self.use_cuda_graph:
+            raise ValueError("NewtonCfg.require_cuda_graph=True requires use_cuda_graph=True.")
         if self.deterministic_mode not in ("not_guaranteed", "run_to_run", "gpu_to_gpu"):
             raise ValueError(
                 "NewtonCfg.deterministic_mode must be 'not_guaranteed', 'run_to_run', or 'gpu_to_gpu', "

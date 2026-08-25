@@ -628,6 +628,25 @@ def test_feather_pgs_register_builder_attributes_is_idempotent():
     register.assert_called_once_with(builder)
 
 
+def test_required_cuda_graph_rejects_unsupported_solver(monkeypatch):
+    """Stop a required graph workload instead of silently stepping eagerly."""
+    monkeypatch.setattr(
+        PhysicsManager,
+        "_cfg",
+        NewtonCfg(
+            solver_cfg=MPMSolverCfg(grid_type="sparse"),
+            use_cuda_graph=True,
+            require_cuda_graph=True,
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(PhysicsManager, "_device", "cuda:0", raising=False)
+    monkeypatch.setattr(NewtonMPMManager, "_supports_cuda_graph_capture", classmethod(lambda cls: False))
+
+    with pytest.raises(RuntimeError, match="requires CUDA graph capture"):
+        NewtonMPMManager._capture_or_defer_graph()
+
+
 @pytest.mark.parametrize(
     ("manager", "active", "inactive"),
     [
@@ -995,6 +1014,30 @@ def test_cuda_graph_capture_uses_simulation_device(monkeypatch):
 # ---------------------------------------------------------------------------
 # Manager state-refresh boundaries (no SimulationContext required)
 # ---------------------------------------------------------------------------
+
+
+def test_world_reset_reconciles_actuator_and_fk_domains(monkeypatch):
+    """Project one model-world reset into actuator state and owned articulations."""
+    observed = []
+    adapter = SimpleNamespace(_reset_worlds=lambda mask: observed.append(mask.numpy().tolist()))
+    model = SimpleNamespace(
+        world_count=3,
+        articulation_count=4,
+        articulation_world=wp.array([0, 1, 1, 2], dtype=wp.int32, device="cpu"),
+    )
+    manager_world_mask = wp.zeros(4, dtype=wp.bool, device="cpu")
+    fk_mask = wp.zeros(4, dtype=wp.bool, device="cpu")
+    monkeypatch.setattr(PhysicsManager, "_device", "cpu", raising=False)
+    monkeypatch.setattr(NewtonManager, "_adapter", adapter, raising=False)
+    monkeypatch.setattr(NewtonManager, "_model", model, raising=False)
+    monkeypatch.setattr(NewtonManager, "_world_reset_mask", manager_world_mask, raising=False)
+    monkeypatch.setattr(NewtonManager, "_fk_reset_mask", fk_mask, raising=False)
+
+    NewtonManager.notify_world_reset(wp.array([False, True, False], dtype=wp.bool, device="cpu"))
+
+    assert observed == [[False, True, False]]
+    assert manager_world_mask.numpy().tolist() == [False, True, False, False]
+    assert fk_mask.numpy().tolist() == [False, True, True, False]
 
 
 def test_forward_consumes_existing_reset_masks(monkeypatch):

@@ -278,6 +278,19 @@ def _or_world_reset_mask_from_mask(env_mask: wp.array(dtype=wp.bool), world_mask
 
 
 @wp.kernel(enable_backward=False)
+def _or_fk_reset_mask_from_world_mask(
+    world_mask: wp.array(dtype=wp.bool),
+    articulation_world: wp.array(dtype=wp.int32),
+    fk_mask: wp.array(dtype=wp.bool),
+):
+    """Mark every articulation owned by a selected model world for FK."""
+    articulation = wp.tid()
+    world = articulation_world[articulation]
+    if world >= 0 and world_mask[world]:
+        fk_mask[articulation] = True
+
+
+@wp.kernel(enable_backward=False)
 def _scatter_world_reset_mask_from_ids(env_ids: wp.array(dtype=wp.int32), world_mask: wp.array(dtype=wp.bool)):
     """Mark selected worlds for solver reset without requesting FK."""
     world_mask[env_ids[wp.tid()]] = True
@@ -986,6 +999,10 @@ class NewtonManager(PhysicsManager):
                         wp.capture_launch(cls._graph)
                     logger.info("Newton CUDA graph captured (deferred relaxed mode, RTX-compatible)")
                 else:
+                    if getattr(cfg, "require_cuda_graph", False):
+                        raise RuntimeError(
+                            "Newton required CUDA graph capture failed; refusing to continue with eager execution."
+                        )
                     logger.warning("Newton deferred CUDA graph capture failed; using eager execution")
 
         # Reconcile authored state after any mutating graph warmup and before the requested physics step.
@@ -1389,6 +1406,7 @@ class NewtonManager(PhysicsManager):
         env_mask: wp.array | None = None,
         env_ids: wp.array | None = None,
         articulation_ids: wp.array | None = None,
+        world_mask: wp.array | None = None,
     ) -> None:
         """Mark environments as needing FK recomputation and solver reset.
 
@@ -1404,13 +1422,30 @@ class NewtonManager(PhysicsManager):
             articulation_ids: Mapping from ``(world, arti)`` to model articulation
                 index. Shape ``(world_count, count_per_world)``. Obtained from
                 ``ArticulationView.articulation_ids``.
+            world_mask: Boolean mask in the model's complete world domain. Shape
+                ``(model.world_count,)``.
         """
         cls._mark_transforms_dirty()
 
         if cls._world_reset_mask is None or cls._fk_reset_mask is None:
             return
 
-        if articulation_ids is not None and env_mask is not None:
+        if world_mask is not None:
+            wp.launch(
+                _or_world_reset_mask_from_mask,
+                dim=cls._model.world_count,
+                inputs=[world_mask],
+                outputs=[NewtonManager._world_reset_mask],
+                device=PhysicsManager._device,
+            )
+            wp.launch(
+                _or_fk_reset_mask_from_world_mask,
+                dim=cls._model.articulation_count,
+                inputs=[world_mask, cls._model.articulation_world],
+                outputs=[NewtonManager._fk_reset_mask],
+                device=PhysicsManager._device,
+            )
+        elif articulation_ids is not None and env_mask is not None:
             wp.launch(
                 _or_reset_masks_from_mask,
                 dim=articulation_ids.shape,
@@ -1430,6 +1465,19 @@ class NewtonManager(PhysicsManager):
             # Fallback: no topology info — mark everything dirty
             NewtonManager._world_reset_mask[: cls._model.world_count].fill_(True)
             NewtonManager._fk_reset_mask.fill_(True)
+
+    @classmethod
+    def notify_world_reset(cls, world_mask: wp.array) -> None:
+        """Reconcile actuator, solver, and FK state after model-world state restoration."""
+        if not isinstance(world_mask, wp.array) or world_mask.dtype != wp.bool:
+            raise TypeError("world_mask must be a Warp array with dtype bool.")
+        if world_mask.shape != (cls._model.world_count,):
+            raise ValueError(f"world_mask must have shape ({cls._model.world_count},), got {world_mask.shape}.")
+        if world_mask.device != wp.get_device(PhysicsManager._device):
+            raise ValueError(f"world_mask must be on {PhysicsManager._device}, got {world_mask.device}.")
+        if NewtonManager._adapter is not None:
+            NewtonManager._adapter._reset_worlds(world_mask)
+        cls.invalidate_fk(world_mask=world_mask)
 
     @classmethod
     def invalidate_body_state(
@@ -2256,10 +2304,20 @@ class NewtonManager(PhysicsManager):
         if cfg is None or device is None:
             return
 
+        require_cuda_graph = bool(getattr(cfg, "require_cuda_graph", False))
+        if require_cuda_graph and (not cfg.use_cuda_graph or "cuda" not in device):
+            raise RuntimeError(
+                "Newton requires CUDA graph capture, but graphing is disabled or the simulation device is not CUDA."
+            )
         use_cuda_graph = cfg.use_cuda_graph and "cuda" in device
         if use_cuda_graph and not cls._supports_cuda_graph_capture():
             NewtonManager._graph = None
             NewtonManager._graph_capture_pending = False
+            if require_cuda_graph:
+                raise RuntimeError(
+                    f"{cls.__name__} requires CUDA graph capture, but the active solver configuration does not "
+                    "support it."
+                )
             logger.warning(
                 "%s does not support CUDA graph capture for the current solver configuration; using eager execution.",
                 cls.__name__,
@@ -3252,13 +3310,19 @@ class NewtonManager(PhysicsManager):
             return
         from isaaclab.actuators.newton import NewtonActuatorAdapter  # noqa: PLC0415
 
-        dofs_per_env = cls._model.joint_dof_count // cls._num_envs
-        NewtonManager._adapter = NewtonActuatorAdapter(
-            actuators=list(cls._model.actuators),
-            num_envs=cls._num_envs,
-            num_joints=dofs_per_env,
-            dof_offset=0,
+        joint_world = cls._model.joint_world.numpy()
+        dof_counts = np.diff(cls._model.joint_qd_start.numpy())
+        dof_world_id = wp.array(
+            np.repeat(joint_world, dof_counts).astype(np.int32),
+            dtype=wp.int32,
             device=PhysicsManager._device,
+        )
+        NewtonManager._adapter = NewtonActuatorAdapter._from_flat(
+            actuators=list(cls._model.actuators),
+            world_count=cls._model.world_count,
+            device=PhysicsManager._device,
+            dof_count=cls._model.joint_dof_count,
+            dof_world_id=dof_world_id,
         )
         cls._adapter.finalize(cls._control)
 

@@ -11,6 +11,7 @@ import logging
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
+import torch
 import warp as wp
 
 from isaaclab.actuators import ActuatorCollection
@@ -40,6 +41,7 @@ class NewtonActuatorControl(ArticulationActuatorControl):
             articulation: Newton articulation that owns backend simulation handles.
         """
         super().__init__(articulation)
+        self._model_world_id_map: torch.Tensor | None = None
 
     def prepare_native_actuators(self, collection: ActuatorCollection, actuator_cfgs: dict) -> set[str]:
         articulation = self._articulation
@@ -65,17 +67,19 @@ class NewtonActuatorControl(ArticulationActuatorControl):
 
         articulation = self._articulation
         adapter = SimulationManager._adapter
+        computed_effort_src = None
+        computed_effort_gather_map = None
         if adapter is not None:
-            arti_start = self._joint_dof_offset()
-            binding = adapter.bind_articulation(
+            binding = adapter._bind_articulation_flat(
                 implicit_joint_indices=collection._implicit_group_joint_indices(),
-                dof_offset=arti_start,
-                num_joints=self.num_joints,
+                dof_index_map=self._joint_dof_index_map(),
             )
             articulation.newton_actuator_adapter = adapter
             articulation._implicit_dof_mask = binding.implicit_dof_mask
             articulation._implicit_dof_mask_owner = binding.implicit_dof_mask_owner
             articulation._data._sim_bind_joint_computed_effort = binding.computed_effort_view
+            computed_effort_src = binding.computed_effort_src
+            computed_effort_gather_map = binding.computed_effort_gather_map
         else:
             articulation._implicit_dof_mask, articulation._implicit_dof_mask_owner = build_implicit_dof_mask(
                 collection._implicit_group_joint_indices(),
@@ -89,6 +93,14 @@ class NewtonActuatorControl(ArticulationActuatorControl):
             )
 
         def _post_actuator() -> None:
+            if computed_effort_gather_map is not None:
+                wp.launch(
+                    actuator_kernels.gather_computed_effort,
+                    dim=(self.num_instances, self.num_joints),
+                    inputs=[computed_effort_src, computed_effort_gather_map],
+                    outputs=[articulation._data._sim_bind_joint_computed_effort],
+                    device=self.device,
+                )
             wp.launch(
                 actuator_kernels.sync_torque_telemetry,
                 dim=(self.num_instances, self.num_joints),
@@ -179,17 +191,42 @@ class NewtonActuatorControl(ArticulationActuatorControl):
 
     def reset_native_actuators(self, env_ids: Sequence[int] | slice) -> None:
         if self._native_actuator_path_active and SimulationManager._adapter is not None:
-            SimulationManager._adapter.reset(env_ids)
+            SimulationManager._adapter.reset(self._model_world_ids(env_ids))
 
-    def _joint_dof_offset(self) -> int:
-        """Return the first selected joint DOF's model offset within an environment."""
+    def _joint_dof_index_map(self) -> torch.Tensor:
+        """Return absolute model DOF indices for every articulation-view cell."""
         from newton import Model as NewtonModel  # noqa: PLC0415
 
-        dof_layout = self._articulation._root_view.frequency_layouts[NewtonModel.AttributeFrequency.JOINT_DOF]
-        if dof_layout.slice is not None:
-            selection_offset = dof_layout.slice.start
-        elif dof_layout.indices is not None:
-            selection_offset = int(dof_layout.indices.numpy()[0])
+        view = self._articulation._root_view
+        layout = view.frequency_layouts[NewtonModel.AttributeFrequency.JOINT_DOF]
+        if layout.base_offsets is not None:
+            starts = wp.to_torch(layout.base_offsets).to(device=self.device, dtype=torch.long).reshape(-1, 1)
+            local_indices = wp.to_torch(layout.local_indices).to(device=self.device, dtype=torch.long).reshape(1, -1)
+            return starts + local_indices
+
+        if layout.slice is not None:
+            local_indices = torch.arange(layout.slice.start, layout.slice.stop, dtype=torch.long, device=self.device)
+        elif layout.indices is not None:
+            local_indices = wp.to_torch(layout.indices).to(device=self.device, dtype=torch.long)
         else:
-            selection_offset = 0
-        return dof_layout.offset + selection_offset
+            local_indices = torch.arange(layout.value_count, dtype=torch.long, device=self.device)
+        worlds = torch.arange(view.world_count, dtype=torch.long, device=self.device).repeat_interleave(
+            view.count_per_world
+        )
+        articulations = torch.arange(view.count_per_world, dtype=torch.long, device=self.device).repeat(
+            view.world_count
+        )
+        starts = layout.offset + worlds * layout.stride_between_worlds + articulations * layout.stride_within_worlds
+        return starts[:, None] + local_indices[None, :]
+
+    def _model_world_ids(self, env_ids: Sequence[int] | slice) -> Sequence[int] | torch.Tensor | slice:
+        """Translate articulation-view rows to model-global world IDs."""
+        world_ids = getattr(self._articulation._root_view, "world_ids", None)
+        if world_ids is None:
+            return env_ids
+        if getattr(self, "_model_world_id_map", None) is None:
+            self._model_world_id_map = torch.as_tensor(world_ids, dtype=torch.long, device=self.device)
+        if isinstance(env_ids, slice):
+            return self._model_world_id_map[env_ids]
+        indices = torch.as_tensor(env_ids, dtype=torch.long, device=self.device)
+        return self._model_world_id_map[indices]
