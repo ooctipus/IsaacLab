@@ -15,5 +15,7 @@ Fixed
 
 * Fixed excessive FeatherPGS work in dexterous-hand tasks and unnecessary
   joint-limit row allocation in cabinet tasks.
+* Fixed cabinet tasks to avoid repeating already stable FeatherPGS integration
+  work while retaining the shared controller and collision cadence.
 * Fixed dexterous-hand FeatherPGS constraint truncation while retaining the
   shared simulation cadence.

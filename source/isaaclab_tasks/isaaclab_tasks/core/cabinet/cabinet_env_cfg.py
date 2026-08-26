@@ -111,7 +111,7 @@ class CabinetPhysicsCfg(PresetCfg):
             hinv_jt_kernel="par_row",
             serial_kernel_block_dim=64,
         ),
-        num_substeps=10,
+        num_substeps=1,
     )
     default: NewtonCfg = newton_mjwarp
 
