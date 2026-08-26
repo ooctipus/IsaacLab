@@ -992,6 +992,45 @@ def test_cuda_graph_capture_uses_simulation_device(monkeypatch):
     assert NewtonManager._graph is captured_graph
 
 
+def test_feather_pgs_cuda_graph_seeds_double_buffer_events_before_simulation(monkeypatch):
+    """FeatherPGS must seed its asynchronous buffer events inside capture before solver work."""
+    events: list[str] = []
+    captured_graph = object()
+
+    class RecordingSolver:
+        def seed_double_buffer_events(self):
+            events.append("seed")
+
+    class FakeScopedCapture:
+        def __init__(self, device=None):
+            self.graph = captured_graph
+
+        def __enter__(self):
+            events.append("capture_begin")
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            events.append("capture_end")
+            return False
+
+    monkeypatch.setattr(PhysicsManager, "_cfg", SimpleNamespace(use_cuda_graph=True), raising=False)
+    monkeypatch.setattr(PhysicsManager, "_device", "cuda:0", raising=False)
+    monkeypatch.setattr(NewtonManager, "_usdrt_stage", None, raising=False)
+    monkeypatch.setattr(NewtonManager, "_solver", RecordingSolver(), raising=False)
+    monkeypatch.setattr(NewtonFeatherPGSManager, "_is_all_graphable", classmethod(lambda cls: False))
+    monkeypatch.setattr(
+        NewtonFeatherPGSManager,
+        "_simulate_physics_only",
+        classmethod(lambda cls: events.append("simulate")),
+    )
+    monkeypatch.setattr(wp, "ScopedCapture", FakeScopedCapture)
+
+    NewtonFeatherPGSManager._capture_or_defer_graph()
+
+    assert events == ["capture_begin", "seed", "simulate", "capture_end"]
+    assert NewtonManager._graph is captured_graph
+
+
 # ---------------------------------------------------------------------------
 # Manager state-refresh boundaries (no SimulationContext required)
 # ---------------------------------------------------------------------------

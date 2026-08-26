@@ -515,7 +515,7 @@ class PhysicsCfg(PresetCfg):
             use_mujoco_contacts=False,
             ccd_iterations=35,
         ),
-        collision_cfg=NewtonCollisionPipelineCfg(rigid_contact_max=4000000),
+        collision_cfg=NewtonCollisionPipelineCfg(rigid_contact_max=4_000_000),
         default_shape_cfg=NewtonShapeCfg(),
         num_substeps=2,
         debug_mode=False,
@@ -526,15 +526,13 @@ class PhysicsCfg(PresetCfg):
             update_mass_matrix_interval=2,
             enable_joint_limits=True,
             joint_limit_activation_gap=0.1,
-            pgs_iterations=8,
-            dense_max_constraints=384,
+            dense_max_constraints=192,
             mf_max_constraints=64,
+            serial_kernel_block_dim=64,
         ),
-        collision_cfg=NewtonCollisionPipelineCfg(),
+        collision_cfg=NewtonCollisionPipelineCfg(rigid_contact_max=4_000_000),
         default_shape_cfg=NewtonShapeCfg(),
-        num_substeps=1,
-        debug_mode=False,
-        use_cuda_graph=True,
+        num_substeps=2,
     )
     physx = PhysxAutoCfg(isaacsim_physx=isaacsim_physx, ovphysx=ovphysx)
     default = newton_mjwarp

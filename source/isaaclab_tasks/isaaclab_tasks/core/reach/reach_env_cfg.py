@@ -56,16 +56,13 @@ class ReachPhysicsCfg(PresetCfg):
     feather_pgs: NewtonCfg = NewtonCfg(
         solver_cfg=FeatherPGSSolverCfg(
             pgs_mode="matrix_free",
-            update_mass_matrix_interval=1,
+            update_mass_matrix_interval=2,
             enable_joint_limits=True,
             joint_limit_activation_gap=0.1,
-            pgs_iterations=8,
             dense_max_constraints=64,
             mf_max_constraints=32,
         ),
-        num_substeps=1,
-        debug_mode=False,
-        use_cuda_graph=False,
+        num_substeps=2,
     )
     default: NewtonCfg = newton_mjwarp
 

@@ -43,6 +43,20 @@ def _defines_name(node: ast.ClassDef, name: str) -> bool:
     return False
 
 
+def _assigned_value(node: ast.ClassDef, name: str) -> ast.expr | None:
+    """Return the value directly assigned to a class field."""
+    for statement in node.body:
+        if isinstance(statement, ast.Assign):
+            targets = statement.targets
+        elif isinstance(statement, ast.AnnAssign):
+            targets = [statement.target]
+        else:
+            continue
+        if any(isinstance(target, ast.Name) and target.id == name for target in targets):
+            return statement.value
+    return None
+
+
 def test_physics_preset_classes_are_not_subclassed() -> None:
     """Forbid robot-specific subclasses of an existing physics preset class."""
     offenders = [
@@ -74,5 +88,59 @@ def test_feather_pgs_presets_are_owned_by_existing_composition_roots() -> None:
             continue
         if {_base_name(base) for base in node.bases} != {"PresetCfg"}:
             offenders.append(f"{path.relative_to(_TASK_SOURCE_ROOT)}:{node.lineno} {node.name}")
+
+    assert offenders == []
+
+
+def test_feather_pgs_presets_select_physics_only() -> None:
+    """Forbid FeatherPGS variants that wrap simulation or environment-level settings."""
+    offenders = []
+    for path, node in _classes():
+        value = _assigned_value(node, "feather_pgs")
+        if value is None:
+            continue
+        if not isinstance(value, ast.Call) or _base_name(value.func) != "NewtonCfg":
+            offenders.append(f"{path.relative_to(_TASK_SOURCE_ROOT)}:{node.lineno} {node.name}")
+
+    assert offenders == []
+
+
+def test_feather_pgs_presets_do_not_disable_cuda_graphs() -> None:
+    """Forbid task presets from disabling the default FeatherPGS graph capture path."""
+    offenders = []
+    for path, node in _classes():
+        value = _assigned_value(node, "feather_pgs")
+        if not isinstance(value, ast.Call) or _base_name(value.func) != "NewtonCfg":
+            continue
+        for keyword in value.keywords:
+            if (
+                keyword.arg == "use_cuda_graph"
+                and isinstance(keyword.value, ast.Constant)
+                and keyword.value.value is False
+            ):
+                offenders.append(f"{path.relative_to(_TASK_SOURCE_ROOT)}:{keyword.value.lineno} {node.name}")
+
+    assert offenders == []
+
+
+def test_feather_pgs_presets_preserve_newton_collision_frequency() -> None:
+    """Require FeatherPGS and MJWarp variants to use the same integration substep count."""
+    offenders = []
+    for path, node in _classes():
+        feather_pgs = _assigned_value(node, "feather_pgs")
+        newton_mjwarp = _assigned_value(node, "newton_mjwarp")
+        if not isinstance(feather_pgs, ast.Call) or not isinstance(newton_mjwarp, ast.Call):
+            continue
+        feather_substeps = next(
+            (ast.literal_eval(keyword.value) for keyword in feather_pgs.keywords if keyword.arg == "num_substeps"), 1
+        )
+        mjwarp_substeps = next(
+            (ast.literal_eval(keyword.value) for keyword in newton_mjwarp.keywords if keyword.arg == "num_substeps"), 1
+        )
+        if feather_substeps != mjwarp_substeps:
+            offenders.append(
+                f"{path.relative_to(_TASK_SOURCE_ROOT)}:{node.lineno} {node.name} "
+                f"(feather_pgs={feather_substeps}, newton_mjwarp={mjwarp_substeps})"
+            )
 
     assert offenders == []

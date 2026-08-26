@@ -31,6 +31,12 @@ class NewtonFeatherPGSManager(NewtonManager):
     @classmethod
     def _create_solver(cls, model: Model, solver_cfg: FeatherPGSSolverCfg) -> SolverFeatherPGS:
         """Construct the configured FeatherPGS solver without changing manager state."""
+        collision_cfg = NewtonManager._collision_cfg
+        if collision_cfg is not None and collision_cfg.rigid_contact_max is not None:
+            # FeatherPGS owns per-contact scratch and is constructed before the
+            # collision pipeline. Publish the explicit pipeline capacity on the
+            # model first so both allocations use the same bound.
+            model.rigid_contact_max = int(collision_cfg.rigid_contact_max)
         return SolverFeatherPGS(model, **cls._filter_solver_kwargs(SolverFeatherPGS, solver_cfg))
 
     @classmethod
@@ -40,6 +46,11 @@ class NewtonFeatherPGSManager(NewtonManager):
         NewtonManager._use_single_state = False
         NewtonManager._needs_collision_pipeline = True
         NewtonManager._supports_rigid_body_force_input = True
+
+    @classmethod
+    def _prepare_cuda_graph_capture(cls) -> None:
+        """Seed FeatherPGS buffer events so captured waits survive graph replay."""
+        cls._solver.seed_double_buffer_events()
 
     @classmethod
     def _reset_solver_internals(cls, world_mask: wp.array(dtype=wp.bool) | None) -> None:

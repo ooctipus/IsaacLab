@@ -972,6 +972,7 @@ class NewtonManager(PhysicsManager):
                 simulate = cls._simulate_full if cls._is_all_graphable() else cls._simulate_physics_only
                 with Timer(name="newton_cuda_graph", msg="CUDA graph took:"):
                     with _paused_gc(), wp.ScopedCapture(device=device, force_module_load=False) as capture:
+                        cls._prepare_cuda_graph_capture()
                         simulate()
                 NewtonManager._graph = capture.graph
                 logger.info("Newton CUDA graph captured (deferred standard mode)")
@@ -2271,6 +2272,7 @@ class NewtonManager(PhysicsManager):
                 if cls._usdrt_stage is None and not cls._requires_initial_reset_before_graph_capture():
                     simulate = cls._simulate_full if cls._is_all_graphable() else cls._simulate_physics_only
                     with _paused_gc(), wp.ScopedCapture(device=device) as capture:
+                        cls._prepare_cuda_graph_capture()
                         simulate()
                     NewtonManager._graph = capture.graph
                     logger.info("Newton CUDA graph captured (standard Warp mode)")
@@ -2295,6 +2297,10 @@ class NewtonManager(PhysicsManager):
     def _requires_initial_reset_before_graph_capture(cls) -> bool:
         """Return whether graph capture must wait until the initial environment reset."""
         return False
+
+    @classmethod
+    def _prepare_cuda_graph_capture(cls) -> None:
+        """Prepare solver-owned asynchronous resources after graph capture begins."""
 
     @classmethod
     def _supports_cuda_graph_capture(cls) -> bool:
@@ -2390,6 +2396,8 @@ class NewtonManager(PhysicsManager):
             err_during_capture = None
             with wp.ScopedStream(fresh_stream, sync_enter=False):
                 try:
+                    if capture_target is None:
+                        cls._prepare_cuda_graph_capture()
                     simulate()
                 except Exception as exc:
                     err_during_capture = exc

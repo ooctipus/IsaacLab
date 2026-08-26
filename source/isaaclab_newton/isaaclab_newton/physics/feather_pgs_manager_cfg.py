@@ -66,8 +66,12 @@ class FeatherPGSSolverCfg(NewtonSolverCfg):
     enable_joint_limits: bool = False
     """Whether to enforce joint position limits as unilateral PGS constraints."""
 
-    joint_limit_activation_gap: float = math.inf
-    """Distance [m or rad, depending on joint type] from a joint limit at which rows activate."""
+    joint_limit_activation_gap: float = 0.20
+    """Distance [m or rad, depending on joint type] from a joint limit at which rows activate.
+
+    A finite gap allocates a row only when the joint is within that distance of the corresponding limit.
+    Setting this to ``math.inf`` allocates lower and upper rows for every finite limit on every step.
+    """
 
     enable_joint_velocity_limits: bool = False
     """Whether to enforce per-DOF joint velocity limits as PGS constraints.
@@ -75,19 +79,24 @@ class FeatherPGSSolverCfg(NewtonSolverCfg):
     This option requires :attr:`pgs_mode` to be ``"matrix_free"``.
     """
 
-    velocity_limit_activation_fraction: float = 0.0
-    """Dimensionless fraction of each joint velocity limit at which velocity-limit rows activate."""
+    velocity_limit_activation_fraction: float = 0.7
+    """Dimensionless fraction of each joint velocity limit at which velocity-limit rows activate.
+
+    The default allocates rows once a finite limit reaches 70%, leaving headroom for the
+    one-step activation delay. Set this to ``0.0`` to allocate rows for every limited degree
+    of freedom on every step.
+    """
 
     fuse_joint_velocity_limits: bool = True
     """Whether to fuse joint velocity-limit rows into the matrix-free constraint solve."""
 
-    pgs_iterations: int = 12
+    pgs_iterations: int = 8
     """Number of Gauss-Seidel iterations per simulation step."""
 
     pgs_velocity_iterations: int = 0
     """Number of velocity-level Gauss-Seidel iterations per simulation step."""
 
-    pgs_beta: float = 0.2
+    pgs_beta: float = 0.05
     """Dimensionless ERP-style position correction factor."""
 
     pgs_cfm: float = 1.0e-6

@@ -68,18 +68,15 @@ class PhysicsCfg(PresetCfg):
     )
     feather_pgs = NewtonCfg(
         solver_cfg=FeatherPGSSolverCfg(
+            update_mass_matrix_interval=2,
             enable_joint_limits=True,
             enable_joint_velocity_limits=True,
-            pgs_iterations=16,
-            pgs_beta=0.02,
-            pgs_cfm=1.0e-5,
-            dense_max_constraints=64,
+            pgs_iterations=12,
+            dense_max_constraints=192,
             pgs_mode="matrix_free",
-            mf_max_constraints=512,
+            mf_max_constraints=64,
         ),
-        num_substeps=12,
-        debug_mode=False,
-        use_cuda_graph=False,
+        num_substeps=2,
     )
     ovphysx = OvPhysxCfg()
     physx = PhysxAutoCfg(isaacsim_physx=isaacsim_physx, ovphysx=ovphysx)
