@@ -73,10 +73,12 @@ class RoughPhysicsCfg(PresetCfg):
     )
     feather_pgs = NewtonCfg(
         solver_cfg=FeatherPGSSolverCfg(
-            update_mass_matrix_interval=2,
+            update_mass_matrix_interval=1,
             enable_joint_limits=True,
             pgs_mode="matrix_free",
+            pgs_inner_substeps=2,
             contact_friction_gap_threshold=0.02,
+            contact_friction_position_iterations=3,
             contact_friction_anchor_limit=2,
             dense_max_constraints=192,
             mf_max_constraints=32,
@@ -84,7 +86,7 @@ class RoughPhysicsCfg(PresetCfg):
             tile_threads=128,
         ),
         collision_cfg=NewtonCollisionPipelineCfg(max_triangle_pairs=12_000_000),
-        num_substeps=2,
+        num_substeps=1,
         default_shape_cfg=NewtonShapeCfg(margin=0.01, ke=160000.0, kd=1100.0),
     )
     newton_kamino = NewtonCfg(solver_cfg=KaminoPADMMSolverCfg(max_contacts_per_world=64))

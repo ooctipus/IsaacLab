@@ -19,6 +19,8 @@ Changed
   ``velocity_limit_activation_fraction=0.0`` to retain always-allocated rows.
 * Changed FeatherPGS CUDA-graph capture to seed asynchronous double-buffer
   events before captured solver work.
+* Added ``pgs_inner_substeps`` to expose Newton's opt-in frozen-basis
+  position-solve and integration cycles.
 
 Fixed
 ^^^^^

@@ -93,6 +93,9 @@ class FeatherPGSSolverCfg(NewtonSolverCfg):
     pgs_iterations: int = 8
     """Number of Gauss-Seidel iterations per simulation step."""
 
+    pgs_inner_substeps: int = 1
+    """Number of frozen-basis position-solve and integration cycles per simulation step."""
+
     pgs_velocity_iterations: int = 0
     """Number of velocity-level Gauss-Seidel iterations per simulation step."""
 

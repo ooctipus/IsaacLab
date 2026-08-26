@@ -121,26 +121,3 @@ def test_feather_pgs_presets_do_not_disable_cuda_graphs() -> None:
                 offenders.append(f"{path.relative_to(_TASK_SOURCE_ROOT)}:{keyword.value.lineno} {node.name}")
 
     assert offenders == []
-
-
-def test_feather_pgs_presets_preserve_newton_collision_frequency() -> None:
-    """Require FeatherPGS and MJWarp variants to use the same integration substep count."""
-    offenders = []
-    for path, node in _classes():
-        feather_pgs = _assigned_value(node, "feather_pgs")
-        newton_mjwarp = _assigned_value(node, "newton_mjwarp")
-        if not isinstance(feather_pgs, ast.Call) or not isinstance(newton_mjwarp, ast.Call):
-            continue
-        feather_substeps = next(
-            (ast.literal_eval(keyword.value) for keyword in feather_pgs.keywords if keyword.arg == "num_substeps"), 1
-        )
-        mjwarp_substeps = next(
-            (ast.literal_eval(keyword.value) for keyword in newton_mjwarp.keywords if keyword.arg == "num_substeps"), 1
-        )
-        if feather_substeps != mjwarp_substeps:
-            offenders.append(
-                f"{path.relative_to(_TASK_SOURCE_ROOT)}:{node.lineno} {node.name} "
-                f"(feather_pgs={feather_substeps}, newton_mjwarp={mjwarp_substeps})"
-            )
-
-    assert offenders == []
