@@ -17,5 +17,7 @@ Fixed
   joint-limit row allocation in cabinet tasks.
 * Fixed cabinet tasks to avoid repeating already stable FeatherPGS integration
   work while retaining the shared controller and collision cadence.
+* Fixed non-finite FeatherPGS Reach simulations by enforcing the robots'
+  authored joint-velocity limits across the task family.
 * Fixed dexterous-hand FeatherPGS constraint truncation while retaining the
   shared simulation cadence.
