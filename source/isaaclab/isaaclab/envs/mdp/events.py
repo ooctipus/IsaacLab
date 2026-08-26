@@ -1840,6 +1840,9 @@ class randomize_fixed_tendon_parameters(ManagerTermBase):
         operation: Literal["add", "scale", "abs"] = "abs",
         distribution: Literal["uniform", "log_uniform", "gaussian"] = "uniform",
     ):
+        if self.asset.num_fixed_tendons == 0:
+            return
+
         _backend = env.sim.physics_manager.__name__.lower()
 
         # resolve environment ids

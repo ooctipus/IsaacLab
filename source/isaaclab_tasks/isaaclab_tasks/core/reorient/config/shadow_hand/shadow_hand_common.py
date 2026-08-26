@@ -80,7 +80,7 @@ class ShadowHandRandomizationEventCfg:
         min_step_count_between_reset=720,
         mode="reset",
         params={
-            "asset_cfg": SceneEntityCfg("robot", fixed_tendon_names=".*"),
+            "asset_cfg": SceneEntityCfg("robot"),
             "stiffness_distribution_params": (0.75, 1.5),
             "damping_distribution_params": (0.3, 3.0),
             "operation": "scale",

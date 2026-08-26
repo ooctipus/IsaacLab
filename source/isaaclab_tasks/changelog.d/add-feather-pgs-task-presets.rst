@@ -19,5 +19,7 @@ Fixed
   work while retaining the shared controller and collision cadence.
 * Fixed non-finite FeatherPGS Reach simulations by enforcing the robots'
   authored joint-velocity limits across the task family.
+* Fixed Shadow Hand tendon randomization on backends whose articulation has no
+  runtime fixed-tendon objects.
 * Fixed dexterous-hand FeatherPGS constraint truncation while retaining the
   shared simulation cadence.
