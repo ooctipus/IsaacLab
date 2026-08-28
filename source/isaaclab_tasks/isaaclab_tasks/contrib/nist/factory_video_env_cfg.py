@@ -12,11 +12,12 @@ from isaaclab.assets import AssetBaseCfg
 from isaaclab.envs import VideoRecorderCfg
 from isaaclab.utils.configclass import configclass
 
+from .assembly_variants import ASSEMBLY_VARIANT_NAMES
 from .factory_env_cfg import FactoryBaseEnvCfg, FactoryEnvCfg
 from .factory_variant_env_cfg import FactoryVariantEnvCfg
 
 
-def configure_factory_video(cfg: FactoryEnvCfg, fps: int, output_prefix: str) -> None:
+def configure_factory_video(cfg: FactoryEnvCfg, fps: int, output_prefix: str, video_length: int = 200) -> None:
     """Configure the shared wide studio recording setup."""
     cfg.viewer.eye = (7.5, 7.5, 7.5)
     cfg.viewer.lookat = (0.0, 0.0, 0.0)
@@ -47,7 +48,11 @@ def configure_factory_video(cfg: FactoryEnvCfg, fps: int, output_prefix: str) ->
     ]
     cfg.video_recorders = [
         VideoRecorderCfg(
-            source="visualizer:newton_rtx", capture_on_render=True, fps=fps, output_filename_prefix=output_prefix
+            source="visualizer:newton_rtx",
+            capture_on_render=True,
+            fps=fps,
+            video_length=video_length,
+            output_filename_prefix=output_prefix,
         )
     ]
 
@@ -71,4 +76,11 @@ class FactoryVariantVideoEnvCfg(FactoryVariantEnvCfg):
         """Configure evaluation recording."""
         super().play_mode()
         self.sim.render_interval = 1
-        configure_factory_video(self, fps=100, output_prefix="factory_variant")
+        episode_steps = round(self.episode_length_s / (self.sim.dt * self.decimation))
+        self.events.reset_strategies.func = "isaaclab_tasks.contrib.nist.factory_video_env:SuccessSequencedVariantReset"
+        configure_factory_video(
+            self,
+            fps=100,
+            output_prefix="factory_variant",
+            video_length=10 * len(ASSEMBLY_VARIANT_NAMES) * episode_steps,
+        )

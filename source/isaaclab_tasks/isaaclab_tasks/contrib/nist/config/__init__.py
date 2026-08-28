@@ -58,7 +58,7 @@ gym.register(
 
 gym.register(
     id="IsaacContrib-Factory-Variant-Video-Franka",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    entry_point="isaaclab_tasks.contrib.nist.factory_video_env:FactoryVariantVideoEnv",
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point": "isaaclab_tasks.contrib.nist.factory_video_env_cfg:FactoryVariantVideoEnvCfg",

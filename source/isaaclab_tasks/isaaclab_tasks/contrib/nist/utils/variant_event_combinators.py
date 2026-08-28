@@ -248,6 +248,15 @@ class variant_reset_accumulator(ManagerTermBase):
         probabilities.mul_(cell_scale[self.state_cell_indices]).div_(probabilities.sum())
         return probabilities, self._sampler.sample(probabilities, num_samples)
 
+    def _sample_variant(self, num_samples: int, variant_id: int) -> tuple[torch.Tensor, torch.Tensor]:
+        """Sample reset states for one scheduled assembly variant."""
+        probabilities = self._sampler.probabilities()
+        probabilities.mul_(self.state_cell_indices.remainder(self._num_variants) == variant_id)
+        probabilities.div_(probabilities.sum())
+        self.cell_probabilities.zero_()
+        self.cell_probabilities.flatten().scatter_add_(0, self.state_cell_indices, probabilities)
+        return probabilities, self._sampler.sample(probabilities, num_samples)
+
     def _update_cell_success_rate(self) -> None:
         successes = self.success_monitor.success_buf.sum(dim=1)
         episodes = self.success_monitor.success_size.to(successes.dtype)
