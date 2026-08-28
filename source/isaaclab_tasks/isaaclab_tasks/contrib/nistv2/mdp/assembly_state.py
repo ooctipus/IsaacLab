@@ -33,6 +33,8 @@ def _update_assembly_state(
     board_body_ids: wp.array2d(dtype=wp.int32),
     robot_root_body_ids: wp.array2d(dtype=wp.int32),
     variant_ids: wp.array2d(dtype=wp.uint8),
+    unfinished_count: wp.array(dtype=wp.uint8),
+    required_assembly_gain: wp.array(dtype=wp.uint8),
     env_origins: wp.array(dtype=wp.vec3f),
     held_align: wp.array(dtype=wp.transformf),
     fixed_tip_in_board: wp.array(dtype=wp.transformf),
@@ -49,6 +51,7 @@ def _update_assembly_state(
     variant_active: wp.array2d(dtype=wp.float32),
     asset_assembled: wp.array2d(dtype=wp.bool),
     all_success: wp.array(dtype=wp.bool),
+    task_success: wp.array(dtype=wp.bool),
     assembly_contact_force_exceeded: wp.array(dtype=wp.bool),
     any_held_asset_out_of_bound: wp.array(dtype=wp.bool),
 ):
@@ -99,7 +102,9 @@ def _update_assembly_state(
         outside = outside or root_position[1] < lower[1] or root_position[1] > upper[1]
         outside = outside or root_position[2] < lower[2] or root_position[2] > upper[2]
 
+    target_count = num_slots - int(unfinished_count[world]) + int(required_assembly_gain[world])
     all_success[world] = count == num_slots
+    task_success[world] = count >= target_count
     assembly_contact_force_exceeded[world] = excessive_contact
     any_held_asset_out_of_bound[world] = outside
 
@@ -198,6 +203,8 @@ class AssemblyState(ManagerTermBase):
         self._board_body_ids = wp.array(board.ids, dtype=wp.int32, device=env.device)
         self._robot_root_body_ids = wp.array(robot_root.ids, dtype=wp.int32, device=env.device)
         self._variant_ids = wp.from_torch(reset.variant_ids, dtype=wp.uint8)
+        self._unfinished_count = wp.from_torch(reset.unfinished_count, dtype=wp.uint8)
+        self._required_assembly_gain = wp.from_torch(reset.required_assembly_gain, dtype=wp.uint8)
         self._fixed_kind_by_slot = wp.from_torch(reset.fixed_kind_by_slot)
         self._fixture_index_by_variant = wp.array(layout.fixture_index_by_variant, dtype=wp.int32, device=env.device)
         self._env_origins = wp.from_torch(env.scene.env_origins.contiguous(), dtype=wp.vec3f)
@@ -236,6 +243,7 @@ class AssemblyState(ManagerTermBase):
         self._variant_active = wp.empty((env.num_envs, self._num_variants), dtype=wp.float32, device=env.device)
         self._asset_assembled = wp.empty((env.num_envs, self._num_variants), dtype=wp.bool, device=env.device)
         self._all_success = wp.empty(env.num_envs, dtype=wp.bool, device=env.device)
+        self._task_success = wp.empty(env.num_envs, dtype=wp.bool, device=env.device)
         self._assembly_contact_force_exceeded = wp.empty(env.num_envs, dtype=wp.bool, device=env.device)
         self._any_held_asset_out_of_bound = wp.empty(env.num_envs, dtype=wp.bool, device=env.device)
         self._assembly_frames_torch = wp.to_torch(self._assembly_frames).view(env.num_envs, -1)
@@ -245,6 +253,7 @@ class AssemblyState(ManagerTermBase):
         self._variant_active_torch = wp.to_torch(self._variant_active)
         self._asset_assembled_torch = wp.to_torch(self._asset_assembled)
         self._all_success_torch = wp.to_torch(self._all_success)
+        self._task_success_torch = wp.to_torch(self._task_success)
         self._assembly_contact_force_exceeded_torch = wp.to_torch(self._assembly_contact_force_exceeded)
         self._any_held_asset_out_of_bound_torch = wp.to_torch(self._any_held_asset_out_of_bound)
         self._stamp = (-1, -1)
@@ -287,6 +296,12 @@ class AssemblyState(ManagerTermBase):
         return self._all_success_torch
 
     @property
+    def task_success(self) -> torch.Tensor:
+        """Whether the episode's required net assembly gain is complete."""
+        self._refresh()
+        return self._task_success_torch
+
+    @property
     def variant_active(self) -> torch.Tensor:
         """Active assembly variants as a zero-copy float mask."""
         self._refresh()
@@ -323,6 +338,8 @@ class AssemblyState(ManagerTermBase):
                 self._board_body_ids,
                 self._robot_root_body_ids,
                 self._variant_ids,
+                self._unfinished_count,
+                self._required_assembly_gain,
                 self._env_origins,
                 self._held_align,
                 self._fixed_tip_in_board,
@@ -341,6 +358,7 @@ class AssemblyState(ManagerTermBase):
                 self._variant_active,
                 self._asset_assembled,
                 self._all_success,
+                self._task_success,
                 self._assembly_contact_force_exceeded,
                 self._any_held_asset_out_of_bound,
             ],
@@ -399,7 +417,7 @@ def assembly_contact_force(env: ManagerBasedRLEnv) -> torch.Tensor:
 
 
 class assembly_progress_context(ManagerTermBase):
-    """Expose all-pairs completion through Factory's progress-context contract."""
+    """Expose the active assembly goal through Factory's progress-context contract."""
 
     def __init__(self, cfg: ManagerTermBaseCfg, env: ManagerBasedRLEnv):
         super().__init__(cfg, env)
@@ -413,11 +431,11 @@ class assembly_progress_context(ManagerTermBase):
         return self._terminal_success
 
     def __call__(self, env: ManagerBasedRLEnv) -> torch.Tensor:
-        self._terminal_success.copy_(self._state.all_success)
+        self._terminal_success.copy_(self._state.task_success)
         env.extras["successes"] = self._terminal_success
         return self._dummy
 
 
 def assembly_success_reward(env: ManagerBasedRLEnv) -> torch.Tensor:
-    """Reward environments only when every assembly pair is complete."""
-    return _assembly_state(env).all_success.float()
+    """Reward environments that complete their active assembly goal."""
+    return _assembly_state(env).task_success.float()

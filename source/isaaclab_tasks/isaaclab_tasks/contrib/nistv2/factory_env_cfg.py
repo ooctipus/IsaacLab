@@ -103,7 +103,7 @@ class FactoryBoardObservationsCfg:
 
 @configclass
 class FactoryBoardRewardsCfg:
-    """Penalize control effort and reward complete-board assembly."""
+    """Penalize control effort and reward the active assembly goal."""
 
     action_l2 = RewTerm(func=mdp.action_l2_clamped, weight=-1e-4)
     action_rate_l2 = RewTerm(func=mdp.action_rate_l2_clamped, weight=-1e-4)
@@ -119,12 +119,13 @@ class FactoryBoardRewardsCfg:
 
 @configclass
 class FactoryBoardTerminationsCfg:
-    """Terminate on complete-board success or invalid board state."""
+    """Terminate on task success or invalid board state."""
 
     time_out = DoneTerm(
         func=mdp.initial_unfinished_time_out,
         time_out=True,
         params={
+            "enabled": preset(default=True, progress_goal=False),
             "seconds_per_asset": 14.0,
             "dynamic": preset(default=True, fixed_timeout=False),
             "fixed_horizon_s": None,
@@ -198,6 +199,7 @@ class FactoryBoardEventCfg:
             "spawn_all_sockets": False,
             "state_table_size": 32760,
             "unfinished_count": preset(default=None, unfinished_1=1),
+            "progress_goal": preset(default=False, progress_goal=True),
             "fallen_state_table_size": None,
             "settle_steps": 20,
             "fixed_asset_pose_range": {"x": (0.075, 0.25), "y": (-0.25, 0.25), "yaw": (-3.14, 3.14)},

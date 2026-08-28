@@ -66,7 +66,7 @@ class BoardMetrics(ManagerTermBase):
                 "denominator": self._reset.reset_state_count,
                 "tile_shape": self._unfinished_tile_shape,
                 "cell_labels": self._unfinished_labels,
-                "color_label": "Estimated whole-board success rate",
+                "color_label": "Estimated task success rate",
                 "cmap": "RdYlGn",
                 "vmax": 1.0,
             },

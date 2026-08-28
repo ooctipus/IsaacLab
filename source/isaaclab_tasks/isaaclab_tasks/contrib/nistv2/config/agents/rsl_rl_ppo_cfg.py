@@ -64,7 +64,7 @@ class FactoryBoardPPORunnerCfg(FactoryPPORunnerCfg):
         num_mini_batches=4,
         learning_rate=1.0e-4,
         schedule="adaptive",
-        gamma=0.995,
+        gamma=preset(default=0.995, gamma_0999=0.999, gamma_09999=0.9999),
         lam=0.90,
         desired_kl=0.01,
         max_grad_norm=1.0,

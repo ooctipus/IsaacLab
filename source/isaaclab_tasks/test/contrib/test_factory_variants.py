@@ -70,7 +70,11 @@ from isaaclab_tasks.contrib.nistv2.board_layout import (
     board_layout,
 )
 from isaaclab_tasks.contrib.nistv2.factory_env_cfg import FactoryBoardSceneCfg
-from isaaclab_tasks.contrib.nistv2.mdp.assembly_state import _update_assembly_state, assembly_progress_context
+from isaaclab_tasks.contrib.nistv2.mdp.assembly_state import (
+    _update_assembly_state,
+    assembly_progress_context,
+    assembly_success_reward,
+)
 from isaaclab_tasks.contrib.nistv2.mdp.events import randomize_rigid_body_materials
 from isaaclab_tasks.contrib.nistv2.mdp.metrics import BoardMetrics
 from isaaclab_tasks.contrib.nistv2.mdp.reset import (
@@ -571,6 +575,11 @@ def test_one_slot_rl_cfg_matches_the_variant_training_contract() -> None:
     assert unfinished_count.to_dict() == {"default": None, "unfinished_1": 1}
     assert resolve_presets(unfinished_count) is None
     assert resolve_presets(unfinished_count, selected=("unfinished_1",)) == 1
+    progress_goal = reset_params["progress_goal"]
+    assert isinstance(progress_goal, PresetCfg)
+    assert progress_goal.to_dict() == {"default": False, "progress_goal": True}
+    assert resolve_presets(progress_goal) is False
+    assert resolve_presets(progress_goal, selected=("progress_goal",)) is True
     assert isinstance(monitor_cfg, PresetCfg)
     assert resolve_presets(monitor_cfg).monitored_history_len == 5
     assert resolve_presets(monitor_cfg, selected=("success_estimator",)) is None
@@ -636,6 +645,38 @@ def test_full_board_curriculum_presets_compose_independently(
     assert env_cfg.terminations.time_out.params["dynamic"] is not fixed_timeout
     assert env_cfg.terminations.time_out.params["fixed_horizon_s"] is None
     assert env_cfg.terminations.time_out.params["dynamic_env_count"] is None
+
+
+@pytest.mark.parametrize(
+    ("selected", "progress_goal", "gamma"),
+    [
+        ((), False, 0.995),
+        (("gamma_0999",), False, 0.999),
+        (("progress_goal", "gamma_0999"), True, 0.999),
+        (("progress_goal", "gamma_09999"), True, 0.9999),
+    ],
+)
+def test_full_board_progress_goal_and_discount_presets_are_independent(
+    monkeypatch: pytest.MonkeyPatch, selected: tuple[str, ...], progress_goal: bool, gamma: float
+) -> None:
+    """Toggle hidden progress goals, infinite horizon, and discount independently."""
+    from isaaclab_tasks.utils.hydra import resolve_task_config
+
+    monkeypatch.setattr(sys, "argv", ["train.py"])
+    baseline_env_cfg, baseline_agent_cfg = resolve_task_config(
+        "IsaacContrib-Factory-Board-Reset-Franka", "rsl_rl_cfg_entry_point"
+    )
+    argv = ["train.py"]
+    if selected:
+        argv.append(f"presets={','.join(selected)}")
+    monkeypatch.setattr(sys, "argv", argv)
+    env_cfg, agent_cfg = resolve_task_config("IsaacContrib-Factory-Board-Reset-Franka", "rsl_rl_cfg_entry_point")
+
+    assert env_cfg.events.reset_board.params["progress_goal"] is progress_goal
+    assert env_cfg.terminations.time_out.params["enabled"] is not progress_goal
+    assert agent_cfg.algorithm.gamma == pytest.approx(gamma)
+    assert env_cfg.observations.to_dict() == baseline_env_cfg.observations.to_dict()
+    assert agent_cfg.obs_groups == baseline_agent_cfg.obs_groups
 
 
 def test_full_board_material_randomization_matches_v1() -> None:
@@ -753,6 +794,7 @@ def test_one_slot_assembly_state_keeps_canonical_variant_channels() -> None:
     variant_active = wp.empty((1, 3), dtype=wp.float32, device="cpu")
     asset_assembled = wp.empty((1, 3), dtype=wp.bool, device="cpu")
     all_success = wp.empty(1, dtype=wp.bool, device="cpu")
+    task_success = wp.empty(1, dtype=wp.bool, device="cpu")
     contact_exceeded = wp.empty(1, dtype=wp.bool, device="cpu")
     out_of_bound = wp.empty(1, dtype=wp.bool, device="cpu")
 
@@ -765,6 +807,8 @@ def test_one_slot_assembly_state_keeps_canonical_variant_channels() -> None:
             board_ids,
             root_ids,
             variant_ids,
+            wp.array([1], dtype=wp.uint8, device="cpu"),
+            wp.array([1], dtype=wp.uint8, device="cpu"),
             wp.array([[0.0, 0.0, 0.0]], dtype=wp.vec3f, device="cpu"),
             identity,
             identity,
@@ -778,18 +822,88 @@ def test_one_slot_assembly_state_keeps_canonical_variant_channels() -> None:
             wp.vec3f(-10.0, -10.0, -10.0),
             wp.vec3f(10.0, 10.0, 10.0),
         ],
-        outputs=[assembly_frames, variant_active, asset_assembled, all_success, contact_exceeded, out_of_bound],
+        outputs=[
+            assembly_frames,
+            variant_active,
+            asset_assembled,
+            all_success,
+            task_success,
+            contact_exceeded,
+            out_of_bound,
+        ],
         device="cpu",
     )
 
     torch.testing.assert_close(wp.to_torch(variant_active), torch.tensor([[0.0, 0.0, 1.0]]))
     torch.testing.assert_close(wp.to_torch(asset_assembled), torch.tensor([[False, False, True]]))
     assert wp.to_torch(all_success).item()
+    assert wp.to_torch(task_success).item()
     assert wp.to_torch(contact_exceeded).item()
     frames = wp.to_torch(assembly_frames)
     torch.testing.assert_close(frames[0, 0], torch.zeros(7))
     torch.testing.assert_close(frames[0, 2], torch.zeros(7))
     torch.testing.assert_close(frames[0, [1, 3, 4, 5], 0], torch.ones(4))
+
+
+def test_assembly_state_uses_net_progress_from_the_preassembled_baseline() -> None:
+    """Require net assembled-count gain without crediting removal and reinsertion."""
+    num_envs = 5
+    num_slots = 3
+    body_q = wp.array(
+        [[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]],
+        dtype=wp.transformf,
+        device="cpu",
+    )
+    held_ids = wp.array([[1, 1, 1], [0, 1, 1], [0, 1, 1], [0, 0, 1], [0, 0, 0]], dtype=wp.int32, device="cpu")
+    root_ids = wp.zeros((num_envs, 1), dtype=wp.int32, device="cpu")
+    variant_ids = wp.array([[0, 1, 2]] * num_envs, dtype=wp.uint8, device="cpu")
+    identity = wp.array([[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]] * 3, dtype=wp.transformf, device="cpu")
+    assembly_frames = wp.empty((num_envs, 6), dtype=wp.transformf, device="cpu")
+    variant_active = wp.empty((num_envs, 3), dtype=wp.float32, device="cpu")
+    asset_assembled = wp.empty((num_envs, 3), dtype=wp.bool, device="cpu")
+    all_success = wp.empty(num_envs, dtype=wp.bool, device="cpu")
+    task_success = wp.empty(num_envs, dtype=wp.bool, device="cpu")
+    contact_exceeded = wp.empty(num_envs, dtype=wp.bool, device="cpu")
+    out_of_bound = wp.empty(num_envs, dtype=wp.bool, device="cpu")
+
+    wp.launch(
+        _update_assembly_state,
+        dim=num_envs,
+        inputs=[
+            body_q,
+            held_ids,
+            root_ids,
+            root_ids,
+            variant_ids,
+            wp.array([2, 2, 3, 3, 3], dtype=wp.uint8, device="cpu"),
+            wp.array([1, 1, 2, 2, 3], dtype=wp.uint8, device="cpu"),
+            wp.zeros(num_envs, dtype=wp.vec3f, device="cpu"),
+            identity,
+            identity,
+            identity,
+            3,
+            num_slots,
+            1,
+            wp.zeros((num_envs * num_slots, 1), dtype=wp.vec3f, device="cpu"),
+            1.0,
+            0.001,
+            wp.vec3f(-10.0, -10.0, -10.0),
+            wp.vec3f(10.0, 10.0, 10.0),
+        ],
+        outputs=[
+            assembly_frames,
+            variant_active,
+            asset_assembled,
+            all_success,
+            task_success,
+            contact_exceeded,
+            out_of_bound,
+        ],
+        device="cpu",
+    )
+
+    torch.testing.assert_close(wp.to_torch(task_success), torch.tensor([False, False, False, True, True]))
+    torch.testing.assert_close(wp.to_torch(all_success), torch.tensor([False, False, False, False, True]))
 
 
 def test_full_board_reset_planner_balances_accepted_marginals() -> None:
@@ -801,16 +915,19 @@ def test_full_board_reset_planner_balances_accepted_marginals() -> None:
     for batch in range(128):
         variants = (torch.arange(512)[:, None] + torch.arange(num_slots)[None, :] + batch * num_slots) % NUM_VARIANTS
         unfinished_before = planner.unfinished_counts.clone()
+        progress_goals_before = planner.progress_goal_counts.clone()
         focus_slots_before = planner.focus_slot_counts.clone()
         unfinished_labels_before = planner.unfinished_label_counts.clone()
         cells_before = planner.cell_counts.clone()
         plan = planner.sample(variants)
         torch.testing.assert_close(planner.unfinished_counts, unfinished_before)
+        torch.testing.assert_close(planner.progress_goal_counts, progress_goals_before)
         torch.testing.assert_close(planner.focus_slot_counts, focus_slots_before)
         torch.testing.assert_close(planner.unfinished_label_counts, unfinished_labels_before)
         torch.testing.assert_close(planner.cell_counts, cells_before)
         rows = torch.arange(len(plan.focus_slot))
         near_preassembled = plan.label == NEAR_PREASSEMBLED_LABEL
+        torch.testing.assert_close(plan.required_assembly_gain, plan.unfinished_count)
         assert plan.unfinished[rows[~near_preassembled], plan.focus_slot[~near_preassembled]].all()
         assert (~plan.unfinished[rows[near_preassembled], plan.focus_slot[near_preassembled]]).all()
         assert (plan.unfinished_count[near_preassembled] < num_slots).all()
@@ -823,6 +940,8 @@ def test_full_board_reset_planner_balances_accepted_marginals() -> None:
 
     unfinished_label_counts = planner.unfinished_label_counts
     assert planner.unfinished_counts.sum() == 65536
+    assert planner.progress_goal_counts.sum() == 65536
+    assert torch.equal(planner.progress_goal_counts.diag(), planner.unfinished_counts)
     assert planner.focus_slot_counts.sum() == 65536
     assert unfinished_label_counts.sum() == 65536
     assert planner.cell_counts.sum() == 65536
@@ -842,6 +961,24 @@ def test_full_board_reset_planner_balances_accepted_marginals() -> None:
     assert unfinished_label_counts[-1, NEAR_PREASSEMBLED_LABEL] == 0
 
 
+def test_full_board_reset_planner_balances_intermediate_progress_goals() -> None:
+    """Cover every reachable progress target without enforcing exact batch quotas."""
+    torch.manual_seed(11)
+    num_slots = 4
+    planner = BalancedResetPlanner(num_slots, "cpu", num_variants=NUM_VARIANTS, progress_goal=True)
+    for batch in range(64):
+        variants = (torch.arange(512)[:, None] + torch.arange(num_slots)[None, :] + batch) % NUM_VARIANTS
+        plan = planner.sample(variants)
+        assert ((plan.required_assembly_gain >= 1) & (plan.required_assembly_gain <= plan.unfinished_count)).all()
+        planner.accept(plan, variants, torch.arange(len(plan.unfinished_count)))
+
+    for unfinished, counts in enumerate(planner.progress_goal_counts, 1):
+        reachable = counts[:unfinished]
+        assert (reachable > 0).all()
+        assert reachable.max() < reachable.min() * 1.2
+        assert (counts[unfinished:] == 0).all()
+
+
 def test_full_board_reset_planner_can_fix_unfinished_count() -> None:
     """Keep all other reset choices active when a preset fixes the unfinished count."""
     num_slots = 3
@@ -851,6 +988,7 @@ def test_full_board_reset_planner_can_fix_unfinished_count() -> None:
     rows = torch.arange(512)
 
     assert (plan.unfinished_count == 1).all()
+    assert (plan.required_assembly_gain == 1).all()
     assert (plan.unfinished.sum(dim=1) == 1).all()
     near_preassembled = plan.label == NEAR_PREASSEMBLED_LABEL
     assert plan.unfinished[rows[~near_preassembled], plan.focus_slot[~near_preassembled]].all()
@@ -935,6 +1073,7 @@ def test_full_board_reset_places_robot_near_preassembled_focus() -> None:
     variants = torch.tensor([[2, 5]])
     plan = ResetPlan(
         unfinished_count=torch.tensor([1]),
+        required_assembly_gain=torch.tensor([1]),
         unfinished=torch.tensor([[True, False]]),
         focus_slot=torch.tensor([1]),
         label=torch.tensor([NEAR_PREASSEMBLED_LABEL]),
@@ -1267,8 +1406,9 @@ def test_full_board_reset_handles_an_empty_marginal_row() -> None:
 
 
 def test_full_board_reset_exposes_compact_state_curriculum_features() -> None:
-    """Encode only physical state shared by reset rows and later endpoints."""
+    """Encode physical state and the learner-private absolute assembly target."""
     reset = board_reset.__new__(board_reset)
+    reset._progress_goal = True
     reset._capacity = 2
     reset.num_slots = 2
     reset.num_variants = 3
@@ -1279,9 +1419,10 @@ def test_full_board_reset_exposes_compact_state_curriculum_features() -> None:
     reset._variant_ids = torch.tensor([[0, 2], [1, 0]], dtype=torch.uint8)
     reset._slot_state = torch.tensor([[TARGET, ASSEMBLED], [FALLEN, PARTIAL_ASSEMBLY]], dtype=torch.uint8)
     reset._unfinished_count = torch.tensor([1, 2], dtype=torch.uint8)
+    reset._required_assembly_gain = torch.tensor([1, 1], dtype=torch.uint8)
     reset._focus_slot = torch.tensor([0, 1], dtype=torch.uint8)
     reset._reset_label = torch.tensor([0, len(RESET_LABELS) - 1], dtype=torch.uint8)
-    feature_dim = 7 + 14 + 2 + 2 * 3
+    feature_dim = 7 + 14 + 2 + 2 * 3 + 1
     reset.state_features = torch.empty((reset._capacity, feature_dim))
 
     data_ptr = reset.state_features.data_ptr()
@@ -1292,6 +1433,7 @@ def test_full_board_reset_exposes_compact_state_curriculum_features() -> None:
             reset._held_pose.flatten(1),
             reset._robot_joint_pos,
             torch.eye(reset.num_variants)[reset._variant_ids.long()].flatten(1),
+            torch.tensor([[2.0], [1.0]]),
         ),
         dim=1,
     )
@@ -1300,10 +1442,20 @@ def test_full_board_reset_exposes_compact_state_curriculum_features() -> None:
     reset._slot_state.zero_()
     reset._focus_slot.fill_(1)
     reset._reset_label.fill_(3)
-    reset._unfinished_count.fill_(2)
+    reset._unfinished_count.copy_(torch.tensor([2, 2], dtype=torch.uint8))
+    reset._required_assembly_gain.copy_(torch.tensor([2, 1], dtype=torch.uint8))
     reset._build_state_features()
     torch.testing.assert_close(reset.state_features, expected)
     assert reset.state_features.data_ptr() == data_ptr
+    reset._required_assembly_gain[0] = 1
+    reset._build_state_features()
+    expected[0, -1] = 1.0
+    torch.testing.assert_close(reset.state_features, expected)
+
+    reset._progress_goal = False
+    reset.state_features = torch.empty((reset._capacity, feature_dim - 1))
+    reset._build_state_features()
+    torch.testing.assert_close(reset.state_features, expected[:, :-1])
 
 
 def test_full_board_timeout_snapshots_initial_unfinished_count() -> None:
@@ -1348,12 +1500,17 @@ def test_full_board_timeout_snapshots_initial_unfinished_count() -> None:
     mixed.reset()
     torch.testing.assert_close(mixed.episode_limit_steps, torch.tensor([4, 6, 6]))
 
+    disabled = initial_unfinished_time_out(SimpleNamespace(params={"enabled": False}), env)
+    env.episode_length_buf.fill_(1_000_000)
+    disabled.reset()
+    torch.testing.assert_close(disabled(env, enabled=False), torch.zeros(3, dtype=torch.bool))
+
 
 def test_full_board_progress_context_keeps_terminal_success_stable() -> None:
     """Do not let a post-reset assembly refresh overwrite terminal estimator labels."""
     source = torch.tensor([True, False, True])
     term = assembly_progress_context.__new__(assembly_progress_context)
-    term._state = SimpleNamespace(all_success=source)
+    term._state = SimpleNamespace(task_success=source)
     term._dummy = torch.zeros(3, dtype=torch.bool)
     term._terminal_success = torch.empty_like(term._dummy)
     env = SimpleNamespace(extras={})
@@ -1364,6 +1521,18 @@ def test_full_board_progress_context_keeps_terminal_success_stable() -> None:
     torch.testing.assert_close(result, torch.zeros(3, dtype=torch.bool))
     torch.testing.assert_close(env.extras["successes"], torch.tensor([True, False, True]))
     assert env.extras["successes"] is term._terminal_success
+
+
+def test_full_board_success_reward_matches_the_progress_goal() -> None:
+    """Use the same success predicate for termination context and reward."""
+    task_success = torch.tensor([True, False, True])
+    env = SimpleNamespace(
+        event_manager=SimpleNamespace(
+            get_term_cfg=lambda name: SimpleNamespace(func=SimpleNamespace(task_success=task_success))
+        )
+    )
+
+    torch.testing.assert_close(assembly_success_reward(env), torch.tensor([1.0, 0.0, 1.0]))
 
 
 def test_full_board_reset_updates_and_samples_monitor_rows(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1388,6 +1557,7 @@ def test_full_board_reset_updates_and_samples_monitor_rows(monkeypatch: pytest.M
     )
     reset.sampled_state = torch.tensor([2, -1, 1])
     reset.unfinished_count = torch.zeros(3, dtype=torch.uint8)
+    reset.required_assembly_gain = torch.zeros(3, dtype=torch.uint8)
     reset.focus_slot = torch.zeros(3, dtype=torch.uint8)
     reset.reset_label = torch.zeros(3, dtype=torch.uint8)
     reset.variant_ids = torch.zeros((3, reset.num_slots), dtype=torch.uint8)
@@ -1399,6 +1569,7 @@ def test_full_board_reset_updates_and_samples_monitor_rows(monkeypatch: pytest.M
     reset.fixed_kind_by_slot = torch.full((3, reset.layout.num_fixed_slots), -1, dtype=torch.int32)
     reset.revision = 0
     reset._unfinished_count = torch.tensor([1, 2, 1, 2], dtype=torch.uint8)
+    reset._required_assembly_gain = torch.tensor([1, 2, 1, 1], dtype=torch.uint8)
     reset._focus_slot = torch.zeros(4, dtype=torch.uint8)
     reset._reset_label = torch.zeros(4, dtype=torch.uint8)
     reset._variant_ids = torch.tensor([[0, 1], [2, 3], [4, 5], [18, 7]], dtype=torch.uint8)
@@ -1457,17 +1628,28 @@ def test_full_board_reset_updates_and_samples_monitor_rows(monkeypatch: pytest.M
     assert refresh_count == 1
     torch.testing.assert_close(reset.sampled_state, torch.tensor([3, 0, 2]))
     torch.testing.assert_close(reset.unfinished_count, torch.tensor([2, 1, 1], dtype=torch.uint8))
+    torch.testing.assert_close(reset.required_assembly_gain, torch.tensor([1, 1, 1], dtype=torch.uint8))
     torch.testing.assert_close(reset.variant_ids, torch.tensor([[18, 7], [0, 1], [4, 5]], dtype=torch.uint8))
+    assert env.extras["diagnostics"]["factory_board_required_assembly_gain"] is reset.required_assembly_gain
     torch.testing.assert_close(written["state_ids"], torch.tensor([3, 0, 2]))
 
     reset.success_monitor = None
     reset.state_features = torch.empty((4, 1))
     reset.sampled_state.copy_(torch.tensor([0, 1, 2]))
+    reset.unfinished_count.copy_(torch.tensor([1, 2, 1], dtype=torch.uint8))
+    reset.required_assembly_gain.copy_(torch.tensor([1, 2, 1], dtype=torch.uint8))
     reset.outcome_state_ids = torch.full((3,), -1, dtype=torch.long)
     reset.outcome_hard_targets = torch.zeros(3)
     reset.outcome_grounded = torch.zeros(3, dtype=torch.bool)
     captured = torch.empty(0, dtype=torch.long)
-    reset._capture_outcome_features = lambda env_ids: captured.resize_as_(env_ids).copy_(env_ids)
+    captured_targets = torch.empty(0, dtype=torch.uint8)
+
+    def capture_outcome_features(env_ids: torch.Tensor) -> None:
+        captured.resize_as_(env_ids).copy_(env_ids)
+        targets = reset.num_slots - reset.unfinished_count[env_ids] + reset.required_assembly_gain[env_ids]
+        captured_targets.resize_as_(targets).copy_(targets)
+
+    reset._capture_outcome_features = capture_outcome_features
     progress.is_success.copy_(torch.tensor([True, False, False]))
     terminations.terminated.copy_(torch.tensor([True, False, True]))
     terminations.time_outs.copy_(torch.tensor([False, True, False]))
@@ -1494,6 +1676,8 @@ def test_full_board_reset_updates_and_samples_monitor_rows(monkeypatch: pytest.M
     torch.testing.assert_close(reset.outcome_hard_targets[:2], torch.tensor([1.0, 0.0]))
     torch.testing.assert_close(reset.outcome_grounded, torch.tensor([True, False, False]))
     torch.testing.assert_close(captured, torch.tensor([0, 1]))
+    torch.testing.assert_close(captured_targets, torch.tensor([2, 2], dtype=torch.uint8))
+    torch.testing.assert_close(reset.required_assembly_gain, torch.tensor([1, 1, 1], dtype=torch.uint8))
 
 
 def test_full_board_reset_publishes_full_bank_success_estimate_without_history() -> None:
@@ -1605,6 +1789,7 @@ def test_full_board_metrics_are_full_bank_averages() -> None:
     )
     assert heatmaps["Metrics/ResetProbs"]["numerator"] is reset.reset_probability_mass
     assert heatmaps["Metrics/ResetSuccessRate"]["numerator"] is reset.reset_success_sum
+    assert heatmaps["Metrics/ResetSuccessRate"]["color_label"] == "Estimated task success rate"
     assert heatmaps["Metrics/AssetUnassembledRate"]["numerator"] is reset.asset_unassembled_sum
     assert heatmaps["Metrics/AssetUnassembledRate"]["facet_labels"] == ("U=1", "U=2", "U=3")
     assert (

@@ -63,6 +63,7 @@ class ResetPlan:
     """Discrete choices for one reset-generation batch."""
 
     unfinished_count: torch.Tensor
+    required_assembly_gain: torch.Tensor
     unfinished: torch.Tensor
     focus_slot: torch.Tensor
     label: torch.Tensor
@@ -78,6 +79,7 @@ class BalancedResetPlanner:
         device: str | torch.device,
         unfinished_count: int | None = None,
         num_variants: int = 1,
+        progress_goal: bool = False,
     ):
         if num_slots < 1:
             raise ValueError(f"num_slots must be positive, got {num_slots}.")
@@ -89,7 +91,9 @@ class BalancedResetPlanner:
         self.num_variants = num_variants
         self.device = torch.device(device)
         self._unfinished_count = unfinished_count
+        self._progress_goal = progress_goal
         self.unfinished_counts = torch.zeros(num_slots, dtype=torch.long, device=device)
+        self.progress_goal_counts = torch.zeros((num_slots, num_slots), dtype=torch.long, device=device)
         self.focus_slot_counts = torch.zeros(num_slots, dtype=torch.long, device=device)
         self.unfinished_label_counts = torch.zeros((num_slots, len(RESET_LABELS)), dtype=torch.long, device=device)
         self.cell_counts = torch.zeros((len(RESET_LABELS), num_variants), dtype=torch.long, device=device)
@@ -102,6 +106,13 @@ class BalancedResetPlanner:
             unfinished_count = self._sample_marginal(self.unfinished_counts, count) + 1
         else:
             unfinished_count = torch.full((count,), self._unfinished_count, dtype=torch.long, device=self.device)
+
+        if self._progress_goal:
+            goal_weights = self.progress_goal_counts[unfinished_count - 1].float().add_(1.0).reciprocal_()
+            goal_weights.mul_(torch.arange(self.num_slots, device=self.device) < unfinished_count[:, None])
+            required_assembly_gain = torch.multinomial(goal_weights, 1).squeeze(1) + 1
+        else:
+            required_assembly_gain = unfinished_count
 
         ranks = torch.rand((count, self.num_slots), device=self.device).argsort(dim=1).argsort(dim=1)
         unfinished = ranks < unfinished_count[:, None]
@@ -125,12 +136,23 @@ class BalancedResetPlanner:
         rows = torch.arange(count, device=self.device)
         unfinished_focus = label != _NEAR_PREASSEMBLED_LABEL
         slot_state[rows[unfinished_focus], focus_slot[unfinished_focus]] = TARGET
-        return ResetPlan(unfinished_count, unfinished, focus_slot, label, slot_state.to(torch.uint8))
+        return ResetPlan(
+            unfinished_count,
+            required_assembly_gain,
+            unfinished,
+            focus_slot,
+            label,
+            slot_state.to(torch.uint8),
+        )
 
     def accept(self, plan: ResetPlan, variants: torch.Tensor, indices: torch.Tensor) -> None:
         """Update balancing counts from states that entered the bank."""
         self.unfinished_counts.add_(
             torch.bincount(plan.unfinished_count[indices] - 1, minlength=self.unfinished_counts.numel())
+        )
+        goal_ids = (plan.unfinished_count[indices] - 1) * self.num_slots + plan.required_assembly_gain[indices] - 1
+        self.progress_goal_counts.add_(
+            torch.bincount(goal_ids, minlength=self.progress_goal_counts.numel()).view_as(self.progress_goal_counts)
         )
         self.focus_slot_counts.add_(torch.bincount(plan.focus_slot[indices], minlength=self.focus_slot_counts.numel()))
         joint_ids = (plan.unfinished_count[indices] - 1) * len(RESET_LABELS) + plan.label[indices]
@@ -262,8 +284,13 @@ class board_reset(ManagerTermBase):
                 f"got {self._success_monitor_env_count}."
             )
         self._sampling_cfg: SamplerCfg = cfg.params["sampling"]
+        self._progress_goal = bool(cfg.params.get("progress_goal", False))
         self._planner = BalancedResetPlanner(
-            self.num_slots, env.device, cfg.params["unfinished_count"], num_variants=self.num_variants
+            self.num_slots,
+            env.device,
+            cfg.params["unfinished_count"],
+            num_variants=self.num_variants,
+            progress_goal=self._progress_goal,
         )
         self._solver: DifferentialInverseKinematicsAction | None = None
 
@@ -272,6 +299,7 @@ class board_reset(ManagerTermBase):
         self._variant_ids = torch.empty((self._capacity, self.num_slots), dtype=torch.uint8, device=env.device)
         self._robot_joint_pos = torch.empty((self._capacity, self._robot.num_joints), device=env.device)
         self._unfinished_count = torch.empty(self._capacity, dtype=torch.uint8, device=env.device)
+        self._required_assembly_gain = torch.empty_like(self._unfinished_count)
         self._focus_slot = torch.empty_like(self._unfinished_count)
         self._reset_label = torch.empty_like(self._unfinished_count)
         self._slot_state = torch.empty((self._capacity, self.num_slots), dtype=torch.uint8, device=env.device)
@@ -279,7 +307,13 @@ class board_reset(ManagerTermBase):
         self._bank_unfinished_index = torch.empty(self._capacity, dtype=torch.long, device=env.device)
         self.state_features: torch.Tensor | None = None
         self.estimated_success_rate: torch.Tensor | None = None
-        state_feature_dim = 7 + 7 * self.num_slots + self._robot.num_joints + self.num_slots * self.num_variants
+        state_feature_dim = (
+            7
+            + 7 * self.num_slots
+            + self._robot.num_joints
+            + self.num_slots * self.num_variants
+            + int(self._progress_goal)
+        )
         if monitor_cfg is None:
             self.state_features = torch.empty((self._capacity, state_feature_dim), device=env.device)
             self.estimated_success_rate = torch.full((self._capacity,), 0.5, device=env.device)
@@ -300,6 +334,7 @@ class board_reset(ManagerTermBase):
 
         self.sampled_state = torch.full((env.num_envs,), -1, dtype=torch.long, device=env.device)
         self.unfinished_count = torch.zeros(env.num_envs, dtype=torch.uint8, device=env.device)
+        self.required_assembly_gain = torch.zeros_like(self.unfinished_count)
         self.focus_slot = torch.zeros_like(self.unfinished_count)
         self.reset_label = torch.zeros_like(self.unfinished_count)
         self.variant_ids = (
@@ -346,6 +381,7 @@ class board_reset(ManagerTermBase):
         fixed_asset_pose_range: dict[str, tuple[float, float]],
         held_asset_in_bound_range: dict[str, tuple[float, float]],
         acceptance_conditions: dict[str, object],
+        progress_goal: bool = False,
         success_monitor_env_count: int | None = None,
         fallen_state_table_size: int | None = None,
         settle_steps: int = 20,
@@ -381,6 +417,7 @@ class board_reset(ManagerTermBase):
         _, state_ids = self._sample_marginally_balanced(len(env_ids))
         self.sampled_state[env_ids] = state_ids
         self.unfinished_count[env_ids] = self._unfinished_count[state_ids]
+        self.required_assembly_gain[env_ids] = self._required_assembly_gain[state_ids]
         self.focus_slot[env_ids] = self._focus_slot[state_ids]
         self.reset_label[env_ids] = self._reset_label[state_ids]
         self.variant_ids[env_ids] = self._variant_ids[state_ids]
@@ -398,6 +435,7 @@ class board_reset(ManagerTermBase):
             {
                 "factory_board_reset_state": self.sampled_state,
                 "factory_board_unfinished_count": self.unfinished_count,
+                "factory_board_required_assembly_gain": self.required_assembly_gain,
                 "factory_board_focus_slot": self.focus_slot,
                 "factory_board_reset_label": self.reset_label,
                 "factory_board_variant_ids": self.variant_ids,
@@ -494,6 +532,7 @@ class board_reset(ManagerTermBase):
             self._variant_ids[size:end] = variants[accepted]
             self._robot_joint_pos[size:end] = self._robot.data.joint_pos.torch[env_ids[accepted]]
             self._unfinished_count[size:end] = plan.unfinished_count[accepted]
+            self._required_assembly_gain[size:end] = plan.required_assembly_gain[accepted]
             self._focus_slot[size:end] = plan.focus_slot[accepted]
             self._reset_label[size:end] = plan.label[accepted]
             self._slot_state[size:end] = plan.slot_state[accepted]
@@ -539,6 +578,7 @@ class board_reset(ManagerTermBase):
             self._held_pose,
             self._robot_joint_pos,
             self._variant_ids,
+            self.num_slots - self._unfinished_count + self._required_assembly_gain,
         )
 
     def _capture_outcome_features(self, env_ids: torch.Tensor) -> None:
@@ -555,6 +595,7 @@ class board_reset(ManagerTermBase):
             held_pose,
             self._robot.data.joint_pos.torch[env_ids],
             self.variant_ids[env_ids],
+            self.num_slots - self.unfinished_count[env_ids] + self.required_assembly_gain[env_ids],
         )
         self.outcome_next_features[env_ids] = features
 
@@ -565,8 +606,9 @@ class board_reset(ManagerTermBase):
         held_pose: torch.Tensor,
         joint_pos: torch.Tensor,
         variant_ids: torch.Tensor,
+        target_assembled_count: torch.Tensor,
     ) -> None:
-        """Pack the physical state shared by reset rows and live endpoints."""
+        """Pack the curriculum state shared by reset rows and live endpoints."""
         features.zero_()
         column = 0
 
@@ -581,8 +623,11 @@ class board_reset(ManagerTermBase):
         features[:, column : column + width].copy_(joint_pos)
         column += width
 
-        variant_one_hot = features[:, column:].view(len(features), self.num_slots, self.num_variants)
+        width = self.num_slots * self.num_variants
+        variant_one_hot = features[:, column : column + width].view(len(features), self.num_slots, self.num_variants)
         variant_one_hot.scatter_(2, variant_ids.long().unsqueeze(-1), 1.0)
+        if self._progress_goal:
+            features[:, column + width].copy_(target_assembled_count)
 
     def _precollect_fallen(self) -> tuple[torch.Tensor, torch.Tensor]:
         poses = torch.empty((self._fallen_capacity, self.num_slots, 7), device=self.device)
@@ -1096,6 +1141,8 @@ class board_reset(ManagerTermBase):
 
     def _report_distribution(self) -> None:
         n_counts = torch.bincount(self._unfinished_count.long(), minlength=self.num_slots + 1)[1:]
+        goal_ids = (self._unfinished_count.long() - 1) * self.num_slots + self._required_assembly_gain.long() - 1
+        goal_counts = torch.bincount(goal_ids, minlength=self.num_slots**2).view(self.num_slots, self.num_slots)
         label_counts = torch.bincount(self._reset_label.long(), minlength=len(RESET_LABELS))
         joint_ids = (self._unfinished_count.long() - 1) * len(RESET_LABELS) + self._reset_label.long()
         joint_counts = torch.bincount(joint_ids, minlength=self.num_slots * len(RESET_LABELS)).view(
@@ -1106,6 +1153,9 @@ class board_reset(ManagerTermBase):
         coarse = self._slot_state.flatten()
         coarse_counts = torch.bincount(coarse[coarse < ASSEMBLED].long(), minlength=len(COARSE_STATE_NAMES))
         print(f"[factory_board_reset] unfinished: {n_counts.tolist()}")
+        if self._progress_goal:
+            for unfinished, counts in enumerate(goal_counts.tolist(), 1):
+                print(f"[factory_board_reset] unfinished={unfinished:02d} progress goals: {counts[:unfinished]}")
         print(f"[factory_board_reset] reset labels: {dict(zip(RESET_LABELS, label_counts.tolist()))}")
         for unfinished, counts in enumerate(joint_counts.tolist(), 1):
             print(f"[factory_board_reset] unfinished={unfinished:02d}: {dict(zip(RESET_LABELS, counts))}")
@@ -1122,6 +1172,8 @@ class initial_unfinished_time_out(ManagerTermBase):
         if not isinstance(reset, board_reset):
             raise TypeError("initial_unfinished_time_out requires the resolved board reset term.")
         self._reset = reset
+        self._enabled = bool(cfg.params.get("enabled", True))
+        self._disabled = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
         self._dynamic = bool(cfg.params.get("dynamic", True))
         seconds_per_asset = float(cfg.params.get("seconds_per_asset", 14.0))
         if not math.isfinite(seconds_per_asset) or seconds_per_asset <= 0.0:
@@ -1149,6 +1201,8 @@ class initial_unfinished_time_out(ManagerTermBase):
 
     def reset(self, env_ids: Sequence[int] | None = None) -> None:
         """Snapshot the new episode's unfinished-asset count."""
+        if not self._enabled:
+            return
         if env_ids is None:
             env_ids = slice(None)
         if self._fixed_steps is not None and self._dynamic_env_mask is not None:
@@ -1166,11 +1220,14 @@ class initial_unfinished_time_out(ManagerTermBase):
     def __call__(
         self,
         env: ManagerBasedRLEnv,
+        enabled: bool = True,
         seconds_per_asset: float = 14.0,
         dynamic: bool = True,
         fixed_horizon_s: float | None = None,
         dynamic_env_count: int | None = None,
     ) -> torch.Tensor:
         """Return environments whose individual episode limit has elapsed."""
-        del seconds_per_asset, dynamic, fixed_horizon_s, dynamic_env_count
+        del enabled, seconds_per_asset, dynamic, fixed_horizon_s, dynamic_env_count
+        if not self._enabled:
+            return self._disabled
         return env.episode_length_buf >= self.episode_limit_steps
