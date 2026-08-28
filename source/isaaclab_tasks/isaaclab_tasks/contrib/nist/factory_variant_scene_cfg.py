@@ -48,7 +48,7 @@ class FactoryVariantSceneCfg(InteractiveSceneCfg):
 
     ground = assets.GROUND_CFG
     table = assets.TABLE_CFG
-    nistboard = assets.NISTBOARD_CFG
+    nistboard = resolve_presets(assets.NISTBOARD_CFG.copy(), selected=("newton_mjwarp",))
     robot: ArticulationCfg = resolve_presets(RobotArticulationCfg(), selected=("newton_mjwarp",))  # type: ignore
     fixed_asset = RigidObjectCfg(
         prim_path="{ENV_REGEX_NS}/FixedAsset",
