@@ -156,8 +156,8 @@ def test_initialization(num_cubes, device):
 
 @pytest.mark.isaacsim_ci
 @pytest.mark.parametrize("device", test_devices())
-def test_fixed_root_initialization_and_reads(tmp_path, device):
-    """A fixed standalone rigid body is selectable and readable without solver degrees of freedom."""
+def test_fixed_root_initialization_and_pose_writes(tmp_path, device):
+    """A fixed standalone rigid body supports pose writes without adding solver degrees of freedom."""
     from pxr import Usd, UsdGeom, UsdPhysics
 
     asset_path = tmp_path / "fixed_cube.usda"
@@ -197,9 +197,32 @@ def test_fixed_root_initialization_and_reads(tmp_path, device):
         torch.testing.assert_close(cube_object.data.root_pos_w.torch, expected_pos)
         torch.testing.assert_close(cube_object.data.root_com_vel_w.torch, torch.zeros((num_cubes, 6), device=device))
 
-        with pytest.raises(RuntimeError, match="fixed-root Newton RigidObject"):
-            cube_object.write_root_pose_to_sim_index(root_pose=cube_object.data.root_link_pose_w.torch)
-        with pytest.raises(RuntimeError, match="fixed-root Newton RigidObject"):
+        original_pose = cube_object.data.root_link_pose_w.torch.clone()
+        env_ids = torch.tensor([1], dtype=torch.int32, device=device)
+        indexed_pose = original_pose[1:].clone()
+        indexed_pose[:, 0] += 0.25
+        indexed_pose[:, 5:] = torch.tensor([0.7071068, 0.7071068], device=device)
+        cube_object.write_root_pose_to_sim_index(root_pose=indexed_pose, env_ids=env_ids)
+
+        sim.forward()
+        torch.testing.assert_close(cube_object.data.body_link_pose_w.torch[0, 0], original_pose[0])
+        torch.testing.assert_close(cube_object.data.body_link_pose_w.torch[1, 0], indexed_pose[0])
+
+        masked_pose = cube_object.data.root_link_pose_w.torch.clone()
+        masked_pose[0, 1] += 0.5
+        env_mask = wp.array([True, False], dtype=wp.bool, device=device)
+        cube_object.write_root_pose_to_sim_mask(root_pose=masked_pose, env_mask=env_mask)
+        sim.forward()
+        torch.testing.assert_close(cube_object.data.body_link_pose_w.torch[:, 0], masked_pose)
+
+        sim.step()
+        cube_object.update(sim.cfg.dt)
+        torch.testing.assert_close(cube_object.data.body_link_pose_w.torch[:, 0], masked_pose)
+        solver_data = SimulationManager._solver.mjw_data
+        torch.testing.assert_close(wp.to_torch(solver_data.mocap_pos)[:, 0], masked_pose[:, :3])
+        torch.testing.assert_close(wp.to_torch(solver_data.mocap_quat)[:, 0], masked_pose[:, [6, 3, 4, 5]])
+
+        with pytest.raises(RuntimeError, match="velocity writes are not supported for a fixed-root"):
             cube_object.write_root_velocity_to_sim_index(root_velocity=cube_object.data.root_com_vel_w.torch)
 
 
