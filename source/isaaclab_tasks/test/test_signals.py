@@ -12,8 +12,10 @@ import torch
 from isaaclab_tasks.contrib.nist.utils import (
     BetaSamplingStrategyCfg,
     FrontierSamplingStrategyCfg,
+    SamplerCfg,
     StateLayout,
     UniformSamplingStrategyCfg,
+    ValueShiftSamplingStrategyCfg,
 )
 
 
@@ -243,3 +245,37 @@ def test_uniform_dtype_matches_input():
     for dtype in (torch.float32, torch.float64):
         scores = _score(signal, torch.rand(64, dtype=dtype))
         assert scores.dtype == dtype
+
+
+def test_value_shift_preserves_state_order_and_normalizes_scale():
+    """Keep row ordering while making the sampling weight independent of value scale."""
+    layout = _layout_factory(num_states=4)
+    value_shift = torch.tensor([2.0, -2.0, 0.0, 6.0])
+    cfg = ValueShiftSamplingStrategyCfg(value_shift_bind="value_shifts")
+    strategy = cfg.class_type(cfg, layout, value_shifts=value_shift)
+    out = torch.empty_like(value_shift)
+
+    strategy.score(out)
+
+    torch.testing.assert_close(out, torch.tensor([1.0, 0.0, 0.0, 3.0]))
+
+    value_shift.zero_()
+    strategy.score(out)
+    torch.testing.assert_close(out, torch.zeros(4))
+
+
+def test_torch_sampler_does_not_construct_disabled_strategies():
+    """A disabled learner signal should add no reset-time binding or scoring work."""
+    layout = _layout_factory(num_states=4)
+    cfg = SamplerCfg(
+        strategies=[
+            BetaSamplingStrategyCfg(weight=0.0, success_rate_bind="missing_binding"),
+            UniformSamplingStrategyCfg(weight=1.0),
+        ],
+        eps=0.0,
+    )
+
+    sampler = cfg.class_type(cfg, layout)
+
+    assert sampler.names == ["uniform"]
+    torch.testing.assert_close(sampler.probabilities(), torch.full((4,), 0.25))

@@ -14,6 +14,8 @@ __all__ = [
     "SamplingStrategyCfg",
     "UniformSamplingStrategy",
     "UniformSamplingStrategyCfg",
+    "ValueShiftSamplingStrategy",
+    "ValueShiftSamplingStrategyCfg",
 ]
 
 from .sampler import Sampler
@@ -23,10 +25,12 @@ from .sampling_strategies import (
     FrontierSamplingStrategy,
     SamplingStrategy,
     UniformSamplingStrategy,
+    ValueShiftSamplingStrategy,
 )
 from .sampling_strategies_cfg import (
     BetaSamplingStrategyCfg,
     FrontierSamplingStrategyCfg,
     SamplingStrategyCfg,
     UniformSamplingStrategyCfg,
+    ValueShiftSamplingStrategyCfg,
 )

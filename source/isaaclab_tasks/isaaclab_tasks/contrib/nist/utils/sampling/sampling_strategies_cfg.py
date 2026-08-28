@@ -15,6 +15,7 @@ from .sampling_strategies import (
     BetaSamplingStrategy,
     FrontierSamplingStrategy,
     UniformSamplingStrategy,
+    ValueShiftSamplingStrategy,
 )
 
 
@@ -111,5 +112,21 @@ class UniformSamplingStrategyCfg:
     """Whether terrain scatter diagnostics should include this strategy's attribution panel."""
 
 
-SamplingStrategyCfg = BetaSamplingStrategyCfg | FrontierSamplingStrategyCfg | UniformSamplingStrategyCfg
+@configclass
+class ValueShiftSamplingStrategyCfg:
+    """Blueprint for normalized sampled-start critic value-shift sampling."""
+
+    class_type: type[ValueShiftSamplingStrategy] | str = "{DIR}.sampling_strategies:ValueShiftSamplingStrategy"
+    """Runtime strategy class."""
+    weight: float = 0.05
+    """Multiplier on the unit-mean value-shift score before sampler normalization."""
+    plot: bool = False
+    """Whether diagnostics include this strategy's attribution panel."""
+    value_shift_bind: str = MISSING
+    """Expression resolving to the row-aligned value-shift tensor."""
+
+
+SamplingStrategyCfg = (
+    BetaSamplingStrategyCfg | FrontierSamplingStrategyCfg | UniformSamplingStrategyCfg | ValueShiftSamplingStrategyCfg
+)
 """Discriminated union of sampling-strategy cfg types."""

@@ -25,16 +25,16 @@ class SamplerTorch:
     """
 
     def __init__(self, cfg: SamplerCfg, layout: StateLayout, **bind_ns) -> None:
+        active_cfgs = [strategy_cfg for strategy_cfg in cfg.strategies if float(strategy_cfg.weight) > 0.0]
         self.strategies: list[tuple[SamplingStrategy, float]] = [
             (strategy_cfg.class_type(strategy_cfg, layout, **bind_ns), float(strategy_cfg.weight))
-            for strategy_cfg in cfg.strategies
+            for strategy_cfg in active_cfgs
         ]
         self.eps = float(cfg.eps)
         self.names = [strategy.name for strategy, _ in self.strategies]
-        self._plot_strategy_indices = [i for i, strategy_cfg in enumerate(cfg.strategies) if strategy_cfg.plot]
+        self._plot_strategy_indices = [i for i, strategy_cfg in enumerate(active_cfgs) if strategy_cfg.plot]
 
         device = layout.coords.device
-        self._weights = torch.tensor([weight for _, weight in self.strategies], device=device)
         self._num_items = int(layout.spawn_index.shape[0])
         self._score_rows = torch.empty((len(self.strategies), self._num_items), device=device, dtype=torch.float32)
         self._weighted = torch.empty(self._num_items, device=device, dtype=torch.float32)

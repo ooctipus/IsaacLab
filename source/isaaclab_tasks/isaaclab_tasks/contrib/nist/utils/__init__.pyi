@@ -23,6 +23,8 @@ __all__ = [
     "PreparedTermChoice",
     "UniformSamplingStrategy",
     "UniformSamplingStrategyCfg",
+    "ValueShiftSamplingStrategy",
+    "ValueShiftSamplingStrategyCfg",
     "create_primitive_mesh",
     "get_reset_state",
     "prim_to_trimesh",
@@ -60,5 +62,7 @@ from .sampling import (
     SamplingStrategyCfg,
     UniformSamplingStrategy,
     UniformSamplingStrategyCfg,
+    ValueShiftSamplingStrategy,
+    ValueShiftSamplingStrategyCfg,
 )
 from .state_layout import StateLayout, StateLayoutCfg

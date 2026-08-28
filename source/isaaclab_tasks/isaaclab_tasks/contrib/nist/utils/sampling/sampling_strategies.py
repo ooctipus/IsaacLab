@@ -27,6 +27,7 @@ if TYPE_CHECKING:
         BetaSamplingStrategyCfg,
         FrontierSamplingStrategyCfg,
         UniformSamplingStrategyCfg,
+        ValueShiftSamplingStrategyCfg,
     )
 
 
@@ -134,3 +135,17 @@ class UniformSamplingStrategy:
 
     def score(self, out: torch.Tensor) -> None:
         out.fill_(1.0)
+
+
+class ValueShiftSamplingStrategy:
+    """Normalized critic shift for reset states sampled in the latest rollout."""
+
+    name = "value_shift"
+
+    def __init__(self, cfg: ValueShiftSamplingStrategyCfg, layout: StateLayout, **bind_ns) -> None:
+        del layout
+        self._value_shift: torch.Tensor = eval(cfg.value_shift_bind, bind_ns)  # noqa: S307
+
+    def score(self, out: torch.Tensor) -> None:
+        out.copy_(self._value_shift).clamp_min_(0.0)
+        out.div_(out.mean().clamp_min(torch.finfo(out.dtype).eps))
