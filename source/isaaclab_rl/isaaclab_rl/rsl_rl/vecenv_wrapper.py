@@ -156,7 +156,7 @@ class RslRlVecEnvWrapper(VecEnv):
         Note:
             This is needed to perform random initialization of episode lengths in RSL-RL.
         """
-        self.unwrapped.episode_length_buf = value
+        self.unwrapped.episode_length_buf.copy_(value)
 
     """
     Operations - MDP
@@ -173,6 +173,10 @@ class RslRlVecEnvWrapper(VecEnv):
     def get_observations(self) -> TensorDict:
         """Returns the current observations of the environment."""
         return TensorDict(self.unwrapped.obs_buf, batch_size=[self.num_envs])
+
+    def get_state_curriculum(self) -> object | None:
+        """Return the state curriculum exposed by the environment, if present."""
+        return getattr(self.unwrapped, "state_curriculum", None)
 
     def step(self, actions: torch.Tensor) -> tuple[TensorDict, torch.Tensor, torch.Tensor, dict]:
         # clip actions

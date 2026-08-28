@@ -159,6 +159,48 @@ class RslRlCNNModelCfg(RslRlMLPModelCfg):
 
 
 @configclass
+class RslRlValueShiftCfg:
+    """Configuration for estimating policy value shifts over reset states."""
+
+    momentum: float = 0.0
+    """The momentum used to smooth value estimates. Defaults to 0.0."""
+
+    evaluation_batch_size: int = 16384
+    """The number of reset states evaluated at once. Defaults to 16384."""
+
+
+@configclass
+class RslRlSuccessEstimatorCfg:
+    """Configuration for the reset-state success estimator."""
+
+    hidden_dims: list[int] = [256, 256]
+    """The hidden dimensions of the estimator network. Defaults to [256, 256]."""
+
+    activation: str = "elu"
+    """The activation function of the estimator network. Defaults to elu."""
+
+    learning_rate: float = 1.0e-4
+    """The estimator learning rate. Defaults to 1e-4."""
+
+    optimizer: Literal["adam", "adamw", "sgd", "rmsprop"] = "adam"
+    """The estimator optimizer. Defaults to adam."""
+
+    max_grad_norm: float = 1.0
+    """The maximum estimator gradient norm. Defaults to 1.0."""
+
+
+@configclass
+class RslRlStateCurriculumCfg:
+    """Configuration for learner-side reset-state curriculum signals."""
+
+    value_shift_cfg: RslRlValueShiftCfg | None = None
+    """The value-shift configuration. Defaults to None, which disables value shifts."""
+
+    success_estimator_cfg: RslRlSuccessEstimatorCfg | None = None
+    """The success-estimator configuration. Defaults to None, which disables the estimator."""
+
+
+@configclass
 class RslRlPpoAlgorithmCfg:
     """Configuration for the PPO algorithm."""
 
@@ -219,6 +261,9 @@ class RslRlPpoAlgorithmCfg:
 
     symmetry_cfg: RslRlSymmetryCfg | None = None
     """The symmetry configuration. Defaults to None, in which case symmetry is not used."""
+
+    state_curriculum_cfg: RslRlStateCurriculumCfg | None = None
+    """The state-curriculum configuration. Defaults to None, which disables the integration."""
 
 
 #########################

@@ -21,11 +21,14 @@ from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper
 
 
 class _FakeEnv:
-    """Minimal stand-in exposing only what :meth:`get_observations` reads."""
+    """Minimal stand-in exposing the environment-owned wrapper data."""
 
-    def __init__(self):
+    def __init__(self, state_curriculum: object | None = None):
         self.unwrapped = self
         self.obs_buf = {"policy": torch.tensor([[1.0, 2.0], [3.0, 4.0]])}
+        self.episode_length_buf = torch.zeros(2, dtype=torch.long)
+        if state_curriculum is not None:
+            self.state_curriculum = state_curriculum
 
 
 def _make_wrapper(env: _FakeEnv, num_envs: int = 2) -> RslRlVecEnvWrapper:
@@ -68,6 +71,33 @@ def test_get_observations_does_not_use_private_environment_methods():
     wrapper = _make_wrapper(env)
 
     wrapper.get_observations()
+
+
+def test_get_state_curriculum_returns_the_environment_integration():
+    """The wrapper should expose the environment-owned curriculum without adapting it."""
+    state_curriculum = object()
+    wrapper = _make_wrapper(_FakeEnv(state_curriculum))
+
+    assert wrapper.get_state_curriculum() is state_curriculum
+
+
+def test_get_state_curriculum_is_optional():
+    """Environments without a state curriculum should remain valid RSL-RL environments."""
+    wrapper = _make_wrapper(_FakeEnv())
+
+    assert wrapper.get_state_curriculum() is None
+
+
+def test_episode_length_setter_preserves_the_environment_buffer():
+    """Learner initialization should not invalidate references held by extensions."""
+    env = _FakeEnv()
+    wrapper = _make_wrapper(env)
+    data_ptr = env.episode_length_buf.data_ptr()
+
+    wrapper.episode_length_buf = torch.tensor([3, 7])
+
+    torch.testing.assert_close(env.episode_length_buf, torch.tensor([3, 7]))
+    assert env.episode_length_buf.data_ptr() == data_ptr
 
 
 def test_direct_rl_env_stores_the_observation_buffer():
