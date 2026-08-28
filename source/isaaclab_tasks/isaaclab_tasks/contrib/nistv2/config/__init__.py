@@ -13,7 +13,7 @@ from . import agents
 
 gym.register(
     id="IsaacContrib-Factory-Board-Reset-Franka",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    entry_point="isaaclab_tasks.contrib.nistv2.factory_env:FactoryBoardEnv",
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point": "isaaclab_tasks.contrib.nistv2.factory_env_cfg:FactoryBoardEnvCfg",
