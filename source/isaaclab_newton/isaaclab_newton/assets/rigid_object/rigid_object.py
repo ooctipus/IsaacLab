@@ -71,6 +71,7 @@ class RigidObject(BaseRigidObject):
         )
         self._num_mesh_variants = variant_count if self._mesh_variant_name is not None else 0
         self._mesh_variant_ids: ProxyArray | None = None
+        self._mesh_variant_write_buffer: torch.Tensor | None = None
 
     """
     Properties
@@ -176,13 +177,21 @@ class RigidObject(BaseRigidObject):
         if self._mesh_variant_name is None:
             raise RuntimeError("Mesh variants are not enabled for this rigid object.")
         env_ids = self._resolve_env_ids(env_ids)
-        if isinstance(variant_ids, torch.Tensor):
-            variant_ids = wp.from_torch(variant_ids.to(device=self.device, dtype=torch.int32))
-        if isinstance(env_ids, torch.Tensor):
-            env_ids = wp.from_torch(env_ids.to(device=self.device, dtype=torch.int32))
-        elif not isinstance(env_ids, wp.array):
+        if not isinstance(env_ids, (torch.Tensor, wp.array)):
             env_ids = wp.array(env_ids, dtype=wp.int32, device=self.device)
-        self.assert_shape_and_dtype(variant_ids, (env_ids.shape[0],), wp.int32, "variant_ids")
+        selection_count = env_ids.shape[0]
+        self.assert_shape_and_dtype(variant_ids, (selection_count,), wp.int32, "variant_ids")
+        write_buffer = self._mesh_variant_write_buffer
+        if write_buffer is None:
+            raise RuntimeError("Mesh variant write buffers are not initialized.")
+        if isinstance(variant_ids, torch.Tensor) or isinstance(env_ids, torch.Tensor):
+            with torch.cuda.stream(wp.stream_to_torch(self.device)):
+                if isinstance(variant_ids, torch.Tensor):
+                    write_buffer[0, :selection_count].copy_(variant_ids, non_blocking=True)
+                    variant_ids = wp.from_torch(write_buffer[0, :selection_count])
+                if isinstance(env_ids, torch.Tensor):
+                    write_buffer[1, :selection_count].copy_(env_ids, non_blocking=True)
+                    env_ids = wp.from_torch(write_buffer[1, :selection_count])
         SimulationManager._set_mesh_variant_index(self._mesh_variant_name, variant_ids=variant_ids, env_ids=env_ids)
         self.data._reset_body_com_pose_b_dependents()
 
@@ -1169,6 +1178,10 @@ class RigidObject(BaseRigidObject):
         self._ALL_ENV_MASK = wp.ones((self.num_instances,), dtype=wp.bool, device=self.device)
         self._ALL_BODY_INDICES = wp.array(np.arange(self.num_bodies, dtype=np.int32), device=self.device)
         self._ALL_BODY_MASK = wp.ones((self.num_bodies,), dtype=wp.bool, device=self.device)
+        if self._mesh_variant_name is not None:
+            self._mesh_variant_write_buffer = torch.empty(
+                (2, self.num_instances), dtype=torch.int32, device=self.device
+            )
 
         # external wrench composer
         self._instantaneous_wrench_composer = WrenchComposer(self)

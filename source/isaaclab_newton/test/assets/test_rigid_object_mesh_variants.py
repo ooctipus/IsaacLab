@@ -12,7 +12,7 @@ simulation_app = AppLauncher(headless=True, device="cuda:0").app
 import pytest
 import torch
 import warp as wp
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
+from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg, NewtonManager
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import RigidObjectCfg
@@ -43,7 +43,7 @@ class _MeshVariantSceneCfg(InteractiveSceneCfg):
 
 
 @pytest.mark.isaacsim_ci
-def test_write_mesh_variant_updates_selected_environment() -> None:
+def test_write_mesh_variant_updates_selected_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     """Switch collision geometry and inertia through the rigid-object API."""
     sim_cfg = SimulationCfg(
         device="cuda:0",
@@ -68,3 +68,26 @@ def test_write_mesh_variant_updates_selected_environment() -> None:
 
         torch.testing.assert_close(asset.mesh_variant_ids.torch.cpu(), torch.tensor([1, 0], dtype=torch.int32))
         torch.testing.assert_close(asset.data.body_mass.torch[:, 0].cpu(), torch.tensor([8.0, 1.0]))
+
+        captured = {}
+
+        def capture_indices(name, *, variant_ids, env_ids):
+            captured[name] = variant_ids, env_ids
+
+        monkeypatch.setattr(NewtonManager, "_set_mesh_variant_index", capture_indices)
+        variant_ids = torch.tensor([0, 1], dtype=torch.int32, device=sim.device)
+        env_ids = torch.tensor([1, 0], dtype=torch.int32, device=sim.device)
+        asset.write_mesh_variant_to_sim(variant_ids, env_ids)
+        captured_variants, captured_envs = captured[asset.cfg.prim_path]
+        assert wp.to_torch(captured_variants).data_ptr() != variant_ids.data_ptr()
+        assert wp.to_torch(captured_envs).data_ptr() != env_ids.data_ptr()
+        torch.cuda.synchronize(sim.device)
+        variant_ids.fill_(1)
+        env_ids.fill_(0)
+
+        torch.testing.assert_close(wp.to_torch(captured_variants).cpu(), torch.tensor([0, 1], dtype=torch.int32))
+        torch.testing.assert_close(wp.to_torch(captured_envs).cpu(), torch.tensor([1, 0], dtype=torch.int32))
+
+        asset.write_mesh_variant_to_sim(variant_ids, (0, 1))
+        _, captured_envs = captured[asset.cfg.prim_path]
+        torch.testing.assert_close(wp.to_torch(captured_envs).cpu(), torch.tensor([0, 1], dtype=torch.int32))
