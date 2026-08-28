@@ -365,9 +365,10 @@ def test_rsl_wandb_logger_renders_count_heatmap(monkeypatch) -> None:
             extras={
                 "heatmap": {
                     "Metrics/AssetUnassembledRate": {
-                        "numerator": torch.tensor([[1, 0], [0, 2]]),
-                        "denominator": torch.tensor([[2, 0], [4, 2]]),
-                        "cell_labels": (("A", "B"), ("C", "D")),
+                        "numerator": torch.tensor([1, 0, 0]),
+                        "denominator": torch.tensor([2, 0, 4]),
+                        "tile_shape": (2, 2),
+                        "cell_labels": (("A", "B"), ("C", "")),
                         "color_label": "Still unassembled",
                         "cmap": "RdYlGn_r",
                         "vmax": 1.0,
@@ -380,9 +381,68 @@ def test_rsl_wandb_logger_renders_count_heatmap(monkeypatch) -> None:
     _HeatmapLogger(base_logger, env).log(it=250)
 
     assert logged["title"] == "Metrics/AssetUnassembledRate"
-    assert logged["cell_labels"] == ["A", "B", "C", "D"]
-    torch.testing.assert_close(logged["values"], torch.tensor([[0.5, float("nan")], [0.0, 1.0]]), equal_nan=True)
-    torch.testing.assert_close(logged["mask"], torch.tensor([[False, True], [False, False]]))
+    assert logged["cell_labels"] == ["A", "B", "C", ""]
+    torch.testing.assert_close(
+        logged["values"], torch.tensor([[0.5, float("nan")], [0.0, float("nan")]]), equal_nan=True
+    )
+    torch.testing.assert_close(logged["mask"], torch.tensor([[False, True], [False, True]]))
+    assert logged["payload"] == {"Metrics/AssetUnassembledRate": "wandb-image"}
+    assert logged["step"] == 250
+
+
+def test_rsl_wandb_logger_renders_faceted_count_heatmap(monkeypatch) -> None:
+    """Render conditioned asset rates as one image containing multiple labeled grids."""
+    from isaaclab_rl.entrypoints.backends.train_rsl_rl import _HeatmapLogger
+
+    logged: dict[str, object] = {}
+
+    def image(figure):
+        panel_axes = figure.axes[:2]
+        logged["titles"] = [axes.get_title() for axes in panel_axes]
+        logged["cell_labels"] = [[text.get_text() for text in axes.texts] for axes in panel_axes]
+        logged["values"] = torch.stack([torch.as_tensor(axes.images[0].get_array().data.copy()) for axes in panel_axes])
+        logged["masks"] = torch.stack([torch.as_tensor(axes.images[0].get_array().mask.copy()) for axes in panel_axes])
+        return "wandb-image"
+
+    wandb = types.SimpleNamespace(
+        Image=image,
+        log=lambda payload, step: logged.update(payload=payload, step=step),
+    )
+    monkeypatch.setitem(sys.modules, "wandb", wandb)
+
+    base_logger = types.SimpleNamespace(writer=object(), log=lambda **_kwargs: None)
+    env = types.SimpleNamespace(
+        unwrapped=types.SimpleNamespace(
+            extras={
+                "heatmap": {
+                    "Metrics/AssetUnassembledRate": {
+                        "numerator": torch.tensor([[1, 0, 0], [0, 1, 2]]),
+                        "denominator": torch.full((2, 3), 2),
+                        "tile_shape": (2, 2),
+                        "cell_labels": (("A", "B"), ("C", "")),
+                        "facet_labels": ("U=1", "U=2"),
+                        "facet_columns": 2,
+                        "color_label": "Still unassembled",
+                        "cmap": "RdYlGn_r",
+                        "vmax": 1.0,
+                    }
+                }
+            }
+        )
+    )
+
+    _HeatmapLogger(base_logger, env).log(it=250)
+
+    assert logged["titles"] == ["U=1", "U=2"]
+    assert logged["cell_labels"] == [["A", "B", "C", ""], ["A", "B", "C", ""]]
+    torch.testing.assert_close(
+        logged["values"],
+        torch.tensor([[[0.5, 0.0], [0.0, float("nan")]], [[0.0, 0.5], [1.0, float("nan")]]]),
+        equal_nan=True,
+    )
+    torch.testing.assert_close(
+        logged["masks"], torch.tensor([[[False, False], [False, True]], [[False, False], [False, True]]])
+    )
     assert logged["payload"] == {"Metrics/AssetUnassembledRate": "wandb-image"}
     assert logged["step"] == 250
 
@@ -401,6 +461,29 @@ def test_rsl_heatmap_count_ratio_broadcasts_scalar_denominator() -> None:
     )
 
     torch.testing.assert_close(values["Metrics/ResetProbs"], torch.tensor([[0.125, 0.375], [0.25, 0.25]]))
+
+
+def test_rsl_heatmap_ratio_reduces_floating_bank_statistics(monkeypatch) -> None:
+    """Preserve estimator sums while pooling distinct reset banks across ranks."""
+    from isaaclab_rl.entrypoints.backends.train_rsl_rl import _resolve_heatmap_values
+
+    monkeypatch.setattr(torch.distributed, "is_available", lambda: True)
+    monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+
+    def all_reduce(statistics: torch.Tensor) -> None:
+        statistics.add_(torch.tensor([1.4, 1.0, 2.0, 1.0], dtype=torch.float64))
+
+    monkeypatch.setattr(torch.distributed, "all_reduce", all_reduce)
+    values = _resolve_heatmap_values(
+        {
+            "Metrics/ResetSuccessRate": {
+                "numerator": torch.tensor([0.2, 1.2]),
+                "denominator": torch.tensor([1, 2]),
+            }
+        }
+    )
+
+    torch.testing.assert_close(values["Metrics/ResetSuccessRate"], torch.tensor([1.6 / 3.0, 2.2 / 3.0]))
 
 
 def test_skrl_training_restores_jax_backend(monkeypatch) -> None:

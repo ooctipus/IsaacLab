@@ -54,7 +54,7 @@ with contextlib.suppress(ImportError):
 
 
 def _resolve_heatmap_values(heatmaps: dict) -> dict[str, torch.Tensor]:
-    """Resolve local values and globally reduce count-based heatmaps."""
+    """Resolve local values and globally reduce ratio heatmaps."""
     values = {}
     count_data = []
     packed_parts = []
@@ -64,8 +64,8 @@ def _resolve_heatmap_values(heatmaps: dict) -> dict[str, torch.Tensor]:
             values[tag] = data["values"]
             continue
 
-        numerator = data["numerator"].detach().long().clone()
-        denominator = data["denominator"].detach().long().clone()
+        numerator = data["numerator"].detach().to(dtype=torch.float64).clone()
+        denominator = data["denominator"].detach().to(dtype=torch.float64).clone()
         packed_parts.extend((numerator.flatten(), denominator.flatten()))
         count_data.append((tag, numerator.shape, denominator.shape, offset, numerator.numel(), denominator.numel()))
         offset += numerator.numel() + denominator.numel()
@@ -83,6 +83,82 @@ def _resolve_heatmap_values(heatmaps: dict) -> dict[str, torch.Tensor]:
         ratio = numerator.float() / denominator.float()
         values[tag] = torch.where(denominator > 0, ratio, torch.nan)
     return values
+
+
+def _tile_heatmap(values: torch.Tensor, shape: tuple[int, int]) -> torch.Tensor:
+    """Pad the last dimension with missing values and reshape it into tiles."""
+    if values.ndim not in (1, 2):
+        raise ValueError(f"Tiled heatmap values must be one- or two-dimensional, got shape {tuple(values.shape)}.")
+    rows, columns = shape
+    capacity = rows * columns
+    if rows < 1 or columns < 1 or values.shape[-1] > capacity:
+        raise ValueError(f"Heatmap shape {tuple(values.shape)} does not fit tile shape {shape}.")
+    padded = torch.full((*values.shape[:-1], capacity), torch.nan, dtype=values.dtype, device=values.device)
+    padded[..., : values.shape[-1]] = values
+    return padded.view(*values.shape[:-1], rows, columns)
+
+
+def _render_faceted_heatmap(plt, tag: str, data: dict, values: torch.Tensor):
+    """Render a stack of equally shaped heatmaps as one compact figure."""
+    facets, rows, columns = values.shape
+    facet_labels = data.get("facet_labels")
+    if facet_labels is not None and len(facet_labels) != facets:
+        raise ValueError(f"Heatmap '{tag}' has {facets} facets but {len(facet_labels)} facet labels.")
+
+    facet_columns = min(data.get("facet_columns", facets), facets)
+    if facet_columns < 1:
+        raise ValueError(f"Heatmap '{tag}' must use at least one facet column.")
+    facet_rows = (facets + facet_columns - 1) // facet_columns
+    size = data.get("figure_size", (3.0 * facet_columns, 2.5 * facet_rows))
+    figure, axes = plt.subplots(facet_rows, facet_columns, figsize=size, squeeze=False)
+    color_map = plt.get_cmap(data.get("cmap", "RdYlGn")).with_extremes(bad="#d9d9d9")
+    cell_labels = data.get("cell_labels")
+    image = None
+
+    for index, axes_item in enumerate(axes.flat):
+        if index >= facets:
+            axes_item.set_axis_off()
+            continue
+        image = axes_item.imshow(
+            values[index].numpy(),
+            cmap=color_map,
+            vmin=data.get("vmin", 0.0),
+            vmax=data.get("vmax", 1.0),
+            aspect=data.get("aspect", "equal"),
+        )
+        axes_item.set_xticks([])
+        axes_item.set_yticks([])
+        if facet_labels is not None:
+            axes_item.set_title(facet_labels[index], fontsize=data.get("facet_fontsize", 9))
+        for row in range(rows):
+            for column in range(columns):
+                value = values[index, row, column]
+                if cell_labels is not None:
+                    label = cell_labels[row][column]
+                elif data.get("annotate_values", True):
+                    label = format(float(value), data.get("value_format", ".0%")) if value.isfinite() else "—"
+                else:
+                    continue
+                rgba = image.cmap(image.norm(float(value))) if value.isfinite() else color_map.get_bad()
+                luminance = 0.2126 * rgba[0] + 0.7152 * rgba[1] + 0.0722 * rgba[2]
+                axes_item.text(
+                    column,
+                    row,
+                    label,
+                    color="black" if luminance > 0.5 else "white",
+                    ha="center",
+                    va="center",
+                    fontsize=data.get("cell_fontsize", 6),
+                )
+
+    figure.subplots_adjust(left=0.01, right=0.9, bottom=0.01, top=0.98, wspace=0.03, hspace=0.12)
+    colorbar_axes = figure.add_axes((0.92, 0.08, 0.012, 0.82))
+    colorbar = figure.colorbar(image, cax=colorbar_axes, label=data.get("color_label", "Value"))
+    if data.get("colorbar_percent", False):
+        from matplotlib.ticker import PercentFormatter
+
+        colorbar.ax.yaxis.set_major_formatter(PercentFormatter(xmax=1.0))
+    return figure
 
 
 def _check_rsl_rl_version() -> str:
@@ -128,14 +204,20 @@ class _HeatmapLogger:
             return
 
         import matplotlib.pyplot as plt
-
         import wandb
 
         images = {}
         for tag, data in heatmaps.items():
             values = heatmap_values[tag].detach().float().cpu()
+            if "tile_shape" in data:
+                values = _tile_heatmap(values, data["tile_shape"])
+            if values.ndim == 3:
+                figure = _render_faceted_heatmap(plt, tag, data, values)
+                images[tag] = wandb.Image(figure)
+                plt.close(figure)
+                continue
             if values.ndim != 2:
-                raise ValueError(f"Heatmap '{tag}' must be two-dimensional, got shape {tuple(values.shape)}.")
+                raise ValueError(f"Heatmap '{tag}' must be two- or three-dimensional, got shape {tuple(values.shape)}.")
             x_labels, y_labels = data.get("x_labels"), data.get("y_labels")
             cell_labels = data.get("cell_labels")
             color_label = data.get("color_label", "Value")
