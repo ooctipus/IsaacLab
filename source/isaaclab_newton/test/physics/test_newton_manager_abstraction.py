@@ -1070,6 +1070,27 @@ def test_solver_reset_check_runs_once_after_controller_step(monkeypatch, method_
     assert events == ["solver"] * solver_steps + ["check", "callback", "sensors"]
 
 
+def test_contact_sensors_read_solved_forces(monkeypatch):
+    """Refresh solver-owned contact data before evaluating sensors."""
+    events = []
+    contacts = object()
+    state = object()
+    solver = SimpleNamespace(
+        update_contacts=lambda actual, actual_state: events.append(("solver", actual, actual_state))
+    )
+    sensor = SimpleNamespace(update=lambda actual_state, actual: events.append(("sensor", actual, actual_state)))
+    monkeypatch.setattr(NewtonManager, "_newton_frame_transform_sensors", [])
+    monkeypatch.setattr(NewtonManager, "_newton_imu_sensors", [])
+    monkeypatch.setattr(NewtonManager, "_newton_contact_sensors", {"sensor": sensor})
+    monkeypatch.setattr(NewtonManager, "_report_contacts", True)
+    monkeypatch.setattr(NewtonManager, "_solver", solver)
+    monkeypatch.setattr(NewtonManager, "_state_0", state)
+
+    NewtonManager._update_sensors(contacts)
+
+    assert events == [("solver", contacts, state), ("sensor", contacts, state)]
+
+
 def test_forward_dispatches_active_mpm_reset_hook_through_base_manager(monkeypatch):
     """Base-class state reads must use the active MPM manager's reset behavior."""
     world_mask = wp.array([True, False], dtype=wp.bool, device="cpu")

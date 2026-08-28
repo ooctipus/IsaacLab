@@ -128,7 +128,6 @@ class _HeatmapLogger:
             return
 
         import matplotlib.pyplot as plt
-
         import wandb
 
         images = {}
@@ -287,8 +286,6 @@ def _run(args_cli: argparse.Namespace) -> None:
             print(f"Exact experiment name requested from command line: {log_dir}")
             if agent_cfg.run_name:
                 log_dir += f"_{agent_cfg.run_name}"
-            if args_cli.workflow_id:
-                log_dir += f"_{args_cli.workflow_id}"
             log_dir = os.path.join(log_root_path, log_dir)
             write_run_manifest(
                 log_dir,

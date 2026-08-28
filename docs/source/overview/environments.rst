@@ -1373,6 +1373,11 @@ including disabling runtime perturbations used for training.
       - Manager Based
       -
       -
+    * - IsaacContrib-Factory-Franka
+      - Manager Based
+      - **rsl_rl** (PPO)
+      - | **physics=** ``isaacsim_physx``, ``newton_mjwarp``
+          | **presets=** ``accumulator``, ``bnc``, ``choice``, ``dsub``, ``gear_mesh_large``, ``gear_mesh_medium``, ``gear_mesh_small``, ``nut_thread_m12``, ``nut_thread_m16``, ``nut_thread_m4``, ``nut_thread_m8``, ``peg_insert_12mm``, ``peg_insert_16mm``, ``peg_insert_4mm``, ``peg_insert_8mm``, ``rj45``, ``rod_insert_12mm``, ``rod_insert_16mm``, ``rod_insert_4mm``, ``rod_insert_8mm``, ``usba``, ``waterproof``
     * - IsaacContrib-Factory-GearMesh-Direct
       - Direct
       - **rl_games** (PPO)
@@ -1385,6 +1390,19 @@ including disabling runtime perturbations used for training.
       - Direct
       - **rl_games** (PPO)
       -
+    * - IsaacContrib-Factory-Variant-Franka
+      - Manager Based
+      - **rsl_rl** (PPO)
+      -
+    * - IsaacContrib-Factory-Variant-Video-Franka
+      - Manager Based
+      - **rsl_rl** (PPO)
+      -
+    * - IsaacContrib-Factory-Video-Franka
+      - Manager Based
+      - **rsl_rl** (PPO)
+      - | **physics=** ``isaacsim_physx``, ``newton_mjwarp``
+          | **presets=** ``accumulator``, ``bnc``, ``choice``, ``dsub``, ``gear_mesh_large``, ``gear_mesh_medium``, ``gear_mesh_small``, ``nut_thread_m12``, ``nut_thread_m16``, ``nut_thread_m4``, ``nut_thread_m8``, ``peg_insert_12mm``, ``peg_insert_16mm``, ``peg_insert_4mm``, ``peg_insert_8mm``, ``rj45``, ``rod_insert_12mm``, ``rod_insert_16mm``, ``rod_insert_4mm``, ``rod_insert_8mm``, ``usba``, ``waterproof``
     * - IsaacContrib-Forge-GearMesh-Direct
       - Direct
       - **rl_games** (PPO)
