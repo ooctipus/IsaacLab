@@ -2679,9 +2679,14 @@ class NewtonManager(PhysicsManager):
                 sensor.update(cls._state_0)
         if cls._report_contacts:
             eval_contacts = contacts if contacts is not None else cls._contacts
-            cls._solver.update_contacts(eval_contacts, cls._state_0)
+            cls._update_contacts_for_sensors(eval_contacts)
             for sensor in cls._newton_contact_sensors.values():
                 sensor.update(cls._state_0, eval_contacts)
+
+    @classmethod
+    def _update_contacts_for_sensors(cls, contacts: Contacts) -> None:
+        """Populate solver-owned contact data before sensor evaluation."""
+        cls._solver.update_contacts(contacts, cls._state_0)
 
     # ------------------------------------------------------------------
     # Composite stepping routines

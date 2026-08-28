@@ -12,6 +12,7 @@ import logging
 import numpy as np
 import torch
 import warp as wp
+from mujoco_warp._src.types import vec5
 from newton import Contacts, Model
 from newton.solvers import SolverMuJoCo
 
@@ -22,6 +23,53 @@ from .mjwarp_manager_cfg import MJWarpSolverCfg
 from .newton_manager import NewtonManager
 
 logger = logging.getLogger(__name__)
+
+
+def _contact_force_fn():
+    from mujoco_warp._src.support import contact_force_fn
+
+    return contact_force_fn
+
+
+@wp.kernel(enable_backward=False)
+def _copy_external_contact_forces(
+    contact_count: wp.array(dtype=wp.int32),
+    contact_to_mujoco: wp.array(dtype=wp.int32),
+    cone: int,
+    frame: wp.array(dtype=wp.mat33f),
+    friction: wp.array(dtype=vec5),
+    dimension: wp.array(dtype=wp.int32),
+    constraint_address: wp.array2d(dtype=wp.int32),
+    world: wp.array(dtype=wp.int32),
+    adhesion: wp.array(dtype=wp.float32),
+    constraint_force: wp.array2d(dtype=wp.float32),
+    constraints_per_world: int,
+    mujoco_contact_count: wp.array(dtype=wp.int32),
+    force: wp.array(dtype=wp.spatial_vector),
+):
+    contact = wp.tid()
+    force[contact] = wp.spatial_vector(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    if contact >= contact_count[0]:
+        return
+
+    mujoco_contact = contact_to_mujoco[contact]
+    if mujoco_contact < 0 or mujoco_contact >= mujoco_contact_count[0]:
+        return
+
+    force[contact] = -wp.static(_contact_force_fn())(
+        cone,
+        frame,
+        friction,
+        dimension,
+        constraint_address,
+        adhesion,
+        constraint_force,
+        constraints_per_world,
+        mujoco_contact_count,
+        world[mujoco_contact],
+        mujoco_contact,
+        True,
+    )
 
 
 @wp.kernel(enable_backward=False)
@@ -165,6 +213,38 @@ class NewtonMJWarpManager(NewtonManager):
                 device=PhysicsManager._device,
                 requested_attributes=cls._model.get_requested_contact_attributes(),
             )
+
+    @classmethod
+    def _update_contacts_for_sensors(cls, contacts: Contacts) -> None:
+        if not cls._needs_collision_pipeline:
+            super()._update_contacts_for_sensors(contacts)
+            return
+
+        solver = cls._solver
+        contact_to_mujoco = solver._contact_tid_to_cid
+        if contacts.force is None or contact_to_mujoco is None:
+            raise RuntimeError("MJWarp contact reporting was not initialized.")
+        data = solver.mjw_data
+        wp.launch(
+            _copy_external_contact_forces,
+            dim=contact_to_mujoco.shape[0],
+            inputs=[
+                contacts.rigid_contact_count,
+                contact_to_mujoco,
+                solver.mjw_model.opt.cone,
+                data.contact.frame,
+                data.contact.friction,
+                data.contact.dim,
+                data.contact.efc_address,
+                data.contact.worldid,
+                data.contact.adhesion,
+                data.efc.force,
+                data.njmax,
+                data.nacon,
+            ],
+            outputs=[contacts.force],
+            device=cls._model.device,
+        )
 
     @classmethod
     def _reset_solver_internals(cls, world_mask: wp.array | None) -> None:
