@@ -1,0 +1,164 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+workflow:
+  name: isaac-lab
+  resources:
+    default:
+      gpu: {{ num_gpu }}
+      cpu: {{ num_cpu }}
+      memory: {{ memory }}Gi
+      storage: {{ storage }}Gi
+      platform: {{ platform }}
+
+  groups:
+  - name: training
+    tasks:
+    {% for item in range(num_node) %}
+    {% if item == 0 %}
+    - name: master
+      lead: true
+    {% else %}
+    - name: worker_{{item}}
+    {% endif %}
+      image: nvcr.io/nvidian/octi-isaac-lab:{{ image }}
+      command: ["bash"]
+      args: ["/tmp/run.sh"]
+      environment:
+        ISAACLAB_WORKFLOW_ID: "{{workflow_id}}"
+        OMNI_KIT_ACCEPT_EULA: "YES"
+        ACCEPT_EULA: Y
+        NO_NUCLEUS: Y
+        OMNICLIENT_HUB_MODE: disabled
+        PXR_WORK_THREAD_LIMIT: "1"
+        NCCL_DEBUG: WARN
+        NCCL_ASYNC_ERROR_HANDLING: "1"
+        TORCH_NCCL_ASYNC_ERROR_HANDLING: "1"
+        {% if platform in ["ovx-l40", "ovx-l40s"] %}
+        NCCL_NET: Socket
+        NCCL_SOCKET_IFNAME: eth0
+        {% endif %}
+        GLOO_SOCKET_IFNAME: eth0
+      credentials:
+        wandb:
+          WANDB_API_KEY: wandb_api_key
+      files:
+      - path: /tmp/run.sh
+        contents: |
+          set -euo pipefail
+
+          # Avoid Vulkan conflicts in Isaac containers
+          if [ -e "/usr/share/vulkan" ] && [ -e "/etc/vulkan" ]; then
+            mv /usr/share/vulkan /usr/share/vulkan_hidden
+          fi
+
+          export WANDB_API_KEY="${WANDB_API_KEY}"
+          export OMP_NUM_THREADS=$(( {{ num_cpu }} / {{ num_gpu }} ))
+          if [ "${OMP_NUM_THREADS}" -lt 1 ]; then
+            export OMP_NUM_THREADS=1
+          fi
+          export MKL_NUM_THREADS="${OMP_NUM_THREADS}"
+          export OPENBLAS_NUM_THREADS="${OMP_NUM_THREADS}"
+          CLUSTER_CACHE_ROOT="{{ cluster_cache_root }}"
+          if [ -z "${CLUSTER_CACHE_ROOT}" ]; then
+            for candidate in /mnt/amlfs-*/home/{{ cache_user }}; do
+              if [ -d "${candidate}" ] && [ -w "${candidate}" ]; then
+                CLUSTER_CACHE_ROOT="${candidate}/.cache/isaaclab-cluster"
+                break
+              fi
+            done
+          fi
+
+          if [ -n "${CLUSTER_CACHE_ROOT}" ]; then
+            CLUSTER_CACHE_ROOT="${CLUSTER_CACHE_ROOT}/${ISAACSIM_VERSION:-unknown}/{{ image }}"
+            mkdir -p \
+              "${CLUSTER_CACHE_ROOT}/uv" \
+              "${CLUSTER_CACHE_ROOT}/warp" \
+              "${CLUSTER_CACHE_ROOT}/kit-cache" \
+              "${CLUSTER_CACHE_ROOT}/ov" \
+              "${CLUSTER_CACHE_ROOT}/nvidia/GLCache" \
+              "${CLUSTER_CACHE_ROOT}/nv/ComputeCache"
+
+            export UV_CACHE_DIR="${CLUSTER_CACHE_ROOT}/uv"
+            export UV_LINK_MODE=copy
+            export WARP_CACHE_PATH="${CLUSTER_CACHE_ROOT}/warp"
+            mkdir -p "${WARP_CACHE_PATH}"
+
+            rm -rf \
+              /root/.cache/ov \
+              /root/.cache/nvidia/GLCache \
+              /root/.nv/ComputeCache
+            mkdir -p /root/.cache/nvidia /root/.nv
+            ln -sfn "${CLUSTER_CACHE_ROOT}/ov" /root/.cache/ov
+            ln -sfn "${CLUSTER_CACHE_ROOT}/nvidia/GLCache" /root/.cache/nvidia/GLCache
+            ln -sfn "${CLUSTER_CACHE_ROOT}/nv/ComputeCache" /root/.nv/ComputeCache
+
+            # Kit/OV shader caches apply to Isaac Sim images only (skip for kitless).
+            if [ -d /workspace/isaaclab/_isaac_sim/kit ] || [ -L /workspace/isaaclab/_isaac_sim ]; then
+              rm -rf /workspace/isaaclab/_isaac_sim/kit/cache
+              mkdir -p /workspace/isaaclab/_isaac_sim/kit
+              ln -sfn "${CLUSTER_CACHE_ROOT}/kit-cache" /workspace/isaaclab/_isaac_sim/kit/cache
+            fi
+
+            echo "[INFO] Using shared Isaac Lab cache: ${CLUSTER_CACHE_ROOT}"
+            echo "[INFO] WARP kernel cache: ${WARP_CACHE_PATH}"
+          else
+            echo "[INFO] No writable AMLFS cache root found; using container-local caches."
+          fi
+
+          echo "[INFO] Syncing Python environment from uv.lock..."
+          cd /workspace/isaaclab
+          UV_SYNC_ARGS=(--extra all --extra ovrtx)
+          if [ -d /workspace/isaaclab/_isaac_sim/kit ] || [ -L /workspace/isaaclab/_isaac_sim ]; then
+            UV_SYNC_ARGS+=(--extra ov)
+          fi
+          uv sync --locked --no-progress "${UV_SYNC_ARGS[@]}"
+
+          {% if num_node > 1 %}
+          /workspace/isaaclab/isaaclab.sh -p -m torch.distributed.run \
+            --nnodes {{ num_node }} \
+            --nproc_per_node {{ num_gpu }} \
+            --node_rank {{ item }} \
+            --master_addr {{host:master}} \
+            --master_port {{ master_port }} \
+            /workspace/isaaclab/{{ script }} \
+              --distributed \
+              {{ args }}
+          {% elif num_gpu > 1 %}
+          /workspace/isaaclab/isaaclab.sh -p -m torch.distributed.run \
+            --nnodes 1 \
+            --nproc_per_node {{ num_gpu }} \
+            --master_addr 127.0.0.1 \
+            --master_port {{ master_port }} \
+            /workspace/isaaclab/{{ script }} \
+              --distributed \
+              {{ args }}
+          {% else %}
+          /workspace/isaaclab/isaaclab.sh -p \
+            /workspace/isaaclab/{{ script }} \
+              {{ args }}
+          {% endif %}
+      - path: /tmp/config.json
+        contents: |
+          {
+            "launch_config": {
+              "headless": true
+            }
+          }
+    {% endfor %}
+
+default-values:
+  image: factory
+  num_node: 1
+  num_gpu: 1
+  master_port: 29400
+  num_cpu: 16
+  memory: 64
+  storage: 256
+  platform: dgx-h100
+  cache_user: zhengyuz
+  cluster_cache_root: ""
+  script: scripts/reinforcement_learning/rsl_rl/train.py
+  args:
