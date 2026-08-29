@@ -428,6 +428,9 @@ class FactoryBoardEnvCfg(FactoryEnvCfg):
             physics.collision_cfg.contact_reduction_hashtable_size_factor = 0.04
             if layout.num_slots > 1:
                 physics.solver_cfg.enable_sleeping = True
+                physics.solver_cfg.sleep_tolerance = 0.003
+                # K19 peaks near 51 cached rows per world and slot; retain measured headroom.
+                physics.collision_cfg.sdf_contact_replay_max_per_world = 64 * layout.num_slots
         if layout.num_slots > 1 and self.events.reset_board.params["state_table_size"] == 32760:
             self.events.reset_board.params["state_table_size"] = 65536
         self.episode_length_s = 14.0 * layout.num_slots

@@ -279,6 +279,8 @@ class NewtonMJWarpManager(NewtonManager):
         # flags=0 skips the joint-state reset to model defaults: IsaacLab owns
         # joint_q/joint_qd and has already written the authored reset pose.
         cls._solver.reset(cls._state_0, world_mask=world_mask, flags=0)
+        if cls._collision_pipeline is not None:
+            cls._collision_pipeline.reset_contact_history(world_mask)
 
     @classmethod
     def _update_solver_reset_required(cls) -> None:

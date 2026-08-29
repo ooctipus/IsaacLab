@@ -119,11 +119,12 @@ class NewtonCollisionPipelineCfg:
         """Strict SDF provisioning for every finite shape collider in the assembled model.
 
         The manager applies this policy after USD-authored mesh approximations and
-        scene replication have completed. It tessellates analytic colliders, keeps
-        the resulting collision geometry, and requests a texture SDF for every
-        finite colliding shape before model finalization. Infinite planes remain
-        analytic half-spaces; unsupported finite geometry raises instead of
-        silently retaining a non-SDF collision path.
+        scene replication have completed. It preserves boxes because Newton can
+        create their texture SDFs and collision edges directly, tessellates other
+        analytic colliders, keeps the resulting collision geometry, and requests
+        a texture SDF for every finite colliding shape before model finalization.
+        Infinite planes remain analytic half-spaces; unsupported finite geometry
+        raises instead of silently retaining a non-SDF collision path.
         """
 
         sdf_max_resolution: int | None = 64
@@ -228,6 +229,14 @@ class NewtonCollisionPipelineCfg:
     Defaults to ``None`` (auto-estimate, same as Newton's default).
     """
 
+    sdf_contact_replay_max_per_world: int = 0
+    """Maximum cached SDF contact rows per replicated world.
+
+    A positive value enables Newton's exact replay of unchanged contacts between
+    sleeping dynamic and kinematic SDF shapes. The manager multiplies this value
+    by the finalized Newton model's world count. Zero disables replay.
+    """
+
     max_triangle_pairs: int = 1_000_000
     """Maximum number of triangle pairs allocated by narrow phase for mesh and heightfield collisions.
 
@@ -301,11 +310,12 @@ class NewtonCollisionPipelineCfg:
     sdf_all_shapes: SDFAllShapesCfg | None = None
     """Strict post-approximation SDF policy for every finite shape collider.
 
-    When set, finite planes, analytic primitives, and boxes are tessellated into
-    triangle meshes, while meshes and convex meshes retain their imported geometry.
-    Every result receives a texture SDF request. A convex-hull or other USD-authored
-    mesh approximation is completed before this policy runs, so its resulting hull
-    is what Newton cooks into the SDF.
+    When set, boxes retain their analytic geometry while finite planes and other
+    analytic primitives are tessellated into triangle meshes. Meshes and convex
+    meshes retain their imported geometry. Every result receives a texture SDF
+    request. A convex-hull or other USD-authored mesh approximation is completed
+    before this policy runs, so its resulting hull is what Newton cooks into the
+    SDF.
 
     Infinite planes remain analytic because a finite texture cannot represent an
     infinite half-space. Heightfields, Gaussian geometry, and malformed mesh sources
@@ -313,12 +323,16 @@ class NewtonCollisionPipelineCfg:
     Defaults to ``None`` (preserve each collider's authored representation).
     """
 
-    def to_pipeline_args(self) -> dict[str, Any]:
+    def to_pipeline_args(self, *, world_count: int | None = None) -> dict[str, Any]:
         """Build keyword arguments for :class:`newton.CollisionPipeline`.
 
         Converts this configuration into the dict expected by
         ``CollisionPipeline.__init__``, handling nested config conversion
         (e.g. :class:`HydroelasticSDFCfg` → ``HydroelasticSDF.Config``).
+
+        Args:
+            world_count: Finalized Newton model world count. Required when
+                :attr:`sdf_contact_replay_max_per_world` is positive.
 
         Returns:
             Keyword arguments suitable for ``CollisionPipeline(model, **args)``.
@@ -328,6 +342,13 @@ class NewtonCollisionPipelineCfg:
 
         cfg_dict = self.to_dict()
         cfg_dict.pop("sdf_all_shapes", None)
+        replay_max_per_world = cfg_dict.pop("sdf_contact_replay_max_per_world")
+        if replay_max_per_world < 0:
+            raise ValueError(f"sdf_contact_replay_max_per_world must be non-negative, got {replay_max_per_world}")
+        if replay_max_per_world > 0:
+            if world_count is None or world_count <= 0:
+                raise ValueError("A positive world_count is required when sdf_contact_replay_max_per_world is enabled.")
+            cfg_dict["sdf_contact_replay_max"] = replay_max_per_world * world_count
         speculative_cfg = cfg_dict.pop("speculative_config", None)
         if speculative_cfg is not None:
             cfg_dict["speculative_config"] = CollisionPipeline.SpeculativeContactConfig(**speculative_cfg)

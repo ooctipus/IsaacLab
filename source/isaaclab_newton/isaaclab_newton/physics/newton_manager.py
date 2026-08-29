@@ -1276,9 +1276,11 @@ class NewtonManager(PhysicsManager):
 
         This runs at the final builder boundary, after USD import has completed
         authored approximations such as ``convexHull``. Mesh and convex-mesh
-        sources are therefore preserved, while finite planes and analytic
-        primitives are tessellated in place. Existing body mass and inertia data
-        are intentionally left unchanged.
+        sources are therefore preserved. Boxes retain their analytic geometry
+        because Newton can provision their texture SDF and collision edges
+        directly; finite planes and other analytic primitives are tessellated in
+        place. Existing body mass and inertia data are intentionally left
+        unchanged.
 
         Args:
             builder: Fully assembled Newton model builder.
@@ -1308,6 +1310,12 @@ class NewtonManager(PhysicsManager):
                 if not isinstance(builder.shape_source[shape_index], Mesh):
                     raise ValueError(
                         f"Strict all-shapes SDF provisioning requires {shape_label!r} to have a valid mesh source."
+                    )
+            elif shape_type == GeoType.BOX:
+                if not all(np.isfinite(value) and value > 0.0 for value in shape_scale):
+                    raise ValueError(
+                        f"Strict all-shapes SDF provisioning cannot use {shape_label!r} "
+                        f"with geometry type BOX and scale {shape_scale}."
                     )
             elif shape_type == GeoType.PLANE:
                 width, length = shape_scale[:2]
@@ -1340,15 +1348,7 @@ class NewtonManager(PhysicsManager):
                 mesh_key = (shape_type, *shape_scale, cfg.primitive_mesh_segments)
                 mesh = primitive_meshes.get(mesh_key)
                 if mesh is None:
-                    if shape_type == GeoType.BOX and all(value > 0.0 for value in shape_scale):
-                        mesh = Mesh.create_box(
-                            *shape_scale,
-                            duplicate_vertices=False,
-                            compute_normals=False,
-                            compute_uvs=False,
-                            compute_inertia=False,
-                        )
-                    elif shape_type == GeoType.SPHERE and shape_scale[0] > 0.0:
+                    if shape_type == GeoType.SPHERE and shape_scale[0] > 0.0:
                         mesh = Mesh.create_sphere(
                             shape_scale[0],
                             num_latitudes=cfg.primitive_mesh_segments,
@@ -2166,7 +2166,7 @@ class NewtonManager(PhysicsManager):
             return
         pipeline_args = {"broad_phase": "explicit"}
         if cls._collision_cfg is not None:
-            pipeline_args = cls._collision_cfg.to_pipeline_args()
+            pipeline_args = cls._collision_cfg.to_pipeline_args(world_count=int(cls._model.world_count))
         pipeline_args["deterministic"] = cls._deterministic_mode != wp.DeterministicMode.NOT_GUARANTEED
         if cls._collision_pipeline is None:
             NewtonManager._collision_pipeline = CollisionPipeline(cls._model, **pipeline_args)
@@ -2350,6 +2350,8 @@ class NewtonManager(PhysicsManager):
         if world_mask is None:
             return
         cls._solver.reset(cls._state_0, world_mask=world_mask, flags=0)
+        if cls._collision_pipeline is not None:
+            cls._collision_pipeline.reset_contact_history(world_mask)
 
     # ----- Lifecycle orchestration ----------------------------------------
 

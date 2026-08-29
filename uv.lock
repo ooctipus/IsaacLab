@@ -19,8 +19,8 @@ prerelease-mode = "allow"
 overrides = [
     { name = "coverage", specifier = ">=7.6.1" },
     { name = "mujoco", specifier = "~=3.12.0" },
-    { name = "mujoco-warp", git = "https://github.com/ooctipus/mujoco_warp.git?rev=fd7e13de54a19663f4ddbd72a03bc7e0cae2503b" },
-    { name = "newton", extras = ["sim"], git = "https://github.com/ooctipus/newton.git?rev=9c6333c6dfc76c0b8b96d490598e66e329ff83f3" },
+    { name = "mujoco-warp", git = "https://github.com/ooctipus/mujoco_warp.git?rev=a8ae5b3257f6e71db3235d1e461da2db80564d92" },
+    { name = "newton", extras = ["sim"], git = "https://github.com/ooctipus/newton.git?rev=3746d72376b37074577f3417711544f264d37d97" },
     { name = "newton-usd-schemas", specifier = ">=0.5.0" },
     { name = "numpy", specifier = ">=2" },
     { name = "packaging", specifier = ">=20,<27" },
@@ -3300,7 +3300,7 @@ wheels = [
 [[package]]
 name = "mujoco-warp"
 version = "3.12.0"
-source = { git = "https://github.com/ooctipus/mujoco_warp.git?rev=fd7e13de54a19663f4ddbd72a03bc7e0cae2503b#fd7e13de54a19663f4ddbd72a03bc7e0cae2503b" }
+source = { git = "https://github.com/ooctipus/mujoco_warp.git?rev=a8ae5b3257f6e71db3235d1e461da2db80564d92#a8ae5b3257f6e71db3235d1e461da2db80564d92" }
 dependencies = [
     { name = "absl-py", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
     { name = "etils", extra = ["epath"], marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
@@ -3392,7 +3392,7 @@ wheels = [
 [[package]]
 name = "newton"
 version = "1.6.0.dev0"
-source = { git = "https://github.com/ooctipus/newton.git?rev=9c6333c6dfc76c0b8b96d490598e66e329ff83f3#9c6333c6dfc76c0b8b96d490598e66e329ff83f3" }
+source = { git = "https://github.com/ooctipus/newton.git?rev=3746d72376b37074577f3417711544f264d37d97#3746d72376b37074577f3417711544f264d37d97" }
 dependencies = [
     { name = "warp-lang", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
 ]

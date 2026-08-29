@@ -54,8 +54,8 @@ def test_all_shapes_sdf_preserves_convex_hull_before_mesh_conversion():
     assert builder.shape_sdf_max_resolution[shape] == 32
 
 
-def test_all_shapes_sdf_converts_every_colliding_primitive_and_ignores_sites():
-    """Every supported collider becomes an SDF mesh while non-colliding sites remain untouched."""
+def test_all_shapes_sdf_preserves_boxes_and_converts_other_primitives():
+    """Boxes keep exact geometry while other finite primitives become SDF meshes."""
     builder = ModelBuilder()
     colliders = [
         builder.add_shape_plane(width=4.0, length=6.0, label="plane"),
@@ -71,9 +71,13 @@ def test_all_shapes_sdf_converts_every_colliding_primitive_and_ignores_sites():
     sdf_shapes = NewtonManager._configure_sdf_all_shapes(builder, _sdf_cfg(plane_thickness=0.2))
 
     assert sdf_shapes == tuple(colliders)
-    assert all(GeoType(builder.shape_type[index]) == GeoType.MESH for index in colliders)
-    assert all(builder.shape_source[index] is not None for index in colliders)
-    assert all(builder.shape_scale[index] == wp.vec3(1.0) for index in colliders)
+    box = colliders[1]
+    converted = colliders[:1] + colliders[2:]
+    assert GeoType(builder.shape_type[box]) == GeoType.BOX
+    assert builder.shape_scale[box] == wp.vec3(1.0, 2.0, 3.0)
+    assert all(GeoType(builder.shape_type[index]) == GeoType.MESH for index in converted)
+    assert all(builder.shape_source[index] is not None for index in converted)
+    assert all(builder.shape_scale[index] == wp.vec3(1.0) for index in converted)
     assert GeoType(builder.shape_type[site]) == GeoType.SPHERE
     assert builder.shape_sdf_max_resolution[site] is None
     assert tuple(builder.shape_transform[colliders[0]].p) == pytest.approx((0.0, 0.0, -0.1))
@@ -136,6 +140,28 @@ def test_static_kinematic_pair_filter_is_forwarded_to_collision_pipeline():
     cfg = NewtonCollisionPipelineCfg(include_static_kinematic_pairs=False)
 
     assert cfg.to_pipeline_args()["include_static_kinematic_pairs"] is False
+
+
+def test_collision_config_does_not_expose_contact_omission_policy():
+    """Do not trade stable support contacts for speed at the Isaac Lab boundary."""
+    assert not hasattr(NewtonCollisionPipelineCfg(), "skip_stable_kinematic_pairs")
+
+
+@pytest.mark.parametrize(("world_count", "expected"), [(512, 32_768), (1024, 65_536)])
+def test_sdf_contact_replay_capacity_scales_with_finalized_world_count(world_count, expected):
+    """Per-world replay capacity resolves against the finalized Newton model."""
+    cfg = NewtonCollisionPipelineCfg(sdf_contact_replay_max_per_world=64)
+
+    assert cfg.to_pipeline_args(world_count=world_count)["sdf_contact_replay_max"] == expected
+
+
+@pytest.mark.parametrize(("per_world", "world_count"), [(-1, 1), (1, None), (1, 0), (1, -1)])
+def test_sdf_contact_replay_capacity_rejects_invalid_sizes(per_world, world_count):
+    """Enabled replay requires nonnegative capacity and a positive finalized world count."""
+    cfg = NewtonCollisionPipelineCfg(sdf_contact_replay_max_per_world=per_world)
+
+    with pytest.raises(ValueError, match="sdf_contact_replay_max_per_world|world_count"):
+        cfg.to_pipeline_args(world_count=world_count)
 
 
 def test_speculative_contact_config_is_converted_without_exposing_scheduler_timing():

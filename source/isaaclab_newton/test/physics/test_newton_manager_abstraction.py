@@ -286,6 +286,43 @@ def test_deterministic_collision_pipeline_matches_expanded_contact_capacity(
     assert NewtonManager._contacts.rigid_contact_max == 2
 
 
+def test_collision_pipeline_scales_replay_cache_from_finalized_world_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Replay capacity should use the finalized model rather than scene configuration."""
+    pipeline_calls: list[dict] = []
+
+    class FakeCollisionPipeline:
+        def __init__(self, _model, **kwargs):
+            pipeline_calls.append(kwargs)
+
+        def contacts(self):
+            return SimpleNamespace(rigid_contact_max=1)
+
+    monkeypatch.setattr(newton_manager_module, "CollisionPipeline", FakeCollisionPipeline)
+    monkeypatch.setattr(NewtonManager, "_needs_collision_pipeline", True)
+    monkeypatch.setattr(NewtonManager, "_collision_pipeline", None)
+    monkeypatch.setattr(
+        NewtonManager,
+        "_collision_cfg",
+        NewtonCollisionPipelineCfg(sdf_contact_replay_max_per_world=64),
+    )
+    monkeypatch.setattr(NewtonManager, "_contacts", None)
+    monkeypatch.setattr(NewtonManager, "_solver", None)
+    monkeypatch.setattr(NewtonManager, "_model", SimpleNamespace(world_count=512))
+    monkeypatch.setattr(NewtonManager, "_deterministic_mode", wp.DeterministicMode.NOT_GUARANTEED)
+
+    NewtonManager._initialize_contacts()
+
+    assert pipeline_calls == [
+        {
+            **NewtonCollisionPipelineCfg().to_pipeline_args(),
+            "sdf_contact_replay_max": 32_768,
+            "deterministic": False,
+        }
+    ]
+
+
 def test_refit_sensor_bvh_rejects_missing_sensor_state(monkeypatch):
     """BVH refitting raises when a particle BVH exists without an initialized sensor state."""
     model = SimpleNamespace(shape_count=0, particle_count=1, bvh_particles=object())
@@ -960,6 +997,28 @@ def test_forward_consumes_existing_reset_masks(monkeypatch):
     assert solver_resets == [[False, True]]
     assert world_mask.numpy().tolist() == [False, False]
     assert fk_mask.numpy().tolist() == [False, False]
+
+
+@pytest.mark.parametrize("manager", [NewtonManager, NewtonMJWarpManager])
+def test_solver_reset_invalidates_all_contact_history(monkeypatch: pytest.MonkeyPatch, manager) -> None:
+    """Forward the exact partial reset mask to solver and collision history."""
+    world_mask = wp.array([False, True, False], dtype=wp.bool, device="cpu")
+    calls: list[tuple[str, object]] = []
+    solver = SimpleNamespace(
+        use_mujoco_cpu=False,
+        reset=lambda state, world_mask=None, flags=0: calls.append(("solver", world_mask)),
+    )
+    pipeline = SimpleNamespace(
+        reset_contact_history=lambda mask: calls.append(("contact_history", mask)),
+    )
+    monkeypatch.setattr(manager, "_solver", solver, raising=False)
+    monkeypatch.setattr(manager, "_state_0", object(), raising=False)
+    monkeypatch.setattr(manager, "_collision_pipeline", pipeline, raising=False)
+
+    manager._reset_solver_internals(world_mask)
+
+    assert [name for name, _ in calls] == ["solver", "contact_history"]
+    assert all(mask is world_mask for _, mask in calls)
 
 
 @pytest.mark.parametrize(

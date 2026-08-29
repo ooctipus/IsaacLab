@@ -340,6 +340,24 @@ def test_one_slot_override_keeps_every_variant_eligible(monkeypatch: pytest.Monk
     assert cfg.terminations.time_out.params["fixed_horizon_s"] is None
 
 
+@pytest.mark.parametrize(("num_slots", "expected_replay_rows"), [(1, 0), (2, 128), (10, 640), (19, 1216)])
+def test_board_replay_budget_tracks_slot_count(
+    monkeypatch: pytest.MonkeyPatch, num_slots: int, expected_replay_rows: int
+) -> None:
+    """Allocate bounded replay rows only for multi-slot board workloads."""
+    from isaaclab_tasks.utils.hydra import resolve_task_config
+
+    monkeypatch.setattr(sys, "argv", ["train.py", f"env.assembly_set.num_slots={num_slots}"])
+    cfg, _ = resolve_task_config("IsaacContrib-Factory-Board-Reset-Franka", "rsl_rl_cfg_entry_point")
+    cfg = cfg.replace(scene=cfg.scene.copy(), events=cfg.events.copy())
+
+    assert cfg.sim.physics.collision_cfg.sdf_contact_replay_max_per_world == expected_replay_rows
+    if num_slots == 1:
+        assert cfg.sim.physics.solver_cfg.sleep_tolerance is None
+    else:
+        assert cfg.sim.physics.solver_cfg.sleep_tolerance == pytest.approx(0.003)
+
+
 @pytest.mark.parametrize(("num_slots", "horizon_s"), [(1, 8.0), (2, 15.0)])
 def test_mixed_horizon_experiment_overrides_resolve(
     monkeypatch: pytest.MonkeyPatch, num_slots: int, horizon_s: float
