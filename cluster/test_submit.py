@@ -618,6 +618,25 @@ class TestWorkflowSpecArchitecture:
         assert spec.count("/workspace/isaaclab/isaaclab.sh -p") == 3
         assert "/workspace/isaaclab/_isaac_sim/python.sh" not in spec
 
+    def test_workflow_syncs_the_lock_before_launching_ranks(self):
+        spec = self._spec()
+        sync = 'uv sync --locked --no-progress "${UV_SYNC_ARGS[@]}"'
+        assert spec.count(sync) == 1
+        assert spec.index(sync) < spec.index("{% if num_node > 1 %}")
+
+    def test_workflow_syncs_kitless_and_isaac_sim_extras(self):
+        spec = self._spec()
+        assert spec.count("UV_SYNC_ARGS=(--extra all --extra ovrtx)") == 1
+        assert spec.count("UV_SYNC_ARGS+=(--extra ov)") == 1
+        assert spec.index("UV_SYNC_ARGS+=(--extra ov)") < spec.index(
+            'uv sync --locked --no-progress "${UV_SYNC_ARGS[@]}"'
+        )
+
+    def test_workflow_reuses_the_uv_cache(self):
+        spec = self._spec()
+        assert 'export UV_CACHE_DIR="${CLUSTER_CACHE_ROOT}/uv"' in spec
+        assert "export UV_LINK_MODE=copy" in spec
+
     def test_workflow_uses_socket_nccl_only_on_ovx(self):
         spec = self._spec()
         conditional = '{% if platform in ["ovx-l40", "ovx-l40s"] %}'
