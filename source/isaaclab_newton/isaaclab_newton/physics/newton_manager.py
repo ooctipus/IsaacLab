@@ -939,8 +939,6 @@ class NewtonManager(PhysicsManager):
         if sim is None or not sim.is_playing():
             return
 
-        cls._reset_solver_internals_delegate(cls._world_reset_mask)
-
         # Notify solver of model changes
         if cls._model_changes:
             with wp.ScopedDevice(PhysicsManager._device):
@@ -968,6 +966,10 @@ class NewtonManager(PhysicsManager):
                 NewtonManager._graph = capture.graph
                 logger.info("Newton CUDA graph captured (deferred standard mode)")
             else:
+                # Relaxed capture performs a mutating warmup before ``forward`` can
+                # consume the mask. Reset once here so that warmup starts from the
+                # authored state; the post-capture forward reconciles it again.
+                cls._reset_solver_internals_delegate(cls._world_reset_mask)
                 NewtonManager._graph = cls._capture_relaxed_graph(device)
                 if cls._graph is not None:
                     # Kamino: StateKamino.from_newton() lazily allocates body_f_total,
