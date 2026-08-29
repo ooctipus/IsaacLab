@@ -381,6 +381,11 @@ def test_cable_mask_writes_are_cuda_graph_capturable(device):
         torch.testing.assert_close(cable.data.segment_velocity_w.torch, expected_velocity)
         assert wp.to_torch(SimulationManager._world_reset_mask).tolist() == [True, False, True, False]
         assert not wp.to_torch(SimulationManager._fk_reset_mask).any()
+        assert SimulationManager._reset_masks_may_change_on_graph_replay is True
+
+        SimulationManager.forward()
+
+        assert not wp.to_torch(SimulationManager._world_reset_mask).any()
 
 
 def test_cable_callback_does_not_retain_asset():

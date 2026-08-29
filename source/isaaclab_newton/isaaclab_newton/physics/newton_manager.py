@@ -399,6 +399,10 @@ class NewtonManager(PhysicsManager):
     # Newton reserves the final slot for global entities in world -1.
     _world_reset_mask: wp.array | None = None  # (num_envs + 1,) wp.bool
     _fk_reset_mask: wp.array | None = None  # (articulation_count,) wp.bool — for eval_fk(mask=...)
+    # Host ownership avoids synchronizing device masks. Captured writers make
+    # consumption permanently conservative.
+    _reset_masks_pending: bool = False
+    _reset_masks_may_change_on_graph_replay: bool = False
     _solver_reset_required: wp.array | None = None  # (num_envs,) wp.bool
     _solver_reset_required_torch: torch.Tensor | None = None
     # Solver-specialized FK delegate. Bound in initialize_solver() to the active subclass's choice of FK implementation.
@@ -597,13 +601,21 @@ class NewtonManager(PhysicsManager):
         The delegate (rather than a direct ``cls._eval_fk_impl`` call) is required because the
         data layer invokes ``NewtonManager.forward()`` on the base class, where ``cls`` is the
         base ``NewtonManager``; the bound delegate dispatches to the concrete subclass override.
+        Clean boundaries skip reconciliation without reading device masks back to the host.
+        Captured mask writers keep reconciliation enabled because graph replay bypasses Python.
         """
-        cls._reset_solver_internals_delegate(cls._world_reset_mask)
-        cls._eval_fk(cls._world_reset_mask, cls._fk_reset_mask)
-        if cls._fk_reset_mask is not None:
-            cls._fk_reset_mask.zero_()
-        if cls._world_reset_mask is not None:
-            cls._world_reset_mask.zero_()
+        if (
+            cls._world_reset_mask is None
+            or NewtonManager._reset_masks_pending
+            or NewtonManager._reset_masks_may_change_on_graph_replay
+        ):
+            cls._reset_solver_internals_delegate(cls._world_reset_mask)
+            cls._eval_fk(cls._world_reset_mask, cls._fk_reset_mask)
+            if cls._fk_reset_mask is not None:
+                cls._fk_reset_mask.zero_()
+            if cls._world_reset_mask is not None:
+                cls._world_reset_mask.zero_()
+            NewtonManager._reset_masks_pending = False
         cls._mark_sensor_state_dirty()
 
     @classmethod
@@ -1100,6 +1112,8 @@ class NewtonManager(PhysicsManager):
         # Per-world reset masks
         NewtonManager._world_reset_mask = None
         NewtonManager._fk_reset_mask = None
+        NewtonManager._reset_masks_pending = False
+        NewtonManager._reset_masks_may_change_on_graph_replay = False
         NewtonManager._solver_reset_required = None
         NewtonManager._solver_reset_required_torch = None
         NewtonManager._graph = None
@@ -1630,6 +1644,16 @@ class NewtonManager(PhysicsManager):
         cls._model_changes.add(change)
 
     @classmethod
+    def _mark_reset_masks_pending(cls) -> None:
+        """Track host writes and device-only replays that may dirty the reset masks."""
+        NewtonManager._reset_masks_pending = True
+        device = PhysicsManager._device
+        if device is not None:
+            device = wp.get_device(device)
+            if device.is_cuda and device.stream.is_capturing:
+                NewtonManager._reset_masks_may_change_on_graph_replay = True
+
+    @classmethod
     def invalidate_fk(
         cls,
         env_mask: wp.array | None = None,
@@ -1655,6 +1679,7 @@ class NewtonManager(PhysicsManager):
 
         if cls._world_reset_mask is None or cls._fk_reset_mask is None:
             return
+        cls._mark_reset_masks_pending()
 
         if articulation_ids is not None and env_mask is not None:
             wp.launch(
@@ -1692,6 +1717,7 @@ class NewtonManager(PhysicsManager):
         cls._mark_transforms_dirty()
         if cls._world_reset_mask is None:
             return
+        cls._mark_reset_masks_pending()
         if env_mask is not None:
             wp.launch(
                 _or_world_reset_mask_from_mask,
@@ -1845,6 +1871,8 @@ class NewtonManager(PhysicsManager):
         # Isaac Lab resets local environments only, so that slot remains false.
         NewtonManager._world_reset_mask = wp.zeros(cls._model.world_count + 1, dtype=wp.bool, device=device)
         NewtonManager._fk_reset_mask = wp.zeros(cls._model.articulation_count, dtype=wp.bool, device=device)
+        NewtonManager._reset_masks_pending = True
+        NewtonManager._reset_masks_may_change_on_graph_replay = False
 
         logger.info("Dispatching PHYSICS_READY callbacks")
         cls.dispatch_event(PhysicsEvent.PHYSICS_READY)

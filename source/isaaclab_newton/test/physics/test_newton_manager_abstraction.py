@@ -972,6 +972,7 @@ def test_forward_consumes_existing_reset_masks(monkeypatch):
     fk_mask = wp.array([True, False], dtype=wp.bool, device="cpu")
     observed: list[tuple[list[bool], list[bool]]] = []
     solver_resets: list[list[bool]] = []
+    sensor_refreshes: list[None] = []
 
     def record_fk(worlds, articulations):
         observed.append((worlds.numpy().tolist(), articulations.numpy().tolist()))
@@ -982,6 +983,8 @@ def test_forward_consumes_existing_reset_masks(monkeypatch):
 
     monkeypatch.setattr(NewtonManager, "_world_reset_mask", world_mask, raising=False)
     monkeypatch.setattr(NewtonManager, "_fk_reset_mask", fk_mask, raising=False)
+    monkeypatch.setattr(NewtonManager, "_reset_masks_pending", True, raising=False)
+    monkeypatch.setattr(NewtonManager, "_reset_masks_may_change_on_graph_replay", False, raising=False)
     monkeypatch.setattr(NewtonManager, "_eval_fk", record_fk, raising=False)
     monkeypatch.setattr(NewtonManager, "_solver", _RecordingSolver(), raising=False)
     monkeypatch.setattr(
@@ -990,13 +993,86 @@ def test_forward_consumes_existing_reset_masks(monkeypatch):
         NewtonManager._reset_solver_internals,
         raising=False,
     )
+    monkeypatch.setattr(
+        NewtonManager,
+        "_mark_sensor_state_dirty",
+        classmethod(lambda cls: sensor_refreshes.append(None)),
+    )
 
+    NewtonManager.forward()
     NewtonManager.forward()
 
     assert observed == [([False, True], [True, False])]
     assert solver_resets == [[False, True]]
+    assert sensor_refreshes == [None, None]
+    assert NewtonManager._reset_masks_pending is False
     assert world_mask.numpy().tolist() == [False, False]
     assert fk_mask.numpy().tolist() == [False, False]
+
+
+@pytest.mark.parametrize("method_name", ["invalidate_fk", "invalidate_body_state"])
+def test_state_invalidation_marks_reset_masks_pending(monkeypatch: pytest.MonkeyPatch, method_name: str) -> None:
+    """Every writer of the world-reset mask should mark its host-side ownership bit."""
+    monkeypatch.setattr(PhysicsManager, "_device", "cpu", raising=False)
+    monkeypatch.setattr(NewtonManager, "_model", SimpleNamespace(world_count=2), raising=False)
+    monkeypatch.setattr(
+        NewtonManager,
+        "_world_reset_mask",
+        wp.zeros(3, dtype=wp.bool, device="cpu"),
+        raising=False,
+    )
+    monkeypatch.setattr(NewtonManager, "_fk_reset_mask", wp.zeros(1, dtype=wp.bool, device="cpu"), raising=False)
+    monkeypatch.setattr(NewtonManager, "_reset_masks_pending", False, raising=False)
+    monkeypatch.setattr(NewtonManager, "_reset_masks_may_change_on_graph_replay", False, raising=False)
+
+    getattr(NewtonManager, method_name)()
+
+    assert NewtonManager._reset_masks_pending is True
+
+
+def test_captured_state_invalidation_keeps_reset_consumption_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Device-only graph replays should keep clean host boundaries conservative."""
+    world_mask = wp.zeros(3, dtype=wp.bool, device="cpu")
+    fk_mask = wp.zeros(1, dtype=wp.bool, device="cpu")
+    resets: list[list[bool]] = []
+    fk_calls: list[tuple[list[bool], list[bool]]] = []
+    device = SimpleNamespace(is_cuda=True, stream=SimpleNamespace(is_capturing=True))
+    get_device = wp.get_device
+
+    def record_fk(worlds, articulations):
+        fk_calls.append((worlds.numpy().tolist(), articulations.numpy().tolist()))
+
+    monkeypatch.setattr(PhysicsManager, "_device", "cuda:0", raising=False)
+    monkeypatch.setattr(wp, "get_device", lambda _: device)
+    monkeypatch.setattr(NewtonManager, "_model", SimpleNamespace(world_count=2), raising=False)
+    monkeypatch.setattr(NewtonManager, "_world_reset_mask", world_mask, raising=False)
+    monkeypatch.setattr(NewtonManager, "_fk_reset_mask", fk_mask, raising=False)
+    monkeypatch.setattr(NewtonManager, "_reset_masks_pending", False, raising=False)
+    monkeypatch.setattr(NewtonManager, "_reset_masks_may_change_on_graph_replay", False, raising=False)
+    monkeypatch.setattr(
+        NewtonManager,
+        "_reset_solver_internals_delegate",
+        staticmethod(lambda mask: resets.append(mask.numpy().tolist())),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        NewtonManager,
+        "_eval_fk",
+        staticmethod(record_fk),
+        raising=False,
+    )
+
+    NewtonManager.invalidate_body_state()
+    monkeypatch.setattr(wp, "get_device", get_device)
+    NewtonManager.forward()
+    world_mask[1:2].fill_(True)
+    fk_mask.fill_(True)
+    NewtonManager.forward()
+
+    assert resets == [[True, True, False], [False, True, False]]
+    assert fk_calls == [([True, True, False], [False]), ([False, True, False], [True])]
+    assert NewtonManager._reset_masks_pending is False
+    assert NewtonManager._reset_masks_may_change_on_graph_replay is True
 
 
 def test_step_consumes_reset_mask_once_through_forward(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1011,6 +1087,8 @@ def test_step_consumes_reset_mask_once_through_forward(monkeypatch: pytest.Monke
     monkeypatch.setattr(PhysicsManager, "_sim_time", 0.0, raising=False)
     monkeypatch.setattr(NewtonManager, "_world_reset_mask", world_mask, raising=False)
     monkeypatch.setattr(NewtonManager, "_fk_reset_mask", fk_mask, raising=False)
+    monkeypatch.setattr(NewtonManager, "_reset_masks_pending", True, raising=False)
+    monkeypatch.setattr(NewtonManager, "_reset_masks_may_change_on_graph_replay", False, raising=False)
     monkeypatch.setattr(NewtonManager, "_model_changes", set(), raising=False)
     monkeypatch.setattr(NewtonManager, "_graph_capture_pending", False, raising=False)
     monkeypatch.setattr(NewtonManager, "_graph", None, raising=False)
@@ -1034,6 +1112,7 @@ def test_step_consumes_reset_mask_once_through_forward(monkeypatch: pytest.Monke
     NewtonManager.step()
 
     assert solver_resets == [[False, True]]
+    assert NewtonManager._reset_masks_pending is False
     assert world_mask.numpy().tolist() == [False, False]
 
 
@@ -1050,6 +1129,8 @@ def test_relaxed_capture_resets_before_warmup_then_forward_consumes_mask(monkeyp
     monkeypatch.setattr(PhysicsManager, "_sim_time", 0.0, raising=False)
     monkeypatch.setattr(NewtonManager, "_world_reset_mask", world_mask, raising=False)
     monkeypatch.setattr(NewtonManager, "_fk_reset_mask", fk_mask, raising=False)
+    monkeypatch.setattr(NewtonManager, "_reset_masks_pending", True, raising=False)
+    monkeypatch.setattr(NewtonManager, "_reset_masks_may_change_on_graph_replay", False, raising=False)
     monkeypatch.setattr(NewtonManager, "_model_changes", set(), raising=False)
     monkeypatch.setattr(NewtonManager, "_graph_capture_pending", True, raising=False)
     monkeypatch.setattr(NewtonManager, "_graph", None, raising=False)
@@ -1093,6 +1174,7 @@ def test_relaxed_capture_resets_before_warmup_then_forward_consumes_mask(monkeyp
         ("launch", graph),
     ]
     assert NewtonManager._graph_capture_pending is False
+    assert NewtonManager._reset_masks_pending is False
     assert world_mask.numpy().tolist() == [False, False]
     assert fk_mask.numpy().tolist() == [False]
 
@@ -1259,6 +1341,8 @@ def test_forward_dispatches_active_mpm_reset_hook_through_base_manager(monkeypat
 
     monkeypatch.setattr(NewtonManager, "_world_reset_mask", world_mask, raising=False)
     monkeypatch.setattr(NewtonManager, "_fk_reset_mask", fk_mask, raising=False)
+    monkeypatch.setattr(NewtonManager, "_reset_masks_pending", True, raising=False)
+    monkeypatch.setattr(NewtonManager, "_reset_masks_may_change_on_graph_replay", False, raising=False)
     monkeypatch.setattr(NewtonManager, "_eval_fk", lambda worlds, articulations: None, raising=False)
     monkeypatch.setattr(NewtonManager, "_solver", _RejectingSolver(), raising=False)
     monkeypatch.setattr(
@@ -1297,13 +1381,17 @@ def test_subclass_of_newton_manager(manager):
     assert manager._create_solver is not NewtonManager._create_solver
 
 
-def test_clear_resets_rigid_body_force_capability(monkeypatch):
-    """Teardown clears the canonical solver capability without subclass shadowing."""
+def test_clear_resets_canonical_solver_state(monkeypatch):
+    """Teardown clears canonical solver state without subclass shadowing."""
     monkeypatch.setattr(NewtonManager, "_supports_rigid_body_force_input", True)
+    monkeypatch.setattr(NewtonManager, "_reset_masks_pending", True)
+    monkeypatch.setattr(NewtonManager, "_reset_masks_may_change_on_graph_replay", True)
 
     NewtonManager.clear()
 
     assert NewtonManager._supports_rigid_body_force_input is False
+    assert NewtonManager._reset_masks_pending is False
+    assert NewtonManager._reset_masks_may_change_on_graph_replay is False
     for manager in (
         NewtonMJWarpManager,
         NewtonXPBDManager,
@@ -1482,6 +1570,8 @@ def test_initialize_solver_populates_canonical_state(
         assert (
             NewtonManager._reset_solver_internals_delegate.__func__ is expected_manager._reset_solver_internals.__func__
         )
+        assert NewtonManager._reset_masks_pending is True
+        assert NewtonManager._reset_masks_may_change_on_graph_replay is False
 
         # ``_contacts`` is allocated whichever way contacts are handled
         # (MuJoCo internal buffer or Newton pipeline output).
@@ -1493,6 +1583,7 @@ def test_initialize_solver_populates_canonical_state(
         # end-to-end.  (We do not assert physics; that's covered by the
         # asset/sensor test suites.)
         sim.step(render=False)
+        assert NewtonManager._reset_masks_pending is False
 
 
 def test_mjwarp_internal_contacts_with_collision_cfg_raises():
