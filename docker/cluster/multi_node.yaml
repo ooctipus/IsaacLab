@@ -74,12 +74,15 @@ workflow:
           if [ -n "${CLUSTER_CACHE_ROOT}" ]; then
             CLUSTER_CACHE_ROOT="${CLUSTER_CACHE_ROOT}/${ISAACSIM_VERSION:-unknown}/{{ image }}"
             mkdir -p \
+              "${CLUSTER_CACHE_ROOT}/uv" \
               "${CLUSTER_CACHE_ROOT}/warp" \
               "${CLUSTER_CACHE_ROOT}/kit-cache" \
               "${CLUSTER_CACHE_ROOT}/ov" \
               "${CLUSTER_CACHE_ROOT}/nvidia/GLCache" \
               "${CLUSTER_CACHE_ROOT}/nv/ComputeCache"
 
+            export UV_CACHE_DIR="${CLUSTER_CACHE_ROOT}/uv"
+            export UV_LINK_MODE=copy
             export WARP_CACHE_PATH="${CLUSTER_CACHE_ROOT}/warp"
             mkdir -p "${WARP_CACHE_PATH}"
 
@@ -104,6 +107,14 @@ workflow:
           else
             echo "[INFO] No writable AMLFS cache root found; using container-local caches."
           fi
+
+          echo "[INFO] Syncing Python environment from uv.lock..."
+          cd /workspace/isaaclab
+          UV_SYNC_ARGS=(--extra all --extra ovrtx)
+          if [ -d /workspace/isaaclab/_isaac_sim/kit ] || [ -L /workspace/isaaclab/_isaac_sim ]; then
+            UV_SYNC_ARGS+=(--extra ov)
+          fi
+          uv sync --locked --no-progress "${UV_SYNC_ARGS[@]}"
 
           {% if num_node > 1 %}
           /workspace/isaaclab/isaaclab.sh -p -m torch.distributed.run \

@@ -30,6 +30,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
+import tomllib
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_KITLESS_BASE_IMAGE = "nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04"
 FINAL_IMAGE_REPO = "nvcr.io/nvidian/octi-isaac-lab"
@@ -239,33 +241,44 @@ def hash_file(md5: hashlib._Hash, path: Path, label: str) -> None:
 
 
 def compute_deps_hash(kitless: bool) -> str:
-    """Compute the hash governing the dependency/base image."""
+    """Compute the hash governing the reusable image foundation."""
 
     md5 = hashlib.md5()
     if kitless:
         md5.update(b"### build-mode: kitless\n")
-        build_recipe = Path("docker/Dockerfile.kitless")
+        foundation_files = [
+            Path("docker/.env.kitless"),
+            Path("docker/Dockerfile.kitless"),
+            Path("docker/docker-compose.yaml"),
+            Path("docker/utils/volume_mounts.py"),
+            Path("isaaclab.sh"),
+        ]
     else:
-        build_recipe = Path("docker/Dockerfile.base")
+        foundation_files = [
+            Path("docker/.env.base"),
+            Path("docker/Dockerfile.base"),
+            Path("docker/docker-compose.yaml"),
+            Path("docker/scripts/install_carb_env_shim.sh"),
+            Path("docker/utils/volume_mounts.py"),
+            Path("isaaclab.sh"),
+            Path("tools/install_deps.py"),
+        ]
 
-    # ``uv.lock`` pins the resolved dependency set (exact git revisions included), so a
-    # lock-only bump must invalidate the deps image even when pyproject.toml is unchanged.
-    for rel_path in [
-        Path("docker/.env.base"),
-        build_recipe,
-        Path("docker/docker-compose.yaml"),
-        Path("pyproject.toml"),
-        Path("uv.lock"),
-        Path("isaaclab.sh"),
-    ]:
+    # Python packages are reconciled from uv.lock when a cluster task starts. Keep only inputs that
+    # can change the system image here.
+    for rel_path in foundation_files:
         hash_file(md5, REPO_ROOT / rel_path, rel_path.as_posix())
-
-    source = REPO_ROOT / "source"
-    source_files = [
-        path for path in source.rglob("*") if path.is_file() and path.name in {"pyproject.toml", "extension.toml"}
-    ]
-    for path in sorted(source_files, key=lambda item: item.relative_to(REPO_ROOT).as_posix()):
-        hash_file(md5, path, path.relative_to(REPO_ROOT).as_posix())
+    if not kitless:
+        extension_files = sorted(
+            (path for path in (REPO_ROOT / "source").rglob("extension.toml") if path.is_file()),
+            key=lambda path: path.relative_to(REPO_ROOT).as_posix(),
+        )
+        for path in extension_files:
+            apt_deps = tomllib.loads(path.read_text()).get("isaac_lab_settings", {}).get("apt_deps", ())
+            if apt_deps:
+                label = f"{path.relative_to(REPO_ROOT).as_posix()}:apt_deps"
+                md5.update(f"### {label}\n".encode())
+                md5.update("\n".join(sorted(apt_deps)).encode())
     return md5.hexdigest()[:12]
 
 
@@ -544,6 +557,14 @@ def out_of_sync_packages(check_output: str) -> list[str]:
     return offenders
 
 
+def verify_lockfile() -> None:
+    """Fail if ``uv.lock`` does not match the project metadata."""
+
+    if not (REPO_ROOT / "uv.lock").is_file():
+        return
+    run(["uv", "lock", "--check", "--offline"])
+
+
 def verify_synced_deps(ctx: BuildContext, docker_env: dict[str, str]) -> None:
     """Fail when the freshly built image's environment does not match the repository's lock.
 
@@ -698,6 +719,7 @@ def build_image(args: BuildArgs) -> None:
     """Run the requested build."""
 
     clean_stale_egg_info()
+    verify_lockfile()
     ctx = make_context(args)
     print("Dependency Analysis...")
     print(f"   Hash: {ctx.deps_hash if ctx.deps_hash else 'SKIP (-s)'}")
@@ -710,10 +732,11 @@ def build_image(args: BuildArgs) -> None:
             build_overlay(ctx, plan, docker_env)
         else:
             build_full_deps(ctx, plan, docker_env)
-        # Every path needs this gate, including the source-only overlay: that overlay inherits its
-        # environment from a prepared image that may have been built against an older lock, so it is
-        # the path most likely to ship a stale dependency set.
-        verify_synced_deps(ctx, docker_env)
+        # Source-only images intentionally defer lock reconciliation to the cluster launch script.
+        # Explicit dependency builds still verify the environment before publishing it as prepared.
+        dependencies_synced = plan.run_pip_install or not plan.skip_deps
+        if dependencies_synced:
+            verify_synced_deps(ctx, docker_env)
         tag_and_push(ctx, plan)
     if ctx.deps_hash:
         update_state_and_cleanup(ctx)
