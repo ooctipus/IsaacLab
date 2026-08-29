@@ -237,6 +237,9 @@ class RslRlPpoAlgorithmCfg:
     optimizer: Literal["adam", "adamw", "sgd", "rmsprop"] = "adam"
     """The optimizer to use. Defaults to adam."""
 
+    weight_decay: float | None = None
+    """The optimizer weight decay. ``None`` preserves the optimizer's default."""
+
     value_loss_coef: float = MISSING
     """The coefficient for the value loss."""
 
