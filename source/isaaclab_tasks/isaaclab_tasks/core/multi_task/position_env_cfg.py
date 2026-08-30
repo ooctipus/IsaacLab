@@ -48,12 +48,9 @@ class SceneCfg(InteractiveSceneCfg):
 
     # ground terrain
     #
-    # Per-env terrain (``{ENV_REGEX_NS}/ground``) clones one tile per environment and
-    # ``use_terrain_origins=False`` makes the importer place env origins on a flat
-    # ``env_spacing`` grid (z=0). The foot-sample retarget table is built against this model:
-    # spawn base z is the standing height above a z=0 tile. Switching to a global terrain with
-    # ``use_terrain_origins=True`` injects terrain elevation into the env origins, which the
-    # sampler does not expect and which makes robots spawn above the surface.
+    # Per-env terrain keeps each clone on its own tile. ``use_terrain_origins=False`` keeps
+    # env origins on a flat ``env_spacing`` grid (z=0), as expected by the foot-sample
+    # retarget table.
     terrain = TerrainImporterCfg(
         prim_path="{ENV_REGEX_NS}/ground",
         terrain_type="generator",
@@ -172,7 +169,7 @@ class PositionPhysicsCfg(PresetCfg):
 
 @configclass
 class LocomotionPositionCommandEnvCfg(ManagerBasedRLEnvCfg):
-    scene: SceneCfg = SceneCfg(num_envs=4096, env_spacing=120.0)
+    scene: SceneCfg = SceneCfg(num_envs=4096, env_spacing=0.0)
     sim: SimulationCfg = SimulationCfg(physics=PositionPhysicsCfg())  # type: ignore
     observations: mdp_presets.ObservationsCfg = mdp_presets.ObservationsCfg()  # type: ignore
     actions: ActionsCfg = ActionsCfg()

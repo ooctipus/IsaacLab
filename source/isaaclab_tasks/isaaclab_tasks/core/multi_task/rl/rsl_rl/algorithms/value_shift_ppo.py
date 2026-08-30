@@ -21,14 +21,15 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import torch
-from rsl_rl.algorithms.ppo import PPO
+
+from .composable_ppo import ComposablePPO
 
 if TYPE_CHECKING:
     from rsl_rl.env import VecEnv
     from tensordict import TensorDict
 
 
-class ValueShiftPPO(PPO):
+class ValueShiftPPO(ComposablePPO):
     """PPO + per-state critic value-shift signal.
 
     Three buffers are bound by :meth:`construct_algorithm` via ``eval`` over the
@@ -83,7 +84,7 @@ class ValueShiftPPO(PPO):
         # Delegate construction to PPO. ``algorithm_cfg["class_name"]`` still
         # points at ValueShiftPPO's FQN, so PPO.construct_algorithm pops it,
         # resolves it via :func:`resolve_callable`, and instantiates this class.
-        alg: ValueShiftPPO = PPO.construct_algorithm(obs, env, cfg, device)  # type: ignore[assignment]
+        alg: ValueShiftPPO = ComposablePPO.construct_algorithm(obs, env, cfg, device)  # type: ignore[assignment]
         assert isinstance(alg, ValueShiftPPO), (
             f"ValueShiftPPO.construct_algorithm expected a ValueShiftPPO instance; got {type(alg).__name__}."
             " Check that ``algorithm.class_name`` resolves to ValueShiftPPO."

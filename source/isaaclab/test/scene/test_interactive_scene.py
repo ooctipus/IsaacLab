@@ -24,6 +24,7 @@ from isaaclab.cloner import CloneCfg
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
 from isaaclab.sensors import ContactSensorCfg
 from isaaclab.sim import build_simulation_context
+from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.configclass import configclass
 
@@ -209,6 +210,31 @@ def test_scene_publishes_plan_via_replicate(monkeypatch: pytest.MonkeyPatch):
     assert plan.clone_mask.shape == (1, 4)
     assert stage is scene.stage
     assert replicate_physics is True
+
+
+def test_env_scoped_terrain_uses_concrete_source_path():
+    """An env-scoped terrain expression should be materialized under the source environment."""
+    captured_cfgs = []
+
+    class FakeTerrain:
+        def __init__(self, cfg):
+            captured_cfgs.append(cfg)
+            self.env_origins = torch.zeros((cfg.num_envs, 3))
+
+    @configclass
+    class TerrainSceneCfg(InteractiveSceneCfg):
+        terrain = TerrainImporterCfg(
+            prim_path="{ENV_REGEX_NS}/ground",
+            terrain_type="plane",
+            class_type=FakeTerrain,
+        )
+
+    with build_simulation_context(device="cpu", auto_add_lighting=False, add_ground_plane=False) as sim:
+        sim._app_control_on_stop_handle = None
+        InteractiveScene(TerrainSceneCfg(num_envs=2, env_spacing=1.0))
+
+    assert len(captured_cfgs) == 1
+    assert captured_cfgs[0].prim_path == "/World/envs/env_0/ground"
 
 
 @pytest.mark.parametrize("device", ["cuda:0"])

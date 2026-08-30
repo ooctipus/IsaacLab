@@ -221,12 +221,15 @@ class _MockRobot:
         self._joint_vel = torch.zeros(num_envs, num_joints, device=device)
         self.body_names = ["base", "foot_0", "foot_1", "foot_2", "foot_3"]
         self._body_link_pos_w = torch.zeros(num_envs, len(self.body_names), 3, device=device)
+        self._body_link_pos_w[:, 0, 2] = 0.5
+        self._body_mass = torch.ones(num_envs, len(self.body_names), device=device)
         self.data = SimpleNamespace(
             root_state_w=wp.from_torch(self._root_state_w),
             root_quat_w=wp.from_torch(self._root_quat_w),
             joint_pos=wp.from_torch(self._joint_pos),
             joint_vel=wp.from_torch(self._joint_vel),
             body_link_pos_w=wp.from_torch(self._body_link_pos_w),
+            body_mass=SimpleNamespace(torch=self._body_mass),
         )
         self.calls: list[tuple[str, torch.Tensor, torch.Tensor]] = []
 
@@ -268,7 +271,9 @@ class _MockRobot:
 
 class _MockScene(SimpleNamespace):
     def __getitem__(self, name: str):
-        return self._articulations[name]
+        if name in self._articulations:
+            return self._articulations[name]
+        return self._sensors[name]
 
 
 def _make_env(num_envs: int, device: str, step_dt: float = 0.02):
@@ -282,6 +287,7 @@ def _make_env(num_envs: int, device: str, step_dt: float = 0.02):
         termination_manager=None,
         command_manager=None,
         scene=None,
+        cfg=SimpleNamespace(sim=SimpleNamespace(gravity=(0.0, 0.0, -9.81))),
     )
 
 
@@ -317,12 +323,29 @@ def _make_command_term(
             ang_vel_std=0.5,
             foot_pos_std=0.1,
             normalize_command_obs=False,
+            success_effort_multiplier=0.8,
+            joint_wrench_sensor_name="joint_wrench",
+            contact_sensor_name="contact_forces",
+            success_min_foot_weight_fraction=0.8,
         ),
     )
     term.robot = _MockRobot(env.num_envs, num_joints, device)
+    term._mock_joint_torques = torch.zeros(env.num_envs, num_joints, 3, device=device)
+    term._mock_contact_forces = torch.zeros(env.num_envs, len(term.robot.body_names), 3, device=device)
+    supported_weight = term.robot._body_mass.sum(dim=-1) * 9.81
+    term._mock_contact_forces[:, 1:, 2] = supported_weight[:, None] / 4
     env.scene = _MockScene(
         _articulations={"robot": term.robot},
         _rigid_objects={},
+        _sensors={
+            "joint_wrench": SimpleNamespace(
+                data=SimpleNamespace(torque=SimpleNamespace(torch=term._mock_joint_torques))
+            ),
+            "contact_forces": SimpleNamespace(
+                body_names=term.robot.body_names,
+                data=SimpleNamespace(net_forces_w=SimpleNamespace(torch=term._mock_contact_forces)),
+            ),
+        },
         env_origins=torch.zeros(env.num_envs, 3, device=device),
         _default_env_origins=torch.zeros(env.num_envs, 3, device=device),
         env_ns="/World/envs",
@@ -852,6 +875,30 @@ class TestCommandTerm:
         # env 1 never ticked
         assert term._payload.cmd_buf[1, 2, term._payload.time_idx].item() == pytest.approx(0.0)
         assert term._payload.cmd_buf[1, 1, term._payload.time_idx].item() == pytest.approx(hold_init)
+
+    @pytest.mark.parametrize("payload_class", [CommandPayloadBaseState, CommandPayloadBaseFootState])
+    def test_hold_requires_natural_effort_and_foot_support_without_speed_gate(self, payload_class):
+        """Both payloads require physical support, but not a base-speed threshold, while holding."""
+        table = _make_task_table()
+        env = _make_env(num_envs=1, device=DEVICE, step_dt=0.1)
+        term = _make_command_term(env, table, payload_class=payload_class)
+        time_idx = term._payload.time_idx
+        term._payload.cmd_buf[:, 0, time_idx] = 1.0
+
+        weight = term.robot._body_mass.sum(dim=-1) * 9.81
+        term._mock_contact_forces[:, 1:, 2] = weight[:, None] * 0.79 / 4
+        term._update_command()
+        assert term._payload.cmd_buf[0, 2, time_idx].item() == pytest.approx(0.0)
+
+        term._mock_contact_forces[:, 1:, 2] = weight[:, None] / 4
+        term._mock_joint_torques[..., 0] = 1.0e6
+        term._update_command()
+        assert term._payload.cmd_buf[0, 2, time_idx].item() == pytest.approx(0.0)
+
+        term._mock_joint_torques.zero_()
+        term.robot._root_state_w[:, 7:13] = 100.0
+        term._update_command()
+        assert term._payload.cmd_buf[0, 2, time_idx].item() == pytest.approx(env.step_dt)
 
     def test_command_observation_exposes_target_feet_not_joint_delta(self):
         """Policy command is root delta plus target foot positions in base frame."""

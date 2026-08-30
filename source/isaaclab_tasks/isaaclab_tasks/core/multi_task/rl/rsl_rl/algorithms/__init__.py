@@ -11,9 +11,10 @@ This package keeps PPO subclasses that need task-specific bindings (e.g.
 path declared on a runner cfg's ``algorithm.class_name``.
 """
 
+from .composable_ppo import ComposablePPO
 from .crl import CRL
 from .success_estimator_ppo import SuccessEstimatorPPO
 from .successor_latent_ppo import SuccessorLatentPPO
 from .value_shift_ppo import ValueShiftPPO
 
-__all__ = ["CRL", "SuccessEstimatorPPO", "SuccessorLatentPPO", "ValueShiftPPO"]
+__all__ = ["CRL", "ComposablePPO", "SuccessEstimatorPPO", "SuccessorLatentPPO", "ValueShiftPPO"]

@@ -835,9 +835,15 @@ class InteractiveScene:
             # create asset
             if isinstance(asset_cfg, TerrainImporterCfg):
                 # terrains are special entities since they define environment origins
-                asset_cfg.num_envs = self.cfg.num_envs
-                asset_cfg.env_spacing = self.cfg.env_spacing
-                self._terrain = asset_cfg.class_type(asset_cfg)
+                terrain_cfg = asset_cfg
+                matched = cloner.path.match(asset_cfg.prim_path, self._env_fmt)
+                if matched is not None:
+                    # The importer authors USD prims, so materialize an env-scoped expression
+                    # under the concrete source env before the clone session replicates it.
+                    terrain_cfg = asset_cfg.replace(prim_path=self.env_prim_paths[0] + matched.suffix)
+                terrain_cfg.num_envs = self.cfg.num_envs
+                terrain_cfg.env_spacing = self.cfg.env_spacing
+                self._terrain = terrain_cfg.class_type(terrain_cfg)
             elif isinstance(asset_cfg, ArticulationCfg):
                 self._articulations[asset_name] = asset_cfg.class_type(asset_cfg)
             elif isinstance(asset_cfg, CableObjectCfg):

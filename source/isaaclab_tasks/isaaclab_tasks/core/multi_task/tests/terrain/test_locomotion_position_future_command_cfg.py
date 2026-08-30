@@ -28,6 +28,7 @@ def test_locomotion_position_uses_future_command_and_curriculum():
     assert cfg.scene.terrain.use_terrain_origins is False
     assert cfg.scene.env_spacing == 120.0
     assert cfg.scene.height_scanner.mesh_prim_paths == ["{ENV_REGEX_NS}/ground"]
+    assert cfg.scene.height_scanner.spawn is None
     assert not hasattr(cfg.commands.goal_point.task_table, "state_frame")
     assert cfg.curriculum.terrain_levels.func is success_rate_sampler
     assert "success_rates_bind" in cfg.curriculum.terrain_levels.params

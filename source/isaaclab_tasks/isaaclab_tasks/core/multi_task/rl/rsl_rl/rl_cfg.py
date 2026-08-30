@@ -104,6 +104,100 @@ class RslRlResidualMLPEncoderModelCfg(RslRlMLPEncoderModelCfg):
     hidden_dims: list[int] = [0]  # type: ignore[assignment]
     """Unused plain-MLP head field retained for inherited config shape."""
 
+    simplicial_group_size: int | None = None
+    """SEM simplex width. ``None`` disables the actor-side simplicial embedding."""
+
+    simplicial_temperature: float = 1.0
+    """Softmax temperature used within each SEM simplex."""
+
+
+@configclass
+class RslRlCategoricalResidualMLPEncoderModelCfg(RslRlResidualMLPEncoderModelCfg):
+    """Configuration for a SimBa-v1 critic with categorical value estimation."""
+
+    class_name: str = (
+        "isaaclab_tasks.core.multi_task.rl.rsl_rl.models.categorical_value:CategoricalResidualMLPEncoderModel"
+    )
+    """The model class name."""
+
+    num_bins: int = 101
+    """Number of categorical value atoms."""
+
+    value_min: float = -5.0
+    """Minimum represented normalized return."""
+
+    value_max: float = 5.0
+    """Maximum represented normalized return."""
+
+    reward_scaling: bool = True
+    """Whether PPO rewards are scaled using discounted-return statistics."""
+
+    reward_scale_epsilon: float = 1.0e-8
+    """Numerical floor used by discounted-return reward scaling."""
+
+
+@configclass
+class RslRlSimbaV2EncoderModelCfg(RslRlMLPEncoderModelCfg):
+    """Configuration for per-group encoders with a SimBaV2 head."""
+
+    class_name: str = "isaaclab_tasks.core.multi_task.rl.rsl_rl.models.simba_v2_encoder_model:SimbaV2EncoderModel"
+    """The model class name."""
+
+    hidden_dim: int = MISSING
+    """Width of the hyperspherical representation."""
+
+    num_blocks: int = 1
+    """Number of LERP residual blocks."""
+
+    expansion: int = 4
+    """Expansion ratio inside each SimBaV2 block."""
+
+    c_shift: float = 3.0
+    """Positive constant appended before input L2 normalization."""
+
+    simplicial_group_size: int | None = None
+    """SEM simplex width. ``None`` disables the actor-side simplicial embedding."""
+
+    simplicial_temperature: float = 1.0
+    """Softmax temperature used within each SEM simplex."""
+
+    head_layer_norm: bool = False
+    """SimBaV2 does not apply LayerNorm before its hyperspherical head."""
+
+    activation: str = "relu"
+    """Unused inherited activation field retained for config compatibility."""
+
+    encoder_cfg: dict[str, RslRlMLPEncoderModelCfg.EncoderCfg | RslRlCNNModelCfg.CNNCfg] | None = None  # type: ignore[assignment]
+    """Per-group MLP or CNN encoders applied before the SimBaV2 head."""
+
+    hidden_dims: list[int] = [0]  # type: ignore[assignment]
+    """Unused plain-MLP head field retained for inherited config shape."""
+
+
+@configclass
+class RslRlCategoricalSimbaV2EncoderModelCfg(RslRlSimbaV2EncoderModelCfg):
+    """Configuration for a SimBaV2 critic with categorical value estimation."""
+
+    class_name: str = (
+        "isaaclab_tasks.core.multi_task.rl.rsl_rl.models.simba_v2_encoder_model:CategoricalSimbaV2EncoderModel"
+    )
+    """The model class name."""
+
+    num_bins: int = 101
+    """Number of categorical value atoms."""
+
+    value_min: float = -5.0
+    """Minimum represented normalized return."""
+
+    value_max: float = 5.0
+    """Maximum represented normalized return."""
+
+    reward_scaling: bool = True
+    """Whether PPO rewards are scaled using discounted-return statistics."""
+
+    reward_scale_epsilon: float = 1.0e-8
+    """Numerical floor used by discounted-return reward scaling."""
+
 
 @configclass
 class RslRlResidualMLPCfg:

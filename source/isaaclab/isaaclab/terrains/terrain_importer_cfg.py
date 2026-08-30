@@ -31,9 +31,11 @@ class TerrainImporterCfg:
     """The collision group of the terrain. Defaults to -1."""
 
     prim_path: str = MISSING
-    """The absolute path of the USD terrain prim.
+    """The absolute path or environment-scoped expression of the USD terrain prim.
 
-    All sub-terrains are imported relative to this prim path.
+    All sub-terrains are imported relative to this prim path. When the terrain belongs to an
+    :class:`~isaaclab.scene.InteractiveScene`, the path may contain ``{ENV_REGEX_NS}``; the
+    scene authors the terrain under its concrete source environment before cloning it.
     """
 
     num_envs: int = 1

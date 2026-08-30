@@ -4,6 +4,8 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 from .rl_cfg import (
+    RslRlCategoricalResidualMLPEncoderModelCfg,
+    RslRlCategoricalSimbaV2EncoderModelCfg,
     RslRlCommanderActorModelCfg,
     RslRlCrlAlgorithmCfg,
     RslRlHerCfg,
@@ -11,10 +13,13 @@ from .rl_cfg import (
     RslRlOffPolicyRunnerCfg,
     RslRlResidualMLPCfg,
     RslRlResidualMLPEncoderModelCfg,
+    RslRlSimbaV2EncoderModelCfg,
     RslRlTaskEasingActorModelCfg,
 )
 
 __all__ = [
+    "RslRlCategoricalResidualMLPEncoderModelCfg",
+    "RslRlCategoricalSimbaV2EncoderModelCfg",
     "RslRlCommanderActorModelCfg",
     "RslRlCrlAlgorithmCfg",
     "RslRlHerCfg",
@@ -22,5 +27,6 @@ __all__ = [
     "RslRlOffPolicyRunnerCfg",
     "RslRlResidualMLPCfg",
     "RslRlResidualMLPEncoderModelCfg",
+    "RslRlSimbaV2EncoderModelCfg",
     "RslRlTaskEasingActorModelCfg",
 ]

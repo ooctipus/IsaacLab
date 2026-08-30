@@ -120,5 +120,6 @@ class CRLObservationsCfg:
 @configclass
 class ObservationsCfg(PresetCfg):
     position = PositionObservationsCfg()
+    simba_cnn_big = position
     crl = CRLObservationsCfg()
     default = position

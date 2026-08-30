@@ -11,6 +11,8 @@ __all__: list[str] = []
 
 from pathlib import Path
 
+import isaaclab.sim as sim_utils
+from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets import ArticulationCfg
 
 from isaaclab_tasks.utils import preset
@@ -44,11 +46,38 @@ _ANYMAL_C_CFG: ArticulationCfg = anymal.ANYMAL_C_CFG.replace(prim_path="{ENV_REG
 _ANYMAL_C_CFG.spawn.usd_path = (  # type: ignore[attr-defined]
     "https://uwlab-assets.s3.us-west-004.backblazeb2.com/Robots/ANYbotics/ANYmal-C/anymal_c.usd"
 )
-_ANYMAL_C_CFG.actuators["legs"] = _ANYMAL_C_CFG.actuators["legs"].replace(
+_ANYMAL_C_CFG.spawn.joint_drive_props = preset(
+    implicit_actuator=sim_utils.JointDriveBaseCfg(
+        drive_type="force",
+        stiffness=40.0,
+        damping=5.0,
+        max_force=120.0,
+        max_joint_velocity=7.5,
+    ),
+    default=None,
+    lstm_actuator=None,
+)
+
+ANYDRIVE_3_LSTM_ACTUATOR_CFG = anymal.ANYDRIVE_3_LSTM_ACTUATOR_CFG.replace(
     network_file=preset(
         default=anymal.ANYDRIVE_3_LSTM_ACTUATOR_CFG.network_file,
         newton_mjwarp=ANYDRIVE_3_LSTM_JIT_PATH,
     )
+)
+ANYDRIVE_3_SIMPLE_ACTUATOR_CFG = ImplicitActuatorCfg(
+    joint_names_expr=[".*HAA", ".*HFE", ".*KFE"],
+    effort_limit_sim=80.0,
+    velocity_limit_sim=7.5,
+    effort_limit=80.0,
+    velocity_limit=7.5,
+    stiffness={".*": 40.0},
+    damping={".*": 5.0},
+    armature={".*": 0.15},
+)
+_ANYMAL_C_CFG.actuators["legs"] = preset(
+    implicit_actuator=ANYDRIVE_3_SIMPLE_ACTUATOR_CFG,
+    default=ANYDRIVE_3_LSTM_ACTUATOR_CFG,
+    lstm_actuator=ANYDRIVE_3_LSTM_ACTUATOR_CFG,
 )
 
 RobotArticulationCfg.anymal_c = _ANYMAL_C_CFG

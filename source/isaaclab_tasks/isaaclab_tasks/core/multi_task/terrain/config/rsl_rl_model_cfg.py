@@ -26,9 +26,12 @@ from isaaclab_rl.rsl_rl import (
 )
 
 from isaaclab_tasks.core.multi_task.rl.rsl_rl.rl_cfg import (
+    RslRlCategoricalResidualMLPEncoderModelCfg,
+    RslRlCategoricalSimbaV2EncoderModelCfg,
     RslRlCommanderActorModelCfg,
     RslRlMLPEncoderModelCfg,
     RslRlResidualMLPEncoderModelCfg,
+    RslRlSimbaV2EncoderModelCfg,
     RslRlTaskEasingActorModelCfg,
 )
 from isaaclab_tasks.utils import preset
@@ -68,6 +71,15 @@ CNN_ENCODER_CFG = RslRlCNNModelCfg.CNNCfg(
     stride=[2, 2, 1],
     activation="elu",
 )
+
+SIMBA_CNN_ENCODER_CFG: dict[str, RslRlCNNModelCfg.CNNCfg] = {
+    "height_scan": RslRlCNNModelCfg.CNNCfg(
+        output_channels=[16, 32],
+        kernel_size=[3, 3],
+        stride=[2, 2],
+        activation="elu",
+    ),
+}
 
 
 def get_error(env, cmd_proposed: torch.Tensor, cmd_target: torch.Tensor):
@@ -200,6 +212,22 @@ SIMBA_ACTOR = RslRlResidualMLPEncoderModelCfg(
     encoder_cfg=MLP_ENCODER_CFG,
 )
 
+SIMBA_SEM_ACTOR = SIMBA_ACTOR.replace(simplicial_group_size=64, simplicial_temperature=1.0)
+
+SIMBA_V2_ACTOR = RslRlSimbaV2EncoderModelCfg(
+    hidden_dim=128,
+    num_blocks=1,
+    expansion=4,
+    c_shift=3.0,
+    obs_normalization=True,
+    encoder_normalization=True,
+    stochastic=True,
+    distribution_cfg=RslRlMLPModelCfg.GaussianDistributionCfg(init_std=1.0, std_type="log"),
+    encoder_cfg=MLP_ENCODER_CFG,
+)
+
+SIMBA_V2_SEM_ACTOR = SIMBA_V2_ACTOR.replace(simplicial_group_size=64, simplicial_temperature=1.0)
+
 # Wider SimBa actor for capacity-scaling experiments. Same architecture as ``SIMBA_ACTOR``, doubled
 # width. Critic should also switch to ``SIMBA_BIG_CRITIC`` (which is wider AND deeper than the actor
 # per the SimBa paper's finding that critic capacity matters more than actor capacity).
@@ -214,6 +242,19 @@ SIMBA_BIG_ACTOR = RslRlResidualMLPEncoderModelCfg(
     stochastic=True,
     distribution_cfg=RslRlMLPModelCfg.GaussianDistributionCfg(init_std=1.0, std_type="log"),
     encoder_cfg=MLP_ENCODER_CFG,
+)
+
+SIMBA_CNN_BIG_ACTOR = RslRlResidualMLPEncoderModelCfg(
+    hidden_dim=512,
+    num_blocks=2,
+    expand=4,
+    activation="swish",
+    norm=True,
+    obs_normalization=True,
+    encoder_normalization=True,
+    stochastic=True,
+    distribution_cfg=RslRlMLPModelCfg.GaussianDistributionCfg(init_std=1.0, std_type="log"),
+    encoder_cfg=SIMBA_CNN_ENCODER_CFG,
 )
 
 # Recurrent SimBa actor: byte-for-byte the same SimBa head as ``SIMBA_ACTOR`` with an LSTM inserted
@@ -297,6 +338,48 @@ SIMBA_CRITIC = RslRlResidualMLPEncoderModelCfg(
     encoder_cfg=MLP_ENCODER_CFG,
 )
 
+SIMBA_CATEGORICAL_CRITIC = RslRlCategoricalResidualMLPEncoderModelCfg(
+    hidden_dim=256,
+    num_blocks=2,
+    expand=4,
+    activation=preset(relu="relu", swish="swish", default="swish"),
+    norm=True,
+    obs_normalization=True,
+    encoder_normalization=True,
+    stochastic=False,
+    encoder_cfg=MLP_ENCODER_CFG,
+    num_bins=101,
+    value_min=-5.0,
+    value_max=5.0,
+    reward_scaling=True,
+)
+
+SIMBA_V2_CRITIC = RslRlSimbaV2EncoderModelCfg(
+    hidden_dim=512,
+    num_blocks=2,
+    expansion=4,
+    c_shift=3.0,
+    obs_normalization=True,
+    encoder_normalization=True,
+    stochastic=False,
+    encoder_cfg=MLP_ENCODER_CFG,
+)
+
+SIMBA_V2_CATEGORICAL_CRITIC = RslRlCategoricalSimbaV2EncoderModelCfg(
+    hidden_dim=512,
+    num_blocks=2,
+    expansion=4,
+    c_shift=3.0,
+    obs_normalization=True,
+    encoder_normalization=True,
+    stochastic=False,
+    encoder_cfg=MLP_ENCODER_CFG,
+    num_bins=101,
+    value_min=-5.0,
+    value_max=5.0,
+    reward_scaling=True,
+)
+
 # Scaled-up SimBa critic: 4 residual blocks of 1024 width (4x expansion -> 4096 inner width).
 # Per the SimBa paper's scaling analysis (Figure 4), critic capacity helps more than actor
 # capacity; this preset realizes that by scaling the critic more aggressively than the actor.
@@ -310,6 +393,18 @@ SIMBA_BIG_CRITIC = RslRlResidualMLPEncoderModelCfg(
     encoder_normalization=True,
     stochastic=False,
     encoder_cfg=MLP_ENCODER_CFG,
+)
+
+SIMBA_CNN_BIG_CRITIC = RslRlResidualMLPEncoderModelCfg(
+    hidden_dim=1024,
+    num_blocks=4,
+    expand=4,
+    activation=preset(relu="relu", swish="swish", default="swish"),
+    norm=True,
+    obs_normalization=True,
+    encoder_normalization=True,
+    stochastic=False,
+    encoder_cfg=SIMBA_CNN_ENCODER_CFG,
 )
 
 # Recurrent SimBa critic: matches ``SIMBA_CRITIC`` with an LSTM before the residual head (via the

@@ -35,7 +35,7 @@
             ["Isaac-Open-Drawer-Franka", "rl_games,rsl_rl,skrl", "isaacsim_physx,newton_mjwarp,ovphysx", "", "", {}, "tasks/manipulation/franka_open_drawer.jpg"],
             ["Isaac-Pendulum-MARL-Direct", "rl_games,skrl", "isaacsim_physx,newton_kamino,newton_mjwarp,ovphysx", "", ""],
             ["Isaac-Position-MultiTask-v0", "rsl_rl", "", "", "locomotion,minimal_velocity,pose_vel,position,simple_pos_vel,velocity"],
-            ["Isaac-Position-v0", "rsl_rl", "isaacsim_physx,newton_mjwarp", "", "all_commands,anymal_c,base,base_foot,beta66,crl,extreme_stair,flat,frontier,gap,go2,h1,pit,pos,pose,position,radiating_beam,slope_inv,spot,square_pillar_obstacle,stepping_stone,stepping_stone_curriculum,terrain,terrain_curriculum,terrain_pos,terrain_pose,uniform,vel"],
+            ["Isaac-Position-v0", "rsl_rl", "isaacsim_physx,newton_mjwarp", "", "all_commands,anymal_c,base,base_foot,beta66,beta_value_shift,crl,extreme_stair,flat,frontier,gap,go2,h1,implicit_actuator,lstm_actuator,pit,pos,pose,position,radiating_beam,simba_cnn_big,slope_inv,spot,square_pillar_obstacle,stepping_stone,stepping_stone_curriculum,terrain,terrain_curriculum,terrain_pos,terrain_pose,uniform,value_shift,vel"],
             ["Isaac-Reach-Franka", "rl_games,rsl_rl,skrl", "isaacsim_physx,newton_mjwarp,ovphysx", "", "diffik,diffik_abs,joint_pos,newton_ik", {}, "tasks/manipulation/franka_reach.jpg", true],
             ["Isaac-Reach-Franka-OSC", "rsl_rl", "isaacsim_physx,newton_mjwarp,ovphysx", "", "diffik_abs", {}, "tasks/manipulation/franka_reach.jpg"],
             ["Isaac-Reach-UR10", "rl_games,rsl_rl,skrl", "isaacsim_physx,newton_mjwarp,ovphysx", "", "", {}, "tasks/manipulation/ur10_reach.jpg", true],

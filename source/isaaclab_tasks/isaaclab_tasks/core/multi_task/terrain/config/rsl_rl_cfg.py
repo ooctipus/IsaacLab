@@ -12,11 +12,13 @@ runner composition. The preset classes here just wire those instances into
 ``agent.actor=<name>`` / ``agent.critic=<name>`` selectable alternatives.
 """
 
+from typing import Any
+
 from isaaclab.utils.configclass import configclass
 
 from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoAlgorithmCfg, RslRlRndCfg
 
-from isaaclab_tasks.utils import PresetCfg
+from isaaclab_tasks.utils import PresetCfg, preset
 
 from ...rl.rsl_rl import (
     RslRlCrlAlgorithmCfg,
@@ -37,9 +39,17 @@ from .rsl_rl_model_cfg import (
     MLP_ENCODER_CRITIC,
     SIMBA_ACTOR,
     SIMBA_BIG_CRITIC,
+    SIMBA_CATEGORICAL_CRITIC,
+    SIMBA_CNN_BIG_ACTOR,
+    SIMBA_CNN_BIG_CRITIC,
     SIMBA_CRITIC,
     SIMBA_RNN_ACTOR,
     SIMBA_RNN_CRITIC,
+    SIMBA_SEM_ACTOR,
+    SIMBA_V2_ACTOR,
+    SIMBA_V2_CATEGORICAL_CRITIC,
+    SIMBA_V2_CRITIC,
+    SIMBA_V2_SEM_ACTOR,
     TASK_EASING_ACTOR,
 )
 
@@ -56,8 +66,14 @@ class PositionActorPresetCfg(PresetCfg):
     cnn = CNN_ACTOR_CFG
     encoder = ENCODER_ACTOR
     simba = SIMBA_ACTOR
+    simba_sem = SIMBA_SEM_ACTOR
     simba_big = SIMBA_ACTOR
+    simba_cnn_big = SIMBA_CNN_BIG_ACTOR
     simba_rnn = SIMBA_RNN_ACTOR
+    simba_categorical = SIMBA_ACTOR
+    simba_v2 = SIMBA_V2_ACTOR
+    simba_v2_sem = SIMBA_V2_SEM_ACTOR
+    simba_v2_categorical = SIMBA_V2_ACTOR
     default = encoder
 
 
@@ -71,12 +87,18 @@ class PositionCriticPresetCfg(PresetCfg):
     lstm = LSTM_CRITIC
     mlp_encoder = MLP_ENCODER_CRITIC
     simba = SIMBA_CRITIC
+    simba_sem = SIMBA_CRITIC
     simba_big = SIMBA_BIG_CRITIC
+    simba_cnn_big = SIMBA_CNN_BIG_CRITIC
     simba_rnn = SIMBA_RNN_CRITIC
+    simba_categorical = SIMBA_CATEGORICAL_CRITIC
+    simba_v2 = SIMBA_V2_CRITIC
+    simba_v2_sem = SIMBA_V2_CRITIC
+    simba_v2_categorical = SIMBA_V2_CATEGORICAL_CRITIC
     default = mlp_encoder
 
 
-POSITION_PPO_ALGORITHM_CFG = RslRlPpoAlgorithmCfg(
+_POSITION_PPO_ALGORITHM_KWARGS: dict[str, Any] = dict(
     value_loss_coef=1.0,
     use_clipped_value_loss=True,
     clip_param=0.2,
@@ -89,8 +111,50 @@ POSITION_PPO_ALGORITHM_CFG = RslRlPpoAlgorithmCfg(
     lam=0.95,
     desired_kl=0.01,
     max_grad_norm=1.0,
+    optimizer=preset(default="adam", adamw="adamw", adam="adam"),
     share_cnn_encoders=True,
 )
+
+POSITION_PPO_ALGORITHM_CFG = RslRlPpoAlgorithmCfg(
+    class_name="isaaclab_tasks.core.multi_task.rl.rsl_rl.algorithms:ComposablePPO",
+    **_POSITION_PPO_ALGORITHM_KWARGS,
+)
+
+
+@configclass
+class ValueShiftAlgorithmCfg(RslRlPpoAlgorithmCfg):
+    """PPO algorithm configuration bound to the position value-shift sampler."""
+
+    class_name: str = "isaaclab_tasks.core.multi_task.rl.rsl_rl.algorithms:ValueShiftPPO"
+    bind_observation_exp: str = (
+        "setattr(alg, '_obs_cache',"
+        " env.unwrapped.curriculum_manager.get_term('terrain_levels')"
+        "._sampler._impl.value_shift_strategy.observation_cache)"
+    )
+    bind_current_value_exp: str = (
+        "setattr(alg, '_cur_buf',"
+        " env.unwrapped.curriculum_manager.get_term('terrain_levels')"
+        "._sampler._impl.value_shift_strategy.cur_val)"
+    )
+    bind_value_diff_exp: str = (
+        "setattr(alg, '_diff_buf',"
+        " env.unwrapped.curriculum_manager.get_term('terrain_levels')"
+        "._sampler._impl.value_shift_strategy.diff_val)"
+    )
+
+
+POSITION_VALUE_SHIFT_ALGORITHM_CFG = ValueShiftAlgorithmCfg(
+    **(_POSITION_PPO_ALGORITHM_KWARGS | {"gamma": 0.999, "share_cnn_encoders": False})
+)
+
+
+@configclass
+class PositionAlgorithmPresetCfg(PresetCfg):
+    """Algorithm presets selectable through the global position presets."""
+
+    default: RslRlPpoAlgorithmCfg = POSITION_PPO_ALGORITHM_CFG
+    value_shift: ValueShiftAlgorithmCfg = POSITION_VALUE_SHIFT_ALGORITHM_CFG
+    beta_value_shift: ValueShiftAlgorithmCfg = value_shift
 
 
 POSITION_RND_CFG = RslRlRndCfg(
@@ -114,7 +178,7 @@ class PositionLocomotionPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     obs_groups = {"actor": ["policy", "task", "height_scan"], "critic": ["policy", "task", "height_scan"]}
     actor = PositionActorPresetCfg()  # type: ignore
     critic = PositionCriticPresetCfg()  # type: ignore
-    algorithm: RslRlPpoAlgorithmCfg = POSITION_PPO_ALGORITHM_CFG
+    algorithm = PositionAlgorithmPresetCfg()  # type: ignore[assignment]
 
 
 @configclass

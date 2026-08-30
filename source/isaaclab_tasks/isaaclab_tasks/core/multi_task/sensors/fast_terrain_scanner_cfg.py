@@ -14,7 +14,6 @@ from isaaclab.markers import VisualizationMarkersCfg
 from isaaclab.markers.config import RAY_CASTER_MARKER_CFG
 from isaaclab.sensors.ray_caster.patterns.patterns_cfg import PatternBaseCfg
 from isaaclab.sensors.sensor_base_cfg import SensorBaseCfg
-from isaaclab.sim.spawners.sensors import SensorFrameCfg
 from isaaclab.utils.configclass import configclass
 
 if TYPE_CHECKING:
@@ -43,8 +42,8 @@ class FastTerrainScannerCfg(SensorBaseCfg):
 
     class_type: type[FastTerrainScanner] | str = "{DIR}.fast_terrain_scanner:FastTerrainScanner"
 
-    spawn: SensorFrameCfg | None = SensorFrameCfg()
-    """Spawn config — keeps API parity with the upstream raycaster sensors."""
+    spawn: None = None
+    """No sensor prim is spawned; the scanner reads its pose from the bound articulation body."""
 
     mesh_prim_paths: list[str] = MISSING
     """List of prim-path expressions to ray-cast against. Each entry may use ``{ENV_REGEX_NS}``

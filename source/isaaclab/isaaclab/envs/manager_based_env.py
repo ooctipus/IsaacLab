@@ -605,7 +605,8 @@ class ManagerBasedEnv:
             # Kit app events (omni.kit.app.get_app().update()), which would otherwise fire
             # the controller's still-subscribed post-update callback against assets whose
             # physics views were just invalidated by the timeline-stop event.
-            del self.viewport_camera_controller
+            if hasattr(self, "viewport_camera_controller"):
+                del self.viewport_camera_controller
 
             # Stop simulation to allow physics to clean up properly
             self.sim.stop()

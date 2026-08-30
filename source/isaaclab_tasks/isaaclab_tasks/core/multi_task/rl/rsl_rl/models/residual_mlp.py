@@ -12,6 +12,8 @@ import torch
 import torch.nn as nn
 from rsl_rl.utils import resolve_nn_activation
 
+from .simplicial_embedding import SimplicialEmbedding
+
 
 def _lecun_uniform_(tensor: torch.Tensor) -> None:
     fan_in = nn.init._calculate_correct_fan(tensor, "fan_in")
@@ -65,6 +67,8 @@ class ResidualMLP(nn.Sequential):
         activation: str = "relu",
         last_activation: str | None = None,
         norm: bool = True,
+        simplicial_group_size: int | None = None,
+        simplicial_temperature: float = 1.0,
     ) -> None:
         super().__init__()
         layers: list[nn.Module] = [nn.Linear(input_dim, hidden_dim)]
@@ -75,6 +79,8 @@ class ResidualMLP(nn.Sequential):
         for _ in range(num_blocks):
             layers.append(ResidualBlock(hidden_dim, expand, num_layers_per_block, activation, norm))
         layers.append(nn.LayerNorm(hidden_dim) if norm else nn.Identity())
+        if simplicial_group_size is not None:
+            layers.append(SimplicialEmbedding(hidden_dim, simplicial_group_size, simplicial_temperature))
         if isinstance(output_dim, int):
             layers.append(nn.Linear(hidden_dim, output_dim))
         else:

@@ -31,6 +31,7 @@ from tensordict import TensorDict  # noqa: E402
 from isaaclab_tasks.core.multi_task.rl.rsl_rl.models.residual_mlp_encoder_model import (  # noqa: E402
     ResidualMLPEncoderModel,
 )
+from isaaclab_tasks.core.multi_task.rl.rsl_rl.models.simplicial_embedding import SimplicialEmbedding  # noqa: E402
 
 _OBS_GROUPS = {"actor": ["policy", "task", "height_scan"], "critic": ["policy", "task", "height_scan"]}
 _POLICY_DIM = 12
@@ -51,7 +52,12 @@ def _make_obs(batch_size: int) -> TensorDict:
     )
 
 
-def _make_actor(rnn_type: str = "lstm", rnn_hidden_dim: int = 24, memory: bool = True) -> ResidualMLPEncoderModel:
+def _make_actor(
+    rnn_type: str = "lstm",
+    rnn_hidden_dim: int = 24,
+    memory: bool = True,
+    simplicial_group_size: int | None = None,
+) -> ResidualMLPEncoderModel:
     memory_cfg = (
         {"rnn_type": rnn_type, "hidden_dim": rnn_hidden_dim, "num_layers": 1, "forget_bias": 1.0} if memory else None
     )
@@ -71,7 +77,36 @@ def _make_actor(rnn_type: str = "lstm", rnn_hidden_dim: int = 24, memory: bool =
         memory=memory_cfg,
         distribution_cfg={"class_name": "GaussianDistribution", "init_std": 1.0, "std_type": "log"},
         encoder_cfg=_ENCODER_CFG,
+        simplicial_group_size=simplicial_group_size,
     )
+
+
+class TestSimplicialEmbedding:
+    def test_matches_grouped_softmax_and_preserves_leading_dimensions(self):
+        features = torch.randn(3, 5, 16, requires_grad=True)
+        module = SimplicialEmbedding(feature_dim=16, group_size=4, temperature=0.5)
+
+        output = module(features)
+        expected = torch.softmax(features.reshape(3, 5, 4, 4) / 0.5, dim=-1).flatten(-2)
+
+        torch.testing.assert_close(output, expected)
+        torch.testing.assert_close(output.reshape(3, 5, 4, 4).sum(dim=-1), torch.ones(3, 5, 4))
+        output.square().mean().backward()
+        assert features.grad is not None
+        assert torch.isfinite(features.grad).all()
+        assert torch.count_nonzero(features.grad) > 0
+
+    @pytest.mark.parametrize(
+        ("feature_dim", "group_size", "temperature", "message"),
+        [
+            (15, 4, 1.0, "must be divisible"),
+            (16, 0, 1.0, "group_size must be positive"),
+            (16, 4, 0.0, "temperature must be positive"),
+        ],
+    )
+    def test_rejects_invalid_geometry(self, feature_dim, group_size, temperature, message):
+        with pytest.raises(ValueError, match=message):
+            SimplicialEmbedding(feature_dim, group_size, temperature)
 
 
 class TestResidualMLPEncoderModel:
@@ -80,6 +115,14 @@ class TestResidualMLPEncoderModel:
         assert actor.is_recurrent is False
         assert actor.rnn is None
         assert actor.get_hidden_state() is None
+        out = actor(_make_obs(7))
+        assert out.shape == (7, _NUM_ACTIONS)
+        assert torch.isfinite(out).all()
+
+    def test_feedforward_sem_actor(self):
+        actor = _make_actor(memory=False, simplicial_group_size=8)
+        sem = next(module for module in actor.mlp.modules() if isinstance(module, SimplicialEmbedding))
+        assert sem.num_groups == 4
         out = actor(_make_obs(7))
         assert out.shape == (7, _NUM_ACTIONS)
         assert torch.isfinite(out).all()

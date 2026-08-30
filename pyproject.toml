@@ -85,10 +85,12 @@ dependencies = [
     "rich",
     "tqdm>=4.67.1",
     "rsl-rl-lib==5.4.1",  # default RL framework
+    # RSL-RL 5.4.1 passes Settings.start_method; W&B 0.27+ also conflicts with Isaac Sim's Click 8.1.7 pin.
+    "wandb>=0.26.1,<0.27",
     "onnxscript>=0.5",
     # ----- newton (default physics engine) -----
     # Loose bound so the wheel co-resolves with isaacsim's newton[sim]==1.2.0 pin; the
-    # exact PyPI release is forced via [tool.uv].override-dependencies (uv sync only).
+    # exact revision is forced via [tool.uv].override-dependencies (uv sync only).
     "newton[sim]>=1.2.0",
     # Import and mesh-processing packages used by Newton, including the ones that honoring
     # USD-authored ``physics:approximation`` requires. Keep these explicit instead of selecting
@@ -153,7 +155,7 @@ rl-games = [
     "standard-distutils",
 ]
 
-rsl-rl = ["rsl-rl-lib==5.4.1", "onnxscript>=0.5"]
+rsl-rl = ["rsl-rl-lib==5.4.1", "wandb>=0.26.1,<0.27", "onnxscript>=0.5"]
 
 viser = ["viser>=1.0.16"]
 
@@ -396,7 +398,8 @@ override-dependencies = [
     "numpy>=2",
     "mujoco~=3.11.0",
     "mujoco-warp~=3.11.0",
-    "newton[sim]==1.5.1",
+    # Pin the translated floating-base analytic IK fix until newton-physics/newton#4088 is released.
+    "newton[sim] @ git+https://github.com/ooctipus/newton.git@5469a441c191a0132b32ad18a36f254353eb72d0",
     # Force the Newton-matched schemas over isaacsim's ==0.2.0 pin.
     "newton-usd-schemas>=0.4.1",
     "torch==2.11.0",

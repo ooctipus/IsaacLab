@@ -77,6 +77,8 @@ class ResidualMLPEncoderModel(MLPEncoderModel):
         memory: dict[str, Any] | None = None,
         distribution_cfg: dict | None = None,
         encoder_cfg: dict[str, dict[str, Any]] | None = None,
+        simplicial_group_size: int | None = None,
+        simplicial_temperature: float = 1.0,
         # ``cnns`` is rsl-rl's encoder-SHARING hook, not a CNN-specific input. When PPO runs with
         # ``share_cnn_encoders=True`` it injects the actor's already-built per-group encoders here
         # (``cfg["critic"]["cnns"] = actor.cnns``) so the critic reuses them instead of building its own.
@@ -85,6 +87,8 @@ class ResidualMLPEncoderModel(MLPEncoderModel):
         cnns: nn.ModuleDict | dict[str, nn.Module] | None = None,
         hidden_dims: list[int] | tuple[int, ...] | None = None,  # noqa: ARG002
     ) -> None:
+        if simplicial_group_size is not None and obs_set != "actor":
+            raise ValueError("SEM is actor-only; simplicial_group_size must be None for critic models.")
         if encoder_cfg is None and cnns is None:
             encoder_cfg = {}
         nn.Module.__init__(self)
@@ -174,6 +178,8 @@ class ResidualMLPEncoderModel(MLPEncoderModel):
             activation,
             last_activation,
             norm,
+            simplicial_group_size,
+            simplicial_temperature,
         )
         if self.distribution is not None:
             self.distribution.init_mlp_weights(self.mlp)

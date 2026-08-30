@@ -197,6 +197,138 @@ def test_factory_actor_critic_preset_composes_with_value_shift_algorithm(
     assert isinstance(agent_cfg.algorithm, ValueShiftAlgorithmCfg)
 
 
+def test_position_training_presets_compose(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Restored position presets should resolve as one training configuration."""
+    from isaaclab.actuators import ImplicitActuatorCfg
+
+    from isaaclab_tasks.core.multi_task.curriculum import ValueShiftSamplingStrategyCfg
+    from isaaclab_tasks.core.multi_task.terrain.config.rsl_rl_cfg import ValueShiftAlgorithmCfg
+    from isaaclab_tasks.utils.hydra import resolve_task_config
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "pytest",
+            ("presets=anymal_c,terrain_pose,newton_mjwarp,simba_cnn_big,implicit_actuator,beta_value_shift,adamw"),
+        ],
+    )
+
+    env_cfg, agent_cfg = resolve_task_config("Isaac-Position-v0", "rsl_rl_cfg_entry_point")
+
+    assert isinstance(env_cfg.scene.robot.actuators["legs"], ImplicitActuatorCfg)
+    assert env_cfg.scene.robot.spawn.joint_drive_props.stiffness == 40.0
+    assert env_cfg.scene.robot.spawn.joint_drive_props.damping == 5.0
+
+    assert agent_cfg.actor.hidden_dim == 512
+    assert agent_cfg.critic.hidden_dim == 1024
+    assert set(agent_cfg.actor.encoder_cfg) == {"height_scan"}
+    assert set(agent_cfg.critic.encoder_cfg) == {"height_scan"}
+
+    assert isinstance(agent_cfg.algorithm, ValueShiftAlgorithmCfg)
+    assert agent_cfg.algorithm.gamma == 0.999
+    assert agent_cfg.algorithm.optimizer == "adamw"
+
+    sampling = env_cfg.curriculum.terrain_levels.params["sampling"]
+    assert any(isinstance(strategy, ValueShiftSamplingStrategyCfg) for strategy in sampling.strategies)
+
+
+@pytest.mark.parametrize(
+    ("preset_name", "actor_class", "critic_class", "actor_width", "critic_width", "sem_group_size"),
+    [
+        (
+            "simba",
+            "ResidualMLPEncoderModel",
+            "ResidualMLPEncoderModel",
+            256,
+            256,
+            None,
+        ),
+        (
+            "simba_sem",
+            "ResidualMLPEncoderModel",
+            "ResidualMLPEncoderModel",
+            256,
+            256,
+            64,
+        ),
+        (
+            "simba_v2",
+            "SimbaV2EncoderModel",
+            "SimbaV2EncoderModel",
+            128,
+            512,
+            None,
+        ),
+        (
+            "simba_v2_sem",
+            "SimbaV2EncoderModel",
+            "SimbaV2EncoderModel",
+            128,
+            512,
+            64,
+        ),
+    ],
+)
+def test_position_simba_ablation_presets_resolve(
+    monkeypatch: pytest.MonkeyPatch,
+    preset_name: str,
+    actor_class: str,
+    critic_class: str,
+    actor_width: int,
+    critic_width: int,
+    sem_group_size: int | None,
+) -> None:
+    """SimBa backbone and actor-side SEM choices should compose independently."""
+    from isaaclab_tasks.utils.hydra import resolve_task_config
+
+    monkeypatch.setattr(sys, "argv", ["pytest", f"presets={preset_name}"])
+    _, agent_cfg = resolve_task_config("Isaac-Position-v0", "rsl_rl_cfg_entry_point")
+
+    assert agent_cfg.actor.class_name.endswith(actor_class)
+    assert agent_cfg.critic.class_name.endswith(critic_class)
+    assert agent_cfg.actor.hidden_dim == actor_width
+    assert agent_cfg.critic.hidden_dim == critic_width
+    assert agent_cfg.actor.simplicial_group_size == sem_group_size
+    assert agent_cfg.critic.simplicial_group_size is None
+    assert agent_cfg.algorithm.class_name.endswith("ComposablePPO")
+
+
+@pytest.mark.parametrize(
+    ("backbone_preset", "critic_preset", "critic_class"),
+    [
+        ("simba_sem", "simba_categorical", "CategoricalResidualMLPEncoderModel"),
+        ("simba_v2_sem", "simba_v2_categorical", "CategoricalSimbaV2EncoderModel"),
+    ],
+)
+def test_position_categorical_value_ablation_composes_with_value_shift(
+    monkeypatch: pytest.MonkeyPatch,
+    backbone_preset: str,
+    critic_preset: str,
+    critic_class: str,
+) -> None:
+    """Categorical value learning should remain independent of SEM and value-shift sampling."""
+    from isaaclab_tasks.core.multi_task.terrain.config.rsl_rl_cfg import ValueShiftAlgorithmCfg
+    from isaaclab_tasks.utils.hydra import resolve_task_config
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "pytest",
+            f"presets={backbone_preset},beta_value_shift",
+            f"agent.critic={critic_preset}",
+        ],
+    )
+    _, agent_cfg = resolve_task_config("Isaac-Position-v0", "rsl_rl_cfg_entry_point")
+
+    assert agent_cfg.actor.simplicial_group_size == 64
+    assert agent_cfg.critic.class_name.endswith(critic_class)
+    assert agent_cfg.critic.num_bins == 101
+    assert agent_cfg.critic.reward_scaling is True
+    assert isinstance(agent_cfg.algorithm, ValueShiftAlgorithmCfg)
+
+
 @pytest.mark.parametrize("task_name", ["Isaac-Position-v0", "Isaac-Factory-v0"])
 def test_env_cfg_to_dict_serialises(task_name: str) -> None:
     """``cfg.to_dict()`` produces a fully-flattened dict with no dataclass instances.
