@@ -626,11 +626,16 @@ class TestWorkflowSpecArchitecture:
 
     def test_workflow_syncs_kitless_and_isaac_sim_extras(self):
         spec = self._spec()
-        assert spec.count("UV_SYNC_ARGS=(--extra all --extra ovrtx)") == 1
+        assert spec.count("UV_SYNC_ARGS=(--inexact --no-install-local --extra all --extra ovrtx)") == 1
         assert spec.count("UV_SYNC_ARGS+=(--extra ov)") == 1
         assert spec.index("UV_SYNC_ARGS+=(--extra ov)") < spec.index(
             'uv sync --locked --no-progress "${UV_SYNC_ARGS[@]}"'
         )
+
+    def test_workflow_does_not_reinstall_image_local_packages(self):
+        spec = self._spec()
+        assert spec.count("--no-install-local") == 1
+        assert spec.count("--inexact") == 1
 
     def test_workflow_reuses_the_uv_cache(self):
         spec = self._spec()

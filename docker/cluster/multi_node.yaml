@@ -110,7 +110,7 @@ workflow:
 
           echo "[INFO] Syncing Python environment from uv.lock..."
           cd /workspace/isaaclab
-          UV_SYNC_ARGS=(--extra all --extra ovrtx)
+          UV_SYNC_ARGS=(--inexact --no-install-local --extra all --extra ovrtx)
           if [ -d /workspace/isaaclab/_isaac_sim/kit ] || [ -L /workspace/isaaclab/_isaac_sim ]; then
             UV_SYNC_ARGS+=(--extra ov)
           fi
