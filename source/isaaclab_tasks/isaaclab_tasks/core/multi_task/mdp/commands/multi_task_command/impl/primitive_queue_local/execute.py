@@ -22,7 +22,7 @@ from ..kernels_wp import (
 )
 
 if TYPE_CHECKING:
-    from ..multi_task_command_warp import MultiTaskCommandWarp
+    from ...multi_task_command_warp import MultiTaskCommandWarp
     from .bindings import PrimitiveQueueLocalPlan
 
 

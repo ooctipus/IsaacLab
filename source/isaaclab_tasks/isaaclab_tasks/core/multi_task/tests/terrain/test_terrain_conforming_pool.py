@@ -319,7 +319,7 @@ def realistic_terrain():
         use_cache=False,
         seed=42,
         curriculum=True,
-        sub_terrains=SubTerrainPresetCfg().curriculum,
+        sub_terrains=SubTerrainPresetCfg().terrain_curriculum,
     )
     return TerrainGenerator(cfg=cfg, device=DEVICE)
 

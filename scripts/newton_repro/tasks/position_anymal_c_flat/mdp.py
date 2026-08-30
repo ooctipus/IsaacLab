@@ -31,7 +31,7 @@ from tasks.position_anymal_c_flat.networks import ActuatorNetLSTM, CNNEncoderPol
 NUM_DOFS = 12
 ARMATURE = 0.001
 # Mirrors ``EventsCfg`` in
-# ``source/isaaclab_tasks/.../locomotion/position/position_env_cfg.py``.
+# ``source/isaaclab_tasks/isaaclab_tasks/core/multi_task/position_env_cfg.py``.
 # These are ``mode="startup"`` randomizations; the bundle stops capture at the
 # cloner hook (before EventManager runs), so we replay them here.
 RANDOMIZATION_SEED = 42

@@ -56,7 +56,7 @@ def mechanical_power(env: ManagerBasedRLEnv, robot_cfg: SceneEntityCfg = SceneEn
     seen briefly during reset on some backends) are clamped to 0.
     """
     robot: Articulation = env.scene[robot_cfg.name]
-    work = torch.sum((wp.to_torch(robot.data.applied_torque) * wp.to_torch(robot.data.joint_vel)).abs(), dim=1)
+    work = torch.sum((robot.actuators.applied_effort.torch * robot.data.joint_vel.torch).abs(), dim=1)
     return torch.where(torch.isfinite(work), work, torch.zeros_like(work))
 
 

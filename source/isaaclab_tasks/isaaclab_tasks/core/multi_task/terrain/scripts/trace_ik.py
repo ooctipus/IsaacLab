@@ -19,7 +19,7 @@ is dominating, whether targets are wrong, whether the solver converged).
 
 Usage (same flags as ``validate_spawn_points`` where applicable)::
 
-    SCRIPT=source/isaaclab_tasks/isaaclab_tasks/manager_based/locomotion/position/utils/tools/trace_ik.py
+    SCRIPT=source/isaaclab_tasks/isaaclab_tasks/core/multi_task/terrain/scripts/trace_ik.py
     ./isaaclab.sh -p $SCRIPT --sub_terrain FLAT --robot anymal_c \\
         --exclude_feet "LH|RH" --trace_samples 2 --max_iters 100 \\
         --output /tmp/trace.json

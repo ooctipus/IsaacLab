@@ -21,6 +21,7 @@ from .robot_presets import (
     RetargetJointRegularizeTargetsCfg,
     RobotArticulationCfg,
     SyncFootPairsCfg,
+    ViewerOriginTrackPathCfg,
 )
 
 _H1_CFG: ArticulationCfg = H1_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
@@ -32,6 +33,7 @@ _H1_CFG.spawn.articulation_props.enabled_self_collisions = True  # type: ignore[
 RobotArticulationCfg.h1 = _H1_CFG
 HeightScannerPrimPathCfg.h1 = "{ENV_REGEX_NS}/Robot/torso_link"
 BaseBodyNameCfg.h1 = "torso_link"
+ViewerOriginTrackPathCfg.h1 = f"robot/{BaseBodyNameCfg.h1}"
 FootBodyNamesCfg.h1 = ".*ankle_link"
 NonFootContactBodyNamesCfg.h1 = "^(?!.*ankle_link).*$"
 AsyncFootPairsCfg.h1 = (("left_ankle_link", "right_ankle_link"),)

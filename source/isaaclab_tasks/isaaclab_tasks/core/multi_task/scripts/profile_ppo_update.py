@@ -14,7 +14,7 @@ Chrome trace for the chrome://tracing or perfetto UI.
 
 Usage::
 
-    ./isaaclab.sh -p source/isaaclab_tasks/isaaclab_tasks/manager_based/multi_task/scripts/profile_ppo_update.py \\
+    ./isaaclab.sh -p source/isaaclab_tasks/isaaclab_tasks/core/multi_task/scripts/profile_ppo_update.py \\
         --task=Isaac-Position-v0 --num_envs=4096 --device=cuda:0 --warmup_iters=2 \\
         --output=/tmp/ppo_update.json presets=anymal_c,res02,cnn
 

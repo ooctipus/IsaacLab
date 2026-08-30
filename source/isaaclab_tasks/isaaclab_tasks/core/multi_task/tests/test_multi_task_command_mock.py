@@ -37,14 +37,14 @@ import torch
 
 from isaaclab.managers import SceneEntityCfg
 
-import isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command as mtc_mod
-from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.kernels_torch import (
+import isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.multi_task_command as mtc_mod
+from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.kernel_ids import (
     ACTIVATION_KERNEL_ID,
     METRIC_KERNEL_ID,
     SAMPLER_KERNEL_ID,
     STATE_KERNEL_ID,
 )
-from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.multi_task_cfg import (
+from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.multi_task_cfg import (
     MinMaxSampler,
     MultiTaskCfg,
 )
@@ -154,6 +154,24 @@ class _MockEnv:
         self.scene = scene
         self.common_step_counter = 0
         self.step_dt = 0.02
+        self.sim = _MockSimulation()
+
+
+class _MockVisualizationRegistry:
+    """Minimal visualization callback registry required by :class:`CommandTerm`."""
+
+    def add_debug_vis_callback(self, _term):
+        return object()
+
+    def clear_debug_vis_callback(self, _term) -> None:
+        pass
+
+
+class _MockSimulation:
+    """Minimal simulation surface required by :class:`CommandTerm`."""
+
+    def __init__(self):
+        self.vis_marker_registry = _MockVisualizationRegistry()
 
 
 def _make_env(num_envs: int = 4, device: str = "cpu", max_episode_length: int = 10) -> _MockEnv:
@@ -263,9 +281,9 @@ class _SyntheticState:
         real indexer + compute handle slicing and math.
         """
         from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.kernels_torch import (
-            BUFFER_KIND,
             STATE_KERNEL_BUFFER_KIND,
         )
+        from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.kernel_ids import BUFFER_KIND
 
         # Fold per-kernel outputs into per-buffer outputs (same-buffer kernels
         # collapse to whichever kid was set — tests never collide on a buffer

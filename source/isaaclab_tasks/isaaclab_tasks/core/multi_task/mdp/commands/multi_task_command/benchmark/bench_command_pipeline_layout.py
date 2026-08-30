@@ -11,7 +11,8 @@ and runs a per-env composer. This benchmark measures those layout costs.
 
 Run with:
 
-    ./isaaclab.sh -p -m isaaclab_tasks.core.multi_task.mdp.commands.benchmark.bench_command_pipeline_layout
+    ./isaaclab.sh -p -m \
+        isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.benchmark.bench_command_pipeline_layout
 """
 
 from __future__ import annotations

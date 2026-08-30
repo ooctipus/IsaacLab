@@ -6,30 +6,30 @@
 """Single source of truth for kernel ids and metadata schemas.
 
 The multi-task command term has two parallel implementations of every kernel:
-a PyTorch reference (:mod:`.kernels`) and a Warp mega-kernel
-(:mod:`.kernels_wp`). Both must agree on the integer ids the spec routes by
+a PyTorch reference (:mod:`.impl.kernels_torch`) and Warp kernels
+(:mod:`.impl.kernels_wp`). Both must agree on the integer ids the spec routes by
 — a desync silently dispatches to the wrong projection.
 
 This module is the **only** place ids are declared. Both implementation
 modules import their constants from here:
 
-- :mod:`.kernels` builds its registry tuples (``STATE_KERNELS``,
+- :mod:`.impl.kernels_torch` builds its registry tuples (``STATE_KERNELS``,
   ``BUFFER_KINDS``, …) keyed by :class:`STATE_KERNEL_ID` / :class:`BUFFER_KIND`.
-- :mod:`.kernels_wp` derives its ``STATE_*`` / ``ACTIVATION_*`` ``wp.constant``
+- :mod:`.impl.kernels_wp` derives its ``STATE_*`` / ``ACTIVATION_*`` ``wp.constant``
   values from the same enums (``wp.constant(int(STATE_KERNEL_ID.X))``), so
   Warp branch ids cannot drift from PyTorch.
 
 Schema dataclasses (:class:`BufferKindDef`, :class:`StateKernelDef`) also
 live here — they describe the metadata each id must carry, and are
-populated by :mod:`.kernels` with concrete PyTorch function references.
+populated by :mod:`.impl.kernels_torch` with concrete PyTorch function references.
 
 Adding a new kernel:
 
   1. Add an entry to the relevant enum in this file (with docstring).
-  2. Add a row to the corresponding registry tuple in :mod:`.kernels`,
+  2. Add a row to the corresponding registry tuple in :mod:`.impl.kernels_torch`,
      pointing at a new PyTorch implementation function.
   3. Add a ``@wp.func`` projection (and an ``elif`` branch in
-     ``dispatch_mega``) in :mod:`.kernels_wp`.
+     ``dispatch_mega``) in :mod:`.impl.kernels_wp`.
 
 Step 1 is what makes step 2 and step 3 stay in sync; both modules import
 the same enum and the same int value flows through.
@@ -171,7 +171,7 @@ class BUFFER_KIND(enum.IntEnum):
     JOINT_MECH_POWER_ABS = 7
     """Per-joint ``|τ_j · q̇_j|`` (absolute mechanical power), shape ``[N, num_joints]``.
 
-    Reader allocates a per-step torch tensor (``applied_torque * joint_vel``,
+    Reader allocates a per-step torch tensor (``applied_effort * joint_vel``,
     abs); this is the one buffer in the registry that does NOT meet the
     "zero-copy view" contract — the elementwise product cannot be expressed
     as a stride view of any underlying scene array.
@@ -179,7 +179,7 @@ class BUFFER_KIND(enum.IntEnum):
 
 
 # -----------------------------------------------------------------------------
-# Schema dataclasses — populated by :mod:`.kernels` with PyTorch function refs.
+# Schema dataclasses — populated by :mod:`.impl.kernels_torch` with PyTorch function refs.
 # Warp side imports the *enums* (above) and reproduces the math via @wp.func.
 # -----------------------------------------------------------------------------
 
@@ -221,8 +221,8 @@ class StateKernelDef:
         compute_fn: Pure tensor op ``[M, N, slice_size] → [M, N, stride]``.
             Runs on the stacked unified-buffer gather for one read group.
 
-    Debug visualization is bound separately in :mod:`.kernels_viz` via
-    :data:`~.kernels_viz.VIZ_REGISTRY` so the math registry stays Kit-free.
+    Debug visualization is bound separately in :mod:`.impl.kernels_viz` via
+    :data:`~.impl.kernels_viz.VIZ_REGISTRY` so the math registry stays Kit-free.
     """
 
     buffer_kind: BUFFER_KIND

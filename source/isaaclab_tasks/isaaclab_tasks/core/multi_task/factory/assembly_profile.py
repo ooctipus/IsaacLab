@@ -20,8 +20,8 @@ import torch
 
 import isaaclab.utils.math as math_utils
 
+from ..geom.pose_offset import Offset
 from ..utils.symmetry.asset_symmetry import KIND_CYCLIC
-from .assembly_keypoints import Offset
 
 if TYPE_CHECKING:
     from .assembly_profile_cfg import (

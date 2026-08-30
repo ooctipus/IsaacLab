@@ -5,7 +5,7 @@
 
 """PyTorch reference implementation of :class:`MultiTaskCommand`.
 
-Byte-identical in output to :class:`~.multi_task_command_warp.MultiTaskCommandWarp`
+Byte-identical in output to :class:`~..multi_task_command_warp.MultiTaskCommandWarp`
 (gated by :mod:`tests.test_multi_task_warp_equivalence`). Kept deliberately slow
 and obvious — its role is to be the implementation that the Warp path is
 validated against. Do not optimize this file.
@@ -20,9 +20,10 @@ from __future__ import annotations
 import torch
 
 from .. import multi_task_command as _base_module
+from ..kernel_ids import BUFFER_KIND
 from ..multi_task_command import MultiTaskCommand
 from ..reward_composer import multiplicative_terminal_reward
-from .kernels_torch import ACTIVATION_KERNELS, BUFFER_KIND, DELTA_KERNELS, METRIC_KERNELS, STATE_KERNEL_COMPUTES
+from .kernels_torch import ACTIVATION_KERNELS, DELTA_KERNELS, METRIC_KERNELS, STATE_KERNEL_COMPUTES
 
 __all__ = ["MultiTaskCommandTorch"]
 
@@ -39,7 +40,7 @@ class MultiTaskCommandTorch(MultiTaskCommand):
       the error buffer and apply the kernel.
 
     Dispatches ~440 small kernels per step. See
-    :class:`~.multi_task_command_warp.MultiTaskCommandWarp` for the optimized
+    :class:`~..multi_task_command_warp.MultiTaskCommandWarp` for the optimized
     path (≈8 launches).
     """
 
@@ -51,8 +52,9 @@ class MultiTaskCommandTorch(MultiTaskCommand):
     def _compose(self, valid_slots: torch.Tensor) -> None:
         """Advance composer state + write terminal reward / success / progress.
 
-        Byte-identical to :meth:`MultiTaskCommandWarp._compose` — the
-        equivalence test gates drift.
+        Byte-identical to
+        :meth:`~..multi_task_command_warp.MultiTaskCommandWarp._compose`.
+        The equivalence test gates drift.
         """
         # Accumulate and increment (pre-composer — composer reads updated state).
         self._sum_activation.add_(self._buf_activation)

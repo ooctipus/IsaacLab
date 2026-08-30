@@ -22,7 +22,7 @@ shrinking ray-cast pattern, or by sharing height-field meshes).
 
 Example::
 
-    ./isaaclab.sh -p source/isaaclab_tasks/isaaclab_tasks/manager_based/multi_task/scripts/trace_memory.py \
+    ./isaaclab.sh -p source/isaaclab_tasks/isaaclab_tasks/core/multi_task/scripts/trace_memory.py \
         --task=Isaac-Position-v0 --num_envs=4096 --trace_steps=8 --rsl_rl_iters=1 \
         --output=/tmp/trace_memory.json --tensor_top=40 \
         presets=anymal_c,res02,cnn
@@ -492,11 +492,8 @@ def _wrap_module_function(module_name: str, function_name: str, span_name: str, 
 def _install_startup_tracing(recorder: MemoryRecorder) -> None:
     clone_spans = (
         ("isaaclab.cloner", "usd_replicate", "cloner.usd_replicate"),
-        ("isaaclab.cloner.cloner_utils", "usd_replicate", "cloner.usd_replicate"),
         ("isaaclab.cloner", "filter_collisions", "cloner.filter_collisions"),
-        ("isaaclab.cloner.cloner_utils", "filter_collisions", "cloner.filter_collisions"),
         ("isaaclab.cloner", "clone_from_template", "cloner.clone_from_template"),
-        ("isaaclab.cloner.cloner_utils", "clone_from_template", "cloner.clone_from_template"),
         ("isaaclab_physx.cloner", "physx_replicate", "cloner.physx_replicate"),
         ("isaaclab_physx.cloner.physx_replicate", "physx_replicate", "cloner.physx_replicate"),
         ("isaaclab_ovphysx.cloner", "ovphysx_replicate", "cloner.ovphysx_replicate"),

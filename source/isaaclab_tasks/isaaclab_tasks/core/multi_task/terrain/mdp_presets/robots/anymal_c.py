@@ -29,6 +29,7 @@ from .robot_presets import (
     RetargetLateralHipJointPatternCfg,
     RobotArticulationCfg,
     SyncFootPairsCfg,
+    ViewerOriginTrackPathCfg,
 )
 
 # Pre-exported TorchScript ANYdrive checkpoint for the Newton LSTM actuator controller.
@@ -53,6 +54,7 @@ _ANYMAL_C_CFG.actuators["legs"] = _ANYMAL_C_CFG.actuators["legs"].replace(
 RobotArticulationCfg.anymal_c = _ANYMAL_C_CFG
 HeightScannerPrimPathCfg.anymal_c = "{ENV_REGEX_NS}/Robot/base"
 BaseBodyNameCfg.anymal_c = "base"
+ViewerOriginTrackPathCfg.anymal_c = f"robot/{BaseBodyNameCfg.anymal_c}"
 NonFootContactBodyNamesCfg.anymal_c = "^(?!.*FOOT).*$"
 FootBodyNamesCfg.anymal_c = ".*FOOT.*"
 AsyncFootPairsCfg.anymal_c = (

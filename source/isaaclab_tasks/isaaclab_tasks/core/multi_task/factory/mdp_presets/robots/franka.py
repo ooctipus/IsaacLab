@@ -49,11 +49,12 @@ JointEffortNamesCfg.franka = "(?!panda_joint7$|panda_finger_.*$).*"
 # ---------------------------------------------------------------------------
 
 # Backend-unification split: pick the PhysX or Newton/MuJoCo articulation cfg from the active
-# ``presets=`` backend (matches the ``preset(default=physx, physx=physx, newton_mjwarp=newton)``
-# pattern used elsewhere, e.g. shadow_hand_over). ``default`` keeps PhysX for back-compat.
+# backend preset. ``default`` and the compatibility ``physx`` selector keep PhysX behavior.
+_FRANKA_PHYSX_CFG = FRANKA_PANDA_PHYSX_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
 RobotArticulationCfg.franka = preset(
-    default=FRANKA_PANDA_PHYSX_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot"),
-    physx=FRANKA_PANDA_PHYSX_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot"),
+    default=_FRANKA_PHYSX_CFG,
+    isaacsim_physx=_FRANKA_PHYSX_CFG,
+    physx=_FRANKA_PHYSX_CFG,
     newton_mjwarp=FRANKA_PANDA_NEWTON_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot"),
 )
 

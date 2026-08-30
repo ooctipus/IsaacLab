@@ -22,7 +22,7 @@ from isaaclab.utils.configclass import configclass
 # ``source/isaaclab_tasks/test/test_env_cfg_no_forbidden_imports.py`` gates
 # this contract.
 if TYPE_CHECKING:
-    from ..multi_task_command import MultiTaskCommand
+    from .multi_task_command import MultiTaskCommand
 
 
 @configclass
@@ -166,9 +166,6 @@ class MultiTaskCfg(CommandTermCfg):
         pass
 
     # Lazy string reference; resolved to ``MultiTaskCommand`` after Kit launches.
-    # Hardcoded full path because ``{DIR}`` resolves to this module's parent
-    # package (``commands.multi_task_command.impl``), but :class:`MultiTaskCommand` lives one level
-    # up at ``commands.multi_task_command``.
     class_type: type[MultiTaskCommand] | str = (
         "isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.multi_task_command:MultiTaskCommand"
     )

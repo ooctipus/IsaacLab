@@ -18,6 +18,6 @@ only shared layer is the ``multi_task_command`` agreement.
 * ``primitive_graph_local``: primitive graph queues with shared producer nodes.
 """
 
-from .backend import CommandBackend, build_command_backend
+from .backend import CommandBackend
 
-__all__ = ["CommandBackend", "build_command_backend"]
+__all__ = ["CommandBackend"]

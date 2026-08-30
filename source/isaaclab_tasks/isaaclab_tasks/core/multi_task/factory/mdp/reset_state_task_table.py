@@ -202,13 +202,13 @@ def _precollect_from_pipeline(env, table_cfg, reset_assets):
         jq = result.joint_q[b]
         jp[:, [i for _, i in arm_pairs]] = jq[:, [c for c, _ in arm_pairs]]
         jp[:, [i for _, i in finger_pairs]] = jq[:, [c for c, _ in finger_pairs]] + squeeze[b].unsqueeze(-1)
-        robot.write_joint_state_to_sim(jp, torch.zeros_like(jp), env_ids=ids)
-        robot.set_joint_position_target(jp, env_ids=ids)
+        robot.write_joint_state_to_sim_index(position=jp, velocity=torch.zeros_like(jp), env_ids=ids)
+        robot.actuators.target_command.set_position_index(value=jp, env_ids=ids)
         zeros6 = torch.zeros(ids.numel(), 6, device=env.device)
         for asset, pose in assets:
             root = torch.cat([pose[b, :3] + env.scene.env_origins[ids], pose[b, 3:7]], dim=-1)
-            asset.write_root_pose_to_sim(root, env_ids=ids)
-            asset.write_root_com_velocity_to_sim(zeros6, env_ids=ids)
+            asset.write_root_pose_to_sim_index(root_pose=root, env_ids=ids)
+            asset.write_root_com_velocity_to_sim_index(root_velocity=zeros6, env_ids=ids)
         valid = torch.ones(ids.numel(), dtype=torch.bool, device=env.device)
         if table_cfg.settle_steps > 0:
             env.scene.write_data_to_sim()

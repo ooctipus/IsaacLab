@@ -51,10 +51,11 @@ def set_reset_state(env, states: Tensor, env_ids: Tensor, reset_assets: Sequence
             if is_relative:
                 root_state = root_state.clone()
                 root_state[:, :3] += env.scene.env_origins[env_ids]
-            articulation.write_root_state_to_sim(root_state, env_ids=env_ids)
-            articulation.write_joint_state_to_sim(
-                state[:, 13 : 13 + n_joints],
-                state[:, 13 + n_joints : 13 + 2 * n_joints],
+            articulation.write_root_link_pose_to_sim_index(root_pose=root_state[:, :7], env_ids=env_ids)
+            articulation.write_root_com_velocity_to_sim_index(root_velocity=root_state[:, 7:], env_ids=env_ids)
+            articulation.write_joint_state_to_sim_index(
+                position=state[:, 13 : 13 + n_joints],
+                velocity=state[:, 13 + n_joints : 13 + 2 * n_joints],
                 env_ids=env_ids,
             )
             offset += width
@@ -65,7 +66,8 @@ def set_reset_state(env, states: Tensor, env_ids: Tensor, reset_assets: Sequence
             if is_relative:
                 root_state = root_state.clone()
                 root_state[:, :3] += env.scene.env_origins[env_ids]
-            rigid_object.write_root_state_to_sim(root_state, env_ids)
+            rigid_object.write_root_link_pose_to_sim_index(root_pose=root_state[:, :7], env_ids=env_ids)
+            rigid_object.write_root_com_velocity_to_sim_index(root_velocity=root_state[:, 7:], env_ids=env_ids)
             offset += 13
 
 

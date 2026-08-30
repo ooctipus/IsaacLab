@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from isaaclab.assets import Articulation, RigidObject
     from isaaclab.envs import ManagerBasedEnv, ManagerBasedRLEnv
 
-    from .util.pose_offset import Offset
+    from ..geom.pose_offset import Offset
 
 
 # ---------------------------------------------------------------------------

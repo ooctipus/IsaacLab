@@ -492,7 +492,6 @@ class CRL:
         self.intrinsic_rewards = None
         self.kinematic_rewards = None
 
-        goal_slice_dim = goal_end_idx - goal_start_idx
         B = self.batch_size
 
         # CUDA Graph: full-loop with index-based gathering from buffer.

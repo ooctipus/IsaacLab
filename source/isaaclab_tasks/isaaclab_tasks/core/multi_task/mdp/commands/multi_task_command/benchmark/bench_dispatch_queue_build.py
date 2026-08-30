@@ -10,7 +10,8 @@ cost of building those queues from a per-work-item ``kind`` vector.
 
 Run with:
 
-    ./isaaclab.sh -p -m isaaclab_tasks.core.multi_task.mdp.commands.benchmark.bench_dispatch_queue_build
+    ./isaaclab.sh -p -m \
+        isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.benchmark.bench_dispatch_queue_build
 """
 
 from __future__ import annotations

@@ -98,7 +98,7 @@ _POSE_VEL = {
 
 _LOCOMOTION = {
     # Velocity tracking — two tracking subtasks (lin + ang).
-    "velocity": [LIN_VEL_TRACKING, ANG_VEL_TRACKING, UNDESIRED_CONTACT],
+    "velocity": [LIN_VEL_TRACKING, ANG_VEL_TRACKING, UNDESIRED_CONTACT, MECH_POWER],
     # Reach a body-position target near standing height.
     "position": [BODY_POS_INSTANT, UNDESIRED_CONTACT, MECH_POWER],
     # Reach an elevated body-position target (z lifted into the air).

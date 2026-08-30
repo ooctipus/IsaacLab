@@ -22,6 +22,7 @@ __all__ = [
     "RobotArticulationCfg",
     "RetargetLateralHipJointPatternCfg",
     "SyncFootPairsCfg",
+    "ViewerOriginTrackPathCfg",
 ]
 
 from .command_presets import CommandPayloadPresetCfg, CommandsCfg, CommandsPresetCfg
@@ -39,6 +40,7 @@ from .robots import (
     RetargetLateralHipJointPatternCfg,
     RobotArticulationCfg,
     SyncFootPairsCfg,
+    ViewerOriginTrackPathCfg,
 )
 from .terrain_presets import SubTerrainPresetCfg
 from .termination_presets import TerminationsCfg

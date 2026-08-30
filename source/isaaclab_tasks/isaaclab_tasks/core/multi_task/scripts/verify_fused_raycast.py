@@ -16,7 +16,7 @@ alignment modes (world/yaw/base), the fused kernel is correct.
 
 Run with::
 
-    ./isaaclab.sh -p source/isaaclab_tasks/isaaclab_tasks/manager_based/multi_task/scripts/verify_fused_raycast.py
+    ./isaaclab.sh -p source/isaaclab_tasks/isaaclab_tasks/core/multi_task/scripts/verify_fused_raycast.py
 """
 
 from __future__ import annotations

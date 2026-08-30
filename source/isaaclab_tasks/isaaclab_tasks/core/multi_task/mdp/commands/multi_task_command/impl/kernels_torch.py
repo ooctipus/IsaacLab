@@ -6,7 +6,7 @@
 """PyTorch reference implementations for every kernel id.
 
 Kernel ids and metadata schemas (:class:`BufferKindDef`, :class:`StateKernelDef`)
-live in :mod:`.kernel_ids` — the shared source of truth. This module provides
+live in :mod:`..kernel_ids` — the shared source of truth. This module provides
 the PyTorch function bodies and binds them to the ids via the
 :data:`STATE_KERNELS`, :data:`BUFFER_KINDS`, :data:`ACTIVATION_KERNELS`,
 :data:`METRIC_KERNELS`, :data:`DELTA_KERNELS`, :data:`SAMPLER_KERNELS`
@@ -24,35 +24,22 @@ import torch
 
 from isaaclab.utils.math import axis_angle_from_quat, quat_from_euler_xyz, quat_inv, quat_mul
 
-from .kernel_ids import (
-    ACTIVATION_KERNEL_ID,
+from ..kernel_ids import (
     BUFFER_KIND,
-    METRIC_KERNEL_ID,
-    SAMPLER_KERNEL_ID,
-    STATE_KERNEL_ID,
     BufferKindDef,
     StateKernelDef,
 )
 
-# Re-export ids/schemas so existing call sites that ``from .kernels_torch import …``
-# keep working. New code should import directly from :mod:`.kernel_ids`.
 __all__ = [
-    "ACTIVATION_KERNEL_ID",
     "ACTIVATION_KERNELS",
-    "BUFFER_KIND",
     "BUFFER_KINDS",
     "BUFFER_KIND_READERS",
-    "BufferKindDef",
     "DELTA_KERNELS",
-    "METRIC_KERNEL_ID",
     "METRIC_KERNELS",
-    "SAMPLER_KERNEL_ID",
     "SAMPLER_KERNELS",
     "STATE_KERNEL_BUFFER_KIND",
     "STATE_KERNEL_COMPUTES",
-    "STATE_KERNEL_ID",
     "STATE_KERNELS",
-    "StateKernelDef",
     "buffer_kind_is_body_indexed",
     "buffer_kind_per_element_stride",
     "state_kernel_intra_body_offset",
@@ -193,14 +180,14 @@ def _read_contact_net_forces_w(env: ManagerBasedRLEnv, asset_name: str) -> torch
 def _read_joint_mech_power_abs(env: ManagerBasedRLEnv, asset_name: str) -> torch.Tensor:
     """Per-joint absolute mechanical power, ``[N, num_joints]``.
 
-    Computes ``|applied_torque · joint_vel|`` element-wise. NaN-safe:
+    Computes ``|applied_effort · joint_vel|`` element-wise. NaN-safe:
     non-finite entries (which can show up briefly during reset on some
     backends) are clamped to 0. Unlike the other readers this allocates a
     fresh tensor each step — the elementwise product can't be represented
     as a stride view.
     """
     articulation: Articulation = env.scene[asset_name]
-    tau = articulation.data.applied_torque.torch
+    tau = articulation.actuators.applied_effort.torch
     qd = articulation.data.joint_vel.torch
     power = (tau * qd).abs()
     return torch.where(torch.isfinite(power), power, torch.zeros_like(power))

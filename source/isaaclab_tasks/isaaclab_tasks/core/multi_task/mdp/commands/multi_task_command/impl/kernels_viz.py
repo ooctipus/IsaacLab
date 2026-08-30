@@ -42,7 +42,7 @@ import isaaclab.sim as sim_utils
 from isaaclab.markers import FRAME_MARKER_CFG, VisualizationMarkersCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
-from .kernel_ids import STATE_KERNEL_ID
+from ..kernel_ids import STATE_KERNEL_ID
 
 if TYPE_CHECKING:
     from collections.abc import Callable

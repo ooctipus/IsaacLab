@@ -367,10 +367,6 @@ class MeshRadiatingBeamTerrainCfg(terrains.MeshStarTerrainCfg):
       [m], interpolated with difficulty.
     """
 
-    # backward-compatible aliases
-    FlatBeamCfg = FlatBeamCfg
-    BoxBeamCfg = BoxBeamCfg
-
     @configclass
     class SquareBorderCfg:
         """Rectangular border ring surrounding the terrain."""
@@ -438,10 +434,6 @@ class MeshFloatingIslandTerrainCfg(terrains.SubTerrainBaseCfg):
     3. **Passways** are generated along each graph edge, reusing
        :class:`FlatBeamCfg` / :class:`BoxBeamCfg`.
     """
-
-    # backward-compatible aliases
-    FlatBeamCfg = FlatBeamCfg
-    BoxBeamCfg = BoxBeamCfg
 
     @configclass
     class CylinderIslandCfg:

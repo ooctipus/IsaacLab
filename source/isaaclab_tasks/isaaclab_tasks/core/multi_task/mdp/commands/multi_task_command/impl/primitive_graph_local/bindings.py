@@ -28,11 +28,9 @@ whether to use the fused-compose dense kernel (set at cfg time via
 ``use_parallel_compose``). Callers who want direct (non-materialized)
 compute should select the ``primitive_queue_local`` backend.
 
-This module stays pure Warp — no ``import torch``. Spec/env-slot/output
-Warp views come from :class:`MultiTaskCommandWarp`
-(``command.spec_wp`` and friends); the refresh path operates on
-``wp.to_torch`` views of the plan's Warp-owned arrays via tensor methods
-(no ``torch.X`` symbols).
+Spec/env-slot/output Warp views come from :class:`MultiTaskCommandWarp`
+(``command.spec_wp`` and friends); the cold refresh path operates on
+``wp.to_torch`` views of the plan's Warp-owned arrays via tensor methods.
 """
 
 from __future__ import annotations
@@ -42,7 +40,7 @@ from typing import TYPE_CHECKING
 
 import warp as wp
 
-from ..kernel_ids import BUFFER_KIND
+from ...kernel_ids import BUFFER_KIND
 from ..kernels_wp import (
     ComposerState,
     EnvSlots,
@@ -68,7 +66,7 @@ from .csr_graph import CSRGraph
 if TYPE_CHECKING:
     import torch
 
-    from ..multi_task_command_warp import MultiTaskCommandWarp
+    from ...multi_task_command_warp import MultiTaskCommandWarp
 
 _CONTACT_SCHEDULES = (
     SCHEDULE_VEC3_THRESHOLD_VECTOR_DELTA,
@@ -137,7 +135,7 @@ class QuatSlabBinding:
 class JointMechPowerSlabBinding:
     """Computed slab ``|τ · q̇|`` — JOINT_MECH_POWER_ABS."""
 
-    applied_torque_wp: wp.array
+    applied_effort_wp: wp.array
     joint_vel_wp: wp.array
     offset: int
     size: int
@@ -203,7 +201,7 @@ def _resolve_slabs(
         elif kind == BUFFER_KIND.JOINT_MECH_POWER_ABS:
             art = command._env.scene[asset_name]
             joint_mech_power_slabs.append(
-                JointMechPowerSlabBinding(art.data.applied_torque.warp, art.data.joint_vel.warp, offset, size)
+                JointMechPowerSlabBinding(art.actuators.applied_effort.warp, art.data.joint_vel.warp, offset, size)
             )
         else:
             raise ValueError(
@@ -441,12 +439,16 @@ def build_primitive_graph_local_plan(command: MultiTaskCommandWarp) -> Primitive
         backend_name="primitive_graph_local",
     )
 
-    max_consumers = command.num_envs * command.k_max
     vec3_nodes = _make_producer_node_table(command, (SCHEDULE_DIRECT_VEC3_DELTA,))
     scalar_nodes = _make_producer_node_table(command, (SCHEDULE_DIRECT_SCALAR_DELTA,))
     quat_nodes = _make_producer_node_table(command, (SCHEDULE_DIRECT_QUAT_DELTA,))
     scalar_sum_nodes = _make_producer_node_table(command, (SCHEDULE_SCALAR_SUM_DELTA,))
     contact_nodes = _make_producer_node_table(command, _CONTACT_SCHEDULES)
+    vec3_signature_count = int(vec3_nodes.signature_subtask_wp.shape[0])
+    scalar_signature_count = int(scalar_nodes.signature_subtask_wp.shape[0])
+    quat_signature_count = int(quat_nodes.signature_subtask_wp.shape[0])
+    scalar_sum_signature_count = int(scalar_sum_nodes.signature_subtask_wp.shape[0])
+    contact_signature_count = int(contact_nodes.signature_subtask_wp.shape[0])
 
     # Combine the 5 per-kind ``consumer_to_producer`` arrays into one per-subtask
     # producer-within-kind tensor. Each subtask is active in exactly one kind, so
@@ -461,11 +463,16 @@ def build_primitive_graph_local_plan(command: MultiTaskCommandWarp) -> Primitive
         )
     producer_id_stride = max(nodes.csr_graph.num_producers for nodes in kind_tables) + 1
 
-    direct_vec3_wp = wp.zeros(shape=(max_consumers, 3), dtype=wp.float32, device=device_str)
-    direct_scalar_wp = wp.zeros(shape=max_consumers, dtype=wp.float32, device=device_str)
-    direct_quat_wp = wp.zeros(shape=(max_consumers, 4), dtype=wp.float32, device=device_str)
-    scalar_sum_wp = wp.zeros(shape=max_consumers, dtype=wp.float32, device=device_str)
-    contact_mask_wp = wp.zeros(shape=(max_consumers, 4), dtype=wp.float32, device=device_str)
+    # Producers materialize every unique signature for every environment. The
+    # signature count can exceed ``k_max`` when many one-slot tasks reference
+    # different state sources, so consumer capacity is not a valid bound.
+    direct_vec3_wp = wp.zeros(shape=(command.num_envs * vec3_signature_count, 3), dtype=wp.float32, device=device_str)
+    direct_scalar_wp = wp.zeros(shape=command.num_envs * scalar_signature_count, dtype=wp.float32, device=device_str)
+    direct_quat_wp = wp.zeros(shape=(command.num_envs * quat_signature_count, 4), dtype=wp.float32, device=device_str)
+    scalar_sum_wp = wp.zeros(shape=command.num_envs * scalar_sum_signature_count, dtype=wp.float32, device=device_str)
+    contact_mask_wp = wp.zeros(
+        shape=(command.num_envs * contact_signature_count, 4), dtype=wp.float32, device=device_str
+    )
 
     (
         float_slabs,
@@ -482,11 +489,11 @@ def build_primitive_graph_local_plan(command: MultiTaskCommandWarp) -> Primitive
         scalar_sum_nodes=scalar_sum_nodes,
         contact_nodes=contact_nodes,
         total_consumers=0,
-        vec3_signature_count=int(vec3_nodes.signature_subtask_wp.shape[0]),
-        scalar_signature_count=int(scalar_nodes.signature_subtask_wp.shape[0]),
-        quat_signature_count=int(quat_nodes.signature_subtask_wp.shape[0]),
-        scalar_sum_signature_count=int(scalar_sum_nodes.signature_subtask_wp.shape[0]),
-        contact_signature_count=int(contact_nodes.signature_subtask_wp.shape[0]),
+        vec3_signature_count=vec3_signature_count,
+        scalar_signature_count=scalar_signature_count,
+        quat_signature_count=quat_signature_count,
+        scalar_sum_signature_count=scalar_sum_signature_count,
+        contact_signature_count=contact_signature_count,
         schedule_counts_py=[0] * NUM_SCHEDULES,
         env_slots=command.env_slots_wp,
         spec=command.spec_wp,

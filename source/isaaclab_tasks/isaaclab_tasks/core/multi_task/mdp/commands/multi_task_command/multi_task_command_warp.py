@@ -13,7 +13,7 @@ pieces live under :mod:`.impl`:
 backend owns its execution plan under :mod:`.impl`.
 
 Selected when ``MultiTaskCfg.dispatch_backend`` is not ``"torch"``. The factory
-in :class:`~..multi_task_command.MultiTaskCommand.__new__` routes construction
+in :meth:`MultiTaskCommand.__new__` routes construction
 to this class automatically; users never reference it directly.
 
 This wrapper owns the torch → Warp conversion for the command's mutable
@@ -21,8 +21,10 @@ state (spec, env-slot tables, unified buffer, targets, composer state, output
 buffers, episode-length state). Each backend consumes the shared Warp views
 exposed here through ``command.env_slots_wp`` / ``command.spec_wp`` /
 ``command.state_wp`` / ``command.composer_state_wp`` / ``command.outputs_wp``
-plus ``command.episode_length_buf_wp`` / ``command.effective_max_episode_length_wp`` —
-the backend directories stay pure Warp (no ``wp.from_torch`` calls of their own).
+plus ``command.episode_length_buf_wp`` /
+``command.effective_max_episode_length_wp``. Backends own their fixed Warp
+plan storage and cold-path plan population; they do not create duplicate
+``wp.from_torch`` views of command-owned state.
 """
 
 from __future__ import annotations
@@ -30,9 +32,13 @@ from __future__ import annotations
 import torch
 import warp as wp
 
-from ..multi_task_command import MultiTaskCommand
-from . import CommandBackend, build_command_backend
-from .kernels_wp import ComposerState, EnvSlots, Outputs, StateAccess, SubtaskSpec
+from .impl import CommandBackend
+from .impl.kernels_wp import ComposerState, EnvSlots, Outputs, StateAccess, SubtaskSpec
+from .impl.mega_kernel.backend import MegaKernelBackend
+from .impl.packed_scatter.backend import PackedScatterBackend
+from .impl.primitive_graph_local.backend import PrimitiveGraphLocalBackend
+from .impl.primitive_queue_local.backend import PrimitiveQueueLocalBackend
+from .multi_task_command import MultiTaskCommand
 
 __all__ = ["MultiTaskCommandWarp"]
 
@@ -53,7 +59,18 @@ class MultiTaskCommandWarp(MultiTaskCommand):
         self._backend: CommandBackend | None = None
         super().__init__(cfg, env)
         self._build_shared_wp_views()
-        self._backend = build_command_backend(self, cfg.dispatch_backend)
+        if cfg.dispatch_backend == MegaKernelBackend.name:
+            self._backend = MegaKernelBackend(self, slot_order="natural")
+        elif cfg.dispatch_backend == "schedule_ordered_mega":
+            self._backend = MegaKernelBackend(self, slot_order="schedule")
+        elif cfg.dispatch_backend == PackedScatterBackend.name:
+            self._backend = PackedScatterBackend(self)
+        elif cfg.dispatch_backend == PrimitiveQueueLocalBackend.name:
+            self._backend = PrimitiveQueueLocalBackend(self)
+        elif cfg.dispatch_backend == PrimitiveGraphLocalBackend.name:
+            self._backend = PrimitiveGraphLocalBackend(self)
+        else:
+            raise ValueError(f"Unsupported MultiTaskCommand dispatch backend: {cfg.dispatch_backend!r}.")
 
     # ------------------------------------------------------------------------
     # Shared Warp views over the base class's torch state.

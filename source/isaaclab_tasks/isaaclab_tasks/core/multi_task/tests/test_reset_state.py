@@ -36,14 +36,18 @@ class _MockArticulation:
         )
         self.calls: list[tuple[str, torch.Tensor, torch.Tensor, torch.Tensor | None]] = []
 
-    def write_root_state_to_sim(self, root_state: torch.Tensor, env_ids: torch.Tensor):
-        self.calls.append(("root", root_state, env_ids, None))
-        self.root_state[env_ids] = root_state
+    def write_root_link_pose_to_sim_index(self, root_pose: torch.Tensor, env_ids: torch.Tensor):
+        self.calls.append(("root_pose", root_pose, env_ids, None))
+        self.root_state[env_ids, :7] = root_pose
 
-    def write_joint_state_to_sim(self, joint_pos: torch.Tensor, joint_vel: torch.Tensor, env_ids: torch.Tensor):
-        self.calls.append(("joint", joint_pos, env_ids, joint_vel))
-        self.joint_pos[env_ids] = joint_pos
-        self.joint_vel[env_ids] = joint_vel
+    def write_root_com_velocity_to_sim_index(self, root_velocity: torch.Tensor, env_ids: torch.Tensor):
+        self.calls.append(("root_velocity", root_velocity, env_ids, None))
+        self.root_state[env_ids, 7:] = root_velocity
+
+    def write_joint_state_to_sim_index(self, position: torch.Tensor, velocity: torch.Tensor, env_ids: torch.Tensor):
+        self.calls.append(("joint", position, env_ids, velocity))
+        self.joint_pos[env_ids] = position
+        self.joint_vel[env_ids] = velocity
 
 
 class _MockRigidObject:
@@ -53,9 +57,13 @@ class _MockRigidObject:
         self.data = SimpleNamespace(root_state_w=wp.from_torch(self.root_state))
         self.calls: list[tuple[str, torch.Tensor, torch.Tensor]] = []
 
-    def write_root_state_to_sim(self, root_state: torch.Tensor, env_ids: torch.Tensor):
-        self.calls.append(("root", root_state, env_ids))
-        self.root_state[env_ids] = root_state
+    def write_root_link_pose_to_sim_index(self, root_pose: torch.Tensor, env_ids: torch.Tensor):
+        self.calls.append(("root_pose", root_pose, env_ids))
+        self.root_state[env_ids, :7] = root_pose
+
+    def write_root_com_velocity_to_sim_index(self, root_velocity: torch.Tensor, env_ids: torch.Tensor):
+        self.calls.append(("root_velocity", root_velocity, env_ids))
+        self.root_state[env_ids, 7:] = root_velocity
 
 
 def _make_env(num_envs: int = 3, num_joints: int = 4):
@@ -123,11 +131,15 @@ def test_set_absolute_state_passes_views_without_copy():
 
     set_reset_state(env, states, env_ids, reset_assets, is_relative=False)
 
-    root_call = next(call for call in robot.calls if call[0] == "root")
+    root_pose_call = next(call for call in robot.calls if call[0] == "root_pose")
+    root_velocity_call = next(call for call in robot.calls if call[0] == "root_velocity")
     joint_call = next(call for call in robot.calls if call[0] == "joint")
-    box_call = box.calls[0]
+    box_pose_call = next(call for call in box.calls if call[0] == "root_pose")
+    box_velocity_call = next(call for call in box.calls if call[0] == "root_velocity")
 
-    assert root_call[1].data_ptr() == states[:, :13].data_ptr()
+    assert root_pose_call[1].data_ptr() == states[:, :7].data_ptr()
+    assert root_velocity_call[1].data_ptr() == states[:, 7:13].data_ptr()
     assert joint_call[1].data_ptr() == states[:, 13 : 13 + robot.num_joints].data_ptr()
     assert joint_call[3].data_ptr() == states[:, 13 + robot.num_joints : 13 + 2 * robot.num_joints].data_ptr()
-    assert box_call[1].data_ptr() == states[:, box_root_start : box_root_start + 13].data_ptr()
+    assert box_pose_call[1].data_ptr() == states[:, box_root_start : box_root_start + 7].data_ptr()
+    assert box_velocity_call[1].data_ptr() == states[:, box_root_start + 7 : box_root_start + 13].data_ptr()

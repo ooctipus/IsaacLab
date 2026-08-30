@@ -22,7 +22,7 @@ diff is from our change vs from PhysX.
 
 Usage::
 
-    ./isaaclab.sh -p source/isaaclab_tasks/isaaclab_tasks/manager_based/multi_task/scripts/verify_obs_equivalence.py
+    ./isaaclab.sh -p source/isaaclab_tasks/isaaclab_tasks/core/multi_task/scripts/verify_obs_equivalence.py
 """
 
 from __future__ import annotations
@@ -59,8 +59,8 @@ args_cli, remaining = parser.parse_known_args()
 
 def _orchestrate() -> int:
     """Spawn legacy + fused child captures, then load and compare their obs traces."""
-    # Path layout: source/isaaclab_tasks/isaaclab_tasks/manager_based/multi_task/scripts/<this>
-    # parents[0]=scripts, [1]=multi_task, [2]=manager_based, [3]=isaaclab_tasks (inner),
+    # Path layout: source/isaaclab_tasks/isaaclab_tasks/core/multi_task/scripts/<this>
+    # parents[0]=scripts, [1]=multi_task, [2]=core, [3]=isaaclab_tasks (inner),
     # [4]=isaaclab_tasks (outer), [5]=source, [6]=repo root.
     isaaclab_root = Path(__file__).resolve().parents[6]
     self_path = Path(__file__)

@@ -9,5 +9,5 @@ __all__ = [
     "MultiTaskCommand",
 ]
 
-from .impl.multi_task_cfg import MinMaxSampler, MultiTaskCfg
+from .multi_task_cfg import MinMaxSampler, MultiTaskCfg
 from .multi_task_command import MultiTaskCommand

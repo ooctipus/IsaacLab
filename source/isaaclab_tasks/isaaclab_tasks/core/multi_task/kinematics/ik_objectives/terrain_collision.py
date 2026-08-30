@@ -15,24 +15,10 @@ import newton.ik as ik
 import numpy as np
 import warp as wp
 
-from ._kernels import jac_fill_row
-
 if TYPE_CHECKING:
     from isaaclab_tasks.core.multi_task.terrain.retarget.pipeline import RetargetPipeline
 
     from .cfg import IKObjectiveTerrainCollisionCfg
-
-
-@wp.kernel
-def _write_basis_column(
-    total_residuals: int,
-    col: int,
-    value: float,
-    out: wp.array1d(dtype=wp.float32),
-):
-    """Write ``value`` at column ``col`` of every batch row in a flat ``(n_batch * total_residuals)`` buffer."""
-    b = wp.tid()
-    out[b * total_residuals + col] = value
 
 
 @wp.kernel
@@ -348,6 +334,11 @@ class IKObjectiveTerrainCollision(ik.IKObjective):
 
     def init_buffers(self, model: newton.Model, jacobian_mode: ik.IKJacobianType) -> None:
         self._require_batch_layout()
+        if jacobian_mode == ik.IKJacobianType.AUTODIFF:
+            raise ValueError(
+                "IKObjectiveTerrainCollision does not support autodiff because Warp mesh-query kernels "
+                "have no backward implementation; use the analytic or mixed Jacobian mode"
+            )
         d = self.device
         self._probe_body = wp.array(self._probe_body_np, dtype=wp.int32, device=d)
         self._probe_offset = wp.from_numpy(self._probe_offset_np, dtype=wp.vec3, device=d)
@@ -371,15 +362,6 @@ class IKObjectiveTerrainCollision(ik.IKObjective):
             probe_mask = body_mask[self._probe_body_np]
             self._affects_dof = wp.array(probe_mask, dtype=wp.uint8, device=d)
 
-        if jacobian_mode in (ik.IKJacobianType.AUTODIFF, ik.IKJacobianType.MIXED):
-            # Shared scratch basis vector reused for every probe backward pass.
-            # Each probe's basis is ``1`` at ``residual_offset + r`` and ``0``
-            # elsewhere in every batch row — materialising all ``n_probes``
-            # copies would cost ``n_probes * n_batch * total_residuals * 4`` B
-            # (>1 GB at high batch counts); we instead fill column ``r`` before
-            # each backward and clear it after.
-            self._e_scratch = wp.zeros(self.n_batch * self.total_residuals, dtype=wp.float32, device=d)
-
     def compute_residuals(self, body_q, joint_q, model, residuals, start_idx, problem_idx) -> None:
         wp.launch(
             _terrain_collision_residuals,
@@ -398,35 +380,6 @@ class IKObjectiveTerrainCollision(ik.IKObjective):
             outputs=[residuals],
             device=self.device,
         )
-
-    def compute_jacobian_autodiff(self, tape, model, jacobian, start_idx, dq_dof) -> None:
-        self._require_batch_layout()
-        n_dofs = dq_dof.shape[1]
-        for r in range(self.n_probes):
-            col = self.residual_offset + r
-            wp.launch(
-                _write_basis_column,
-                dim=self.n_batch,
-                inputs=[self.total_residuals, col, 1.0],
-                outputs=[self._e_scratch],
-                device=self.device,
-            )
-            tape.backward(grads={tape.outputs[0]: self._e_scratch})
-            wp.launch(
-                jac_fill_row,
-                dim=self.n_batch,
-                inputs=[tape.gradients[dq_dof], n_dofs, start_idx + r],
-                outputs=[jacobian],
-                device=self.device,
-            )
-            wp.launch(
-                _write_basis_column,
-                dim=self.n_batch,
-                inputs=[self.total_residuals, col, 0.0],
-                outputs=[self._e_scratch],
-                device=self.device,
-            )
-            tape.zero()
 
     def compute_jacobian_analytic(self, body_q, joint_q, model, jacobian, joint_S_s, start_idx) -> None:
         """Fuse all ``n_probes * n_dofs`` Jacobian entries into a single kernel launch.

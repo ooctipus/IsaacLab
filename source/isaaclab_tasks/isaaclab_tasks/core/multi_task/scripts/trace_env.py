@@ -140,11 +140,8 @@ def _install_startup_tracing() -> None:
     """Install trace wrappers for scene-startup clone utilities."""
     clone_spans = (
         ("isaaclab.cloner", "usd_replicate", "cloner.usd_replicate"),
-        ("isaaclab.cloner.cloner_utils", "usd_replicate", "cloner.usd_replicate"),
         ("isaaclab.cloner", "filter_collisions", "cloner.filter_collisions"),
-        ("isaaclab.cloner.cloner_utils", "filter_collisions", "cloner.filter_collisions"),
         ("isaaclab.cloner", "clone_from_template", "cloner.clone_from_template"),
-        ("isaaclab.cloner.cloner_utils", "clone_from_template", "cloner.clone_from_template"),
         ("isaaclab_physx.cloner", "physx_replicate", "cloner.physx_replicate"),
         ("isaaclab_physx.cloner.physx_replicate", "physx_replicate", "cloner.physx_replicate"),
         ("isaaclab_ovphysx.cloner", "ovphysx_replicate", "cloner.ovphysx_replicate"),

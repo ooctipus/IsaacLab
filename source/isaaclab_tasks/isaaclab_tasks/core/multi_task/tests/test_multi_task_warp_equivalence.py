@@ -28,16 +28,6 @@ import warp as wp
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils.warp import ProxyArray
 
-from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.kernels_torch import (
-    ACTIVATION_KERNEL_ID,
-    METRIC_KERNEL_ID,
-    SAMPLER_KERNEL_ID,
-    STATE_KERNEL_ID,
-)
-from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.multi_task_cfg import (
-    MinMaxSampler,
-    MultiTaskCfg,
-)
 from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.schedules import (
     SCHEDULE_DIRECT_QUAT_DELTA,
     SCHEDULE_DIRECT_SCALAR_DELTA,
@@ -46,6 +36,16 @@ from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.schedul
     SCHEDULE_VEC3_THRESHOLD_PAIR_DIFF_DELTA,
     SCHEDULE_VEC3_THRESHOLD_SUM_DELTA,
     SCHEDULE_VEC3_THRESHOLD_VECTOR_DELTA,
+)
+from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.kernel_ids import (
+    ACTIVATION_KERNEL_ID,
+    METRIC_KERNEL_ID,
+    SAMPLER_KERNEL_ID,
+    STATE_KERNEL_ID,
+)
+from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.multi_task_cfg import (
+    MinMaxSampler,
+    MultiTaskCfg,
 )
 from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.multi_task_command import MultiTaskCommand
 
@@ -179,11 +179,6 @@ class _MockArticulationData:
         # doesn't exercise non-zero joint state).
         self._joint_pos_torch = torch.zeros((num_envs, num_joints), device=device).contiguous()
         self._joint_vel_torch = torch.zeros((num_envs, num_joints), device=device).contiguous()
-        # applied_torque feeds the joint_mech_power kernel; non-zero so the
-        # Warp/Torch paths see a non-trivial ``|τ · q̇|`` value (where both
-        # are zero here, the product is zero — still byte-identical).
-        self._applied_torque_torch = torch.randn((num_envs, num_joints), generator=g, device=device).contiguous()
-
         # ProxyArray views (both paths read through these).
         self.body_pos_w = _proxy(self._body_pos_w_torch, wp.vec3)
         self.body_quat_w = _proxy(self._body_quat_w_torch, wp.quat)
@@ -191,7 +186,15 @@ class _MockArticulationData:
         self.body_ang_vel_w = _proxy(self._body_ang_vel_w_torch, wp.vec3)
         self.joint_pos = _proxy(self._joint_pos_torch, wp.float32)
         self.joint_vel = _proxy(self._joint_vel_torch, wp.float32)
-        self.applied_torque = _proxy(self._applied_torque_torch, wp.float32)
+
+
+class _MockActuators:
+    """Mock articulation-owned actuator telemetry."""
+
+    def __init__(self, num_envs: int, num_joints: int, device: str, seed: int):
+        g = torch.Generator(device=device).manual_seed(seed)
+        self._applied_effort_torch = torch.randn((num_envs, num_joints), generator=g, device=device).contiguous()
+        self.applied_effort = _proxy(self._applied_effort_torch, wp.float32)
 
 
 class _MockContactSensorData:
@@ -213,12 +216,13 @@ class _MockScene:
         self.env_origins = torch.zeros(num_envs, 3, device=device)
         # Each articulation gets a seeded data block so all kinds (body_pos_w,
         # body_quat_w, body_lin_vel_w, body_ang_vel_w, joint_pos, joint_vel,
-        # applied_torque) have ProxyArray views over deterministic tensors.
+        # applied effort) have ProxyArray views over deterministic tensors.
         for i, (name, ent) in enumerate(entities.items()):
             if name == "contact_forces":
                 ent.data = _MockContactSensorData(num_envs, ent.num_bodies, device, seed=seed + 100 + i)
             else:
                 ent.data = _MockArticulationData(num_envs, ent.num_bodies, ent.num_joints, device, seed=seed + i)
+                ent.actuators = _MockActuators(num_envs, ent.num_joints, device, seed=seed + 200 + i)
         self.sensors = entities
 
     def keys(self):
@@ -240,6 +244,24 @@ class _MockEnv:
         self.scene = scene
         self.common_step_counter = 0
         self.step_dt = 0.02
+        self.sim = _MockSimulation()
+
+
+class _MockVisualizationRegistry:
+    """Minimal visualization callback registry required by :class:`CommandTerm`."""
+
+    def add_debug_vis_callback(self, _term):
+        return object()
+
+    def clear_debug_vis_callback(self, _term) -> None:
+        pass
+
+
+class _MockSimulation:
+    """Minimal simulation surface required by :class:`CommandTerm`."""
+
+    def __init__(self):
+        self.vis_marker_registry = _MockVisualizationRegistry()
 
 
 def _make_env(num_envs: int, device: str, seed: int = 0):
@@ -734,6 +756,43 @@ def test_primitive_graph_local_materializes_shared_signature_nodes():
     assert torch.allclose(cmd_ref._buf_activation, cmd_graph._buf_activation, atol=atol, rtol=rtol)
     assert torch.allclose(cmd_ref.task_reward, cmd_graph.task_reward, atol=atol, rtol=rtol)
     assert torch.equal(cmd_ref.task_done, cmd_graph.task_done)
+
+
+@_NEED_CUDA
+def test_primitive_graph_local_sizes_producer_buffers_by_signature_count():
+    """Producer storage must cover signatures even when each task has only one slot."""
+    device = "cuda:0"
+    num_envs = 8
+
+    def _body_position_task(body_name: str) -> MultiTaskCfg.TrackingTaskCfg:
+        return MultiTaskCfg.TrackingTaskCfg(
+            asset_cfg=SceneEntityCfg("robot", body_names=body_name),
+            state_kernel=int(STATE_KERNEL_ID.BODY_POS),
+            metric_kernel=int(METRIC_KERNEL_ID.GEOMETRIC),
+            activation_kernel=int(ACTIVATION_KERNEL_ID.TANH),
+            activation_kernel_param=0.3,
+            sampler=MinMaxSampler(
+                kernel=int(SAMPLER_KERNEL_ID.UNIFORM),
+                minimum=[-1.0, -1.0, 0.0],
+                maximum=[1.0, 1.0, 1.0],
+            ),
+        )
+
+    cfg = MultiTaskCfg(
+        resampling_time_range=(100.0, 100.0),
+        debug_vis=False,
+        dispatch_backend="primitive_graph_local",
+        tasks={
+            "base": [_body_position_task("base")],
+            "hip": [_body_position_task("LF_HIP")],
+        },
+    )
+    cmd = MultiTaskCommand(cfg, _make_env(num_envs=num_envs, device=device, seed=7890))
+    plan = cmd._backend.plan
+
+    assert cmd.k_max == 1
+    assert plan.vec3_signature_count == 2
+    assert plan.direct_vec3_wp.shape == (num_envs * plan.vec3_signature_count, 3)
 
 
 @_NEED_CUDA

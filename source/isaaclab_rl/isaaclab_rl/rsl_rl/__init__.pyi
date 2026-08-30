@@ -4,9 +4,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 __all__ = [
-    "RslRlCrlAlgorithmCfg",
-    "RslRlOffPolicyRunnerCfg",
-    "RslRlResidualMLPCfg",
     "RslRlDistillationAlgorithmCfg",
     "RslRlDistillationRunnerCfg",
     "RslRlDistillationStudentTeacherCfg",
@@ -16,10 +13,7 @@ __all__ = [
     "handle_deprecated_rsl_rl_cfg",
     "RslRlBaseRunnerCfg",
     "RslRlCNNModelCfg",
-    "RslRlHerCfg",
-    "RslRlMLPEncoderModelCfg",
     "RslRlMLPModelCfg",
-    "RslRlResidualMLPEncoderModelCfg",
     "RslRlOnPolicyRunnerCfg",
     "RslRlPpoActorCriticCfg",
     "RslRlPpoActorCriticRecurrentCfg",
@@ -40,13 +34,7 @@ from .exporter import export_policy_as_jit, export_policy_as_onnx
 from .rl_cfg import (
     RslRlBaseRunnerCfg,
     RslRlCNNModelCfg,
-    RslRlCrlAlgorithmCfg,
-    RslRlOffPolicyRunnerCfg,
-    RslRlResidualMLPCfg,
-    RslRlHerCfg,
-    RslRlMLPEncoderModelCfg,
     RslRlMLPModelCfg,
-    RslRlResidualMLPEncoderModelCfg,
     RslRlOnPolicyRunnerCfg,
     RslRlPpoActorCriticCfg,
     RslRlPpoActorCriticRecurrentCfg,

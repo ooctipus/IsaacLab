@@ -25,8 +25,8 @@ from dataclasses import MISSING
 
 from isaaclab.utils.configclass import configclass
 
+from ..geom.pose_offset import Offset
 from ..utils.symmetry import AssetSymmetryCfg
-from .assembly_keypoints import Offset
 from .assembly_profile import (
     AssemblyProfile,
     EndPointsSegment,

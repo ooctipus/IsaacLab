@@ -212,7 +212,7 @@ Register a baseline `rsl_rl_cfg_entry_point` on the CRL env (use a trivial one
 that picks the ``flat`` obs preset) and run
 
 ```bash
-./isaaclab.sh -p scripts/reinforcement_learning/rsl_rl/train.py \
+uv run isaaclab train --rl_library rsl_rl \
     --task Isaac-Position-CRL-Anymal-C-v0
 ```
 

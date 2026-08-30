@@ -97,7 +97,6 @@ class _MockArticulationData:
         self._body_ang_vel_w_torch = torch.randn(num_envs, num_bodies, 3, device=device).contiguous()
         self._joint_pos_torch = torch.randn(num_envs, num_joints, device=device).contiguous()
         self._joint_vel_torch = torch.randn(num_envs, num_joints, device=device).contiguous()
-        self._applied_torque_torch = torch.randn(num_envs, num_joints, device=device).contiguous()
 
         self.body_pos_w = _make_proxy(self._body_pos_w_torch, wp.vec3)
         self.body_quat_w = _make_proxy(self._body_quat_w_torch, wp.quat)
@@ -105,7 +104,16 @@ class _MockArticulationData:
         self.body_ang_vel_w = _make_proxy(self._body_ang_vel_w_torch, wp.vec3)
         self.joint_pos = _make_proxy(self._joint_pos_torch, wp.float32)
         self.joint_vel = _make_proxy(self._joint_vel_torch, wp.float32)
-        self.applied_torque = _make_proxy(self._applied_torque_torch, wp.float32)
+
+
+class _MockActuators:
+    """Mock articulation-owned actuator telemetry."""
+
+    def __init__(self, num_envs: int, num_joints: int, device: str):
+        import warp as wp
+
+        self._applied_effort_torch = torch.randn(num_envs, num_joints, device=device).contiguous()
+        self.applied_effort = _make_proxy(self._applied_effort_torch, wp.float32)
 
 
 class _MockContactSensorData:
@@ -137,6 +145,7 @@ class MockArticulation:
         # ProxyArray-backed mock data — works for both Torch and Warp paths.
         if self.num_joints > 0:
             self.data = _MockArticulationData(num_envs, self.num_bodies, self.num_joints, device)
+            self.actuators = _MockActuators(num_envs, self.num_joints, device)
         else:
             # Contact-sensor-style entity (no joints).
             self.data = _MockContactSensorData(num_envs, self.num_bodies, device)
@@ -193,6 +202,24 @@ class MockEnv:
         self.scene = scene
         self.common_step_counter = 0
         self.step_dt = 0.02
+        self.sim = _MockSimulation()
+
+
+class _MockVisualizationRegistry:
+    """Minimal visualization callback registry required by :class:`CommandTerm`."""
+
+    def add_debug_vis_callback(self, _term):
+        return object()
+
+    def clear_debug_vis_callback(self, _term) -> None:
+        pass
+
+
+class _MockSimulation:
+    """Minimal simulation surface required by :class:`CommandTerm`."""
+
+    def __init__(self):
+        self.vis_marker_registry = _MockVisualizationRegistry()
 
 
 def build_mock_synthetic_readers(
@@ -202,7 +229,7 @@ def build_mock_synthetic_readers(
     joint_names: list[str] | None = None,
 ) -> tuple:
     """Build fixed synthetic readers for each command buffer kind."""
-    from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.kernels_torch import BUFFER_KIND
+    from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.kernel_ids import BUFFER_KIND
 
     nb = len(body_names if body_names is not None else _ANYMAL_BODY_NAMES)
     nj = len(joint_names if joint_names is not None else _ANYMAL_JOINT_NAMES)
@@ -234,13 +261,13 @@ def _build_shared_direct_tasks():
     """Build a high-fanout public-command workload over existing state kernels."""
     from isaaclab.managers import SceneEntityCfg
 
-    from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.kernels_torch import (
+    from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.kernel_ids import (
         ACTIVATION_KERNEL_ID,
         METRIC_KERNEL_ID,
         SAMPLER_KERNEL_ID,
         STATE_KERNEL_ID,
     )
-    from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.multi_task_cfg import (
+    from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.multi_task_cfg import (
         MinMaxSampler,
         MultiTaskCfg,
     )
@@ -319,13 +346,13 @@ def _build_future_synthetic_tasks(*, interleave: bool = False):
     """Build a wide public-command workload over production state kernels."""
     from isaaclab.managers import SceneEntityCfg
 
-    from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.kernels_torch import (
+    from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.kernel_ids import (
         ACTIVATION_KERNEL_ID,
         METRIC_KERNEL_ID,
         SAMPLER_KERNEL_ID,
         STATE_KERNEL_ID,
     )
-    from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.multi_task_cfg import (
+    from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.multi_task_cfg import (
         MinMaxSampler,
         MultiTaskCfg,
     )
@@ -405,7 +432,7 @@ def _build_future_synthetic_tasks(*, interleave: bool = False):
 
 def build_mock_command(num_envs: int, device: str, dispatch_backend: str, preset: str | None = None):
     """Construct a real command term against a mocked env and synthetic readers."""
-    from isaaclab_tasks.core.multi_task.mdp.commands import multi_task_command as mtc_mod
+    import isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.multi_task_command as mtc_mod
     from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.multi_task_command import MultiTaskCommand
     from isaaclab_tasks.core.multi_task.multi_task_env_cfg import MultiTaskEnvCfg
     from isaaclab_tasks.core.multi_task.terrain.mdp_presets.multitask_presets import MultiTaskTasksPresetCfg

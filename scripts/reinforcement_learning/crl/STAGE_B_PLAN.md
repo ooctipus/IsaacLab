@@ -148,7 +148,7 @@ Brax spec is the finicky part).
 ## Pointers for the implementer
 
 - `dep/scaling-crl/envs/ant.py` — reference obs/reward/termination impls.
-- `source/isaaclab_tasks/isaaclab_tasks/manager_based/locomotion/position/` —
+- `source/isaaclab_tasks/isaaclab_tasks/core/multi_task/position_env_cfg.py` —
   closest IsaacLab analog to copy structurally.
 - ``isaaclab.sensors.ContactSensorCfg`` for the "unhealthy termination" check.
 - Keep ``observations.enable_corruption=False`` during reproduction runs —

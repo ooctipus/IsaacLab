@@ -41,4 +41,4 @@ class DefaultJointPositionStaticAction(JointAction):
 
     def apply_actions(self):
         # set position targets
-        self._asset.set_joint_position_target(self._default_actions, joint_ids=self._joint_ids)
+        self._asset.actuators.target_command.set_position_index(value=self._default_actions, joint_ids=self._joint_ids)

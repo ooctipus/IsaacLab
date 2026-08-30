@@ -32,7 +32,7 @@ D. ``global_materialize`` - Two launches, producers write to a global array and
 Run with ``./isaaclab.sh -p`` (Warp + torch must be importable):
 
     ./isaaclab.sh -p -m \\
-      isaaclab_tasks.core.multi_task.mdp.commands.benchmark.bench_tile_fusion_testbed \\
+      isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.benchmark.bench_tile_fusion_testbed \\
       --num_envs 16384 --k_max 8 --gather_size 3 --runs 500
 
     # Sweep fanout (num_signatures from 1 to k_max):

@@ -18,7 +18,7 @@ def _init_warp():
     wp.init()
 
 
-ANYMAL_USD = "/home/zhengyuz/Downloads/ANYmal-C/anymal_c.usd"
+ANYMAL_USD = "https://uwlab-assets.s3.us-west-004.backblazeb2.com/Robots/ANYbotics/ANYmal-C/anymal_c.usd"
 DEVICE = "cuda:0"
 DEFAULT_JPOS = {
     ".*HAA": 0.0,
@@ -53,6 +53,10 @@ class TestNewtonKinematics:
         jq = kin.default_joint_q[7:]
         assert len(jq) > 0
         assert not np.allclose(jq, 0), "Joint positions should be non-zero from dict"
+
+    @pytest.mark.skipif(not wp.is_device_available("cuda:0"), reason="GPU required")
+    def test_uses_coordinate_aligned_joint_targets(self, kin):
+        assert kin.model.use_coord_layout_targets is True
 
     @pytest.mark.skipif(not wp.is_device_available("cuda:0"), reason="GPU required")
     def test_find_joint_dof_indices(self, kin):

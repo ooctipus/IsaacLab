@@ -25,7 +25,7 @@ class NewtonKinematicsCfg:
     """
 
     usd_path: str = MISSING  # type: ignore[assignment]
-    """Path to the robot USD file."""
+    """Local path or remote URL to the robot USD file."""
 
     device: str = "cuda:0"
     """Warp device string."""

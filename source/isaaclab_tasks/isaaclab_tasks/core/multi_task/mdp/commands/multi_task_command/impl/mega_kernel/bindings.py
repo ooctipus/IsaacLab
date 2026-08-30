@@ -5,9 +5,9 @@
 
 """Backend-owned execution plan for the current mega-kernel layout.
 
-Pure Warp — no ``import torch``. Slab resolution is direct: each
-``BUFFER_KIND`` maps to a stable ``wp.array`` exposed by the IsaacLab scene
-(via ``ProxyArray.warp``). Spec/env-slot/output Warp views are owned by
+Slab resolution is direct: each ``BUFFER_KIND`` maps to a stable ``wp.array``
+exposed by the IsaacLab scene (via ``ProxyArray.warp``). Spec/env-slot/output
+Warp views are owned by
 :class:`MultiTaskCommandWarp` and consumed here through ``command.spec_wp``,
 ``command.env_slots_wp``, ``command.state_wp``, ``command.outputs_wp``, and
 ``command.composer_state_wp``.
@@ -20,11 +20,11 @@ from typing import TYPE_CHECKING
 
 import warp as wp
 
-from ..kernel_ids import BUFFER_KIND
+from ...kernel_ids import BUFFER_KIND
 from ..kernels_wp import ComposerState, EnvSlots, Outputs, StateAccess, SubtaskSpec
 
 if TYPE_CHECKING:
-    from ..multi_task_command_warp import MultiTaskCommandWarp
+    from ...multi_task_command_warp import MultiTaskCommandWarp
 
 
 @dataclass
@@ -94,7 +94,7 @@ class JointMechPowerSlabBinding:
     unified buffer.
     """
 
-    applied_torque_wp: wp.array
+    applied_effort_wp: wp.array
     joint_vel_wp: wp.array
     offset: int
     size: int  # = num_joints
@@ -239,7 +239,7 @@ def _resolve_slabs(
             articulation = command._env.scene[asset_name]
             joint_mech_power_slabs.append(
                 JointMechPowerSlabBinding(
-                    applied_torque_wp=articulation.data.applied_torque.warp,
+                    applied_effort_wp=articulation.actuators.applied_effort.warp,
                     joint_vel_wp=articulation.data.joint_vel.warp,
                     offset=offset,
                     size=size,

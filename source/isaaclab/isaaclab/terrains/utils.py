@@ -11,6 +11,8 @@ import torch
 import trimesh
 import warp as wp
 
+from pxr import UsdGeom
+
 import isaaclab.sim as sim_utils
 from isaaclab.sim.spawners.materials import spawn_physics_material
 from isaaclab.utils.warp import raycast_mesh

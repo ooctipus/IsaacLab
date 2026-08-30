@@ -157,10 +157,10 @@ class FastTerrainScanner(SensorBase):
     def reset(self, env_ids: Sequence[int] | None = None, env_mask: wp.array | None = None) -> None:
         """Reset per-env drift values and timing state."""
         super().reset(env_ids, env_mask)
-        if env_ids is not None:
-            num_envs_ids = len(env_ids)
-        elif env_mask is not None:
+        if env_mask is not None:
             env_ids = wp.to_torch(env_mask).nonzero(as_tuple=False).squeeze(-1)
+            num_envs_ids = len(env_ids)
+        elif env_ids is not None:
             num_envs_ids = len(env_ids)
         else:
             env_ids = slice(None)

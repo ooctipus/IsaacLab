@@ -26,6 +26,7 @@ from .robot_presets import (
     NonFootContactBodyNamesCfg,
     RobotArticulationCfg,
     SyncFootPairsCfg,
+    ViewerOriginTrackPathCfg,
 )
 
 try:
@@ -39,6 +40,7 @@ if mewtwo is not None and hasattr(mewtwo, "MEWTWO_CFG"):
     RobotArticulationCfg.mewtwo = _MEWTWO_CFG
     HeightScannerPrimPathCfg.mewtwo = "{ENV_REGEX_NS}/Robot/Pelvis"
     BaseBodyNameCfg.mewtwo = "Pelvis"
+    ViewerOriginTrackPathCfg.mewtwo = f"robot/{BaseBodyNameCfg.mewtwo}"
     NonFootContactBodyNamesCfg.mewtwo = "^(?!.*(?:Toe|Thumb|Index|Pinky|Coccyx.*)).*$"
     AsyncFootPairsCfg.mewtwo = (("RightToe", "LeftToe"),)
     SyncFootPairsCfg.mewtwo = ()

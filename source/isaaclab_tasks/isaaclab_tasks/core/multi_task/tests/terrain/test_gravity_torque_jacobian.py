@@ -20,7 +20,7 @@ import pytest
 import torch
 import warp as wp
 
-ANYMAL_USD = "/home/zhengyuz/Downloads/ANYmal-C/anymal_c.usd"
+ANYMAL_USD = "https://uwlab-assets.s3.us-west-004.backblazeb2.com/Robots/ANYbotics/ANYmal-C/anymal_c.usd"
 DEVICE = "cuda:0"
 
 

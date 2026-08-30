@@ -237,6 +237,17 @@ def test_play_entrypoints_route_through_frontend_factory() -> None:
         assert "add_frontend_args(parser)" in source, f"{script.name} does not expose --frontend"
 
 
+def test_rsl_rl_entrypoints_construct_the_configured_runner() -> None:
+    """RSL-RL runner selection remains owned by the agent configuration."""
+    backend_dir = _repo_root() / "source" / "isaaclab_rl" / "isaaclab_rl" / "entrypoints" / "backends"
+    for action in ("train", "play"):
+        script = backend_dir / f"{action}_rsl_rl.py"
+        source = script.read_text()
+        assert "agent_cfg.class_type(" in source, f"{script.name} ignores the configured runner class"
+        assert "from rsl_rl.runners import" not in source, f"{script.name} hard-codes upstream runner classes"
+        assert "agent_cfg.class_name ==" not in source, f"{script.name} restricts custom runner classes"
+
+
 def test_create_isaaclab_env_uses_registered_torch_env_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     """The shared factory preserves the existing Gym path when no frontend is selected."""
     expected_env = object()

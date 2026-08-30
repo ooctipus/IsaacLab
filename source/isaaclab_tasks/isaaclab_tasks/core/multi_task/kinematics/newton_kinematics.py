@@ -23,6 +23,8 @@ import warp as wp
 from newton import GeoType, JointType
 from newton._src.sim.ik.ik_common import eval_fk_batched as _newton_eval_fk_batched
 
+from isaaclab.utils.assets import check_file_path, retrieve_file_path
+
 from .newton_kinematics_cfg import NewtonKinematicsCfg  # re-exported for backcompat
 
 __all__ = ["NewtonKinematics", "NewtonKinematicsCfg"]
@@ -52,11 +54,23 @@ class NewtonKinematics:
 
     def __init__(self, cfg: NewtonKinematicsCfg):
         self.cfg = cfg
-        self.usd_path = str(cfg.usd_path)
+        usd_path = str(cfg.usd_path)
+        status = check_file_path(usd_path)
+        if status == 0:
+            raise FileNotFoundError(f"USD not found: {usd_path}")
+        self.usd_path = retrieve_file_path(usd_path, force_download=False) if status == 2 else usd_path
 
-        self.builder = newton.ModelBuilder()
-        result = self.builder.add_usd(self.usd_path, collapse_fixed_joints=cfg.collapse_fixed_joints)
-        self.model = self.builder.finalize(device=cfg.device)
+        # Newton 1.5 deprecates its DOF-shaped position-target layout because it
+        # misaligns targets after free or ball joints. The setting is process
+        # global, so scope it to this model build and restore the caller's state.
+        previous_target_layout = newton.use_coord_layout_targets
+        try:
+            newton.use_coord_layout_targets = True
+            self.builder = newton.ModelBuilder()
+            result = self.builder.add_usd(self.usd_path, collapse_fixed_joints=cfg.collapse_fixed_joints)
+            self.model = self.builder.finalize(device=cfg.device)
+        finally:
+            newton.use_coord_layout_targets = previous_target_layout
 
         path_body_map: dict[str, int] = result.get("path_body_map", {})
         names = [""] * self.model.body_count

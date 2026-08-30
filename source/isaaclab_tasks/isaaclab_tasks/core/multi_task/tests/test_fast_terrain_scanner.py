@@ -31,6 +31,9 @@ if importlib.util.find_spec("isaaclab.app") is None:
 
 from isaaclab.app import AppLauncher
 
+if not AppLauncher.is_available():
+    pytest.skip("Full Isaac Sim runtime not available.", allow_module_level=True)
+
 simulation_app = AppLauncher(headless=True).app
 
 import torch

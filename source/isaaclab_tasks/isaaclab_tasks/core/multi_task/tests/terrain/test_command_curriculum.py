@@ -236,12 +236,16 @@ class _MockRobot:
         body_ids = [self.body_names.index(name) for name in names]
         return body_ids, [self.body_names[body_id] for body_id in body_ids]
 
-    def write_root_state_to_sim(self, root_state: torch.Tensor, env_ids: torch.Tensor):
-        self._root_state_w[env_ids] = root_state
-        self._root_quat_w[env_ids] = root_state[:, 3:7]
-        self.calls.append(("root_state", env_ids.clone(), root_state.clone()))
+    def write_root_link_pose_to_sim_index(self, root_pose: torch.Tensor, env_ids: torch.Tensor):
+        self._root_state_w[env_ids, :7] = root_pose
+        self._root_quat_w[env_ids] = root_pose[:, 3:7]
+        self.calls.append(("root_pose", env_ids.clone(), root_pose.clone()))
 
-    def write_joint_state_to_sim(self, position: torch.Tensor, velocity: torch.Tensor, env_ids: torch.Tensor):
+    def write_root_com_velocity_to_sim_index(self, root_velocity: torch.Tensor, env_ids: torch.Tensor):
+        self._root_state_w[env_ids, 7:] = root_velocity
+        self.calls.append(("root_velocity", env_ids.clone(), root_velocity.clone()))
+
+    def write_joint_state_to_sim_index(self, position: torch.Tensor, velocity: torch.Tensor, env_ids: torch.Tensor):
         self._joint_pos[env_ids] = position
         self._joint_vel[env_ids] = velocity
         self.calls.append(("joint_state", env_ids.clone(), torch.cat([position, velocity], dim=-1).clone()))
@@ -660,7 +664,7 @@ class TestCommandTerm:
         """After ``_resample_command``:
         * target pos = spawn_states[target_idx, :3] + params[task_idx, :3]
         * hold column = params[task_idx, 12]
-        * robot received write_root_state with spawn_states[spawn_idx, :13]
+        * robot received root pose and COM velocity writes from spawn_states[spawn_idx, :13]
         * cmd_mask equals table.task_mask at task_idx
         """
         torch.manual_seed(123)
@@ -693,11 +697,15 @@ class TestCommandTerm:
         assert (term._payload.cmd_mask[env_ids] == table.task_mask[task_idx]).all()
 
         # Robot was teleported to the spawn reset state associated with each task.
-        root_calls = [c for c in term.robot.calls if c[0] == "root_state"]
-        assert len(root_calls) == 1
-        _, call_env_ids, root_state = root_calls[0]
+        root_pose_calls = [c for c in term.robot.calls if c[0] == "root_pose"]
+        root_velocity_calls = [c for c in term.robot.calls if c[0] == "root_velocity"]
+        assert len(root_pose_calls) == len(root_velocity_calls) == 1
+        _, call_env_ids, root_pose = root_pose_calls[0]
+        _, velocity_env_ids, root_velocity = root_velocity_calls[0]
         torch.testing.assert_close(call_env_ids, env_ids)
-        torch.testing.assert_close(root_state, table.spawn_states[spawn_state_idx, :13])
+        torch.testing.assert_close(velocity_env_ids, env_ids)
+        torch.testing.assert_close(root_pose, table.spawn_states[spawn_state_idx, :7])
+        torch.testing.assert_close(root_velocity, table.spawn_states[spawn_state_idx, 7:13])
 
     def test_spawn_states_are_not_shifted_by_env_origins(self):
         """Task-table states are already valid world terrain poses."""
@@ -713,9 +721,9 @@ class TestCommandTerm:
         task_idx = term.cmd_indices[env_ids]
         spawn_state_idx = table.spawn_index[task_idx]
 
-        root_calls = [c for c in term.robot.calls if c[0] == "root_state"]
-        _, _, root_state = root_calls[-1]
-        torch.testing.assert_close(root_state[:, :3], table.spawn_states[spawn_state_idx, :3])
+        root_pose_calls = [c for c in term.robot.calls if c[0] == "root_pose"]
+        _, _, root_pose = root_pose_calls[-1]
+        torch.testing.assert_close(root_pose[:, :3], table.spawn_states[spawn_state_idx, :3])
 
     def test_replicated_terrain_spawn_states_are_shifted_by_env_origins(self):
         """Replicated terrain task-table states are placed into each env world slot."""
@@ -735,9 +743,9 @@ class TestCommandTerm:
         task_idx = term.cmd_indices[env_ids]
         spawn_state_idx = table.spawn_index[task_idx]
 
-        root_calls = [c for c in term.robot.calls if c[0] == "root_state"]
-        _, _, root_state = root_calls[-1]
-        torch.testing.assert_close(root_state[:, :3], table.spawn_states[spawn_state_idx, :3] + origins)
+        root_pose_calls = [c for c in term.robot.calls if c[0] == "root_pose"]
+        _, _, root_pose = root_pose_calls[-1]
+        torch.testing.assert_close(root_pose[:, :3], table.spawn_states[spawn_state_idx, :3] + origins)
 
     def test_terrain_task_target_uses_valid_target_state(self):
         """Terrain commands should target the sampled IK-valid state, not random pose params."""

@@ -20,9 +20,7 @@ import pytest
 
 _FORBIDDEN_PREFIXES = ("pxr", "omni", "carb", "isaacsim", "scipy")
 
-_FACTORY_TASKS = [
-    "Isaac-Factory-v0",
-]
+_FACTORY_TASKS = ["Isaac-Factory-v0", "IsaacContrib-Factory-Franka"]
 
 
 def _build_hydra_check_script(task_name: str) -> str:

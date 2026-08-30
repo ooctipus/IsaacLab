@@ -26,7 +26,7 @@ ship with the module:
 
 - :class:`~.impl.multi_task_command_torch.MultiTaskCommandTorch` — PyTorch
   reference, selected by ``cfg.dispatch_backend="torch"``.
-- :class:`~.impl.multi_task_command_warp.MultiTaskCommandWarp` — Warp backend
+- :class:`~.multi_task_command_warp.MultiTaskCommandWarp` — Warp composition root
   switchboard, selected by any non-``"torch"`` backend string.
 
 The :meth:`__new__` factory inspects ``cfg.dispatch_backend`` and returns
@@ -66,8 +66,8 @@ from .impl.kernels_torch import (
     METRIC_KERNELS,
     SAMPLER_KERNELS,
     STATE_KERNEL_COMPUTES,
-    STATE_KERNEL_ID,
 )
+from .kernel_ids import STATE_KERNEL_ID
 
 # Note: ``BUFFER_KIND_READERS`` is imported into this module (even though the
 # base class doesn't dereference it) so tests can ``patch.object(mtc_mod,
@@ -78,7 +78,7 @@ _ = BUFFER_KIND_READERS
 from .spec import build_spec
 
 if TYPE_CHECKING:
-    from .impl.multi_task_cfg import MultiTaskCfg
+    from .multi_task_cfg import MultiTaskCfg
 
 __all__ = ["MultiTaskCommand"]
 
@@ -110,7 +110,7 @@ class MultiTaskCommand(CommandTerm):
                 return object.__new__(MultiTaskCommandTorch)
             # Deferred import avoids a circular dependency at module-load
             # time (the subclass imports from this module).
-            from .impl.multi_task_command_warp import MultiTaskCommandWarp
+            from .multi_task_command_warp import MultiTaskCommandWarp
 
             return object.__new__(MultiTaskCommandWarp)
         return object.__new__(cls)

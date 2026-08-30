@@ -114,8 +114,6 @@ def run(argv: list[str]) -> None:
 
 def _run(args_cli: argparse.Namespace) -> None:
     """Execute RSL-RL training with parsed arguments."""
-    from rsl_rl.runners import DistillationRunner, OnPolicyRunner
-
     from isaaclab.app import launch_simulation
     from isaaclab.envs import DirectMARLEnvCfg
     from isaaclab.utils.assets import retrieve_file_path
@@ -207,12 +205,7 @@ def _run(args_cli: argparse.Namespace) -> None:
             report_activity(None)
 
             report_activity("Building policy")
-            if agent_cfg.class_name == "OnPolicyRunner":
-                runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
-            elif agent_cfg.class_name == "DistillationRunner":
-                runner = DistillationRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
-            else:
-                raise ValueError(f"Unsupported runner class: {agent_cfg.class_name}")
+            runner = agent_cfg.class_type(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
             report_activity(None)
 
             # configure_seed must run after runner construction so torch determinism does not disturb its initialization

@@ -3,7 +3,8 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-from isaaclab.envs.mdp import ActionTerm, JointActionCfg
+from isaaclab.envs.mdp import JointActionCfg
+from isaaclab.managers import ActionTerm
 from isaaclab.utils.configclass import configclass
 
 from .actions import DefaultJointPositionStaticAction

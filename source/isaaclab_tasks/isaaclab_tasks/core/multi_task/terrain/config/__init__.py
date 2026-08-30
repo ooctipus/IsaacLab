@@ -8,8 +8,8 @@
 A single gym environment is registered.  The robot (and every robot-specific
 override) is chosen declaratively through the preset system -- e.g.::
 
-    ./isaaclab.sh -p scripts/reinforcement_learning/rsl_rl/train.py \
-        --task Isaac-Position-v0 presets=anymal_c
+    uv run isaaclab train --rl_library rsl_rl --task Isaac-Position-v0 \
+        presets=anymal_c
 
 See :mod:`.mdp_presets.robot_presets` for the robot registry and how to add
 new robots.

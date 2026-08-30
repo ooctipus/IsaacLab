@@ -18,7 +18,7 @@ inspect to see exactly what the wandb upload will look like at log time.
 Run::
 
     ./isaaclab.sh -p \
-        source/isaaclab_tasks/isaaclab_tasks/manager_based/multi_task/terrain/utils/tools/preview_spawn_scatter.py \
+        source/isaaclab_tasks/isaaclab_tasks/core/multi_task/terrain/scripts/preview_spawn_scatter.py \
         --headless --num_envs 16 --output /tmp/spawn_scatter_preview.png
 """
 

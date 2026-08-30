@@ -6,12 +6,13 @@
 from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg, NewtonCollisionPipelineCfg, NewtonShapeCfg
 from isaaclab_physx.physics import PhysxCfg
 
-from isaaclab.envs import ManagerBasedRLEnvCfg, ViewerCfg
+from isaaclab.envs import ManagerBasedRLEnvCfg
 from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import SceneEntityCfg
+from isaaclab.physics import PhysxAutoCfg
 from isaaclab.utils.configclass import configclass
 
 from isaaclab_tasks.core.multi_task.curriculum import StateLayoutCfg, SuccessMonitorCfg
@@ -329,16 +330,19 @@ class FactoryCurriculumsCfg:
 class FactoryPhysicsCfg(PresetCfg):
     """Physics-backend preset for Factory tasks.
 
-    Selected via ``presets=physx`` (default) or ``presets=newton_mjwarp``. The PhysX
-    variant keeps Factory's contact-rich solver tuning; the Newton variant follows Newton's
-    reference ``example_nut_bolt_sdf`` (MuJoCo/Newton solver path): few constraint iterations
-    with many line-search iterations, ``impratio=1.0``, ``num_substeps=5``, a small global
-    shape gap, and Newton's SDF collision pipeline (rather than MuJoCo's internal contacts).
-    Capacity knobs (``njmax``/``nconmax``) are kept larger than the bare nut/bolt demo since
-    Factory's scene also contains the robot, NIST board, and table.
+    Selected via ``physics=isaacsim_physx`` (default), ``physics=physx`` for
+    automatic PhysX selection, or ``physics=newton_mjwarp``. The concrete
+    PhysX variant keeps Factory's contact-rich solver tuning; the Newton
+    variant follows Newton's reference ``example_nut_bolt_sdf``
+    (MuJoCo/Newton solver path): few constraint iterations with many
+    line-search iterations, ``impratio=1.0``, ``num_substeps=5``, a small
+    global shape gap, and Newton's SDF collision pipeline (rather than
+    MuJoCo's internal contacts). Capacity knobs (``njmax``/``nconmax``) are
+    kept larger than the bare nut/bolt demo since Factory's scene also
+    contains the robot, NIST board, and table.
     """
 
-    default = PhysxCfg(
+    isaacsim_physx = PhysxCfg(
         solver_type=1,
         max_position_iteration_count=192,
         max_velocity_iteration_count=1,
@@ -360,7 +364,6 @@ class FactoryPhysicsCfg(PresetCfg):
             impratio=1.0,
             cone="pyramidal",
             update_data_interval=2,
-            ls_parallel=False,
             use_mujoco_contacts=False,
         ),
         collision_cfg=NewtonCollisionPipelineCfg(
@@ -373,7 +376,8 @@ class FactoryPhysicsCfg(PresetCfg):
         debug_mode=False,
         use_cuda_graph=True,
     )
-    physx = default
+    physx = PhysxAutoCfg(isaacsim_physx=isaacsim_physx)
+    default = isaacsim_physx
 
 
 @configclass
@@ -386,26 +390,24 @@ class FactoryBaseEnvCfg(ManagerBasedRLEnvCfg):
     terminations: FactoryTerminationsCfg = FactoryTerminationsCfg()
     rewards: FactoryRewardsCfg = FactoryRewardsCfg()
     curriculum: FactoryCurriculumsCfg = FactoryCurriculumsCfg()
-    viewer: ViewerCfg = ViewerCfg(eye=((3.5, 1.0, 0.35)), lookat=(0.0, 1.0, 0.35))
     actions: RobotActionsCfg = RobotActionsCfg()  # type: ignore
     commands: FactoryCommandsCfg = FactoryCommandsCfg()
 
     # Post initialization
     def __post_init__(self) -> None:
         """Post initialization."""
+        from isaaclab_visualizers.kit import KitVisualizerCfg
+
         # general settings
         self.decimation = 8
         self.episode_length_s = 14.0
         # simulation settings
         self.sim.dt = 0.04 / self.decimation
         self.sim.render_interval = self.decimation
-        # Select the physics backend from the active preset (``presets=physx`` default, or
-        # ``presets=newton_mjwarp`` for the kitless Newton/MuJoCo path). Previously this hardcoded
-        # ``PhysxCfg`` here, which silently overrode ``presets=newton_mjwarp`` and forced Kit to launch.
+        self.sim.default_visualizer_cfg = KitVisualizerCfg(eye=(3.5, 1.0, 0.35), lookat=(0.0, 1.0, 0.35))
+        # Select the physics backend from the active preset. Previously this hardcoded ``PhysxCfg``
+        # here, which silently overrode ``physics=newton_mjwarp`` and forced Kit to launch.
         self.sim.physics = FactoryPhysicsCfg()
 
         self.sim.physics_material.static_friction = 0.5
         self.sim.physics_material.dynamic_friction = 0.5
-
-        self.sim.render.enable_ambient_occlusion = True
-        self.sim.render.enable_dlssg = True

@@ -20,7 +20,7 @@ import warp as wp
 from ..kernels_wp import compute_dense_graph_producers, dispatch_graph_dense, dispatch_graph_dense_compose_fused
 
 if TYPE_CHECKING:
-    from ..multi_task_command_warp import MultiTaskCommandWarp
+    from ...multi_task_command_warp import MultiTaskCommandWarp
     from .bindings import PrimitiveGraphLocalPlan
 
 

@@ -220,7 +220,8 @@ def test_warp_sampler_matches_torch_scores_and_probabilities():
 
     assert torch.allclose(scores_w, scores_t, atol=1e-6)
     assert torch.allclose(probs_w, probs_t, atol=1e-6)
-    samples = warp_sampler.sample(warp_sampler.probabilities(), 16)
+    external_probs = torch.full_like(rates_cuda, 1.0 / layout_cpu.num_items)
+    samples = warp_sampler.sample(external_probs, 16)
     assert samples.shape == (16,)
     assert samples.min() >= 0
     assert samples.max() < layout_cpu.num_items
@@ -229,3 +230,14 @@ def test_warp_sampler_matches_torch_scores_and_probabilities():
     assert samples_g.shape == (16,)
     assert samples_g.min() >= 0
     assert samples_g.max() < layout_cpu.num_items
+
+    probs_ptr = probs_g.data_ptr()
+    samples_ptr = samples_g.data_ptr()
+    updated_rates = torch.linspace(0.05, 0.95, layout_cpu.num_items)
+    rates_cpu.copy_(updated_rates)
+    rates_cuda.copy_(updated_rates.cuda())
+    probs_t = torch_sampler.probabilities()
+    probs_g, samples_g = warp_sampler.probabilities_and_sample(16)
+    assert torch.allclose(probs_g.cpu(), probs_t, atol=1e-6)
+    assert probs_g.data_ptr() == probs_ptr
+    assert samples_g.data_ptr() == samples_ptr

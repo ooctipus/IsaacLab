@@ -14,6 +14,7 @@ __all__ = [
     "RetargetLateralHipJointPatternCfg",
     "RobotArticulationCfg",
     "SyncFootPairsCfg",
+    "ViewerOriginTrackPathCfg",
 ]
 
 from .robot_presets import (
@@ -27,6 +28,7 @@ from .robot_presets import (
     RetargetLateralHipJointPatternCfg,
     RobotArticulationCfg,
     SyncFootPairsCfg,
+    ViewerOriginTrackPathCfg,
 )
 
 # Wildcard imports force eager module load so each robot's class-attribute

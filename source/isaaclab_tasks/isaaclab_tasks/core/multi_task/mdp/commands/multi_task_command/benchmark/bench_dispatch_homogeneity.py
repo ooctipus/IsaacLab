@@ -29,7 +29,8 @@ The point is not exact command semantics; it is to quantify whether the
 homogeneity hierarchy is worth pursuing before touching production kernels.
 Run with:
 
-    ./isaaclab.sh -p -m isaaclab_tasks.core.multi_task.mdp.commands.benchmark.bench_dispatch_homogeneity
+    ./isaaclab.sh -p -m \
+        isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.benchmark.bench_dispatch_homogeneity
 """
 
 from __future__ import annotations

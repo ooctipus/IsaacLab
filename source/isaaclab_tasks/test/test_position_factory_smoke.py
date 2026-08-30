@@ -37,6 +37,25 @@ import torch
 import isaaclab_tasks  # noqa: F401 -- registers the gym tasks
 
 
+def test_factory_task_registrations_preserve_separate_owners() -> None:
+    """Core and contrib Factory tasks should keep their distinct config roots."""
+    expected = {
+        "Isaac-Factory-v0": {
+            "env_cfg_entry_point": "isaaclab_tasks.core.multi_task.factory_env_cfg:FactoryBaseEnvCfg",
+            "rsl_rl_cfg_entry_point": (
+                "isaaclab_tasks.core.multi_task.factory.config.agents.rsl_rl_ppo_cfg:FactoryPPORunnerCfg"
+            ),
+        },
+        "IsaacContrib-Factory-Franka": {
+            "env_cfg_entry_point": "isaaclab_tasks.contrib.nist.factory_env_cfg:FactoryEnvCfg",
+            "rsl_rl_cfg_entry_point": "isaaclab_tasks.contrib.nist.config.agents.rsl_rl_ppo_cfg:FactoryPPORunnerCfg",
+        },
+    }
+
+    for task_name, entry_points in expected.items():
+        assert gym.spec(task_name).kwargs == entry_points
+
+
 @pytest.mark.parametrize("task_name", ["Isaac-Position-v0", "Isaac-Factory-v0"])
 def test_env_cfg_constructs(task_name: str) -> None:
     """The env cfg referenced by ``env_cfg_entry_point`` imports + constructs."""
@@ -54,24 +73,57 @@ def test_env_cfg_constructs(task_name: str) -> None:
     assert hasattr(cfg, "events")
 
 
-def test_factory_accumulator_success_rate_callback_targets_monitor_success_rate() -> None:
-    """Factory accumulator curriculum should bind the reset monitor tensor."""
+@pytest.mark.parametrize("task_name", ["Isaac-Position-v0", "Isaac-Factory-v0"])
+def test_env_cfg_physx_presets_expose_current_selectors(task_name: str) -> None:
+    """Concrete and automatic PhysX selectors should follow the current preset contract."""
+    from isaaclab_physx.physics import PhysxCfg
+
+    from isaaclab.physics import PhysxAutoCfg
+
+    from isaaclab_tasks.utils.hydra import collect_presets
+
+    spec = gym.spec(task_name)
+    module_path, cls_name = spec.kwargs["env_cfg_entry_point"].split(":")
+    cfg = getattr(importlib.import_module(module_path), cls_name)()
+    presets = collect_presets(cfg)
+
+    physics = presets["sim.physics"]
+    assert isinstance(physics["isaacsim_physx"], PhysxCfg)
+    assert isinstance(physics["physx"], PhysxAutoCfg)
+    assert physics["physx"].isaacsim_physx == physics["isaacsim_physx"]
+    assert physics["default"] == physics["isaacsim_physx"]
+
+    for path, fields in presets.items():
+        if "physx" in fields and not isinstance(fields["physx"], PhysxAutoCfg):
+            assert fields.get("isaacsim_physx") == fields["physx"], path
+
+
+def test_factory_newton_collision_properties_use_solver_common_schema() -> None:
+    """Newton assets should not wrap their mesh properties in a PhysX-only collision config."""
+    from isaaclab.sim.schemas import CollisionBaseCfg
+
+    from isaaclab_tasks.core.multi_task.factory.factory_assets_cfg import FRANKA_PANDA_NEWTON_CFG
+
+    collision_props = FRANKA_PANDA_NEWTON_CFG.spawn.collision_props
+    assert type(collision_props) is CollisionBaseCfg
+    assert collision_props.mesh_collision_property.mesh_approximation_name == "convexHull"
+
+
+def test_factory_difficulty_callback_targets_reset_state_success_rates() -> None:
+    """Factory difficulty curriculum should bind the command-owned success rates."""
     spec = gym.spec("Isaac-Factory-v0")
     module_path, cls_name = spec.kwargs["env_cfg_entry_point"].split(":")
     cfg_cls = getattr(importlib.import_module(module_path), cls_name)
     cfg = cfg_cls()
     callback = cfg.curriculum.difficulty_scheduler.params["success_rate_callback"]
 
-    expected = "env.event_manager.get_term_cfg('reset_strategies').func.monitor_success_rate"
-    assert callback.default == expected
-    assert callback.accumulator == expected
+    expected = "env.command_manager.get_term('reset_state').success_rates"
+    assert callback == expected
 
     rates = torch.tensor([0.5, 1.0])
-    reset_accumulator = SimpleNamespace(monitor_success_rate=rates)
-    eval_env = SimpleNamespace(
-        event_manager=SimpleNamespace(get_term_cfg=lambda _name: SimpleNamespace(func=reset_accumulator))
-    )
-    assert eval(callback.accumulator, {}, {"env": eval_env}) is rates  # noqa: S307
+    reset_state = SimpleNamespace(success_rates=rates)
+    eval_env = SimpleNamespace(command_manager=SimpleNamespace(get_term=lambda _name: reset_state))
+    assert eval(callback, {}, {"env": eval_env}) is rates  # noqa: S307
 
 
 def test_factory_difficulty_scheduler_waits_for_accumulator_rates() -> None:
@@ -196,6 +248,9 @@ def test_env_cfg_to_dict_serialises(task_name: str) -> None:
         "isaaclab_tasks.core.multi_task.curriculum.state_buffer",
         "isaaclab_tasks.core.multi_task.curriculum.success_monitor",
         "isaaclab_tasks.core.multi_task.curriculum.reset_state",
+        "isaaclab_tasks.core.multi_task.mdp.observations",
+        "isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.benchmark.bench_future_heterogeneous_dispatch",
+        "isaaclab_tasks.core.multi_task.terrain.mdp.actions.actions_cfg",
         "isaaclab_tasks.core.multi_task.terrain.terrains.patch_sampling.cfg",
         "isaaclab_tasks.core.multi_task.terrain.terrains.patch_sampling.morph",
         "isaaclab_tasks.core.multi_task.terrain.terrains.patch_sampling.rejection",

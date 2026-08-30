@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 import warp as wp
 
-from .kernel_ids import STATE_KERNEL_ID
+from ..kernel_ids import STATE_KERNEL_ID
 
 if TYPE_CHECKING:
     import torch

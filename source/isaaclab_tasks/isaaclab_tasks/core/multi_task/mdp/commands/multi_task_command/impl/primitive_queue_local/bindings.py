@@ -5,10 +5,10 @@
 
 """Backend-owned execution plan for primitive-queued local outputs.
 
-Pure Warp — no ``import torch``. Spec/env-slot/output Warp views come from
-:class:`MultiTaskCommandWarp` (``command.spec_wp`` and friends); the
-per-resample refresh uses ``wp.to_torch`` views of the plan's Warp-owned
-queue arrays plus tensor methods on those views (no ``torch.X`` symbols).
+Spec/env-slot/output Warp views come from :class:`MultiTaskCommandWarp`
+(``command.spec_wp`` and friends); the cold per-resample refresh uses
+``wp.to_torch`` views of the plan's Warp-owned queue arrays plus tensor
+methods on those views.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 
 import warp as wp
 
-from ..kernel_ids import BUFFER_KIND
+from ...kernel_ids import BUFFER_KIND
 from ..kernels_wp import (
     ComposerState,
     EnvSlots,
@@ -30,7 +30,7 @@ from ..kernels_wp import (
 from ..schedules import NUM_SCHEDULES, SCHEDULE_STATE_KERNELS, validate_schedule_support
 
 if TYPE_CHECKING:
-    from ..multi_task_command_warp import MultiTaskCommandWarp
+    from ...multi_task_command_warp import MultiTaskCommandWarp
 
 
 @dataclass
@@ -93,7 +93,7 @@ class QuatSlabBinding:
 class JointMechPowerSlabBinding:
     """Computed slab ``|τ · q̇|`` — JOINT_MECH_POWER_ABS."""
 
-    applied_torque_wp: wp.array
+    applied_effort_wp: wp.array
     joint_vel_wp: wp.array
     offset: int
     size: int
@@ -254,7 +254,7 @@ def _resolve_slabs(
         elif kind == BUFFER_KIND.JOINT_MECH_POWER_ABS:
             art = command._env.scene[asset_name]
             joint_mech_power_slabs.append(
-                JointMechPowerSlabBinding(art.data.applied_torque.warp, art.data.joint_vel.warp, offset, size)
+                JointMechPowerSlabBinding(art.actuators.applied_effort.warp, art.data.joint_vel.warp, offset, size)
             )
         else:
             raise ValueError(

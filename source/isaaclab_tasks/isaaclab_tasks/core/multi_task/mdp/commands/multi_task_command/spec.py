@@ -30,7 +30,7 @@ from isaaclab.managers import SceneEntityCfg
 if TYPE_CHECKING:
     from isaaclab.scene import InteractiveScene
 
-    from .impl.multi_task_cfg import MultiTaskCfg
+    from .multi_task_cfg import MultiTaskCfg
 
 
 # -----------------------------------------------------------------------------
@@ -363,7 +363,7 @@ def build_spec(cfg: MultiTaskCfg, scene: InteractiveScene, device: torch.device 
        flat targets buffer layout.
     5. Pad sampler params to rectangular ``[M, Pmax]``.
     """
-    from .impl.multi_task_cfg import MultiTaskCfg as _MultiTaskCfg
+    from .multi_task_cfg import MultiTaskCfg as _MultiTaskCfg
 
     task_names = list(cfg.tasks.keys())
     sig_to_sid: dict[tuple, int] = {}
@@ -532,7 +532,7 @@ def build_spec(cfg: MultiTaskCfg, scene: InteractiveScene, device: torch.device 
         K = _resolve_id_count(subtask_asset_cfgs[sid], body_indexed=body_indexed)
         # CONTACT-family kernels reduce K bodies but read the full per_stride
         # block, so override to full block-read size regardless of intra_stride.
-        from .impl.kernels_torch import STATE_KERNEL_ID as _SKID  # noqa: PLC0415
+        from .kernel_ids import STATE_KERNEL_ID as _SKID  # noqa: PLC0415
 
         if skid in (
             int(_SKID.BODY_CONTACT),
@@ -602,7 +602,7 @@ def build_spec(cfg: MultiTaskCfg, scene: InteractiveScene, device: torch.device 
     # after scatter — so downstream obs terms see body-frame deltas without
     # any frame logic. Multiple subtasks sharing (entity, kernel) collapse to
     # one canonical slot; dedup via a set before sorting.
-    from .impl.kernels_torch import STATE_KERNEL_ID as _SKID  # noqa: PLC0415
+    from .kernel_ids import STATE_KERNEL_ID as _SKID  # noqa: PLC0415
 
     _rotatable_kids = {int(_SKID.BODY_POS), int(_SKID.BODY_LIN_VEL), int(_SKID.BODY_ANG_VEL)}
     _reach_by_asset: dict[str, set[int]] = {}
@@ -953,7 +953,7 @@ def _compute_canonical_layout(
 
     Returns ``(reach_width, track_width, per_subtask_offset, per_subtask_stride)``.
     """
-    from .impl.kernels_torch import STATE_KERNEL_ID as SKID
+    from .kernel_ids import STATE_KERNEL_ID as SKID
 
     # Canonical order: walk kernel ids in a fixed enumeration so every entity
     # lays them out in the same order. Stride comes from the subtasks

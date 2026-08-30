@@ -28,15 +28,11 @@ from isaaclab.utils.math import quat_from_euler_xyz
 wp.init()
 
 from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.kernels_torch import (
-    ACTIVATION_KERNEL_ID,
     ACTIVATION_KERNELS,
-    BUFFER_KIND,
     BUFFER_KIND_READERS,
-    SAMPLER_KERNEL_ID,
     SAMPLER_KERNELS,
     STATE_KERNEL_BUFFER_KIND,
     STATE_KERNEL_COMPUTES,
-    STATE_KERNEL_ID,
     _state_identity,
     delta_geometric,
     delta_quaternion,
@@ -44,6 +40,12 @@ from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.kernels
     metric_quaternion,
     state_kernel_intra_body_offset,
     state_kernel_intra_body_stride,
+)
+from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.kernel_ids import (
+    ACTIVATION_KERNEL_ID,
+    BUFFER_KIND,
+    SAMPLER_KERNEL_ID,
+    STATE_KERNEL_ID,
 )
 
 # -----------------------------------------------------------------------------

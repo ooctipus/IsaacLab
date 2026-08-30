@@ -7,14 +7,17 @@
 
 The softplus-smoothed collision residual has a closed-form Jacobian that
 composes the signed-distance gradient with Newton's spatial motion
-subspace. We validate it three ways:
+subspace. We validate it with:
 
 1. Central finite differences on the base-translation and revolute
    joint coordinates (direct perturbation of ``joint_q``).
-2. Parity with the existing autodiff path on every DoF column.
-3. Three probe regimes -- far above terrain, at the surface,
+2. Three probe regimes -- far above terrain, at the surface,
    penetrating -- to exercise both softplus tails and both branches of
    the ``max(sign_pen, z_pen)`` subgradient.
+
+Warp mesh-query kernels do not support backward evaluation, so constructing
+this objective with Newton's explicit autodiff mode must fail clearly instead
+of silently producing zero Jacobians.
 """
 
 from __future__ import annotations
@@ -32,6 +35,7 @@ from isaaclab_tasks.core.multi_task.kinematics import (
     NewtonKinematics,
     NewtonKinematicsCfg,
 )
+from isaaclab_tasks.core.multi_task.terrain.retarget.buffer import RetargetBuffer
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -39,7 +43,7 @@ def _init_warp():
     wp.init()
 
 
-ANYMAL_USD = "/home/zhengyuz/Downloads/ANYmal-C/anymal_c.usd"
+ANYMAL_USD = "https://uwlab-assets.s3.us-west-004.backblazeb2.com/Robots/ANYbotics/ANYmal-C/anymal_c.usd"
 DEVICE = "cuda:0"
 DEFAULT_JPOS = {
     ".*HAA": 0.0,
@@ -101,7 +105,8 @@ def _make_optimizer(
     )
 
     cfg = IKObjectiveTerrainCollisionCfg(weight=weight, margin=margin, n_samples=n_samples)
-    pipeline = SimpleNamespace(kin=kin, foot_body_ids=foot_ids)
+    buffer = RetargetBuffer(1, kin.model.joint_coord_count, kin.model.body_count, len(foot_ids), device=DEVICE)
+    pipeline = SimpleNamespace(kin=kin, foot_body_ids=foot_ids, buffer=buffer)
     obj = IKObjectiveTerrainCollision(cfg, pipeline, wp_mesh)
     impl = IKOptimizerLM(
         model=kin.model,
@@ -177,30 +182,13 @@ def _make_test_config(kin: NewtonKinematics, base_z: float) -> np.ndarray:
 
 
 class TestTerrainCollisionAnalytic:
-    """Validate the analytic Jacobian against FD and autodiff."""
+    """Validate the analytic Jacobian against finite differences."""
 
     @pytest.mark.skipif(not wp.is_device_available("cuda:0"), reason="GPU required")
-    @pytest.mark.parametrize(
-        "regime,base_z",
-        [("far_above", 2.0), ("near_surface", 0.3), ("penetrating", -0.2)],
-    )
-    def test_analytic_matches_autodiff(self, setup, regime, base_z):
+    def test_rejects_unsupported_autodiff(self, setup):
         kin, foot_ids, wp_mesh = setup
-        jq = _make_test_config(kin, base_z)
-
-        impl_a, _ = _make_optimizer(kin, wp_mesh, foot_ids, ik.IKJacobianType.ANALYTIC)
-        impl_ad, _ = _make_optimizer(kin, wp_mesh, foot_ids, ik.IKJacobianType.AUTODIFF)
-
-        J_analytic = _compute_jacobian(impl_a, jq)
-        J_autodiff = _compute_jacobian(impl_ad, jq)
-
-        diff = np.abs(J_analytic - J_autodiff)
-        max_err = float(diff.max())
-        scale = float(np.abs(J_autodiff).max()) + 1e-8
-        rel_err = max_err / scale
-        assert max_err < 1e-3 or rel_err < 1e-3, (
-            f"[{regime}] analytic vs autodiff max_abs={max_err:.3e} (rel={rel_err:.3e})"
-        )
+        with pytest.raises(ValueError, match="does not support autodiff"):
+            _make_optimizer(kin, wp_mesh, foot_ids, ik.IKJacobianType.AUTODIFF)
 
     @pytest.mark.skipif(not wp.is_device_available("cuda:0"), reason="GPU required")
     @pytest.mark.parametrize(
@@ -212,8 +200,7 @@ class TestTerrainCollisionAnalytic:
         jq = _make_test_config(kin, base_z)
 
         impl_a, _ = _make_optimizer(kin, wp_mesh, foot_ids, ik.IKJacobianType.ANALYTIC)
-        impl_fd, _ = _make_optimizer(kin, wp_mesh, foot_ids, ik.IKJacobianType.AUTODIFF)
-        # ^ reuse an autodiff-mode impl for residual-only evaluations in FD
+        impl_fd, _ = _make_optimizer(kin, wp_mesh, foot_ids, ik.IKJacobianType.ANALYTIC)
 
         J_analytic = _compute_jacobian(impl_a, jq)
         coord_to_dof = _coord_to_dof(kin)

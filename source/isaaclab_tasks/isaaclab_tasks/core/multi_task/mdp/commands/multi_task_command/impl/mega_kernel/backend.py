@@ -16,8 +16,9 @@ Supports two slot-ordering modes through the same execution pipeline:
 Same plan, same kernels, same launches — only the slot ordering established
 at resample time differs.
 
-Pure Warp — no ``import torch``. The per-resample sort calls tensor methods
-on Warp-typed views of the command's slot tables (no ``torch.X`` symbols).
+The hot path launches Warp kernels. The cold per-resample sort uses tensor
+operations over the command's slot tables and a ``wp.to_torch`` view of the
+backend's schedule lookup.
 """
 
 from __future__ import annotations
@@ -36,7 +37,7 @@ from .read import fill_unified_buffer_warp
 from .rotation import rotate_canonical_slots_to_body_frame_warp
 
 if TYPE_CHECKING:
-    from ..multi_task_command_warp import MultiTaskCommandWarp
+    from ...multi_task_command_warp import MultiTaskCommandWarp
 
 
 SlotOrder = Literal["natural", "schedule"]

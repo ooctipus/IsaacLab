@@ -86,13 +86,13 @@ def make_minimal_multi_task_env_cfg():
     from isaaclab.sim import SimulationCfg
     from isaaclab.utils import configclass
 
-    from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.kernels_torch import (
+    from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.kernel_ids import (
         ACTIVATION_KERNEL_ID,
         METRIC_KERNEL_ID,
         SAMPLER_KERNEL_ID,
         STATE_KERNEL_ID,
     )
-    from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.multi_task_cfg import (
+    from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.multi_task_cfg import (
         MinMaxSampler,
         MultiTaskCfg,
     )
@@ -211,13 +211,13 @@ def make_heterogeneous_multi_task_env_cfg(dispatch_backend: str = "torch"):
     from isaaclab.sim import SimulationCfg
     from isaaclab.utils import configclass
 
-    from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.kernels_torch import (
+    from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.kernel_ids import (
         ACTIVATION_KERNEL_ID,
         METRIC_KERNEL_ID,
         SAMPLER_KERNEL_ID,
         STATE_KERNEL_ID,
     )
-    from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.multi_task_cfg import (
+    from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.multi_task_cfg import (
         MinMaxSampler,
         MultiTaskCfg,
     )

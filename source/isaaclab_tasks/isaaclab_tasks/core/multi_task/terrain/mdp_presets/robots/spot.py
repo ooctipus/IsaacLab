@@ -21,6 +21,7 @@ from .robot_presets import (
     RetargetLateralHipJointPatternCfg,
     RobotArticulationCfg,
     SyncFootPairsCfg,
+    ViewerOriginTrackPathCfg,
 )
 
 _SPOT_CFG: ArticulationCfg = SPOT_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
@@ -28,6 +29,7 @@ _SPOT_CFG: ArticulationCfg = SPOT_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
 RobotArticulationCfg.spot = _SPOT_CFG
 HeightScannerPrimPathCfg.spot = "{ENV_REGEX_NS}/Robot/body"
 BaseBodyNameCfg.spot = "body"
+ViewerOriginTrackPathCfg.spot = f"robot/{BaseBodyNameCfg.spot}"
 # Spot feet are lowercase ``*_foot`` rather than the default ``.*FOOT.*``.
 FootBodyNamesCfg.spot = ".*_foot"
 AsyncFootPairsCfg.spot = (

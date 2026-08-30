@@ -36,7 +36,7 @@ from isaaclab_physx.sensors import ContactSensorCfg as PhysXContactSensorCfg
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import AssetBaseCfg
-from isaaclab.envs import ManagerBasedRLEnvCfg, ViewerCfg
+from isaaclab.envs import ManagerBasedRLEnvCfg
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
@@ -47,7 +47,7 @@ from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim import SimulationCfg
 from isaaclab.utils.configclass import configclass
 
-from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.multi_task_cfg import MultiTaskCfg
+from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.multi_task_cfg import MultiTaskCfg
 from isaaclab_tasks.utils import PresetCfg
 
 import isaaclab_assets.robots.anymal as anymal
@@ -174,7 +174,7 @@ class MultiTaskEventsCfg:
 class MultiTaskRewardsCfg:
     """Two reward terms only — soft-safety constraints (undesired-contact and
     mechanical-power) are folded into the composer as multiplicative
-    :class:`~isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.impl.multi_task_cfg.MultiTaskCfg.TrackingTaskCfg`
+    :class:`~isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.multi_task_cfg.MultiTaskCfg.TrackingTaskCfg`
     subtasks declared with ``expose_in_obs=False``, rather than per-step shaping.
 
     Why no per-step ``undesired_contact`` / ``mech_work`` here: per-step
@@ -251,13 +251,17 @@ class MultiTaskEnvCfg(ManagerBasedRLEnvCfg):
     rewards: MultiTaskRewardsCfg = MultiTaskRewardsCfg()
     terminations: MultiTaskTerminationsCfg = MultiTaskTerminationsCfg()
     events: MultiTaskEventsCfg = MultiTaskEventsCfg()
-    viewer: ViewerCfg = ViewerCfg(eye=(3.0, 3.0, 2.0), origin_type="asset_body", asset_name="robot", body_name="base")
 
     def __post_init__(self):
+        from isaaclab_visualizers.kit import KitVisualizerCfg
+
         self.decimation = 4
         self.episode_length_s = 8.0
         self.sim.dt = 0.01
         self.sim.render_interval = self.decimation
+        self.sim.default_visualizer_cfg = KitVisualizerCfg(
+            eye=(3.0, 3.0, 2.0), origin_type="asset", origin_track_path="robot/base"
+        )
         if self.scene.contact_forces is not None:
             self.scene.contact_forces.update_period = self.sim.dt
         # ``reward_manager.compute`` scales each term by step_dt. The composer's

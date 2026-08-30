@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 
 def test_locomotion_position_uses_future_command_and_curriculum():
     """The working position env should use the future task-table command stack."""
@@ -22,9 +24,10 @@ def test_locomotion_position_uses_future_command_and_curriculum():
     resolve_presets(cfg)
 
     assert isinstance(cfg.commands.goal_point, StateCommandCfg)
-    assert cfg.scene.terrain.prim_path == "/World/ground"
-    assert cfg.scene.terrain.use_terrain_origins is True
-    assert cfg.scene.height_scanner.mesh_prim_paths == ["/World/ground"]
+    assert cfg.scene.terrain.prim_path == "{ENV_REGEX_NS}/ground"
+    assert cfg.scene.terrain.use_terrain_origins is False
+    assert cfg.scene.env_spacing == 120.0
+    assert cfg.scene.height_scanner.mesh_prim_paths == ["{ENV_REGEX_NS}/ground"]
     assert not hasattr(cfg.commands.goal_point.task_table, "state_frame")
     assert cfg.curriculum.terrain_levels.func is success_rate_sampler
     assert "success_rates_bind" in cfg.curriculum.terrain_levels.params
@@ -58,6 +61,19 @@ def test_locomotion_position_anymal_c_command_resolves_without_robot_preset():
     assert goal_cfg.task_table.pipeline_cfg.lateral_hip_joint_pattern == ".*HAA"
 
 
+@pytest.mark.parametrize("robot_preset", ["anymal_c", "h1", "spot"])
+def test_locomotion_position_viewer_tracks_preset_base_body(robot_preset: str):
+    """The Kit visualizer should follow the base body selected by each robot preset."""
+    from isaaclab_tasks.core.multi_task.position_env_cfg import LocomotionPositionCommandEnvCfg
+    from isaaclab_tasks.core.multi_task.terrain.mdp_presets import BaseBodyNameCfg
+    from isaaclab_tasks.utils import resolve_presets
+
+    cfg = LocomotionPositionCommandEnvCfg()
+    resolve_presets(cfg, {robot_preset})
+
+    assert cfg.sim.default_visualizer_cfg.origin_track_path == f"robot/{getattr(BaseBodyNameCfg, robot_preset)}"
+
+
 def test_locomotion_position_subterrains_do_not_request_flat_patches():
     """Position terrain presets should rely on the task-table pipeline, not terrain flat patches."""
     from isaaclab_tasks.core.multi_task.terrain.mdp_presets import SubTerrainPresetCfg
@@ -87,6 +103,7 @@ def test_locomotion_position_newton_mjwarp_preset_enables_newton_actuators(monke
 
     from isaaclab.actuators import ActuatorNetLSTMCfg
 
+    from isaaclab_tasks.core.multi_task.terrain.mdp_presets.robots.anymal_c import ANYDRIVE_3_LSTM_JIT_PATH
     from isaaclab_tasks.utils.hydra import resolve_task_config
 
     monkeypatch.setattr(
@@ -100,25 +117,5 @@ def test_locomotion_position_newton_mjwarp_preset_enables_newton_actuators(monke
 
     assert cfg.sim.use_newton_actuators is True
     assert isinstance(actuator_cfg, ActuatorNetLSTMCfg)
-    assert isinstance(actuator_cfg.network_file, str)
-    assert actuator_cfg.network_file
-    assert actuator_cfg.network_file.endswith(".onnx")
-
-
-def test_locomotion_position_newton_mjwarp_keeps_actuator_choice_explicit(monkeypatch):
-    """Newton MJWarp should not conflict with explicit actuator presets."""
-    import sys
-
-    from isaaclab.actuators import ImplicitActuatorCfg
-
-    from isaaclab_tasks.utils.hydra import resolve_task_config
-
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        ["test", "presets=anymal_c,newton_mjwarp,implicit_actuator,terrain_pose"],
-    )
-
-    cfg, _ = resolve_task_config("Isaac-Position-v0", "rsl_rl_cfg_entry_point")
-
-    assert isinstance(cfg.scene.robot.actuators["legs"], ImplicitActuatorCfg)
+    assert actuator_cfg.network_file == ANYDRIVE_3_LSTM_JIT_PATH
+    assert actuator_cfg.network_file.endswith(".pt")

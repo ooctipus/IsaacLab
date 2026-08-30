@@ -21,7 +21,7 @@ whichever sub-terrains the selected presets resolved to.
 
 Usage::
 
-    SCRIPT=source/isaaclab_tasks/isaaclab_tasks/manager_based/multi_task/terrain/utils/tools/validate_spawn_points.py
+    SCRIPT=source/isaaclab_tasks/isaaclab_tasks/core/multi_task/terrain/scripts/validate_spawn_points.py
 
     # ANYmal-C on the default terrain mix.
     ./isaaclab.sh -p $SCRIPT presets=anymal_c
@@ -309,7 +309,7 @@ def main():
 
     args, remaining = setup_preset_cli(parser)
     # Hand the leftover preset / Hydra-override tokens to ``resolve_task_config`` through
-    # ``sys.argv``, mirroring scripts/reinforcement_learning/rsl_rl/train.py.
+    # ``sys.argv``, mirroring the unified ``uv run isaaclab train`` frontend.
     sys.argv = [sys.argv[0]] + fold_preset_tokens(remaining)
     selected = {
         name

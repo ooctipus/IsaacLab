@@ -58,11 +58,17 @@ class HeightScannerPrimPathCfg(PresetCfg):
 class BaseBodyNameCfg(PresetCfg):
     """Robot base / torso body name.
 
-    Used by events that target the base mass (``add_base_mass``) and by the
-    viewer (``viewer.body_name``).
+    Used by events that target the base mass (``add_base_mass``).
     """
 
     default: str = "base"
+
+
+@configclass
+class ViewerOriginTrackPathCfg(PresetCfg):
+    """Kit visualizer tracking path for the robot base body."""
+
+    default: str = "robot/base"
 
 
 @configclass

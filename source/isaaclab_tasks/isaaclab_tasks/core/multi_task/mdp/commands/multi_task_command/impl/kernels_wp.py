@@ -46,7 +46,7 @@ Adding a new state kernel is three steps, each local:
   1. Add a ``_project_*`` ``@wp.func``.
   2. Add an ``elif skid == STATE_NEW:`` branch in :func:`dispatch_mega`
      that calls the new projection and the appropriate error helper.
-  3. Register the kernel id in :mod:`.kernels`.
+  3. Register the kernel id in :mod:`..kernel_ids`.
 
 No changes to the shell signature, no changes to scatter / activation, no
 changes to the struct definitions.
@@ -72,7 +72,7 @@ import warp as wp
 # these constants picks up the new value at module import time — no chance
 # of drift between PyTorch and Warp branch ids.
 # ---------------------------------------------------------------------------
-from .kernel_ids import ACTIVATION_KERNEL_ID, STATE_KERNEL_ID
+from ..kernel_ids import ACTIVATION_KERNEL_ID, STATE_KERNEL_ID
 
 # state kernel ids
 STATE_JOINT_POS = wp.constant(int(STATE_KERNEL_ID.JOINT_POS))
@@ -386,7 +386,7 @@ def fill_slab_quat(
 
 @wp.kernel
 def fill_slab_joint_mech_power_abs(
-    applied_torque: wp.array2d(dtype=float),
+    applied_effort: wp.array2d(dtype=float),
     joint_vel: wp.array2d(dtype=float),
     unified: wp.array2d(dtype=float),
     offset: int,
@@ -403,7 +403,7 @@ def fill_slab_joint_mech_power_abs(
     Launch shape: ``dim=(num_envs, num_joints)``.
     """
     env, j = wp.tid()
-    p = wp.abs(applied_torque[env, j] * joint_vel[env, j])
+    p = wp.abs(applied_effort[env, j] * joint_vel[env, j])
     if wp.isfinite(p):
         unified[env, offset + j] = p
     else:

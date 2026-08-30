@@ -228,7 +228,7 @@ RADIATING_BEAM_BOX_CURRICULUM = isaaclab_terrain.MeshRadiatingBeamTerrainCfg(
     bar_width_range=(0.8, 0.45),
     bar_height_range=(1.5, 1.5),
     ground_plane=False,
-    beam_style=isaaclab_terrain.MeshRadiatingBeamTerrainCfg.BoxBeamCfg(
+    beam_style=isaaclab_terrain.BoxBeamCfg(
         box_length=(0.35, 0.2),
         box_gap=0.02,
         box_position_variation=(0.05, 0.05, 0.03),
@@ -244,7 +244,7 @@ RADIATING_BEAM_BOX = isaaclab_terrain.MeshRadiatingBeamTerrainCfg(
     bar_width_range=(0.45, 0.45),
     bar_height_range=(1.5, 1.5),
     ground_plane=False,
-    beam_style=isaaclab_terrain.MeshRadiatingBeamTerrainCfg.BoxBeamCfg(
+    beam_style=isaaclab_terrain.BoxBeamCfg(
         box_length=(0.2, 0.2),
         box_gap=0.02,
         box_position_variation=(0.05, 0.05, 0.03),
@@ -261,7 +261,7 @@ RANDOM_JUMP_BOX_CURRICULUM = isaaclab_terrain.MeshRadiatingBeamTerrainCfg(
     bar_width_range=(2.0, 2.0),
     bar_height_range=(1.5, 1.5),
     ground_plane=False,
-    beam_style=isaaclab_terrain.MeshRadiatingBeamTerrainCfg.BoxBeamCfg(
+    beam_style=isaaclab_terrain.BoxBeamCfg(
         box_length=(1.75, 1.75), box_gap=0.5, box_position_variation=(0.2, 0.2, 0.2), box_yaw_variation=1.57
     ),
 )
@@ -275,7 +275,7 @@ RANDOM_JUMP_BOX = isaaclab_terrain.MeshRadiatingBeamTerrainCfg(
     bar_width_range=(2.0, 2.0),
     bar_height_range=(1.5, 1.5),
     ground_plane=False,
-    beam_style=isaaclab_terrain.MeshRadiatingBeamTerrainCfg.BoxBeamCfg(
+    beam_style=isaaclab_terrain.BoxBeamCfg(
         box_length=(1.75, 1.75), box_gap=0.5, box_position_variation=(0.2, 0.2, 0.2), box_yaw_variation=1.57
     ),
 )
@@ -289,7 +289,7 @@ RANDOM_PARALLEL_BOX_CURRICULUM = isaaclab_terrain.MeshRadiatingBeamTerrainCfg(
     bar_width_range=(3.5, 2.5),
     bar_height_range=(1.5, 1.5),
     ground_plane=False,
-    beam_style=isaaclab_terrain.MeshRadiatingBeamTerrainCfg.BoxBeamCfg(
+    beam_style=isaaclab_terrain.BoxBeamCfg(
         box_length=(1.1, 1.1), box_gap=0.4, box_position_variation=(0.4, 0.4, 0.2), box_yaw_variation=1.57
     ),
 )
@@ -304,7 +304,7 @@ RANDOM_PARALLEL_BOX = isaaclab_terrain.MeshRadiatingBeamTerrainCfg(
     bar_width_range=(2.5, 2.5),
     bar_height_range=(1.5, 1.5),
     ground_plane=False,
-    beam_style=isaaclab_terrain.MeshRadiatingBeamTerrainCfg.BoxBeamCfg(
+    beam_style=isaaclab_terrain.BoxBeamCfg(
         box_length=(1.1, 1.1), box_gap=0.4, box_position_variation=(0.4, 0.4, 0.2), box_yaw_variation=1.57
     ),
 )
@@ -320,7 +320,7 @@ CLIMBING_BOX_CURRICULUM = isaaclab_terrain.MeshRadiatingBeamTerrainCfg(
     bar_width_range=(5.5, 5.5),
     bar_height_range=(1.5, 1.5),
     ground_plane=False,
-    beam_style=isaaclab_terrain.MeshRadiatingBeamTerrainCfg.BoxBeamCfg(
+    beam_style=isaaclab_terrain.BoxBeamCfg(
         box_length=(1.1, 1.1), box_gap=0.4, box_position_variation=(0.7, 0.7, 0.4), box_yaw_variation=1.57
     ),
 )
@@ -336,7 +336,7 @@ CLIMBING_BOX = isaaclab_terrain.MeshRadiatingBeamTerrainCfg(
     bar_width_range=(5.5, 5.5),
     bar_height_range=(1.5, 1.5),
     ground_plane=False,
-    beam_style=isaaclab_terrain.MeshRadiatingBeamTerrainCfg.BoxBeamCfg(
+    beam_style=isaaclab_terrain.BoxBeamCfg(
         box_length=(1.1, 1.1), box_gap=0.4, box_position_variation=(0.7, 0.7, 0.4), box_yaw_variation=1.57
     ),
 )
@@ -349,7 +349,7 @@ FLOATING_ISLAND_CURRICULUM = isaaclab_terrain.MeshFloatingIslandTerrainCfg(
     island_height_variation=2.0,
     island_margin=0.75,
     graph=isaaclab_terrain.MeshFloatingIslandTerrainCfg.DelaunayGraphCfg(),
-    passway_style=isaaclab_terrain.MeshFloatingIslandTerrainCfg.BoxBeamCfg(
+    passway_style=isaaclab_terrain.BoxBeamCfg(
         box_length=(0.4, 0.25),
         box_gap=0.0,
         box_position_variation=(0.05, 0.05, 0.05),
@@ -366,7 +366,7 @@ FLOATING_ISLAND = isaaclab_terrain.MeshFloatingIslandTerrainCfg(
     island_height_variation=2.0,
     island_margin=0.75,
     graph=isaaclab_terrain.MeshFloatingIslandTerrainCfg.DelaunayGraphCfg(),
-    passway_style=isaaclab_terrain.MeshFloatingIslandTerrainCfg.BoxBeamCfg(
+    passway_style=isaaclab_terrain.BoxBeamCfg(
         box_length=(0.25, 0.25),
         box_gap=0.0,
         box_position_variation=(0.05, 0.05, 0.05),

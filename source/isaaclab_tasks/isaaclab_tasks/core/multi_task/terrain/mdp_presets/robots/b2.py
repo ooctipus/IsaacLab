@@ -28,6 +28,7 @@ from .robot_presets import (
     RetargetJointRegularizeTargetsCfg,
     RetargetLateralHipJointPatternCfg,
     RobotArticulationCfg,
+    ViewerOriginTrackPathCfg,
 )
 
 B2_LATERAL_HIP_PATTERN = ".*hip_joint"
@@ -42,6 +43,7 @@ if hasattr(unitree, "B2_CFG"):
     RobotArticulationCfg.b2 = _B2_CFG
     HeightScannerPrimPathCfg.b2 = "{ENV_REGEX_NS}/Robot/base_link"
     BaseBodyNameCfg.b2 = "base_link"
+    ViewerOriginTrackPathCfg.b2 = f"robot/{BaseBodyNameCfg.b2}"
     NonFootContactBodyNamesCfg.b2 = "^(?!.*foot$).*$"
     FootBodyNamesCfg.b2 = ".*foot"
     ExperimentNameCfg.b2 = "b2_position_command"

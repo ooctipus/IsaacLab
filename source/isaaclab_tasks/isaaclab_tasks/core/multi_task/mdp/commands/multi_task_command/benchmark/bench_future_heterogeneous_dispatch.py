@@ -39,9 +39,10 @@ Run with:
 
 .. code-block:: bash
 
-    ./isaaclab.sh -p source/isaaclab_tasks/isaaclab_tasks/manager_based/\
-multi_task/mdp/commands/benchmark/bench_future_heterogeneous_dispatch.py \
---n-work 1048576 --state-kernels 192 --pattern random --graph
+    ./isaaclab.sh -p \
+        source/isaaclab_tasks/isaaclab_tasks/core/multi_task/mdp/commands/\
+multi_task_command/benchmark/bench_future_heterogeneous_dispatch.py \
+        --n-work 1048576 --state-kernels 192 --pattern random --graph
 """
 
 from __future__ import annotations
@@ -53,7 +54,7 @@ from dataclasses import dataclass
 import torch
 import warp as wp
 
-from isaaclab_tasks.core.multi_task.mdp.commands.benchmark.bench_dispatch_homogeneity import (
+from isaaclab_tasks.core.multi_task.mdp.commands.multi_task_command.benchmark.bench_dispatch_homogeneity import (
     SRC_WIDTH,
     TGT_WIDTH,
     PackedOutput,

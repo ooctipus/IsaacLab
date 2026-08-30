@@ -20,7 +20,7 @@ from ..kernels_wp import (
 )
 
 if TYPE_CHECKING:
-    from ..multi_task_command_warp import MultiTaskCommandWarp
+    from ...multi_task_command_warp import MultiTaskCommandWarp
     from .bindings import PrimitiveGraphLocalPlan
 
 
@@ -61,6 +61,6 @@ def fill_unified_buffer_warp(command: MultiTaskCommandWarp, plan: PrimitiveGraph
         wp.launch(
             fill_slab_joint_mech_power_abs,
             dim=(command.num_envs, slab.size),
-            inputs=[slab.applied_torque_wp, slab.joint_vel_wp, unified_wp, slab.offset],
+            inputs=[slab.applied_effort_wp, slab.joint_vel_wp, unified_wp, slab.offset],
             device=device_str,
         )

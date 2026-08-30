@@ -1,16 +1,20 @@
 # Multi-Task Command Dispatch Implementations
 
 Private implementation boundary for the multi-task command term. The public
-surface lives one level up:
+surface and Torch/Warp composition root live outside ``impl/``:
 
 ```text
-commands/__init__.py            # exports MultiTaskCfg, MinMaxSampler, MultiTaskCommand
-commands/multi_task_command.py  # base command term and Torch/Warp factory switch
+commands/__init__.py                                  # public re-exports
+commands/multi_task_command/kernel_ids.py              # backend-neutral kernel IDs and schemas
+commands/multi_task_command/multi_task_cfg.py           # public config dataclasses
+commands/multi_task_command/multi_task_command.py     # base term and backend factory switch
+commands/multi_task_command/multi_task_command_warp.py # Torch/Warp composition root
 ```
 
-Backends, the Warp/Torch subclasses, the config classes, and the Warp and
-Torch kernel registries all live under ``impl/`` so the public surface stays
-just the package-level re-exports and the factory in ``multi_task_command``.
+The Warp wrapper lives beside the base command so it can own command-state
+allocation, Torch-to-Warp conversion, and backend selection. Private backends
+own fixed Warp plan storage and cold-path plan population; only backend
+implementations and their kernel registries live under ``impl/``.
 
 Backends are selectable via ``MultiTaskCfg.dispatch_backend``. Each subfolder
 owns the full ``read -> execute -> rotate -> compose`` pipeline for one
@@ -20,14 +24,15 @@ schedule lowering, and compose-kernel selection.
 ## Folder Layout
 
 ```text
+multi_task_command.py          # base term and Torch/Warp factory switch
+multi_task_command_warp.py     # Torch/Warp composition root
+multi_task_cfg.py              # MultiTaskCfg, MinMaxSampler (public config dataclasses)
+kernel_ids.py                  # backend-neutral kernel ID enums and metadata schemas
 impl/
-  multi_task_cfg.py            # MultiTaskCfg, MinMaxSampler (config dataclasses)
   multi_task_command_torch.py  # PyTorch reference subclass (dispatch_backend="torch")
-  multi_task_command_warp.py   # Warp switchboard subclass
   backend.py                   # Warp backend factory and CommandBackend protocol
   schedules.py                 # static schedule plan helpers
   compose_select.py            # adaptive switch between scalar and parallel composers
-  kernel_ids.py                # kernel ID enums shared by Torch and Warp paths
   kernels_torch.py             # Torch state/delta/metric/activation kernel registry
   kernels_wp.py                # Warp kernels (dispatch, compose, rotate, slab fills)
   kernels_viz.py               # debug visualization: VIZ_REGISTRY + per-step update fns

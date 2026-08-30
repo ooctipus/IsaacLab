@@ -32,8 +32,8 @@ Output:
 Usage::
 
     # Mock mode (no Isaac Sim required):
-    ./isaaclab.sh -p source/isaaclab_tasks/isaaclab_tasks/manager_based/\\
-locomotion/position/mdp/commands/multitask/benchmark/trace_multi_task_command.py \\
+    ./isaaclab.sh -p source/isaaclab_tasks/isaaclab_tasks/core/multi_task/mdp/commands/\\
+multi_task_command/benchmark/trace_multi_task_command.py \\
         --backend mega_kernel --num_envs 4096 --num_steps 200
 
     # Sim mode (real env):
