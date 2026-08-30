@@ -12,6 +12,7 @@ from isaaclab_tasks.utils import PresetCfg
 
 from ...mdp.terminations import BaseTerminationsCfg, joint_reaction_overload
 from .. import mdp
+from .robots import BaseBodyNameCfg
 
 
 @configclass
@@ -26,17 +27,8 @@ class PositionTerminationsCfg(BaseTerminationsCfg):
       (replaces the older ``mdp.root_height_below_minimum``-based ``drop``,
       which compared against absolute world z and broke for terrains with
       non-zero spawn heights).
-    - ``base_contact`` — fires on impact contact (force above 3× bodyweight)
-      against any body. Static loading on any body (foot stance, kneeling,
-      leaning) is bounded above by ~1× total BW by static equilibrium, so
-      3× cleanly gates impact contacts regardless of which body is involved
-      — knees, base, and feet alike. Per-robot configs can narrow
-      ``sensor_cfg.body_names`` to exclude small appendages (e.g. fingers /
-      toes / tail) where contact at any force is expected during normal
-      motion. Reference: CaT (Chane-Sane et al., IROS 2024) uses ~2× total
-      BW under stochastic termination + compliant impedance control on a
-      light quadruped; 3× is the deterministic-termination, stiffer-actuator
-      equivalent.
+    - ``base_contact`` — fires when the robot base receives an impact force
+      above 3× bodyweight.
     - ``joint_reaction`` — fires when a joint's measured reaction force exceeds
       6× its effort limit (via the ``joint_wrench`` sensor); mechanical-overload
       guard carried over from the legacy position stack.
@@ -54,7 +46,7 @@ class PositionTerminationsCfg(BaseTerminationsCfg):
     base_contact = DoneTerm(
         func=mdp.illegal_contact_ratio,
         params={
-            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*"),
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=BaseBodyNameCfg()),  # type: ignore[arg-type]
             "threshold_ratio": 3.0,
         },
     )

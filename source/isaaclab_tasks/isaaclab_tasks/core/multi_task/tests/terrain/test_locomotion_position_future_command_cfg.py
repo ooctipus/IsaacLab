@@ -24,11 +24,15 @@ def test_locomotion_position_uses_future_command_and_curriculum():
     resolve_presets(cfg)
 
     assert isinstance(cfg.commands.goal_point, StateCommandCfg)
-    assert cfg.scene.terrain.prim_path == "{ENV_REGEX_NS}/ground"
-    assert cfg.scene.terrain.use_terrain_origins is False
-    assert cfg.scene.env_spacing == 120.0
-    assert cfg.scene.height_scanner.mesh_prim_paths == ["{ENV_REGEX_NS}/ground"]
+    assert cfg.scene.terrain.prim_path == "/World/ground"
+    assert cfg.scene.terrain.use_terrain_origins is True
+    assert cfg.scene.env_spacing == 0.0
+    assert cfg.scene.height_scanner.mesh_prim_paths == ["/World/ground"]
     assert cfg.scene.height_scanner.spawn is None
+    assert cfg.commands.goal_point.states_relative is False
+    assert cfg.terminations.base_contact.params["sensor_cfg"].body_names == "base"
+    assert not hasattr(cfg.commands.goal_point.payload, "success_effort_multiplier")
+    assert not hasattr(cfg.commands.goal_point.payload, "success_min_foot_weight_fraction")
     assert not hasattr(cfg.commands.goal_point.task_table, "state_frame")
     assert cfg.curriculum.terrain_levels.func is success_rate_sampler
     assert "success_rates_bind" in cfg.curriculum.terrain_levels.params
@@ -73,6 +77,7 @@ def test_locomotion_position_viewer_tracks_preset_base_body(robot_preset: str):
     resolve_presets(cfg, {robot_preset})
 
     assert cfg.sim.default_visualizer_cfg.origin_track_path == f"robot/{getattr(BaseBodyNameCfg, robot_preset)}"
+    assert cfg.terminations.base_contact.params["sensor_cfg"].body_names == getattr(BaseBodyNameCfg, robot_preset)
 
 
 def test_locomotion_position_subterrains_do_not_request_flat_patches():

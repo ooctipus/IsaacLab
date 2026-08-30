@@ -48,13 +48,12 @@ class SceneCfg(InteractiveSceneCfg):
 
     # ground terrain
     #
-    # Per-env terrain keeps each clone on its own tile. ``use_terrain_origins=False`` keeps
-    # env origins on a flat ``env_spacing`` grid (z=0), as expected by the foot-sample
+    # The shared terrain owns the per-environment spawn origins used by the world-frame
     # retarget table.
     terrain = TerrainImporterCfg(
-        prim_path="{ENV_REGEX_NS}/ground",
+        prim_path="/World/ground",
         terrain_type="generator",
-        use_terrain_origins=False,
+        use_terrain_origins=True,
         terrain_generator=TerrainGeneratorCfg(
             size=(10.0, 10.0),
             border_width=20.0,
@@ -102,7 +101,7 @@ class SceneCfg(InteractiveSceneCfg):
         ray_alignment="yaw",
         pattern_cfg=patterns.GridPatternCfg(resolution=0.075, size=(2.5, 1.5)),
         debug_vis=False,
-        mesh_prim_paths=["{ENV_REGEX_NS}/ground"],
+        mesh_prim_paths=["/World/ground"],
     )
     contact_forces = PositionEnvContactSensorCfg()
     joint_wrench = JointWrenchSensorCfg(prim_path="{ENV_REGEX_NS}/Robot")
