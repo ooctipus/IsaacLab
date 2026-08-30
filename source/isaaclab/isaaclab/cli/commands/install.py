@@ -494,7 +494,7 @@ def _install_root_extra(extra: str) -> None:
     python_exe = extract_python_exe()
     pip_cmd = get_pip_command(python_exe)
     print_info(f"Installing '{extra}' extra dependencies from the root pyproject...")
-    _run_package_install(pip_cmd + ["install"] + dependencies)
+    run_command(pip_cmd + ["install"] + dependencies)
 
 
 def _install_centralized_dependencies(pip_cmd: list[str], optional_submodules: list[str]) -> None:
@@ -762,7 +762,7 @@ def _install_isaaclab_submodules(isaaclab_submodules: list[str]) -> None:
             print_warning(f"Submodule directory not found or missing pyproject.toml: {item}")
             continue
         print_info(f"Installing submodule: {pkg_name}")
-        _run_package_install(pip_cmd + ["install", "--editable", str(item)])
+        run_command(pip_cmd + ["install", "--editable", str(item)])
         _upgrade_extension_pip_dependencies(
             python_exe,
             pip_cmd,
@@ -863,6 +863,11 @@ def _install_extra_feature(feature_name: str, selector: str = "") -> None:
         print_info(f"Installing RL framework extras: {extra}...")
         for framework in sorted(frameworks):
             _install_root_extra(framework)
+        # Override rsl-rl with local editable copy if present.
+        local_rsl_rl = ISAACLAB_ROOT / "dep" / "rsl_rl"
+        if "rsl-rl" in frameworks and local_rsl_rl.is_dir():
+            pip_cmd = get_pip_command(extract_python_exe())
+            run_command(pip_cmd + ["install", "--editable", str(local_rsl_rl)])
     elif feature_name == "tetrahedralization":
         if selector:
             print_warning(f"tetrahedralization does not support selectors (got {selector!r}).")

@@ -26,6 +26,7 @@
 **/*.sif
 docker/cluster/exports/
 docker/.container.cfg
+docker/.isaac-lab-host-cache.yaml
 
 # IDE
 **/.idea/

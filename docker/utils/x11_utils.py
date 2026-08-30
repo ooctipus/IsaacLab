@@ -83,8 +83,18 @@ def x11_check(statefile: StateFile) -> tuple[list[str], dict[str, str]] | None:
     statefile.namespace = "X11"
     # check if X11 forwarding is enabled
     is_x11_forwarding_enabled = statefile.get_variable("X11_FORWARDING_ENABLED")
+    env_override = os.environ.get("X11_FORWARDING_ENABLED")
 
-    if is_x11_forwarding_enabled is None:
+    if env_override is not None:
+        if env_override not in ("0", "1"):
+            print(
+                "[ERROR] Invalid X11_FORWARDING_ENABLED value. "
+                "Use X11_FORWARDING_ENABLED=0 or X11_FORWARDING_ENABLED=1."
+            )
+            sys.exit(1)
+        is_x11_forwarding_enabled = env_override
+        print(f"[INFO] X11 Forwarding is overridden by environment as '{is_x11_forwarding_enabled}'.")
+    elif is_x11_forwarding_enabled is None:
         print("[INFO] X11 forwarding from the Isaac Lab container is disabled by default.")
         print(
             "[INFO] It will fail if there is no display, or this script is being run via ssh without proper"
@@ -113,6 +123,9 @@ def x11_check(statefile: StateFile) -> tuple[list[str], dict[str, str]] | None:
             print("\tTo enable X11 forwarding, set 'X11_FORWARDING_ENABLED=1' in '.container.cfg'.")
 
     if is_x11_forwarding_enabled == "1":
+        if not os.environ.get("DISPLAY"):
+            print("[INFO] X11 forwarding is enabled but DISPLAY is unset. Disabling X11 for this command.")
+            return None
         x11_envars = configure_x11(statefile)
         # If X11 forwarding is enabled, return the proper args to
         # compose the x11.yaml file. Else, return an empty string.
@@ -168,9 +181,13 @@ def create_x11_tmpfile(tmpfile: Path | None = None, tmpdir: Path | None = None) 
         tmpfile.touch()
         tmp_xauth = tmpfile
 
+    display = os.environ.get("DISPLAY")
+    if not display:
+        raise RuntimeError("DISPLAY is not set. Disable X11 forwarding with X11_FORWARDING_ENABLED=0.")
+
     # Derive current MIT-MAGIC-COOKIE and make it universally addressable
     xauth_cookie = subprocess.run(
-        ["xauth", "nlist", os.environ["DISPLAY"]], capture_output=True, text=True, check=True
+        ["xauth", "nlist", display], capture_output=True, text=True, check=True
     ).stdout.replace("ffff", "")
 
     # Merge the new cookie into the create .tmp file
@@ -211,6 +228,9 @@ def x11_refresh(statefile: StateFile):
 
     # if the file exists, delete it and create a new one
     if tmp_xauth_value is not None and Path(tmp_xauth_value).exists():
+        if is_x11_forwarding_enabled == "1" and not os.environ.get("DISPLAY"):
+            print("[INFO] X11 forwarding is enabled but DISPLAY is unset. Skipping X11 refresh.")
+            return
         # remove the file and create a new one
         Path(tmp_xauth_value).unlink()
         create_x11_tmpfile(tmpfile=Path(tmp_xauth_value))

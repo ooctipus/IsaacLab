@@ -1,0 +1,19 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+services:
+  isaac-lab-base:
+    volumes:
+      - type: bind
+        source: ${HOST_WANDB_NETRC_PATH}
+        target: ${DOCKER_USER_HOME}/.netrc
+        read_only: true
+
+  isaac-lab-ros2:
+    volumes:
+      - type: bind
+        source: ${HOST_WANDB_NETRC_PATH}
+        target: ${DOCKER_USER_HOME}/.netrc
+        read_only: true
