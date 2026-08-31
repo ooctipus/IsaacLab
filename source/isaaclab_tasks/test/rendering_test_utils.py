@@ -19,8 +19,15 @@ import torch
 from PIL import Image, ImageChops
 
 from isaaclab import cloner
+from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils.images import make_camera_output_grid, normalize_camera_output_for_display
 from isaaclab.utils.warp import ProxyArray
+
+from isaaclab_tasks.core.cartpole.cartpole_direct_camera_env_cfg import (
+    CartpoleCameraEnvCfg,
+    CartpoleCameraSceneCfg,
+    CartpoleTiledCameraCfg,
+)
 
 if TYPE_CHECKING:
     from pxr import Sdf
@@ -1711,12 +1718,6 @@ def rendering_test_cartpole(
 
     from isaaclab.utils.configclass import configclass
 
-    from isaaclab_tasks.core.cartpole.cartpole_direct_camera_env_cfg import (
-        CartpoleCameraEnvCfg,
-        CartpoleCameraSceneCfg,
-        CartpoleTiledCameraCfg,
-    )
-
     from isaaclab_assets.robots.cartpole import CARTPOLE_CFG
 
     @configclass
@@ -1998,7 +1999,6 @@ def rendering_test_kuka_visual_material_randomization(
     import isaaclab.sim as sim_utils
     from isaaclab.assets import AssetBaseCfg, VisualMaterial, VisualMaterialCfg
     from isaaclab.managers import SceneEntityCfg
-    from isaaclab.scene import InteractiveSceneCfg
     from isaaclab.sensors import CameraCfg
 
     from isaaclab_assets.robots import KUKA_ALLEGRO_CFG
