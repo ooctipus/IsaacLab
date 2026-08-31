@@ -24,7 +24,7 @@ from pxr import UsdGeom
 import isaaclab.terrains as terrain_gen
 from isaaclab import cloner as lab_cloner
 from isaaclab.sim import PreviewSurfaceCfg, build_simulation_context, get_first_matching_child_prim
-from isaaclab.terrains import TerrainImporter, TerrainImporterCfg
+from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.terrains.config.rough import ROUGH_TERRAINS_CFG
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
@@ -46,7 +46,8 @@ def test_terrain_importer_env_origins(device, env_spacing, num_envs):
             terrain_type="plane",  # for flat ground, origins are in grid
             terrain_generator=None,
         )
-        terrain_importer = TerrainImporter(terrain_importer_cfg)
+        with lab_cloner.ReplicateSession([terrain_importer_cfg], num_envs, env_spacing, sim.device):
+            terrain_importer = terrain_importer_cfg.class_type(terrain_importer_cfg)
         # obtain env origins using terrain importer
         terrain_importer_origins = terrain_importer.env_origins
 
@@ -70,7 +71,8 @@ def test_terrain_generation(device):
             terrain_generator=ROUGH_TERRAINS_CFG,
             num_envs=1,
         )
-        terrain_importer = TerrainImporter(terrain_importer_cfg)
+        with lab_cloner.ReplicateSession([terrain_importer_cfg], 1, 1.0, sim.device):
+            terrain_importer = terrain_importer_cfg.class_type(terrain_importer_cfg)
 
         # check if mesh prim path exists
         mesh_prim_path = terrain_importer.cfg.prim_path + "/terrain"
@@ -111,7 +113,8 @@ def test_plane(device, use_custom_material):
             env_spacing=1.0,
             visual_material=visual_material,
         )
-        terrain_importer = TerrainImporter(terrain_importer_cfg)
+        with lab_cloner.ReplicateSession([terrain_importer_cfg], 1, 1.0, sim.device):
+            terrain_importer = terrain_importer_cfg.class_type(terrain_importer_cfg)
 
         # check if mesh prim path exists
         mesh_prim_path = terrain_importer.cfg.prim_path + "/terrain"
@@ -135,7 +138,8 @@ def test_usd(device):
             num_envs=1,
             env_spacing=1.0,
         )
-        terrain_importer = TerrainImporter(terrain_importer_cfg)
+        with lab_cloner.ReplicateSession([terrain_importer_cfg], 1, 1.0, sim.device):
+            terrain_importer = terrain_importer_cfg.class_type(terrain_importer_cfg)
 
         # check if mesh prim path exists
         mesh_prim_path = terrain_importer.cfg.prim_path + "/terrain"

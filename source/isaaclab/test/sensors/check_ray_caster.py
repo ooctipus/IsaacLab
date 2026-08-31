@@ -48,7 +48,6 @@ from isaaclab.assets import RigidObjectCfg
 from isaaclab.sensors.ray_caster import RayCasterCfg, patterns
 from isaaclab.sim import SimulationCfg, SimulationContext
 from isaaclab.terrains.config.rough import ROUGH_TERRAINS_CFG
-from isaaclab.terrains.terrain_importer import TerrainImporter
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.timer import Timer
 
@@ -80,8 +79,6 @@ def main():
         num_envs=1,
         env_spacing=10.0,
     )
-    _ = TerrainImporter(terrain_importer_cfg)
-
     # Create a ray-caster sensor
     ray_caster_cfg = RayCasterCfg(
         prim_path="{ENV_REGEX_NS}/ball",
@@ -101,7 +98,8 @@ def main():
         ),
         init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 5.0)),
     )
-    with lab_cloner.ReplicateSession([balls_cfg, ray_caster_cfg], num_envs, 2.0, sim.device):
+    with lab_cloner.ReplicateSession([terrain_importer_cfg, balls_cfg, ray_caster_cfg], num_envs, 2.0, sim.device):
+        _ = terrain_importer_cfg.class_type(terrain_importer_cfg)
         balls = balls_cfg.class_type(balls_cfg)
         ray_caster = ray_caster_cfg.class_type(ray_caster_cfg)
 

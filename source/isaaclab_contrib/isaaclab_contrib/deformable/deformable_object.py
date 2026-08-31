@@ -18,7 +18,6 @@ from isaaclab_newton.physics import NewtonManager as SimulationManager
 import isaaclab.sim as sim_utils
 from isaaclab import cloner
 from isaaclab.assets.deformable_object.base_deformable_object import BaseDeformableObject
-from isaaclab.markers import VisualizationMarkers
 from isaaclab.physics import PhysicsEvent
 from isaaclab.utils.warp import ProxyArray
 
@@ -971,7 +970,7 @@ class DeformableObject(BaseDeformableObject):
     def _set_debug_vis_impl(self, debug_vis: bool):
         if debug_vis:
             if not hasattr(self, "target_visualizer"):
-                self.target_visualizer = VisualizationMarkers(self.cfg.visualizer_cfg)
+                self.target_visualizer = self.cfg.visualizer_cfg.class_type(self.cfg.visualizer_cfg)
             self.target_visualizer.set_visibility(True)
         else:
             if hasattr(self, "target_visualizer"):

@@ -44,6 +44,7 @@ ROT_OFFSET = (0, 0, 0.7071068, 0.7071068)
 # offset of imu_link from link_1 on simple_2_link
 PEND_POS_OFFSET = (0.4, 0.0, 0.1)
 PEND_ROT_OFFSET = (0.5, 0.5, 0.5, 0.5)
+_WORLD_PVA_CFG = PvaCfg(prim_path="/World/ground")
 
 
 def _create_scene(cfg: InteractiveSceneCfg, sim):
@@ -737,9 +738,8 @@ def test_attachment_validity(setup_sim):
     It must be somehow attached to something implementing physics.
     """
     sim, scene = setup_sim
-    pva_world_cfg = PvaCfg(prim_path="/World/envs/env_0")
     with pytest.raises(RuntimeError) as exc_info:
-        pva_world = Pva(pva_world_cfg)
+        pva_world = _WORLD_PVA_CFG.class_type(_WORLD_PVA_CFG)
         pva_world._initialize_impl()
     assert exc_info.type is RuntimeError and "find a rigid body ancestor prim" in str(exc_info.value)
 

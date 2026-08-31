@@ -15,7 +15,6 @@ import warp as wp
 from pxr import UsdGeom
 
 import isaaclab.utils.math as math_utils
-from isaaclab.markers import VisualizationMarkers
 from isaaclab.sensors.pva import BasePva
 from isaaclab.sim.utils.queries import path_expr_to_glob
 from isaaclab.utils.warp import ProxyArray
@@ -299,7 +298,7 @@ class Pva(BasePva):
         if debug_vis:
             # create markers if necessary for the first time
             if not hasattr(self, "acceleration_visualizer"):
-                self.acceleration_visualizer = VisualizationMarkers(self.cfg.visualizer_cfg)
+                self.acceleration_visualizer = self.cfg.visualizer_cfg.class_type(self.cfg.visualizer_cfg)
             # set their visibility to true
             self.acceleration_visualizer.set_visibility(True)
         else:

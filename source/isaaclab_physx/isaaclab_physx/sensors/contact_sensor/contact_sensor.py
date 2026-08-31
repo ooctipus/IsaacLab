@@ -19,7 +19,6 @@ import warp as wp
 import omni.physics.tensors as physx
 
 from isaaclab.app.settings_manager import get_settings_manager
-from isaaclab.markers import VisualizationMarkers
 from isaaclab.sensors.contact_sensor import BaseContactSensor
 from isaaclab.sim.utils.queries import path_expr_to_glob, resolve_matching_prims_from_source, split_path_expr
 from isaaclab.utils.warp import ProxyArray
@@ -605,7 +604,7 @@ class ContactSensor(BaseContactSensor):
         if debug_vis:
             # create markers if necessary for the first time
             if not hasattr(self, "contact_visualizer"):
-                self.contact_visualizer = VisualizationMarkers(self.cfg.visualizer_cfg)
+                self.contact_visualizer = self.cfg.visualizer_cfg.class_type(self.cfg.visualizer_cfg)
             # set their visibility to true
             self.contact_visualizer.set_visibility(True)
         else:

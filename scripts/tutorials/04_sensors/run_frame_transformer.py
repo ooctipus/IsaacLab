@@ -46,7 +46,6 @@ import isaaclab.sim as sim_utils
 import isaaclab.utils.math as math_utils
 from isaaclab import cloner
 from isaaclab.assets import Articulation, AssetBaseCfg
-from isaaclab.markers import VisualizationMarkers
 from isaaclab.markers.config import FRAME_MARKER_CFG
 from isaaclab.sensors import FrameTransformer, FrameTransformerCfg, OffsetCfg
 from isaaclab.sim import SimulationContext
@@ -110,7 +109,7 @@ def run_simulator(sim: sim_utils.SimulationContext, scene_entities: dict):
     if not args_cli.headless:
         cfg = FRAME_MARKER_CFG.replace(prim_path="/Visuals/FrameVisualizerFromScript")
         cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
-        transform_visualizer = VisualizationMarkers(cfg)
+        transform_visualizer = cfg.class_type(cfg)
         # debug drawing for lines connecting the frame
         draw_interface = omni_debug_draw.acquire_debug_draw_interface()
     else:

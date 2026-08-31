@@ -74,7 +74,6 @@ import omni.replicator.core as rep
 import isaaclab.sim as sim_utils
 from isaaclab import cloner
 from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
-from isaaclab.markers import VisualizationMarkers
 from isaaclab.markers.config import RAY_CASTER_MARKER_CFG
 from isaaclab.sensors.camera import Camera, CameraCfg
 from isaaclab.sensors.camera.utils import create_pointcloud_from_depth
@@ -188,7 +187,7 @@ def run_simulator(sim: sim_utils.SimulationContext, scene_entities: dict):
     if sim.get_setting("/isaaclab/has_gui") and args_cli.draw:
         cfg = RAY_CASTER_MARKER_CFG.replace(prim_path="/Visuals/CameraPointCloud")
         cfg.markers["hit"].radius = 0.002
-        pc_markers = VisualizationMarkers(cfg)
+        pc_markers = cfg.class_type(cfg)
 
     # Simulate physics
     while simulation_app.is_running():

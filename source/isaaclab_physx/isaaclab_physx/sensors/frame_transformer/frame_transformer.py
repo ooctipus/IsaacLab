@@ -16,7 +16,6 @@ import warp as wp
 
 from pxr import UsdPhysics
 
-from isaaclab.markers import VisualizationMarkers
 from isaaclab.sensors.frame_transformer import BaseFrameTransformer
 from isaaclab.sim.utils.queries import path_expr_to_glob, resolve_matching_prims_from_source
 from isaaclab.utils.math import is_identity_pose, normalize, quat_from_angle_axis
@@ -477,7 +476,7 @@ class FrameTransformer(BaseFrameTransformer):
         # note: parent only deals with callbacks. not their visibility
         if debug_vis:
             if not hasattr(self, "frame_visualizer"):
-                self.frame_visualizer = VisualizationMarkers(self.cfg.visualizer_cfg)
+                self.frame_visualizer = self.cfg.visualizer_cfg.class_type(self.cfg.visualizer_cfg)
 
             # set their visibility to true
             self.frame_visualizer.set_visibility(True)

@@ -45,7 +45,7 @@ from isaaclab.assets import (
     RigidObjectCfg,
 )
 from isaaclab.envs import DirectRLEnv, DirectRLEnvCfg
-from isaaclab.markers import SPHERE_MARKER_CFG, VisualizationMarkers
+from isaaclab.markers import SPHERE_MARKER_CFG
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim import SimulationCfg
 from isaaclab.sim.spawners.from_files import GroundPlaneCfg
@@ -400,7 +400,7 @@ class PickAndPlaceEnv(DirectRLEnv):
                 marker_cfg.markers["sphere"].radius = 0.25
                 # -- goal pose
                 marker_cfg.prim_path = "/Visuals/Command/goal_position"
-                self.goal_pos_visualizer = VisualizationMarkers(marker_cfg)
+                self.goal_pos_visualizer = marker_cfg.class_type(marker_cfg)
             # set their visibility to true
             self.goal_pos_visualizer.set_visibility(True)
         else:

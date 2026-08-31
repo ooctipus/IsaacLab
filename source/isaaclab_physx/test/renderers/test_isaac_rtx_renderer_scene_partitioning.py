@@ -42,7 +42,7 @@ from isaaclab_physx.renderers.isaac_rtx_renderer_cfg import IsaacRtxRendererGlob
 import isaaclab.sim as sim_utils
 from isaaclab import cloner
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
-from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
+from isaaclab.markers import VisualizationMarkersCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors.camera import CameraCfg
 from isaaclab.sim import build_simulation_context
@@ -200,18 +200,17 @@ def test_partitioning_isolates_rigid_object(monkeypatch: pytest.MonkeyPatch):
             "yellow": (1.0, 1.0, 0.05),
             "magenta": (1.0, 0.05, 1.0),
         }
-        markers = VisualizationMarkers(
-            VisualizationMarkersCfg(
-                prim_path="/Visuals/partitioned_cubes",
-                markers={
-                    name: sim_utils.CuboidCfg(
-                        size=(0.25, 0.25, 0.25),
-                        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=color, emissive_color=color),
-                    )
-                    for name, color in marker_colors.items()
-                },
-            )
+        marker_cfg = VisualizationMarkersCfg(
+            prim_path="/Visuals/partitioned_cubes",
+            markers={
+                name: sim_utils.CuboidCfg(
+                    size=(0.25, 0.25, 0.25),
+                    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=color, emissive_color=color),
+                )
+                for name, color in marker_colors.items()
+            },
         )
+        markers = marker_cfg.class_type(marker_cfg)
         markers.visualize(
             marker_positions,
             marker_indices=scene._ALL_INDICES,

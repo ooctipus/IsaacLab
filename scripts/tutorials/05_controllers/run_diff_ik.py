@@ -44,7 +44,6 @@ from isaaclab.assets import AssetBaseCfg
 from isaaclab.cloner import ReplicateSession
 from isaaclab.controllers import DifferentialIKController, DifferentialIKControllerCfg
 from isaaclab.managers import SceneEntityCfg
-from isaaclab.markers import VisualizationMarkers
 from isaaclab.markers.config import FRAME_MARKER_CFG
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
@@ -103,8 +102,10 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
     # Markers
     frame_marker_cfg = FRAME_MARKER_CFG.copy()
     frame_marker_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
-    ee_marker = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/ee_current"))
-    goal_marker = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/ee_goal"))
+    ee_marker_cfg = frame_marker_cfg.replace(prim_path="/Visuals/ee_current")
+    goal_marker_cfg = frame_marker_cfg.replace(prim_path="/Visuals/ee_goal")
+    ee_marker = ee_marker_cfg.class_type(ee_marker_cfg)
+    goal_marker = goal_marker_cfg.class_type(goal_marker_cfg)
 
     # Define goals for the arm (x,y,z,qx,qy,qz,qw)
     ee_goals = [

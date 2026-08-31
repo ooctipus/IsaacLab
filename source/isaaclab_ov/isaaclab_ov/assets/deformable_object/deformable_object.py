@@ -20,7 +20,6 @@ from pxr import UsdShade
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets.deformable_object.base_deformable_object import BaseDeformableObject
-from isaaclab.markers import VisualizationMarkers
 from isaaclab.utils.warp import ProxyArray
 
 from isaaclab_ov import tensor_types as TT
@@ -566,7 +565,7 @@ class DeformableObject(BaseDeformableObject):
     def _set_debug_vis_impl(self, debug_vis: bool) -> None:
         if debug_vis:
             if not hasattr(self, "target_visualizer"):
-                self.target_visualizer = VisualizationMarkers(self.cfg.visualizer_cfg)
+                self.target_visualizer = self.cfg.visualizer_cfg.class_type(self.cfg.visualizer_cfg)
             self.target_visualizer.set_visibility(True)
         elif hasattr(self, "target_visualizer"):
             self.target_visualizer.set_visibility(False)

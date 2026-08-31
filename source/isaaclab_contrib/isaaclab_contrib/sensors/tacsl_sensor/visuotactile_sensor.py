@@ -19,7 +19,6 @@ from pxr import Usd, UsdGeom, UsdPhysics
 
 import isaaclab.sim as sim_utils
 import isaaclab.utils.math as math_utils
-from isaaclab.markers import VisualizationMarkers
 from isaaclab.sensors.camera import Camera
 from isaaclab.sensors.sensor_base import SensorBase
 from isaaclab.sim import SimulationContext
@@ -29,6 +28,8 @@ from .visuotactile_render import GelsightRender
 from .visuotactile_sensor_data import VisuoTactileSensorData
 
 if TYPE_CHECKING:
+    from isaaclab.markers import VisualizationMarkers
+
     from .visuotactile_sensor_cfg import VisuoTactileSensorCfg
 
 import trimesh
@@ -540,7 +541,7 @@ class VisuoTactileSensor(SensorBase):
     def _initialize_visualization(self):
         """Initialize visualization markers for tactile points."""
         if self.cfg.visualizer_cfg:
-            self._visualizer = VisualizationMarkers(self.cfg.visualizer_cfg)
+            self._visualizer = self.cfg.visualizer_cfg.class_type(self.cfg.visualizer_cfg)
 
     def _update_buffers_impl(self, env_mask: wp.array | None = None):
         """Fills the buffers of the sensor data.
@@ -882,7 +883,7 @@ class VisuoTactileSensor(SensorBase):
         if debug_vis:
             # create markers if necessary for the first time
             if self._tactile_visualizer is None:
-                self._tactile_visualizer = VisualizationMarkers(self.cfg.visualizer_cfg)
+                self._tactile_visualizer = self.cfg.visualizer_cfg.class_type(self.cfg.visualizer_cfg)
             # set their visibility to true
             self._tactile_visualizer.set_visibility(True)
         else:

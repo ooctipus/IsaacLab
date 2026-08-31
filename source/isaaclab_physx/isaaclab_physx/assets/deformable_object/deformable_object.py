@@ -19,7 +19,6 @@ from pxr import UsdShade
 import isaaclab.sim as sim_utils
 import isaaclab.utils.math as math_utils
 from isaaclab.assets.asset_base import AssetBase
-from isaaclab.markers import VisualizationMarkers
 from isaaclab.utils.warp import ProxyArray
 
 from isaaclab_physx.physics import PhysxManager as SimulationManager
@@ -765,7 +764,7 @@ class DeformableObject(AssetBase):
         # note: parent only deals with callbacks. not their visibility
         if debug_vis:
             if not hasattr(self, "target_visualizer"):
-                self.target_visualizer = VisualizationMarkers(self.cfg.visualizer_cfg)
+                self.target_visualizer = self.cfg.visualizer_cfg.class_type(self.cfg.visualizer_cfg)
             # set their visibility to true
             self.target_visualizer.set_visibility(True)
         else:

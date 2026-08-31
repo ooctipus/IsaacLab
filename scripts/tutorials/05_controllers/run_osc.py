@@ -42,7 +42,6 @@ import isaaclab.sim as sim_utils
 from isaaclab.assets import Articulation, AssetBaseCfg
 from isaaclab.cloner import ReplicateSession
 from isaaclab.controllers import OperationalSpaceController, OperationalSpaceControllerCfg
-from isaaclab.markers import VisualizationMarkers
 from isaaclab.markers.config import FRAME_MARKER_CFG
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
 from isaaclab.sensors import ContactSensorCfg
@@ -142,8 +141,10 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
     # Markers
     frame_marker_cfg = FRAME_MARKER_CFG.copy()
     frame_marker_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
-    ee_marker = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/ee_current"))
-    goal_marker = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/ee_goal"))
+    ee_marker_cfg = frame_marker_cfg.replace(prim_path="/Visuals/ee_current")
+    goal_marker_cfg = frame_marker_cfg.replace(prim_path="/Visuals/ee_goal")
+    ee_marker = ee_marker_cfg.class_type(ee_marker_cfg)
+    goal_marker = goal_marker_cfg.class_type(goal_marker_cfg)
 
     # Define targets for the arm (x,y,z,qx,qy,qz,qw)
     ee_goal_pose_set_tilted_b = torch.tensor(

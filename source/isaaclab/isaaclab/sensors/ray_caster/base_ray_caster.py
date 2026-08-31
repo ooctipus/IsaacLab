@@ -18,7 +18,6 @@ from pxr import Gf, Usd, UsdGeom
 import isaaclab.sim as sim_utils
 import isaaclab.utils.math as math_utils
 from isaaclab import cloner
-from isaaclab.markers import VisualizationMarkers
 from isaaclab.terrains.trimesh.utils import make_plane
 from isaaclab.utils.warp import ProxyArray, convert_to_warp_mesh
 from isaaclab.utils.warp.kernels import raycast_mesh_masked_kernel
@@ -333,7 +332,7 @@ class BaseRayCaster(SensorBase):
     def _set_debug_vis_impl(self, debug_vis: bool):
         if debug_vis:
             if not hasattr(self, "ray_visualizer"):
-                self.ray_visualizer = VisualizationMarkers(self.cfg.visualizer_cfg)
+                self.ray_visualizer = self.cfg.visualizer_cfg.class_type(self.cfg.visualizer_cfg)
             self.ray_visualizer.set_visibility(True)
         else:
             if hasattr(self, "ray_visualizer"):

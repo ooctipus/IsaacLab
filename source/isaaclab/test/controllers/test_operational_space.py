@@ -21,7 +21,7 @@ pytestmark = pytest.mark.arm_ci
 import isaaclab.envs.mdp as mdp
 import isaaclab.sim as sim_utils
 from isaaclab import cloner
-from isaaclab.assets import Articulation
+from isaaclab.assets import Articulation, AssetBaseCfg, RigidObjectCfg
 from isaaclab.assets.articulation import ArticulationCfg
 from isaaclab.controllers import OperationalSpaceController, OperationalSpaceControllerCfg
 
@@ -53,6 +53,41 @@ from isaaclab_assets import FRANKA_PANDA_CFG, G1_29DOF_CFG  # isort:skip
 
 pytestmark = pytest.mark.integration
 
+_CONTACT_SENSOR_CFG = ContactSensorCfg(
+    prim_path="{ENV_REGEX_NS}/obstacles/obstacle[^/]*",
+    update_period=0.0,
+    history_length=2,
+    debug_vis=False,
+    force_threshold=0.1,
+)
+_OBSTACLE_PARENT_CFG = AssetBaseCfg(
+    prim_path="{ENV_REGEX_NS}/obstacles", spawn=sim_utils.CuboidCfg(size=(0.001, 0.001, 0.001), visible=False)
+)
+_OBSTACLE_CFG = RigidObjectCfg(
+    prim_path="{ENV_REGEX_NS}/obstacles/obstacle1",
+    spawn=sim_utils.CuboidCfg(
+        size=(0.7, 0.7, 0.01),
+        collision_props=sim_utils.CollisionPropertiesCfg(),
+        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0), opacity=0.1),
+        rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
+        activate_contact_sensors=True,
+    ),
+)
+_WRENCH_OBSTACLE_CFGS = tuple(
+    _OBSTACLE_CFG.replace(
+        prim_path=f"{{ENV_REGEX_NS}}/obstacles/obstacle{index}",
+        init_state=RigidObjectCfg.InitialStateCfg(pos=pos, rot=rot),
+    )
+    for index, (pos, rot) in enumerate(
+        (
+            ((0.2, 0.0, 0.93), (0.0, -0.1736, 0.0, 0.9848)),
+            ((0.2, 0.35, 0.7), (0.707, 0.0, 0.0, 0.707)),
+            ((0.55, 0.0, 0.7), (0.0, 0.707, 0.0, 0.707)),
+        ),
+        start=1,
+    )
+)
+
 
 @pytest.fixture
 def sim():
@@ -73,8 +108,10 @@ def sim():
     # Markers
     frame_marker_cfg = FRAME_MARKER_CFG.copy()
     frame_marker_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
-    ee_marker = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/ee_current"))
-    goal_marker = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/ee_goal"))
+    ee_marker_cfg = frame_marker_cfg.replace(prim_path="/Visuals/ee_current")
+    goal_marker_cfg = frame_marker_cfg.replace(prim_path="/Visuals/ee_goal")
+    ee_marker = ee_marker_cfg.class_type(ee_marker_cfg)
+    goal_marker = goal_marker_cfg.class_type(goal_marker_cfg)
 
     light_cfg = sim_utils.DistantLightCfg(intensity=5.0, exposure=10.0)
     light_cfg.func(
@@ -554,43 +591,19 @@ def test_franka_wrench_abs_open_loop(sim):
         frame,
     ) = sim
 
-    with cloner.ReplicateSession([robot_cfg], num_envs, 2.0, sim_context.device):
+    contact_forces_cfg = _CONTACT_SENSOR_CFG.replace(history_length=50)
+    with cloner.ReplicateSession(
+        [robot_cfg, _OBSTACLE_PARENT_CFG, *_WRENCH_OBSTACLE_CFGS, contact_forces_cfg],
+        num_envs,
+        2.0,
+        sim_context.device,
+    ):
         robot = robot_cfg.class_type(robot_cfg)
-
-    obstacle_spawn_cfg = sim_utils.CuboidCfg(
-        size=(0.7, 0.7, 0.01),
-        collision_props=sim_utils.CollisionPropertiesCfg(),
-        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0), opacity=0.1),
-        rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
-        activate_contact_sensors=True,
-    )
-    obstacle_spawn_cfg.func(
-        "/World/envs/env_[^/]+/obstacle1",
-        obstacle_spawn_cfg,
-        translation=(0.2, 0.0, 0.93),
-        orientation=(0.0, -0.1736, 0.0, 0.9848),
-    )
-    obstacle_spawn_cfg.func(
-        "/World/envs/env_[^/]+/obstacle2",
-        obstacle_spawn_cfg,
-        translation=(0.2, 0.35, 0.7),
-        orientation=(0.707, 0.0, 0.0, 0.707),
-    )
-    obstacle_spawn_cfg.func(
-        "/World/envs/env_[^/]+/obstacle3",
-        obstacle_spawn_cfg,
-        translation=(0.55, 0.0, 0.7),
-        orientation=(0.0, 0.707, 0.0, 0.707),
-    )
-    contact_forces_cfg = ContactSensorCfg(
-        prim_path="{ENV_REGEX_NS}/obstacle[^/]*",
-        update_period=0.0,
-        history_length=50,
-        debug_vis=False,
-        force_threshold=0.1,
-    )
-    contact_forces = ContactSensor(contact_forces_cfg)
-
+        (parent_path,) = cloner.query.cfg_source_paths(sim_context.get_clone_plan(), _OBSTACLE_PARENT_CFG)
+        _OBSTACLE_PARENT_CFG.spawn.func(parent_path, _OBSTACLE_PARENT_CFG.spawn)
+        for obstacle_cfg in _WRENCH_OBSTACLE_CFGS:
+            obstacle_cfg.class_type(obstacle_cfg)
+        contact_forces = contact_forces_cfg.class_type(contact_forces_cfg)
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["wrench_abs"],
         motion_control_axes_task=[0, 0, 0, 0, 0, 0],
@@ -636,43 +649,18 @@ def test_franka_wrench_abs_closed_loop(sim):
         frame,
     ) = sim
 
-    with cloner.ReplicateSession([robot_cfg], num_envs, 2.0, sim_context.device):
+    with cloner.ReplicateSession(
+        [robot_cfg, _OBSTACLE_PARENT_CFG, *_WRENCH_OBSTACLE_CFGS, _CONTACT_SENSOR_CFG],
+        num_envs,
+        2.0,
+        sim_context.device,
+    ):
         robot = robot_cfg.class_type(robot_cfg)
-
-    obstacle_spawn_cfg = sim_utils.CuboidCfg(
-        size=(0.7, 0.7, 0.01),
-        collision_props=sim_utils.CollisionPropertiesCfg(),
-        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0), opacity=0.1),
-        rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
-        activate_contact_sensors=True,
-    )
-    obstacle_spawn_cfg.func(
-        "/World/envs/env_[^/]+/obstacle1",
-        obstacle_spawn_cfg,
-        translation=(0.2, 0.0, 0.93),
-        orientation=(0.0, -0.1736, 0.0, 0.9848),
-    )
-    obstacle_spawn_cfg.func(
-        "/World/envs/env_[^/]+/obstacle2",
-        obstacle_spawn_cfg,
-        translation=(0.2, 0.35, 0.7),
-        orientation=(0.707, 0.0, 0.0, 0.707),
-    )
-    obstacle_spawn_cfg.func(
-        "/World/envs/env_[^/]+/obstacle3",
-        obstacle_spawn_cfg,
-        translation=(0.55, 0.0, 0.7),
-        orientation=(0.0, 0.707, 0.0, 0.707),
-    )
-    contact_forces_cfg = ContactSensorCfg(
-        prim_path="{ENV_REGEX_NS}/obstacle[^/]*",
-        update_period=0.0,
-        history_length=2,
-        debug_vis=False,
-        force_threshold=0.1,
-    )
-    contact_forces = ContactSensor(contact_forces_cfg)
-
+        (parent_path,) = cloner.query.cfg_source_paths(sim_context.get_clone_plan(), _OBSTACLE_PARENT_CFG)
+        _OBSTACLE_PARENT_CFG.spawn.func(parent_path, _OBSTACLE_PARENT_CFG.spawn)
+        for obstacle_cfg in _WRENCH_OBSTACLE_CFGS:
+            obstacle_cfg.class_type(obstacle_cfg)
+        contact_forces = _CONTACT_SENSOR_CFG.class_type(_CONTACT_SENSOR_CFG)
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["wrench_abs"],
         contact_wrench_stiffness_task=[
@@ -726,31 +714,20 @@ def test_franka_hybrid_decoupled_motion(sim):
         frame,
     ) = sim
 
-    with cloner.ReplicateSession([robot_cfg], num_envs, 2.0, sim_context.device):
+    obstacle_cfg = _OBSTACLE_CFG.replace(
+        spawn=_OBSTACLE_CFG.spawn.replace(size=(1.0, 1.0, 0.01)),
+        init_state=RigidObjectCfg.InitialStateCfg(
+            pos=(target_hybrid_set_b[0, 0] + 0.05, 0.0, 0.7), rot=(0.0, 0.707, 0.0, 0.707)
+        ),
+    )
+    with cloner.ReplicateSession(
+        [robot_cfg, _OBSTACLE_PARENT_CFG, obstacle_cfg, _CONTACT_SENSOR_CFG], num_envs, 2.0, sim_context.device
+    ):
         robot = robot_cfg.class_type(robot_cfg)
-
-    obstacle_spawn_cfg = sim_utils.CuboidCfg(
-        size=(1.0, 1.0, 0.01),
-        collision_props=sim_utils.CollisionPropertiesCfg(),
-        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0), opacity=0.1),
-        rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
-        activate_contact_sensors=True,
-    )
-    obstacle_spawn_cfg.func(
-        "/World/envs/env_[^/]+/obstacle1",
-        obstacle_spawn_cfg,
-        translation=(target_hybrid_set_b[0, 0] + 0.05, 0.0, 0.7),
-        orientation=(0.0, 0.707, 0.0, 0.707),
-    )
-    contact_forces_cfg = ContactSensorCfg(
-        prim_path="{ENV_REGEX_NS}/obstacle[^/]*",
-        update_period=0.0,
-        history_length=2,
-        debug_vis=False,
-        force_threshold=0.1,
-    )
-    contact_forces = ContactSensor(contact_forces_cfg)
-
+        (parent_path,) = cloner.query.cfg_source_paths(sim_context.get_clone_plan(), _OBSTACLE_PARENT_CFG)
+        _OBSTACLE_PARENT_CFG.spawn.func(parent_path, _OBSTACLE_PARENT_CFG.spawn)
+        obstacle_cfg.class_type(obstacle_cfg)
+        contact_forces = _CONTACT_SENSOR_CFG.class_type(_CONTACT_SENSOR_CFG)
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["pose_abs", "wrench_abs"],
         impedance_mode="fixed",
@@ -804,31 +781,20 @@ def test_franka_hybrid_variable_kp_impedance(sim):
         frame,
     ) = sim
 
-    with cloner.ReplicateSession([robot_cfg], num_envs, 2.0, sim_context.device):
+    obstacle_cfg = _OBSTACLE_CFG.replace(
+        spawn=_OBSTACLE_CFG.spawn.replace(size=(1.0, 1.0, 0.01)),
+        init_state=RigidObjectCfg.InitialStateCfg(
+            pos=(target_hybrid_set_b[0, 0] + 0.05, 0.0, 0.7), rot=(0.0, 0.707, 0.0, 0.707)
+        ),
+    )
+    with cloner.ReplicateSession(
+        [robot_cfg, _OBSTACLE_PARENT_CFG, obstacle_cfg, _CONTACT_SENSOR_CFG], num_envs, 2.0, sim_context.device
+    ):
         robot = robot_cfg.class_type(robot_cfg)
-
-    obstacle_spawn_cfg = sim_utils.CuboidCfg(
-        size=(1.0, 1.0, 0.01),
-        collision_props=sim_utils.CollisionPropertiesCfg(),
-        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0), opacity=0.1),
-        rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
-        activate_contact_sensors=True,
-    )
-    obstacle_spawn_cfg.func(
-        "/World/envs/env_[^/]+/obstacle1",
-        obstacle_spawn_cfg,
-        translation=(target_hybrid_set_b[0, 0] + 0.05, 0.0, 0.7),
-        orientation=(0.0, 0.707, 0.0, 0.707),
-    )
-    contact_forces_cfg = ContactSensorCfg(
-        prim_path="{ENV_REGEX_NS}/obstacle[^/]*",
-        update_period=0.0,
-        history_length=2,
-        debug_vis=False,
-        force_threshold=0.1,
-    )
-    contact_forces = ContactSensor(contact_forces_cfg)
-
+        (parent_path,) = cloner.query.cfg_source_paths(sim_context.get_clone_plan(), _OBSTACLE_PARENT_CFG)
+        _OBSTACLE_PARENT_CFG.spawn.func(parent_path, _OBSTACLE_PARENT_CFG.spawn)
+        obstacle_cfg.class_type(obstacle_cfg)
+        contact_forces = _CONTACT_SENSOR_CFG.class_type(_CONTACT_SENSOR_CFG)
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["pose_abs", "wrench_abs"],
         impedance_mode="variable_kp",
@@ -986,32 +952,22 @@ def test_franka_taskframe_hybrid(sim):
         frame,
     ) = sim
 
-    with cloner.ReplicateSession([robot_cfg], num_envs, 2.0, sim_context.device):
+    obstacle_cfg = _OBSTACLE_CFG.replace(
+        spawn=_OBSTACLE_CFG.spawn.replace(size=(2.0, 1.5, 0.01)),
+        init_state=RigidObjectCfg.InitialStateCfg(
+            pos=(target_hybrid_set_tilted[0, 0] + 0.085, 0.0, 0.3),
+            rot=(0.0, -0.3826834324, 0.0, 0.9238795325),
+        ),
+    )
+    with cloner.ReplicateSession(
+        [robot_cfg, _OBSTACLE_PARENT_CFG, obstacle_cfg, _CONTACT_SENSOR_CFG], num_envs, 2.0, sim_context.device
+    ):
         robot = robot_cfg.class_type(robot_cfg)
+        (parent_path,) = cloner.query.cfg_source_paths(sim_context.get_clone_plan(), _OBSTACLE_PARENT_CFG)
+        _OBSTACLE_PARENT_CFG.spawn.func(parent_path, _OBSTACLE_PARENT_CFG.spawn)
+        obstacle_cfg.class_type(obstacle_cfg)
+        contact_forces = _CONTACT_SENSOR_CFG.class_type(_CONTACT_SENSOR_CFG)
     frame = "task"
-
-    obstacle_spawn_cfg = sim_utils.CuboidCfg(
-        size=(2.0, 1.5, 0.01),
-        collision_props=sim_utils.CollisionPropertiesCfg(),
-        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0), opacity=0.1),
-        rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
-        activate_contact_sensors=True,
-    )
-    obstacle_spawn_cfg.func(
-        "/World/envs/env_[^/]+/obstacle1",
-        obstacle_spawn_cfg,
-        translation=(target_hybrid_set_tilted[0, 0] + 0.085, 0.0, 0.3),
-        orientation=(0.0, -0.3826834324, 0.0, 0.9238795325),
-    )
-    contact_forces_cfg = ContactSensorCfg(
-        prim_path="{ENV_REGEX_NS}/obstacle[^/]*",
-        update_period=0.0,
-        history_length=2,
-        debug_vis=False,
-        force_threshold=0.1,
-    )
-    contact_forces = ContactSensor(contact_forces_cfg)
-
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["pose_abs", "wrench_abs"],
         impedance_mode="fixed",
@@ -1222,32 +1178,22 @@ def test_franka_taskframe_hybrid_with_nullspace_centering(sim):
         frame,
     ) = sim
 
-    with cloner.ReplicateSession([robot_cfg], num_envs, 2.0, sim_context.device):
+    obstacle_cfg = _OBSTACLE_CFG.replace(
+        spawn=_OBSTACLE_CFG.spawn.replace(size=(2.0, 1.5, 0.01)),
+        init_state=RigidObjectCfg.InitialStateCfg(
+            pos=(target_hybrid_set_tilted[0, 0] + 0.085, 0.0, 0.3),
+            rot=(0.0, -0.3826834324, 0.0, 0.9238795325),
+        ),
+    )
+    with cloner.ReplicateSession(
+        [robot_cfg, _OBSTACLE_PARENT_CFG, obstacle_cfg, _CONTACT_SENSOR_CFG], num_envs, 2.0, sim_context.device
+    ):
         robot = robot_cfg.class_type(robot_cfg)
+        (parent_path,) = cloner.query.cfg_source_paths(sim_context.get_clone_plan(), _OBSTACLE_PARENT_CFG)
+        _OBSTACLE_PARENT_CFG.spawn.func(parent_path, _OBSTACLE_PARENT_CFG.spawn)
+        obstacle_cfg.class_type(obstacle_cfg)
+        contact_forces = _CONTACT_SENSOR_CFG.class_type(_CONTACT_SENSOR_CFG)
     frame = "task"
-
-    obstacle_spawn_cfg = sim_utils.CuboidCfg(
-        size=(2.0, 1.5, 0.01),
-        collision_props=sim_utils.CollisionPropertiesCfg(),
-        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0), opacity=0.1),
-        rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
-        activate_contact_sensors=True,
-    )
-    obstacle_spawn_cfg.func(
-        "/World/envs/env_[^/]+/obstacle1",
-        obstacle_spawn_cfg,
-        translation=(target_hybrid_set_tilted[0, 0] + 0.085, 0.0, 0.3),
-        orientation=(0.0, -0.3826834324, 0.0, 0.9238795325),
-    )
-    contact_forces_cfg = ContactSensorCfg(
-        prim_path="{ENV_REGEX_NS}/obstacle[^/]*",
-        update_period=0.0,
-        history_length=2,
-        debug_vis=False,
-        force_threshold=0.1,
-    )
-    contact_forces = ContactSensor(contact_forces_cfg)
-
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["pose_abs", "wrench_abs"],
         impedance_mode="fixed",
