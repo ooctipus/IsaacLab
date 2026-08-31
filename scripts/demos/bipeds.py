@@ -42,6 +42,8 @@ args_cli = parser.parse_args()
 import torch
 
 import isaaclab.sim as sim_utils
+from isaaclab import cloner
+from isaaclab.assets import AssetBaseCfg
 
 ##
 # Pre-defined configs
@@ -58,12 +60,11 @@ if TYPE_CHECKING:
 
 def design_scene(sim: "sim_utils.SimulationContext") -> tuple[list, torch.Tensor]:
     """Designs the scene."""
-    # Ground-plane
-    cfg = sim_utils.GroundPlaneCfg()
-    cfg.func("/World/defaultGroundPlane", cfg)
-    # Lights
-    cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
-    cfg.func("/World/Light", cfg)
+    ground_cfg = AssetBaseCfg(prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg())
+    light_cfg = AssetBaseCfg(
+        prim_path="/World/Light",
+        spawn=sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75)),
+    )
 
     # Define origins
     origins = torch.tensor(
@@ -74,14 +75,15 @@ def design_scene(sim: "sim_utils.SimulationContext") -> tuple[list, torch.Tensor
         ]
     ).to(device=sim.device)
 
-    # Robots
-    cassie_cfg = CASSIE_CFG.replace(prim_path="/World/Cassie")
-    cassie = cassie_cfg.class_type(cassie_cfg)
-    h1_cfg = H1_CFG.replace(prim_path="/World/H1")
-    h1 = h1_cfg.class_type(h1_cfg)
-    g1_cfg = G1_CFG.replace(prim_path="/World/G1")
-    g1 = g1_cfg.class_type(g1_cfg)
-    robots = [cassie, h1, g1]
+    robot_cfgs = (
+        CASSIE_CFG.replace(prim_path="/World/Cassie"),
+        H1_CFG.replace(prim_path="/World/H1"),
+        G1_CFG.replace(prim_path="/World/G1"),
+    )
+    with cloner.ReplicateSession((ground_cfg, light_cfg, *robot_cfgs), 1, 0.0, sim.device):
+        ground_cfg.spawn.func(ground_cfg.prim_path, ground_cfg.spawn)
+        light_cfg.spawn.func(light_cfg.prim_path, light_cfg.spawn)
+        robots = [cfg.class_type(cfg) for cfg in robot_cfgs]
 
     return robots, origins
 

@@ -24,14 +24,8 @@
 
    .. autosummary::
 
-      clone_plan_from_env_0
-      make_clone_plan
-      make_valid_clone_combinations
-      num_spawn_variants
+      expand_env_regex_ns
       grid_transforms
-      replicate
-      queue_replication
-      usd_replicate
       filter_collisions
 
 Clone plan

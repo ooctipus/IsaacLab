@@ -46,6 +46,7 @@ parser.set_defaults(visualizer=["kit"])
 args_cli = parser.parse_args()
 
 import isaaclab.sim as sim_utils
+from isaaclab import cloner
 
 ##
 # Pre-defined configs
@@ -111,7 +112,6 @@ class MultiObjectSceneCfg(InteractiveSceneCfg):
                 sim_utils.CuboidCfg(size=(0.3, 0.3, 0.3), **PURPLE_MATERIAL),
                 sim_utils.SphereCfg(radius=0.3, **PURPLE_MATERIAL),
             ],
-            random_choice=False,
             **OBJECT_PHYSICS,
         ),
         init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 2.0)),
@@ -146,7 +146,6 @@ class MultiObjectSceneCfg(InteractiveSceneCfg):
                 f"{ISAACLAB_NUCLEUS_DIR}/Robots/ANYbotics/ANYmal-C/anymal_c.usd",
                 f"{ISAACLAB_NUCLEUS_DIR}/Robots/ANYbotics/ANYmal-D/anymal_d.usd",
             ],
-            random_choice=False,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 disable_gravity=False,
                 retain_accelerations=False,
@@ -252,7 +251,15 @@ def main():
             scene_cfg.object.spawn.assets_cfg = scene_cfg.object.spawn.assets_cfg[1:2]
             scene_cfg.robot.spawn.usd_path = scene_cfg.robot.spawn.usd_path[0]
         with Timer("[INFO] Time to create scene: "):
-            scene = scene_cfg.class_type(scene_cfg)
+            with cloner.ReplicateSession(
+                [scene_cfg],
+                scene_cfg.num_envs,
+                scene_cfg.env_spacing,
+                sim.device,
+                env_template=scene_cfg.clone_cfg.clone_template,
+                replicate_physics=scene_cfg.replicate_physics,
+            ):
+                scene = scene_cfg.class_type(scene_cfg)
 
         # Play the simulator
         sim.reset()

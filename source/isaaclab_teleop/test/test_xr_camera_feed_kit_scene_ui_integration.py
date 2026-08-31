@@ -31,7 +31,8 @@ import usdrt.Usd as UsdRtUsd
 from pxr import UsdUtils
 
 import isaaclab.sim as sim_utils
-from isaaclab.sensors.camera import Camera, CameraCfg
+from isaaclab.cloner import ReplicateSession
+from isaaclab.sensors.camera import CameraCfg
 
 pytestmark = [pytest.mark.integration, pytest.mark.isaacsim_ci]
 
@@ -73,24 +74,23 @@ def test_real_feed_source_applies_local_policy_and_reads_cuda_from_cpu_camera():
     """Late PiP attachment authors only its RenderProduct and keeps camera pixels on CPU."""
     sim_utils.create_new_stage()
     sim = sim_utils.SimulationContext(sim_utils.SimulationCfg(device="cpu", dt=1.0 / 60.0))
-    camera = Camera(
-        CameraCfg(
-            prim_path="/World/Camera",
-            height=64,
-            width=64,
-            data_types=["rgb"],
-            spawn=sim_utils.PinholeCameraCfg(),
-        )
+    camera_cfg = CameraCfg(
+        prim_path="/World/Camera",
+        height=64,
+        width=64,
+        data_types=["rgb"],
+        spawn=sim_utils.PinholeCameraCfg(),
     )
-    bystander_camera = Camera(
-        CameraCfg(
-            prim_path="/World/BystanderCamera",
-            height=64,
-            width=64,
-            data_types=["rgb"],
-            spawn=sim_utils.PinholeCameraCfg(),
-        )
+    bystander_camera_cfg = CameraCfg(
+        prim_path="/World/BystanderCamera",
+        height=64,
+        width=64,
+        data_types=["rgb"],
+        spawn=sim_utils.PinholeCameraCfg(),
     )
+    with ReplicateSession([camera_cfg, bystander_camera_cfg], 1, 0.0, sim.device):
+        camera = camera_cfg.class_type(camera_cfg)
+        bystander_camera = bystander_camera_cfg.class_type(bystander_camera_cfg)
     source = None
 
     try:

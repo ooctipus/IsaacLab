@@ -3,7 +3,8 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-from isaaclab.assets import ArticulationCfg, RigidObjectCfg
+import isaaclab.sim as sim_utils
+from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
 from isaaclab.envs import DirectRLEnvCfg
 from isaaclab.markers import VisualizationMarkersCfg
 from isaaclab.scene import InteractiveSceneCfg
@@ -19,6 +20,18 @@ from isaaclab_tasks.core.reorient.config.allegro_hand.allegro_hand_common import
 )
 
 from isaaclab_assets.robots.allegro import ALLEGRO_ACTUATED_JOINT_NAMES, ALLEGRO_FINGERTIP_BODY_NAMES
+
+
+@configclass
+class AllegroHandSceneCfg(InteractiveSceneCfg):
+    """Allegro hand assets constructed and cloned as one scene."""
+
+    ground = AssetBaseCfg(prim_path="/World/ground", spawn=sim_utils.GroundPlaneCfg())
+    robot: ArticulationCfg = ALLEGRO_HAND_ROBOT_CFG
+    object: RigidObjectCfg = CUBE_CFG
+    light = AssetBaseCfg(
+        prim_path="/World/Light", spawn=sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
+    )
 
 
 @configclass
@@ -39,18 +52,13 @@ class AllegroHandEnvCfg(DirectRLEnvCfg):
         physics_material=RigidBodyMaterialBaseCfg(static_friction=1.0, dynamic_friction=1.0),
         physics=PhysicsCfg(),
     )
-    # robot
-    robot_cfg: ArticulationCfg = ALLEGRO_HAND_ROBOT_CFG
-
     actuated_joint_names = ALLEGRO_ACTUATED_JOINT_NAMES
     fingertip_body_names = ALLEGRO_FINGERTIP_BODY_NAMES
 
-    # in-hand object
-    object_cfg: RigidObjectCfg = CUBE_CFG
     # goal object
     goal_object_cfg: VisualizationMarkersCfg = GOAL_OBJECT_CFG
     # scene
-    scene: InteractiveSceneCfg = InteractiveSceneCfg(
+    scene: AllegroHandSceneCfg = AllegroHandSceneCfg(
         num_envs=8192,
         env_spacing=0.75,
         replicate_physics=True,

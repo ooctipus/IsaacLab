@@ -93,9 +93,9 @@ paths are used to specify the location of the prim in the graph. The ground plan
 light source are specified using absolute paths, while the cartpole is specified using
 a relative path. The relative path is specified using the ``ENV_REGEX_NS`` variable,
 which is a special variable that is replaced with the environment name during scene creation.
-Any entity that has the ``ENV_REGEX_NS`` variable in its prim path will be  cloned for each
-environment. This path is replaced by the scene object with ``/World/envs/env_{i}`` where
-``i`` is the environment index.
+Any entity that has the ``ENV_REGEX_NS`` variable in its prim path is cloned for each
+environment. The replication plan resolves this path to ``/World/envs/env_{i}``, where ``i``
+is the environment index.
 
 Scene instantiation
 -------------------
@@ -109,7 +109,7 @@ This will be used to clone the scene for each environment.
 .. literalinclude:: ../../../../scripts/tutorials/02_scene/create_scene.py
    :language: python
    :start-at: # Design scene
-   :end-at: scene = InteractiveScene(scene_cfg)
+   :end-at: scene = scene_cfg.class_type(scene_cfg)
 
 Accessing scene elements
 ------------------------

@@ -10,7 +10,6 @@ from dataclasses import MISSING
 from typing import TYPE_CHECKING
 
 from isaaclab.cloner import CloneCfg, InclusionSet
-from isaaclab.cloner import add as clone_add
 from isaaclab.utils import find_unique_string_name
 from isaaclab.utils.configclass import configclass
 
@@ -121,10 +120,8 @@ class InteractiveSceneCfg:
         replace for cloned environments.
 
     .. note::
-        The scene pipes this flag into :attr:`~isaaclab.cloner.CloneCfg.replicate_physics`;
-        the policy is applied by :func:`~isaaclab.cloner.replicate`. Direct workflows that
-        call :func:`~isaaclab.cloner.replicate` themselves pass ``replicate_physics``
-        explicitly.
+        Environment base classes pass this flag to :class:`~isaaclab.cloner.ReplicateSession`.
+        When disabled, the session dispatches its plan only to scene clone contexts.
     """
 
     filter_collisions: bool = True
@@ -136,15 +133,8 @@ class InteractiveSceneCfg:
 
     .. note::
         Collisions can only be filtered automatically in direct workflows when physics replication is enabled.
-        If :attr:`replicated_physics` is ``False`` and collision filtering is desired, make sure to call
+        If :attr:`replicate_physics` is ``False`` and collision filtering is desired, make sure to call
         ``scene.filter_collisions()``.
-    """
-
-    clone_in_fabric: bool = False
-    """Deprecated legacy Fabric cloning flag. Default is False.
-
-    Queued replication no longer forwards this flag to the PhysX replicator;
-    ``useFabricForReplication`` is always ``False``.
     """
 
     clone_cfg: CloneCfg = CloneCfg()
@@ -202,7 +192,10 @@ def add(
 
     # an empty clone configuration is homogeneous: make the base combination explicit
     if not target.clone_cfg.clone_combinations:
-        clone_add(target.clone_cfg, InclusionSet(assets=[name for name, _ in target_assets]))
+        target.clone_cfg.clone_combinations = [
+            *target.clone_cfg.clone_combinations,
+            InclusionSet(assets=[name for name, _ in target_assets]),
+        ]
 
     # a duplicate is an asset equal to an existing binding; each binding is
     # reused at most once per call so distinct twins survive
@@ -223,7 +216,10 @@ def add(
             paths.add(cfg.prim_path)
         added_names.append(target_name)
 
-    clone_add(target.clone_cfg, InclusionSet(assets=list(dict.fromkeys(added_names))))
+    target.clone_cfg.clone_combinations = [
+        *target.clone_cfg.clone_combinations,
+        InclusionSet(assets=list(dict.fromkeys(added_names))),
+    ]
     return target
 
 

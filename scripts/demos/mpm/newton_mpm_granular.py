@@ -24,6 +24,7 @@ import argparse
 import math
 
 from isaaclab.app import add_launcher_args, launch_simulation
+from isaaclab.cloner import ReplicateSession
 
 parser = argparse.ArgumentParser(description="Newton implicit MPM granular demo.")
 parser.add_argument(
@@ -208,11 +209,21 @@ def main() -> None:
     sim_cfg = create_sim_cfg()
     with launch_simulation(sim_cfg, args_cli):
         import isaaclab.sim as sim_utils
-        from isaaclab.scene import InteractiveScene
 
         sim = sim_utils.SimulationContext(sim_cfg)
         sim.set_camera_view(eye=(4.0, -6.0, 4.0), target=(0.0, 0.0, 1.0))
-        scene = InteractiveScene(create_scene_cfg())
+        scene_cfg = create_scene_cfg()
+        with ReplicateSession(
+            [scene_cfg],
+            scene_cfg.num_envs,
+            scene_cfg.env_spacing,
+            sim.device,
+            env_template=scene_cfg.clone_cfg.clone_template,
+            replicate_physics=scene_cfg.replicate_physics,
+        ):
+            scene = scene_cfg.class_type(scene_cfg)
+        if scene_cfg.filter_collisions and "physx" in sim.physics_backend:
+            scene.filter_collisions()
         sim.reset()
         print(
             f"[INFO]: Isaac Lab Newton granular MPM demo ready. Spawned {particle_count(scene)} particles.",

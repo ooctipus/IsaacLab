@@ -12,12 +12,23 @@ simulator and no USD, so they live outside ``test/sim/``.
 
 import subprocess
 import sys
+from dataclasses import dataclass
 
 import pytest
 import torch
 
+import isaaclab.sim as sim_utils
 from isaaclab import cloner
+from isaaclab.assets import AssetBaseCfg
 from isaaclab.cloner import ClonePlan
+from isaaclab.cloner.clone_plan import _make_clone_plan, _make_valid_clone_combinations
+
+
+@dataclass
+class _SpawnCfg:
+    prim_path: str
+    spawn: object | None
+
 
 ##
 # Path primitives.
@@ -64,6 +75,177 @@ def test_expand_env_regex_ns_preserves_regex_quantifiers():
     assert (
         cloner.path.rebase("/World/envs/env_0X/Robot", "/World/envs/env_0", "/World/envs/env_5")
         == "/World/envs/env_0X/Robot"
+    )
+
+
+def test_make_clone_plan_gives_each_asset_one_flat_row():
+    """A homogeneous scene keeps per-asset ownership instead of collapsing into one env row."""
+    robot = _SpawnCfg(
+        prim_path="/World/envs/env_[^/]+/Robot",
+        spawn=sim_utils.CuboidCfg(size=(0.1, 0.1, 0.1)),
+    )
+    table = _SpawnCfg(
+        prim_path="/World/envs/env_[^/]+/Table",
+        spawn=sim_utils.CuboidCfg(size=(0.2, 0.2, 0.1)),
+    )
+
+    plan = _make_clone_plan([robot, table], num_clones=3, env_spacing=1.0, device="cpu")
+
+    assert plan.sources == ("/World/envs/env_0/Robot", "/World/envs/env_0/Table")
+    assert plan.destinations == ("/World/envs/env_{}/Robot", "/World/envs/env_{}/Table")
+    assert plan.clone_mask.tolist() == [[True, True, True], [True, True, True]]
+    assert plan.cfg_rows == {id(robot): (0,), id(table): (1,)}
+
+
+def test_make_clone_plan_reads_nested_direct_cfg_and_expands_its_namespace():
+    """The plan discovers an asset declared as data inside a direct-environment cfg."""
+
+    @dataclass
+    class DirectCfg:
+        asset: object
+
+    asset = _SpawnCfg(prim_path="{ENV_REGEX_NS}/Object", spawn=sim_utils.SphereCfg(radius=0.1))
+
+    plan = _make_clone_plan([DirectCfg(asset)], num_clones=2, env_spacing=1.0, device="cpu")
+
+    assert plan.sources == ("/World/envs/env_0/Object",)
+    assert plan.destinations == ("/World/envs/env_{}/Object",)
+    assert plan.cfg_rows == {id(asset): (0,)}
+
+
+def test_cfg_source_paths_preserves_inactive_variant_slots_without_mutating_cfg():
+    """Inactive variants stay addressable without rewriting their configuration."""
+    cfg = _SpawnCfg(
+        prim_path="/World/envs/env_[^/]+/Object",
+        spawn=sim_utils.MultiAssetSpawnerCfg(
+            assets_cfg=[sim_utils.ConeCfg(), sim_utils.SphereCfg(), sim_utils.CuboidCfg()]
+        ),
+    )
+    before = cfg.spawn.to_dict()
+
+    plan = _make_clone_plan([cfg], num_clones=2, env_spacing=1.0, device="cpu")
+
+    assert cloner.query.cfg_source_paths(plan, cfg) == (
+        "/World/envs/env_0/Object",
+        "/World/envs/env_1/Object",
+        None,
+    )
+    assert cfg.spawn.to_dict() == before
+    with pytest.raises(ValueError, match="owns no row"):
+        cloner.query.cfg_source_paths(plan, object())
+
+    mismatched = _SpawnCfg(prim_path="/World/envs/env_[^/]+/Other", spawn=None)
+    plan.cfg_rows[id(mismatched)] = plan.cfg_rows[id(cfg)]
+    with pytest.raises(ValueError, match="does not match clone-plan destination"):
+        cloner.query.cfg_source_paths(plan, mismatched)
+
+
+def test_valid_clone_combinations_encode_presence_variants_and_weights():
+    """Legal combinations remain declarative inputs to the flat row assignment."""
+    combinations = _make_valid_clone_combinations(
+        ["robot", "object"],
+        [1, 2],
+        [
+            cloner.InclusionSet(assets=["robot"], weight=1),
+            cloner.InclusionSet(assets=["object"], weight=2),
+        ],
+    )
+
+    assert combinations.tolist() == [
+        [0, -1],
+        [-1, 0],
+        [-1, 1],
+        [0, -1],
+        [-1, 0],
+        [-1, 1],
+    ]
+
+
+def test_global_cfg_without_spawner_owns_one_non_cloned_row():
+    """A directly authored shared subtree is plan-owned even though nothing copies it."""
+    terrain = AssetBaseCfg(prim_path="/World/Ground")
+
+    plan = _make_clone_plan([terrain], num_clones=2, env_spacing=1.0, device="cpu")
+
+    assert plan.sources == plan.destinations == ("/World/Ground",)
+    assert plan.cfg_rows == {id(terrain): (0,)}
+    assert cloner.query.cfg_source_paths(plan, terrain) == ("/World/Ground",)
+    assert not bool(plan.clone_mask.any())
+
+
+def test_plan_derives_cross_environment_collision_roots_from_cfg_data():
+    """Only cfgs marked collision_group=-1 contribute exact plan-owned collision roots."""
+    ground = AssetBaseCfg(prim_path="/World/Ground", collision_group=-1)
+    light = AssetBaseCfg(prim_path="/World/Light", collision_group=0)
+    obstacle = AssetBaseCfg(
+        prim_path="{ENV_REGEX_NS}/Obstacle",
+        spawn=sim_utils.CuboidCfg(size=(0.1, 0.1, 0.1)),
+        collision_group=-1,
+    )
+
+    plan = _make_clone_plan([ground, light, obstacle], num_clones=2, env_spacing=1.0, device="cpu")
+
+    assert plan.collision_paths == (
+        "/World/Ground",
+        "/World/envs/env_0/Obstacle",
+        "/World/envs/env_1/Obstacle",
+    )
+
+
+def test_plan_rejects_global_regex_authoring_and_ignores_regex_references():
+    """Authoring needs an exact destination; a reference expression owns no independent row."""
+    author = _SpawnCfg(
+        prim_path="/World/Origin.*/Robot",
+        spawn=sim_utils.CuboidCfg(size=(0.1, 0.1, 0.1)),
+    )
+    reference = _SpawnCfg(prim_path="/World/Origin.*/Robot/base", spawn=None)
+
+    with pytest.raises(ValueError, match="must use an exact prim path or the session env template"):
+        _make_clone_plan([author], num_clones=2, env_spacing=1.0, device="cpu")
+
+    plan = _make_clone_plan([reference], num_clones=2, env_spacing=1.0, device="cpu")
+    assert plan.sources == plan.destinations == ()
+
+
+def test_make_clone_plan_rejects_duplicate_scene_ownership():
+    """Two authoring cfgs cannot claim the same physical destination."""
+    cfgs = [
+        _SpawnCfg(
+            prim_path="/World/envs/env_[^/]+/Object",
+            spawn=sim_utils.CuboidCfg(size=(0.1, 0.1, 0.1)),
+        )
+        for _ in range(2)
+    ]
+
+    with pytest.raises(ValueError, match="Multiple cfgs author the same clone-plan destination"):
+        _make_clone_plan(cfgs, num_clones=2, env_spacing=1.0, device="cpu")
+
+
+def test_nested_cfg_reuses_parent_rows_without_duplicate_copy():
+    """A declared child resolves every parent prototype without adding clone rows."""
+    robot = _SpawnCfg(
+        prim_path="/World/envs/env_[^/]+/Robot",
+        spawn=sim_utils.MultiAssetSpawnerCfg(assets_cfg=[sim_utils.ConeCfg(), sim_utils.SphereCfg()]),
+    )
+    camera = _SpawnCfg(
+        prim_path="/World/envs/env_[^/]+/Robot/Camera",
+        spawn=sim_utils.PinholeCameraCfg(),
+    )
+
+    plan = _make_clone_plan([camera, robot], num_clones=2, env_spacing=1.0, device="cpu")
+
+    assert plan.destinations == ("/World/envs/env_{}/Robot",) * 2
+    assert plan.cfg_rows[id(camera)] == plan.cfg_rows[id(robot)] == (0, 1)
+    assert cloner.query.cfg_source_paths(plan, camera) == (
+        "/World/envs/env_0/Robot/Camera",
+        "/World/envs/env_1/Robot/Camera",
+    )
+    assert cloner.query.path_to_clone(plan, "/World/envs/env_0/Robot/Camera", 0) == ("/World/envs/env_0/Robot/Camera")
+    assert cloner.query.path_to_clone(plan, "/World/envs/env_1/Robot/Camera", 1) == ("/World/envs/env_1/Robot/Camera")
+    assert cloner.query.path_to_source(plan, "/World/envs/env_1/Robot/Camera") == (
+        "/World/envs/env_1/Robot",
+        "/World/envs/env_[^/]+/Robot",
+        "/Camera",
     )
 
 
@@ -145,11 +327,14 @@ def test_path_stage_root_is_not_a_segment():
 ##
 
 
-def _plan(sources, destinations, mask) -> ClonePlan:
+def _plan(sources, destinations, mask, env_ids=None, env_template="/World/envs/env_{}") -> ClonePlan:
+    clone_mask = torch.tensor(mask, dtype=torch.bool)
     return ClonePlan(
         sources=tuple(sources),
         destinations=tuple(destinations),
-        clone_mask=torch.tensor(mask, dtype=torch.bool),
+        clone_mask=clone_mask,
+        env_ids=torch.arange(clone_mask.shape[1]) if env_ids is None else torch.tensor(env_ids, dtype=torch.long),
+        env_template=env_template,
     )
 
 
@@ -167,6 +352,7 @@ def _wide_env_id_plan() -> ClonePlan:
         sources=("/World/envs/env_0/Object", "/World/envs/env_10/Object"),
         destinations=("/World/envs/env_{}/Object", "/World/envs/env_{}/Object"),
         clone_mask=mask,
+        env_ids=torch.arange(12),
     )
 
 
@@ -177,11 +363,6 @@ PLANS = {
         ("/World/envs/env_0/Object", "/World/envs/env_2/Object"),
         ("/World/envs/env_{}/Object", "/World/envs/env_{}/Object"),
         [[True, True, False, True], [False, False, True, False]],
-    ),
-    "nested_prototype": _plan(
-        ("/World/envs/env_0/Robot", "/World/envs/env_0/Robot/wrist/Camera"),
-        ("/World/envs/env_{}/Robot", "/World/envs/env_{}/Robot/wrist/Camera"),
-        [[True, True, True, True], [True, True, True, True]],
     ),
     "distinct_env_root": _plan(
         ("/World/source/Robot",),
@@ -219,34 +400,6 @@ def test_path_to_clone_heterogeneous_selects_env_owning_row():
     # env 2 draws Object from the row-1 variant, so the row-0 prototype does not reach it.
     assert cloner.query.path_to_clone(plan, "/World/envs/env_0/Object/base", 2) is None
     assert cloner.query.path_to_clone(plan, "/World/envs/env_2/Object/base", 2) == "/World/envs/env_2/Object/base"
-
-
-def test_path_to_clone_nested_prototype_uses_nearest_source():
-    """A path inside a nested prototype is cloned by the nested row, not its ancestor."""
-    plan = PLANS["nested_prototype"]
-    path = "/World/envs/env_0/Robot/wrist/Camera/lens"
-    assert cloner.query.path_to_clone(plan, path, 1) == "/World/envs/env_1/Robot/wrist/Camera/lens"
-
-
-def test_path_to_source_nested_templates_pick_most_specific():
-    """A path owned by both an ancestor and a descendant template resolves to the descendant."""
-    plan = _plan(
-        ("/World/envs/env_0/Robot", "/World/envs/env_0/Robot/ee_link/palm_link/Camera"),
-        ("/World/envs/env_{}/Robot", "/World/envs/env_{}/Robot/ee_link/palm_link/Camera"),
-        [[True, True], [True, True]],
-    )
-
-    # The camera path matches both templates; the more specific (longer-matching) one wins.
-    resolved = cloner.query.path_to_source(plan, "/World/envs/env_0/Robot/ee_link/palm_link/Camera")
-    assert resolved == (
-        "/World/envs/env_0/Robot/ee_link/palm_link/Camera",
-        "/World/envs/env_[^/]+/Robot/ee_link/palm_link/Camera",
-        "",
-    )
-
-    # A path that only the ancestor template owns still resolves against it with its suffix.
-    resolved = cloner.query.path_to_source(plan, "/World/envs/env_0/Robot/base")
-    assert resolved == ("/World/envs/env_0/Robot", "/World/envs/env_[^/]+/Robot", "/base")
 
 
 def test_path_to_source_ambiguous_templates_raise():
@@ -348,24 +501,6 @@ def test_iter_sources_reports_only_the_envs_a_row_populates():
             "/World/envs/env_{}/Object",
             "/World/envs/env_2/Object/Body/Camera",
             (2, 3),
-        )
-    ]
-
-
-def test_iter_sources_skips_rows_without_envs():
-    """A nearer template populating no env does not hide the populated ancestor owning the path."""
-    plan = _plan(
-        ("/World/envs/env_0/Robot", "/World/envs/env_0/Robot/wrist/Camera"),
-        ("/World/envs/env_{}/Robot", "/World/envs/env_{}/Robot/wrist/Camera"),
-        [[True, True, False, False], [False, False, False, False]],
-    )
-
-    assert list(cloner.query.iter_sources(plan, "/World/envs/env_[^/]+/Robot/wrist/Camera")) == [
-        (
-            "/World/envs/env_0/Robot",
-            "/World/envs/env_{}/Robot",
-            "/World/envs/env_0/Robot/wrist/Camera",
-            (0, 1),
         )
     ]
 
@@ -491,8 +626,8 @@ def test_query_resolve_distinguishes_concrete_paths_from_wildcards():
 def test_query_translates_env_ids_through_the_plan():
     """Mask columns are not env ids: a plan targeting envs (2, 5) reports 2 and 5.
 
-    :func:`~isaaclab.cloner.replicate` formats destinations with ``env_ids[column]``, so the
-    queries have to agree with it rather than reporting column indices.
+    Clone dispatch formats destinations with ``env_ids[column]``, so queries must agree with
+    it rather than reporting column indices.
     """
     plan = ClonePlan(
         sources=("/World/envs/env_2/Robot",),
@@ -538,7 +673,7 @@ def test_query_rejects_env_ids_outside_the_plan(env_id):
 def test_query_agrees_across_duplicate_source_rows():
     """An inactive variant may share a fallback source path with an active one.
 
-    ``make_clone_plan`` points an unused variant at ``destination.format(i)``, which can
+    ``_make_clone_plan`` points an unused variant at ``destination.format(i)``, which can
     collide with another row's source. The two source-side queries must still agree about
     which envs that path reaches.
     """
@@ -556,9 +691,65 @@ def test_query_agrees_across_duplicate_source_rows():
         assert (cloner.query.path_to_clone(plan, path, env_id) is not None) == (env_id in reached)
 
 
-def test_env_0_plan_defaults_to_no_global_paths():
-    plan = cloner.clone_plan_from_env_0("/World/envs/env_0", "/World/envs/env_{}", 2, "cpu")
-    assert plan.global_paths == ()
+def test_environment_queries_read_flat_rows_and_ignore_globals():
+    """Environment collapse derives its roots from cloned rows, not shared world rows."""
+    plan = _plan(
+        ["/World/envs/env_0/Robot", "/World/envs/env_0/Table", "/World/Ground"],
+        ["/World/envs/env_{}/Robot", "/World/envs/env_{}/Table", "/World/Ground"],
+        [[True, True, True], [True, True, True], [False, False, False]],
+        env_ids=[0, 1, 2],
+    )
+
+    assert cloner.query.clone_rows(plan) == [0, 1]
+    assert cloner.query.env_root_paths(plan) == [f"/World/envs/env_{env_id}" for env_id in range(3)]
+    assert cloner.query.whole_env_copy(plan) == ("/World/envs/env_0", "/World/envs/env_{}")
+
+
+def test_global_rows_resolve_without_a_clone_slot():
+    """A shared plan-owned subtree resolves directly instead of entering template parsing."""
+    plan = _plan(
+        ["/World/Ground"],
+        ["/World/Ground"],
+        [[False, False]],
+        env_ids=[0, 1],
+    )
+
+    assert cloner.query.path_to_source(plan, "/World/Ground/Collision") == (
+        "/World/Ground",
+        "/World/Ground",
+        "/Collision",
+    )
+    assert list(cloner.query.iter_sources(plan, "/World/Ground/Collision")) == [
+        ("/World/Ground", "/World/Ground", "/World/Ground/Collision", (0, 1))
+    ]
+
+
+@pytest.mark.parametrize(
+    "sources, mask",
+    [
+        (["/World/envs/env_0/Robot", "/World/envs/env_0/Table"], [[True, True], [True, False]]),
+        (["/World/envs/env_0/Robot", "/World/envs/env_1/Table"], [[True, True], [True, True]]),
+    ],
+)
+def test_whole_env_copy_refuses_non_equivalent_flat_plans(sources, mask):
+    """Partial coverage and prototypes outside the source env require per-asset copies."""
+    destinations = ["/World/envs/env_{}/Robot", "/World/envs/env_{}/Table"]
+    plan = _plan(sources, destinations, mask, env_ids=[0, 1])
+
+    assert cloner.query.whole_env_copy(plan) is None
+
+
+def test_env_root_paths_respects_custom_template():
+    """Consumers ask the plan for custom environment roots instead of assuming names."""
+    plan = _plan(
+        ["/Scene/worlds/world_4/Robot"],
+        ["/Scene/worlds/world_{}/Robot"],
+        [[True, True]],
+        env_ids=[4, 7],
+        env_template="/Scene/worlds/world_{}",
+    )
+
+    assert cloner.query.env_root_paths(plan) == ["/Scene/worlds/world_4", "/Scene/worlds/world_7"]
 
 
 def test_query_and_path_are_real_modules():

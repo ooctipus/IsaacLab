@@ -41,23 +41,18 @@ from typing import Any
 import torch
 
 import isaaclab.sim as sim_utils
+from isaaclab import cloner
+from isaaclab.assets import AssetBaseCfg
 from isaaclab.sensors.ray_caster import RayCasterCamera, RayCasterCameraCfg, patterns
 from isaaclab.utils import convert_dict_to_backend
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.math import project_points, unproject_depth
 
 
-def define_sensor() -> RayCasterCamera:
-    """Defines the ray-cast camera sensor to add to the scene."""
-    # Camera base frames
-    # In contras to the USD camera, we associate the sensor to the prims at these locations.
-    # This means that parent prim of the sensor is the prim at this location.
-    sim_utils.create_prim("/World/Origin_00/CameraSensor", "Xform")
-    sim_utils.create_prim("/World/Origin_01/CameraSensor", "Xform")
-
-    # Setup camera sensor
+def design_scene(sim: sim_utils.SimulationContext):
     camera_cfg = RayCasterCameraCfg(
-        prim_path="/World/Origin_.*/CameraSensor",
+        prim_path="{ENV_REGEX_NS}/CameraSensor",
+        spawn=sim_utils.SensorFrameCfg(),
         mesh_prim_paths=["/World/ground"],
         update_period=0.1,
         offset=RayCasterCameraCfg.OffsetCfg(pos=(0.0, 0.0, 0.0), rot=(1.0, 0.0, 0.0, 0.0)),
@@ -70,22 +65,24 @@ def define_sensor() -> RayCasterCamera:
             width=640,
         ),
     )
-    # Create camera
-    camera = RayCasterCamera(cfg=camera_cfg)
-
-    return camera
-
-
-def design_scene():
-    # Populate scene
-    # -- Rough terrain
-    cfg = sim_utils.UsdFileCfg(usd_path=f"{ISAAC_NUCLEUS_DIR}/Environments/Terrains/rough_plane.usd")
-    cfg.func("/World/ground", cfg)
-    # -- Lights
-    cfg = sim_utils.DistantLightCfg(intensity=600.0, color=(0.75, 0.75, 0.75))
-    cfg.func("/World/Light", cfg)
-    # -- Sensors
-    camera = define_sensor()
+    ground_cfg = AssetBaseCfg(
+        prim_path="/World/ground",
+        spawn=sim_utils.UsdFileCfg(usd_path=f"{ISAAC_NUCLEUS_DIR}/Environments/Terrains/rough_plane.usd"),
+    )
+    light_cfg = AssetBaseCfg(
+        prim_path="/World/Light",
+        spawn=sim_utils.DistantLightCfg(intensity=600.0, color=(0.75, 0.75, 0.75)),
+    )
+    with cloner.ReplicateSession(
+        (ground_cfg, light_cfg, camera_cfg),
+        args_cli.num_envs,
+        0.0,
+        sim.device,
+        env_template="/World/Origin_{}",
+    ):
+        ground_cfg.spawn.func(ground_cfg.prim_path, ground_cfg.spawn)
+        light_cfg.spawn.func(light_cfg.prim_path, light_cfg.spawn)
+        camera = camera_cfg.class_type(camera_cfg)
 
     # return the scene information
     scene_entities = {"camera": camera}
@@ -109,7 +106,8 @@ def run_simulator(sim: sim_utils.SimulationContext, scene_entities: dict):
     # Set pose: There are two ways to set the pose of the camera.
     # -- Option-1: Set pose using view
     eyes = torch.tensor([[2.5, 2.5, 2.5], [-2.5, -2.5, 2.5]], device=sim.device)
-    targets = torch.tensor([[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]], device=sim.device)
+    eyes = eyes.repeat((camera.num_instances + 1) // 2, 1)[: camera.num_instances]
+    targets = torch.zeros_like(eyes)
     camera.set_world_poses_from_view(eyes, targets)
     # -- Option-2: Set pose using ROS
     # position = torch.tensor([[2.5, 2.5, 2.5]], device=sim.device)
@@ -171,7 +169,7 @@ def main():
     # Set main camera
     sim.set_camera_view([2.5, 2.5, 3.5], [0.0, 0.0, 0.0])
     # Design scene
-    scene_entities = design_scene()
+    scene_entities = design_scene(sim)
     # Play simulator
     sim.reset()
     # Now we are ready!

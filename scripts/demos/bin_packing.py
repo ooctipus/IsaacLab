@@ -58,12 +58,13 @@ import warp as wp
 
 import isaaclab.sim as sim_utils
 import isaaclab.utils.math as math_utils
+from isaaclab import cloner
 
 ##
 # Pre-defined configs
 ##
 from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
-from isaaclab.cloner import CloneCfg, InclusionSet, sequential
+from isaaclab.cloner import CloneCfg, InclusionSet
 from isaaclab.physics import PhysicsCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim import schemas
@@ -287,7 +288,6 @@ class BinPackingSceneCfg(InteractiveSceneCfg):
                 for _ in range(NUM_LAYOUTS - 1)
             ),
         ],
-        clone_strategy=sequential,
     )
 
 
@@ -402,7 +402,15 @@ def main():
         layouts = [combination.assets for combination in scene_cfg.clone_cfg.clone_combinations]
         print(f"[INFO] Drawn bin layouts (objects per layout): {[len(layout) for layout in layouts]}")
         with Timer("[INFO] Time to create scene: "):
-            scene = scene_cfg.class_type(scene_cfg)
+            with cloner.ReplicateSession(
+                [scene_cfg],
+                scene_cfg.num_envs,
+                scene_cfg.env_spacing,
+                sim.device,
+                env_template=scene_cfg.clone_cfg.clone_template,
+                replicate_physics=scene_cfg.replicate_physics,
+            ):
+                scene = scene_cfg.class_type(scene_cfg)
 
         # Play the simulator
         sim.reset()

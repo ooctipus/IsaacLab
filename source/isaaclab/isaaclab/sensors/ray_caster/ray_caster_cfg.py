@@ -37,19 +37,11 @@ class RayCasterCfg(SensorBaseCfg):
 
     class_type: type[RayCaster] | str = "{DIR}.ray_caster:RayCaster"
 
-    spawn: SensorFrameCfg | None = SensorFrameCfg()
-    """Spawn configuration for the sensor Xform prim.
+    spawn: SensorFrameCfg | None = None
+    """Optional spawner for a new sensor frame at :attr:`prim_path`.
 
-    A plain USD Xform is created at :attr:`prim_path` before initialization, matching the
-    pattern used by :class:`~isaaclab.sensors.camera.camera_cfg.CameraCfg` (which spawns a
-    Camera prim). The :attr:`prim_path` can be either:
-
-    - A **new** child path under a parent link (e.g. ``{ENV_REGEX_NS}/Robot/base``).
-    - A **physics body** path (e.g. ``{ENV_REGEX_NS}/Robot/base``). In this case, the sensor
-      will automatically create a child Xform at ``{prim_path}``.
-
-    If ``None``, the prim at :attr:`prim_path` must already exist on the USD stage and must
-    **not** be a physics body.
+    Leave this as ``None`` when :attr:`prim_path` references an existing frame or physics
+    body. Set it to :class:`~isaaclab.sim.SensorFrameCfg` when the sensor owns a new Xform.
     """
 
     mesh_prim_paths: list[str] = MISSING

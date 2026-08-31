@@ -7,11 +7,12 @@ from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
-from isaaclab.assets import ArticulationCfg
+from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
 from isaaclab.envs import DirectRLEnvCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim import SimulationCfg
 from isaaclab.sim.spawners.materials.physics_materials_cfg import RigidBodyMaterialCfg
+from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.configclass import configclass
 
 from .assembly_tasks_cfg import ASSET_DIR, Insertion
@@ -38,6 +39,8 @@ STATE_DIM_CFG = {
     "held_quat": 4,
     "delta_pos": 3,
 }
+
+_TASK_CFG = Insertion()
 
 
 @configclass
@@ -70,70 +73,23 @@ class CtrlCfg:
 
 
 @configclass
-class AssemblyEnvCfg(DirectRLEnvCfg):
-    decimation = 8
-    action_space = 6
-    # num_*: will be overwritten to correspond to obs_order, state_order.
-    observation_space = 24
-    state_space = 44
-    obs_order: list = [
-        "joint_pos",
-        "fingertip_pos",
-        "fingertip_quat",
-        "fingertip_goal_pos",
-        "fingertip_goal_quat",
-        "delta_pos",
-    ]
-    state_order: list = [
-        "joint_pos",
-        "joint_vel",
-        "fingertip_pos",
-        "fingertip_quat",
-        "ee_linvel",
-        "ee_angvel",
-        "fingertip_goal_pos",
-        "fingertip_goal_quat",
-        "held_pos",
-        "held_quat",
-        "delta_pos",
-    ]
+class AssemblySceneCfg(InteractiveSceneCfg):
+    """AutoMate assembly assets constructed and cloned through one scene plan."""
 
-    task_name: str = "insertion"  # peg_insertion, gear_meshing, nut_threading
-    tasks: dict = {"insertion": Insertion()}
-    obs_rand: ObsRandCfg = ObsRandCfg()
-    ctrl: CtrlCfg = CtrlCfg()
-
-    # episode_length_s = 10.0  # Probably need to override.
-    episode_length_s = 5.0
-    sim: SimulationCfg = SimulationCfg(
-        device="cuda:0",
-        dt=1 / 120,
-        gravity=(0.0, 0.0, -9.81),
-        physics=PhysxCfg(
-            solver_type=1,
-            max_position_iteration_count=192,  # Important to avoid interpenetration.
-            max_velocity_iteration_count=1,
-            bounce_threshold_velocity=0.2,
-            friction_offset_threshold=0.01,
-            friction_correlation_distance=0.00625,
-            gpu_max_rigid_contact_count=2**23,
-            gpu_max_rigid_patch_count=2**23,
-            gpu_collision_stack_size=2**27,
-            gpu_max_num_partitions=1,  # Important for stable simulation.
-        ),
-        physics_material=RigidBodyMaterialCfg(
-            static_friction=1.0,
-            dynamic_friction=1.0,
-        ),
+    ground = AssetBaseCfg(
+        prim_path="/World/ground",
+        spawn=sim_utils.GroundPlaneCfg(),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.0, 0.0, -0.4)),
     )
-
-    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=128, env_spacing=2.0)
-
+    table = AssetBaseCfg(
+        prim_path="{ENV_REGEX_NS}/Table",
+        spawn=sim_utils.UsdFileCfg(usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Mounts/SeattleLabTable/table_instanceable.usd"),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.55, 0.0, 0.0), rot=(0.0, 0.0, 0.70711, 0.70711)),
+    )
     robot = ArticulationCfg(
         prim_path="{ENV_REGEX_NS}/Robot",
         spawn=sim_utils.UsdFileCfg(
             usd_path=f"{ASSET_DIR}/franka_mimic.usd",
-            # usd_path=f'{ASSET_DIR}/automate_franka.usd',
             activate_contact_sensors=False,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 disable_gravity=True,
@@ -198,6 +154,119 @@ class AssemblyEnvCfg(DirectRLEnvCfg):
             ),
         },
     )
+    fixed_asset = ArticulationCfg(
+        prim_path="{ENV_REGEX_NS}/FixedAsset",
+        spawn=sim_utils.UsdFileCfg(
+            usd_path=f"{_TASK_CFG.assembly_dir}{_TASK_CFG.fixed_asset_cfg.usd_path}",
+            activate_contact_sensors=True,
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(
+                disable_gravity=False,
+                max_depenetration_velocity=5.0,
+                linear_damping=0.0,
+                angular_damping=0.0,
+                max_linear_velocity=1000.0,
+                max_angular_velocity=3666.0,
+                enable_gyroscopic_forces=True,
+                solver_position_iteration_count=192,
+                solver_velocity_iteration_count=1,
+                max_contact_impulse=1e32,
+            ),
+            articulation_props=sim_utils.ArticulationRootPropertiesCfg(
+                enabled_self_collisions=True, fix_root_link=True
+            ),
+            mass_props=sim_utils.MassPropertiesCfg(mass=_TASK_CFG.fixed_asset_cfg.mass),
+            collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
+        ),
+        init_state=ArticulationCfg.InitialStateCfg(
+            pos=(0.6, 0.0, 0.05), rot=(0.0, 0.0, 0.0, 1.0), joint_pos={}, joint_vel={}
+        ),
+        actuators={},
+    )
+    held_asset = RigidObjectCfg(
+        prim_path="{ENV_REGEX_NS}/HeldAsset",
+        spawn=sim_utils.UsdFileCfg(
+            usd_path=f"{_TASK_CFG.assembly_dir}{_TASK_CFG.held_asset_cfg.usd_path}",
+            activate_contact_sensors=True,
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(
+                disable_gravity=True,
+                max_depenetration_velocity=5.0,
+                linear_damping=0.0,
+                angular_damping=0.0,
+                max_linear_velocity=1000.0,
+                max_angular_velocity=3666.0,
+                enable_gyroscopic_forces=True,
+                solver_position_iteration_count=192,
+                solver_velocity_iteration_count=1,
+                max_contact_impulse=1e32,
+            ),
+            mass_props=sim_utils.MassPropertiesCfg(mass=_TASK_CFG.held_asset_cfg.mass),
+            collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
+        ),
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.4, 0.1), rot=(0.0, 0.0, 0.0, 1.0)),
+    )
+    light = AssetBaseCfg(
+        prim_path="/World/Light", spawn=sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
+    )
+
+
+@configclass
+class AssemblyEnvCfg(DirectRLEnvCfg):
+    decimation = 8
+    action_space = 6
+    # num_*: will be overwritten to correspond to obs_order, state_order.
+    observation_space = 24
+    state_space = 44
+    obs_order: list = [
+        "joint_pos",
+        "fingertip_pos",
+        "fingertip_quat",
+        "fingertip_goal_pos",
+        "fingertip_goal_quat",
+        "delta_pos",
+    ]
+    state_order: list = [
+        "joint_pos",
+        "joint_vel",
+        "fingertip_pos",
+        "fingertip_quat",
+        "ee_linvel",
+        "ee_angvel",
+        "fingertip_goal_pos",
+        "fingertip_goal_quat",
+        "held_pos",
+        "held_quat",
+        "delta_pos",
+    ]
+
+    task: Insertion = _TASK_CFG
+    obs_rand: ObsRandCfg = ObsRandCfg()
+    ctrl: CtrlCfg = CtrlCfg()
+
+    # episode_length_s = 10.0  # Probably need to override.
+    episode_length_s = 5.0
+    sim: SimulationCfg = SimulationCfg(
+        device="cuda:0",
+        dt=1 / 120,
+        gravity=(0.0, 0.0, -9.81),
+        physics=PhysxCfg(
+            solver_type=1,
+            max_position_iteration_count=192,  # Important to avoid interpenetration.
+            max_velocity_iteration_count=1,
+            bounce_threshold_velocity=0.2,
+            friction_offset_threshold=0.01,
+            friction_correlation_distance=0.00625,
+            gpu_max_rigid_contact_count=2**23,
+            gpu_max_rigid_patch_count=2**23,
+            gpu_collision_stack_size=2**27,
+            gpu_max_num_partitions=1,  # Important for stable simulation.
+        ),
+        physics_material=RigidBodyMaterialCfg(
+            static_friction=1.0,
+            dynamic_friction=1.0,
+        ),
+    )
+
+    scene: AssemblySceneCfg = AssemblySceneCfg(num_envs=128, env_spacing=2.0)
     # contact_sensor: ContactSensorCfg = ContactSensorCfg(
     #     prim_path="{ENV_REGEX_NS}/Robot/[^/]*", update_period=0.0, history_length=1, debug_vis=True
     # )

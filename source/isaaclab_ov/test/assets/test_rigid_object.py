@@ -44,7 +44,8 @@ from isaaclab_ov.physics import OvPhysxCfg, OvPhysxManager  # noqa: E402
 
 import isaaclab.sim as sim_utils  # noqa: E402
 from isaaclab.assets import RigidObjectCfg  # noqa: E402
-from isaaclab.sim import SimulationCfg, build_simulation_context  # noqa: E402
+from isaaclab.cloner import ReplicateSession  # noqa: E402
+from isaaclab.sim import SimulationCfg, SimulationContext, build_simulation_context  # noqa: E402
 from isaaclab.sim.spawners import materials  # noqa: E402
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR  # noqa: E402
 from isaaclab.utils.math import (  # noqa: E402
@@ -129,11 +130,6 @@ def generate_cubes_scene(
         A tuple containing the rigid object representing the cubes and the origins of the cubes.
 
     """
-    origins = torch.tensor([(i * 1.0, 0, height) for i in range(num_cubes)]).to(device)
-    # Create Top-level Xforms, one for each cube
-    for i, origin in enumerate(origins):
-        sim_utils.create_prim(f"/World/Table_{i}", "Xform", translation=origin)
-
     # Resolve spawn configuration
     if api == "none":
         # since no rigid body properties defined, this is just a static collider
@@ -161,7 +157,9 @@ def generate_cubes_scene(
         spawn=spawn_cfg,
         init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, height)),
     )
-    cube_object = RigidObject(cfg=cube_object_cfg)
+    with ReplicateSession([cube_object_cfg], num_cubes, 1.0, device, env_template="/World/Table_{}"):
+        cube_object = cube_object_cfg.class_type(cube_object_cfg)
+    origins = SimulationContext.instance().get_clone_plan().positions
 
     return cube_object, origins
 
@@ -394,7 +392,7 @@ def test_external_force_on_single_body(num_cubes, device):
             root_vel = cube_object.data.default_root_vel.torch.clone()
 
             # need to shift the position of the cubes otherwise they will be on top of each other
-            root_pose[:, :3] = origins
+            root_pose[:, :3] += origins
             cube_object.write_root_pose_to_sim_index(root_pose=root_pose)
             cube_object.write_root_velocity_to_sim_index(root_velocity=root_vel)
 
@@ -475,7 +473,7 @@ def test_external_force_on_single_body_at_position(num_cubes, device):
             root_vel = cube_object.data.default_root_vel.torch.clone()
 
             # need to shift the position of the cubes otherwise they will be on top of each other
-            root_pose[:, :3] = origins
+            root_pose[:, :3] += origins
             cube_object.write_root_pose_to_sim_index(root_pose=root_pose)
             cube_object.write_root_velocity_to_sim_index(root_velocity=root_vel)
 

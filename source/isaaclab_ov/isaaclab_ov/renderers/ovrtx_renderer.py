@@ -419,8 +419,8 @@ class OVRTXRenderer(BaseRenderer):
             return
 
         self._clone_plan = SimulationContext.instance().get_clone_plan()
-        if self._clone_plan is None or self._clone_plan.env_ids is None or self._clone_plan.positions is None:
-            raise RuntimeError("Clone plan with environment ids and positions is required when preparing OVRTX stage")
+        if self._clone_plan is None or self._clone_plan.positions is None:
+            raise RuntimeError("Clone plan with positions is required when preparing OVRTX stage")
         expected_ids = torch.arange(num_envs, device=self._clone_plan.env_ids.device)
         if not torch.equal(self._clone_plan.env_ids, expected_ids):
             raise RuntimeError("OVRTX requires ClonePlan environment ids ordered from zero.")
@@ -593,8 +593,8 @@ class OVRTXRenderer(BaseRenderer):
     def _clone_sources_in_ovrtx(self):
         """Clone sources in OVRTX using the scene :class:`~isaaclab.cloner.ClonePlan`."""
         clone_plan = self._clone_plan
-        if clone_plan is None or clone_plan.env_ids is None or clone_plan.positions is None:
-            raise RuntimeError("Clone plan with environment ids and positions is required when using OVRTX cloning")
+        if clone_plan is None or clone_plan.positions is None:
+            raise RuntimeError("Clone plan with positions is required when using OVRTX cloning")
 
         env_ids = clone_plan.env_ids.detach().cpu()
         clone_mask = clone_plan.clone_mask.detach().cpu()
@@ -1876,8 +1876,8 @@ class OVRTXRenderer(BaseRenderer):
     def _clone_sources_ovstage(self):
         """Clone sources in OVRTX using the scene :class:`~isaaclab.cloner.ClonePlan` (ovstage path)."""
         clone_plan = self._clone_plan
-        if clone_plan is None or clone_plan.env_ids is None or clone_plan.positions is None:
-            raise RuntimeError("Clone plan with environment ids and positions is required when using OVRTX cloning")
+        if clone_plan is None or clone_plan.positions is None:
+            raise RuntimeError("Clone plan with positions is required when using OVRTX cloning")
 
         env_ids = clone_plan.env_ids.detach().cpu()
         clone_mask = clone_plan.clone_mask.detach().cpu()

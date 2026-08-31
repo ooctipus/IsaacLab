@@ -29,6 +29,7 @@ from pxr import Gf, UsdGeom, UsdPhysics
 
 import isaaclab.sim as sim_utils
 import isaaclab.sim.schemas as schemas
+from isaaclab import cloner
 from isaaclab.app.settings_manager import get_settings_manager
 from isaaclab.assets import RigidObject, RigidObjectCfg
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
@@ -42,6 +43,19 @@ from isaaclab.utils.configclass import configclass
 ##
 # Custom helper classes.
 ##
+
+
+def _create_scene(cfg: InteractiveSceneCfg, sim):
+    """Construct a scene through its cfg-owned clone lifecycle."""
+    with cloner.ReplicateSession(
+        [cfg],
+        cfg.num_envs,
+        cfg.env_spacing,
+        sim.device,
+        env_template=cfg.clone_cfg.clone_template,
+        replicate_physics=cfg.replicate_physics,
+    ):
+        return cfg.class_type(cfg)
 
 
 class ContactTestMode(Enum):
@@ -425,7 +439,7 @@ def test_cube_stack_contact_filtering(setup_simulation, device, num_envs):
             update_period=0.0,
             filter_prim_paths_expr=["{ENV_REGEX_NS}/Cube_1"],
         )
-        scene = InteractiveScene(scene_cfg)
+        scene = _create_scene(scene_cfg, sim)
 
         # Check that contact processing is enabled
         assert not settings.get("/physics/disableContactProcessing")
@@ -574,7 +588,7 @@ def test_no_contact_reporting(setup_simulation):
             update_period=0.0,
             filter_prim_paths_expr=["{ENV_REGEX_NS}/Cube_1"],
         )
-        scene = InteractiveScene(scene_cfg)
+        scene = _create_scene(scene_cfg, sim)
 
         # Force disable contact processing
         settings.set_bool("/physics/disableContactProcessing", True)
@@ -625,7 +639,7 @@ def test_contact_sensor_no_stale_data_after_reset(setup_simulation, device):
             update_period=0.0,
             history_length=10,
         )
-        scene = InteractiveScene(scene_cfg)
+        scene = _create_scene(scene_cfg, sim)
         sim.reset()
         scene.reset()
 
@@ -679,7 +693,7 @@ def test_contact_history_updates_at_sensor_period(
             track_air_time=True,
             history_length=history_length,
         )
-        scene = InteractiveScene(scene_cfg)
+        scene = _create_scene(scene_cfg, sim)
         sim.reset()
         scene.reset()
 
@@ -729,7 +743,7 @@ def test_sensor_print(setup_simulation):
             track_air_time=True,
             history_length=3,
         )
-        scene = InteractiveScene(scene_cfg)
+        scene = _create_scene(scene_cfg, sim)
         # Play the simulator
         sim.reset()
         # print info
@@ -754,7 +768,7 @@ def test_contact_sensor_threshold(setup_simulation, device):
             track_air_time=True,
             history_length=3,
         )
-        scene = InteractiveScene(scene_cfg)
+        scene = _create_scene(scene_cfg, sim)
         # Play the simulator
         sim.reset()
 
@@ -810,7 +824,7 @@ def test_friction_reporting(setup_simulation, grav_dir):
             filter_prim_paths_expr=filter_prim_paths_expr,
         )
 
-        scene = InteractiveScene(scene_cfg)
+        scene = _create_scene(scene_cfg, sim)
 
         sim.reset()
 
@@ -863,7 +877,7 @@ def test_invalid_prim_paths_config(setup_simulation):
         )
 
         try:
-            _ = InteractiveScene(scene_cfg)
+            _ = _create_scene(scene_cfg, sim)
 
             sim.reset()
 
@@ -899,7 +913,7 @@ def test_invalid_max_contact_points_config(setup_simulation):
         )
 
         try:
-            _ = InteractiveScene(scene_cfg)
+            _ = _create_scene(scene_cfg, sim)
 
             sim.reset()
 
@@ -961,7 +975,7 @@ def _run_contact_sensor_test(
                         track_friction_forces=track_contact_data,
                         filter_prim_paths_expr=filter_prim_paths_expr,
                     )
-                    scene = InteractiveScene(scene_cfg)
+                    scene = _create_scene(scene_cfg, sim)
 
                     # Play the simulation
                     sim.reset()

@@ -37,28 +37,20 @@ import torch
 
 import isaaclab.sim as sim_utils
 import isaaclab.utils.math as math_utils
-from isaaclab.assets import RigidObject, RigidObjectCfg
+from isaaclab import cloner
+from isaaclab.assets import AssetBaseCfg, RigidObject, RigidObjectCfg
 from isaaclab.sim import SimulationContext
 
 
-def design_scene():
+def design_scene(sim: SimulationContext) -> tuple[dict, torch.Tensor]:
     """Designs the scene."""
-    # Ground-plane
-    cfg = sim_utils.GroundPlaneCfg()
-    cfg.func("/World/defaultGroundPlane", cfg)
-    # Lights
-    cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.8, 0.8, 0.8))
-    cfg.func("/World/Light", cfg)
-
-    # Create separate groups called "Origin1", "Origin2", "Origin3"
-    # Each group will have a robot in it
-    origins = [[0.25, 0.25, 0.0], [-0.25, 0.25, 0.0], [0.25, -0.25, 0.0], [-0.25, -0.25, 0.0]]
-    for i, origin in enumerate(origins):
-        sim_utils.create_prim(f"/World/Origin{i}", "Xform", translation=origin)
-
-    # Rigid Object
+    ground_cfg = AssetBaseCfg(prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg())
+    light_cfg = AssetBaseCfg(
+        prim_path="/World/Light",
+        spawn=sim_utils.DomeLightCfg(intensity=2000.0, color=(0.8, 0.8, 0.8)),
+    )
     cone_cfg = RigidObjectCfg(
-        prim_path="/World/Origin.*/Cone",
+        prim_path="{ENV_REGEX_NS}/Cone",
         spawn=sim_utils.ConeCfg(
             radius=0.1,
             height=0.2,
@@ -69,11 +61,20 @@ def design_scene():
         ),
         init_state=RigidObjectCfg.InitialStateCfg(),
     )
-    cone_object = RigidObject(cfg=cone_cfg)
+    with cloner.ReplicateSession(
+        (ground_cfg, light_cfg, cone_cfg),
+        4,
+        0.5,
+        sim.device,
+        env_template="/World/Origin{}",
+    ):
+        ground_cfg.spawn.func(ground_cfg.prim_path, ground_cfg.spawn)
+        light_cfg.spawn.func(light_cfg.prim_path, light_cfg.spawn)
+        cone_object = cone_cfg.class_type(cone_cfg)
 
-    # return the scene information
-    scene_entities = {"cone": cone_object}
-    return scene_entities, origins
+    plan = sim.get_clone_plan()
+    assert plan is not None and plan.positions is not None
+    return {"cone": cone_object}, plan.positions
 
 
 def run_simulator(sim: sim_utils.SimulationContext, entities: dict[str, RigidObject], origins: torch.Tensor):
@@ -130,8 +131,7 @@ def main():
     # Set main camera
     sim.set_camera_view(eye=[1.5, 0.0, 1.0], target=[0.0, 0.0, 0.0])
     # Design scene
-    scene_entities, scene_origins = design_scene()
-    scene_origins = torch.tensor(scene_origins, device=sim.device)
+    scene_entities, scene_origins = design_scene(sim)
     # Play the simulator
     sim.reset()
     # Now we are ready!

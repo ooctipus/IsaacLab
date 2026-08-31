@@ -24,6 +24,7 @@ from typing import NamedTuple
 import numpy as np
 
 from isaaclab.app import add_launcher_args, launch_simulation
+from isaaclab.cloner import ReplicateSession
 
 
 class SnowballSpec(NamedTuple):
@@ -351,10 +352,20 @@ def main() -> None:
     sim_cfg = create_sim_cfg()
     with launch_simulation(sim_cfg, args_cli):
         import isaaclab.sim as sim_utils
-        from isaaclab.scene import InteractiveScene
 
         sim = sim_utils.SimulationContext(sim_cfg)
-        scene = InteractiveScene(create_scene_cfg())
+        scene_cfg = create_scene_cfg()
+        with ReplicateSession(
+            [scene_cfg],
+            scene_cfg.num_envs,
+            scene_cfg.env_spacing,
+            sim.device,
+            env_template=scene_cfg.clone_cfg.clone_template,
+            replicate_physics=scene_cfg.replicate_physics,
+        ):
+            scene = scene_cfg.class_type(scene_cfg)
+        if scene_cfg.filter_collisions and "physx" in sim.physics_backend:
+            scene.filter_collisions()
         sim.reset()
         sim.set_camera_view(eye=CAMERA_EYE, target=CAMERA_TARGET)
 

@@ -40,7 +40,8 @@ from isaaclab_ov.physics import OvPhysxCfg  # noqa: E402
 
 import isaaclab.sim as sim_utils  # noqa: E402
 from isaaclab.assets import RigidObjectCfg, RigidObjectCollectionCfg  # noqa: E402
-from isaaclab.sim import SimulationCfg, build_simulation_context  # noqa: E402
+from isaaclab.cloner import ReplicateSession  # noqa: E402
+from isaaclab.sim import SimulationCfg, SimulationContext, build_simulation_context  # noqa: E402
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR  # noqa: E402
 from isaaclab.utils.math import (  # noqa: E402
     combine_frame_transforms,
@@ -125,11 +126,6 @@ def generate_cubes_scene(
         A tuple containing the rigid object representing the cubes and the origins of the cubes.
 
     """
-    origins = torch.tensor([(i * 3.0, 0, height) for i in range(num_envs)]).to(device)
-    # Create Top-level Xforms, one for each cube
-    for i, origin in enumerate(origins):
-        sim_utils.create_prim(f"/World/Table_{i}", "Xform", translation=origin)
-
     # Resolve spawn configuration
     if has_api:
         spawn_cfg = sim_utils.UsdFileCfg(
@@ -155,9 +151,11 @@ def generate_cubes_scene(
         cube_config_dict[f"cube_{i}"] = cube_object_cfg
     # create the rigid object collection
     cube_object_collection_cfg = RigidObjectCollectionCfg(rigid_objects=cube_config_dict)
-    cube_object_colection = RigidObjectCollection(cfg=cube_object_collection_cfg)
+    with ReplicateSession([cube_object_collection_cfg], num_envs, 3.0, device, env_template="/World/Table_{}"):
+        cube_object_collection = cube_object_collection_cfg.class_type(cube_object_collection_cfg)
+    origins = SimulationContext.instance().get_clone_plan().positions
 
-    return cube_object_colection, origins
+    return cube_object_collection, origins
 
 
 @pytest.mark.parametrize("num_envs", [1, 2])

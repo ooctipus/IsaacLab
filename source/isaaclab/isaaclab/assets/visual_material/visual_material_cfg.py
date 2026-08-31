@@ -20,7 +20,6 @@ class VisualMaterialCfg(AssetBaseCfg):
     """
 
     class_type: type | str = "{DIR}.visual_material:VisualMaterial"
-    cloning_contexts: tuple[str | type, ...] | None = ()
     spawn: VisualMaterialSpawnerCfg | None = MISSING
     """Material spawner, or ``None`` to wrap an existing material prim."""
     channels: tuple[str, ...] = ("color",)

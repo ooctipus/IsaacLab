@@ -27,8 +27,8 @@ try:
 except ImportError as e:
     raise ImportError("LEAPP package is required for policy deployment testing. Install with: pip install leapp") from e
 
+from isaaclab import cloner
 from isaaclab.managers import CommandManager, EventManager
-from isaaclab.scene import InteractiveScene
 from isaaclab.sim import SimulationContext
 from isaaclab.sim.utils.stage import use_stage
 
@@ -179,7 +179,18 @@ class LeappDeploymentEnv:
             torch.cuda.set_device(self.sim.device)
 
         with use_stage(self.sim.stage):
-            self.scene = InteractiveScene(cfg.scene)
+            with cloner.ReplicateSession(
+                [cfg],
+                num_clones=cfg.scene.num_envs,
+                env_spacing=cfg.scene.env_spacing,
+                device=self.device,
+                env_template=cfg.scene.clone_cfg.clone_template,
+                replicate_physics=cfg.scene.replicate_physics,
+            ):
+                self.scene = cfg.scene.class_type(cfg.scene)
+            if cfg.scene.filter_collisions and "physx" in self.scene.physics_backend:
+                self.scene.filter_collisions()
+        self.sim.register_interactive_scene(self.scene)
         with use_stage(self.sim.stage):
             self.sim.reset()
         self.scene.update(dt=self.physics_dt)

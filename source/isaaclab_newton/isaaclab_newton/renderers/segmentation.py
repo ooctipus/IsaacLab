@@ -269,9 +269,9 @@ class NewtonSegmentationMapper:
             stage: The live USD stage used to read :class:`UsdSemantics.LabelsAPI` labels. May be
                 ``None`` in stageless setups, in which case every shape is treated as unlabelled.
             cfg: Renderer config exposing ``semantic_filter`` and ``semantic_segmentation_mapping``.
-            clone_plan: The scene's published :class:`~isaaclab.cloner.ClonePlan`, used to fall back
-                to the prototype env when a replicated shape has no prim on the stage (backend-only
-                replication). See :meth:`_resolve_via_prototype`.
+            clone_plan: The scene's published :class:`~isaaclab.cloner.ClonePlan`, used to resolve
+                the plan source when a cloned shape has no prim on the stage. See
+                :meth:`_resolve_via_prototype`.
         """
         self._model = model
         self._stage = stage
@@ -320,8 +320,8 @@ class NewtonSegmentationMapper:
         ``result`` at the end, so sibling shapes that share an ancestry prefix resolve in O(1)
         on subsequent calls without re-walking the hierarchy or re-querying USD.
 
-        When the walk finds nothing, :meth:`_resolve_via_prototype` retries against the prototype
-        environment, covering scenes replicated only in the physics backend.
+        When the walk finds nothing, :meth:`_resolve_via_prototype` retries against the source
+        prototype named by the clone plan.
         """
         if prim_path in self._matched_cache:
             return self._matched_cache[prim_path]
@@ -378,11 +378,10 @@ class NewtonSegmentationMapper:
     ) -> tuple[dict[SemanticType, SemanticLabels], SemanticPrimPath] | None:
         """Resolve a replicated shape's labels through the prototype env it was cloned from.
 
-        Newton replicates the *model*, rewriting each cloned shape's ``shape_label`` to its per-env
-        path (see ``isaaclab_newton.cloner.rename_builder_labels``), but a scene that spawns only
-        the prototype (:attr:`~isaaclab.sim.spawners.SpawnerCfg.spawn_path`) authors USD prims —
-        and therefore :class:`UsdSemantics.LabelsAPI` labels — for that one env only. Those clones
-        would otherwise resolve to UNLABELLED, so their labels are read off the prototype instead.
+        A clone plan assigns each asset a source prototype and destination environments. Newton shape
+        labels use the destination paths, while a stageless clone has USD semantic labels only on the
+        source prototype. Those clones would otherwise resolve to UNLABELLED, so their labels are read
+        from the plan source instead.
 
         The matched ancestor is rebased back onto the clone before being returned, because
         ``instance_segmentation`` groups by that path: leaving it on the prototype side would

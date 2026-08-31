@@ -84,11 +84,11 @@ component yet:
      - ``PhysxSceneDataBackend`` (in :mod:`isaaclab_physx.physics`)
      - ``NewtonSceneDataBackend`` (in :mod:`isaaclab_newton.physics`)
      - ``OvPhysxSceneDataBackend`` (in :mod:`isaaclab_ov.physics`)
-   * - Cloner
-     - :func:`~isaaclab.cloner.usd_replicate`
-     - :func:`~isaaclab_physx.cloner.physx_replicate`
-     - :func:`~isaaclab_newton.cloner.newton_physics_replicate`
-     - :func:`~isaaclab_ov.cloner.ovphysx_replicate`
+   * - Clone plan consumer
+     - :class:`~isaaclab.cloner.UsdReplicateContext`
+     - :class:`~isaaclab_physx.cloner.PhysxReplicateContext`
+     - :class:`~isaaclab_newton.cloner.NewtonReplicateContext`
+     - :class:`~isaaclab_ov.cloner.OvReplicateContext`
 
 The Factory Pattern
 -------------------
@@ -134,6 +134,31 @@ other declarative configs:
 The config determines the implementation independently of the physics backend. ``RenderContext``
 retains one renderer for each equal renderer config, while ``SimulationContext`` owns visualizer
 construction and initialization.
+
+Scene Construction and Cloning
+------------------------------
+
+Every environment uses one :class:`~isaaclab.cloner.ReplicateSession`. The session derives a flat
+:class:`~isaaclab.cloner.ClonePlan` from the resolved environment configuration and publishes it before
+constructing the scene. Asset and sensor constructors query that plan for their exact prototype paths.
+When construction finishes, the session dispatches the same plan once to every registered clone context.
+
+.. code-block:: python
+
+    from isaaclab import cloner
+
+    with cloner.ReplicateSession(
+        [env_cfg],
+        num_clones=env_cfg.scene.num_envs,
+        env_spacing=env_cfg.scene.env_spacing,
+        device=env_cfg.sim.device,
+        replicate_physics=env_cfg.scene.replicate_physics,
+    ):
+        scene = env_cfg.scene.class_type(env_cfg.scene)
+
+Environment base classes own this session. Task authors declare spawned assets and sensors as fields on
+their scene config; ``_setup_scene()`` only binds task-specific references or performs work that cannot be
+expressed as scene configuration.
 
 Backend Selection
 -----------------

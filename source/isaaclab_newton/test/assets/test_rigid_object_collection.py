@@ -29,7 +29,8 @@ from newton import ModelFlags
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import RigidObjectCfg, RigidObjectCollectionCfg
-from isaaclab.sim import SimulationCfg, build_simulation_context
+from isaaclab.cloner import ReplicateSession
+from isaaclab.sim import SimulationCfg, SimulationContext, build_simulation_context
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.math import (
     combine_frame_transforms,
@@ -86,11 +87,6 @@ def generate_cubes_scene(
         A tuple containing the rigid object collection representing the cubes and the origins of the cubes.
 
     """
-    origins = torch.tensor([(i * 3.0, 0, height) for i in range(num_envs)]).to(device)
-    # Create Top-level Xforms, one for each cube
-    for i, origin in enumerate(origins):
-        sim_utils.create_prim(f"/World/Env_{i}", "Xform", translation=origin)
-
     # Resolve spawn configuration
     if has_api:
         spawn_cfg = sim_utils.UsdFileCfg(
@@ -113,15 +109,17 @@ def generate_cubes_scene(
             init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 3 * i, height)),
         )
         cube_config_dict[f"cube_{i}"] = cube_object_cfg
-    if spawn_unrelated_sibling:
-        spawn_cfg.func(
-            "/World/Env_[^/]*/UnrelatedObject",
-            spawn_cfg,
-            translation=(0.0, -3.0, height),
-        )
     # create the rigid object collection
     cube_object_collection_cfg = RigidObjectCollectionCfg(rigid_objects=cube_config_dict)
-    cube_object_collection = RigidObjectCollection(cfg=cube_object_collection_cfg)
+    session_cfgs = [cube_object_collection_cfg]
+    if spawn_unrelated_sibling:
+        unrelated_cfg = RigidObjectCfg(prim_path="/World/Env_[^/]*/UnrelatedObject", spawn=spawn_cfg)
+        session_cfgs.append(unrelated_cfg)
+    with ReplicateSession(session_cfgs, num_envs, 3.0, device, env_template="/World/Env_{}"):
+        if spawn_unrelated_sibling:
+            spawn_cfg.func("/World/Env_0/UnrelatedObject", spawn_cfg, translation=(0.0, -3.0, height))
+        cube_object_collection = cube_object_collection_cfg.class_type(cube_object_collection_cfg)
+    origins = SimulationContext.instance().get_clone_plan().positions
 
     return cube_object_collection, origins
 
@@ -184,26 +182,24 @@ def test_set_body_inertial_properties_updates_inverses(device):
     num_cubes = 3
     with _newton_sim_context(device, gravity_enabled=False, auto_add_lighting=True) as sim:
         sim._app_control_on_stop_handle = None
-        for env_index in range(num_envs):
-            sim_utils.create_prim(f"/World/Env_{env_index}", "Xform", translation=(float(env_index), 0.0, 1.0))
         spawn_cfg = sim_utils.CuboidCfg(
             size=(0.2, 0.2, 0.2),
             rigid_props=sim_utils.RigidBodyPropertiesCfg(disable_gravity=True),
             mass_props=sim_utils.MassPropertiesCfg(mass=1.0),
             collision_props=sim_utils.CollisionPropertiesCfg(),
         )
-        object_collection = RigidObjectCollection(
-            RigidObjectCollectionCfg(
-                rigid_objects={
-                    f"cube_{body_index}": RigidObjectCfg(
-                        prim_path=f"/World/Env_[^/]*/Object_{body_index}",
-                        spawn=spawn_cfg,
-                        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, float(body_index), 0.0)),
-                    )
-                    for body_index in range(num_cubes)
-                }
-            )
+        object_collection_cfg = RigidObjectCollectionCfg(
+            rigid_objects={
+                f"cube_{body_index}": RigidObjectCfg(
+                    prim_path=f"/World/Env_[^/]*/Object_{body_index}",
+                    spawn=spawn_cfg,
+                    init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, float(body_index), 0.0)),
+                )
+                for body_index in range(num_cubes)
+            }
         )
+        with ReplicateSession([object_collection_cfg], num_envs, 1.0, device, env_template="/World/Env_{}"):
+            object_collection = object_collection_cfg.class_type(object_collection_cfg)
         sim.reset()
 
         env_mask = wp.array([True, False], dtype=wp.bool, device=device)

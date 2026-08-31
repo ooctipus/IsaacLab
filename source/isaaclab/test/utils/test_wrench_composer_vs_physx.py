@@ -27,6 +27,7 @@ import torch
 import warp as wp
 
 import isaaclab.sim as sim_utils
+from isaaclab import cloner
 from isaaclab.assets import RigidObject, RigidObjectCfg
 from isaaclab.sim import build_simulation_context
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
@@ -60,31 +61,26 @@ def generate_dual_cube_scene(
 
     y_offset = max(spacing, 3.0)
 
-    # Create Xform prims for both groups
-    for i in range(num_cubes):
-        origin_composer = (i * spacing, 0.0, height)
-        origin_raw = (i * spacing, y_offset, height)  # Y offset to avoid overlap
-        sim_utils.create_prim(f"/World/Composer_{i}", "Xform", translation=origin_composer)
-        sim_utils.create_prim(f"/World/Raw_{i}", "Xform", translation=origin_raw)
-
     spawn_cfg = sim_utils.UsdFileCfg(
         usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd",
         rigid_props=sim_utils.RigidBodyPropertiesCfg(),
     )
 
     cube_composer_cfg = RigidObjectCfg(
-        prim_path="/World/Composer_[^/]*/Object",
+        prim_path="{ENV_REGEX_NS}/Composer",
         spawn=spawn_cfg,
         init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, height), rot=initial_rot),
     )
-    cube_composer = RigidObject(cfg=cube_composer_cfg)
-
     cube_raw_cfg = RigidObjectCfg(
-        prim_path="/World/Raw_[^/]*/Object",
+        prim_path="{ENV_REGEX_NS}/Raw",
         spawn=spawn_cfg,
         init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, y_offset, height), rot=initial_rot),
     )
-    cube_raw = RigidObject(cfg=cube_raw_cfg)
+    with cloner.ReplicateSession(
+        [cube_composer_cfg, cube_raw_cfg], num_cubes, spacing, device, env_template="/World/Table_{}"
+    ):
+        cube_composer = cube_composer_cfg.class_type(cube_composer_cfg)
+        cube_raw = cube_raw_cfg.class_type(cube_raw_cfg)
 
     return cube_composer, cube_raw
 

@@ -14,11 +14,10 @@ assets whose rows cover it. :func:`path_to_clone`, :func:`path_env_ids` and
 
 Environment ids are not mask columns. Column ``j`` stands for
 :attr:`~isaaclab.cloner.ClonePlan.env_ids`\\ ``[j]``, which is the number
-:func:`~isaaclab.cloner.replicate` formats into the template. These functions take and
-return environment ids throughout.
+:class:`~isaaclab.cloner.ReplicateSession` formats into the template. These functions take
+and return environment ids throughout.
 
-A path belongs to the nearest row containing it: the deepest prototype root, or the template
-leaving the shortest suffix. Rows tying there are one asset's variants, and the environment
+Rows sharing one source or destination root are variants of the same asset, and the environment
 picks between them. ``test/cloner/test_clone_plan_algebra.py`` pins that down.
 
 The path primitives are aliased ``pth`` because ``path`` is a parameter name here.
@@ -35,11 +34,110 @@ if TYPE_CHECKING:
     from .clone_plan import ClonePlan
 
 
+def is_global(destination: str) -> bool:
+    """Whether a destination names one prim shared by every environment."""
+    return "{}" not in destination
+
+
+def clone_rows(plan: ClonePlan) -> list[int]:
+    """Return populated rows that copy a prototype into environments, in row order."""
+    return [
+        row
+        for row, destination in enumerate(plan.destinations)
+        if not is_global(destination) and bool(plan.clone_mask[row].any())
+    ]
+
+
+def env_root_paths(plan: ClonePlan) -> list[str]:
+    """Return environment root paths from the plan, in environment-id order.
+
+    Args:
+        plan: Replication layout.
+
+    Returns:
+        One path per environment.
+    """
+    return [plan.env_template.format(int(env_id)) for env_id in plan.env_ids.tolist()]
+
+
+def whole_env_copy(plan: ClonePlan) -> tuple[str, str] | None:
+    """Return a whole-environment copy when every cloned row permits one.
+
+    Args:
+        plan: Replication layout to collapse.
+
+    Returns:
+        The ``(source, destination)`` environment roots, or ``None`` when the
+        plan must be replicated asset by asset.
+    """
+    if plan.clone_mask.numel() == 0:
+        return None
+    rows = clone_rows(plan)
+    if not rows:
+        return None
+    if not bool(plan.clone_mask[rows].all()):
+        return None
+    source_env = plan.env_template.format(int(plan.env_ids[0]))
+    if any(
+        not pth.under(plan.sources[row], source_env)
+        or not pth.under(plan.destinations[row].format(int(plan.env_ids[0])), source_env)
+        for row in rows
+    ):
+        return None
+    return source_env, plan.env_template
+
+
+def _row_populated(plan: ClonePlan, row: int) -> bool:
+    """Whether a row names a global asset or reaches at least one environment."""
+    return is_global(plan.destinations[row]) or bool(plan.clone_mask[row].any())
+
+
+def cfg_source_paths(plan: ClonePlan, cfg: object) -> tuple[str | None, ...]:
+    """Return the exact plan source paths covering a cfg.
+
+    The result follows the covering row order. An inactive variant retains its slot as ``None``;
+    a cfg nested below another asset gets the same child suffix below every parent prototype.
+
+    Args:
+        plan: Active clone plan.
+        cfg: The same configuration instance used to build ``plan``.
+
+    Returns:
+        Exact prototype paths, with ``None`` for inactive rows.
+
+    Raises:
+        ValueError: If ``cfg`` owns no row or its path does not match that row in ``plan``.
+    """
+    rows = plan.cfg_rows.get(id(cfg))
+    if rows is None:
+        raise ValueError(f"Cfg {type(cfg).__name__} owns no row in the active clone plan.")
+    path_expr = cfg.prim_path
+    paths: list[str | None] = []
+    for row in rows:
+        if not _row_populated(plan, row):
+            paths.append(None)
+            continue
+        source, destination = plan.sources[row], plan.destinations[row]
+        resolved_expr = path_expr
+        if "{ENV_REGEX_NS}" in resolved_expr and not is_global(destination):
+            prefix, _ = pth.split(destination)
+            resolved_expr = resolved_expr.replace("{ENV_REGEX_NS}", f"{prefix}[^/]+")
+        if is_global(destination):
+            suffix = pth.relative_to(resolved_expr, destination)
+        else:
+            matched = pth.match(resolved_expr, destination)
+            suffix = None if matched is None else matched.suffix
+        if suffix is None:
+            raise ValueError(f"Cfg path {path_expr!r} does not match clone-plan destination {destination!r}.")
+        paths.append((source.rstrip("/") + suffix) or "/")
+    return tuple(paths)
+
+
 def _row_env_ids(plan: ClonePlan, row: int) -> tuple[int, ...]:
-    """Env ids populated from a plan row: the plan's env ids at the row's ``True`` columns."""
+    """Env ids populated by a row, or every env for a shared global row."""
+    if is_global(plan.destinations[row]):
+        return tuple(plan.env_ids.tolist())
     columns = plan.clone_mask[row].nonzero(as_tuple=False).flatten()
-    if plan.env_ids is None:
-        return tuple(columns.tolist())
     columns = columns.to(plan.env_ids.device)
     return tuple(plan.env_ids[columns].tolist())
 
@@ -50,49 +148,32 @@ def _column_for_env_id(plan: ClonePlan, env_id: int) -> int | None:
     Guards against out-of-range and negative ids, which plain indexing would raise on or
     silently wrap around.
     """
-    if plan.env_ids is None:
-        return env_id if 0 <= env_id < plan.clone_mask.shape[1] else None
     columns = (plan.env_ids == env_id).nonzero(as_tuple=False).flatten().tolist()
     return int(columns[0]) if columns else None
 
 
 def _source_rows(plan: ClonePlan, path: str) -> list[int]:
-    """Rows whose prototype subtree owns ``path``, nearest owner only, in row order."""
-    rows = [
+    """Rows whose prototype subtree owns ``path``, in row order."""
+    return [
         row for row, source in enumerate(plan.sources) if "{}" in plan.destinations[row] and pth.under(path, source)
     ]
-    if not rows:
-        return []
-    nearest = max(len(plan.sources[row].rstrip("/")) for row in rows)
-    return [row for row in rows if len(plan.sources[row].rstrip("/")) == nearest]
 
 
 def _clone_rows(plan: ClonePlan, path_expr: str, *, populated_only: bool) -> list[tuple[str, pth.TemplateMatch, int]]:
-    """Collect ``(template, match, row)`` for the nearest destination template owning ``path_expr``.
-
-    A shorter suffix below the template means a longer matched prefix, i.e. a nearer owner.
-    The suffix does not depend on how many digits a row's env ids have, so a variant is never
-    ranked out by the width of its env id.
-
-    ``populated_only`` is the active-row policy: :func:`iter_sources` ranks only rows that
-    populate an env, so a nearer but empty template cannot hide a populated ancestor, while
-    :func:`path_to_source` ranks every row and filters afterwards, so an empty nearest owner
-    resolves to ``None`` and its caller falls back to direct stage resolution.
-    """
+    """Collect ``(template, match, row)`` for destination templates owning ``path_expr``."""
     candidates: list[tuple[str, pth.TemplateMatch, int]] = []
     for row, template in enumerate(plan.destinations):
-        if "{}" not in template:
+        if populated_only and not _row_populated(plan, row):
             continue
-        if populated_only and not plan.clone_mask[row].any():
-            continue
-        matched = pth.match(path_expr, template)
+        if is_global(template):
+            suffix = pth.relative_to(path_expr, template)
+            matched = None if suffix is None else pth.TemplateMatch("", suffix)
+        else:
+            matched = pth.match(path_expr, template)
         if matched is None:
             continue
         candidates.append((template, matched, row))
-    if not candidates:
-        return []
-    nearest = min(len(matched.suffix) for _, matched, _ in candidates)
-    return [candidate for candidate in candidates if len(candidate[1].suffix) == nearest]
+    return candidates
 
 
 def _owning_template(plan: ClonePlan, path_expr: str) -> tuple[str, list[int], pth.TemplateMatch] | None:
@@ -103,8 +184,7 @@ def _owning_template(plan: ClonePlan, path_expr: str) -> tuple[str, list[int], p
         in row order, or ``None`` when no template owns ``path_expr``.
 
     Raises:
-        ValueError: When ``path_expr`` is owned by multiple distinct, equally near templates
-            (a genuine ambiguity). Nested templates do not conflict: the nearest one wins.
+        ValueError: When ``path_expr`` is owned by multiple distinct templates.
     """
     candidates = _clone_rows(plan, path_expr, populated_only=False)
     if not candidates:
@@ -196,12 +276,12 @@ def path_to_source(plan: ClonePlan, path_expr: str, env_id: int | None = None) -
     # Resolution must walk a prototype that exists on stage, so rows populating no env at all
     # are skipped rather than reported.
     if env_id is None:
-        rows = [row for row in rows if plan.clone_mask[row].any()]
+        rows = [row for row in rows if _row_populated(plan, row)]
     else:
         column = _column_for_env_id(plan, env_id)
         if column is None:
             return None
-        rows = [row for row in rows if bool(plan.clone_mask[row][column])]
+        rows = [row for row in rows if is_global(plan.destinations[row]) or bool(plan.clone_mask[row][column])]
     if not rows:
         return None
     return plan.sources[rows[0]], template.format("[^/]+"), matched.suffix

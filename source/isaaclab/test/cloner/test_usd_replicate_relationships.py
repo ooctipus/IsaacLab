@@ -12,7 +12,7 @@ import torch
 
 from pxr import Sdf, Usd
 
-from isaaclab.cloner import usd_replicate
+from isaaclab.cloner import UsdReplicateContext
 
 
 def test_asset_clone_uses_native_relationship_path_mapping() -> None:
@@ -34,8 +34,7 @@ def test_asset_clone_uses_native_relationship_path_mapping() -> None:
     body = Sdf.RelationshipSpec(joint, "physics:body1", custom=False)
     body.targetPathList.explicitItems = [Sdf.Path("/World/envs/env_0/Robot/target")]
 
-    usd_replicate(
-        stage,
+    UsdReplicateContext(stage).replicate(
         sources=["/World/envs/env_0/Robot"],
         destinations=["/World/envs/env_{}/Robot"],
         env_ids=torch.tensor([0, 2]),
@@ -53,7 +52,7 @@ def test_asset_clone_uses_native_relationship_path_mapping() -> None:
     assert cloned_body.targetPathList.explicitItems == [Sdf.Path("/World/envs/env_2/Robot/target")]
 
 
-def test_usd_replicate_keeps_native_copy_spec_path_semantics() -> None:
+def test_usd_context_keeps_native_copy_spec_path_semantics() -> None:
     module = Path(__file__).parents[2] / "isaaclab" / "cloner" / "usd.py"
     calls = [
         node

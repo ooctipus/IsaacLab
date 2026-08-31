@@ -18,6 +18,7 @@ import torch
 import warp as wp
 
 from ...sim import SimulationContext
+from ...sim.schemas.schemas_actuators import define_actuator_properties
 from ...utils.buffers import TimestampedBufferWarp
 from ...utils.leapp.leapp_semantics import OutputKindEnum, joint_names_resolver, leapp_tensor_semantics
 from ...utils.warp import ProxyArray
@@ -134,6 +135,8 @@ class BaseArticulation(AssetBase):
             cfg: A configuration instance.
         """
         super().__init__(cfg)
+        for source_path in self._source_prim_paths:
+            define_actuator_properties(source_path, self.cfg.actuators, self.stage)
         sim_ctx = SimulationContext.instance()
         self._sim_cfg = sim_ctx.cfg if sim_ctx is not None else None
         # Per-articulation cache of resolved cross-backend convention name orderings,

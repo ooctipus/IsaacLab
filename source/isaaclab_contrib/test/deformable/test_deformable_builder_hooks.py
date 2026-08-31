@@ -132,16 +132,9 @@ def test_builder_hook_resets_entry_offsets_on_first_environment():
     assert entry.particles_per_body == 3
 
 
-def test_newton_physics_context_is_replicate_context():
-    """Test that Newton registers its replicate context as the backend physics context.
-
-    USD clones are no longer part of a backend stack: :func:`isaaclab.cloner.replicate`
-    adds ``UsdReplicateContext`` per spawned cfg only when Kit is available, which is
-    covered by the replicate-session tests in ``test_cloner.py``.
-    """
-    from isaaclab_newton.cloner import PHYSICS_CONTEXT
-
-    assert PHYSICS_CONTEXT is NewtonReplicateContext
+def test_newton_clone_context_keeps_asset_rows():
+    """Newton imports every planned asset row rather than copying an environment subtree."""
+    assert NewtonReplicateContext.clones_whole_env is False
 
 
 def test_fabric_particle_sync_skips_missing_fabric_prim(monkeypatch):

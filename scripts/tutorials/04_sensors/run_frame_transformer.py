@@ -44,7 +44,8 @@ from isaacsim.util.debug_draw import _debug_draw as omni_debug_draw
 
 import isaaclab.sim as sim_utils
 import isaaclab.utils.math as math_utils
-from isaaclab.assets import Articulation
+from isaaclab import cloner
+from isaaclab.assets import Articulation, AssetBaseCfg
 from isaaclab.markers import VisualizationMarkers
 from isaaclab.markers.config import FRAME_MARKER_CFG
 from isaaclab.sensors import FrameTransformer, FrameTransformerCfg, OffsetCfg
@@ -59,14 +60,11 @@ ROBOT_PRIM_PATH = "/World/envs/env_0/Robot"
 ROBOT_PRIM_PATH_EXPR = "/World/envs/env_.*/Robot"
 
 
-def define_sensor() -> FrameTransformer:
-    """Defines the FrameTransformer sensor to add to the scene."""
-    # define offset
+def design_scene(sim: SimulationContext) -> dict:
+    """Design the scene."""
     rot_offset = math_utils.quat_from_euler_xyz(torch.zeros(1), torch.zeros(1), torch.tensor(-math.pi / 2))
     pos_offset = math_utils.quat_apply(rot_offset, torch.tensor([0.08795, 0.01305, -0.33797]))
-
-    # Example using .* to get full body + LF_FOOT
-    frame_transformer_cfg = FrameTransformerCfg(
+    sensor_cfg = FrameTransformerCfg(
         prim_path=f"{ROBOT_PRIM_PATH_EXPR}/base",
         target_frames=[
             FrameTransformerCfg.FrameCfg(prim_path=f"{ROBOT_PRIM_PATH_EXPR}/.*"),
@@ -78,24 +76,17 @@ def define_sensor() -> FrameTransformer:
         ],
         debug_vis=False,
     )
-    frame_transformer = FrameTransformer(frame_transformer_cfg)
-
-    return frame_transformer
-
-
-def design_scene() -> dict:
-    """Design the scene."""
-    # Populate scene
-    # -- Ground-plane
-    cfg = sim_utils.GroundPlaneCfg()
-    cfg.func("/World/defaultGroundPlane", cfg)
-    # -- Lights
-    cfg = sim_utils.DistantLightCfg(intensity=3000.0, color=(0.75, 0.75, 0.75))
-    cfg.func("/World/Light", cfg)
-    # -- Robot
-    robot = Articulation(ANYMAL_C_CFG.replace(prim_path=ROBOT_PRIM_PATH))
-    # -- Sensors
-    frame_transformer = define_sensor()
+    ground_cfg = AssetBaseCfg(prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg())
+    light_cfg = AssetBaseCfg(
+        prim_path="/World/Light",
+        spawn=sim_utils.DistantLightCfg(intensity=3000.0, color=(0.75, 0.75, 0.75)),
+    )
+    robot_cfg = ANYMAL_C_CFG.replace(prim_path=ROBOT_PRIM_PATH)
+    with cloner.ReplicateSession((ground_cfg, light_cfg, robot_cfg, sensor_cfg), 1, 0.0, sim.device):
+        ground_cfg.spawn.func(ground_cfg.prim_path, ground_cfg.spawn)
+        light_cfg.spawn.func(light_cfg.prim_path, light_cfg.spawn)
+        robot = robot_cfg.class_type(robot_cfg)
+        frame_transformer = sensor_cfg.class_type(sensor_cfg)
 
     # return the scene information
     scene_entities = {"robot": robot, "frame_transformer": frame_transformer}
@@ -177,7 +168,7 @@ def main():
     # Set main camera
     sim.set_camera_view(eye=[2.5, 2.5, 2.5], target=[0.0, 0.0, 0.0])
     # Design scene
-    scene_entities = design_scene()
+    scene_entities = design_scene(sim)
     # Play the simulator
     sim.reset()
     # Now we are ready!

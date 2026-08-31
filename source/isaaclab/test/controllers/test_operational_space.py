@@ -57,8 +57,7 @@ pytestmark = pytest.mark.integration
 @pytest.fixture
 def sim():
     """Create a simulation context for testing."""
-    # Wait for spawning
-    stage = sim_utils.create_new_stage()
+    sim_utils.create_new_stage()
     # Constants
     num_envs = 16
     # Load kit helper
@@ -83,16 +82,6 @@ def sim():
         light_cfg,
         translation=[0, 0, 1],
     )
-
-    # Create environment clones using Isaac Lab's cloner utilities
-    env_prim_paths = [f"/World/envs/env_{i}" for i in range(num_envs)]
-    env_fmt = "/World/envs/env_{}"
-    env_ids = torch.arange(num_envs, dtype=torch.long, device=sim.device)
-    env_origins, _ = cloner.grid_transforms(num_envs, spacing=2.0, device=sim.device)
-    # create source prim
-    stage.DefinePrim(env_prim_paths[0], "Xform")
-    # clone the env xform
-    cloner.usd_replicate(stage, [env_fmt.format(0)], [env_fmt], env_ids, positions=env_origins)
 
     robot_cfg = FRANKA_PANDA_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
     robot_cfg.actuators["panda_shoulder"].stiffness = 0.0
@@ -260,7 +249,8 @@ def test_franka_pose_abs_without_inertial_decoupling(sim):
         frame,
     ) = sim
 
-    robot = Articulation(cfg=robot_cfg)
+    with cloner.ReplicateSession([robot_cfg], num_envs, 2.0, sim_context.device):
+        robot = robot_cfg.class_type(robot_cfg)
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["pose_abs"],
         impedance_mode="fixed",
@@ -309,7 +299,8 @@ def test_franka_pose_abs_with_partial_inertial_decoupling(sim):
         frame,
     ) = sim
 
-    robot = Articulation(cfg=robot_cfg)
+    with cloner.ReplicateSession([robot_cfg], num_envs, 2.0, sim_context.device):
+        robot = robot_cfg.class_type(robot_cfg)
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["pose_abs"],
         impedance_mode="fixed",
@@ -361,7 +352,8 @@ def test_franka_pose_abs_fixed_impedance_with_gravity_compensation(sim):
     ) = sim
 
     robot_cfg.spawn.rigid_props.disable_gravity = False
-    robot = Articulation(cfg=robot_cfg)
+    with cloner.ReplicateSession([robot_cfg], num_envs, 2.0, sim_context.device):
+        robot = robot_cfg.class_type(robot_cfg)
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["pose_abs"],
         impedance_mode="fixed",
@@ -411,7 +403,8 @@ def test_franka_pose_abs(sim):
         frame,
     ) = sim
 
-    robot = Articulation(cfg=robot_cfg)
+    with cloner.ReplicateSession([robot_cfg], num_envs, 2.0, sim_context.device):
+        robot = robot_cfg.class_type(robot_cfg)
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["pose_abs"],
         impedance_mode="fixed",
@@ -461,7 +454,8 @@ def test_franka_pose_rel(sim):
         frame,
     ) = sim
 
-    robot = Articulation(cfg=robot_cfg)
+    with cloner.ReplicateSession([robot_cfg], num_envs, 2.0, sim_context.device):
+        robot = robot_cfg.class_type(robot_cfg)
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["pose_rel"],
         impedance_mode="fixed",
@@ -511,7 +505,8 @@ def test_franka_pose_abs_variable_impedance(sim):
         frame,
     ) = sim
 
-    robot = Articulation(cfg=robot_cfg)
+    with cloner.ReplicateSession([robot_cfg], num_envs, 2.0, sim_context.device):
+        robot = robot_cfg.class_type(robot_cfg)
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["pose_abs"],
         impedance_mode="variable",
@@ -559,7 +554,8 @@ def test_franka_wrench_abs_open_loop(sim):
         frame,
     ) = sim
 
-    robot = Articulation(cfg=robot_cfg)
+    with cloner.ReplicateSession([robot_cfg], num_envs, 2.0, sim_context.device):
+        robot = robot_cfg.class_type(robot_cfg)
 
     obstacle_spawn_cfg = sim_utils.CuboidCfg(
         size=(0.7, 0.7, 0.01),
@@ -640,7 +636,8 @@ def test_franka_wrench_abs_closed_loop(sim):
         frame,
     ) = sim
 
-    robot = Articulation(cfg=robot_cfg)
+    with cloner.ReplicateSession([robot_cfg], num_envs, 2.0, sim_context.device):
+        robot = robot_cfg.class_type(robot_cfg)
 
     obstacle_spawn_cfg = sim_utils.CuboidCfg(
         size=(0.7, 0.7, 0.01),
@@ -729,7 +726,8 @@ def test_franka_hybrid_decoupled_motion(sim):
         frame,
     ) = sim
 
-    robot = Articulation(cfg=robot_cfg)
+    with cloner.ReplicateSession([robot_cfg], num_envs, 2.0, sim_context.device):
+        robot = robot_cfg.class_type(robot_cfg)
 
     obstacle_spawn_cfg = sim_utils.CuboidCfg(
         size=(1.0, 1.0, 0.01),
@@ -806,7 +804,8 @@ def test_franka_hybrid_variable_kp_impedance(sim):
         frame,
     ) = sim
 
-    robot = Articulation(cfg=robot_cfg)
+    with cloner.ReplicateSession([robot_cfg], num_envs, 2.0, sim_context.device):
+        robot = robot_cfg.class_type(robot_cfg)
 
     obstacle_spawn_cfg = sim_utils.CuboidCfg(
         size=(1.0, 1.0, 0.01),
@@ -883,7 +882,8 @@ def test_franka_taskframe_pose_abs(sim):
         frame,
     ) = sim
 
-    robot = Articulation(cfg=robot_cfg)
+    with cloner.ReplicateSession([robot_cfg], num_envs, 2.0, sim_context.device):
+        robot = robot_cfg.class_type(robot_cfg)
     frame = "task"
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["pose_abs"],
@@ -934,7 +934,8 @@ def test_franka_taskframe_pose_rel(sim):
         frame,
     ) = sim
 
-    robot = Articulation(cfg=robot_cfg)
+    with cloner.ReplicateSession([robot_cfg], num_envs, 2.0, sim_context.device):
+        robot = robot_cfg.class_type(robot_cfg)
     frame = "task"
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["pose_rel"],
@@ -985,7 +986,8 @@ def test_franka_taskframe_hybrid(sim):
         frame,
     ) = sim
 
-    robot = Articulation(cfg=robot_cfg)
+    with cloner.ReplicateSession([robot_cfg], num_envs, 2.0, sim_context.device):
+        robot = robot_cfg.class_type(robot_cfg)
     frame = "task"
 
     obstacle_spawn_cfg = sim_utils.CuboidCfg(
@@ -1062,7 +1064,8 @@ def test_franka_pose_abs_without_inertial_decoupling_with_nullspace_centering(si
         frame,
     ) = sim
 
-    robot = Articulation(cfg=robot_cfg)
+    with cloner.ReplicateSession([robot_cfg], num_envs, 2.0, sim_context.device):
+        robot = robot_cfg.class_type(robot_cfg)
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["pose_abs"],
         impedance_mode="fixed",
@@ -1112,7 +1115,8 @@ def test_franka_pose_abs_with_partial_inertial_decoupling_nullspace_centering(si
         frame,
     ) = sim
 
-    robot = Articulation(cfg=robot_cfg)
+    with cloner.ReplicateSession([robot_cfg], num_envs, 2.0, sim_context.device):
+        robot = robot_cfg.class_type(robot_cfg)
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["pose_abs"],
         impedance_mode="fixed",
@@ -1165,7 +1169,8 @@ def test_franka_pose_abs_with_nullspace_centering(sim):
         frame,
     ) = sim
 
-    robot = Articulation(cfg=robot_cfg)
+    with cloner.ReplicateSession([robot_cfg], num_envs, 2.0, sim_context.device):
+        robot = robot_cfg.class_type(robot_cfg)
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["pose_abs"],
         impedance_mode="fixed",
@@ -1217,7 +1222,8 @@ def test_franka_taskframe_hybrid_with_nullspace_centering(sim):
         frame,
     ) = sim
 
-    robot = Articulation(cfg=robot_cfg)
+    with cloner.ReplicateSession([robot_cfg], num_envs, 2.0, sim_context.device):
+        robot = robot_cfg.class_type(robot_cfg)
     frame = "task"
 
     obstacle_spawn_cfg = sim_utils.CuboidCfg(

@@ -117,7 +117,7 @@ def spawn_from_mdl_file(
 
 def _author_cfg_inputs(prim: Usd.Prim, cfg, *, camel_case: bool, ignored: tuple[str, ...] = ()) -> None:
     """Author material-specific config fields as shader inputs."""
-    ignored = (*ignored, "func", "visible", "semantic_tags", "copy_from_source", "spawn_path")
+    ignored = (*ignored, "func", "visible", "semantic_tags", "copy_from_source")
     for name, value in cfg.to_dict().items():
         if name not in ignored and value is not None:
             input_name = to_camel_case(name, to="cC") if camel_case else name

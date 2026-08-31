@@ -3,8 +3,6 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-import isaaclab.sim as sim_utils
-from isaaclab.assets import ArticulationCfg, RigidObjectCfg
 from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR
 from isaaclab.utils.configclass import configclass
 
@@ -153,68 +151,3 @@ class Extraction(DisassemblyTask):
     gripper_rand_pos_noise: list = [0.05, 0.05, 0.05]
     gripper_rand_rot_noise: list = [0.174533, 0.174533, 0.174533]  # +-10 deg for roll/pitch/yaw
     gripper_rand_z_offset: float = 0.05
-
-    fixed_asset: ArticulationCfg = ArticulationCfg(
-        # fixed_asset: RigidObjectCfg = RigidObjectCfg(
-        prim_path="{ENV_REGEX_NS}/FixedAsset",
-        spawn=sim_utils.UsdFileCfg(
-            usd_path=f"{assembly_dir}{fixed_asset_cfg.usd_path}",
-            activate_contact_sensors=True,
-            rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                disable_gravity=False,
-                max_depenetration_velocity=5.0,
-                linear_damping=0.0,
-                angular_damping=0.0,
-                max_linear_velocity=1000.0,
-                max_angular_velocity=3666.0,
-                enable_gyroscopic_forces=True,
-                solver_position_iteration_count=192,
-                solver_velocity_iteration_count=1,
-                max_contact_impulse=1e32,
-            ),
-            articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-                enabled_self_collisions=True,
-                fix_root_link=True,  # add this so the fixed asset is set to have a fixed base
-            ),
-            mass_props=sim_utils.MassPropertiesCfg(mass=fixed_asset_cfg.mass),
-            collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
-        ),
-        init_state=ArticulationCfg.InitialStateCfg(
-            # init_state=RigidObjectCfg.InitialStateCfg(
-            pos=(0.6, 0.0, 0.05),
-            rot=(0.0, 0.0, 0.0, 1.0),
-            joint_pos={},
-            joint_vel={},
-        ),
-        actuators={},
-    )
-    # held_asset: ArticulationCfg = ArticulationCfg(
-    held_asset: RigidObjectCfg = RigidObjectCfg(
-        prim_path="{ENV_REGEX_NS}/HeldAsset",
-        spawn=sim_utils.UsdFileCfg(
-            usd_path=f"{assembly_dir}{held_asset_cfg.usd_path}",
-            activate_contact_sensors=True,
-            rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                disable_gravity=True,
-                max_depenetration_velocity=5.0,
-                linear_damping=0.0,
-                angular_damping=0.0,
-                max_linear_velocity=1000.0,
-                max_angular_velocity=3666.0,
-                enable_gyroscopic_forces=True,
-                solver_position_iteration_count=192,
-                solver_velocity_iteration_count=1,
-                max_contact_impulse=1e32,
-            ),
-            mass_props=sim_utils.MassPropertiesCfg(mass=held_asset_cfg.mass),
-            collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
-        ),
-        # init_state=ArticulationCfg.InitialStateCfg(
-        init_state=RigidObjectCfg.InitialStateCfg(
-            pos=(0.0, 0.4, 0.1),
-            rot=(0.0, 0.0, 0.0, 1.0),
-            # joint_pos={},
-            # joint_vel={}
-        ),
-        # actuators={}
-    )

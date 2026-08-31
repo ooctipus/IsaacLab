@@ -3,10 +3,12 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-from isaaclab.assets import RigidObjectCfg
+import isaaclab.sim as sim_utils
+from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
 from isaaclab.envs import DirectRLEnvCfg
 from isaaclab.markers import VisualizationMarkersCfg
 from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.sensors import JointWrenchSensorCfg
 from isaaclab.sim import SimulationCfg
 from isaaclab.sim.spawners.materials import RigidBodyMaterialBaseCfg
 from isaaclab.utils.configclass import configclass
@@ -23,11 +25,18 @@ from isaaclab_assets.robots.shadow_hand import SHADOW_ACTUATED_JOINT_NAMES, SHAD
 
 @configclass
 class ShadowHandSceneCfg(InteractiveSceneCfg):
-    """Shadow Direct scene defaults."""
+    """Shadow hand assets constructed and cloned as one scene."""
 
     num_envs = 8192
     env_spacing = 0.75
     replicate_physics = True
+    ground = AssetBaseCfg(prim_path="/World/ground", spawn=sim_utils.GroundPlaneCfg())
+    robot: ShadowHandRobotCfg = ShadowHandRobotCfg()
+    object: RigidObjectCfg = CUBE_CFG
+    joint_wrench: JointWrenchSensorCfg | None = None
+    light = AssetBaseCfg(
+        prim_path="/World/Light", spawn=sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
+    )
 
 
 @configclass
@@ -49,17 +58,13 @@ class ShadowHandEnvCfg(DirectRLEnvCfg):
         physics=PhysicsCfg(),
     )
 
-    # robot
-    robot_cfg: ShadowHandRobotCfg = ShadowHandRobotCfg()
     actuated_joint_names = SHADOW_ACTUATED_JOINT_NAMES
     fingertip_body_names = SHADOW_FINGERTIP_BODY_NAMES
 
-    # in-hand object
-    object_cfg: RigidObjectCfg = CUBE_CFG
     # goal object
     goal_object_cfg: VisualizationMarkersCfg = GOAL_OBJECT_CFG
     # scene
-    scene: InteractiveSceneCfg = ShadowHandSceneCfg()
+    scene: ShadowHandSceneCfg = ShadowHandSceneCfg()
 
     # reset
     reset_position_noise = 0.01  # range of position at reset

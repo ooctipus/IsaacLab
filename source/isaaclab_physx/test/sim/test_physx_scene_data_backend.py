@@ -4,11 +4,56 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 from types import SimpleNamespace
+from unittest.mock import MagicMock, call
 
 import pytest
 
 pytest.importorskip("pxr")
 pytest.importorskip("omni.physics.tensors")
+
+import isaaclab_physx
+import isaaclab_physx.physics.physx_manager as physx_manager
+from isaaclab_physx.cloner import PhysxReplicateContext
+from isaaclab_physx.physics import PhysxManager
+
+import isaaclab.sim.utils.stage as stage_utils
+from isaaclab.cloner import UsdReplicateContext
+from isaaclab.physics import PhysicsManager
+
+
+def test_manager_registers_clone_resources_by_type(monkeypatch):
+    """PhysX declares its USD and native clone resources during manager initialization."""
+    stage = object()
+    simulation = SimpleNamespace(
+        cfg=SimpleNamespace(physics=object(), device="cpu"),
+        stage=stage,
+        get_or_create_backend=MagicMock(),
+        set_setting=MagicMock(),
+        add_render_callback=MagicMock(),
+    )
+    monkeypatch.setattr(PhysicsManager, "_sim", PhysicsManager._sim)
+    monkeypatch.setattr(PhysicsManager, "_cfg", PhysicsManager._cfg)
+    monkeypatch.setattr(PhysicsManager, "_device", PhysicsManager._device)
+    monkeypatch.setattr(PhysicsManager, "_sim_time", PhysicsManager._sim_time)
+    monkeypatch.setattr(PhysxManager, "_stage_id", PhysxManager._stage_id)
+    monkeypatch.setattr(PhysxManager, "_anim_recorder", PhysxManager._anim_recorder)
+    monkeypatch.setattr(PhysxManager, "_scene_data_backend", PhysxManager._scene_data_backend)
+    monkeypatch.setattr(isaaclab_physx, "_subscribe_to_simulation_manager_enable", lambda: None)
+    monkeypatch.setattr(isaaclab_physx, "_patch_isaacsim_simulation_manager", lambda: None)
+    monkeypatch.setattr(stage_utils, "get_current_stage_id", lambda: 1)
+    monkeypatch.setattr(PhysxManager, "_setup_subscriptions", classmethod(lambda cls: None))
+    monkeypatch.setattr(PhysxManager, "_configure_physics", classmethod(lambda cls: None))
+    monkeypatch.setattr(PhysxManager, "_load_fabric", classmethod(lambda cls: None))
+    monkeypatch.setattr(physx_manager, "AnimationRecorder", lambda _simulation: object())
+    monkeypatch.setattr(physx_manager.omni.kit.app, "get_app", lambda: SimpleNamespace(update=lambda: None))
+
+    PhysxManager.initialize(simulation)
+
+    assert simulation.get_or_create_backend.call_args_list == [
+        call(UsdReplicateContext, stage, clone_role="physics"),
+        call(PhysxReplicateContext, stage, clone_role="physics"),
+    ]
+    assert PhysxReplicateContext.clones_whole_env is True
 
 
 @pytest.mark.parametrize("joint_has_rigid_body_api", [False, True])

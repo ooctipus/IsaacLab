@@ -611,7 +611,6 @@ class UR10ParticlePushEnvCfg(ManagerBasedRLEnvCfg):
         num_envs=64,
         env_spacing=3.0,
         replicate_physics=True,
-        clone_in_fabric=True,
     )
     sim: SimulationCfg = SimulationCfg(dt=1.0 / 120.0, render_interval=decimation)
     actions: ActionsCfg = ActionsCfg()

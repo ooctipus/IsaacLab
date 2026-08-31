@@ -25,8 +25,9 @@ from isaaclab_physx.sensors.frame_transformer.frame_transformer_data import Fram
 
 import isaaclab.sim as sim_utils
 import isaaclab.utils.math as math_utils
+from isaaclab import cloner
 from isaaclab.assets import RigidObjectCfg
-from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
+from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import FrameTransformerCfg, OffsetCfg
 from isaaclab.sensors.frame_transformer import BaseFrameTransformer
 from isaaclab.terrains import TerrainImporterCfg
@@ -36,6 +37,19 @@ from isaaclab.utils.configclass import configclass
 # Pre-defined configs
 ##
 from isaaclab_assets.robots.anymal import ANYMAL_C_CFG  # isort:skip
+
+
+def _create_scene(cfg: InteractiveSceneCfg, sim):
+    """Construct a scene through its cfg-owned clone lifecycle."""
+    with cloner.ReplicateSession(
+        [cfg],
+        cfg.num_envs,
+        cfg.env_spacing,
+        sim.device,
+        env_template=cfg.clone_cfg.clone_template,
+        replicate_physics=cfg.replicate_physics,
+    ):
+        return cfg.class_type(cfg)
 
 
 def quat_from_euler_rpy(roll, pitch, yaw, degrees=False):
@@ -142,7 +156,7 @@ def test_frame_transformer_feet_wrt_base(sim):
             ),
         ],
     )
-    scene = InteractiveScene(scene_cfg)
+    scene = _create_scene(scene_cfg, sim)
 
     # Play the simulator
     sim.reset()
@@ -252,7 +266,7 @@ def test_frame_transformer_feet_wrt_thigh(sim):
             ),
         ],
     )
-    scene = InteractiveScene(scene_cfg)
+    scene = _create_scene(scene_cfg, sim)
 
     # Play the simulator
     sim.reset()
@@ -344,7 +358,7 @@ def test_frame_transformer_robot_body_to_external_cube(sim):
             ),
         ],
     )
-    scene = InteractiveScene(scene_cfg)
+    scene = _create_scene(scene_cfg, sim)
 
     # Play the simulator
     sim.reset()
@@ -449,7 +463,7 @@ def test_frame_transformer_offset_frames(sim):
             ),
         ],
     )
-    scene = InteractiveScene(scene_cfg)
+    scene = _create_scene(scene_cfg, sim)
 
     # Play the simulator
     sim.reset()
@@ -536,7 +550,7 @@ def test_frame_transformer_all_bodies(sim):
             ),
         ],
     )
-    scene = InteractiveScene(scene_cfg)
+    scene = _create_scene(scene_cfg, sim)
 
     # Play the simulator
     sim.reset()
@@ -628,7 +642,7 @@ def test_sensor_print(sim):
             ),
         ],
     )
-    scene = InteractiveScene(scene_cfg)
+    scene = _create_scene(scene_cfg, sim)
 
     # Play the simulator
     sim.reset()
@@ -712,7 +726,7 @@ def test_frame_transformer_duplicate_body_names(sim, source_robot, path_prefix):
             ),
         ],
     )
-    scene = InteractiveScene(scene_cfg)
+    scene = _create_scene(scene_cfg, sim)
 
     # Play the simulator
     sim.reset()

@@ -150,7 +150,6 @@ class VisualMaterialSceneCfg(InteractiveSceneCfg):
                     )
                 ),
             ],
-            random_choice=False,
         ),
     )
 

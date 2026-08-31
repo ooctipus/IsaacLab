@@ -31,7 +31,12 @@ from isaaclab.sim.utils.semantics import add_labels
 
 def _empty_clone_plan() -> ClonePlan:
     """A clone plan owning nothing, standing in for scenes with no replicated shapes to fall back to."""
-    return ClonePlan(sources=(), destinations=(), clone_mask=torch.zeros(0, 0, dtype=torch.bool))
+    return ClonePlan(
+        sources=(),
+        destinations=(),
+        clone_mask=torch.zeros(0, 0, dtype=torch.bool),
+        env_ids=torch.empty(0, dtype=torch.long),
+    )
 
 
 def _cfg(**overrides):
@@ -187,14 +192,9 @@ def test_ancestor_cache_prevents_redundant_get_labels_calls():
 def _prototype_only_scene():
     """A scene replicated by the physics backend only: USD prims exist for env_0 alone.
 
-    Mirrors a cfg that sets :attr:`~isaaclab.sim.spawners.SpawnerCfg.spawn_path` to the prototype
-    env, so the clone plan spreads the asset to env_1 while the stage never gains env_1 prims.
-    Returns the stage, the per-shape prim-path list, and the matching clone plan.
+    Mirrors a plan-owned prototype in env_0 that the Newton clone context spreads to env_1
+    without authoring an env_1 USD prim. Returns the stage, per-shape paths, and matching plan.
     """
-    import torch
-
-    from isaaclab.cloner import ClonePlan
-
     stage = Usd.Stage.CreateInMemory()
     # Only the prototype env is authored; env_1 exists in the Newton model alone.
     for path in ("/World/envs/env_0/Robot/pole/geom", "/World/envs/env_0/Robot/cart/geom", "/World/ground/geom"):

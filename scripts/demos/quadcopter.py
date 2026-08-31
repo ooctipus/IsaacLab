@@ -41,6 +41,8 @@ args_cli = parser.parse_args()
 import torch
 
 import isaaclab.sim as sim_utils
+from isaaclab import cloner
+from isaaclab.assets import AssetBaseCfg
 
 ##
 # Pre-defined configs
@@ -59,20 +61,16 @@ def main():
         # Set main camera
         sim.set_camera_view(eye=[0.25, -0.25, 0.7], target=[0.0, 0.0, 0.5])
 
-        # Spawn things into stage
-        # Ground-plane
-        cfg = sim_utils.GroundPlaneCfg()
-        cfg.func("/World/defaultGroundPlane", cfg)
-        # Lights
-        cfg = sim_utils.DistantLightCfg(intensity=3000.0, color=(0.75, 0.75, 0.75))
-        cfg.func("/World/Light", cfg)
-
-        # Robots
+        ground_cfg = AssetBaseCfg(prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg())
+        light_cfg = AssetBaseCfg(
+            prim_path="/World/Light",
+            spawn=sim_utils.DistantLightCfg(intensity=3000.0, color=(0.75, 0.75, 0.75)),
+        )
         robot_cfg = CRAZYFLIE_CFG.replace(prim_path="/World/Crazyflie")
-        robot_cfg.spawn.func("/World/Crazyflie", robot_cfg.spawn, translation=robot_cfg.init_state.pos)
-
-        # create handles for the robots
-        robot = robot_cfg.class_type(robot_cfg)
+        with cloner.ReplicateSession((ground_cfg, light_cfg, robot_cfg), 1, 0.0, sim.device):
+            ground_cfg.spawn.func(ground_cfg.prim_path, ground_cfg.spawn)
+            light_cfg.spawn.func(light_cfg.prim_path, light_cfg.spawn)
+            robot = robot_cfg.class_type(robot_cfg)
 
         # Play the simulator
         sim.reset()

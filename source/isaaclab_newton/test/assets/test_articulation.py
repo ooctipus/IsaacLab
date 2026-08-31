@@ -45,6 +45,7 @@ from isaaclab_newton.physics import NewtonManager as SimulationManager
 from newton import JointTargetMode, JointType, ModelBuilder, ModelFlags
 from newton.solvers import SolverMuJoCo
 
+import omni.usd
 from pxr import UsdPhysics
 
 import isaaclab.assets.articulation.ordering_kernels as ordering_kernels
@@ -59,6 +60,7 @@ from isaaclab.actuators import (
 )
 from isaaclab.assets import ArticulationCfg
 from isaaclab.assets.articulation.ordering_resolvers import get_articulation_name_ordering
+from isaaclab.cloner import ReplicateSession
 from isaaclab.controllers import (
     DifferentialIKController,
     DifferentialIKControllerCfg,
@@ -67,7 +69,7 @@ from isaaclab.controllers import (
 )
 from isaaclab.envs.mdp.terminations import joint_effort_out_of_limit
 from isaaclab.managers import SceneEntityCfg
-from isaaclab.sim import SimulationCfg, build_simulation_context
+from isaaclab.sim import SimulationCfg, SimulationContext, build_simulation_context
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.math import compute_pose_error, matrix_from_quat, quat_inv, subtract_frame_transforms
 from isaaclab.utils.version import get_isaac_sim_version, has_kit
@@ -317,8 +319,6 @@ def fix_reversed_joints(stage):
     a graph of body connections and identifying the root body (the one attached to world via a joint
     with a missing body target). Any joint where body0 is closer to the root than body1 is swapped.
     """
-    from pxr import UsdPhysics
-
     # First pass: find root bodies (bodies with a joint that has only one target, i.e. attached to world)
     root_bodies: set[str] = set()
     joints_to_check = []
@@ -416,21 +416,12 @@ def generate_articulation(
         The articulation and environment translations.
 
     """
-    # Generate translations of 2.5 m in x for each articulation
-    translations = torch.zeros(num_articulations, 3, device=device)
-    translations[:, 0] = torch.arange(num_articulations) * 2.5
-
-    # Create Top-level Xforms, one for each articulation
-    for i in range(num_articulations):
-        sim_utils.create_prim(f"/World/Env_{i}", "Xform", translation=translations[i][:3])
-    articulation = Articulation(articulation_cfg.replace(prim_path="/World/Env_[^/]*/Robot"))
-
-    # Fix reversed joints for known-broken USD assets (body0/body1 swapped)
-    usd_path = getattr(articulation_cfg.spawn, "usd_path", "")
-    if any(name in usd_path for name in _REVERSED_JOINT_USD_FILES):
-        import omni.usd
-
-        fix_reversed_joints(omni.usd.get_context().get_stage())
+    articulation_cfg = articulation_cfg.replace(prim_path="/World/Env_[^/]*/Robot")
+    with ReplicateSession([articulation_cfg], num_articulations, 2.5, device, env_template="/World/Env_{}"):
+        articulation = articulation_cfg.class_type(articulation_cfg)
+        if any(name in articulation_cfg.spawn.usd_path for name in _REVERSED_JOINT_USD_FILES):
+            fix_reversed_joints(omni.usd.get_context().get_stage())
+    translations = SimulationContext.instance().get_clone_plan().positions
 
     return articulation, translations
 
@@ -470,8 +461,8 @@ def _setup_franka_at_home_pose(sim, *, zero_actuator_pd: bool = False, disable_g
         cfg.actuators["panda_forearm"].stiffness = 0.0
         cfg.actuators["panda_forearm"].damping = 0.0
     cfg.spawn.rigid_props.disable_gravity = disable_gravity
-    sim_utils.create_prim("/World/Env_0", "Xform", translation=(0.0, 0.0, 0.0))
-    robot = Articulation(cfg)
+    with ReplicateSession([cfg], 1, 0.0, sim.device, env_template="/World/Env_{}"):
+        robot = cfg.class_type(cfg)
     sim.reset()
     assert robot.is_initialized
 
@@ -860,13 +851,13 @@ def test_mjwarp_ordering_resolver_matches_newton_backend_names(sim, device, grav
     the same order on a single-joint chain.
     """
     fixture_path = Path(__file__).parent / "data" / "articulation_ordering_branching.usda"
-    articulation = Articulation(
-        ArticulationCfg(
-            prim_path="/World/Robot",
-            spawn=sim_utils.UsdFileCfg(usd_path=str(fixture_path)),
-            actuators={},
-        )
+    articulation_cfg = ArticulationCfg(
+        prim_path="/World/Robot",
+        spawn=sim_utils.UsdFileCfg(usd_path=str(fixture_path)),
+        actuators={},
     )
+    with ReplicateSession([articulation_cfg], 1, 0.0, sim.device):
+        articulation = articulation_cfg.class_type(articulation_cfg)
 
     sim.reset()
     assert articulation.is_initialized
@@ -910,15 +901,15 @@ def test_branching_fixture_physx_ordering_reorders_newton_to_bfs(sim, device, gr
     test data directory so the two backends assert against the same ground-truth asset.
     """
     fixture_path = Path(__file__).parent / "data" / "articulation_ordering_branching.usda"
-    articulation = Articulation(
-        ArticulationCfg(
-            prim_path="/World/Robot",
-            spawn=sim_utils.UsdFileCfg(usd_path=str(fixture_path)),
-            actuators={},
-            joint_ordering="physx",
-            body_ordering="physx",
-        )
+    articulation_cfg = ArticulationCfg(
+        prim_path="/World/Robot",
+        spawn=sim_utils.UsdFileCfg(usd_path=str(fixture_path)),
+        actuators={},
+        joint_ordering="physx",
+        body_ordering="physx",
     )
+    with ReplicateSession([articulation_cfg], 1, 0.0, sim.device):
+        articulation = articulation_cfg.class_type(articulation_cfg)
 
     sim.reset()
     assert articulation.is_initialized
@@ -1500,14 +1491,14 @@ def test_set_body_inertial_properties_updates_inverses(
 ):
     """Selected inertial-property writes keep Newton inverse arrays current under body ordering."""
     fixture_path = Path(__file__).parent / "data" / "articulation_ordering_branching.usda"
-    articulation = Articulation(
-        ArticulationCfg(
-            prim_path="/World/Robot",
-            spawn=sim_utils.UsdFileCfg(usd_path=str(fixture_path)),
-            actuators={},
-            body_ordering="physx",
-        )
+    articulation_cfg = ArticulationCfg(
+        prim_path="/World/Robot",
+        spawn=sim_utils.UsdFileCfg(usd_path=str(fixture_path)),
+        actuators={},
+        body_ordering="physx",
     )
+    with ReplicateSession([articulation_cfg], 1, 0.0, sim.device):
+        articulation = articulation_cfg.class_type(articulation_cfg)
     sim.reset()
     assert articulation.data.body_ordering is not None
 
@@ -2083,7 +2074,8 @@ def test_out_of_range_default_joint_vel(sim, device, articulation_type):
         "panda_joint1": 100.0,
         "panda_joint[2, 4]": -60.0,
     }
-    articulation = Articulation(articulation_cfg)
+    with ReplicateSession([articulation_cfg], 1, 0.0, sim.device):
+        articulation = articulation_cfg.class_type(articulation_cfg)
 
     # Check that the framework doesn't hold excessive strong references.
     assert sys.getrefcount(articulation) < 10
@@ -4023,16 +4015,11 @@ def test_heterogeneous_scene_per_view_shapes(sim, device, add_ground_plane, arti
     # of each is the minimum heterogeneous setup that still exercises the
     # per-articulation shape gate without that pre-existing quirk.
     num_per_type = 1
-
-    franka_cfg = FRANKA_PANDA_CFG.replace(prim_path="/World/Env_franka_[^/]*/Robot")
-    anymal_cfg = ANYMAL_C_CFG.replace(prim_path="/World/Env_anymal_[^/]*/Robot")
-
-    for i in range(num_per_type):
-        sim_utils.create_prim(f"/World/Env_franka_{i}", "Xform", translation=(2.5 * i, 0.0, 0.0))
-        sim_utils.create_prim(f"/World/Env_anymal_{i}", "Xform", translation=(2.5 * i, 5.0, 0.0))
-
-    franka = Articulation(franka_cfg)
-    anymal = Articulation(anymal_cfg)
+    franka_cfg = FRANKA_PANDA_CFG.replace(prim_path="/World/Env_[^/]*/Franka")
+    anymal_cfg = ANYMAL_C_CFG.replace(prim_path="/World/Env_[^/]*/Anymal")
+    with ReplicateSession([franka_cfg, anymal_cfg], num_per_type, 2.5, sim.device, env_template="/World/Env_{}"):
+        franka = franka_cfg.class_type(franka_cfg)
+        anymal = anymal_cfg.class_type(anymal_cfg)
     sim.reset()
     assert franka.is_initialized and anymal.is_initialized
     assert franka.is_fixed_base and not anymal.is_fixed_base

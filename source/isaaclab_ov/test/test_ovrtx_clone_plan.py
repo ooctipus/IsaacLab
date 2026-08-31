@@ -317,21 +317,13 @@ def test_write_file_creates_parent_directory_and_writes_utf8(tmp_path: Path):
             clone_mask=torch.ones((1, 2), dtype=torch.bool),
             env_ids=torch.arange(2),
         ),
-        ClonePlan(
-            sources=("/World/envs/env_0",),
-            destinations=("/World/envs/env_{}",),
-            clone_mask=torch.ones((1, 2), dtype=torch.bool),
-            positions=torch.zeros((2, 3)),
-        ),
     ],
 )
-def test_prepare_stage_requires_published_plan_ids_and_positions(
-    monkeypatch: pytest.MonkeyPatch, clone_plan: ClonePlan | None
-):
-    """OVRTX stage preparation rejects an absent plan and plans missing ids or positions."""
+def test_prepare_stage_requires_published_plan_positions(monkeypatch: pytest.MonkeyPatch, clone_plan: ClonePlan | None):
+    """OVRTX stage preparation rejects an absent plan and plans missing positions."""
     _patch_simulation_context(monkeypatch, clone_plan)
 
-    with pytest.raises(RuntimeError, match="Clone plan with environment ids and positions is required"):
+    with pytest.raises(RuntimeError, match="Clone plan with positions is required"):
         _make_ovrtx_renderer_without_backend().prepare_stage(_make_multi_env_stage(2), 2)
 
 

@@ -47,6 +47,7 @@ from isaaclab_ov.physics import OvPhysxCfg  # noqa: E402
 
 import isaaclab.sim as sim_utils  # noqa: E402
 import isaaclab.utils.math as math_utils  # noqa: E402
+from isaaclab import cloner  # noqa: E402
 from isaaclab.assets import RigidObject, RigidObjectCfg  # noqa: E402
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg  # noqa: E402
 from isaaclab.sensors.pva import Pva, PvaCfg  # noqa: E402
@@ -76,26 +77,8 @@ MOUNT_ROT_OFFSET = (0.5, 0.5, 0.5, 0.5)
 # ---------------------------------------------------------------------------
 
 
-def _spawn_envs(num_envs: int) -> None:
-    """Create per-env Xform containers at ``/World/env_<i>``.
-
-    These match the prim-path layout the PVA's attachment-validity test
-    expects, and provide a parent for per-env asset spawns.
-    """
-    # /World/env_<i> Xforms are siblings under /World — no envs container needed
-    for i in range(num_envs):
-        sim_utils.create_prim(f"/World/env_{i}", "Xform", translation=(i * 5.0, 0.0, 0.0))
-
-
-def _spawn_balls(num_envs: int, height: float = 0.5) -> RigidObject:
-    """Spawn a sphere rigid body at ``/World/env_<i>/ball`` for each env.
-
-    Returns the :class:`RigidObject` whose binding pattern matches all spawned
-    instances. The :class:`RigidObject` does the per-env spawning itself when
-    ``spawn`` is set; we only have to create the env Xform containers first
-    (handled by :func:`_spawn_envs`). The prim path is a regex; the ovphysx
-    binding pattern underneath it is an fnmatch glob.
-    """
+def _make_ball_cfg(height: float = 0.5) -> RigidObjectCfg:
+    """Declare a sphere rigid body in each environment."""
     spawn_cfg = sim_utils.SphereCfg(
         radius=0.25,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(),
@@ -103,16 +86,15 @@ def _spawn_balls(num_envs: int, height: float = 0.5) -> RigidObject:
         collision_props=sim_utils.CollisionPropertiesCfg(),
         visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.0, 1.0)),
     )
-    cfg = RigidObjectCfg(
-        prim_path="/World/env_[^/]+/ball",
+    return RigidObjectCfg(
+        prim_path="{ENV_REGEX_NS}/ball",
         spawn=spawn_cfg,
         init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, height)),
     )
-    return RigidObject(cfg)
 
 
-def _spawn_cubes(num_envs: int, height: float = 0.5) -> RigidObject:
-    """Spawn a cube rigid body at ``/World/env_<i>/cube`` for each env."""
+def _make_cube_cfg(height: float = 0.5) -> RigidObjectCfg:
+    """Declare a cube rigid body in each environment."""
     spawn_cfg = sim_utils.CuboidCfg(
         size=(0.25, 0.25, 0.25),
         rigid_props=sim_utils.RigidBodyPropertiesCfg(),
@@ -120,31 +102,19 @@ def _spawn_cubes(num_envs: int, height: float = 0.5) -> RigidObject:
         collision_props=sim_utils.CollisionPropertiesCfg(),
         visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.0, 1.0)),
     )
-    cfg = RigidObjectCfg(
-        prim_path="/World/env_[^/]+/cube",
+    return RigidObjectCfg(
+        prim_path="{ENV_REGEX_NS}/cube",
         spawn=spawn_cfg,
         init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, -2.0, height)),
     )
-    return RigidObject(cfg)
 
 
-def _add_pva_mount_xforms(num_envs: int, parent_name: str = "cube", child_name: str = "pva_mount") -> None:
-    """Add a procedural non-physics child Xform under each rigid body."""
-    for i in range(num_envs):
-        sim_utils.create_prim(
-            f"/World/env_{i}/{parent_name}/{child_name}",
-            "Xform",
-            translation=MOUNT_POS_OFFSET,
-            orientation=MOUNT_ROT_OFFSET,
-        )
-
-
-def _make_pva(prim_path: str, offset: PvaCfg.OffsetCfg | None = None) -> Pva:
-    """Create a :class:`Pva` with the given prim path and optional offset."""
+def _make_pva_cfg(prim_path: str, offset: PvaCfg.OffsetCfg | None = None) -> PvaCfg:
+    """Declare a PVA sensor with the given prim path and optional offset."""
     cfg = PvaCfg(prim_path=prim_path)
     if offset is not None:
         cfg.offset = offset
-    return Pva(cfg)
+    return cfg
 
 
 @configclass
@@ -162,6 +132,19 @@ class _StaleResetSceneCfg(InteractiveSceneCfg):
         ),
     )
     pva_cube: PvaCfg = PvaCfg(prim_path="{ENV_REGEX_NS}/cube")
+
+
+def _create_scene(cfg: InteractiveSceneCfg, sim) -> InteractiveScene:
+    """Construct a cfg-owned scene through its clone lifecycle."""
+    with cloner.ReplicateSession(
+        [cfg],
+        cfg.num_envs,
+        cfg.env_spacing,
+        sim.device,
+        env_template=cfg.clone_cfg.clone_template,
+        replicate_physics=cfg.replicate_physics,
+    ):
+        return cfg.class_type(cfg)
 
 
 # ---------------------------------------------------------------------------
@@ -229,11 +212,21 @@ def test_constant_velocity(sim_ctx, device):
     linear acceleration is the coordinate acceleration and does not include
     gravity (the IMU's gravity bias is absent here).
     """
-    _spawn_envs(NUM_ENVS)
-    balls = _spawn_balls(NUM_ENVS)
-    cubes = _spawn_cubes(NUM_ENVS)
-    pva_ball = _make_pva("/World/env_[^/]+/ball")
-    pva_cube = _make_pva("/World/env_[^/]+/cube")
+    ball_cfg = _make_ball_cfg()
+    cube_cfg = _make_cube_cfg()
+    pva_ball_cfg = _make_pva_cfg("{ENV_REGEX_NS}/ball")
+    pva_cube_cfg = _make_pva_cfg("{ENV_REGEX_NS}/cube")
+    with cloner.ReplicateSession(
+        [ball_cfg, cube_cfg, pva_ball_cfg, pva_cube_cfg],
+        NUM_ENVS,
+        5.0,
+        sim_ctx.device,
+        env_template="/World/env_{}",
+    ):
+        balls = ball_cfg.class_type(ball_cfg)
+        cubes = cube_cfg.class_type(cube_cfg)
+        pva_ball = pva_ball_cfg.class_type(pva_ball_cfg)
+        pva_cube = pva_cube_cfg.class_type(pva_cube_cfg)
     sim_ctx.reset()
 
     prev_lin_acc_ball = torch.zeros((NUM_ENVS, 3), dtype=torch.float32, device=device)
@@ -320,9 +313,17 @@ def test_constant_acceleration(sim_ctx, device):
     The PVA linear acceleration is a coordinate acceleration (no gravity bias),
     so it should equal the imposed dv/dt rotated into the body frame.
     """
-    _spawn_envs(NUM_ENVS)
-    balls = _spawn_balls(NUM_ENVS)
-    pva_ball = _make_pva("/World/env_[^/]+/ball")
+    ball_cfg = _make_ball_cfg()
+    pva_ball_cfg = _make_pva_cfg("{ENV_REGEX_NS}/ball")
+    with cloner.ReplicateSession(
+        [ball_cfg, pva_ball_cfg],
+        NUM_ENVS,
+        5.0,
+        sim_ctx.device,
+        env_template="/World/env_{}",
+    ):
+        balls = ball_cfg.class_type(ball_cfg)
+        pva_ball = pva_ball_cfg.class_type(pva_ball_cfg)
     sim_ctx.reset()
 
     dt = sim_ctx.get_physics_dt()
@@ -375,14 +376,28 @@ def test_offset_calculation(sim_ctx, device):
     Xform and one attached to the cube with the same configured offset -- should
     produce identical readings across all outputs.
     """
-    _spawn_envs(NUM_ENVS)
-    cubes = _spawn_cubes(NUM_ENVS)
-    _add_pva_mount_xforms(NUM_ENVS)
-    pva_child = _make_pva("/World/env_[^/]+/cube/pva_mount")
-    pva_direct = _make_pva(
-        "/World/env_[^/]+/cube",
+    cube_cfg = _make_cube_cfg()
+    pva_child_cfg = _make_pva_cfg("{ENV_REGEX_NS}/cube/pva_mount")
+    pva_direct_cfg = _make_pva_cfg(
+        "{ENV_REGEX_NS}/cube",
         offset=PvaCfg.OffsetCfg(pos=MOUNT_POS_OFFSET, rot=MOUNT_ROT_OFFSET),
     )
+    with cloner.ReplicateSession(
+        [cube_cfg, pva_child_cfg, pva_direct_cfg],
+        NUM_ENVS,
+        5.0,
+        sim_ctx.device,
+        env_template="/World/env_{}",
+    ):
+        cubes = cube_cfg.class_type(cube_cfg)
+        sim_utils.create_prim(
+            "/World/env_0/cube/pva_mount",
+            "Xform",
+            translation=MOUNT_POS_OFFSET,
+            orientation=MOUNT_ROT_OFFSET,
+        )
+        pva_child = pva_child_cfg.class_type(pva_child_cfg)
+        pva_direct = pva_direct_cfg.class_type(pva_direct_cfg)
     sim_ctx.reset()
 
     dt = sim_ctx.get_physics_dt()
@@ -453,9 +468,17 @@ def test_offset_calculation(sim_ctx, device):
 @pytest.mark.parametrize("device", _DEVICES)
 def test_env_ids_propagation(sim_ctx, device):
     """Test that ``env_ids`` argument propagates through update and reset methods."""
-    _spawn_envs(NUM_ENVS)
-    cubes = _spawn_cubes(NUM_ENVS)
-    pva_cube = _make_pva("/World/env_[^/]+/cube")
+    cube_cfg = _make_cube_cfg()
+    pva_cube_cfg = _make_pva_cfg("{ENV_REGEX_NS}/cube")
+    with cloner.ReplicateSession(
+        [cube_cfg, pva_cube_cfg],
+        NUM_ENVS,
+        5.0,
+        sim_ctx.device,
+        env_template="/World/env_{}",
+    ):
+        cubes = cube_cfg.class_type(cube_cfg)
+        pva_cube = pva_cube_cfg.class_type(pva_cube_cfg)
     sim_ctx.reset()
 
     dt = sim_ctx.get_physics_dt()
@@ -493,9 +516,17 @@ def test_env_ids_propagation(sim_ctx, device):
 @pytest.mark.parametrize("device", _DEVICES)
 def test_sensor_initialization(sim_ctx, device):
     """Test that the OVPhysX PVA sensor initializes correctly."""
-    _spawn_envs(NUM_ENVS)
-    _spawn_balls(NUM_ENVS)
-    pva_ball = _make_pva("/World/env_[^/]+/ball")
+    ball_cfg = _make_ball_cfg()
+    pva_ball_cfg = _make_pva_cfg("{ENV_REGEX_NS}/ball")
+    with cloner.ReplicateSession(
+        [ball_cfg, pva_ball_cfg],
+        NUM_ENVS,
+        5.0,
+        sim_ctx.device,
+        env_template="/World/env_{}",
+    ):
+        ball_cfg.class_type(ball_cfg)
+        pva_ball = pva_ball_cfg.class_type(pva_ball_cfg)
     sim_ctx.reset()
 
     assert pva_ball.num_instances == NUM_ENVS
@@ -525,9 +556,17 @@ def test_pose_w_packing(sim_ctx, device):
     checked, and a regression that, say, swaps the kernel inputs or returns
     stale data would not be caught.
     """
-    _spawn_envs(NUM_ENVS)
-    balls = _spawn_balls(NUM_ENVS)
-    pva_ball = _make_pva("/World/env_[^/]+/ball")
+    ball_cfg = _make_ball_cfg()
+    pva_ball_cfg = _make_pva_cfg("{ENV_REGEX_NS}/ball")
+    with cloner.ReplicateSession(
+        [ball_cfg, pva_ball_cfg],
+        NUM_ENVS,
+        5.0,
+        sim_ctx.device,
+        env_template="/World/env_{}",
+    ):
+        balls = ball_cfg.class_type(ball_cfg)
+        pva_ball = pva_ball_cfg.class_type(pva_ball_cfg)
     sim_ctx.reset()
 
     dt = sim_ctx.get_physics_dt()
@@ -554,9 +593,17 @@ def test_projected_gravity_at_rest(sim_ctx, device):
     which for a body whose orientation is identity is also ``(0, 0, -1)`` in
     the body frame.
     """
-    _spawn_envs(NUM_ENVS)
-    balls = _spawn_balls(NUM_ENVS)
-    pva_ball = _make_pva("/World/env_[^/]+/ball")
+    ball_cfg = _make_ball_cfg()
+    pva_ball_cfg = _make_pva_cfg("{ENV_REGEX_NS}/ball")
+    with cloner.ReplicateSession(
+        [ball_cfg, pva_ball_cfg],
+        NUM_ENVS,
+        5.0,
+        sim_ctx.device,
+        env_template="/World/env_{}",
+    ):
+        balls = ball_cfg.class_type(ball_cfg)
+        pva_ball = pva_ball_cfg.class_type(pva_ball_cfg)
     sim_ctx.reset()
 
     dt = sim_ctx.get_physics_dt()
@@ -581,9 +628,17 @@ def test_freefall_lin_acc(sim_ctx, device):
     freefall this is ``-g`` (the body is accelerating downward at ``g``), so
     the magnitude of ``lin_acc_b`` should converge to ``g ≈ 9.81 m/s^2``.
     """
-    _spawn_envs(NUM_ENVS)
-    balls = _spawn_balls(NUM_ENVS, height=5.0)
-    pva_ball = _make_pva("/World/env_[^/]+/ball")
+    ball_cfg = _make_ball_cfg(height=5.0)
+    pva_ball_cfg = _make_pva_cfg("{ENV_REGEX_NS}/ball")
+    with cloner.ReplicateSession(
+        [ball_cfg, pva_ball_cfg],
+        NUM_ENVS,
+        5.0,
+        sim_ctx.device,
+        env_template="/World/env_{}",
+    ):
+        balls = ball_cfg.class_type(ball_cfg)
+        pva_ball = pva_ball_cfg.class_type(pva_ball_cfg)
     sim_ctx.reset()
 
     dt = sim_ctx.get_physics_dt()
@@ -613,9 +668,17 @@ def test_reset(sim_ctx, device):
     buffers are zero.  We read the raw warp arrays directly because accessing
     ``pva.data`` triggers a lazy re-fill that masks reset bugs.
     """
-    _spawn_envs(NUM_ENVS)
-    balls = _spawn_balls(NUM_ENVS)
-    pva_ball = _make_pva("/World/env_[^/]+/ball")
+    ball_cfg = _make_ball_cfg()
+    pva_ball_cfg = _make_pva_cfg("{ENV_REGEX_NS}/ball")
+    with cloner.ReplicateSession(
+        [ball_cfg, pva_ball_cfg],
+        NUM_ENVS,
+        5.0,
+        sim_ctx.device,
+        env_template="/World/env_{}",
+    ):
+        balls = ball_cfg.class_type(ball_cfg)
+        pva_ball = pva_ball_cfg.class_type(pva_ball_cfg)
     sim_ctx.reset()
 
     dt = sim_ctx.get_physics_dt()
@@ -669,7 +732,7 @@ def test_reset(sim_ctx, device):
 def test_no_stale_data_after_scene_reset(sim_ctx, device):
     """Test ``scene.reset(env_ids)`` does not expose stale native velocity through ``pva.data``."""
     scene_cfg = _StaleResetSceneCfg(num_envs=1, env_spacing=2.0, lazy_sensor_update=False)
-    scene = InteractiveScene(scene_cfg)
+    scene = _create_scene(scene_cfg, sim_ctx)
     sim_ctx.reset()
     scene.reset()
 
@@ -711,16 +774,22 @@ def test_indirect_attachment_usd(sim_ctx, device):
     PVA at it.  The composed offset should match the directly-configured
     offset; all output channels should agree.
     """
-    _spawn_envs(NUM_ENVS)
-    balls = _spawn_balls(NUM_ENVS)
-    # Add a non-physics Xform child under each ball at a known offset; the PVA
-    # must resolve the rigid-body ancestor (the ball) and recover the offset.
     sub_pos = (0.4, 0.0, 0.1)
     sub_rot = (0.5, 0.5, 0.5, 0.5)
-    for i in range(NUM_ENVS):
-        sim_utils.create_prim(f"/World/env_{i}/ball/pva_sub", "Xform", translation=sub_pos, orientation=sub_rot)
-    pva_indirect = _make_pva("/World/env_[^/]+/ball/pva_sub")
-    pva_direct = _make_pva("/World/env_[^/]+/ball", offset=PvaCfg.OffsetCfg(pos=sub_pos, rot=sub_rot))
+    ball_cfg = _make_ball_cfg()
+    pva_indirect_cfg = _make_pva_cfg("{ENV_REGEX_NS}/ball/pva_sub")
+    pva_direct_cfg = _make_pva_cfg("{ENV_REGEX_NS}/ball", offset=PvaCfg.OffsetCfg(pos=sub_pos, rot=sub_rot))
+    with cloner.ReplicateSession(
+        [ball_cfg, pva_indirect_cfg, pva_direct_cfg],
+        NUM_ENVS,
+        5.0,
+        sim_ctx.device,
+        env_template="/World/env_{}",
+    ):
+        balls = ball_cfg.class_type(ball_cfg)
+        sim_utils.create_prim("/World/env_0/ball/pva_sub", "Xform", translation=sub_pos, orientation=sub_rot)
+        pva_indirect = pva_indirect_cfg.class_type(pva_indirect_cfg)
+        pva_direct = pva_direct_cfg.class_type(pva_direct_cfg)
     sim_ctx.reset()
 
     torch.testing.assert_close(
@@ -803,22 +872,34 @@ def test_attachment_validity(sim_ctx, device):
     A PVA sensor cannot be attached directly to the world Xform — it must have
     a rigid-body ancestor in its prim tree.
     """
-    _spawn_envs(NUM_ENVS)
-    sim_ctx.reset()
-
-    pva_world_cfg = PvaCfg(prim_path="/World/env_0")
+    pva_world_cfg = PvaCfg(prim_path="{ENV_REGEX_NS}")
+    with cloner.ReplicateSession(
+        [pva_world_cfg],
+        NUM_ENVS,
+        5.0,
+        sim_ctx.device,
+        env_template="/World/env_{}",
+    ):
+        _pva_world = pva_world_cfg.class_type(pva_world_cfg)
     with pytest.raises(RuntimeError) as exc_info:
-        pva_world = Pva(pva_world_cfg)
-        pva_world._initialize_impl()
+        sim_ctx.reset()
     assert exc_info.type is RuntimeError and "find a rigid body ancestor prim" in str(exc_info.value)
 
 
 @pytest.mark.parametrize("device", _DEVICES)
 def test_sensor_print(sim_ctx, device):
     """Test ``__str__`` is implemented and exposes the prim path and binding pattern."""
-    _spawn_envs(NUM_ENVS)
-    _spawn_balls(NUM_ENVS)
-    pva_ball = _make_pva("/World/env_[^/]+/ball")
+    ball_cfg = _make_ball_cfg()
+    pva_ball_cfg = _make_pva_cfg("{ENV_REGEX_NS}/ball")
+    with cloner.ReplicateSession(
+        [ball_cfg, pva_ball_cfg],
+        NUM_ENVS,
+        5.0,
+        sim_ctx.device,
+        env_template="/World/env_{}",
+    ):
+        ball_cfg.class_type(ball_cfg)
+        pva_ball = pva_ball_cfg.class_type(pva_ball_cfg)
     sim_ctx.reset()
 
     s = str(pva_ball)

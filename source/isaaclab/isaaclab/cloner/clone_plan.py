@@ -7,37 +7,95 @@
 
 A plan is the whole description of a replication layout: which prototypes exist, where each
 one is cloned to, and which envs each one populates. It is built once, queried through
-:mod:`~isaaclab.cloner.query`, and executed by :func:`~isaaclab.cloner.replicate`.
+:mod:`~isaaclab.cloner.query`, and executed by :class:`~isaaclab.cloner.ReplicateSession`.
 
-Three constructors cover the ways a layout is specified:
+Two internal constructors cover how a layout is specified:
 
-* :func:`clone_plan_from_env_0` — every env is a copy of one prototype env.
-* :func:`make_clone_plan` — the layout is derived from the scene's asset cfgs, expanding
+* :func:`_make_clone_plan` — the layout is derived from the scene's asset cfgs, expanding
   multi-asset spawners into per-variant prototypes.
-* :func:`make_valid_clone_combinations` — restricts which variant combinations
-  :func:`make_clone_plan` may draw from, weighted per combination.
+* :func:`_make_valid_clone_combinations` — restricts which variant combinations
+  :func:`_make_clone_plan` may draw from, weighted per combination.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import itertools
 import math
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
 import torch
 
+from pxr import Sdf
+
 import isaaclab.sim as sim_utils
 
-from .cloner_cfg import DEFAULT_ENV_TEMPLATE, InclusionSet
-from .cloner_strategies import sequential
-from .path import match
+from .cloner_cfg import DEFAULT_ENV_TEMPLATE, CloneCfg, InclusionSet, expand_env_regex_ns
+from .path import match, relative_to
+
+
+def _plan_cfgs(cfgs: Iterable[Any]) -> tuple[tuple[Any, ...], dict[int, str], CloneCfg | None]:
+    """Collect declared prim authors, their scene bindings, and the sole clone configuration."""
+    found: list[Any] = []
+    names: dict[int, str] = {}
+    clone_cfg: CloneCfg | None = None
+    visited: set[int] = set()
+
+    def visit(value: Any, binding: str | None, naming_boundary: bool = False) -> None:
+        nonlocal clone_cfg
+        if value is None or isinstance(value, (str, bytes, int, float, bool, type)) or callable(value):
+            return
+        identity = id(value)
+        if isinstance(value, CloneCfg):
+            if clone_cfg is not None and clone_cfg is not value:
+                raise ValueError("One clone lifecycle cannot contain multiple CloneCfg instances.")
+            clone_cfg = value
+            return
+        if identity in visited:
+            if binding is not None and identity in names and names[identity] != binding:
+                raise ValueError(f"One cfg cannot be bound as both {names[identity]!r} and {binding!r}.")
+            return
+        visited.add(identity)
+        if isinstance(value, dict):
+            for name, child in value.items():
+                visit(child, str(name) if naming_boundary else binding)
+            return
+        elif isinstance(value, (list, tuple)):
+            children = value
+        elif dataclasses.is_dataclass(value) and not isinstance(value, type):
+            field_names = tuple(field.name for field in dataclasses.fields(value))
+            declared = set(field_names)
+            spawn = value.spawn if "spawn" in declared else None
+            if "prim_path" in declared and (
+                spawn is not None or "collision_group" in declared or "markers" in declared
+            ):
+                found.append(value)
+                if binding is not None:
+                    names[identity] = binding
+            child_items = [(name, getattr(value, name)) for name in field_names]
+            child_items.extend((name, child) for name, child in vars(value).items() if name not in declared)
+            owns_clone_cfg = any(isinstance(child, CloneCfg) for _, child in child_items)
+            debug_vis = value.debug_vis if "debug_vis" in declared else True
+            for name, child in child_items:
+                if not debug_vis and name.endswith("visualizer_cfg"):
+                    continue
+                visit(child, name if naming_boundary or owns_clone_cfg else binding)
+            return
+        else:
+            return
+        for child in children:
+            visit(child, binding)
+
+    for cfg in cfgs:
+        visit(cfg, None, naming_boundary=True)
+    return tuple(found), names, clone_cfg
 
 
 @dataclass(frozen=True, eq=False)
 class ClonePlan:
-    """Description of a single replication layout, consumed by :func:`~isaaclab.cloner.replicate`."""
+    """Description of one flat per-asset replication layout."""
 
     sources: tuple[str, ...]
     """Source prim paths, one per replication row."""
@@ -48,45 +106,42 @@ class ClonePlan:
     clone_mask: torch.Tensor
     """Bool tensor ``[len(sources), num_clones]``; ``True`` if env ``j`` comes from row ``i``."""
 
-    env_ids: torch.Tensor | None = None
-    """Long tensor ``[num_clones]`` of target env ids.
-
-    Optional for plans used only with :func:`~isaaclab.cloner.query.iter_sources` or
-    :func:`~isaaclab.cloner.query.path_to_source`; required by :func:`~isaaclab.cloner.replicate`.
-    """
+    env_ids: torch.Tensor
+    """Long tensor ``[num_clones]`` of target env ids."""
 
     positions: torch.Tensor | None = None
     """Per-env world positions [m], shape ``[num_clones, 3]``, or ``None``."""
 
     cfg_rows: dict[int, tuple[int, ...]] = field(default_factory=dict)
-    """``id(cfg)`` to the row indices the cfg owns."""
+    """``id(cfg)`` to the nearest replication rows that cover it."""
 
-    global_paths: tuple[str, ...] = ()
-    """Unique prim paths for scene assets shared by every environment."""
+    collision_paths: tuple[str, ...] = ()
+    """Plan-owned prim roots whose cfg declares ``collision_group=-1``."""
+
+    env_template: str = DEFAULT_ENV_TEMPLATE
+    """Environment path template used to resolve cfg namespace macros."""
 
 
-def grid_transforms(N: int, spacing: float = 1.0, up_axis: str = "z", device="cpu"):
-    """Create a centered grid of transforms for ``N`` instances.
+def _grid_positions(num_instances: int, spacing: float = 1.0, up_axis: str = "z", device="cpu"):
+    """Create a centered grid of positions for ``num_instances`` instances.
 
     Computes ``(x, y)`` coordinates in a roughly square grid centered at the origin
-    with the provided spacing, places the third coordinate according to ``up_axis``,
-    and returns identity orientations. This matches the grid layout used by
+    with the provided spacing and places the third coordinate according to ``up_axis``.
+    This matches the grid layout used by
     :class:`isaaclab.terrains.TerrainImporter` for consistent environment positioning.
 
     Args:
-        N: Number of instances.
+        num_instances: Number of instances.
         spacing: Distance between neighboring grid positions [m].
         up_axis: Up axis for positions ("z", "y", or "x").
         device: Torch device for returned tensors.
 
     Returns:
-        A tuple ``(pos, ori)`` where:
-            - ``pos`` is a tensor of shape ``(N, 3)`` with positions [m].
-            - ``ori`` is a tensor of shape ``(N, 4)`` with identity quaternions in ``(x, y, z, w)``.
+        Positions [m], shape ``(num_instances, 3)``.
     """
     # Match terrain_importer._compute_env_origins_grid layout for consistency
-    num_rows = int(math.ceil(N / math.sqrt(N)))
-    num_cols = int(math.ceil(N / num_rows))
+    num_rows = int(math.ceil(num_instances / math.sqrt(num_instances)))
+    num_cols = int(math.ceil(num_instances / num_rows))
 
     # Create meshgrid matching terrain's "ij" indexing
     ii, jj = torch.meshgrid(
@@ -94,14 +149,14 @@ def grid_transforms(N: int, spacing: float = 1.0, up_axis: str = "z", device="cp
         torch.arange(num_cols, device=device, dtype=torch.float32),
         indexing="ij",
     )
-    # Flatten and take first N elements
-    ii = ii.flatten()[:N]
-    jj = jj.flatten()[:N]
+    # Flatten and take first num_instances elements
+    ii = ii.flatten()[:num_instances]
+    jj = jj.flatten()[:num_instances]
 
     # Match terrain's coordinate system: X from rows (negated), Y from cols
     x = -(ii - (num_rows - 1) / 2) * spacing
     y = (jj - (num_cols - 1) / 2) * spacing
-    z0 = torch.zeros(N, device=device)
+    z0 = torch.zeros(num_instances, device=device)
 
     # place on plane based on up_axis
     if up_axis.lower() == "z":
@@ -111,12 +166,17 @@ def grid_transforms(N: int, spacing: float = 1.0, up_axis: str = "z", device="cp
     else:  # up_axis == "x"
         pos = torch.stack([z0, x, y], dim=1)
 
-    # identity orientations (x,y,z,w): w=1 is index 3
-    ori = torch.nn.functional.one_hot(torch.full((N,), 3, device=device), num_classes=4).float()
-    return pos, ori
+    return pos
 
 
-def num_spawn_variants(spawn_cfg: Any) -> int:
+def grid_transforms(num_instances: int, spacing: float = 1.0, up_axis: str = "z", device="cpu"):
+    """Return centered grid positions and identity xyzw orientations."""
+    positions = _grid_positions(num_instances, spacing, up_axis, device)
+    orientations = torch.nn.functional.one_hot(torch.full((num_instances,), 3, device=device), num_classes=4).float()
+    return positions, orientations
+
+
+def _num_spawn_variants(spawn_cfg: Any) -> int:
     """Return the number of spawn variants declared by one spawner configuration.
 
     :class:`~isaaclab.sim.MultiAssetSpawnerCfg` declares one variant per asset
@@ -136,13 +196,11 @@ def num_spawn_variants(spawn_cfg: Any) -> int:
     return 1
 
 
-def make_valid_clone_combinations(
+def _make_valid_clone_combinations(
     asset_names: Sequence[str],
     variant_counts: Sequence[int],
     clone_combinations: Sequence[InclusionSet] | None = None,
     device: str = "cpu",
-    *,
-    all_asset_names: Sequence[str] | None = None,
 ) -> torch.Tensor:
     """Build the valid clone-combination variant tensor.
 
@@ -157,9 +215,6 @@ def make_valid_clone_combinations(
             any combination are active in every row. ``None`` uses the full
             cartesian product of variants.
         device: Torch device for the output tensor. Defaults to ``"cpu"``.
-        all_asset_names: Optional full scene asset-name list; combination
-            entries may reference assets that are not clone-planned.
-
     Returns:
         A ``[num_valid_combinations, num_assets]`` tensor of source variant
         indices, ``-1`` where an asset is absent.
@@ -179,12 +234,11 @@ def make_valid_clone_combinations(
         return torch.tensor(list(rows), dtype=torch.long, device=device)
 
     clone_asset_names = set(asset_names)
-    known_assets = set(all_asset_names) if all_asset_names is not None else clone_asset_names
     combination_assets: list[set[str]] = []
     for combination in clone_combinations:
         if combination.weight < 0:
             raise ValueError("Clone combination weights must be non-negative.")
-        unknown_assets = sorted(set(combination.assets) - known_assets)
+        unknown_assets = sorted(set(combination.assets) - clone_asset_names)
         if unknown_assets:
             raise ValueError(f"Unknown assets in clone combination: {unknown_assets}.")
         combination_assets.append(set(combination.assets) & clone_asset_names)
@@ -219,124 +273,164 @@ def make_valid_clone_combinations(
     return torch.tensor(rows, dtype=torch.long, device=device)
 
 
-def make_clone_plan(
+def _make_clone_plan(
     cfgs: Iterable[Any],
     num_clones: int,
     env_spacing: float,
     device: str,
-    global_paths: tuple[str, ...] = (),
-    clone_strategy: Callable = sequential,
-    valid_set: torch.Tensor | None = None,
+    *,
     env_template: str = DEFAULT_ENV_TEMPLATE,
 ) -> ClonePlan:
     """Build a :class:`ClonePlan` from asset cfgs.
 
     Iterates ``cfgs``, identifies env-scoped cfgs with a spawn, expands
     :class:`~isaaclab.sim.MultiAssetSpawnerCfg` / :class:`~isaaclab.sim.MultiUsdFileCfg`
-    into per-variant prototype rows, runs ``clone_strategy`` to assign prototypes to
-    envs, and returns a self-contained :class:`ClonePlan` with ``cfg_rows`` populated.
+    into per-variant prototype rows, groups equivalent environments for batched cloning,
+    and returns a self-contained :class:`ClonePlan` with ``cfg_rows`` populated.
 
-    Each input cfg's ``spawn_path`` / ``spawn_paths`` is mutated so the subsequent
-    asset constructor spawns the prototype into its first active environment. Every cfg
-    is an env-scoped entity with a spawner. Shared assets are declared explicitly through
-    ``global_paths`` and are never replicated.
+    A cfg outside the environment namespace gets a row that nothing copies, so the plan
+    names it even when the cfg authors that prim without a spawner. An environment-scoped
+    cfg without a spawner only references an existing planned asset and gets no row. The
+    input cfgs remain unchanged.
 
     Args:
         cfgs: Cloneable asset cfgs with resolved env-scoped ``prim_path`` and ``spawn``.
         num_clones: Number of target envs.
         env_spacing: Distance between neighboring grid env origins [m].
         device: Torch device for plan tensors.
-        global_paths: Complete shared-asset roots declared by the scene composition root. Defaults to none.
-        clone_strategy: Function that assigns prototype combinations to envs. Defaults
-            to :func:`~isaaclab.cloner.sequential`.
-        valid_set: Optional ``[num_combos, num_groups]`` long tensor of valid prototype
-            combinations. ``None`` (default) uses the full cartesian product of every
-            group's prototype indices.
 
     Returns:
         A :class:`ClonePlan` whose ``sources``/``destinations``/``clone_mask`` describe
-        the flat prototype-to-env mapping, whose ``cfg_rows`` maps each replicated cfg
-        to the rows it owns, and whose ``global_paths`` names shared scene assets.
+        the flat prototype-to-env mapping and whose ``cfg_rows`` maps each cfg to its nearest
+        covering rows. Rows without clone slots name shared scene assets.
     """
 
-    def set_spawn_paths(spawn_cfg: Any, paths: list[str | None]) -> None:
-        if isinstance(spawn_cfg, (sim_utils.MultiAssetSpawnerCfg, sim_utils.MultiUsdFileCfg)):
-            spawn_cfg.spawn_paths = paths
-        else:
-            active = [p for p in paths if p is not None]
-            if len(active) == 0:
-                spawn_cfg.spawn_path = None
-                return
-            if len(active) != 1:
-                raise ValueError("Single spawner expects exactly one planned source path.")
-            spawn_cfg.spawn_path = active[0]
+    roots = tuple(cfgs)
+    cfgs, cfg_names, clone_cfg = _plan_cfgs(roots)
 
-    # 1) Build per-group records: (cfg, spawn_cfg, destination_template, num_variants).
-    groups: list[tuple[Any, Any, str, int]] = []
+    # 1) Build per-group records. A cfg outside the environment namespace is declared
+    # once and shared, so it becomes a global row instead.
+    records: list[tuple[Any, Any, str, int, bool]] = []
+    owned_paths: set[str] = set()
     for cfg in cfgs:
-        matched = match(cfg.prim_path, env_template)
-        count = num_spawn_variants(cfg.spawn)
+        prim_path = expand_env_regex_ns(cfg.prim_path, env_template)
+        matched = match(prim_path, env_template)
+        destination = prim_path if matched is None else env_template + matched.suffix
+        field_names = {field.name for field in dataclasses.fields(cfg)}
+        spawn_cfg = cfg.spawn if "spawn" in field_names else None
+        authors_without_spawn = "markers" in field_names
+        if matched is None:
+            valid_path = Sdf.Path.IsValidPathString(prim_path)
+            if not valid_path or not Sdf.Path(prim_path).IsPrimPath():
+                if spawn_cfg is not None:
+                    raise ValueError(
+                        f"Global authoring cfg {prim_path!r} must use an exact prim path or the session env template."
+                    )
+                continue
+        if spawn_cfg is None and matched is not None and not authors_without_spawn:
+            continue
+        if destination in owned_paths:
+            raise ValueError(f"Multiple cfgs author the same clone-plan destination: {destination!r}.")
+        owned_paths.add(destination)
+        count = 1 if spawn_cfg is None else _num_spawn_variants(spawn_cfg)
         if count <= 0:
-            raise ValueError(f"Spawner at '{cfg.prim_path}' must have at least one variant.")
-        groups.append((cfg, cfg.spawn, env_template + matched.suffix, count))
+            raise ValueError(f"Spawner at '{prim_path}' must have at least one variant.")
+        records.append((cfg, spawn_cfg, destination, count, matched is None))
+
+    # A parent row already copies every declared child subtree. Map child cfgs onto the nearest
+    # parent's rows so constructors still resolve every exact prototype without asking any backend
+    # to copy the same prims again.
+    parent_by_id: dict[int, tuple[Any, Any, str, int, bool]] = {}
+    for record in records:
+        cfg, _spawn, destination, count, _is_global = record
+        parents = [
+            candidate
+            for candidate in records
+            if candidate is not record and relative_to(destination, candidate[2]) not in (None, "")
+        ]
+        if not parents:
+            continue
+        if count != 1:
+            raise ValueError(f"Nested clone-plan cfg {destination!r} cannot declare multiple spawn variants.")
+        parent_by_id[id(cfg)] = max(parents, key=lambda candidate: len(candidate[2]))
+
+    groups: list[tuple[Any, Any, str, int]] = []
+    global_cfgs: list[tuple[Any, str]] = []
+    covered_cfgs: list[tuple[Any, Any]] = []
+    for cfg, spawn_cfg, destination, count, is_global in records:
+        parent = parent_by_id.get(id(cfg))
+        if parent is not None:
+            while id(parent[0]) in parent_by_id:
+                parent = parent_by_id[id(parent[0])]
+            covered_cfgs.append((cfg, parent[0]))
+        elif is_global:
+            global_cfgs.append((cfg, destination))
+        else:
+            groups.append((cfg, spawn_cfg, destination, count))
     env_ids = torch.arange(num_clones, dtype=torch.long, device=device)
-    positions, _ = grid_transforms(num_clones, env_spacing, device=device)
+    positions = _grid_positions(num_clones, env_spacing, device=device)
 
-    # 2) No env-scoped cfgs: emit an empty plan so the scene can still proceed.
-    if not groups:
-        empty_mask = torch.zeros((0, num_clones), dtype=torch.bool, device=device)
+    def plan_with_globals(
+        sources: list[str], destinations: list[str], mask: torch.Tensor, cfg_rows: dict[int, tuple[int, ...]]
+    ) -> ClonePlan:
+        """Append one row per global asset so the plan names every declared asset."""
+        for cfg, prim_path in global_cfgs:
+            cfg_rows[id(cfg)] = (len(sources),)
+            sources.append(prim_path)
+            destinations.append(prim_path)
+        if global_cfgs:
+            shared = torch.zeros((len(global_cfgs), num_clones), dtype=torch.bool, device=device)
+            mask = torch.cat([mask, shared])
+        for cfg, owner in covered_cfgs:
+            cfg_rows[id(cfg)] = cfg_rows[id(owner)]
+        cfg_destinations = {id(cfg): destination for cfg, _spawn, destination, _count, _global in records}
+        collision_paths: list[str] = []
+        for cfg in cfgs:
+            field_names = {field.name for field in dataclasses.fields(cfg)}
+            if "collision_group" not in field_names or cfg.collision_group != -1 or id(cfg) not in cfg_rows:
+                continue
+            destination = cfg_destinations[id(cfg)]
+            if "{}" not in destination:
+                collision_paths.append(destination)
+                continue
+            for row in cfg_rows[id(cfg)]:
+                columns = mask[row].nonzero(as_tuple=False).flatten().to(env_ids.device)
+                collision_paths.extend(destination.format(int(env_id)) for env_id in env_ids[columns].tolist())
         return ClonePlan(
-            sources=(),
-            destinations=(),
-            clone_mask=empty_mask,
-            env_ids=env_ids,
-            positions=positions,
-            cfg_rows={},
-            global_paths=global_paths,
-        )
-
-    # 3) Homogeneous (every cfg is single-variant): emit the simpler env-root plan.
-    if valid_set is None and all(count == 1 for _, _, _, count in groups):
-        for cfg, spawn_cfg, destination, _ in groups:
-            set_spawn_paths(spawn_cfg, [destination.format(0)])
-        cfg_rows = {id(cfg): (0,) for cfg, _, _, _ in groups}
-        return ClonePlan(
-            sources=(env_template.format(0),),
-            destinations=(env_template,),
-            clone_mask=torch.ones((1, num_clones), dtype=torch.bool, device=device),
+            sources=tuple(sources),
+            destinations=tuple(destinations),
+            clone_mask=mask,
             env_ids=env_ids,
             positions=positions,
             cfg_rows=cfg_rows,
-            global_paths=global_paths,
+            collision_paths=tuple(dict.fromkeys(collision_paths)),
+            env_template=env_template,
         )
 
-    # 4) Heterogeneous: enumerate prototype combos, build per-row mask, mutate spawn paths.
+    clone_combinations = None if clone_cfg is None else clone_cfg.clone_combinations
+
+    # 2) No environment-scoped cfgs: the plan still describes the globals.
+    if not groups:
+        if clone_combinations:
+            raise ValueError("Clone combinations require at least one independently cloned asset.")
+        return plan_with_globals([], [], torch.zeros((0, num_clones), dtype=torch.bool, device=device), {})
+
+    # 3) Enumerate prototype combinations and build the per-row mask. A homogeneous
+    # scene is not special-cased: every asset always retains its own row.
     group_sizes = [count for _, _, _, count in groups]
-
-    def validate_combo_tensor(combos: torch.Tensor, name: str, expected_rows: int | None = None) -> torch.Tensor:
-        if combos.dtype == torch.bool or torch.is_floating_point(combos):
-            raise ValueError(f"{name} must contain integer prototype indices.")
-        combos = combos.to(device=device, dtype=torch.long)
-        if combos.ndim != 2:
-            raise ValueError(f"{name} must be a 2-D tensor, got shape {tuple(combos.shape)}.")
-        if combos.shape[0] == 0:
-            raise ValueError(f"{name} must contain at least one row.")
-        if expected_rows is not None and combos.shape[0] != expected_rows:
-            raise ValueError(f"{name} must contain {expected_rows} rows, got {combos.shape[0]}.")
-        if combos.shape[1] != len(group_sizes):
-            raise ValueError(f"{name} must contain {len(group_sizes)} columns, got {combos.shape[1]}.")
-        group_sizes_tensor = torch.tensor(group_sizes, dtype=torch.long, device=device).view(1, -1)
-        invalid = (combos < -1) | ((combos >= group_sizes_tensor) & (combos != -1))
-        if invalid.any():
-            raise ValueError(f"{name} contains prototype indices outside [-1, group_size).")
-        return combos
-
-    if valid_set is None:
-        all_combos = list(itertools.product(*[range(s) for s in group_sizes]))
-        combos = torch.tensor(all_combos, dtype=torch.long, device=device)
+    if clone_combinations:
+        try:
+            group_names = [cfg_names[id(cfg)] for cfg, _spawn, _destination, _count in groups]
+        except KeyError as exc:
+            raise ValueError("Every asset in clone_combinations must have one scene binding name.") from exc
+        combos = _make_valid_clone_combinations(group_names, group_sizes, clone_combinations, device)
     else:
-        combos = validate_combo_tensor(valid_set, "valid_set")
-    chosen = validate_combo_tensor(clone_strategy(combos, num_clones, device), "clone_strategy result", num_clones)
+        combos = torch.tensor(
+            list(itertools.product(*[range(size) for size in group_sizes])), dtype=torch.long, device=device
+        )
+    combos, counts = torch.unique(combos, dim=0, return_counts=True)
+    combos = torch.repeat_interleave(combos, counts, dim=0)
+    chosen = combos[torch.arange(num_clones, device=device) * len(combos) // num_clones]
 
     group_offsets = torch.tensor([0] + list(itertools.accumulate(group_sizes[:-1])), dtype=torch.long, device=device)
     active = chosen >= 0
@@ -353,70 +447,17 @@ def make_clone_plan(
     destinations_list: list[str] = []
     cfg_rows: dict[int, tuple[int, ...]] = {}
     row = 0
-    for cfg, spawn_cfg, destination, count in groups:
+    for cfg, _spawn_cfg, destination, count in groups:
         cfg_rows[id(cfg)] = tuple(range(row, row + count))
         group_mask = clone_mask[row : row + count]
-        env_ids_assigned = group_mask.to(torch.int).argmax(dim=1).tolist()
+        source_env_ids = group_mask.to(torch.int).argmax(dim=1).tolist()
         active = group_mask.any(dim=1).tolist()
-        paths = [
-            destination.format(env_id) if is_active else None for env_id, is_active in zip(env_ids_assigned, active)
-        ]
-        for i, path in enumerate(paths):
+        for i, (source_env_id, is_active) in enumerate(zip(source_env_ids, active)):
             destinations_list.append(destination)
-            # Inactive prototypes fall back to env-i so the source path stays valid even
-            # when the variant has no active environment (matches the legacy behavior).
-            sources_list.append(path if path is not None else destination.format(i))
-        set_spawn_paths(spawn_cfg, paths)
+            # An active prototype stays at its first destination so another row cannot
+            # overwrite it before every backend consumes the plan. Inactive rows retain a
+            # stable slot, reported as ``None`` by ``query.cfg_source_paths``.
+            sources_list.append(destination.format(source_env_id if is_active else i))
         row += count
 
-    return ClonePlan(
-        sources=tuple(sources_list),
-        destinations=tuple(destinations_list),
-        clone_mask=clone_mask,
-        env_ids=env_ids,
-        positions=positions,
-        cfg_rows=cfg_rows,
-        global_paths=global_paths,
-    )
-
-
-def clone_plan_from_env_0(
-    source: str,
-    destination: str,
-    num_clones: int,
-    device: str,
-    positions: torch.Tensor | None = None,
-    global_paths: tuple[str, ...] = (),
-) -> ClonePlan:
-    """Build a single-source clone plan that targets every env from one source row.
-
-    Auto-populates :attr:`ClonePlan.cfg_rows` from :data:`~isaaclab.cloner.REPLICATION_QUEUE`,
-    including only cfgs whose ``prim_path`` falls under the env-root prefix of
-    ``destination``. ``global_paths`` is the complete declaration of shared assets; it is
-    never inferred from the stage or replication queue. Must be called *after* all asset
-    constructors have run, so their cfgs are already registered in the queue; otherwise
-    those assets will be skipped by the subsequent :func:`~isaaclab.cloner.replicate` call.
-
-    Args:
-        source: Source prim path (typically ``/World/envs/env_0``).
-        destination: Destination template with ``"{}"`` for the env id.
-        num_clones: Number of target envs.
-        device: Torch device for the mask and env id buffers.
-        positions: Optional per-env world positions [m], shape ``[num_clones, 3]``.
-        global_paths: Complete shared-asset roots for the hand-built scene. Defaults to none.
-
-    Returns:
-        A :class:`ClonePlan` with a single source row covering every env.
-    """
-    from .replicate_session import REPLICATION_QUEUE  # noqa: PLC0415
-
-    cfg_rows = {id(cfg): (0,) for cfg in REPLICATION_QUEUE if match(cfg.prim_path, destination) is not None}
-    return ClonePlan(
-        sources=(source,),
-        destinations=(destination,),
-        clone_mask=torch.ones((1, num_clones), dtype=torch.bool, device=device),
-        env_ids=torch.arange(num_clones, dtype=torch.long, device=device),
-        positions=positions,
-        cfg_rows=cfg_rows,
-        global_paths=global_paths,
-    )
+    return plan_with_globals(sources_list, destinations_list, clone_mask, cfg_rows)

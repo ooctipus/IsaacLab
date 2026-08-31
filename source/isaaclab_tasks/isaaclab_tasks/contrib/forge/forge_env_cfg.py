@@ -9,6 +9,9 @@ from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils.configclass import configclass
 
 from isaaclab_tasks.contrib.factory.factory_env_cfg import (
+    _GEAR_MESH_SCENE_CFG,
+    _NUT_THREAD_SCENE_CFG,
+    _PEG_INSERT_SCENE_CFG,
     OBS_DIM_CFG,
     STATE_DIM_CFG,
     CtrlCfg,
@@ -157,20 +160,20 @@ class ForgeEnvCfg(FactoryEnvCfg):
 
 @configclass
 class ForgeTaskPegInsertCfg(ForgeEnvCfg):
-    task_name = "peg_insert"
     task = ForgePegInsert()
+    scene = _PEG_INSERT_SCENE_CFG
     episode_length_s = 10.0
 
 
 @configclass
 class ForgeTaskGearMeshCfg(ForgeEnvCfg):
-    task_name = "gear_mesh"
     task = ForgeGearMesh()
+    scene = _GEAR_MESH_SCENE_CFG
     episode_length_s = 20.0
 
 
 @configclass
 class ForgeTaskNutThreadCfg(ForgeEnvCfg):
-    task_name = "nut_thread"
     task = ForgeNutThread()
+    scene = _NUT_THREAD_SCENE_CFG
     episode_length_s = 30.0

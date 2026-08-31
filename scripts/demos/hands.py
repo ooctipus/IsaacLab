@@ -43,6 +43,8 @@ import numpy as np
 import torch
 
 import isaaclab.sim as sim_utils
+from isaaclab import cloner
+from isaaclab.assets import AssetBaseCfg
 
 ##
 # Pre-defined configs
@@ -72,37 +74,25 @@ def define_origins(num_origins: int, spacing: float) -> list[list[float]]:
     return env_origins.tolist()
 
 
-def design_scene() -> tuple[dict, list[list[float]]]:
+def design_scene(sim: "sim_utils.SimulationContext") -> tuple[dict, list[list[float]]]:
     """Designs the scene."""
-    # Ground-plane
-    cfg = sim_utils.GroundPlaneCfg()
-    cfg.func("/World/defaultGroundPlane", cfg)
-    # Lights
-    cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
-    cfg.func("/World/Light", cfg)
-
-    # Create separate groups called "Origin1", "Origin2", "Origin3"
-    # Each group will have a mount and a robot on top of it
+    ground_cfg = AssetBaseCfg(prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg())
+    light_cfg = AssetBaseCfg(
+        prim_path="/World/Light",
+        spawn=sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75)),
+    )
     origins = define_origins(num_origins=2, spacing=0.5)
-
-    # Origin 1 with Allegro Hand
-    sim_utils.create_prim("/World/Origin1", "Xform", translation=origins[0])
-    # -- Robot
     allegro_cfg = ALLEGRO_HAND_CFG.replace(prim_path="/World/Origin1/Robot")
-    allegro = allegro_cfg.class_type(allegro_cfg)
-
-    # Origin 2 with Shadow Hand
-    sim_utils.create_prim("/World/Origin2", "Xform", translation=origins[1])
-    # -- Robot
     shadow_hand_cfg = SHADOW_HAND_NEWTON_CFG if args_cli.physics == "newton_mjwarp" else SHADOW_HAND_CFG
     shadow_hand_cfg = shadow_hand_cfg.replace(prim_path="/World/Origin2/Robot")
-    shadow_hand = shadow_hand_cfg.class_type(shadow_hand_cfg)
-
-    # return the scene information
-    scene_entities = {
-        "allegro": allegro,
-        "shadow_hand": shadow_hand,
-    }
+    robot_cfgs = (allegro_cfg, shadow_hand_cfg)
+    with cloner.ReplicateSession((ground_cfg, light_cfg, *robot_cfgs), 1, 0.0, sim.device):
+        ground_cfg.spawn.func(ground_cfg.prim_path, ground_cfg.spawn)
+        light_cfg.spawn.func(light_cfg.prim_path, light_cfg.spawn)
+        for index, origin in enumerate(origins, start=1):
+            sim_utils.create_prim(f"/World/Origin{index}", "Xform", translation=origin)
+        robots = [cfg.class_type(cfg) for cfg in robot_cfgs]
+    scene_entities = dict(zip(("allegro", "shadow_hand"), robots, strict=True))
     return scene_entities, origins
 
 
@@ -180,7 +170,7 @@ def main():
         # Set main camera
         sim.set_camera_view(eye=[0.0, -0.5, 1.5], target=[0.0, -0.05, 0.45])
         # design scene
-        scene_entities, scene_origins = design_scene()
+        scene_entities, scene_origins = design_scene(sim)
         scene_origins = torch.tensor(scene_origins, device=sim.device)
         # Play the simulator
         sim.reset()

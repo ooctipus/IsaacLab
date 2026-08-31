@@ -34,6 +34,7 @@ import pytest
 import torch
 import warp as wp
 from isaaclab_physx.assets import Articulation
+from torch.distributions import Uniform
 
 from pxr import UsdPhysics
 
@@ -42,6 +43,7 @@ import isaaclab.utils.math as math_utils
 import isaaclab.utils.string as string_utils
 from isaaclab.actuators import IdealPDActuatorCfg, ImplicitActuatorCfg
 from isaaclab.assets import ArticulationCfg, get_articulation_name_ordering
+from isaaclab.cloner import ReplicateSession
 from isaaclab.controllers import (
     DifferentialIKController,
     DifferentialIKControllerCfg,
@@ -50,7 +52,7 @@ from isaaclab.controllers import (
 )
 from isaaclab.envs.mdp.terminations import joint_effort_out_of_limit
 from isaaclab.managers import SceneEntityCfg
-from isaaclab.sim import build_simulation_context
+from isaaclab.sim import SimulationContext, build_simulation_context
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.math import compute_pose_error, matrix_from_quat, quat_inv, subtract_frame_transforms
 from isaaclab.utils.version import get_isaac_sim_version, has_kit
@@ -194,14 +196,10 @@ def generate_articulation(
         The articulation and environment translations.
 
     """
-    # Generate translations of 2.5 m in x for each articulation
-    translations = torch.zeros(num_articulations, 3, device=device)
-    translations[:, 0] = torch.arange(num_articulations) * 2.5
-
-    # Create Top-level Xforms, one for each articulation
-    for i in range(num_articulations):
-        sim_utils.create_prim(f"/World/Env_{i}", "Xform", translation=translations[i][:3])
-    articulation = Articulation(articulation_cfg.replace(prim_path="/World/Env_[^/]*/Robot"))
+    articulation_cfg = articulation_cfg.replace(prim_path="/World/Env_[^/]*/Robot")
+    with ReplicateSession([articulation_cfg], num_articulations, 2.5, device, env_template="/World/Env_{}"):
+        articulation = articulation_cfg.class_type(articulation_cfg)
+    translations = SimulationContext.instance().get_clone_plan().positions
 
     return articulation, translations
 
@@ -245,8 +243,8 @@ def _setup_franka_at_home_pose(sim, *, zero_actuator_pd: bool = False, enable_ri
                 rigid_props=cfg.spawn.rigid_props.replace(disable_gravity=False),
             ),
         )
-    sim_utils.create_prim("/World/Env_0", "Xform", translation=(0.0, 0.0, 0.0))
-    robot = Articulation(cfg)
+    with ReplicateSession([cfg], 1, 0.0, sim.device, env_template="/World/Env_{}"):
+        robot = cfg.class_type(cfg)
     sim.reset()
     assert robot.is_initialized
 
@@ -380,7 +378,8 @@ def test_live_manual_root_preserving_ordering_reorders_backend_reads_and_writes(
         joint_ordering=tuple(reversed(PANDA_JOINT_NAMES)),
         body_ordering=PANDA_ROOT_PRESERVING_REVERSED_BODY_NAMES,
     )
-    articulation = Articulation(articulation_cfg)
+    with ReplicateSession([articulation_cfg], 1, 0.0, sim.device):
+        articulation = articulation_cfg.class_type(articulation_cfg)
 
     sim.reset()
     assert articulation.is_initialized
@@ -455,20 +454,22 @@ def test_live_manual_root_preserving_ordering_reorders_backend_reads_and_writes(
 @pytest.mark.parametrize("gravity_enabled", [False])
 def test_reversed_joint_dynamics_use_public_joint_basis(sim, device, gravity_enabled):
     """Keep dynamics tensors consistent with public joint velocity."""
-    articulation = Articulation(
-        ArticulationCfg(
-            prim_path="/World/Robot",
-            spawn=sim_utils.UsdFileCfg(
-                usd_path=str(Path(__file__).parent / "data" / "articulation_ordering_branching.usda")
-            ),
-            actuators={},
-        )
+    articulation_cfg = ArticulationCfg(
+        prim_path="/World/Robot",
+        spawn=sim_utils.UsdFileCfg(
+            usd_path=str(Path(__file__).parent / "data" / "articulation_ordering_branching.usda")
+        ),
+        actuators={},
     )
-    UsdPhysics.FixedJoint.Define(sim.stage, "/World/Robot/fixed_root").GetBody1Rel().SetTargets(["/World/Robot/base"])
-    joint = UsdPhysics.RevoluteJoint.Get(sim.stage, "/World/Robot/left_elbow")
-    body0, body1 = joint.GetBody0Rel().GetTargets(), joint.GetBody1Rel().GetTargets()
-    joint.GetBody0Rel().SetTargets(body1)
-    joint.GetBody1Rel().SetTargets(body0)
+    with ReplicateSession([articulation_cfg], 1, 0.0, sim.device):
+        articulation = articulation_cfg.class_type(articulation_cfg)
+        UsdPhysics.FixedJoint.Define(sim.stage, "/World/Robot/fixed_root").GetBody1Rel().SetTargets(
+            ["/World/Robot/base"]
+        )
+        joint = UsdPhysics.RevoluteJoint.Get(sim.stage, "/World/Robot/left_elbow")
+        body0, body1 = joint.GetBody0Rel().GetTargets(), joint.GetBody1Rel().GetTargets()
+        joint.GetBody0Rel().SetTargets(body1)
+        joint.GetBody1Rel().SetTargets(body0)
     sim.reset()
 
     velocity = torch.zeros((1, articulation.num_joints), device=device)
@@ -501,20 +502,19 @@ def test_live_floating_root_writers_match_identity_after_body_reordering(sim, de
     floating_spawn = FRANKA_PANDA_CFG.spawn.replace(
         articulation_props=FRANKA_PANDA_CFG.spawn.articulation_props.replace(fix_root_link=False)
     )
-    identity = Articulation(
-        FRANKA_PANDA_CFG.replace(
-            prim_path="/World/IdentityRobot",
-            spawn=floating_spawn,
-            body_ordering=None,
-        )
+    identity_cfg = FRANKA_PANDA_CFG.replace(
+        prim_path="/World/IdentityRobot",
+        spawn=floating_spawn,
+        body_ordering=None,
     )
-    ordered = Articulation(
-        FRANKA_PANDA_CFG.replace(
-            prim_path="/World/OrderedRobot",
-            spawn=floating_spawn,
-            body_ordering=tuple(reversed(PANDA_BODY_NAMES)),
-        )
+    ordered_cfg = FRANKA_PANDA_CFG.replace(
+        prim_path="/World/OrderedRobot",
+        spawn=floating_spawn,
+        body_ordering=tuple(reversed(PANDA_BODY_NAMES)),
     )
+    with ReplicateSession([identity_cfg, ordered_cfg], 1, 0.0, sim.device):
+        identity = identity_cfg.class_type(identity_cfg)
+        ordered = ordered_cfg.class_type(ordered_cfg)
 
     sim.reset()
     assert identity.is_initialized and ordered.is_initialized
@@ -580,7 +580,9 @@ def test_live_direct_view_mass_inertia_writes_become_visible(sim, device, gravit
     buffers must equal the backend-order view gathered through ``user_to_backend``.
     """
     body_ordering_arg = None if body_ordering == "identity" else PANDA_ROOT_PRESERVING_REVERSED_BODY_NAMES
-    articulation = Articulation(FRANKA_PANDA_CFG.replace(prim_path="/World/Robot", body_ordering=body_ordering_arg))
+    articulation_cfg = FRANKA_PANDA_CFG.replace(prim_path="/World/Robot", body_ordering=body_ordering_arg)
+    with ReplicateSession([articulation_cfg], 1, 0.0, sim.device):
+        articulation = articulation_cfg.class_type(articulation_cfg)
     sim.reset()
     assert articulation.is_initialized
 
@@ -626,15 +628,15 @@ def test_live_direct_view_mass_inertia_writes_become_visible(sim, device, gravit
 def test_branching_fixture_resolves_distinct_conventions(sim, device, gravity_enabled):
     """Resolve concrete breadth-first PhysX and depth-first MJWarp name orders."""
     fixture_path = Path(__file__).parent / "data" / "articulation_ordering_branching.usda"
-    articulation = Articulation(
-        ArticulationCfg(
-            prim_path="/World/Robot",
-            spawn=sim_utils.UsdFileCfg(usd_path=str(fixture_path)),
-            actuators={},
-            joint_ordering="mjwarp",
-            body_ordering="mjwarp",
-        )
+    articulation_cfg = ArticulationCfg(
+        prim_path="/World/Robot",
+        spawn=sim_utils.UsdFileCfg(usd_path=str(fixture_path)),
+        actuators={},
+        joint_ordering="mjwarp",
+        body_ordering="mjwarp",
     )
+    with ReplicateSession([articulation_cfg], 1, 0.0, sim.device):
+        articulation = articulation_cfg.class_type(articulation_cfg)
     sim.reset()
     assert articulation.is_initialized
 
@@ -654,15 +656,15 @@ def test_branching_fixture_resolves_distinct_conventions(sim, device, gravity_en
 def test_unused_jacobian_ordering_map_is_none(sim, device, gravity_enabled, ordering_axis):
     """Keep the inactive Jacobian-axis map unset under single-axis ordering."""
     fixture_path = Path(__file__).parent / "data" / "articulation_ordering_branching.usda"
-    articulation = Articulation(
-        ArticulationCfg(
-            prim_path="/World/Robot",
-            spawn=sim_utils.UsdFileCfg(usd_path=str(fixture_path)),
-            actuators={},
-            joint_ordering="mjwarp" if ordering_axis == "joint" else None,
-            body_ordering="mjwarp" if ordering_axis == "body" else None,
-        )
+    articulation_cfg = ArticulationCfg(
+        prim_path="/World/Robot",
+        spawn=sim_utils.UsdFileCfg(usd_path=str(fixture_path)),
+        actuators={},
+        joint_ordering="mjwarp" if ordering_axis == "joint" else None,
+        body_ordering="mjwarp" if ordering_axis == "body" else None,
     )
+    with ReplicateSession([articulation_cfg], 1, 0.0, sim.device):
+        articulation = articulation_cfg.class_type(articulation_cfg)
     sim.reset()
     assert articulation.is_initialized
 
@@ -1129,7 +1131,8 @@ def test_out_of_range_default_joint_vel(sim, device):
         "panda_joint1": 100.0,
         "panda_joint[2, 4]": -60.0,
     }
-    articulation = Articulation(articulation_cfg)
+    with ReplicateSession([articulation_cfg], 1, 0.0, sim.device):
+        articulation = articulation_cfg.class_type(articulation_cfg)
 
     # Check that the framework doesn't hold excessive strong references.
     assert sys.getrefcount(articulation) < 10
@@ -2192,8 +2195,6 @@ def test_write_joint_state_data_consistency(sim, num_articulations, device, grav
     limits[..., 0] = (torch.rand(num_articulations, articulation.num_joints, device=device) + 5.0) * -1.0
     limits[..., 1] = torch.rand(num_articulations, articulation.num_joints, device=device) + 5.0
     articulation.write_joint_position_limit_to_sim_index(limits=limits)
-
-    from torch.distributions import Uniform
 
     joint_pos_limits = articulation.data.joint_pos_limits.torch
     joint_vel_limits = articulation.data.joint_vel_limits.torch

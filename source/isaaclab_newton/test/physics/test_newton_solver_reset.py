@@ -23,14 +23,13 @@ from newton.solvers import SolverMuJoCo
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import IdealPDActuatorCfg
 from isaaclab.assets import ArticulationCfg
+from isaaclab.cloner import ReplicateSession
 from isaaclab.sim import SimulationCfg, build_simulation_context
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
 
 def _generate_single_joint_articulations(num_articulations: int, device: str) -> Articulation:
     """Spawn ``num_articulations`` copies of the simple revolute articulation, one per env prim."""
-    for i in range(num_articulations):
-        sim_utils.create_prim(f"/World/Env_{i}", "Xform", translation=(i * 2.5, 0.0, 0.0))
     articulation_cfg = ArticulationCfg(
         prim_path="/World/Env_[^/]*/Robot",
         spawn=sim_utils.UsdFileCfg(
@@ -47,7 +46,8 @@ def _generate_single_joint_articulations(num_articulations: int, device: str) ->
             ),
         },
     )
-    return Articulation(articulation_cfg)
+    with ReplicateSession([articulation_cfg], num_articulations, 2.5, device, env_template="/World/Env_{}"):
+        return articulation_cfg.class_type(articulation_cfg)
 
 
 @pytest.mark.parametrize("device", ["cuda:0"])

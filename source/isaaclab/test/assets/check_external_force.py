@@ -39,7 +39,7 @@ simulation_app = app_launcher.app
 import torch
 
 import isaaclab.sim as sim_utils
-from isaaclab.assets import Articulation
+from isaaclab import cloner
 from isaaclab.sim import SimulationContext
 
 ##
@@ -65,11 +65,9 @@ def main():
     cfg.func("/World/Light/greyLight", cfg)
 
     # Robots
-    robot_cfg = ANYMAL_C_CFG
-    robot_cfg.spawn.func("/World/Anymal_c/Robot_1", robot_cfg.spawn, translation=(0.0, -0.5, 0.65))
-    robot_cfg.spawn.func("/World/Anymal_c/Robot_2", robot_cfg.spawn, translation=(0.0, 0.5, 0.65))
-    # create handles for the robots
-    robot = Articulation(robot_cfg.replace(prim_path="/World/Anymal_c/Robot[^/]*"))
+    robot_cfg = ANYMAL_C_CFG.replace(prim_path="{ENV_REGEX_NS}")
+    with cloner.ReplicateSession([robot_cfg], 2, 1.0, sim.device, env_template="/World/Anymal_c/Robot_{}"):
+        robot = robot_cfg.class_type(robot_cfg)
 
     # Play the simulator
     sim.reset()

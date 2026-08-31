@@ -249,7 +249,6 @@ def _run_environments(
     num_steps=20,
     multi_agent=False,
     create_stage_in_memory=False,
-    disable_clone_in_fabric=False,
     physics_preset_name: str | None = None,
 ):
     """Run all environments and check environments return valid signals.
@@ -261,7 +260,6 @@ def _run_environments(
         num_steps: Number of simulation steps.
         multi_agent: Whether the environment is multi-agent.
         create_stage_in_memory: Whether to create stage in memory.
-        disable_clone_in_fabric: Whether to disable fabric cloning.
         physics_preset_name: Name of the physics preset to apply (e.g., 'newton_mjwarp').
             If None, uses the environment's default physics.
     """
@@ -291,7 +289,6 @@ def _run_environments(
         num_steps=num_steps,
         multi_agent=multi_agent,
         create_stage_in_memory=create_stage_in_memory,
-        disable_clone_in_fabric=disable_clone_in_fabric,
         physics_preset_name=physics_preset_name,
     )
     print(f""">>> Closing environment: {task_name}""")
@@ -305,7 +302,6 @@ def _check_random_actions(
     num_steps: int = 20,
     multi_agent: bool = False,
     create_stage_in_memory: bool = False,
-    disable_clone_in_fabric: bool = False,
     physics_preset_name: str | None = None,
 ):
     """Run random actions and check environments return valid signals.
@@ -317,7 +313,6 @@ def _check_random_actions(
         num_steps: Number of simulation steps.
         multi_agent: Whether the environment is multi-agent.
         create_stage_in_memory: Whether to create stage in memory.
-        disable_clone_in_fabric: Whether to disable fabric cloning.
         physics_preset_name: Name of the physics preset to apply (e.g., 'newton_mjwarp').
             If None, uses the environment's default physics.
     """
@@ -344,8 +339,6 @@ def _check_random_actions(
             reset_event.params["state_table_size"] = min(32, reset_event.params["state_table_size"])
         # set config args
         env_cfg.sim.create_stage_in_memory = create_stage_in_memory
-        if disable_clone_in_fabric:
-            env_cfg.scene.clone_in_fabric = False
 
         # filter based off multi agents mode and create env
         if multi_agent:

@@ -101,6 +101,7 @@ from isaaclab_newton.cloner.newton_clone_utils import (
     _restore_visible_colliders_without_visual_shapes,
     replicate_builder_mapping,
 )
+from isaaclab_newton.cloner.replicate import NewtonReplicateContext
 from isaaclab_newton.physics.featherstone_manager_cfg import FeatherstoneSolverCfg
 from isaaclab_newton.physics.mjwarp_manager_cfg import MJWarpSolverCfg
 from isaaclab_newton.physics.newton_manager_cfg import NewtonCfg, NewtonShapeCfg, NewtonSolverCfg
@@ -525,6 +526,7 @@ class NewtonManager(PhysicsManager):
             sim_context: Parent simulation context.
         """
         super().initialize(sim_context)
+        sim_context.get_or_create_backend(NewtonReplicateContext, sim_context, clone_role="physics")
 
         # Newton-specific setup: get gravity from SimulationCfg (not physics manager cfg)
         sim = PhysicsManager._sim
@@ -1152,6 +1154,23 @@ class NewtonManager(PhysicsManager):
         """Set the Newton model builder."""
         NewtonManager._builder = builder
 
+    @staticmethod
+    def _set_clone_state(
+        builder: ModelBuilder,
+        site_index_map: dict,
+        fabric_body_bindings: list[tuple[str, int]],
+        world_xforms: list[wp.transform],
+        source_builders: dict[str, ModelBuilder],
+        num_envs: int,
+    ) -> None:
+        """Publish one replicated builder and its plan-derived lookup data."""
+        NewtonManager._cl_site_index_map = site_index_map
+        NewtonManager._cl_fabric_body_bindings = fabric_body_bindings
+        NewtonManager._world_xforms = world_xforms
+        NewtonManager._cl_protos = source_builders
+        NewtonManager._builder = builder
+        NewtonManager._num_envs = num_envs
+
     @classmethod
     def create_builder(cls, up_axis: str | None = None, **kwargs) -> ModelBuilder:
         """Create a :class:`ModelBuilder` configured with default settings.
@@ -1206,9 +1225,9 @@ class NewtonManager(PhysicsManager):
     def cl_register_site(cls, body_pattern: str | None, xform: wp.transform, *, per_world: bool = False) -> str:
         """Register a site request for injection into prototypes before replication.
 
-        Sensors call this during ``__init__``. Sites are injected into prototype
-        builders by :meth:`_cl_inject_sites` (called from ``newton_replicate``)
-        before ``add_builder``, so they replicate correctly per-world.
+        Sensors call this during ``__init__``. Clone contexts inject the sites
+        into prototype builders before ``add_builder``, so they replicate
+        correctly per-world.
 
         Identical ``(body_pattern, per_world, transform)`` registrations share sites.
 
@@ -1278,8 +1297,8 @@ class NewtonManager(PhysicsManager):
         (``body_pattern is None``) are added to *main_builder* with
         ``body=-1``.
 
-        Returns source-builder-local shape indices so that ``newton_replicate`` can
-        compute final indices during replication without a second pattern match.
+        Returns source-builder-local shape indices so clone contexts can compute
+        final indices during replication without a second pattern match.
 
         Pending requests are cleared after processing.
 
@@ -1537,7 +1556,7 @@ class NewtonManager(PhysicsManager):
         cls.dispatch_event(PhysicsEvent.MODEL_INIT)
 
         # Inject any pending site requests (no-replication fallback path).
-        # In the replication path, _cl_inject_sites() already ran from newton_replicate.
+        # Clone contexts already inject sites before the replication path reaches here.
         cls._cl_inject_sites_fallback()
 
         device = PhysicsManager._device

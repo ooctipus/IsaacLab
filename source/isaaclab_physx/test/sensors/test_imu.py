@@ -22,9 +22,10 @@ from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
 import isaaclab.utils.math as math_utils
+from isaaclab import cloner
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets import ArticulationCfg, RigidObjectCfg
-from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
+from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors.imu import Imu, ImuCfg
 from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils.configclass import configclass
@@ -42,6 +43,19 @@ ROT_OFFSET = (0, 0, 0.7071068, 0.7071068)
 # offset of imu_link from link_1 on simple_2_link
 PEND_POS_OFFSET = (0.4, 0.0, 0.1)
 PEND_ROT_OFFSET = (0.5, 0.5, 0.5, 0.5)
+
+
+def _create_scene(cfg: InteractiveSceneCfg, sim):
+    """Construct a scene through its cfg-owned clone lifecycle."""
+    with cloner.ReplicateSession(
+        [cfg],
+        cfg.num_envs,
+        cfg.env_spacing,
+        sim.device,
+        env_template=cfg.clone_cfg.clone_template,
+        replicate_physics=cfg.replicate_physics,
+    ):
+        return cfg.class_type(cfg)
 
 
 @configclass
@@ -196,7 +210,7 @@ def setup_sim():
         sim._app_control_on_stop_handle = None
         # construct scene
         scene_cfg = MySceneCfg(num_envs=2, env_spacing=5.0, lazy_sensor_update=False, replicate_physics=False)
-        scene = InteractiveScene(scene_cfg)
+        scene = _create_scene(scene_cfg, sim)
         # Both pendulum and pendulum2 use merge_fixed_joints=True, so the
         # fixed-joint child link imu_link is removed from the URDF before USD
         # conversion.  Recreate it as a plain Xform (no RigidBodyAPI) under each
@@ -521,7 +535,7 @@ def test_no_stale_data_after_scene_reset():
     with sim_utils.build_simulation_context(sim_cfg=sim_cfg) as sim:
         sim._app_control_on_stop_handle = None
         scene_cfg = _StaleResetSceneCfg(num_envs=1, env_spacing=2.0, lazy_sensor_update=False)
-        scene = InteractiveScene(scene_cfg)
+        scene = _create_scene(scene_cfg, sim)
         sim.reset()
         scene.reset()
 

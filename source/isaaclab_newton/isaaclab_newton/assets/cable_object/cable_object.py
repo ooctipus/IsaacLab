@@ -16,7 +16,6 @@ from newton.selection import ArticulationView
 from pxr import UsdGeom
 
 from isaaclab.assets.cable_object.base_cable_object import BaseCableObject
-from isaaclab.cloner import queue_replication
 from isaaclab.physics import PhysicsEvent
 from isaaclab.sim.utils.queries import has_deformable_curve_api, path_expr_to_glob, resolve_matching_prims_from_source
 from isaaclab.utils.warp import ProxyArray
@@ -51,7 +50,6 @@ class CableObject(BaseCableObject):
             cfg: A configuration instance.
         """
         super().__init__(cfg)
-        queue_replication(cfg)
 
     @property
     def data(self) -> CableObjectData:

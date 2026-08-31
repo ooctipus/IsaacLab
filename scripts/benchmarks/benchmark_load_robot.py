@@ -63,6 +63,7 @@ import isaaclab.sim as sim_utils
 from isaaclab.app import launch_simulation
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 from isaaclab.benchmark import BaseIsaacLabBenchmark, SingleMeasurement
+from isaaclab.cloner import ReplicateSession
 from isaaclab.physics import PhysicsCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils.configclass import configclass
@@ -171,7 +172,6 @@ def main(
     """Main function."""
     # Import runtime classes only now that the simulation app has been launched. These modules import
     # USD/``omni`` bindings at import time, so importing them before the app is running crashes the simulator.
-    from isaaclab.scene import InteractiveScene
     from isaaclab.sim import SimulationContext
 
     # Load kit helper
@@ -198,7 +198,17 @@ def main(
     # Start the timer for creating the scene
     setup_time_begin = time.perf_counter_ns()
     # Design scene
-    scene = InteractiveScene(scene_cfg)
+    with ReplicateSession(
+        [scene_cfg],
+        scene_cfg.num_envs,
+        scene_cfg.env_spacing,
+        sim.device,
+        env_template=scene_cfg.clone_cfg.clone_template,
+        replicate_physics=scene_cfg.replicate_physics,
+    ):
+        scene = scene_cfg.class_type(scene_cfg)
+    if scene_cfg.filter_collisions and "physx" in sim.physics_backend:
+        scene.filter_collisions()
     # Stop the timer for creating the scene
     setup_time_end = time.perf_counter_ns()
 

@@ -27,12 +27,14 @@ from __future__ import annotations
 
 from inspect import signature
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import isaaclab_newton.physics.newton_manager as newton_manager_module
 import numpy as np
 import pytest
 import warp as wp
 from isaaclab_newton.assets.articulation import articulation as articulation_module
+from isaaclab_newton.cloner import NewtonReplicateContext
 from isaaclab_newton.physics import (
     FeatherstoneSolverCfg,
     KaminoDVICfg,
@@ -136,6 +138,49 @@ SOLVER_MATRIX = [
         id="implicit_mpm",
     ),
 ]
+
+
+def test_manager_registers_clone_resource_by_type(monkeypatch):
+    """Newton declares its simulation-owned clone resource before scene construction."""
+    cfg = SimulationCfg(device="cpu", physics=NewtonCfg(solver_cfg=XPBDSolverCfg()))
+    simulation = SimpleNamespace(
+        cfg=cfg,
+        stage=object(),
+        get_or_create_backend=MagicMock(),
+        resolve_visualizer_types=lambda: [],
+    )
+    monkeypatch.setattr(PhysicsManager, "_sim", PhysicsManager._sim)
+    monkeypatch.setattr(PhysicsManager, "_cfg", PhysicsManager._cfg)
+    monkeypatch.setattr(PhysicsManager, "_device", PhysicsManager._device)
+    monkeypatch.setattr(PhysicsManager, "_sim_time", PhysicsManager._sim_time)
+    monkeypatch.setattr(NewtonManager, "_gravity_vector", NewtonManager._gravity_vector)
+    monkeypatch.setattr(NewtonXPBDManager, "_clone_physics_only", NewtonXPBDManager._clone_physics_only)
+    monkeypatch.setattr(NewtonXPBDManager, "_scene_data_backend", NewtonXPBDManager._scene_data_backend)
+
+    NewtonXPBDManager.initialize(simulation)
+
+    simulation.get_or_create_backend.assert_called_once_with(
+        NewtonReplicateContext,
+        simulation,
+        clone_role="physics",
+    )
+
+
+def test_clone_resource_is_owned_by_its_simulation(monkeypatch):
+    """Newton's asset-wise clone context derives stage and device from one simulation owner."""
+    with pytest.raises(TypeError, match="sim_context"):
+        NewtonReplicateContext()
+    simulation = SimpleNamespace(stage=object(), cfg=SimpleNamespace(device="cpu"))
+    monkeypatch.setattr(PhysicsManager, "_cfg", None)
+
+    resource = NewtonReplicateContext(simulation)
+
+    assert resource._sim is simulation
+    assert "stage" not in resource.__dict__
+    assert "device" not in resource.__dict__
+    assert "load_visual_shapes" not in resource.__dict__
+    assert resource.clones_whole_env is False
+
 
 RIGID_BODY_FORCE_INPUT_SUPPORT = {
     NewtonMJWarpManager: True,

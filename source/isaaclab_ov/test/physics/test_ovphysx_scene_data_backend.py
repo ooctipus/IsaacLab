@@ -10,12 +10,18 @@ from __future__ import annotations
 import logging
 import sys
 from types import ModuleType, SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
 # The OVPhysX runtime wheel is optional. Skip gracefully when it is not installed;
 # CI jobs that need OVPhysX coverage install it explicitly.
 pytest.importorskip("ovphysx.types", reason="ovphysx wheel not installed")
+
+from isaaclab_ov.cloner import OvReplicateContext
+from isaaclab_ov.physics import OvPhysxCfg, OvPhysxManager
+
+from isaaclab.physics import PhysicsManager
 
 
 @pytest.fixture(autouse=True)
@@ -31,8 +37,6 @@ def _close_test_views():
 @pytest.fixture(scope="module", autouse=True)
 def _register_ovphysx_schemas_before_test_stages():
     """Register OvPhysX schemas before this module creates any USD stage."""
-    from isaaclab_ov.physics import OvPhysxManager
-
     OvPhysxManager._prepare_stage_creation()
 
 
@@ -48,8 +52,6 @@ def _make_two_environment_stage():
 
 def _serialize_full_stage_with_pending_clones(stage) -> str:
     """Serialize ``stage`` with pending clones materialized via the production path."""
-    from isaaclab_ov.physics import OvPhysxManager
-
     previous = OvPhysxManager._requires_full_stage
     try:
         OvPhysxManager._requires_full_stage = True
@@ -65,6 +67,34 @@ def _fake_rigid_body_prim(path: str):
         GetPath=lambda p=path: SimpleNamespace(pathString=p),
         GetAppliedSchemas=lambda: [],
         GetMetadata=lambda key: None,
+    )
+
+
+def test_manager_registers_clone_context_by_type(monkeypatch):
+    """OVPhysX declares its simulation-owned clone context during initialization."""
+    simulation = SimpleNamespace(
+        cfg=SimpleNamespace(physics=OvPhysxCfg(), device="cpu"),
+        stage=object(),
+        get_or_create_backend=MagicMock(),
+    )
+    monkeypatch.setattr(PhysicsManager, "_sim", PhysicsManager._sim)
+    monkeypatch.setattr(PhysicsManager, "_cfg", PhysicsManager._cfg)
+    monkeypatch.setattr(PhysicsManager, "_device", PhysicsManager._device)
+    monkeypatch.setattr(PhysicsManager, "_sim_time", PhysicsManager._sim_time)
+    monkeypatch.setattr(OvPhysxManager, "_warmup_done", OvPhysxManager._warmup_done)
+    monkeypatch.setattr(OvPhysxManager, "_requires_full_stage", OvPhysxManager._requires_full_stage)
+    monkeypatch.setattr(OvPhysxManager, "_stage_usda", OvPhysxManager._stage_usda)
+    monkeypatch.setattr(OvPhysxManager, "_pending_clones", OvPhysxManager._pending_clones)
+    monkeypatch.setattr(OvPhysxManager, "_active_clone_recipes", OvPhysxManager._active_clone_recipes)
+    monkeypatch.setattr(OvPhysxManager, "_scene_data_backend", OvPhysxManager._scene_data_backend)
+    monkeypatch.setattr(OvPhysxManager, "_ensure_physx_schemas_registered", classmethod(lambda cls: None))
+
+    OvPhysxManager.initialize(simulation)
+
+    simulation.get_or_create_backend.assert_called_once_with(
+        OvReplicateContext,
+        simulation,
+        clone_role="physics",
     )
 
 

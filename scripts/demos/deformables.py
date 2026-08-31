@@ -58,6 +58,8 @@ import torch
 import tqdm
 
 import isaaclab.sim as sim_utils
+from isaaclab import cloner
+from isaaclab.assets import AssetBaseCfg
 
 ##
 # Pre-defined configs
@@ -107,18 +109,13 @@ def define_origins(num_origins: int, radius: float = 2.0, center_height: float =
     return env_origins.tolist()
 
 
-def design_scene() -> tuple[dict, list[list[float]]]:
+def design_scene(sim: "sim_utils.SimulationContext") -> tuple[dict, list[list[float]]]:
     """Designs the scene."""
-    # Ground-plane
-    cfg_ground = sim_utils.GroundPlaneCfg()
-    cfg_ground.func("/World/defaultGroundPlane", cfg_ground)
-
-    # spawn distant light
-    cfg_light = sim_utils.DomeLightCfg(
-        intensity=3000.0,
-        color=(0.75, 0.75, 0.75),
+    ground_cfg = AssetBaseCfg(prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg())
+    light_cfg = AssetBaseCfg(
+        prim_path="/World/light",
+        spawn=sim_utils.DomeLightCfg(intensity=3000.0, color=(0.75, 0.75, 0.75)),
     )
-    cfg_light.func("/World/light", cfg_light)
 
     # spawn a red cone
     cfg_sphere = sim_utils.MeshSphereCfg(
@@ -185,11 +182,11 @@ def design_scene() -> tuple[dict, list[list[float]]]:
     # Iterate over all the origins, spawn objects, and create a view for all the deformables
     # note: since we manually spawned random deformable meshes above, we don't need to
     #   specify the spawn configuration for the deformable object
-    scene_entities = {}
+    deformable_cfgs = {}
     for idx, origin in tqdm.tqdm(enumerate(origins), total=len(origins)):
         # randomly select an object to spawn
         obj_name = random.choice(list(objects_cfg.keys()))
-        obj_cfg = objects_cfg[obj_name]
+        obj_cfg = objects_cfg[obj_name].copy()
         # randomize the deformable material stiffness
         if args_cli.physics == "newton_vbd" and obj_name == "cloth":
             obj_cfg.physics_material.tri_ke = random.uniform(5e3, 5e4)
@@ -210,20 +207,22 @@ def design_scene() -> tuple[dict, list[list[float]]]:
         # spawn the object, separate groups for surface and volume deformables
         if obj_name in ["cloth"]:
             prim_path = f"/World/Origin/Surface{idx:02d}"
-            cfg = DeformableObjectCfg(
+            deformable_cfgs[f"Surface{idx:02d}"] = DeformableObjectCfg(
                 prim_path=prim_path,
                 spawn=obj_cfg,
                 init_state=DeformableObjectCfg.InitialStateCfg(pos=origin),
             )
-            scene_entities[f"Surface{idx:02d}"] = cfg.class_type(cfg)
         else:
             prim_path = f"/World/Origin/Volume{idx:02d}"
-            cfg = DeformableObjectCfg(
+            deformable_cfgs[f"Volume{idx:02d}"] = DeformableObjectCfg(
                 prim_path=prim_path,
                 spawn=obj_cfg,
                 init_state=DeformableObjectCfg.InitialStateCfg(pos=origin),
             )
-            scene_entities[f"Volume{idx:02d}"] = cfg.class_type(cfg)
+    with cloner.ReplicateSession((ground_cfg, light_cfg, *deformable_cfgs.values()), 1, 0.0, sim.device):
+        ground_cfg.spawn.func(ground_cfg.prim_path, ground_cfg.spawn)
+        light_cfg.spawn.func(light_cfg.prim_path, light_cfg.spawn)
+        scene_entities = {name: cfg.class_type(cfg) for name, cfg in deformable_cfgs.items()}
 
     # return the scene information
     return scene_entities, origins
@@ -282,7 +281,7 @@ def main():
         sim.set_camera_view([4.0, 4.0, 3.0], [0.5, 0.5, 0.0])
 
         # Design scene by adding assets to it
-        scene_entities, _ = design_scene()
+        scene_entities, _ = design_scene(sim)
         # Play the simulator
         sim.reset()
         # Now we are ready!

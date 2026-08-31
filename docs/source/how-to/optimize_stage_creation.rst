@@ -1,16 +1,11 @@
 Optimize Stage Creation
 =======================
 
-Isaac Lab supports two experimental features to speed-up stage creation: **fabric cloning** and **stage in memory**.
-These features are particularly effective for large-scale RL setups with thousands of environments.
+Isaac Lab can construct a stage in memory to avoid disk I/O during scene creation. This is
+particularly effective for large-scale RL setups with thousands of environments.
 
-What These Features Do
------------------------
-
-**Fabric Cloning**
-
-- Clones environments using Fabric library (see `USD Fabric USDRT Documentation <https://docs.omniverse.nvidia.com/kit/docs/usdrt.scenegraph/latest/usd_fabric_usdrt.html>`_)
-- Partially supported and enabled by default on some environments (see `Limitations`_ section for a list)
+What This Feature Does
+----------------------
 
 **Stage in Memory**
 
@@ -20,20 +15,6 @@ What These Features Do
 
 Usage Examples
 --------------
-
-Fabric cloning can be toggled by setting the :attr:`isaaclab.scene.InteractiveSceneCfg.clone_in_fabric` flag.
-For a full guide on the template-based cloning system, see :doc:`cloning`.
-
-**Using Fabric Cloning with a RL environment**
-
-.. code-block:: python
-
-    # create environment configuration
-    env_cfg = CartpoleEnvCfg()
-    env_cfg.scene.clone_in_fabric = True
-    # setup RL environment
-    env = ManagerBasedRLEnv(cfg=env_cfg)
-
 
 Stage in memory can be toggled by setting the :attr:`isaaclab.sim.SimulationCfg.create_stage_in_memory` flag.
 
@@ -56,15 +37,22 @@ to the USD context when ``SimulationContext`` is created with ``create_stage_in_
 
 .. code-block:: python
 
+    from isaaclab import cloner
+    from isaaclab.sim import SimulationCfg, SimulationContext
+    from isaaclab.sim.utils import use_stage
+
     # init simulation context with stage in memory
     # Note: stage is automatically attached to USD context
     sim = SimulationContext(cfg=SimulationCfg(create_stage_in_memory=True))
 
     # grab stage and set stage context
-    with stage_utils.use_stage(sim.stage):
+    with use_stage(sim.stage):
         # create cartpole scene
-        scene_cfg = CartpoleSceneCfg(num_envs=1024)
-        scene = InteractiveScene(scene_cfg)
+        scene_cfg = CartpoleSceneCfg(num_envs=1024, env_spacing=2.0)
+        with cloner.ReplicateSession(
+            [scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device
+        ):
+            scene = scene_cfg.class_type(scene_cfg)
 
     sim.play()
 
@@ -72,33 +60,7 @@ to the USD context when ``SimulationContext`` is created with ``create_stage_in_
 Limitations
 -----------
 
-**Fabric Cloning**
-
-- Fabric-cloned environments must be accessed using USDRT functions, rather than USD functions.
-- Fabric cloning is partially supported and enabled by default on some environments, listed here.
-
-.. code-block:: none
-
-    1.  Isaac-Ant-Direct
-    2.  Isaac-Ant
-    3.  Isaac-Cartpole-Direct
-    4.  IsaacContrib-Cartpole-Showcase-Direct
-    5.  Isaac-Cartpole
-    20. IsaacContrib-Factory-GearMesh-Direct
-    21. IsaacContrib-Factory-NutThread-Direct
-    22. IsaacContrib-Factory-PegInsert-Direct
-    23. Isaac-Open-Drawer-Franka-Direct
-    24. Isaac-Humanoid-Direct
-    25. Isaac-Humanoid
-    27. Isaac-Reorient-Cube-Allegro-Direct
-    28. Isaac-Reorient-Cube-Allegro
-    29. Isaac-Reorient-Cube-Shadow-Direct
-    30. IsaacContrib-Reorient-Cube-Shadow-OpenAI-FF-Direct
-    31. IsaacContrib-Reorient-Cube-Shadow-OpenAI-LSTM-Direct
-
 **Stage in Memory**
-
-- Cannot be currently enabled at the same time as **Fabric Cloning**.
 
 - The stage is automatically attached to the USD context at ``SimulationContext`` creation, ensuring proper
   lifecycle events for viewport and physics systems.
@@ -106,21 +68,3 @@ Limitations
 - Certain low-level Kit APIs do not yet support stage in memory.
 
   - In one particular case, for some environments, the API call to color the ground plane is skipped, when stage in memory is enabled.
-
-
-Benchmark Results
------------------
-
-Performance comparison cloning 4000 ShadowHand robots with rendering enabled
-
-+--------+-----------------+-------------------+------------------------+---------------------------+------------------------+------------------------+
-| Test # | Stage in Memory | Clone in Fabric   | Attach Stage Time (s)  | Fabric Attach Time (s)    | Clone Paths Time (s)   | First Step Time (s)    |
-+========+=================+===================+========================+===========================+========================+========================+
-| 1      | Yes             | Yes               | 3.88                   | 0.15                      | 4.84                   | 1.39                   |
-+--------+-----------------+-------------------+------------------------+---------------------------+------------------------+------------------------+
-| 2      | No              | No                | —                      | 60.17                     | 4.46                   | 3.52                   |
-+--------+-----------------+-------------------+------------------------+---------------------------+------------------------+------------------------+
-| 3      | No              | Yes               | —                      | 0.47                      | 4.72                   | 2.56                   |
-+--------+-----------------+-------------------+------------------------+---------------------------+------------------------+------------------------+
-| 4      | Yes             | No                | 42.64                  | 21.75                     | 1.87                   | 2.16                   |
-+--------+-----------------+-------------------+------------------------+---------------------------+------------------------+------------------------+

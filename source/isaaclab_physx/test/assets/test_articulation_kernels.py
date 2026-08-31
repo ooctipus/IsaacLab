@@ -27,7 +27,6 @@ def _selector(values: list[int], dtype: type) -> wp.array:
 def _articulation_class():
     """Import PhysX Articulation while suppressing only unavailable lazy Kit exports."""
     cloner = ModuleType("isaaclab_physx.cloner")
-    cloner.queue_physx_replication = lambda cfg: None
     physics = ModuleType("isaaclab_physx.physics")
     physics.PhysxManager = type("PhysxManager", (), {})
     with warnings.catch_warnings():

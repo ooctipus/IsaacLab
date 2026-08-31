@@ -16,8 +16,9 @@ import warp as wp
 from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
 
 import isaaclab.sim as sim_utils
+from isaaclab import cloner
 from isaaclab.assets import RigidObject, RigidObjectCfg
-from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
+from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors.imu import Imu, ImuCfg
 from isaaclab.sim import SimulationCfg
 from isaaclab.terrains import TerrainImporterCfg
@@ -68,7 +69,8 @@ def sim():
 def test_sensor_initialization(sim):
     """Test that the Newton IMU sensor initializes correctly."""
     scene_cfg = ImuTestSceneCfg(num_envs=2)
-    scene = InteractiveScene(scene_cfg)
+    with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
+        scene = scene_cfg.class_type(scene_cfg)
     sim.reset()
 
     imu: Imu = scene["imu"]
@@ -80,7 +82,8 @@ def test_sensor_initialization(sim):
 def test_data_shapes(sim):
     """Test that IMU output tensors have correct shapes."""
     scene_cfg = ImuTestSceneCfg(num_envs=2)
-    scene = InteractiveScene(scene_cfg)
+    with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
+        scene = scene_cfg.class_type(scene_cfg)
     sim.reset()
 
     sim.step()
@@ -97,7 +100,8 @@ def test_data_shapes(sim):
 def test_gravity_at_rest(sim):
     """Test that a resting IMU measures gravity (~9.81 m/s^2 upward)."""
     scene_cfg = ImuTestSceneCfg(num_envs=2)
-    scene = InteractiveScene(scene_cfg)
+    with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
+        scene = scene_cfg.class_type(scene_cfg)
     sim.reset()
 
     # Step enough for the cube to settle on the ground
@@ -127,7 +131,8 @@ def test_gravity_at_rest(sim):
 def test_angular_velocity_at_rest(sim):
     """Test that a resting IMU reports near-zero angular velocity."""
     scene_cfg = ImuTestSceneCfg(num_envs=2)
-    scene = InteractiveScene(scene_cfg)
+    with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
+        scene = scene_cfg.class_type(scene_cfg)
     sim.reset()
 
     for _ in range(500):
@@ -148,7 +153,8 @@ def test_angular_velocity_at_rest(sim):
 def test_reset(sim):
     """Test that reset zeroes out IMU data."""
     scene_cfg = ImuTestSceneCfg(num_envs=2)
-    scene = InteractiveScene(scene_cfg)
+    with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
+        scene = scene_cfg.class_type(scene_cfg)
     sim.reset()
 
     # Step enough for the cube to settle on the ground so the accelerometer reads gravity.
@@ -200,7 +206,8 @@ class FreefallSceneCfg(InteractiveSceneCfg):
 def test_freefall_acceleration(sim):
     """Test that a freefalling IMU measures near-zero acceleration."""
     scene_cfg = FreefallSceneCfg(num_envs=2)
-    scene = InteractiveScene(scene_cfg)
+    with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
+        scene = scene_cfg.class_type(scene_cfg)
     sim.reset()
 
     # Step a few times while the cube is in freefall (no ground contact)
@@ -230,7 +237,8 @@ def test_no_stale_data_after_scene_reset(sim):
     the previous step and would produce a spurious finite-difference acceleration).
     """
     scene_cfg = ImuTestSceneCfg(num_envs=1)
-    scene = InteractiveScene(scene_cfg)
+    with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
+        scene = scene_cfg.class_type(scene_cfg)
     sim.reset()
     scene.reset()
 

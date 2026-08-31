@@ -40,7 +40,8 @@ import warp as wp
 from isaaclab_physx.assets import SurfaceGripper, SurfaceGripperCfg
 
 import isaaclab.sim as sim_utils
-from isaaclab.assets import Articulation
+from isaaclab import cloner
+from isaaclab.assets import Articulation, AssetBaseCfg
 from isaaclab.sim import SimulationContext
 
 ##
@@ -49,44 +50,37 @@ from isaaclab.sim import SimulationContext
 from isaaclab_assets import PICK_AND_PLACE_CFG  # isort:skip
 
 
-def design_scene():
+def design_scene(sim: SimulationContext) -> tuple[dict, torch.Tensor]:
     """Designs the scene."""
-    # Ground-plane
-    cfg = sim_utils.GroundPlaneCfg()
-    cfg.func("/World/defaultGroundPlane", cfg)
-    # Lights
-    cfg = sim_utils.DomeLightCfg(intensity=3000.0, color=(0.75, 0.75, 0.75))
-    cfg.func("/World/Light", cfg)
-
-    # Create separate groups called "Origin1", "Origin2"
-    # Each group will have a robot in it
-    origins = [[2.75, 0.0, 0.0], [-2.75, 0.0, 0.0]]
-    # Origin 1
-    sim_utils.create_prim("/World/Origin1", "Xform", translation=origins[0])
-    # Origin 2
-    sim_utils.create_prim("/World/Origin2", "Xform", translation=origins[1])
-
-    # Articulation: First we define the robot config
-    pick_and_place_robot_cfg = PICK_AND_PLACE_CFG.copy()
-    pick_and_place_robot_cfg.prim_path = "/World/Origin.*/Robot"
-    pick_and_place_robot = Articulation(cfg=pick_and_place_robot_cfg)
-
-    # Surface Gripper: Next we define the surface gripper config
-    surface_gripper_cfg = SurfaceGripperCfg()
-    # We need to tell the View which prim to use for the surface gripper
-    surface_gripper_cfg.prim_path = "/World/Origin.*/Robot/picker_head/SurfaceGripper"
+    ground_cfg = AssetBaseCfg(prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg())
+    light_cfg = AssetBaseCfg(
+        prim_path="/World/Light",
+        spawn=sim_utils.DomeLightCfg(intensity=3000.0, color=(0.75, 0.75, 0.75)),
+    )
+    robot_cfg = PICK_AND_PLACE_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+    gripper_cfg = SurfaceGripperCfg(prim_path="{ENV_REGEX_NS}/Robot/picker_head/SurfaceGripper")
     # We can then set different parameters for the surface gripper, note that if these parameters are not set,
     # the View will try to read them from the prim.
-    surface_gripper_cfg.max_grip_distance = 0.1  # [m] (Maximum distance at which the gripper can grasp an object)
-    surface_gripper_cfg.shear_force_limit = 500.0  # [N] (Force limit in the direction perpendicular direction)
-    surface_gripper_cfg.coaxial_force_limit = 500.0  # [N] (Force limit in the direction of the gripper's axis)
-    surface_gripper_cfg.retry_interval = 0.1  # seconds (Time the gripper will stay in a grasping state)
-    # We can now spawn the surface gripper
-    surface_gripper = SurfaceGripper(cfg=surface_gripper_cfg)
+    gripper_cfg.max_grip_distance = 0.1  # [m] (Maximum distance at which the gripper can grasp an object)
+    gripper_cfg.shear_force_limit = 500.0  # [N] (Force limit in the direction perpendicular direction)
+    gripper_cfg.coaxial_force_limit = 500.0  # [N] (Force limit in the direction of the gripper's axis)
+    gripper_cfg.retry_interval = 0.1  # seconds (Time the gripper will stay in a grasping state)
+    with cloner.ReplicateSession(
+        (ground_cfg, light_cfg, robot_cfg, gripper_cfg),
+        2,
+        5.5,
+        sim.device,
+        env_template="/World/Origin{}",
+    ):
+        ground_cfg.spawn.func(ground_cfg.prim_path, ground_cfg.spawn)
+        light_cfg.spawn.func(light_cfg.prim_path, light_cfg.spawn)
+        pick_and_place_robot = robot_cfg.class_type(robot_cfg)
+        surface_gripper = gripper_cfg.class_type(gripper_cfg)
 
-    # return the scene information
+    plan = sim.get_clone_plan()
+    assert plan is not None and plan.positions is not None
     scene_entities = {"pick_and_place_robot": pick_and_place_robot, "surface_gripper": surface_gripper}
-    return scene_entities, origins
+    return scene_entities, plan.positions
 
 
 def run_simulator(
@@ -174,8 +168,7 @@ def main():
     # Set main camera
     sim.set_camera_view([2.75, 7.5, 10.0], [2.75, 0.0, 0.0])
     # Design scene
-    scene_entities, scene_origins = design_scene()
-    scene_origins = torch.tensor(scene_origins, device=sim.device)
+    scene_entities, scene_origins = design_scene(sim)
     # Play the simulator
     sim.reset()
     # Now we are ready!

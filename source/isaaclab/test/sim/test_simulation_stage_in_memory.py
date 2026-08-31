@@ -98,7 +98,6 @@ def test_stage_in_memory_with_shapes(sim):
                     ),
                 ),
             ],
-            random_choice=True,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 solver_position_iteration_count=4, solver_velocity_iteration_count=0
             ),
@@ -145,7 +144,6 @@ def test_stage_in_memory_with_usds(sim):
 
         cfg = sim_utils.MultiUsdFileCfg(
             usd_path=usd_paths,
-            random_choice=True,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 disable_gravity=False,
                 retain_accelerations=False,
@@ -208,7 +206,9 @@ def test_stage_in_memory_with_clone_in_fabric(sim):
         env_fmt = "/World/envs/env_{}"
 
         # clone robots at target paths
-        cloner.usd_replicate(stage_in_memory, [env_fmt.format(0)], [env_fmt], env_ids, positions=env_origins)
+        cloner.UsdReplicateContext(stage_in_memory).replicate(
+            [env_fmt.format(0)], [env_fmt], env_ids, positions=env_origins
+        )
 
     # verify prims exist in fabric stage using usdrt apis
     stage_id = sim_utils.get_current_stage_id()

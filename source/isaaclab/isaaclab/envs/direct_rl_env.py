@@ -19,8 +19,8 @@ import gymnasium as gym
 import numpy as np
 import torch
 
+from isaaclab import cloner
 from isaaclab.managers import EventManager
-from isaaclab.scene import InteractiveScene
 from isaaclab.sim import SimulationContext
 from isaaclab.sim.utils.stage import use_stage
 from isaaclab.utils.noise import NoiseModel
@@ -148,8 +148,18 @@ class DirectRLEnv(gym.Env):
         with Timer("[INFO]: Time taken for scene creation", "scene_creation", activity="Creating scene"):
             # set the stage context for scene creation steps which use the stage
             with use_stage(self.sim.stage):
-                self.scene = InteractiveScene(self.cfg.scene)
-                self._setup_scene()
+                with cloner.ReplicateSession(
+                    [self.cfg],
+                    num_clones=self.cfg.scene.num_envs,
+                    env_spacing=self.cfg.scene.env_spacing,
+                    device=self.device,
+                    env_template=self.cfg.scene.clone_cfg.clone_template,
+                    replicate_physics=self.cfg.scene.replicate_physics,
+                ):
+                    self.scene = self.cfg.scene.class_type(self.cfg.scene)
+                    self._setup_scene()
+                if self.cfg.scene.filter_collisions and "physx" in self.scene.physics_backend:
+                    self.scene.filter_collisions()
             self.sim.register_interactive_scene(self.scene)
         print("[INFO]: Scene manager: ", self.scene)
 
@@ -571,9 +581,11 @@ class DirectRLEnv(gym.Env):
         """
         scalars = {
             "episode": {
-                "mean_reward": lambda: float(getattr(self, "reward_buf", None).mean())
-                if getattr(self, "reward_buf", None) is not None
-                else 0.0,
+                "mean_reward": lambda: (
+                    float(getattr(self, "reward_buf", None).mean())
+                    if getattr(self, "reward_buf", None) is not None
+                    else 0.0
+                ),
                 "episode_length": lambda: float(self.episode_length_buf.float().mean()),
             }
         }

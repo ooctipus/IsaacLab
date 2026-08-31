@@ -29,13 +29,14 @@ from isaaclab_physx.sim.schemas import (
 import omni.replicator.core as rep
 
 import isaaclab.sim as sim_utils
-from isaaclab.assets import Articulation, ArticulationCfg, RigidObject, RigidObjectCfg
+from isaaclab import cloner
+from isaaclab.assets import ArticulationCfg, RigidObjectCfg
 from isaaclab.sensors.camera import CameraCfg
 from isaaclab.terrains.trimesh.utils import make_plane
 from isaaclab.terrains.utils import create_prim_from_mesh
 from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR
 
-from isaaclab_contrib.sensors.tacsl_sensor import VisuoTactileSensor, VisuoTactileSensorCfg
+from isaaclab_contrib.sensors.tacsl_sensor import VisuoTactileSensorCfg
 from isaaclab_contrib.sensors.tacsl_sensor.visuotactile_sensor_cfg import GelSightRenderCfg
 
 # Sample sensor poses
@@ -228,8 +229,9 @@ def setup_nut_rgb_ff():
 def test_sensor_minimum_config(setup_minimum_config):
     """Test sensor with minimal configuration (no camera, no force field)."""
     sim, sensor_cfg, dt, robot_cfg, object_cfg, nut_cfg = setup_minimum_config
-    _ = Articulation(cfg=robot_cfg)
-    sensor_minimum = VisuoTactileSensor(cfg=sensor_cfg)
+    with cloner.ReplicateSession([robot_cfg, sensor_cfg], 1, 0.0, sim.device):
+        _ = robot_cfg.class_type(robot_cfg)
+        sensor_minimum = sensor_cfg.class_type(sensor_cfg)
     sim.reset()
     # Simulate physics
     for _ in range(10):
@@ -259,7 +261,8 @@ def test_sensor_cam_size_false(setup_tactile_cam):
     """Test sensor initialization fails with incorrect camera image size."""
     sim, sensor_cfg, dt, robot_cfg, object_cfg, nut_cfg = setup_tactile_cam
     sensor_cfg.camera_cfg.height = 80
-    _ = VisuoTactileSensor(cfg=sensor_cfg)
+    with cloner.ReplicateSession([sensor_cfg], 1, 0.0, sim.device):
+        _ = sensor_cfg.class_type(sensor_cfg)
     with pytest.raises(ValueError) as excinfo:
         sim.reset()
     assert "Camera configuration image size is not consistent with the render config" in str(excinfo.value)
@@ -270,7 +273,8 @@ def test_sensor_cam_type_false(setup_tactile_cam):
     """Test sensor initialization fails with unsupported camera data types."""
     sim, sensor_cfg, dt, robot_cfg, object_cfg, nut_cfg = setup_tactile_cam
     sensor_cfg.camera_cfg.data_types = ["rgb"]
-    _ = VisuoTactileSensor(cfg=sensor_cfg)
+    with cloner.ReplicateSession([sensor_cfg], 1, 0.0, sim.device):
+        _ = sensor_cfg.class_type(sensor_cfg)
     with pytest.raises(ValueError) as excinfo:
         sim.reset()
     assert "Camera configuration data types are not supported" in str(excinfo.value)
@@ -280,8 +284,9 @@ def test_sensor_cam_type_false(setup_tactile_cam):
 def test_sensor_cam_set(setup_tactile_cam):
     """Test sensor with camera configuration using existing camera prim."""
     sim, sensor_cfg, dt, robot_cfg, object_cfg, nut_cfg = setup_tactile_cam
-    robot = Articulation(cfg=robot_cfg)
-    sensor = VisuoTactileSensor(cfg=sensor_cfg)
+    with cloner.ReplicateSession([robot_cfg, sensor_cfg], 1, 0.0, sim.device):
+        robot = robot_cfg.class_type(robot_cfg)
+        sensor = sensor_cfg.class_type(sensor_cfg)
     sim.reset()
     sensor.get_initial_render()
     for _ in range(10):
@@ -306,8 +311,9 @@ def test_sensor_cam_set_wrong_prim(setup_tactile_cam):
     """Test sensor initialization fails with invalid camera prim path."""
     sim, sensor_cfg, dt, robot_cfg, object_cfg, nut_cfg = setup_tactile_cam
     sensor_cfg.camera_cfg.prim_path = "/World/Robot/elastomer_tip/cam_wrong"
-    robot = Articulation(cfg=robot_cfg)
-    sensor = VisuoTactileSensor(cfg=sensor_cfg)
+    with cloner.ReplicateSession([robot_cfg, sensor_cfg], 1, 0.0, sim.device):
+        robot = robot_cfg.class_type(robot_cfg)
+        sensor = sensor_cfg.class_type(sensor_cfg)
     with pytest.raises(RuntimeError) as excinfo:
         sim.reset()
         robot.update(dt)
@@ -324,8 +330,9 @@ def test_sensor_cam_new_spawn(setup_tactile_cam):
     sensor_cfg.camera_cfg.spawn = sim_utils.PinholeCameraCfg(
         focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.01, 1.0e5)
     )
-    robot = Articulation(cfg=robot_cfg)
-    sensor = VisuoTactileSensor(cfg=sensor_cfg)
+    with cloner.ReplicateSession([robot_cfg, sensor_cfg], 1, 0.0, sim.device):
+        robot = robot_cfg.class_type(robot_cfg)
+        sensor = sensor_cfg.class_type(sensor_cfg)
     sim.reset()
     sensor.get_initial_render()
     for _ in range(10):
@@ -346,9 +353,10 @@ def test_sensor_cam_new_spawn(setup_tactile_cam):
 def test_sensor_rgb_forcefield(setup_nut_rgb_ff):
     """Test sensor with both camera and force field enabled, detecting contact forces."""
     sim, sensor_cfg, dt, robot_cfg, cube_cfg, nut_cfg = setup_nut_rgb_ff
-    robot = Articulation(cfg=robot_cfg)
-    sensor = VisuoTactileSensor(cfg=sensor_cfg)
-    nut = RigidObject(cfg=nut_cfg)
+    with cloner.ReplicateSession([robot_cfg, sensor_cfg, nut_cfg], 1, 0.0, sim.device):
+        robot = robot_cfg.class_type(robot_cfg)
+        sensor = sensor_cfg.class_type(sensor_cfg)
+        nut = nut_cfg.class_type(nut_cfg)
     sim.reset()
     sensor.get_initial_render()
     for _ in range(10):
@@ -378,9 +386,10 @@ def test_sensor_no_contact_object(setup_nut_rgb_ff):
     """Test sensor with force field but no contact object specified."""
     sim, sensor_cfg, dt, robot_cfg, cube_cfg, nut_cfg = setup_nut_rgb_ff
     sensor_cfg.contact_object_prim_path_expr = None
-    robot = Articulation(cfg=robot_cfg)
-    sensor = VisuoTactileSensor(cfg=sensor_cfg)
-    nut = RigidObject(cfg=nut_cfg)
+    with cloner.ReplicateSession([robot_cfg, sensor_cfg, nut_cfg], 1, 0.0, sim.device):
+        robot = robot_cfg.class_type(robot_cfg)
+        sensor = sensor_cfg.class_type(sensor_cfg)
+        nut = nut_cfg.class_type(nut_cfg)
     sim.reset()
     sensor.get_initial_render()
     for _ in range(10):
@@ -406,8 +415,9 @@ def test_sensor_force_field_contact_object_not_found(setup_nut_rgb_ff):
 
     sensor_cfg.enable_camera_tactile = False
     sensor_cfg.contact_object_prim_path_expr = "/World/Nut/wrong_prim"
-    robot = Articulation(cfg=robot_cfg)
-    sensor = VisuoTactileSensor(cfg=sensor_cfg)
+    with cloner.ReplicateSession([robot_cfg, sensor_cfg], 1, 0.0, sim.device):
+        robot = robot_cfg.class_type(robot_cfg)
+        sensor = sensor_cfg.class_type(sensor_cfg)
     with pytest.raises(RuntimeError) as excinfo:
         sim.reset()
         robot.update(dt)
@@ -421,9 +431,10 @@ def test_sensor_force_field_contact_object_no_sdf(setup_nut_rgb_ff):
     sim, sensor_cfg, dt, robot_cfg, cube_cfg, NutCfg = setup_nut_rgb_ff
     sensor_cfg.enable_camera_tactile = False
     sensor_cfg.contact_object_prim_path_expr = "/World/Cube"
-    robot = Articulation(cfg=robot_cfg)
-    sensor = VisuoTactileSensor(cfg=sensor_cfg)
-    cube = RigidObject(cfg=cube_cfg)
+    with cloner.ReplicateSession([robot_cfg, sensor_cfg, cube_cfg], 1, 0.0, sim.device):
+        robot = robot_cfg.class_type(robot_cfg)
+        sensor = sensor_cfg.class_type(sensor_cfg)
+        cube = cube_cfg.class_type(cube_cfg)
     with pytest.raises(RuntimeError) as excinfo:
         sim.reset()
         robot.update(dt)
@@ -438,9 +449,10 @@ def test_sensor_update_period_mismatch(setup_nut_rgb_ff):
     sim, sensor_cfg, dt, robot_cfg, cube_cfg, nut_cfg = setup_nut_rgb_ff
     sensor_cfg.update_period = dt
     sensor_cfg.camera_cfg.update_period = dt * 2
-    robot = Articulation(cfg=robot_cfg)
-    sensor = VisuoTactileSensor(cfg=sensor_cfg)
-    nut = RigidObject(cfg=nut_cfg)
+    with cloner.ReplicateSession([robot_cfg, sensor_cfg, nut_cfg], 1, 0.0, sim.device):
+        robot = robot_cfg.class_type(robot_cfg)
+        sensor = sensor_cfg.class_type(sensor_cfg)
+        nut = nut_cfg.class_type(nut_cfg)
     sim.reset()
     sensor.get_initial_render()
     assert sensor.cfg.camera_cfg.update_period == sensor.cfg.update_period

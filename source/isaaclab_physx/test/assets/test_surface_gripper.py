@@ -25,13 +25,9 @@ from isaaclab_physx.assets import SurfaceGripper, SurfaceGripperCfg
 
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
-from isaaclab.assets import (
-    Articulation,
-    ArticulationCfg,
-    RigidObject,
-    RigidObjectCfg,
-)
-from isaaclab.sim import build_simulation_context
+from isaaclab.assets import Articulation, ArticulationCfg
+from isaaclab.cloner import ReplicateSession
+from isaaclab.sim import SimulationContext, build_simulation_context
 from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR
 from isaaclab.utils.version import get_isaac_sim_version, has_kit
 
@@ -110,35 +106,20 @@ def generate_surface_gripper(
     Returns:
         A tuple containing the surface gripper, the articulation, and the translations of the surface grippers.
     """
-    # Generate translations of 2.5 m in x for each articulation
-    translations = torch.zeros(num_surface_grippers, 3, device=device)
-    translations[:, 0] = torch.arange(num_surface_grippers) * 2.5
-
-    # Create Top-level Xforms, one for each articulation
-    for i in range(num_surface_grippers):
-        sim_utils.create_prim(f"/World/Env_{i}", "Xform", translation=translations[i][:3])
-    articulation = Articulation(articulation_cfg.replace(prim_path="/World/Env_[^/]*/Robot"))
+    articulation_cfg = articulation_cfg.replace(prim_path="/World/Env_[^/]*/Robot")
     surface_gripper_cfg = surface_gripper_cfg.replace(prim_path="/World/Env_[^/]*/Robot/Gripper/SurfaceGripper")
-    surface_gripper = SurfaceGripper(surface_gripper_cfg)
+    with ReplicateSession(
+        [articulation_cfg, surface_gripper_cfg],
+        num_surface_grippers,
+        2.5,
+        device,
+        env_template="/World/Env_{}",
+    ):
+        articulation = articulation_cfg.class_type(articulation_cfg)
+        surface_gripper = surface_gripper_cfg.class_type(surface_gripper_cfg)
+    translations = SimulationContext.instance().get_clone_plan().positions
 
     return surface_gripper, articulation, translations
-
-
-def generate_grippable_object(sim, num_grippable_objects: int):
-    object_cfg = RigidObjectCfg(
-        prim_path="/World/Env_[^/]*/Object",
-        spawn=sim_utils.CuboidCfg(
-            size=(1.0, 1.0, 1.0),
-            rigid_props=sim_utils.RigidBodyPropertiesCfg(),
-            mass_props=sim_utils.MassPropertiesCfg(mass=1.0),
-            collision_props=sim_utils.CollisionPropertiesCfg(),
-            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0)),
-        ),
-        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 0.5)),
-    )
-    grippable_object = RigidObject(object_cfg)
-
-    return grippable_object
 
 
 @pytest.fixture

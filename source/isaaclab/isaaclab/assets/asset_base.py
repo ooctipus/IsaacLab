@@ -16,11 +16,10 @@ import torch
 import warp as wp
 
 import isaaclab.sim as sim_utils
-from isaaclab.cloner import queue_replication
+from isaaclab import cloner
 from isaaclab.cloner.cloner_cfg import expand_env_regex_ns
 from isaaclab.physics import PhysicsEvent, PhysicsManager
 from isaaclab.sim.simulation_context import SimulationContext
-from isaaclab.sim.utils.stage import get_current_stage
 from isaaclab.utils.warp import ProxyArray
 
 if TYPE_CHECKING:
@@ -98,13 +97,6 @@ class AssetBase(ABC):
         """
         # check that the config is valid
         cfg.validate()
-        # expand the namespace macro before the cfg is queued, so the clone plan keys its rows
-        # by a real path expression. The scene has already done this for the assets it collects;
-        # this covers the ones a direct environment builds itself.
-        cfg.prim_path = expand_env_regex_ns(cfg.prim_path)
-        # register the original cfg object for cloning: the clone plan keys rows by the
-        # cfg identity the scene collected; contexts and policy resolve at replication time
-        queue_replication(cfg)
         # store inputs
         self.cfg = cfg.copy()
         # Resolve shape-check flag once: True means checks are active.
@@ -116,29 +108,48 @@ class AssetBase(ABC):
             self._check_shapes = not self.cfg.disable_shape_checks
         # flag for whether the asset is initialized
         self._is_initialized = False
-        # get stage handle
-        self.stage: Usd.Stage = get_current_stage()
+        sim = SimulationContext.instance()
+        if sim is None:
+            raise RuntimeError(f"Asset at {self.cfg.prim_path!r} requires an active SimulationContext.")
+        self.stage: Usd.Stage = sim.stage
+        plan = sim.get_clone_plan()
+        if plan is None:
+            raise RuntimeError(f"Asset at {self.cfg.prim_path!r} requires an active clone plan.")
+        self._sim = sim
+        self._clone_plan = plan
+        # Expand only the private copy; the original cfg identity remains the plan lookup key.
+        self.cfg.prim_path = expand_env_regex_ns(self.cfg.prim_path, plan.env_template)
 
-        # spawn the asset
-        # determine path where prims should exist after spawn
-        if self.cfg.spawn is not None:
-            # Use spawn_path if set (by InteractiveScene), otherwise fall back to prim_path
-            check_path = self.cfg.spawn.spawn_path if self.cfg.spawn.spawn_path is not None else self.cfg.prim_path
-            self.cfg.spawn.func(
-                check_path,
-                self.cfg.spawn,
-                translation=self.cfg.init_state.pos,
-                orientation=self.cfg.init_state.rot,
+        # resolve the exact prototypes owned by the plan, then spawn them when requested
+        if self.cfg.spawn is None:
+            self._source_prim_paths = tuple(
+                source_path for _, _, source_path, _ in cloner.query.iter_sources(plan, self.cfg.prim_path)
             )
-            # check that prims exist
-            matching_prims = sim_utils.find_matching_prims(check_path)
-            if len(matching_prims) == 0:
-                raise RuntimeError(f"Could not find prim with path {check_path}.")
-            # schema-side post-spawn hook (e.g. ArticulationCfg authors NewtonActuator prims here)
-            self.cfg._post_spawn(self.stage)
+            if not self._source_prim_paths:
+                raise RuntimeError(f"Asset at {self.cfg.prim_path!r} is not covered by the active clone plan.")
         else:
-            # asset should exist at run time
-            check_path = self.cfg.prim_path
+            source_paths = cloner.query.cfg_source_paths(plan, cfg)
+            self._source_prim_paths = tuple(path for path in source_paths if path is not None)
+            if isinstance(self.cfg.spawn, (sim_utils.MultiAssetSpawnerCfg, sim_utils.MultiUsdFileCfg)):
+                self.cfg.spawn.func(
+                    source_paths,
+                    self.cfg.spawn,
+                    translation=self.cfg.init_state.pos,
+                    orientation=self.cfg.init_state.rot,
+                )
+            else:
+                for source_path in self._source_prim_paths:
+                    self.cfg.spawn.func(
+                        source_path,
+                        self.cfg.spawn,
+                        translation=self.cfg.init_state.pos,
+                        orientation=self.cfg.init_state.rot,
+                    )
+        missing_path = next(
+            (path for path in self._source_prim_paths if not self.stage.GetPrimAtPath(path).IsValid()), None
+        )
+        if missing_path is not None:
+            raise RuntimeError(f"Could not find prim with path {missing_path}.")
 
         # register various callback functions
         self._register_callbacks()

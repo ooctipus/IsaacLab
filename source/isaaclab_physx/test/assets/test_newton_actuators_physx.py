@@ -27,12 +27,13 @@ import pytest
 import torch
 import warp as wp
 from isaaclab_physx.assets import Articulation
+from isaaclab_physx.assets.articulation import actuator_control
 from isaaclab_physx.assets.articulation.actuator_control import PhysxActuatorControl
 from isaaclab_physx.physics import PhysxCfg
 
-import isaaclab.sim as sim_utils
-from isaaclab.actuators import IdealPDActuatorCfg
-from isaaclab.actuators.newton import read_group_parameter
+from isaaclab.actuators import ActuatorNetLSTMCfg, ActuatorNetMLPCfg, IdealPDActuatorCfg, RemotizedPDActuatorCfg
+from isaaclab.actuators.newton import NewtonActuatorAdapter, PhysxActuatorWrapper, read_group_parameter
+from isaaclab.cloner import ReplicateSession
 from isaaclab.sim import SimulationCfg, build_simulation_context
 from isaaclab.test.utils.actuator_equivalence import (
     CARTPOLE_EXPLICIT_ACTUATORS,
@@ -50,7 +51,7 @@ from isaaclab.test.utils.actuator_equivalence import (
 )
 from isaaclab.test.utils.articulation_ordering import assert_articulation_ordering_trace_matches
 
-from isaaclab_assets import ANYMAL_C_CFG
+from isaaclab_assets import ANYMAL_C_CFG, CARTPOLE_CFG
 from isaaclab_assets.robots.spot import joint_parameter_lookup as SPOT_KNEE_LOOKUP
 
 # ---------------------------------------------------------------------------
@@ -79,10 +80,6 @@ _ANYMAL_C_PHYSX_JOINT_NAMES = (
 
 def test_prepare_native_actuators_does_not_zero_solver_gains(monkeypatch):
     """Leave solver gains untouched until collection construction resolves actuator defaults."""
-    from isaaclab_physx.assets.articulation import actuator_control
-
-    from isaaclab.actuators.newton import NewtonActuatorAdapter, PhysxActuatorWrapper
-
     joint_buffer = SimpleNamespace(warp=wp.zeros((1, 1), dtype=wp.float32, device="cpu"))
     collection = SimpleNamespace(
         target_command=SimpleNamespace(position=joint_buffer, velocity=joint_buffer, effort=joint_buffer)
@@ -154,14 +151,13 @@ def _run_simulation(
         sim_cfg=sim_cfg,
     ) as sim:
         sim._app_control_on_stop_handle = None
-        for i in range(NUM_ENVS):
-            sim_utils.create_prim(f"/World/Env_{i}", "Xform", translation=(i * 3.0, 0, 0))
         art_cfg = ANYMAL_C_CFG.replace(
             actuators=actuators,
             prim_path="/World/Env_[^/]*/Robot",
             joint_ordering=joint_ordering,
         )
-        articulation = Articulation(art_cfg)
+        with ReplicateSession([art_cfg], NUM_ENVS, 3.0, sim.device, env_template="/World/Env_{}"):
+            articulation = art_cfg.class_type(art_cfg)
         sim.reset()
         assert articulation.is_initialized
 
@@ -326,14 +322,13 @@ def _assert_newton_actuator_uses_current_joint_state(
         sim_cfg=sim_cfg,
     ) as sim:
         sim._app_control_on_stop_handle = None
-        for i in range(NUM_ENVS):
-            sim_utils.create_prim(f"/World/Env_{i}", "Xform", translation=(i * 3.0, 0, 0))
         art_cfg = ANYMAL_C_CFG.replace(
             actuators=actuators,
             prim_path="/World/Env_[^/]*/Robot",
             joint_ordering=joint_ordering,
         )
-        articulation = Articulation(art_cfg)
+        with ReplicateSession([art_cfg], NUM_ENVS, 3.0, sim.device, env_template="/World/Env_{}"):
+            articulation = art_cfg.class_type(art_cfg)
         sim.reset()
         assert articulation.is_initialized
 
@@ -490,8 +485,6 @@ class TestImplicitWithFeedforwardEquivalencePhysx(_EquivalenceTestBase):
 
 def _run_anymal_and_cartpole(use_newton_actuators: bool, *, num_steps: int = NUM_STEPS) -> dict:
     """Spawn ANYmal-C + Cartpole per env on PhysX (different DOF counts, base types)."""
-    from isaaclab_assets import CARTPOLE_CFG  # noqa: PLC0415
-
     sim_cfg = SimulationCfg(dt=DT, physics=PhysxCfg(), use_newton_actuators=use_newton_actuators)
     with build_simulation_context(
         device="cuda:0",
@@ -501,9 +494,6 @@ def _run_anymal_and_cartpole(use_newton_actuators: bool, *, num_steps: int = NUM
     ) as sim:
         sim._app_control_on_stop_handle = None
 
-        for i in range(NUM_ENVS):
-            sim_utils.create_prim(f"/World/Env_{i}", "Xform", translation=(i * 6.0, 0, 0))
-
         anymal_cfg = ANYMAL_C_CFG.replace(actuators=IDEAL_PD_ACTUATORS, prim_path="/World/Env_[^/]*/Anymal")
         cartpole_cfg = CARTPOLE_CFG.replace(
             actuators=CARTPOLE_EXPLICIT_ACTUATORS,
@@ -511,8 +501,9 @@ def _run_anymal_and_cartpole(use_newton_actuators: bool, *, num_steps: int = NUM
         )
         cartpole_cfg.init_state = cartpole_cfg.init_state.replace(pos=(0.0, 3.0, 2.0))
 
-        anymal = Articulation(anymal_cfg)
-        cartpole = Articulation(cartpole_cfg)
+        with ReplicateSession([anymal_cfg, cartpole_cfg], NUM_ENVS, 6.0, sim.device, env_template="/World/Env_{}"):
+            anymal = anymal_cfg.class_type(anymal_cfg)
+            cartpole = cartpole_cfg.class_type(cartpole_cfg)
         sim.reset()
         assert anymal.is_initialized and cartpole.is_initialized
 
@@ -607,13 +598,12 @@ class TestRandomizeActuatorGainsViaEventsPhysx(unittest.TestCase):
             sim_cfg=sim_cfg,
         ) as sim:
             sim._app_control_on_stop_handle = None
-            for i in range(NUM_ENVS):
-                sim_utils.create_prim(f"/World/Env_{i}", "Xform", translation=(i * 3.0, 0, 0))
             art_cfg = ANYMAL_C_CFG.replace(
                 actuators=IMPLICIT_ONLY_ACTUATORS,
                 prim_path="/World/Env_.*/Robot",
             )
-            anymal = Articulation(art_cfg)
+            with ReplicateSession([art_cfg], NUM_ENVS, 3.0, sim.device, env_template="/World/Env_{}"):
+                anymal = art_cfg.class_type(art_cfg)
             sim.reset()
 
             actuator = anymal.actuators["legs"]
@@ -652,13 +642,12 @@ class TestRandomizeActuatorGainsViaEventsPhysx(unittest.TestCase):
             sim_cfg=sim_cfg,
         ) as sim:
             sim._app_control_on_stop_handle = None
-            for i in range(NUM_ENVS):
-                sim_utils.create_prim(f"/World/Env_{i}", "Xform", translation=(i * 3.0, 0, 0))
             art_cfg = ANYMAL_C_CFG.replace(
                 actuators=IDEAL_PD_ACTUATORS,
                 prim_path="/World/Env_[^/]*/Robot",
             )
-            anymal = Articulation(art_cfg)
+            with ReplicateSession([art_cfg], NUM_ENVS, 3.0, sim.device, env_template="/World/Env_{}"):
+                anymal = art_cfg.class_type(art_cfg)
             sim.reset()
 
             adapter = anymal.newton_actuator_adapter
@@ -693,8 +682,6 @@ class TestRandomizeActuatorGainsViaEventsPhysx(unittest.TestCase):
                 torch.testing.assert_close(read("legs", "controller", "kd")[env_idx], kd_before[env_idx])
 
     def test_two_articulations(self):
-        from isaaclab_assets import CARTPOLE_CFG  # noqa: PLC0415
-
         sim_cfg = SimulationCfg(dt=DT, physics=PhysxCfg(), use_newton_actuators=True)
         with build_simulation_context(
             device="cuda:0",
@@ -703,17 +690,15 @@ class TestRandomizeActuatorGainsViaEventsPhysx(unittest.TestCase):
             sim_cfg=sim_cfg,
         ) as sim:
             sim._app_control_on_stop_handle = None
-            for i in range(NUM_ENVS):
-                sim_utils.create_prim(f"/World/Env_{i}", "Xform", translation=(i * 6.0, 0, 0))
-
             anymal_cfg = ANYMAL_C_CFG.replace(actuators=IDEAL_PD_ACTUATORS, prim_path="/World/Env_[^/]*/Anymal")
             cartpole_cfg = CARTPOLE_CFG.replace(
                 actuators=CARTPOLE_EXPLICIT_ACTUATORS,
                 prim_path="/World/Env_[^/]*/Cartpole",
             )
             cartpole_cfg.init_state = cartpole_cfg.init_state.replace(pos=(0.0, 3.0, 2.0))
-            anymal = Articulation(anymal_cfg)
-            cartpole = Articulation(cartpole_cfg)
+            with ReplicateSession([anymal_cfg, cartpole_cfg], NUM_ENVS, 6.0, sim.device, env_template="/World/Env_{}"):
+                anymal = anymal_cfg.class_type(anymal_cfg)
+                cartpole = cartpole_cfg.class_type(cartpole_cfg)
             sim.reset()
 
             # On PhysX each articulation owns its own adapter — they are distinct objects.
@@ -776,7 +761,9 @@ class TestActuatorStateReset(ActuatorStateResetBase, unittest.TestCase):
         return SimulationCfg(dt=DT, physics=PhysxCfg(), use_newton_actuators=use_newton_actuators)
 
     def _make_articulation(self) -> Articulation:
-        return Articulation(ANYMAL_C_CFG.replace(actuators=DELAYED_PD_ACTUATORS, prim_path="/World/Env_.*/Robot"))
+        cfg = ANYMAL_C_CFG.replace(actuators=DELAYED_PD_ACTUATORS, prim_path="/World/Env_[^/]*/Robot")
+        with ReplicateSession([cfg], self.NUM_ENVS, 3.0, "cuda:0", env_template="/World/Env_{}"):
+            return cfg.class_type(cfg)
 
     def _get_adapter(self, articulation):
         return articulation.newton_actuator_adapter
@@ -798,8 +785,6 @@ class TestRemotizedPDEquivalence(_EquivalenceTestBase):
 
     @classmethod
     def setUpClass(cls):
-        from isaaclab.actuators.actuator_pd_cfg import RemotizedPDActuatorCfg  # noqa: PLC0415
-
         cls.actuators = {
             "hips": IdealPDActuatorCfg(
                 joint_names_expr=[".*HAA", ".*HFE"],
@@ -829,8 +814,6 @@ class TestNeuralMLPFunctional(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        from isaaclab.actuators.actuator_net_cfg import ActuatorNetMLPCfg  # noqa: PLC0415
-
         cls.mlp_path = make_dummy_mlp_checkpoint()
         cls.result = _run_simulation(
             {
@@ -873,8 +856,6 @@ class TestNeuralLSTMFunctional(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        from isaaclab.actuators.actuator_net_cfg import ActuatorNetLSTMCfg  # noqa: PLC0415
-
         cls.lstm_path = make_dummy_lstm_checkpoint()
         cls.result = _run_simulation(
             {

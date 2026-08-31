@@ -10,7 +10,7 @@ from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
 import isaaclab.utils.math as math_utils
-from isaaclab.assets import ArticulationCfg, RigidObjectCfg
+from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
 from isaaclab.envs import DirectMARLEnvCfg
 from isaaclab.markers import VisualizationMarkersCfg
 from isaaclab.physics import PhysxAutoCfg
@@ -154,6 +154,19 @@ class PhysicsCfg(PresetCfg):
 
 
 @configclass
+class HandoverSceneCfg(InteractiveSceneCfg):
+    """Hands, object, and static assets constructed and cloned as one scene."""
+
+    ground = AssetBaseCfg(prim_path="/World/ground", spawn=sim_utils.GroundPlaneCfg())
+    right_robot: PresetCfg = RIGHT_HAND_CFG
+    left_robot: PresetCfg = LEFT_HAND_CFG
+    object: RigidObjectCfg = BALL_CFG
+    light = AssetBaseCfg(
+        prim_path="/World/Light", spawn=sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
+    )
+
+
+@configclass
 class HandoverEnvCfg(DirectMARLEnvCfg):
     # env
     decimation = 2
@@ -171,18 +184,13 @@ class HandoverEnvCfg(DirectMARLEnvCfg):
         physics=PhysicsCfg(),
     )
 
-    # robot
-    right_robot_cfg: PresetCfg = RIGHT_HAND_CFG
-    left_robot_cfg: PresetCfg = LEFT_HAND_CFG
     actuated_joint_names = ACTUATED_JOINT_NAMES
     fingertip_body_names = FINGERTIP_BODY_NAMES
 
-    # in-hand object
-    object_cfg: RigidObjectCfg = BALL_CFG
     # goal object
     goal_object_cfg: VisualizationMarkersCfg = GOAL_MARKER_CFG
     # scene
-    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=2048, env_spacing=1.5, replicate_physics=True)
+    scene: HandoverSceneCfg = HandoverSceneCfg(num_envs=2048, env_spacing=1.5, replicate_physics=True)
 
     # reset
     reset_position_noise = 0.01  # range of position at reset

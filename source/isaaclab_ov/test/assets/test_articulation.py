@@ -86,9 +86,10 @@ import isaaclab.utils.string as string_utils  # noqa: E402
 from isaaclab.actuators import DelayedPDActuatorCfg, IdealPDActuatorCfg, ImplicitActuatorCfg  # noqa: E402
 from isaaclab.assets import ArticulationCfg, get_articulation_name_ordering  # noqa: E402
 from isaaclab.assets.articulation import ordering_kernels  # noqa: E402
+from isaaclab.cloner import ReplicateSession  # noqa: E402
 from isaaclab.envs.mdp.terminations import joint_effort_out_of_limit  # noqa: E402
 from isaaclab.managers import SceneEntityCfg  # noqa: E402
-from isaaclab.sim import SimulationCfg, build_simulation_context  # noqa: E402
+from isaaclab.sim import SimulationCfg, SimulationContext, build_simulation_context  # noqa: E402
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR  # noqa: E402
 from isaaclab.utils.version import get_isaac_sim_version, has_kit  # noqa: E402
 from isaaclab.utils.warp.launch_cache import _WarpLaunchCache  # noqa: E402
@@ -390,14 +391,10 @@ def generate_articulation(
         The articulation and environment translations.
 
     """
-    # Generate translations of 2.5 m in x for each articulation
-    translations = torch.zeros(num_articulations, 3, device=device)
-    translations[:, 0] = torch.arange(num_articulations) * 2.5
-
-    # Create Top-level Xforms, one for each articulation
-    for i in range(num_articulations):
-        sim_utils.create_prim(f"/World/Env_{i}", "Xform", translation=translations[i][:3])
-    articulation = Articulation(articulation_cfg.replace(prim_path="/World/Env_[^/]*/Robot"))
+    articulation_cfg = articulation_cfg.replace(prim_path="/World/Env_[^/]*/Robot")
+    with ReplicateSession([articulation_cfg], num_articulations, 2.5, device, env_template="/World/Env_{}"):
+        articulation = articulation_cfg.class_type(articulation_cfg)
+    translations = SimulationContext.instance().get_clone_plan().positions
 
     return articulation, translations
 
@@ -623,20 +620,22 @@ def test_write_joint_state_accepts_int64_selector(sim, device, gravity_enabled):
 @pytest.mark.parametrize("gravity_enabled", [False])
 def test_reversed_joint_dynamics_use_public_joint_basis(sim, device, gravity_enabled):
     """Keep dynamics tensors consistent with public joint velocity."""
-    articulation = Articulation(
-        ArticulationCfg(
-            prim_path="/World/Robot",
-            spawn=sim_utils.UsdFileCfg(
-                usd_path=str(Path(__file__).parent / "data" / "articulation_ordering_branching.usda")
-            ),
-            actuators={},
-        )
+    articulation_cfg = ArticulationCfg(
+        prim_path="/World/Robot",
+        spawn=sim_utils.UsdFileCfg(
+            usd_path=str(Path(__file__).parent / "data" / "articulation_ordering_branching.usda")
+        ),
+        actuators={},
     )
-    UsdPhysics.FixedJoint.Define(sim.stage, "/World/Robot/fixed_root").GetBody1Rel().SetTargets(["/World/Robot/base"])
-    joint = UsdPhysics.RevoluteJoint.Get(sim.stage, "/World/Robot/left_elbow")
-    body0, body1 = joint.GetBody0Rel().GetTargets(), joint.GetBody1Rel().GetTargets()
-    joint.GetBody0Rel().SetTargets(body1)
-    joint.GetBody1Rel().SetTargets(body0)
+    with ReplicateSession([articulation_cfg], 1, 0.0, sim.device):
+        articulation = articulation_cfg.class_type(articulation_cfg)
+        UsdPhysics.FixedJoint.Define(sim.stage, "/World/Robot/fixed_root").GetBody1Rel().SetTargets(
+            ["/World/Robot/base"]
+        )
+        joint = UsdPhysics.RevoluteJoint.Get(sim.stage, "/World/Robot/left_elbow")
+        body0, body1 = joint.GetBody0Rel().GetTargets(), joint.GetBody1Rel().GetTargets()
+        joint.GetBody0Rel().SetTargets(body1)
+        joint.GetBody1Rel().SetTargets(body0)
     sim.reset()
 
     velocity = torch.zeros((1, articulation.num_joints), device=device)
@@ -1024,17 +1023,17 @@ def test_branching_fixture_physx_ordering_is_identity_on_ovphysx(sim, device):
     requesting ``physx`` must expose the public joint/body axes verbatim in backend order with no
     reorder map.
     """
-    articulation = Articulation(
-        ArticulationCfg(
-            prim_path="/World/Robot",
-            spawn=sim_utils.UsdFileCfg(
-                usd_path=str(Path(__file__).parent / "data" / "articulation_ordering_branching.usda")
-            ),
-            actuators={},
-            joint_ordering="physx",
-            body_ordering="physx",
-        )
+    articulation_cfg = ArticulationCfg(
+        prim_path="/World/Robot",
+        spawn=sim_utils.UsdFileCfg(
+            usd_path=str(Path(__file__).parent / "data" / "articulation_ordering_branching.usda")
+        ),
+        actuators={},
+        joint_ordering="physx",
+        body_ordering="physx",
     )
+    with ReplicateSession([articulation_cfg], 1, 0.0, sim.device):
+        articulation = articulation_cfg.class_type(articulation_cfg)
     sim.reset()
     assert articulation.is_initialized
 
@@ -1061,17 +1060,17 @@ def test_branching_fixture_mjwarp_ordering_reorders_ovphysx_to_dfs(sim, device):
     MJWarp/DFS ground truth is the same tuple isaaclab_newton's
     ``test_mjwarp_ordering_resolver_matches_newton_backend_names`` pins for its live Newton backend.
     """
-    articulation = Articulation(
-        ArticulationCfg(
-            prim_path="/World/Robot",
-            spawn=sim_utils.UsdFileCfg(
-                usd_path=str(Path(__file__).parent / "data" / "articulation_ordering_branching.usda")
-            ),
-            actuators={},
-            joint_ordering="mjwarp",
-            body_ordering="mjwarp",
-        )
+    articulation_cfg = ArticulationCfg(
+        prim_path="/World/Robot",
+        spawn=sim_utils.UsdFileCfg(
+            usd_path=str(Path(__file__).parent / "data" / "articulation_ordering_branching.usda")
+        ),
+        actuators={},
+        joint_ordering="mjwarp",
+        body_ordering="mjwarp",
     )
+    with ReplicateSession([articulation_cfg], 1, 0.0, sim.device):
+        articulation = articulation_cfg.class_type(articulation_cfg)
     sim.reset()
     assert articulation.is_initialized
 
@@ -1201,17 +1200,17 @@ def test_articulation_dynamics_refresh_after_same_timestamp_model_writes(sim, de
 @pytest.mark.parametrize("device", ["cuda:0", "cpu"])
 def test_articulation_dynamics_reorder_body_rows_and_joint_axes(sim, device):
     """Gather computed dynamics into MJWarp body and joint order."""
-    articulation = Articulation(
-        ArticulationCfg(
-            prim_path="/World/Robot",
-            spawn=sim_utils.UsdFileCfg(
-                usd_path=str(Path(__file__).parent / "data" / "articulation_ordering_branching.usda")
-            ),
-            actuators={},
-            joint_ordering="mjwarp",
-            body_ordering="mjwarp",
-        )
+    articulation_cfg = ArticulationCfg(
+        prim_path="/World/Robot",
+        spawn=sim_utils.UsdFileCfg(
+            usd_path=str(Path(__file__).parent / "data" / "articulation_ordering_branching.usda")
+        ),
+        actuators={},
+        joint_ordering="mjwarp",
+        body_ordering="mjwarp",
     )
+    with ReplicateSession([articulation_cfg], 1, 0.0, sim.device):
+        articulation = articulation_cfg.class_type(articulation_cfg)
     sim.reset()
 
     joint_ordering = articulation.joint_ordering
@@ -1843,7 +1842,8 @@ def test_out_of_range_default_joint_vel(sim, device):
         "panda_joint1": 100.0,
         "panda_joint[2, 4]": -60.0,
     }
-    articulation = Articulation(articulation_cfg)
+    with ReplicateSession([articulation_cfg], 1, 0.0, sim.device):
+        articulation = articulation_cfg.class_type(articulation_cfg)
 
     # Check that the framework doesn't hold excessive strong references.
     assert sys.getrefcount(articulation) < 10

@@ -22,6 +22,7 @@ rebuilds the same topology without modifying the live USD stage.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 import torch
 
@@ -29,7 +30,10 @@ from pxr import Gf, Sdf, Usd, UsdGeom
 
 from isaaclab import cloner
 
-from isaaclab_ov._clone import CloneTransform, clone_transforms_from_positions
+from isaaclab_ov._clone import CloneTransform
+
+if TYPE_CHECKING:
+    from isaaclab.sim import SimulationContext
 
 
 def _select_env_ids(env_ids: torch.Tensor, mapping: torch.Tensor, row: int) -> torch.Tensor:
@@ -75,44 +79,25 @@ def _validate_pose_rows(name: str, rows: list[list[float]] | None, env_ids: Sequ
             raise ValueError(f"{name} does not contain selected environment id {env_id}; it has {len(rows)} rows.")
 
 
-class OvPhysxReplicateContext:
-    """Queue and run OvPhysX clone operations for one stage."""
+class OvReplicateContext:
+    """Apply one clone-plan mapping to an OvPhysX simulation."""
 
     replicate_priority = 0
+    clones_whole_env = True
 
-    def __init__(self, stage: Usd.Stage, global_paths: tuple[str, ...] = ()):
+    def __init__(self, sim_context: SimulationContext):
         """Initialize the context.
 
         Args:
-            stage: USD stage associated with the pending clone operations.
+            sim_context: Simulation context that owns this clone backend.
         """
-        self.stage = stage
+        self._sim = sim_context
+        self.stage = sim_context.stage
         physics_scene_prim = self.stage.GetPrimAtPath("/physicsScene")
         if physics_scene_prim.IsValid():
             physics_scene_prim.CreateAttribute("physxScene:envIdInBoundsBitCount", Sdf.ValueTypeNames.Int).Set(4)
-        self._queue: list[tuple[str, list[str], list[CloneTransform]]] = []
 
-    def queue(
-        self, source: str, targets: Sequence[str], parent_positions: Sequence[tuple[float, float, float]]
-    ) -> None:
-        """Queue one pending OvPhysX clone operation.
-
-        Args:
-            source: Source prim path.
-            targets: Destination prim paths.
-            parent_positions: Final world positions [m] for each target root;
-                orientations are identity.
-        """
-        target_transforms = clone_transforms_from_positions(parent_positions)
-        self._queue_transforms(source, targets, target_transforms)
-
-    def _queue_transforms(
-        self, source: str, targets: Sequence[str], target_transforms: Sequence[CloneTransform]
-    ) -> None:
-        """Queue final target-root world poses for one OvPhysX clone operation."""
-        self._queue.append((source, list(targets), list(target_transforms)))
-
-    def queue_mapping(
+    def replicate(
         self,
         sources: Sequence[str],
         destinations: Sequence[str],
@@ -122,7 +107,7 @@ class OvPhysxReplicateContext:
         positions: torch.Tensor | None = None,
         quaternions: torch.Tensor | None = None,
     ) -> None:
-        """Queue clone operations from the current flat clone mapping.
+        """Publish clone operations from the current flat clone mapping.
 
         Args:
             sources: Source prim paths.
@@ -193,66 +178,4 @@ class OvPhysxReplicateContext:
                 target_transforms.append(_matrix_to_clone_transform(source_relative * target_env_world))
 
             if targets:
-                self._queue_transforms(src, targets, target_transforms)
-
-    def replicate(self) -> None:
-        """Publish all queued clones to :class:`OvPhysxManager`."""
-        from isaaclab_ov.physics.ovphysx_manager import OvPhysxManager
-
-        for source, targets, target_transforms in self._queue:
-            OvPhysxManager._register_clone_transforms(source, targets, target_transforms)
-        self._queue.clear()
-
-
-PHYSICS_CONTEXT = OvPhysxReplicateContext
-"""Physics replication context for OvPhysX assets.  OvPhysxReplicateContext authors USD
-internally, so USD replication is not separately added.
-TODO: decompose into UsdReplicateContext + a pure-physics OvPhysxReplicateContext to match
-the physx/newton split."""
-
-
-def ovphysx_replicate(
-    stage: Usd.Stage,
-    sources: Sequence[str],
-    destinations: Sequence[str],
-    env_ids: torch.Tensor,
-    mapping: torch.Tensor,
-    positions: torch.Tensor | None = None,
-    quaternions: torch.Tensor | None = None,
-    device: str = "cpu",
-) -> None:
-    """Queue OvPhysX clone operations from a flat clone mapping.
-
-    The ``positions`` and ``quaternions`` parameters describe each environment's
-    world pose. Source-relative rows are composed with the target environment
-    poses and queued as final target-root world transforms.
-
-    Args:
-        stage: USD stage associated with the clone operations.
-        sources: Source prim paths (one per prototype).
-        destinations: Destination path templates with ``"{}"`` for env index.
-        env_ids: Environment indices tensor.
-        mapping: ``(num_sources, num_envs)`` bool tensor; True selects which
-            environments receive each source.
-        positions: World (x, y, z) positions [m] for every environment, shape
-            ``[num_envs, 3]``.
-        quaternions: Optional environment orientations in xyzw order, shape
-            ``[num_envs, 4]``.
-        device: Torch device (unused; kept for API compatibility).
-
-    Raises:
-        ValueError: If a provided pose tensor is malformed or lacks a selected
-            environment, or if an active source or source anchor prim is invalid.
-    """
-    del device
-
-    ctx = OvPhysxReplicateContext(stage)
-    ctx.queue_mapping(
-        sources,
-        destinations,
-        env_ids,
-        mapping,
-        positions=positions,
-        quaternions=quaternions,
-    )
-    ctx.replicate()
+                self._sim.physics_manager._register_clone_transforms(src, targets, target_transforms)

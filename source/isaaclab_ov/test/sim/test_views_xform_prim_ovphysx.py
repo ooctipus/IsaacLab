@@ -19,6 +19,7 @@ pytest.importorskip("ovphysx.types", reason="ovphysx wheel not installed")
 from isaaclab_ov.physics import OvPhysxCfg  # noqa: E402
 
 import isaaclab.sim as sim_utils  # noqa: E402
+from isaaclab import cloner  # noqa: E402
 from isaaclab.sim import SimulationCfg, build_simulation_context  # noqa: E402
 from isaaclab.sim.views import FrameView  # noqa: E402
 
@@ -66,14 +67,11 @@ def test_world_attached_source_prim_expands_from_clone_plan():
         device=device, sim_cfg=OVPHYSX_SIM_CFG, auto_add_lighting=False, add_ground_plane=False
     ) as sim:
         sim._app_control_on_stop_handle = None
-        scene = InteractiveScene(_OvPhysxFrameViewSceneCfg(num_envs=4, env_spacing=2.0))
+        cfg = _OvPhysxWorldFrameViewSceneCfg(num_envs=4, env_spacing=2.0)
+        scene = _create_scene(cfg, sim)
         sim.reset()
 
         stage = sim_utils.get_current_stage()
-        prim = stage.DefinePrim("/World/envs/env_0/WorldCamera", "Xform")
-        sim_utils.standardize_xform_ops(prim)
-        prim.GetAttribute("xformOp:translate").Set(Gf.Vec3d(0.25, -0.5, 1.0))
-
         view = FrameView("/World/envs/env_[^/]+/WorldCamera", device=device)
 
         assert not stage.GetPrimAtPath("/World/envs/env_1/WorldCamera").IsValid()
@@ -140,7 +138,7 @@ from frame_view_contract_utils import CHILD_OFFSET, ViewBundle  # noqa: E402
 
 from pxr import Gf  # noqa: E402
 
-from isaaclab.assets import RigidObjectCfg  # noqa: E402
+from isaaclab.assets import AssetBaseCfg, RigidObjectCfg  # noqa: E402
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg  # noqa: E402
 from isaaclab.utils.configclass import configclass  # noqa: E402
 
@@ -157,6 +155,28 @@ class _OvPhysxFrameViewSceneCfg(InteractiveSceneCfg):
         ),
         init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 1.0)),
     )
+
+
+@configclass
+class _OvPhysxWorldFrameViewSceneCfg(_OvPhysxFrameViewSceneCfg):
+    world_camera: AssetBaseCfg = AssetBaseCfg(
+        prim_path="{ENV_REGEX_NS}/WorldCamera",
+        spawn=sim_utils.SensorFrameCfg(),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.25, -0.5, 1.0)),
+    )
+
+
+def _create_scene(cfg: InteractiveSceneCfg, sim) -> InteractiveScene:
+    """Construct a cfg-owned scene through its clone lifecycle."""
+    with cloner.ReplicateSession(
+        [cfg],
+        cfg.num_envs,
+        cfg.env_spacing,
+        sim.device,
+        env_template=cfg.clone_cfg.clone_template,
+        replicate_physics=cfg.replicate_physics,
+    ):
+        return cfg.class_type(cfg)
 
 
 @pytest.fixture
@@ -182,7 +202,8 @@ def view_factory():
         sim._app_control_on_stop_handle = None
         contexts.append(ctx)
 
-        InteractiveScene(_OvPhysxFrameViewSceneCfg(num_envs=num_envs, env_spacing=2.0))
+        cfg = _OvPhysxFrameViewSceneCfg(num_envs=num_envs, env_spacing=2.0)
+        _create_scene(cfg, sim)
 
         stage = sim_utils.get_current_stage()
         for i in range(num_envs):

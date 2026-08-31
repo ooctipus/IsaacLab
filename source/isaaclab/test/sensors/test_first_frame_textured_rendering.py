@@ -18,7 +18,8 @@ import torch
 import omni.replicator.core as rep
 
 import isaaclab.sim as sim_utils
-from isaaclab.sensors.camera import Camera, CameraCfg
+from isaaclab import cloner
+from isaaclab.sensors.camera import CameraCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
 pytestmark = [pytest.mark.integration, pytest.mark.rendering]
@@ -119,7 +120,8 @@ def test_first_frame_is_textured_camera(setup_sim, device):
         ),
     )
     # Create camera
-    camera = Camera(camera_cfg)
+    with cloner.ReplicateSession([camera_cfg], 1, 0.0, sim.device):
+        camera = camera_cfg.class_type(camera_cfg)
 
     sim.reset()
 

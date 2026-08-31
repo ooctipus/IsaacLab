@@ -26,6 +26,7 @@ from typing import Any
 import torch
 import warp as wp
 
+from isaaclab import cloner
 from isaaclab.envs.common import VecEnvObs
 from isaaclab.envs.manager_based_env_cfg import ManagerBasedEnvCfg
 from isaaclab.envs.utils.io_descriptors import export_articulations_data, export_scene_data
@@ -34,7 +35,6 @@ from isaaclab.sim.utils import use_stage
 from isaaclab.utils.seed import configure_seed
 from isaaclab.utils.timer import Timer
 
-from isaaclab_experimental.envs.interactive_scene_warp import InteractiveSceneWarp as InteractiveScene
 from isaaclab_experimental.utils.manager_call_switch import ManagerCallMode, ManagerCallSwitch
 from isaaclab_experimental.utils.warp import resolve_1d_mask
 
@@ -138,8 +138,19 @@ class ManagerBasedEnvWarp:
         with Timer("[INFO]: Time taken for scene creation", "scene_creation"):
             # set the stage context for scene creation steps which use the stage
             with use_stage(self.sim.stage):
-                self.scene = InteractiveScene(self.cfg.scene)
-                # attach_stage_to_usd_context()
+                scene_cfg = self.cfg.scene
+                with cloner.ReplicateSession(
+                    (self.cfg,),
+                    scene_cfg.num_envs,
+                    scene_cfg.env_spacing,
+                    self.sim.device,
+                    env_template=scene_cfg.clone_cfg.clone_template,
+                    replicate_physics=scene_cfg.replicate_physics,
+                ):
+                    self.scene = scene_cfg.class_type(scene_cfg)
+                if scene_cfg.filter_collisions and "physx" in self.scene.physics_backend:
+                    self.scene.filter_collisions()
+            self.sim.register_interactive_scene(self.scene)
         print("[INFO]: Scene manager: ", self.scene)
 
         # Shared per-env Warp RNG state (accessible to all managers/terms via `env`).

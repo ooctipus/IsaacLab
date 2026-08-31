@@ -72,7 +72,8 @@ from isaaclab_physx.renderers import IsaacRtxRendererCfg
 import omni.replicator.core as rep
 
 import isaaclab.sim as sim_utils
-from isaaclab.assets import RigidObject, RigidObjectCfg
+from isaaclab import cloner
+from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
 from isaaclab.markers import VisualizationMarkers
 from isaaclab.markers.config import RAY_CASTER_MARKER_CFG
 from isaaclab.sensors.camera import Camera, CameraCfg
@@ -80,15 +81,10 @@ from isaaclab.sensors.camera.utils import create_pointcloud_from_depth
 from isaaclab.utils import convert_dict_to_backend
 
 
-def define_sensor() -> Camera:
-    """Defines the camera sensor to add to the scene."""
-    # Setup camera sensor
-    # In contrast to the ray-cast camera, we spawn the prim at these locations.
-    # This means the camera sensor will be attached to these prims.
-    sim_utils.create_prim("/World/Origin_00", "Xform")
-    sim_utils.create_prim("/World/Origin_01", "Xform")
+def design_scene(sim: sim_utils.SimulationContext) -> dict:
+    """Design the scene."""
     camera_cfg = CameraCfg(
-        prim_path="/World/Origin_[^/]+/CameraSensor",
+        prim_path="{ENV_REGEX_NS}/CameraSensor",
         update_period=0,
         height=480,
         width=640,
@@ -109,28 +105,12 @@ def define_sensor() -> Camera:
             focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 1.0e5)
         ),
     )
-    # Create camera
-    camera = Camera(cfg=camera_cfg)
-
-    return camera
-
-
-def design_scene() -> dict:
-    """Design the scene."""
-    # Populate scene
-    # -- Ground-plane
-    cfg = sim_utils.GroundPlaneCfg()
-    cfg.func("/World/defaultGroundPlane", cfg)
-    # -- Lights
-    cfg = sim_utils.DistantLightCfg(intensity=3000.0, color=(0.75, 0.75, 0.75))
-    cfg.func("/World/Light", cfg)
-
-    # Create a dictionary for the scene entities
-    scene_entities = {}
-
-    # Xform to hold objects
-    sim_utils.create_prim("/World/Objects", "Xform")
-    # Random objects
+    ground_cfg = AssetBaseCfg(prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg())
+    light_cfg = AssetBaseCfg(
+        prim_path="/World/Light",
+        spawn=sim_utils.DistantLightCfg(intensity=3000.0, color=(0.75, 0.75, 0.75)),
+    )
+    object_cfgs = {}
     for i in range(8):
         # sample random position
         position = np.random.rand(3) - np.asarray([0.05, 0.05, -1.0])
@@ -153,18 +133,22 @@ def design_scene() -> dict:
         elif prim_type == "Cylinder":
             shape_cfg = sim_utils.CylinderCfg(radius=0.25, height=0.25, **common_properties)
         # Rigid Object
-        obj_cfg = RigidObjectCfg(
+        object_cfgs[f"rigid_object{i}"] = RigidObjectCfg(
             prim_path=f"/World/Objects/Obj_{i:02d}",
             spawn=shape_cfg,
             init_state=RigidObjectCfg.InitialStateCfg(pos=position),
         )
-        scene_entities[f"rigid_object{i}"] = RigidObject(cfg=obj_cfg)
-
-    # Sensors
-    camera = define_sensor()
-
-    # return the scene information
-    scene_entities["camera"] = camera
+    with cloner.ReplicateSession(
+        (ground_cfg, light_cfg, *object_cfgs.values(), camera_cfg),
+        2,
+        0.0,
+        sim.device,
+        env_template="/World/Origin_{}",
+    ):
+        ground_cfg.spawn.func(ground_cfg.prim_path, ground_cfg.spawn)
+        light_cfg.spawn.func(light_cfg.prim_path, light_cfg.spawn)
+        scene_entities = {name: cfg.class_type(cfg) for name, cfg in object_cfgs.items()}
+        scene_entities["camera"] = camera_cfg.class_type(camera_cfg)
     return scene_entities
 
 
@@ -280,7 +264,7 @@ def main():
     # Set main camera
     sim.set_camera_view([2.5, 2.5, 2.5], [0.0, 0.0, 0.0])
     # Design scene
-    scene_entities = design_scene()
+    scene_entities = design_scene(sim)
     # Play simulator
     sim.reset()
     # Now we are ready!

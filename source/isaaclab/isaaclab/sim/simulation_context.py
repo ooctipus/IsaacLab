@@ -11,7 +11,7 @@ import traceback
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import fields
-from typing import TYPE_CHECKING, Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
 import torch
 
@@ -127,6 +127,8 @@ class SimulationContext:
         # Store config
         self.cfg = SimulationCfg() if cfg is None else cfg
         self._backend_registry: dict[type[object], object] = {}
+        self._backend_clone_roles: dict[type[object], set[str]] = {}
+        self._clone_plan_dispatched = False
 
         use_isaac_sim = has_kit()
         self._physics = _resolve_physics_cfg(self.cfg.physics, use_isaac_sim=use_isaac_sim)
@@ -686,14 +688,15 @@ class SimulationContext:
     def get_clone_plan(self) -> ClonePlan | None:
         """Return the clone plan published by the scene.
 
-        Set after replication. Consumed by scene data providers that build backend models
-        (e.g. Newton visualizer model on a PhysX backend) from the same plan the cloner used.
-        ``None`` until the scene replicates.
+        The replication session publishes the plan before constructing scene entities, so every
+        constructor and registered backend consumes the same immutable layout.
         """
         return self._clone_plan
 
-    def set_clone_plan(self, plan: ClonePlan | None) -> None:
-        """Set the cloner's clone plan."""
+    def set_clone_plan(self, plan: ClonePlan) -> None:
+        """Publish the simulation's single clone plan."""
+        if self._clone_plan is not None:
+            raise RuntimeError("A SimulationContext owns exactly one clone-plan lifecycle.")
         self._clone_plan = plan
 
     @property
@@ -949,7 +952,13 @@ class SimulationContext:
         """Get a setting value."""
         return self._settings_helper.get(name)
 
-    def get_or_create_backend(self, backend_type: type[_BackendT], *args: Any, **kwargs: Any) -> _BackendT:
+    def get_or_create_backend(
+        self,
+        backend_type: type[_BackendT],
+        *args: Any,
+        clone_role: Literal["physics", "scene"] | None = None,
+        **kwargs: Any,
+    ) -> _BackendT:
         """Return the simulation-scoped native backend for a type.
 
         Consumers that register the same backend type resolve one shared native resource
@@ -958,13 +967,25 @@ class SimulationContext:
         Args:
             backend_type: Backend class to construct when the resource does not exist.
             *args: Positional arguments used only when constructing the resource.
+            clone_role: ``"physics"`` for the active physics engine or ``"scene"`` for another
+                consumer that needs this backend to receive the clone plan.
             **kwargs: Keyword arguments used only when constructing the resource.
 
         Returns:
             The existing or newly constructed native backend.
         """
+        if clone_role not in (None, "physics", "scene"):
+            raise ValueError(f"Unknown clone role: {clone_role!r}.")
+        registered_roles = self._backend_clone_roles.get(backend_type, ())
+        if self._clone_plan_dispatched and (
+            backend_type not in self._backend_registry
+            or (clone_role is not None and clone_role not in registered_roles)
+        ):
+            raise RuntimeError("Backend resources and clone roles must be registered before cloning completes.")
         if backend_type not in self._backend_registry:
             self._backend_registry[backend_type] = backend_type(*args, **kwargs)
+        if clone_role is not None:
+            self._backend_clone_roles.setdefault(backend_type, set()).add(clone_role)
         return cast(_BackendT, self._backend_registry[backend_type])
 
     @classmethod
@@ -997,6 +1018,7 @@ class SimulationContext:
                     if (clear := getattr(resource, "clear", None)) is not None:
                         run_cleanup(clear)
                 instance._backend_registry.clear()
+                instance._backend_clone_roles.clear()
 
                 # Tear down the stage. We skip clear_stage() (prim-by-prim deletion) since
                 # close_stage() + app shutdown destroy the entire stage at once.

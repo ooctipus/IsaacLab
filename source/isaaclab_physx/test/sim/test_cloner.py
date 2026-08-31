@@ -17,31 +17,24 @@ simulation_app = AppLauncher(headless=True).app
 import pytest
 import torch
 import warp as wp
-from isaaclab_physx.cloner import PhysxReplicateContext, physx_replicate
+from isaaclab_physx.cloner import PhysxReplicateContext
 
+import isaaclab.cloner._fabric_notices as _fabric_notices
 import isaaclab.sim as sim_utils
-from isaaclab.cloner import (
-    _fabric_notices,
-    disabled_fabric_change_notifies,
-    sequential,
-    usd_replicate,
-)
-from isaaclab.sim import build_simulation_context
+from isaaclab.cloner import UsdReplicateContext
+from isaaclab.cloner._fabric_notices import disabled_fabric_change_notifies
+from isaaclab.sim import SimulationContext, build_simulation_context
 
 
 def _make_flat_clone_plan(num_variants: int, num_clones: int, destination: str, device: str):
     """Build a flat (sources, destinations, clone_mask) tuple for tests using sequential mapping.
 
     The PhysX test_cloner tests intentionally bypass cfg-driven planning and exercise
-    physx_replicate / usd_replicate against a hand-built per-variant mask. This helper
-    captures the small amount of flat-plan logic the tests need without re-introducing
-    the legacy ``make_clone_plan(sources, destinations, num_clones, ...)`` signature.
+    PhysX and USD contexts against a hand-built per-variant mask. This helper
+    captures the small amount of flat-plan logic the tests need without rebuilding a
+    second public planning lifecycle.
     """
-    chosen = sequential(
-        torch.arange(num_variants, dtype=torch.long, device=device).unsqueeze(1),
-        num_clones,
-        device,
-    ).view(-1)
+    chosen = torch.arange(num_clones, device=device) * num_variants // num_clones
     mask = torch.zeros((num_variants, num_clones), dtype=torch.bool, device=device)
     mask[chosen, torch.arange(num_clones, device=device)] = True
     sources = tuple(destination.format(i) for i in range(num_variants))
@@ -54,6 +47,36 @@ wp.init()
 pytestmark = pytest.mark.isaacsim_ci
 
 
+def _replicate(
+    stage,
+    sources,
+    destinations,
+    env_ids,
+    mapping,
+    positions=None,
+    quaternions=None,
+    device="cpu",
+    exclude_self_replication=True,
+):
+    """Apply one test mapping through the simulation-owned PhysX clone context."""
+    del device
+    sim = SimulationContext.instance()
+    context = (
+        PhysxReplicateContext(stage)
+        if sim is None
+        else sim.get_or_create_backend(PhysxReplicateContext, stage, clone_role="physics")
+    )
+    context.replicate(
+        sources,
+        destinations,
+        env_ids,
+        mapping,
+        positions=positions,
+        quaternions=quaternions,
+        exclude_self_replication=exclude_self_replication,
+    )
+
+
 @pytest.fixture(params=["cpu", "cuda"])
 def sim(request):
     """Provide a fresh simulation context for each test on CPU and CUDA."""
@@ -61,7 +84,7 @@ def sim(request):
         yield sim
 
 
-def test_physx_replicate_no_error(sim):
+def test_physx_context_no_error(sim):
     """PhysX replicator call runs without raising exceptions for simple mapping."""
     sim_utils.create_prim("/World/envs", "Xform")
     sim_utils.create_prim("/World/template", "Xform")
@@ -74,7 +97,7 @@ def test_physx_replicate_no_error(sim):
 
     mapping = torch.ones((1, num_envs), dtype=torch.bool)
 
-    physx_replicate(
+    _replicate(
         sim_utils.get_current_stage(),
         sources=["/World/template/A"],
         destinations=["/World/envs/env_{}/A"],
@@ -87,7 +110,7 @@ def _make_mock_physx_rep():
     """Return (mock_rep, replicate_calls) where replicate_calls accumulates num_worlds per call.
 
     ``mock_rep.register_replicator`` immediately invokes attach_fn + attach_end_fn so the callbacks
-    fire synchronously inside ``physx_replicate``, making the calls observable in tests.
+    fire synchronously inside the context call, making the calls observable in tests.
     """
     from unittest.mock import MagicMock
 
@@ -127,8 +150,8 @@ def _make_mock_physx_rep_detailed():
     return mock_rep, replicate_calls, attach_excluded
 
 
-def test_physx_replicate_context_queue_and_replicate(sim):
-    """PhysxReplicateContext queues mapping rows and replicates them through attach_end_fn."""
+def test_physx_context_consumes_one_mapping(sim):
+    """PhysxReplicateContext applies mapping rows through attach_end_fn."""
     from unittest.mock import patch
 
     stage = sim_utils.get_current_stage()
@@ -139,15 +162,17 @@ def test_physx_replicate_context_queue_and_replicate(sim):
     mock_rep, replicate_calls = _make_mock_physx_rep()
     with patch("isaaclab_physx.cloner.replicate.get_physx_replicator_interface", return_value=mock_rep):
         ctx = PhysxReplicateContext(stage)
-        ctx.queue_mapping(
+        ctx.replicate(
             sources=["/World/envs/env_0/Object"],
             destinations=["/World/envs/env_{}/Object"],
             env_ids=torch.arange(3, dtype=torch.long),
             mapping=torch.ones((1, 3), dtype=torch.bool),
         )
-        ctx.replicate()
+        ctx.clear()
+        ctx.clear()
 
     assert replicate_calls == [2]
+    mock_rep.unregister_replicator.assert_called_once_with(ctx._stage_id)
 
 
 @pytest.mark.parametrize(
@@ -158,8 +183,8 @@ def test_physx_replicate_context_queue_and_replicate(sim):
         (3, "/World/template/Robot", [3]),
     ],
 )
-def test_physx_replicate_world_counts(sim, num_envs, src, expected_worlds):
-    """physx_replicate calls rep.replicate with the correct world count (exclude-self).
+def test_physx_context_world_counts(sim, num_envs, src, expected_worlds):
+    """The PhysX context uses the correct world count when excluding the source.
 
     With ``exclude_self_replication=True`` (default), the source environment is excluded
     from the replication targets when it also maps to other environments.  A source at
@@ -179,7 +204,7 @@ def test_physx_replicate_world_counts(sim, num_envs, src, expected_worlds):
 
     mock_rep, replicate_calls = _make_mock_physx_rep()
     with patch("isaaclab_physx.cloner.replicate.get_physx_replicator_interface", return_value=mock_rep):
-        physx_replicate(
+        _replicate(
             stage,
             sources=[src],
             destinations=["/World/envs/env_{}"],
@@ -193,11 +218,11 @@ def test_physx_replicate_world_counts(sim, num_envs, src, expected_worlds):
 
 
 @pytest.mark.parametrize("device", ["cpu", "cuda"])
-def test_physx_replicate_isolated_source_loaded_without_replication(sim, device):
-    """A single-env source (worlds=[self]) is correctly loaded after physx_replicate.
+def test_physx_context_loads_isolated_source_without_replication(sim, device):
+    """A single-env source remains loadable when native replication has no target.
 
     When there is only one environment and the source maps to itself,
-    ``exclude_self_replication=True`` (default) causes physx_replicate to skip
+    ``exclude_self_replication=True`` (default) causes the context to skip
     replication entirely. The prim already exists from USD, so after ``sim.reset()``
     PhysX must still be able to find the rigid body at the env path.
     """
@@ -213,7 +238,7 @@ def test_physx_replicate_isolated_source_loaded_without_replication(sim, device)
     )
     sphere_cfg.func("/World/envs/env_0/Sphere", sphere_cfg)
 
-    physx_replicate(
+    _replicate(
         stage,
         sources=["/World/envs/env_0/Sphere"],
         destinations=["/World/envs/env_{}/Sphere"],
@@ -232,8 +257,8 @@ def test_physx_replicate_isolated_source_loaded_without_replication(sim, device)
 
 
 @pytest.mark.parametrize("device", ["cpu", "cuda"])
-def test_physx_replicate_heterogeneous_isolated_sources(sim, device):
-    """physx_replicate handles heterogeneous sources excluding self from world lists.
+def test_physx_context_handles_heterogeneous_isolated_sources(sim, device):
+    """The PhysX context excludes heterogeneous sources from their own world lists.
 
     This is the Lift scenario: multiple object types, each with a designated proto-env.
     With ``exclude_self_replication=True`` (default), self is removed from the world list
@@ -261,7 +286,7 @@ def test_physx_replicate_heterogeneous_isolated_sources(sim, device):
 
     mock_rep, replicate_calls, attach_excluded = _make_mock_physx_rep_detailed()
     with patch("isaaclab_physx.cloner.replicate.get_physx_replicator_interface", return_value=mock_rep):
-        physx_replicate(
+        _replicate(
             stage,
             sources=["/World/envs/env_0/Object", "/World/envs/env_5/Object", "/World/envs/env_7/Object"],
             destinations=["/World/envs/env_{}/Object"] * 3,
@@ -320,14 +345,13 @@ def test_direct_clone_plan_multi_asset(sim):
         destination="/World/envs/env_{}/Object",
         device=sim.cfg.device,
     )
-    cfg.spawn_paths = list(sources)
-    prim = cfg.func("/World/unused", cfg)
+    prim = cfg.func(list(sources), cfg)
     assert prim.IsValid()
 
     stage = sim_utils.get_current_stage()
     env_ids = torch.arange(num_clones, dtype=torch.long, device=sim.cfg.device)
-    physx_replicate(stage, sources, destinations, env_ids, clone_mask, device=sim.cfg.device)
-    usd_replicate(stage, sources, destinations, env_ids, clone_mask)
+    _replicate(stage, sources, destinations, env_ids, clone_mask, device=sim.cfg.device)
+    UsdReplicateContext(stage).replicate(sources, destinations, env_ids, clone_mask)
 
     primitive_prims = sim_utils.get_all_matching_child_prims(
         "/World/envs", predicate=lambda prim: prim.GetTypeName() in ["Cone", "Cube", "Sphere"]
@@ -363,16 +387,15 @@ def _run_colocation_collision_filter(sim, asset_cfg, expected_types, assert_coun
         device=sim.cfg.device,
     )
     if isinstance(asset_cfg, sim_utils.MultiAssetSpawnerCfg):
-        asset_cfg.spawn_paths = list(sources)
-        prim = asset_cfg.func("/World/unused", asset_cfg)
+        prim = asset_cfg.func(list(sources), asset_cfg)
     else:
         prim = asset_cfg.func(sources[0], asset_cfg)
     assert prim.IsValid()
 
     stage = sim_utils.get_current_stage()
     env_ids = torch.arange(num_clones, dtype=torch.long, device=sim.cfg.device)
-    physx_replicate(stage, sources, destinations, env_ids, clone_mask, device=sim.cfg.device)
-    usd_replicate(stage, sources, destinations, env_ids, clone_mask)
+    _replicate(stage, sources, destinations, env_ids, clone_mask, device=sim.cfg.device)
+    UsdReplicateContext(stage).replicate(sources, destinations, env_ids, clone_mask)
 
     primitive_prims = sim_utils.get_all_matching_child_prims(
         "/World/envs", predicate=lambda prim: prim.GetTypeName() in expected_types
@@ -455,7 +478,7 @@ def test_colocation_collision_filter_heterogeneous(sim):
     )
 
 
-def _run_sphere_velocity_sim(sim, use_physx_replicate: bool, num_steps: int = 10) -> torch.Tensor:
+def _run_sphere_velocity_sim(sim, use_native_replication: bool, num_steps: int = 10) -> torch.Tensor:
     """Run a 2-env sphere simulation and return the full velocity trajectory.
 
     Returns a (num_steps, num_envs, 6) tensor of velocities at each step.
@@ -479,8 +502,8 @@ def _run_sphere_velocity_sim(sim, use_physx_replicate: bool, num_steps: int = 10
     positions = torch.tensor([[0.0, 0.0, 0.0], [spacing, 0.0, 0.0]])
     mapping = torch.ones((1, num_envs), dtype=torch.bool)
 
-    if use_physx_replicate:
-        physx_replicate(
+    if use_native_replication:
+        _replicate(
             stage,
             sources=["/World/envs/env_0/ball"],
             destinations=["/World/envs/env_{}/ball"],
@@ -489,8 +512,7 @@ def _run_sphere_velocity_sim(sim, use_physx_replicate: bool, num_steps: int = 10
             device=sim.cfg.device,
         )
 
-    usd_replicate(
-        stage,
+    UsdReplicateContext(stage).replicate(
         sources=["/World/envs/env_0"],
         destinations=["/World/envs/env_{}"],
         env_ids=env_ids,
@@ -518,9 +540,9 @@ def _run_sphere_velocity_sim(sim, use_physx_replicate: bool, num_steps: int = 10
     return torch.stack(velocities)
 
 
-def test_physx_replicate_env_consistency(sim):
-    """Test that env_0 and env_1 produce matching velocities when using physx_replicate."""
-    trajectory = _run_sphere_velocity_sim(sim, use_physx_replicate=True)
+def test_physx_context_env_consistency(sim):
+    """Native replication gives env_0 and env_1 matching velocities."""
+    trajectory = _run_sphere_velocity_sim(sim, use_native_replication=True)
 
     for idx in range(trajectory.shape[0]):
         v0 = trajectory[idx, 0]
@@ -531,18 +553,18 @@ def test_physx_replicate_env_consistency(sim):
 
 @pytest.mark.xfail(reason="Source env gets physics from replicator, not USD parsing; may diverge from baseline.")
 @pytest.mark.parametrize("device", ["cpu", "cuda"])
-def test_physx_replicate_vs_no_replicate(device):
-    """Test that physx_replicate does not change the physics behavior of env_0.
+def test_physx_context_vs_no_native_replication(device):
+    """Test that native replication does not change the physics behavior of env_0.
 
     With ``attach_fn`` excluding ``/World/envs``, env_0 receives its physics body
     from the replicator (as the source of ``rep.replicate()``) rather than from
     normal USD parsing, which may produce subtly different behaviour.
     """
     with build_simulation_context(device=device, dt=0.01, add_lighting=False) as sim_no_rep:
-        baseline = _run_sphere_velocity_sim(sim_no_rep, use_physx_replicate=False)
+        baseline = _run_sphere_velocity_sim(sim_no_rep, use_native_replication=False)
 
     with build_simulation_context(device=device, dt=0.01, add_lighting=False) as sim_rep:
-        with_rep = _run_sphere_velocity_sim(sim_rep, use_physx_replicate=True)
+        with_rep = _run_sphere_velocity_sim(sim_rep, use_native_replication=True)
 
     for idx in range(baseline.shape[0]):
         diff = (with_rep[idx, 0] - baseline[idx, 0]).abs().max().item()
@@ -599,95 +621,3 @@ def test_disabled_fabric_change_notifies_toggles_ifabricusd_flag(sim):
             assert not bindings.is_enabled(fabric_id)
         assert not bindings.is_enabled(fabric_id), "inner exit must not re-enable while outer is active"
     assert bindings.is_enabled(fabric_id), "outer exit should restore the flag"
-
-
-@pytest.mark.skip(
-    reason=(
-        "Local-only perf regression; correctness is covered by"
-        " test_disabled_fabric_change_notifies_toggles_ifabricusd_flag."
-        " Re-enable manually when touching listener suspension."
-    )
-)
-def test_disabled_fabric_change_notifies_speedup_regression():
-    """Local-only perf regression: listener suspension speeds up clone+reset by >= 1.2x.
-
-    Skipped unconditionally — the suspension mechanism's correctness is covered by
-    :func:`test_disabled_fabric_change_notifies_toggles_ifabricusd_flag`; the wall-clock
-    win is platform-sensitive (deferred Fabric resync in ``sim.reset`` can offset the
-    scene-time savings on some hardware). Re-verify locally when touching the suspension.
-
-    Scene knobs from bisection: ``rigid_props`` is required (plain Xforms give ~1.0x),
-    ``replicate_physics=True`` is required (drops to ~1.19x without), and 16 bodies x
-    4096 envs ≈ 64K firings keeps listener cost above noise. See PR #5432.
-    """
-    import time
-
-    import isaaclab.cloner._fabric_notices as fabric_notices_mod
-    import isaaclab.sim as sim_utils
-    from isaaclab.assets import RigidObjectCfg
-    from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
-    from isaaclab.utils.configclass import configclass
-
-    if fabric_notices_mod.get_bindings() is None:
-        pytest.skip("omni::fabric::IFabricUsd unavailable")
-
-    def _body(i: int) -> RigidObjectCfg:
-        return RigidObjectCfg(
-            prim_path=f"/World/envs/env_[^/]+/Body_{i}",
-            spawn=sim_utils.SphereCfg(radius=0.1, rigid_props=sim_utils.RigidBodyPropertiesCfg()),
-            init_state=RigidObjectCfg.InitialStateCfg(pos=(0.3 * (i % 4), 0.3 * (i // 4), 0.5)),
-        )
-
-    @configclass
-    class _SceneCfg(InteractiveSceneCfg):
-        pass
-
-    for _i in range(16):
-        setattr(_SceneCfg, f"body_{_i}", _body(_i))
-
-    def _probe_flag(stage) -> bool | None:
-        try:
-            import usdrt
-            from pxr import UsdUtils
-
-            cid = UsdUtils.StageCache.Get().GetId(stage)
-            sid = cid.ToLongInt() if cid.IsValid() else UsdUtils.StageCache.Get().Insert(stage).ToLongInt()
-            fid = usdrt.Usd.Stage.Attach(sid).GetFabricId().id
-            b = fabric_notices_mod.get_bindings()
-            return None if b is None else bool(b.is_enabled(fid))
-        except Exception:
-            return None
-
-    def _measure(simulate_pre_pr: bool) -> tuple[float, float, bool | None]:
-        original = fabric_notices_mod.get_bindings
-        if simulate_pre_pr:
-            fabric_notices_mod.get_bindings = lambda: None
-            assert fabric_notices_mod.get_bindings() is None, "monkey-patch did not take effect"
-        try:
-            with build_simulation_context(device="cpu", dt=0.01, add_lighting=False) as sim:
-                t0 = time.perf_counter()
-                scene = InteractiveScene(_SceneCfg(num_envs=4096, env_spacing=4.0, replicate_physics=True))
-                scene_dt = time.perf_counter() - t0
-                # Probe before reset so we see whether suspension actually engaged.
-                fabric_notices_mod.get_bindings = original
-                flag = _probe_flag(scene.stage)
-                if simulate_pre_pr:
-                    fabric_notices_mod.get_bindings = lambda: None
-                t0 = time.perf_counter()
-                sim.reset()
-                return scene_dt, time.perf_counter() - t0, flag
-        finally:
-            fabric_notices_mod.get_bindings = original
-
-    _measure(simulate_pre_pr=False)  # warmup
-    s_scene, s_reset, s_flag = _measure(simulate_pre_pr=False)
-    a_scene, a_reset, a_flag = _measure(simulate_pre_pr=True)
-
-    suspended = s_scene + s_reset
-    active = a_scene + a_reset
-    speedup = active / suspended
-    print(
-        f"\n[fabric-notice perf] active={active:.2f}s (flag={a_flag})"
-        f" suspended={suspended:.2f}s (flag={s_flag}) speedup={speedup:.2f}x"
-    )
-    assert speedup >= 1.2, f"expected >= 1.2x, got {speedup:.2f}x (active={active:.2f}s suspended={suspended:.2f}s)"

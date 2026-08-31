@@ -34,6 +34,7 @@ import omni.replicator.core as rep
 from pxr import Gf, UsdGeom
 
 import isaaclab.sim as sim_utils
+from isaaclab import cloner
 from isaaclab.sensors.camera import Camera, CameraCfg, TiledCamera, TiledCameraCfg
 
 pytestmark = [pytest.mark.integration, pytest.mark.rendering]
@@ -76,9 +77,11 @@ def setup_camera(device) -> tuple[sim_utils.SimulationContext, CameraCfg, float]
 def test_tiled_camera_deprecation_warning(setup_camera, device):
     """TiledCamera instantiation emits a DeprecationWarning."""
     sim, camera_cfg, dt = setup_camera
+    camera_cfg.class_type = TiledCamera
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        camera = TiledCamera(camera_cfg)
+        with cloner.ReplicateSession([camera_cfg], 1, 0.0, sim.device):
+            camera = camera_cfg.class_type(camera_cfg)
         deprecation_warnings = [x for x in w if issubclass(x.category, DeprecationWarning)]
         assert len(deprecation_warnings) >= 1
         assert "TiledCamera is deprecated" in str(deprecation_warnings[0].message)
@@ -111,7 +114,9 @@ def test_tiled_camera_cfg_deprecation_warning(setup_camera, device):
 def test_tiled_camera_is_camera_subclass(setup_camera, device):
     """TiledCamera is a subclass of Camera, so isinstance checks work."""
     sim, camera_cfg, dt = setup_camera
-    camera = TiledCamera(camera_cfg)
+    camera_cfg.class_type = TiledCamera
+    with cloner.ReplicateSession([camera_cfg], 1, 0.0, sim.device):
+        camera = camera_cfg.class_type(camera_cfg)
     assert isinstance(camera, Camera)
     assert isinstance(camera, TiledCamera)
     del camera
@@ -124,7 +129,9 @@ def test_tiled_camera_basic_functionality(setup_camera, device):
     """TiledCamera produces correct output (proving it delegates to Camera)."""
     sim, camera_cfg, dt = setup_camera
     # Create camera
-    camera = TiledCamera(camera_cfg)
+    camera_cfg.class_type = TiledCamera
+    with cloner.ReplicateSession([camera_cfg], 1, 0.0, sim.device):
+        camera = camera_cfg.class_type(camera_cfg)
     # Play sim
     sim.reset()
     # Check if camera is initialized

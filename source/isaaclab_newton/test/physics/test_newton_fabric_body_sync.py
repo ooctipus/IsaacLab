@@ -21,8 +21,9 @@ from pxr import UsdGeom
 from usdrt import Gf, Rt
 
 import isaaclab.sim as sim_utils
+from isaaclab import cloner
 from isaaclab.assets import CableObjectCfg, RigidObjectCfg
-from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
+from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim import SimulationCfg, build_simulation_context
 from isaaclab.sim.spawners.materials import CableMaterialCfg
 from isaaclab.sim.spawners.shapes import CableCfg
@@ -256,7 +257,9 @@ def test_root_pose_write_is_visible_on_next_render_without_step():
 
     with build_simulation_context(sim_cfg=sim_cfg) as sim:
         sim._app_control_on_stop_handle = None
-        scene = InteractiveScene(_RenderSceneCfg(num_envs=1, env_spacing=2.0))
+        scene_cfg = _RenderSceneCfg(num_envs=1, env_spacing=2.0)
+        with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
+            scene = scene_cfg.class_type(scene_cfg)
         sim.register_interactive_scene(scene)
         try:
             sim.reset()
@@ -368,7 +371,9 @@ def test_cable_points_follow_newton_segments_after_step_and_reset():
 
     with build_simulation_context(sim_cfg=sim_cfg) as sim:
         sim._app_control_on_stop_handle = None
-        scene = InteractiveScene(_CableRenderSceneCfg(num_envs=2, env_spacing=2.0))
+        scene_cfg = _CableRenderSceneCfg(num_envs=2, env_spacing=2.0)
+        with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
+            scene = scene_cfg.class_type(scene_cfg)
         sim.register_interactive_scene(scene)
         try:
             sim.reset()

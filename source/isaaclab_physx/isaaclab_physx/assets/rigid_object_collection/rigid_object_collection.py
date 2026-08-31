@@ -19,8 +19,8 @@ from pxr import UsdPhysics
 
 import isaaclab.sim as sim_utils
 import isaaclab.utils.string as string_utils
+from isaaclab import cloner
 from isaaclab.assets.rigid_object_collection.base_rigid_object_collection import BaseRigidObjectCollection
-from isaaclab.cloner import queue_replication
 from isaaclab.utils.warp import ProxyArray
 from isaaclab.utils.wrench_composer import WrenchComposer
 
@@ -78,22 +78,37 @@ class RigidObjectCollection(BaseRigidObjectCollection):
         self.cfg = cfg.copy()
         # flag for whether the asset is initialized
         self._is_initialized = False
-        # spawn the rigid objects
-        for rigid_body_name, rigid_body_cfg in self.cfg.rigid_objects.items():
-            # spawn the asset
+        sim = sim_utils.SimulationContext.instance()
+        if sim is None:
+            raise RuntimeError("RigidObjectCollection requires an active SimulationContext.")
+        plan = sim.get_clone_plan()
+        if plan is None:
+            raise RuntimeError("RigidObjectCollection must be constructed inside a ReplicateSession.")
+        for source_cfg, rigid_body_cfg in zip(cfg.rigid_objects.values(), self.cfg.rigid_objects.values(), strict=True):
+            rigid_body_cfg.prim_path = cloner.expand_env_regex_ns(rigid_body_cfg.prim_path, plan.env_template)
             if rigid_body_cfg.spawn is not None:
-                spawn_path = rigid_body_cfg.spawn.spawn_path or rigid_body_cfg.prim_path
+                source_paths = cloner.query.cfg_source_paths(plan, source_cfg)
+                active_paths = tuple(path for path in source_paths if path is not None)
+                spawn_path = (
+                    source_paths
+                    if isinstance(rigid_body_cfg.spawn, (sim_utils.MultiAssetSpawnerCfg, sim_utils.MultiUsdFileCfg))
+                    else active_paths[0]
+                )
                 rigid_body_cfg.spawn.func(
                     spawn_path,
                     rigid_body_cfg.spawn,
                     translation=rigid_body_cfg.init_state.pos,
                     orientation=rigid_body_cfg.init_state.rot,
                 )
-            # check that spawn was successful
-            matching_prims = sim_utils.find_matching_prims(rigid_body_cfg.prim_path)
-            if len(matching_prims) == 0:
-                raise RuntimeError(f"Could not find prim with path {rigid_body_cfg.prim_path}.")
-            queue_replication(cfg.rigid_objects[rigid_body_name])
+            else:
+                active_paths = tuple(
+                    source_path for _, _, source_path, _ in cloner.query.iter_sources(plan, rigid_body_cfg.prim_path)
+                )
+            if not active_paths:
+                raise RuntimeError(f"Rigid object at {rigid_body_cfg.prim_path!r} is not covered by the clone plan.")
+            missing_path = next((path for path in active_paths if not sim.stage.GetPrimAtPath(path).IsValid()), None)
+            if missing_path is not None:
+                raise RuntimeError(f"Could not find prim with path {missing_path}.")
         # stores object names
         self._body_names_list = []
 

@@ -34,6 +34,7 @@ import carb
 import isaaclab.sim as sim_utils
 import isaaclab.utils.math as math_utils
 from isaaclab.assets import DeformableObjectCfg
+from isaaclab.cloner import ReplicateSession
 from isaaclab.sim import build_simulation_context
 
 # Temporarily disabled: this suite intermittently aborts with SIGABRT on CI.
@@ -68,11 +69,6 @@ def generate_cubes_scene(
         The deformable object representing the cubes.
 
     """
-    origins = torch.tensor([(i * 1.0, 0, height) for i in range(num_cubes)]).to(device)
-    # Create Top-level Xforms, one for each cube
-    for i, origin in enumerate(origins):
-        sim_utils.create_prim(f"/World/Table_{i}", "Xform", translation=origin)
-
     # Resolve spawn configuration
     if has_api:
         spawn_cfg = sim_utils.MeshCuboidCfg(
@@ -100,7 +96,8 @@ def generate_cubes_scene(
         spawn=spawn_cfg,
         init_state=DeformableObjectCfg.InitialStateCfg(pos=(0.0, 0.0, height), rot=initial_rot),
     )
-    cube_object = DeformableObject(cfg=cube_object_cfg)
+    with ReplicateSession([cube_object_cfg], num_cubes, 1.0, device, env_template="/World/Table_{}"):
+        cube_object = cube_object_cfg.class_type(cube_object_cfg)
 
     return cube_object
 

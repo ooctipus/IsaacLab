@@ -40,9 +40,10 @@ from isaaclab_physx.renderers.isaac_rtx_renderer import IsaacRtxRenderer, IsaacR
 from isaaclab_physx.renderers.isaac_rtx_renderer_cfg import IsaacRtxRendererGlobalSettingsCfg
 
 import isaaclab.sim as sim_utils
+from isaaclab import cloner
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
 from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
-from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
+from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors.camera import CameraCfg
 from isaaclab.sim import build_simulation_context
 from isaaclab.utils.configclass import configclass
@@ -50,6 +51,19 @@ from isaaclab.utils.configclass import configclass
 from isaaclab_assets.robots.kuka_allegro import KUKA_ALLEGRO_CFG
 
 _ENV_VAR = "ISAAC_LAB_ENABLE_ISAAC_RTX_PER_ENV_SCENE_PARTITION"
+
+
+def _create_scene(cfg: InteractiveSceneCfg, sim):
+    """Construct a scene through its cfg-owned clone lifecycle."""
+    with cloner.ReplicateSession(
+        [cfg],
+        cfg.num_envs,
+        cfg.env_spacing,
+        sim.device,
+        env_template=cfg.clone_cfg.clone_template,
+        replicate_physics=cfg.replicate_physics,
+    ):
+        return cfg.class_type(cfg)
 
 
 def _isolation_renderer_cfg() -> IsaacRtxRendererCfg:
@@ -139,7 +153,7 @@ def test_partitioning_isolates_rigid_object(monkeypatch: pytest.MonkeyPatch):
 
     with build_simulation_context(device="cuda:0", dt=1.0 / 60.0) as sim:
         sim._app_control_on_stop_handle = None
-        scene = InteractiveScene(_Scene(num_envs=4, env_spacing=0.0, replicate_physics=False))
+        scene = _create_scene(_Scene(num_envs=4, env_spacing=0.0, replicate_physics=False), sim)
         sim.reset()
         # one settle step so RigidObject data buffers are populated before we write into them
         sim.step()
@@ -260,7 +274,7 @@ def test_partitioning_isolates_articulation(monkeypatch: pytest.MonkeyPatch):
 
     with build_simulation_context(device="cuda:0", dt=1.0 / 60.0) as sim:
         sim._app_control_on_stop_handle = None
-        scene = InteractiveScene(_Scene(num_envs=4, env_spacing=0.0, replicate_physics=False))
+        scene = _create_scene(_Scene(num_envs=4, env_spacing=0.0, replicate_physics=False), sim)
         sim.reset()
 
         robot = scene["robot"]

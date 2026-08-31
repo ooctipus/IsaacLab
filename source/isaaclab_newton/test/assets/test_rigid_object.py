@@ -31,7 +31,8 @@ from newton import ModelFlags
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import RigidObjectCfg
-from isaaclab.sim import SimulationCfg, build_simulation_context
+from isaaclab.cloner import ReplicateSession
+from isaaclab.sim import SimulationCfg, SimulationContext, build_simulation_context
 from isaaclab.sim.spawners import materials
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
 from isaaclab.utils.math import (
@@ -84,11 +85,6 @@ def generate_cubes_scene(
         A tuple containing the rigid object representing the cubes and the origins of the cubes.
 
     """
-    origins = torch.tensor([(i * 1.0, 0, height) for i in range(num_cubes)]).to(device)
-    # Create Top-level Xforms, one for each cube
-    for i, origin in enumerate(origins):
-        sim_utils.create_prim(f"/World/Env_{i}", "Xform", translation=origin)
-
     # Resolve spawn configuration
     if api == "none":
         # since no rigid body properties defined, this is just a static collider
@@ -115,7 +111,9 @@ def generate_cubes_scene(
         spawn=spawn_cfg,
         init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, height)),
     )
-    cube_object = RigidObject(cfg=cube_object_cfg)
+    with ReplicateSession([cube_object_cfg], num_cubes, 1.0, device, env_template="/World/Env_{}"):
+        cube_object = cube_object_cfg.class_type(cube_object_cfg)
+    origins = SimulationContext.instance().get_clone_plan().positions
 
     return cube_object, origins
 
@@ -332,7 +330,7 @@ def test_external_force_on_single_body(num_cubes, device):
             root_vel = cube_object.data.default_root_vel.torch.clone()
 
             # need to shift the position of the cubes otherwise they will be on top of each other
-            root_pose[:, :3] = origins
+            root_pose[:, :3] += origins
             cube_object.write_root_pose_to_sim_index(root_pose=root_pose)
             cube_object.write_root_velocity_to_sim_index(root_velocity=root_vel)
 
@@ -409,7 +407,7 @@ def test_external_force_on_single_body_at_position(num_cubes, device):
             root_vel = cube_object.data.default_root_vel.torch.clone()
 
             # need to shift the position of the cubes otherwise they will be on top of each other
-            root_pose[:, :3] = origins
+            root_pose[:, :3] += origins
             cube_object.write_root_pose_to_sim_index(root_pose=root_pose)
             cube_object.write_root_velocity_to_sim_index(root_velocity=root_vel)
 
@@ -845,19 +843,17 @@ def test_rigid_body_set_mass(num_cubes, device):
     """Test that selected mass writes update inverse mass and inertia across static transitions."""
     with _newton_sim_context(device, gravity_enabled=False, auto_add_lighting=True) as sim:
         sim._app_control_on_stop_handle = None
-        for index in range(num_cubes):
-            sim_utils.create_prim(f"/World/Env_{index}", "Xform", translation=(float(index), 0.0, 1.0))
-        cube_object = RigidObject(
-            RigidObjectCfg(
-                prim_path="/World/Env_[^/]*/Object",
-                spawn=sim_utils.CuboidCfg(
-                    size=(0.2, 0.2, 0.2),
-                    rigid_props=sim_utils.RigidBodyPropertiesCfg(disable_gravity=True),
-                    mass_props=sim_utils.MassPropertiesCfg(mass=1.0),
-                    collision_props=sim_utils.CollisionPropertiesCfg(),
-                ),
-            )
+        cube_object_cfg = RigidObjectCfg(
+            prim_path="/World/Env_[^/]*/Object",
+            spawn=sim_utils.CuboidCfg(
+                size=(0.2, 0.2, 0.2),
+                rigid_props=sim_utils.RigidBodyPropertiesCfg(disable_gravity=True),
+                mass_props=sim_utils.MassPropertiesCfg(mass=1.0),
+                collision_props=sim_utils.CollisionPropertiesCfg(),
+            ),
         )
+        with ReplicateSession([cube_object_cfg], num_cubes, 1.0, device, env_template="/World/Env_{}"):
+            cube_object = cube_object_cfg.class_type(cube_object_cfg)
 
         # Play sim
         sim.reset()

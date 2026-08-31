@@ -23,6 +23,7 @@ import torch
 # import omni.physx
 import warp as wp
 
+from isaaclab import cloner
 from isaaclab.envs.common import VecEnvObs, VecEnvStepReturn
 from isaaclab.envs.direct_rl_env import DirectRLEnv
 from isaaclab.envs.direct_rl_env_cfg import DirectRLEnvCfg
@@ -34,7 +35,6 @@ from isaaclab.utils.noise import NoiseModel
 from isaaclab.utils.seed import configure_seed
 from isaaclab.utils.timer import Timer
 
-from isaaclab_experimental.envs.interactive_scene_warp import InteractiveSceneWarp
 from isaaclab_experimental.utils.warp_graph_cache import WarpGraphCache
 
 # from isaacsim.core.simulation_manager import SimulationManager
@@ -159,9 +159,20 @@ class DirectRLEnvWarp(DirectRLEnv):
         with Timer("[INFO]: Time taken for scene creation", "scene_creation"):
             # set the stage context for scene creation steps which use the stage
             with use_stage(self.sim.stage):
-                self.scene = InteractiveSceneWarp(self.cfg.scene)
-                self._setup_scene()
-                # attach_stage_to_usd_context()
+                scene_cfg = self.cfg.scene
+                with cloner.ReplicateSession(
+                    (self.cfg,),
+                    scene_cfg.num_envs,
+                    scene_cfg.env_spacing,
+                    self.sim.device,
+                    env_template=scene_cfg.clone_cfg.clone_template,
+                    replicate_physics=scene_cfg.replicate_physics,
+                ):
+                    self.scene = scene_cfg.class_type(scene_cfg)
+                    self._setup_scene()
+                if scene_cfg.filter_collisions and "physx" in self.scene.physics_backend:
+                    self.scene.filter_collisions()
+            self.sim.register_interactive_scene(self.scene)
         print("[INFO]: Scene manager: ", self.scene)
 
         # create event manager

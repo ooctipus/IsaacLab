@@ -31,17 +31,15 @@ from pxr import Gf, Sdf, Usd, UsdGeom, Vt
 import isaaclab.sim as sim_utils
 from isaaclab import cloner
 from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
-from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
-from isaaclab.sensors.camera import Camera, CameraCfg
+from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.sensors.camera import CameraCfg
 from isaaclab.sensors.camera.camera_isp import CameraISPMode
 from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils.configclass import configclass
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
-
     from isaaclab.renderers.renderer_cfg import RendererCfg
-    from isaaclab.sim import SimulationCfg, SimulationContext
+    from isaaclab.sim import SimulationCfg
 
 
 # SH degree-0 evaluation constant ``Y_0 = 1 / (2 * sqrt(pi))``. The standard
@@ -586,7 +584,7 @@ def assert_tiled_views_match(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# InteractiveScene helpers shared by the Isaac RTX-, Newton-, and OVRTX-backed
+# InteractiveScene configuration shared by the Isaac RTX-, Newton-, and OVRTX-backed
 # gaussian tests.
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -610,8 +608,7 @@ class SyntheticGaussianSceneCfg(InteractiveSceneCfg):
     a non-empty body table — it is invisible at the camera viewpoint and far
     enough below the scene to never appear in the render.
 
-    The ``gaussian`` asset URL is filled in at runtime by
-    :func:`fresh_synthetic_gaussian_interactive_scene`.
+    The ``gaussian`` asset URL is filled in at runtime by the render helper.
     """
 
     env_spacing: float = 2.0
@@ -637,45 +634,6 @@ class SyntheticGaussianSceneCfg(InteractiveSceneCfg):
     )
 
 
-@contextlib.contextmanager
-def fresh_synthetic_gaussian_interactive_scene(
-    usd_path: str,
-    sim_cfg: SimulationCfg,
-    *,
-    num_envs: int = 1,
-) -> Iterator[SimulationContext]:
-    """Yield a fresh :class:`~isaaclab.sim.SimulationContext` with the synthesised
-    gaussian asset referenced under each env via :class:`SyntheticGaussianSceneCfg`.
-
-    The InteractiveScene is held alive for the lifetime of the context — its
-    callbacks register *weak* refs to the parent's bound methods; if the scene
-    is dropped, the next ``dispatch_event`` raises ``ReferenceError`` from a
-    dead weakref.
-
-    Args:
-        usd_path: Path to the synthesised gaussian USD asset (typically produced
-            by :func:`make_synthetic_gaussian_usd`).
-        sim_cfg: The simulation cfg (caller-provided, since the physics backend
-            and timestep are renderer-specific).
-        num_envs: Number of tiled envs to spawn.
-
-    Yields:
-        The constructed :class:`SimulationContext`.
-    """
-    sim_utils.create_new_stage()
-    sim = sim_utils.SimulationContext(sim_cfg)
-    scene_cfg = SyntheticGaussianSceneCfg(num_envs=num_envs)
-    scene_cfg.gaussian.spawn = sim_utils.UsdFileCfg(usd_path=usd_path)
-    scene = InteractiveScene(scene_cfg)  # noqa: F841 — kept alive intentionally
-    try:
-        yield sim
-    finally:
-        with contextlib.suppress(Exception):
-            sim.stop()
-        with contextlib.suppress(Exception):
-            sim.clear_instance()
-
-
 def render_synthetic_gaussian_scene(
     usd_path: str,
     *,
@@ -691,9 +649,8 @@ def render_synthetic_gaussian_scene(
 ) -> dict[str, torch.Tensor]:
     """Render the synthesised gaussian asset with the aggressive wrapper PPISP.
 
-    Builds an :class:`~isaaclab.scene.InteractiveScene` via
-    :func:`fresh_synthetic_gaussian_interactive_scene`, instantiates a
-    :class:`~isaaclab.sensors.camera.Camera` whose prim path is
+    Builds an :class:`~isaaclab.scene.InteractiveScene` and a
+    :class:`~isaaclab.sensors.camera.Camera` in one clone lifecycle. The camera prim path is
     :data:`SYNTHETIC_GAUSSIAN_CAMERA_REGEX` (one camera per env), drives the
     sim for ``stabilisation_steps`` ticks, and returns every requested output.
 
@@ -716,34 +673,18 @@ def render_synthetic_gaussian_scene(
         ``[num_envs, height, width, channels]`` float32 CPU tensor (uint8 LDR
         buffers are cast to float for downstream arithmetic).
     """
-    isp_cfg = make_aggressive_ppisp_cfg(responsivity=responsivity)
-    with fresh_synthetic_gaussian_interactive_scene(usd_path, sim_cfg, num_envs=num_envs) as sim:
-        cfg = CameraCfg(
-            prim_path=SYNTHETIC_GAUSSIAN_CAMERA_REGEX,
-            update_period=0.0,
-            height=height,
-            width=width,
-            data_types=data_types,
-            spawn=None,
-            isp_cfg=isp_cfg,
-            renderer_cfg=renderer_cfg,
-        )
-        camera = Camera(cfg)
-        # Camera is constructed after the scene's ReplicateSession has exited, so its
-        # queued USD replication needs an explicit drain (Path B). Reuse the scene's
-        # env positions so env_origins stays consistent.
-        published = sim.get_clone_plan()
-        positions = published.positions if published is not None else None
-        src, dst = "/World/envs/env_0", "/World/envs/env_{}"
-        camera_plan = cloner.clone_plan_from_env_0(src, dst, num_envs, str(sim.device), positions)
-        cloner.replicate(camera_plan, stage=sim.stage)
-        sim.reset()
-        for _ in range(stabilisation_steps):
-            sim.step()
-        camera.update(sim_dt)
-        outputs = {name: tensor.clone().detach().cpu().to(torch.float32) for name, tensor in camera.data.output.items()}
-        del camera
-        return outputs
+    return _render_synthetic_gaussian_camera(
+        usd_path=usd_path,
+        sim_cfg=sim_cfg,
+        renderer_cfg=renderer_cfg,
+        data_types=data_types,
+        num_envs=num_envs,
+        height=height,
+        width=width,
+        sim_dt=sim_dt,
+        stabilisation_steps=stabilisation_steps,
+        isp_cfg=make_aggressive_ppisp_cfg(responsivity=responsivity),
+    )
 
 
 def render_synthetic_gaussian_scene_with_static_ppisp_attrs(
@@ -765,18 +706,19 @@ def render_synthetic_gaussian_scene_with_static_ppisp_attrs(
     discover the camera-authored PPISP attributes and route them through their
     PPISP workflow.
     """
-    with fresh_synthetic_gaussian_interactive_scene(usd_path, sim_cfg, num_envs=num_envs) as sim:
-        author_static_ppisp_camera_attrs(sim.stage, ppisp_cfg=ppisp_cfg)
-        return _render_synthetic_gaussian_camera(
-            renderer_cfg=renderer_cfg,
-            data_types=data_types,
-            height=height,
-            width=width,
-            sim_dt=sim_dt,
-            stabilisation_steps=stabilisation_steps,
-            isp_cfg=CameraISPMode.AUTO_CAMERA,
-            sim=sim,
-        )
+    return _render_synthetic_gaussian_camera(
+        usd_path=usd_path,
+        sim_cfg=sim_cfg,
+        renderer_cfg=renderer_cfg,
+        data_types=data_types,
+        num_envs=num_envs,
+        height=height,
+        width=width,
+        sim_dt=sim_dt,
+        stabilisation_steps=stabilisation_steps,
+        isp_cfg=CameraISPMode.AUTO_CAMERA,
+        static_ppisp_cfg=ppisp_cfg,
+    )
 
 
 def render_synthetic_gaussian_scene_with_controller_ppisp_attrs(
@@ -793,32 +735,41 @@ def render_synthetic_gaussian_scene_with_controller_ppisp_attrs(
     stabilisation_steps: int = 5,
 ) -> dict[str, torch.Tensor]:
     """Render the synthesised gaussian asset through camera-authored controller weights."""
-    with fresh_synthetic_gaussian_interactive_scene(usd_path, sim_cfg, num_envs=num_envs) as sim:
-        author_controller_ppisp_camera_attrs(sim.stage, ppisp_cfg=ppisp_cfg)
-        return _render_synthetic_gaussian_camera(
-            renderer_cfg=renderer_cfg,
-            data_types=data_types,
-            height=height,
-            width=width,
-            sim_dt=sim_dt,
-            stabilisation_steps=stabilisation_steps,
-            isp_cfg=CameraISPMode.AUTO_CAMERA,
-            sim=sim,
-        )
+    return _render_synthetic_gaussian_camera(
+        usd_path=usd_path,
+        sim_cfg=sim_cfg,
+        renderer_cfg=renderer_cfg,
+        data_types=data_types,
+        num_envs=num_envs,
+        height=height,
+        width=width,
+        sim_dt=sim_dt,
+        stabilisation_steps=stabilisation_steps,
+        isp_cfg=CameraISPMode.AUTO_CAMERA,
+        controller_ppisp_cfg=ppisp_cfg,
+    )
 
 
 def _render_synthetic_gaussian_camera(
     *,
+    usd_path: str,
+    sim_cfg: SimulationCfg,
     renderer_cfg: RendererCfg,
     data_types: list[str],
+    num_envs: int,
     height: int,
     width: int,
     sim_dt: float,
     stabilisation_steps: int,
     isp_cfg: PpispCfg | CameraISPMode | None,
-    sim: SimulationContext,
+    static_ppisp_cfg: PpispCfg | None = None,
+    controller_ppisp_cfg: PpispCfg | None = None,
 ) -> dict[str, torch.Tensor]:
-    cfg = CameraCfg(
+    sim_utils.create_new_stage()
+    sim = sim_utils.SimulationContext(sim_cfg)
+    scene_cfg = SyntheticGaussianSceneCfg(num_envs=num_envs)
+    scene_cfg.gaussian.spawn = sim_utils.UsdFileCfg(usd_path=usd_path)
+    camera_cfg = CameraCfg(
         prim_path=SYNTHETIC_GAUSSIAN_CAMERA_REGEX,
         update_period=0.0,
         height=height,
@@ -828,11 +779,29 @@ def _render_synthetic_gaussian_camera(
         isp_cfg=isp_cfg,
         renderer_cfg=renderer_cfg,
     )
-    camera = Camera(cfg)
-    sim.reset()
-    for _ in range(stabilisation_steps):
-        sim.step()
-    camera.update(sim_dt)
-    outputs = {name: tensor.clone().detach().cpu().to(torch.float32) for name, tensor in camera.data.output.items()}
-    del camera
-    return outputs
+    with cloner.ReplicateSession(
+        [scene_cfg, camera_cfg],
+        scene_cfg.num_envs,
+        scene_cfg.env_spacing,
+        sim.device,
+        env_template=scene_cfg.clone_cfg.clone_template,
+        replicate_physics=scene_cfg.replicate_physics,
+    ):
+        scene = scene_cfg.class_type(scene_cfg)  # noqa: F841 — kept alive through rendering
+        if static_ppisp_cfg is not None:
+            author_static_ppisp_camera_attrs(sim.stage, ppisp_cfg=static_ppisp_cfg)
+        if controller_ppisp_cfg is not None:
+            author_controller_ppisp_camera_attrs(sim.stage, ppisp_cfg=controller_ppisp_cfg)
+        camera = camera_cfg.class_type(camera_cfg)
+    try:
+        sim.reset()
+        for _ in range(stabilisation_steps):
+            sim.step()
+        camera.update(sim_dt)
+        return {name: tensor.clone().detach().cpu().to(torch.float32) for name, tensor in camera.data.output.items()}
+    finally:
+        del camera
+        with contextlib.suppress(Exception):
+            sim.stop()
+        with contextlib.suppress(Exception):
+            sim.clear_instance()

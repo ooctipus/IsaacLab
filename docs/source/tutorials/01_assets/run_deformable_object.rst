@@ -50,7 +50,6 @@ The tutorial corresponds to the ``run_deformable_object.py`` script in the ``scr
 
    .. literalinclude:: ../../../../scripts/tutorials/01_assets/run_deformable_object.py
       :language: python
-      :emphasize-lines: 71-117, 146-151, 153-162, 167-175, 177-178, 184-189
       :linenos:
 
 
@@ -79,13 +78,14 @@ when the simulation is played.
     implementation.
 
 
-As seen in the rigid body tutorial, we can spawn the deformable object into the scene in a similar fashion by creating
-an instance of the :class:`assets.DeformableObject` class by passing the configuration object to its constructor.
+As in the rigid-body tutorial, the clone session receives the complete scene configuration and constructs the
+deformable object through ``cfg.class_type(cfg)``. The same plan supplies every backend with the prototype paths
+and environment origins.
 
 .. literalinclude:: ../../../../scripts/tutorials/01_assets/run_deformable_object.py
    :language: python
-   :start-at: # Create separate groups called "env_0", "env_1", ...
-   :end-at: cube_object = DeformableObject(cfg=cfg)
+   :start-at: cube_cfg = DeformableObjectCfg(
+   :end-at: return {"cube_object": cube_object}, plan.positions
 
 Running the simulation loop
 ---------------------------

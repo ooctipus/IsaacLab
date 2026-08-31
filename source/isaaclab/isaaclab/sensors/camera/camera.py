@@ -14,12 +14,13 @@ import numpy as np
 import torch
 import warp as wp
 
-from pxr import Usd, UsdGeom, UsdPhysics
+from pxr import Usd, UsdGeom
 
 import isaaclab.sim as sim_utils
 import isaaclab.utils.sensors as sensor_utils
+from isaaclab import cloner
 from isaaclab.app.logging_utils import force_log_level
-from isaaclab.cloner import queue_replication
+from isaaclab.app.settings_manager import get_settings_manager
 from isaaclab.renderers import BaseRenderer, CameraRenderSpec
 from isaaclab.sim.views import FrameView
 from isaaclab.utils import to_camel_case
@@ -157,30 +158,22 @@ class Camera(SensorBase):
         rot_offset = rot_offset.squeeze(0).cpu().numpy()
         if self.cfg.spawn is not None and self.cfg.spawn.vertical_aperture is None:
             self.cfg.spawn.vertical_aperture = self.cfg.spawn.horizontal_aperture * self.cfg.height / self.cfg.width
-        # Resolve the camera prim path and spawn it, redirecting to a child if prim_path is a physics body.
+        # Spawn exactly the prototype the plan assigned this camera cfg.
         spawn = self.cfg.spawn
         if spawn is not None:
-            probe_path = (spawn.spawn_path or self.cfg.prim_path) if spawn is not None else self.cfg.prim_path
-            probe_matches = sim_utils.resolve_matching_prims_from_source(probe_path, raise_if_no_matches=False)
-            source_prim, _source_destination_expr = probe_matches[0] if probe_matches else (None, None)
-            if source_prim is not None and source_prim.IsValid():
-                if source_prim.HasAPI(UsdPhysics.ArticulationRootAPI) or source_prim.HasAPI(UsdPhysics.RigidBodyAPI):
-                    logger.info(f" Spawning camera at '{self.cfg.prim_path}/camera'.")
-                    self.cfg.prim_path = spawn.spawn_path = f"{self.cfg.prim_path}/camera"
-
-            spawn_target = spawn.spawn_path or self.cfg.prim_path
-            if sim_utils.find_first_matching_prim(spawn_target) is None:
+            source_paths = cloner.query.cfg_source_paths(self._clone_plan, self._source_cfg)
+            spawn_targets = tuple(path for path in source_paths if path is not None)
+            if not spawn_targets:
+                raise RuntimeError(f"Camera at {self.cfg.prim_path!r} has no populated clone-plan source.")
+            for spawn_target in spawn_targets:
                 spawn.func(spawn_target, spawn, translation=self.cfg.offset.pos, orientation=rot_offset)
-            if not sim_utils.find_matching_prims(spawn_target):
-                raise RuntimeError(f"Could not find prim with path {spawn_target!r}.")
-        queue_replication(self._source_cfg)
+                if not self.stage.GetPrimAtPath(spawn_target).IsValid():
+                    raise RuntimeError(f"Could not find camera prim with path {spawn_target!r}.")
 
         # Every renderer backend draws the visual-only geometry, so it must survive cloning even
-        # when the run is otherwise headless. This has to happen before the replication queue is
-        # drained, which is why it is here rather than in ``_initialize_impl``.
-        sim_ctx = sim_utils.SimulationContext.instance()
-        if sim_ctx is not None:
-            sim_ctx.require_visual_shapes()
+        # when the run is otherwise headless. Declare that before clone-plan dispatch rather than
+        # waiting for ``_initialize_impl``.
+        self._sim.require_visual_shapes()
 
         # An ISP (any ``isp_cfg`` other than ``None``) requires the HDR AOV;
         # an explicit ``"rgb_hdr"`` in ``data_types`` also requires the
@@ -192,17 +185,13 @@ class Camera(SensorBase):
         # IsaacRtxRendererCfg overrides to flip /isaaclab/render/rtx_sensors. The
         # flag must be set pre-sim.reset() because SimulationContext.is_rendering
         # and several env classes read it before the renderer's __init__ runs.
-        renderer_type = getattr(self.cfg.renderer_cfg, "renderer_type", None)
+        renderer_type = self.cfg.renderer_cfg.renderer_type
         if renderer_type == "isaac_rtx":
-            from isaaclab.app.settings_manager import get_settings_manager
-
             settings = get_settings_manager()
             settings.set_bool("/isaaclab/render/rtx_sensors", True)
             if require_hdr_output:
                 settings.set_bool("/rtx/rtpt/gaussian/skipTonemapping/enabled", False)
         elif renderer_type == "ovrtx" and require_hdr_output:
-            from isaaclab.app.settings_manager import get_settings_manager
-
             get_settings_manager().set_bool("/rtx/rtpt/gaussian/skipTonemapping/enabled", False)
             # FIXME: settings set_bool is a no-op for ovrtx
             # warning only since it affects only ParticleField3DGaussianSplat scene
@@ -217,11 +206,9 @@ class Camera(SensorBase):
         # The backend's ``__init__`` is its pre-physics phase, so it has to exist before
         # ``sim.reset()``; sensor initialization only runs on ``PhysicsEvent.PHYSICS_READY``, which is
         # too late. Backends are shared per renderer config, so this stays cheap for many cameras.
-        self._renderer: BaseRenderer | None = None
-        if sim_ctx is not None:
-            self._renderer = sim_ctx.render_context.get_renderer(self.cfg.renderer_cfg)
-            with force_log_level(logging.INFO):
-                logger.info("Using renderer: %s", type(self._renderer).__name__)
+        self._renderer: BaseRenderer = self._sim.render_context.get_renderer(self.cfg.renderer_cfg)
+        with force_log_level(logging.INFO):
+            logger.info("Using renderer: %s", type(self._renderer).__name__)
         # Render data — assigned in _initialize_impl.
         self._render_data = None
         # Frame view — assigned in _initialize_impl.

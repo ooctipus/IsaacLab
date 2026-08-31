@@ -27,14 +27,14 @@ The sample script ``multi_asset.py`` is used as a reference, located in the
 
    .. literalinclude:: ../../../scripts/demos/multi_asset.py
       :language: python
-      :emphasize-lines: 109-131, 135-179, 184-203
+      :emphasize-lines: 100-118, 120-139, 141-174
       :linenos:
 
 This script creates multiple environments, where each environment has:
 
-* a rigid object collection containing a cone, a cube, and a sphere
-* a rigid object that is either a cone, a cube, or a sphere, chosen at random
-* an articulation that is either the ANYmal-C or ANYmal-D robot, chosen at random
+* a rigid object collection containing a cylinder, a cube, and a sphere
+* a rigid object distributed among cylinder, cube, and sphere variants
+* an articulation distributed between the ANYmal-C and ANYmal-D variants
 
 .. image:: ../_static/demos/multi_asset.jpg
   :width: 100%
@@ -50,12 +50,12 @@ more efficient since it uses a single physics view under the hood to handle all 
 
 .. literalinclude:: ../../../scripts/demos/multi_asset.py
    :language: python
-   :lines: 135-179
+   :lines: 120-139
    :dedent:
 
-The configuration :class:`~assets.RigidObjectCollectionCfg` is used to create the collection. It's attribute :attr:`~assets.RigidObjectCollectionCfg.rigid_objects`
-is a dictionary containing :class:`~assets.RigidObjectCfg` objects. The keys serve as unique identifiers for each
-rigid object in the collection.
+The configuration :class:`~assets.RigidObjectCollectionCfg` creates the collection. Its
+:attr:`~assets.RigidObjectCollectionCfg.rigid_objects` attribute is a dictionary containing
+:class:`~assets.RigidObjectCfg` objects. The keys uniquely identify each object in the collection.
 
 
 Spawning different assets under the same prim path
@@ -69,26 +69,22 @@ It is possible to spawn different assets and USDs under the same prim path in ea
 
   .. literalinclude:: ../../../scripts/demos/multi_asset.py
      :language: python
-     :lines: 107-133
+     :lines: 100-118
      :dedent:
 
-  This function allows you to define a list of different assets that can be spawned as rigid objects.
-  When :attr:`~sim.spawners.wrappers.MultiAssetSpawnerCfg.random_choice` is set to True, one asset from the list
-  is randomly selected and spawned at the specified prim path.
+  This function declares the list of rigid-object variants. The clone plan assigns one
+  variant to each environment and gives the spawner its exact prototype paths.
 
 * Similarly, we set the spawn configuration in :class:`~assets.ArticulationCfg` to be
   :class:`~sim.spawners.wrappers.MultiUsdFileCfg`:
 
   .. literalinclude:: ../../../scripts/demos/multi_asset.py
      :language: python
-     :lines: 182-215
+     :lines: 141-174
      :dedent:
 
   Similar to before, this configuration allows the selection of different USD files representing articulated assets.
 
-
-Things to Note
-~~~~~~~~~~~~~~
 
 Similar asset structuring
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -98,21 +94,20 @@ it is essential to have the assets at all the prim locations follow a similar st
 this means that they all must have the same number of links and joints, the same number of collision bodies and
 the same names for them. If that is not the case, the physics parsing of the prims can get affected and fail.
 
-The main purpose of this functionality is to enable the user to create randomized versions of the same asset,
+The main purpose of this functionality is to distribute variants of the same asset,
 for example robots with different link lengths, or rigid objects with different collider shapes.
 
 Physics replication in interactive scene
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-By default, the flag :attr:`scene.InteractiveScene.replicate_physics` is set to True. This flag informs the physics
-engine that the simulation environments are copies of one another so it just needs to parse the first environment
-to understand the entire simulation scene. This helps speed up the simulation scene parsing.
+The :attr:`scene.InteractiveSceneCfg.replicate_physics` flag is enabled by default. The flat clone
+plan gives the physics backend a separate row for every active variant, so heterogeneous assets do
+not require disabling physics replication. The example keeps it enabled.
 
-However, in the case of spawning different assets in different environments, this assumption does not hold
-anymore. Hence the flag :attr:`scene.InteractiveScene.replicate_physics` must be disabled when the spawned assets
-do not share the same structure.
-For a full guide on the template-based cloning system including strategies and collision filtering,
-see :doc:`cloning`.
+Disable physics replication only when a selected backend or prim type requires parsing each
+environment from USD. Newton does not support that mode, and its views currently require a uniform
+body layout, so the example selects one robot and rigid-object variant under Newton. For clone
+combinations and collision filtering, see :doc:`cloning`.
 
 .. literalinclude:: ../../../scripts/demos/multi_asset.py
    :language: python
@@ -122,11 +117,11 @@ see :doc:`cloning`.
 The Code Execution
 ------------------
 
-To execute the script with multiple environments and randomized assets, use the following command:
+To execute the script with multiple environments and distributed asset variants, use the following command:
 
 .. code-block:: bash
 
    uv run --extra isaacsim python scripts/demos/multi_asset.py --num_envs 2048
 
-This command runs the simulation with 2048 environments, each with randomly selected assets.
+This command runs the simulation with 2048 environments populated from the declared asset variants.
 To stop the simulation, you can close the window, or press ``Ctrl+C`` in the terminal.

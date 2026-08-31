@@ -26,6 +26,7 @@ from isaaclab_physx.sensors.joint_wrench.joint_wrench_sensor_data import JointWr
 from pxr import Gf, UsdPhysics
 
 import isaaclab.sim as sim_utils
+from isaaclab import cloner
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets import Articulation, ArticulationCfg
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
@@ -38,6 +39,19 @@ from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
 from isaaclab.utils.configclass import configclass
 
 from isaaclab_assets.robots.ant import ANT_CFG
+
+
+def _create_scene(cfg: InteractiveSceneCfg, sim):
+    """Construct a scene through its cfg-owned clone lifecycle."""
+    with cloner.ReplicateSession(
+        [cfg],
+        cfg.num_envs,
+        cfg.env_spacing,
+        sim.device,
+        env_template=cfg.clone_cfg.clone_template,
+        replicate_physics=cfg.replicate_physics,
+    ):
+        return cfg.class_type(cfg)
 
 
 def _make_single_joint_articulation_cfg() -> ArticulationCfg:
@@ -214,7 +228,7 @@ def test_data_before_init_is_none():
 
 def test_initialization_and_shapes(sim):
     """Sensor initializes on sim reset and exposes correctly-shaped buffers."""
-    scene = InteractiveScene(_SingleJointSceneCfg(num_envs=2))
+    scene = _create_scene(_SingleJointSceneCfg(num_envs=2), sim)
     sim.reset()
 
     robot: Articulation = scene["robot"]
@@ -235,7 +249,7 @@ def test_initialization_and_shapes(sim):
 
 def test_multi_body_articulation(sim):
     """Cartpole exposes a wrench for each link labelled by body name."""
-    scene = InteractiveScene(_CartpoleSceneCfg(num_envs=2))
+    scene = _create_scene(_CartpoleSceneCfg(num_envs=2), sim)
     sim.reset()
 
     robot: Articulation = scene["robot"]
@@ -254,7 +268,7 @@ def test_multi_body_articulation(sim):
 
 def test_nested_articulation_root_resolution(sim):
     """Sensor accepts an asset prim path whose articulation root is nested in the USD asset."""
-    scene = InteractiveScene(_NestedRootAntSceneCfg(num_envs=1))
+    scene = _create_scene(_NestedRootAntSceneCfg(num_envs=1), sim)
     sim.reset()
 
     robot: Articulation = scene["robot"]
@@ -275,7 +289,7 @@ def test_nested_articulation_root_resolution(sim):
 
 def test_force_and_torque_components_at_rest(sim):
     """Component-level validation of force and torque against the PhysX tensor API."""
-    scene = InteractiveScene(_SingleJointSceneCfg(num_envs=1))
+    scene = _create_scene(_SingleJointSceneCfg(num_envs=1), sim)
     sim.reset()
 
     sensor: JointWrenchSensor = scene["wrench"]
@@ -293,7 +307,7 @@ def test_force_and_torque_components_at_rest(sim):
 
 def test_non_identity_joint_frame_transform(sim):
     """PhysX raw body-frame wrench is converted to the child-side joint frame."""
-    scene = InteractiveScene(_SingleJointSceneCfg(num_envs=1))
+    scene = _create_scene(_SingleJointSceneCfg(num_envs=1), sim)
     _set_child_joint_frame(scene, "Arm")
     sim.reset()
 
@@ -318,7 +332,7 @@ def test_non_identity_joint_frame_transform(sim):
 
 def test_wrench_with_external_force_and_torque(sim):
     """Full wrench validation with external force and torque applied."""
-    scene = InteractiveScene(_SingleJointSceneCfg(num_envs=1))
+    scene = _create_scene(_SingleJointSceneCfg(num_envs=1), sim)
     sim.reset()
 
     sensor: JointWrenchSensor = scene["wrench"]
@@ -351,7 +365,7 @@ def test_interior_joint_wrench_at_rest(sim):
     test compares all link entries, including the cart link controlled by the
     interior joint, against the underlying tensor API.
     """
-    scene = InteractiveScene(_CartpoleDampedSceneCfg(num_envs=1))
+    scene = _create_scene(_CartpoleDampedSceneCfg(num_envs=1), sim)
     sim.reset()
 
     sensor: JointWrenchSensor = scene["wrench"]
@@ -375,7 +389,7 @@ def test_interior_joint_wrench_at_rest(sim):
 
 def test_sensor_print(sim):
     """Test that the sensor string representation works."""
-    scene = InteractiveScene(_SingleJointSceneCfg(num_envs=2))
+    scene = _create_scene(_SingleJointSceneCfg(num_envs=2), sim)
     sim.reset()
 
     sensor: JointWrenchSensor = scene["wrench"]
@@ -391,7 +405,7 @@ def test_sensor_print(sim):
 
 def test_reset_zeros_buffers(sim):
     """Resetting the sensor clears the force / torque buffers."""
-    scene = InteractiveScene(_SingleJointSceneCfg(num_envs=2))
+    scene = _create_scene(_SingleJointSceneCfg(num_envs=2), sim)
     sim.reset()
 
     sensor: JointWrenchSensor = scene["wrench"]
@@ -412,7 +426,7 @@ def test_reset_zeros_buffers(sim):
 
 def test_reset_with_env_ids_only_zeros_selected_envs(sim):
     """Partial reset via env_ids should zero the selected envs and preserve the others."""
-    scene = InteractiveScene(_SingleJointSceneCfg(num_envs=4))
+    scene = _create_scene(_SingleJointSceneCfg(num_envs=4), sim)
     sim.reset()
 
     sensor: JointWrenchSensor = scene["wrench"]
@@ -440,7 +454,7 @@ def test_no_stale_data_after_scene_reset(sim):
     step. The joint-wrench sensor's lazy refetch via :attr:`data` must not return PhysX's
     stale post-step buffer for the reset env.
     """
-    scene = InteractiveScene(_SingleJointSceneCfg(num_envs=1))
+    scene = _create_scene(_SingleJointSceneCfg(num_envs=1), sim)
     sim.reset()
 
     sensor: JointWrenchSensor = scene["wrench"]

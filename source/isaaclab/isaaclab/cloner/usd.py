@@ -26,42 +26,21 @@ def _select_env_ids(env_ids: torch.Tensor, mask: torch.Tensor | None, row: int) 
 
 
 class UsdReplicateContext:
-    """Queue and apply USD replication work for one stage."""
+    """Apply one clone-plan mapping to a USD stage."""
 
-    replicate_priority = 100
+    # USD destinations must exist before native physics contexts consume them.
+    replicate_priority = -100
+    clones_whole_env = True
 
-    def __init__(self, stage: Usd.Stage, global_paths: tuple[str, ...] = ()):
+    def __init__(self, stage: Usd.Stage):
         """Initialize the context.
 
         Args:
             stage: USD stage to author replicated prim specs into.
         """
         self.stage = stage
-        self._queue: list[tuple[str, str, torch.Tensor, torch.Tensor | None, torch.Tensor | None]] = []
 
-    def queue(
-        self,
-        source: str,
-        destination: str,
-        env_ids: torch.Tensor,
-        *,
-        positions: torch.Tensor | None = None,
-        quaternions: torch.Tensor | None = None,
-    ) -> None:
-        """Queue one USD source row for replication.
-
-        Args:
-            source: Source prim path.
-            destination: Destination path template with ``"{}"`` for env id.
-            env_ids: Environment ids selected for this source row.
-            positions: Optional per-environment world positions [m]. Authored only for
-                instance-root destination templates (for example, ``.../env_{}``).
-            quaternions: Optional per-environment orientations in xyzw order. Authored only
-                for instance-root destination templates (for example, ``.../env_{}``).
-        """
-        self._queue.append((source, destination, env_ids, positions, quaternions))
-
-    def queue_mapping(
+    def replicate(
         self,
         sources: Sequence[str],
         destinations: Sequence[str],
@@ -71,7 +50,7 @@ class UsdReplicateContext:
         positions: torch.Tensor | None = None,
         quaternions: torch.Tensor | None = None,
     ) -> None:
-        """Queue replication rows from the current flat clone mapping.
+        """Apply replication rows from the current flat clone mapping.
 
         Args:
             sources: Source prim paths.
@@ -83,27 +62,20 @@ class UsdReplicateContext:
             quaternions: Optional per-environment orientations in xyzw order. Authored only
                 for instance-root destination templates (for example, ``.../env_{}``).
         """
-        for i, source in enumerate(sources):
-            self.queue(
-                source,
-                destinations[i],
-                _select_env_ids(env_ids, mask, i),
-                positions=positions,
-                quaternions=quaternions,
-            )
-
-    def replicate(self) -> None:
-        """Apply all queued USD copy specs in parent-before-child order."""
-        if not self._queue:
+        items = [
+            (source, destinations[i], _select_env_ids(env_ids, mask, i), positions, quaternions)
+            for i, source in enumerate(sources)
+        ]
+        if not items:
             return
 
         # Suspend Fabric's per-Sdf.CopySpec notice listener for the duration of the copy work;
         # no-op outside a live Kit application.
         with disabled_fabric_change_notifies(self.stage):
-            self._apply_queue()
+            self._apply(items)
 
-    def _apply_queue(self) -> None:
-        """Author the queued copy specs into the stage's root layer."""
+    def _apply(self, items: list[tuple[str, str, torch.Tensor, torch.Tensor | None, torch.Tensor | None]]) -> None:
+        """Author copy specs into the stage's root layer."""
         rl = self.stage.GetRootLayer()
 
         def dp_depth(template: str) -> int:
@@ -112,7 +84,7 @@ class UsdReplicateContext:
             return Sdf.Path(dp).pathElementCount
 
         depth_to_items: dict[int, list[tuple[str, str, torch.Tensor, torch.Tensor | None, torch.Tensor | None]]] = {}
-        for item in self._queue:
+        for item in items:
             depth_to_items.setdefault(dp_depth(item[1]), []).append(item)
 
         for depth in sorted(depth_to_items.keys()):
@@ -163,34 +135,3 @@ class UsdReplicateContext:
                                     ps, UsdGeom.Tokens.xformOpOrder, Sdf.ValueTypeNames.TokenArray
                                 )
                                 op_order.default = Vt.TokenArray(op_names)
-
-
-def usd_replicate(
-    stage: Usd.Stage,
-    sources: Sequence[str],
-    destinations: Sequence[str],
-    env_ids: torch.Tensor,
-    mask: torch.Tensor | None = None,
-    positions: torch.Tensor | None = None,
-    quaternions: torch.Tensor | None = None,
-) -> None:
-    """Replicate USD prims to per-environment destinations.
-
-    Copies each source prim spec to destination templates for selected environments
-    (``mask``). Optionally authors translate/orient from position/quaternion buffers.
-    Replication runs in path-depth order (parents before children) for robust composition.
-
-    Args:
-        stage: USD stage.
-        sources: Source prim paths.
-        destinations: Destination formattable templates with ``"{}"`` for env index.
-        env_ids: Environment indices.
-        mask: Optional per-source or shared mask. ``None`` selects all.
-        positions: Optional positions [m], shape ``[E, 3]``. Authored as ``xformOp:translate`` only
-            for env-instance root destinations (``.../env_{}``).
-        quaternions: Optional orientations in xyzw order, shape ``[E, 4]``. Authored as
-            ``xformOp:orient`` only for env-instance root destinations (``.../env_{}``).
-    """
-    ctx = UsdReplicateContext(stage)
-    ctx.queue_mapping(sources, destinations, env_ids, mask, positions=positions, quaternions=quaternions)
-    ctx.replicate()

@@ -66,6 +66,7 @@ import torch
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
+from isaaclab.cloner import ReplicateSession
 from isaaclab.markers.config import VisualizationMarkersCfg
 from isaaclab.physics import PhysicsCfg
 from isaaclab.scene import InteractiveSceneCfg
@@ -183,7 +184,6 @@ elif args_cli.asset_type == "objects":
         prim_path="{ENV_REGEX_NS}/Object",
         spawn=sim_utils.MultiAssetSpawnerCfg(
             assets_cfg=object_assets_cfg,
-            random_choice=True,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 solver_position_iteration_count=4, solver_velocity_iteration_count=0
             ),
@@ -314,8 +314,6 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
 def main():
     """Main function."""
     with launch_simulation(cfg=PhysicsCfg(), launcher_args=args_cli) as physics_cfg:
-        from isaaclab.scene import InteractiveScene
-
         # Initialize the simulation context
         sim_cfg = sim_utils.SimulationCfg(
             dt=0.005,
@@ -328,7 +326,17 @@ def main():
         sim.set_camera_view(eye=[3.5, 3.5, 3.5], target=[0.0, 0.0, 0.0])
         # design scene
         scene_cfg = RaycasterSensorSceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0, replicate_physics=True)
-        scene = InteractiveScene(scene_cfg)
+        with ReplicateSession(
+            [scene_cfg],
+            scene_cfg.num_envs,
+            scene_cfg.env_spacing,
+            sim.device,
+            env_template=scene_cfg.clone_cfg.clone_template,
+            replicate_physics=scene_cfg.replicate_physics,
+        ):
+            scene = scene_cfg.class_type(scene_cfg)
+        if scene_cfg.filter_collisions and "physx" in sim.physics_backend:
+            scene.filter_collisions()
 
         if args_cli.asset_type == "objects":
             randomize_shape_color(scene_cfg.asset.prim_path.format(ENV_REGEX_NS="/World/envs/env_.*"))
