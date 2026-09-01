@@ -97,14 +97,8 @@ def test_expand_env_regex_ns_preserves_regex_quantifiers():
 
 def test_make_clone_plan_gives_each_asset_one_flat_row():
     """A homogeneous scene keeps per-asset ownership instead of collapsing into one env row."""
-    robot = _SpawnCfg(
-        prim_path="/World/envs/env_[^/]+/Robot",
-        spawn=sim_utils.CuboidCfg(size=(0.1, 0.1, 0.1)),
-    )
-    table = _SpawnCfg(
-        prim_path="/World/envs/env_[^/]+/Table",
-        spawn=sim_utils.CuboidCfg(size=(0.2, 0.2, 0.1)),
-    )
+    robot = _SpawnCfg(prim_path="/World/envs/env_[^/]+/Robot", spawn=sim_utils.CuboidCfg(size=(0.1, 0.1, 0.1)))
+    table = _SpawnCfg(prim_path="/World/envs/env_[^/]+/Table", spawn=sim_utils.CuboidCfg(size=(0.2, 0.2, 0.1)))
 
     plan = _make_clone_plan([robot, table], num_clones=3, env_spacing=1.0, device="cpu")
 
@@ -258,10 +252,7 @@ def test_plan_derives_cross_environment_collision_roots_from_cfg_data():
 
 def test_plan_rejects_unowned_global_regex_cfgs():
     """Global authors and references need an exact plan-owned destination."""
-    author = _SpawnCfg(
-        prim_path="/World/Origin.*/Robot",
-        spawn=sim_utils.CuboidCfg(size=(0.1, 0.1, 0.1)),
-    )
+    author = _SpawnCfg(prim_path="/World/Origin.*/Robot", spawn=sim_utils.CuboidCfg(size=(0.1, 0.1, 0.1)))
     reference = _SpawnCfg(prim_path="/World/Origin.*/Robot/base", spawn=None)
 
     with pytest.raises(ValueError, match="must use an exact prim path or the session env template"):
@@ -291,10 +282,7 @@ def test_nested_cfg_reuses_parent_rows_without_duplicate_copy():
         prim_path="/World/envs/env_[^/]+/Robot",
         spawn=sim_utils.MultiAssetSpawnerCfg(assets_cfg=[sim_utils.ConeCfg(), sim_utils.SphereCfg()]),
     )
-    camera = _SpawnCfg(
-        prim_path="/World/envs/env_[^/]+/Robot/Camera",
-        spawn=sim_utils.PinholeCameraCfg(),
-    )
+    camera = _SpawnCfg(prim_path="/World/envs/env_[^/]+/Robot/Camera", spawn=sim_utils.PinholeCameraCfg())
 
     plan = _make_clone_plan([camera, robot], num_clones=2, env_spacing=1.0, device="cpu")
 
@@ -313,10 +301,7 @@ def test_nested_cfg_reuses_parent_rows_without_duplicate_copy():
 
 def test_spawnless_reference_reuses_nearest_author_across_roots():
     """A separately supplied sensor cfg remains covered without stage discovery or another copy row."""
-    robot = _SpawnCfg(
-        prim_path="{ENV_REGEX_NS}/Robot",
-        spawn=sim_utils.CuboidCfg(size=(0.1, 0.1, 0.1)),
-    )
+    robot = _SpawnCfg(prim_path="{ENV_REGEX_NS}/Robot", spawn=sim_utils.CuboidCfg(size=(0.1, 0.1, 0.1)))
     sensor = _SpawnCfg(prim_path="{ENV_REGEX_NS}/Robot/Sensor", spawn=None)
 
     plan = _make_clone_plan([sensor, robot], num_clones=2, env_spacing=1.0, device="cpu")

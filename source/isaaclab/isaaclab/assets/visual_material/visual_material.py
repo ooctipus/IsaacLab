@@ -133,16 +133,11 @@ class VisualMaterial(AssetBase):
 
     def _initialize_impl(self) -> None:
         if self._is_per_env:
-            plan_env_ids = self._clone_plan.env_ids.detach().cpu().tolist()
-            columns = {env_id: column for column, env_id in enumerate(plan_env_ids)}
-            material_paths = [""] * len(plan_env_ids)
-            for source_root, destination, source_path, env_ids in cloner.query.iter_sources(
-                self._clone_plan, self.cfg.prim_path
-            ):
+            columns = {env_id: column for column, env_id in enumerate(self._clone_plan.env_ids.tolist())}
+            material_paths = [""] * len(self._clone_plan.env_ids)
+            for root, dest, source_path, env_ids in cloner.query.iter_sources(self._clone_plan, self.cfg.prim_path):
                 for env_id in env_ids:
-                    material_paths[columns[env_id]] = cloner.path.rebase(
-                        source_path, source_root, destination.format(env_id)
-                    )
+                    material_paths[columns[env_id]] = cloner.path.rebase(source_path, root, dest.format(env_id))
             if not all(material_paths):
                 raise ValueError(
                     f"Per-environment material {self._source_material_path!r} must populate every environment."

@@ -747,11 +747,7 @@ def test_heterogeneous_mixed_deformable_rigid_scene_materializes_missing_targets
     """Materialize missing rigid targets beside full-stage deformable clones without duplicates."""
     with _ovphysx_sim_context(device="cuda:0") as sim:
         num_envs = 4
-        cfg = HeterogeneousMixedDeformableRigidSceneCfg(
-            num_envs=num_envs,
-            env_spacing=1.0,
-            lazy_sensor_update=False,
-        )
+        cfg = HeterogeneousMixedDeformableRigidSceneCfg(num_envs=num_envs, env_spacing=1.0, lazy_sensor_update=False)
         scene = cfg.class_type(cfg)
         plan = sim.get_clone_plan()
         assert plan is not None

@@ -243,9 +243,7 @@ class PlaceToy2BoxEnvCfg(ManagerBasedRLEnvCfg):
     """Configuration for the stacking environment."""
 
     # Scene settings
-    scene: ObjectTableSceneCfg = ObjectTableSceneCfg(
-        num_envs=4096, env_spacing=3.0, clone_cfg=CloneCfg(replicate_physics=False)
-    )
+    scene = ObjectTableSceneCfg(num_envs=4096, env_spacing=3.0, clone_cfg=CloneCfg(replicate_physics=False))
     # Basic settings
     observations: ObservationsCfg = ObservationsCfg()
     actions: ActionsCfg = ActionsCfg()

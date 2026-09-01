@@ -612,9 +612,7 @@ class FrankaSoftSceneCfg(PresetCfg):
     newton_mjwarp_vbd_proxy: _FrankaSoftSceneCfg = _FrankaSoftSceneCfg(num_envs=2048, env_spacing=2.0)
 
     # Isaac Sim PhysX does not support replicating physics for deformable objects
-    physx: _FrankaSoftSceneCfg = _FrankaSoftSceneCfg(
-        num_envs=2048, env_spacing=2.0, clone_cfg=CloneCfg(replicate_physics=False)
-    )
+    physx = _FrankaSoftSceneCfg(num_envs=2048, env_spacing=2.0, clone_cfg=CloneCfg(replicate_physics=False))
     isaacsim_physx = physx
     ovphysx: _FrankaSoftSceneCfg = _FrankaSoftSceneCfg(num_envs=2048, env_spacing=2.0)
 
@@ -626,9 +624,7 @@ class FrankaSoftCameraSceneCfg(PresetCfg):
     """Scene presets for visual Franka soft lifting."""
 
     newton_mjwarp_vbd_proxy: _FrankaSoftCameraSceneCfg = _FrankaSoftCameraSceneCfg(num_envs=128, env_spacing=2.0)
-    physx: _FrankaSoftCameraSceneCfg = _FrankaSoftCameraSceneCfg(
-        num_envs=128, env_spacing=2.0, clone_cfg=CloneCfg(replicate_physics=False)
-    )
+    physx = _FrankaSoftCameraSceneCfg(num_envs=128, env_spacing=2.0, clone_cfg=CloneCfg(replicate_physics=False))
     isaacsim_physx = physx
     ovphysx: _FrankaSoftCameraSceneCfg = _FrankaSoftCameraSceneCfg(num_envs=128, env_spacing=2.0)
     default = newton_mjwarp_vbd_proxy
