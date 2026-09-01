@@ -208,11 +208,11 @@ def main() -> None:
     sim_cfg = create_sim_cfg()
     with launch_simulation(sim_cfg, args_cli):
         import isaaclab.sim as sim_utils
+        from isaaclab.scene import InteractiveScene
 
         sim = sim_utils.SimulationContext(sim_cfg)
         sim.set_camera_view(eye=(4.0, -6.0, 4.0), target=(0.0, 0.0, 1.0))
-        scene_cfg = create_scene_cfg()
-        scene = scene_cfg.class_type(scene_cfg)
+        scene = InteractiveScene(create_scene_cfg())
         sim.reset()
         print(
             f"[INFO]: Isaac Lab Newton granular MPM demo ready. Spawned {particle_count(scene)} particles.",

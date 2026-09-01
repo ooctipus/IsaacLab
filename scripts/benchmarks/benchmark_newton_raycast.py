@@ -43,7 +43,7 @@ from isaaclab_newton.sensors import LegacyRayCaster, NewtonRaycastSensorCfg
 import isaaclab.sim as sim_utils
 import isaaclab.terrains as terrain_gen
 from isaaclab.assets import RigidObjectCfg
-from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
 from isaaclab.sensors import RayCasterCfg
 from isaaclab.sensors.ray_caster.patterns import GridPatternCfg
 from isaaclab.terrains import TerrainGeneratorCfg, TerrainImporterCfg
@@ -121,8 +121,7 @@ def main():
     with launch_simulation(cfg=NewtonCfg(solver_cfg=MJWarpSolverCfg()), launcher_args=args_cli) as physics_cfg:
         sim_cfg = sim_utils.SimulationCfg(dt=1 / 200, device=args_cli.device, physics=physics_cfg)
         sim = sim_utils.SimulationContext(sim_cfg)
-        scene_cfg = _make_scene_cfg(args_cli.num_envs)
-        scene = scene_cfg.class_type(scene_cfg)
+        scene = InteractiveScene(_make_scene_cfg(args_cli.num_envs))
         sim.reset()
         sim.step()
         scene.update(sim.get_physics_dt())

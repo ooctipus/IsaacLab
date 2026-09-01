@@ -21,7 +21,7 @@ import isaaclab.sim as sim_utils
 from isaaclab import cloner
 from isaaclab.assets import AssetBaseCfg, CableObjectCfg, RigidObjectCfg
 from isaaclab.envs.mdp.events import reset_scene_to_default
-from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
 from isaaclab.sim import GroundPlaneCfg, SimulationCfg, UsdPhysicsCollisionCfg, build_simulation_context
 from isaaclab.sim.spawners.materials import CableMaterialCfg
 from isaaclab.sim.spawners.shapes import CableCfg
@@ -141,8 +141,7 @@ def test_interactive_scene_manages_newton_cables():
     )
 
     with build_simulation_context(sim_cfg=sim_cfg) as sim:
-        scene_cfg = _CableSceneCfg(num_envs=2, env_spacing=1.0)
-        scene = scene_cfg.class_type(scene_cfg)
+        scene = InteractiveScene(_CableSceneCfg(num_envs=2, env_spacing=1.0))
         sim.reset()
         scene.update(0.0)
 
@@ -253,8 +252,7 @@ def test_cable_mask_writes_update_selected_environments():
     )
 
     with build_simulation_context(sim_cfg=sim_cfg) as sim:
-        scene_cfg = _CableSceneCfg(num_envs=3, env_spacing=1.0)
-        scene = scene_cfg.class_type(scene_cfg)
+        scene = InteractiveScene(_CableSceneCfg(num_envs=3, env_spacing=1.0))
         sim.reset()
         SimulationManager.forward()
         scene.update(0.0)
@@ -322,8 +320,7 @@ def test_proxy_coupler_runs_cable_in_vbd_entry():
     )
 
     with build_simulation_context(sim_cfg=sim_cfg) as sim:
-        scene_cfg = _ProxyCableSceneCfg(num_envs=1, env_spacing=1.0)
-        scene = scene_cfg.class_type(scene_cfg)
+        scene = InteractiveScene(_ProxyCableSceneCfg(num_envs=1, env_spacing=1.0))
         sim.reset()
         scene.update(0.0)
 
@@ -348,8 +345,7 @@ def test_cable_mask_writes_are_cuda_graph_capturable(device):
     )
 
     with build_simulation_context(sim_cfg=sim_cfg) as sim:
-        scene_cfg = _CableSceneCfg(num_envs=3, env_spacing=1.0)
-        scene = scene_cfg.class_type(scene_cfg)
+        scene = InteractiveScene(_CableSceneCfg(num_envs=3, env_spacing=1.0))
         sim.reset()
         scene.update(0.0)
         cable = scene["cable"]
@@ -398,8 +394,7 @@ def test_cable_callback_does_not_retain_asset():
     )
 
     with build_simulation_context(sim_cfg=sim_cfg) as sim:
-        scene_cfg = _CableSceneCfg(num_envs=1, env_spacing=1.0)
-        scene = scene_cfg.class_type(scene_cfg)
+        scene = InteractiveScene(_CableSceneCfg(num_envs=1, env_spacing=1.0))
         sim.reset()
         cable = scene["cable"]
         callback_id = cable._physics_ready_handle.id

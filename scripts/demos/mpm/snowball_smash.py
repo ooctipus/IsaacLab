@@ -351,10 +351,10 @@ def main() -> None:
     sim_cfg = create_sim_cfg()
     with launch_simulation(sim_cfg, args_cli):
         import isaaclab.sim as sim_utils
+        from isaaclab.scene import InteractiveScene
 
         sim = sim_utils.SimulationContext(sim_cfg)
-        scene_cfg = create_scene_cfg()
-        scene = scene_cfg.class_type(scene_cfg)
+        scene = InteractiveScene(create_scene_cfg())
         sim.reset()
         sim.set_camera_view(eye=CAMERA_EYE, target=CAMERA_TARGET)
 

@@ -47,7 +47,7 @@ from isaaclab.assets import AssetBaseCfg
 # Pre-defined configs
 ##
 from isaaclab.physics import PhysicsCfg
-from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
 from isaaclab.utils.configclass import configclass
 
 from isaaclab_assets import CRAZYFLIE_CFG  # isort:skip
@@ -74,8 +74,7 @@ def main():
         # Set main camera
         sim.set_camera_view(eye=[0.25, -0.25, 0.7], target=[0.0, 0.0, 0.5])
 
-        scene_cfg = QuadcopterSceneCfg(num_envs=1, env_spacing=0.0)
-        scene = scene_cfg.class_type(scene_cfg)
+        scene = InteractiveScene(QuadcopterSceneCfg(num_envs=1, env_spacing=0.0))
         robot = scene["robot"]
 
         # Play the simulator

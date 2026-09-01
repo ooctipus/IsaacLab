@@ -246,8 +246,7 @@ def main():
     # Set main camera
     sim.set_camera_view(eye=(8, 0, 4), target=(0.0, 0.0, 0.0))
     # design scene
-    scene_cfg = SimpleSceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0)
-    scene = scene_cfg.class_type(scene_cfg)
+    scene = InteractiveScene(SimpleSceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0))
     # Play the simulator
     sim.reset()
     # Now we are ready!

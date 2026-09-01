@@ -25,7 +25,7 @@ from newton import ShapeFlags
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import RigidObject, RigidObjectCfg
-from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
 from isaaclab.sensors.camera import CameraCfg
 from isaaclab.sensors.ray_caster import MultiMeshRayCaster, MultiMeshRayCasterCamera, RayCasterCamera, RayCasterCfg
 from isaaclab.sensors.ray_caster.patterns import GridPatternCfg
@@ -141,8 +141,7 @@ def test_rays_hit_ground_plane(sim, global_world_only):
 
 def test_generic_ray_caster_uses_newton_scene_bvh(sim):
     """The backend-dispatching ray caster selects the Newton BVH implementation."""
-    scene_cfg = GenericRaycastTestSceneCfg(num_envs=1)
-    scene = scene_cfg.class_type(scene_cfg)
+    scene = InteractiveScene(GenericRaycastTestSceneCfg(num_envs=1))
     sim.reset()
     sensor = _step_and_read(sim, scene)
 
@@ -165,8 +164,7 @@ def test_remaining_warp_mesh_factories_select_legacy_newton_adapters(sim):
 
 def test_bvh_refit_tracks_moving_geometry(sim):
     """Sliding a box under the sensor changes the hits, proving the BVH refits live."""
-    scene_cfg = RaycastTestSceneCfg(num_envs=1)
-    scene = scene_cfg.class_type(scene_cfg)
+    scene = InteractiveScene(RaycastTestSceneCfg(num_envs=1))
     sim.reset()
     sensor = _step_and_read(sim, scene)
     torch.testing.assert_close(
@@ -205,8 +203,7 @@ class RaycastCameraSceneCfg(RaycastTestSceneCfg):
 
 def test_renderer_and_raycast_share_newton_manager_graph(sim):
     """Tiled-camera and ray-cast updates share the Newton manager graph."""
-    scene_cfg = RaycastCameraSceneCfg(num_envs=1)
-    scene = scene_cfg.class_type(scene_cfg)
+    scene = InteractiveScene(RaycastCameraSceneCfg(num_envs=1))
     sim.reset()
     sim.step()
     scene.update(sim.get_physics_dt())

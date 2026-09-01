@@ -137,8 +137,7 @@ class ManagerBasedEnvWarp:
         with Timer("[INFO]: Time taken for scene creation", "scene_creation"):
             # set the stage context for scene creation steps which use the stage
             with use_stage(self.sim.stage):
-                scene_cfg = self.cfg.scene
-                self.scene = scene_cfg.class_type(scene_cfg)
+                self.scene = self.cfg.scene.class_type(self.cfg.scene)
         print("[INFO]: Scene manager: ", self.scene)
 
         # Shared per-env Warp RNG state (accessible to all managers/terms via `env`).

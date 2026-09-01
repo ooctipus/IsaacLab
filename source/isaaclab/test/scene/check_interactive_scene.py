@@ -29,7 +29,7 @@ simulation_app = app_launcher.app
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import AssetBaseCfg
-from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
 from isaaclab.sensors.ray_caster import RayCasterCfg, patterns
 from isaaclab.sim import SimulationContext
 from isaaclab.terrains import TerrainImporterCfg
@@ -86,8 +86,7 @@ def main():
 
     # Spawn things into stage
     with Timer("Setup scene"):
-        scene_cfg = MySceneCfg(num_envs=args_cli.num_envs, env_spacing=5.0, lazy_sensor_update=False)
-        scene = scene_cfg.class_type(scene_cfg)
+        scene = InteractiveScene(MySceneCfg(num_envs=args_cli.num_envs, env_spacing=5.0, lazy_sensor_update=False))
 
     # Check that parsing happened as expected
     assert scene.terrain is not None, "Terrain not found."

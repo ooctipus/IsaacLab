@@ -31,7 +31,7 @@ from pxr import Gf, UsdGeom
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import AssetBaseCfg, RigidObjectCfg, RigidObjectCollectionCfg
-from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
 from isaaclab.utils.configclass import configclass
 
 DOMINO_SIZE = (0.12, 0.032, 0.36)
@@ -145,8 +145,7 @@ def main() -> None:
         sim_cfg = sim_utils.SimulationCfg(dt=1.0 / 120.0, device=args_cli.device, physics=resolved_physics_cfg)
         sim = sim_utils.SimulationContext(sim_cfg)
         sim.set_camera_view(eye=(0.0, -18.0, 15.0), target=(0.0, 0.0, 0.0))
-        scene_cfg = DominoSceneCfg(num_envs=1, env_spacing=1.0)
-        _scene = scene_cfg.class_type(scene_cfg)
+        _scene = InteractiveScene(DominoSceneCfg(num_envs=1, env_spacing=1.0))
         _apply_display_colors()
         NewtonManager._builder.rigid_gap = 0.001
         sim.reset()

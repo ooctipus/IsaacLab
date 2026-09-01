@@ -71,7 +71,7 @@ from pxr import Gf
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import RigidObjectCfg
-from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
 from isaaclab.sim import SimulationCfg, build_simulation_context
 from isaaclab.sim.views import FrameView
 from isaaclab.utils.configclass import configclass
@@ -164,8 +164,7 @@ def benchmark_newton(num_iterations: int) -> dict[str, float]:
     ctx = build_simulation_context(device=args_cli.device, sim_cfg=newton_cfg, add_ground_plane=True)
     sim = ctx.__enter__()
     sim._app_control_on_stop_handle = None
-    _scene_cfg = _SceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0)
-    _scene = _scene_cfg.class_type(_scene_cfg)
+    _scene = InteractiveScene(_SceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0))
 
     stage = sim_utils.get_current_stage()
     for i in range(args_cli.num_envs):

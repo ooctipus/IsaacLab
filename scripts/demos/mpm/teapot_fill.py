@@ -695,10 +695,10 @@ def main() -> None:
             island_usd = bowl_usd = None
 
         import isaaclab.sim as sim_utils
+        from isaaclab.scene import InteractiveScene
 
         sim = sim_utils.SimulationContext(sim_cfg)
-        scene_cfg = create_scene_cfg(container_usd, island_usd, bowl_usd)
-        scene = scene_cfg.class_type(scene_cfg)
+        scene = InteractiveScene(create_scene_cfg(container_usd, island_usd, bowl_usd))
         sim.reset()
         sim.set_camera_view(eye=CAMERA_EYE, target=CAMERA_TARGET)
 

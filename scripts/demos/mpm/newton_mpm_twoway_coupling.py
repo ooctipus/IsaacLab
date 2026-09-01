@@ -29,6 +29,7 @@ from pxr import Gf, Usd, UsdGeom
 
 import isaaclab.sim as sim_utils
 from isaaclab.app import add_launcher_args, launch_simulation
+from isaaclab.scene import InteractiveScene
 
 parser = argparse.ArgumentParser(description="Newton rigid-sphere and MPM-sand two-way coupling demo.")
 parser.add_argument("--max_steps", type=int, default=-1, help="Stop after this many frames; negative runs forever.")
@@ -303,8 +304,7 @@ def main() -> None:
     with launch_simulation(sim_cfg, args_cli):
         sim = sim_utils.SimulationContext(sim_cfg)
         sim.set_camera_view(eye=(6.0, -7.0, 5.0), target=(0.0, 0.4, 1.3))
-        scene_cfg = create_scene_cfg()
-        scene = scene_cfg.class_type(scene_cfg)
+        scene = InteractiveScene(create_scene_cfg())
         sim.reset()
         sand = scene["sand"]
         particle_count = sand.num_instances * sand.particles_per_object

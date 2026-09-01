@@ -40,10 +40,10 @@ from isaaclab_physx.renderers.isaac_rtx_renderer import IsaacRtxRenderer, IsaacR
 from isaaclab_physx.renderers.isaac_rtx_renderer_cfg import IsaacRtxRendererGlobalSettingsCfg
 
 import isaaclab.sim as sim_utils
-from isaaclab import cloner
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
+from isaaclab.cloner import CloneCfg
 from isaaclab.markers import VisualizationMarkersCfg
-from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
 from isaaclab.sensors.camera import CameraCfg
 from isaaclab.sim import build_simulation_context
 from isaaclab.utils.configclass import configclass
@@ -140,8 +140,7 @@ def test_partitioning_isolates_rigid_object(monkeypatch: pytest.MonkeyPatch):
 
     with build_simulation_context(device="cuda:0", dt=1.0 / 60.0) as sim:
         sim._app_control_on_stop_handle = None
-        scene_cfg = _Scene(num_envs=4, env_spacing=0.0, clone_cfg=cloner.CloneCfg(replicate_physics=False))
-        scene = scene_cfg.class_type(scene_cfg)
+        scene = InteractiveScene(_Scene(num_envs=4, env_spacing=0.0, clone_cfg=CloneCfg(replicate_physics=False)))
         sim.reset()
         # one settle step so RigidObject data buffers are populated before we write into them
         sim.step()
@@ -261,8 +260,7 @@ def test_partitioning_isolates_articulation(monkeypatch: pytest.MonkeyPatch):
 
     with build_simulation_context(device="cuda:0", dt=1.0 / 60.0) as sim:
         sim._app_control_on_stop_handle = None
-        scene_cfg = _Scene(num_envs=4, env_spacing=0.0, clone_cfg=cloner.CloneCfg(replicate_physics=False))
-        scene = scene_cfg.class_type(scene_cfg)
+        scene = InteractiveScene(_Scene(num_envs=4, env_spacing=0.0, clone_cfg=CloneCfg(replicate_physics=False)))
         sim.reset()
 
         robot = scene["robot"]
