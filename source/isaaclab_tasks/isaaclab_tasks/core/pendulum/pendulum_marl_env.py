@@ -39,7 +39,7 @@ class PendulumMARLEnv(DirectMARLEnv):
         self._consecutive_upright_steps = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
 
     def _setup_scene(self):
-        plan = cloner.clone_plan_from_env_0(self.cfg, self.scene.num_envs, self.scene.cfg.env_spacing)
+        plan = cloner.clone_plan_from_env_0(self.cfg, self.cfg.scene.num_envs, self.cfg.scene.env_spacing)
         self.robot = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
         self.cfg.ground_cfg.spawn.func(
             self.cfg.ground_cfg.prim_path,

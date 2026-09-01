@@ -68,7 +68,7 @@ Next, we need to expand the initialization and setup steps to construct the data
     from isaaclab import cloner
 
     def _setup_scene(self):
-        plan = cloner.clone_plan_from_env_0(self.cfg, self.scene.num_envs, self.scene.cfg.env_spacing)
+        plan = cloner.clone_plan_from_env_0(self.cfg, self.cfg.scene.num_envs, self.cfg.scene.env_spacing)
         self.robot = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
         self.cfg.ground_cfg.spawn.func(self.cfg.ground_cfg.prim_path, self.cfg.ground_cfg.spawn)
         self.cfg.light_cfg.spawn.func(self.cfg.light_cfg.prim_path, self.cfg.light_cfg.spawn)

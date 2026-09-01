@@ -59,9 +59,9 @@ class AnymalCEnv(DirectRLEnv):
         self._undesired_contact_body_ids, _ = self._contact_sensor.find_sensors(".*THIGH")
 
     def _setup_scene(self):
-        self.cfg.terrain.num_envs = self.scene.num_envs
-        self.cfg.terrain.env_spacing = self.scene.cfg.env_spacing
-        plan = cloner.clone_plan_from_env_0(self.cfg, self.scene.num_envs, self.scene.cfg.env_spacing)
+        self.cfg.terrain.num_envs = self.cfg.scene.num_envs
+        self.cfg.terrain.env_spacing = self.cfg.scene.env_spacing
+        plan = cloner.clone_plan_from_env_0(self.cfg, self.cfg.scene.num_envs, self.cfg.scene.env_spacing)
         self._robot = self.cfg.robot.class_type(self.cfg.robot)
         self._terrain = self.cfg.terrain.class_type(self.cfg.terrain)
         self._contact_sensor = self.cfg.contact_sensor.class_type(self.cfg.contact_sensor)

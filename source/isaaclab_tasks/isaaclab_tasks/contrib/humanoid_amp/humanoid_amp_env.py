@@ -50,7 +50,7 @@ class HumanoidAmpEnv(DirectRLEnv):
         )
 
     def _setup_scene(self):
-        plan = cloner.clone_plan_from_env_0(self.cfg, self.scene.num_envs, self.scene.cfg.env_spacing)
+        plan = cloner.clone_plan_from_env_0(self.cfg, self.cfg.scene.num_envs, self.cfg.scene.env_spacing)
         self.robot = self.cfg.robot.class_type(self.cfg.robot)
         for asset_cfg in (self.cfg.ground, self.cfg.light):
             asset_cfg.spawn.func(

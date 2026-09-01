@@ -524,9 +524,9 @@ class LocomotionWarpEnv(DirectRLEnvWarp):
         self.torch_episode_length_buf = self.episode_length_buf  # already a torch tensor via wp.to_torch
 
     def _setup_scene(self) -> None:
-        self.cfg.terrain.num_envs = self.scene.num_envs
-        self.cfg.terrain.env_spacing = self.scene.cfg.env_spacing
-        plan = cloner.clone_plan_from_env_0(self.cfg, self.scene.num_envs, self.scene.cfg.env_spacing)
+        self.cfg.terrain.num_envs = self.cfg.scene.num_envs
+        self.cfg.terrain.env_spacing = self.cfg.scene.env_spacing
+        plan = cloner.clone_plan_from_env_0(self.cfg, self.cfg.scene.num_envs, self.cfg.scene.env_spacing)
         self.robot = self.cfg.robot.class_type(self.cfg.robot)
         self.terrain = self.cfg.terrain.class_type(self.cfg.terrain)
         self.joint_wrench = self.cfg.joint_wrench.class_type(self.cfg.joint_wrench)

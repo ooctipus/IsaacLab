@@ -709,21 +709,6 @@ class SimulationContext:
             raise RuntimeError("A SimulationContext owns exactly one clone-plan lifecycle.")
         self._clone_plan = plan
 
-    def _validate_clone_plan(self, plan: ClonePlan, env_spacing: float) -> None:
-        """Validate a prospective clone plan against the registered scene."""
-        scene = getattr(self, "_interactive_scene", None)
-        if scene is None:
-            return
-        cfg = scene.cfg
-        if (
-            plan.env_template != cfg.clone_cfg.clone_template
-            or len(plan.env_ids) != cfg.num_envs
-            or env_spacing != cfg.env_spacing
-            or plan.replicate_physics != cfg.clone_cfg.replicate_physics
-            or plan.filter_collisions != cfg.clone_cfg.filter_collisions
-        ):
-            raise ValueError("ClonePlan must match the registered InteractiveSceneCfg.")
-
     @property
     def visualizers(self) -> list[BaseVisualizer]:
         """Returns the list of active visualizers."""

@@ -32,7 +32,7 @@ class EmptyDirectMARLEnv(DirectMARLEnv):
 
     def _setup_scene(self):
         assert self.sim.get_clone_plan() is None
-        plan = cloner.clone_plan_from_env_0(self.cfg, self.scene.num_envs, self.scene.cfg.env_spacing)
+        plan = cloner.clone_plan_from_env_0(self.cfg, self.cfg.scene.num_envs, self.cfg.scene.env_spacing)
         cloner.replicate(plan)
 
 

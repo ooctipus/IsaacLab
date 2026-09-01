@@ -241,13 +241,21 @@ env cfg and own their homogeneous clone lifecycle in ``_setup_scene()``.
 
 
    class CartpoleEnv(DirectRLEnv):
+      cfg: CartpoleEnvCfg
+
       def _setup_scene(self):
-         plan = cloner.clone_plan_from_env_0(self.cfg, self.scene.num_envs, self.scene.cfg.env_spacing)
+         plan = cloner.clone_plan_from_env_0(self.cfg, self.cfg.scene.num_envs, self.cfg.scene.env_spacing)
          self.cartpole = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
          self.cfg.ground_cfg.spawn.func(self.cfg.ground_cfg.prim_path, self.cfg.ground_cfg.spawn)
          self.cfg.light_cfg.spawn.func(self.cfg.light_cfg.prim_path, self.cfg.light_cfg.spawn)
          self.scene.articulations["robot"] = self.cartpole
          cloner.replicate(plan)
+
+Here ``self.cfg`` is the :class:`CartpoleEnvCfg` instance; only ``self.cfg.scene`` is its nested
+:class:`~isaaclab.scene.InteractiveSceneCfg`. The cloner accepts a generic configuration root and
+collects its single :class:`~isaaclab.cloner.CloneCfg` together with every nested prim-authoring cfg.
+It does not inspect the registered scene object. Passing the complete Direct cfg avoids maintaining a
+second asset and sensor list that can omit a camera, marker, or another scene declaration.
 
 The environment base constructs the plain scene registry and invokes ``_setup_scene()``. The setup
 method publishes before cfg-owned constructors and dispatches afterward. Every authored asset cfg
@@ -642,23 +650,43 @@ It is also no longer necessary to ``wrap`` and ``unwrap`` tensors.
 
 **Scene Setup**
 
-IsaacGymEnvs loaded an asset and created one actor handle per environment. In a homogeneous Isaac Lab
-direct environment, the direct env configuration is the complete construction input. It declares
-global assets alongside replicated assets:
+IsaacGymEnvs loaded an asset, created every environment and actor, configured each actor, and retained
+their handles in a loop. A homogeneous Isaac Lab Direct task instead declares those properties in cfgs
+and constructs one plan-owned prototype:
 
-.. code-block:: python
+.. list-table::
+   :widths: 1 1
+   :header-rows: 1
 
-   class CartpoleEnv(DirectRLEnv):
-       def _setup_scene(self):
-           plan = cloner.clone_plan_from_env_0(self.cfg, self.scene.num_envs, self.scene.cfg.env_spacing)
-           self.cartpole = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
-           self.cfg.ground_cfg.spawn.func(self.cfg.ground_cfg.prim_path, self.cfg.ground_cfg.spawn)
-           self.cfg.light_cfg.spawn.func(self.cfg.light_cfg.prim_path, self.cfg.light_cfg.spawn)
-           self.scene.articulations["robot"] = self.cartpole
-           cloner.replicate(plan)
+   * - IsaacGymEnvs
+     - Isaac Lab
+   * - .. code-block:: python
 
-The task owns one explicit two-phase clone lifecycle; it does not loop over environments or discover
-the completed stage.
+          def _create_envs(self):
+              asset = self.gym.load_asset(...)
+              for i in range(self.num_envs):
+                  env = self.gym.create_env(...)
+                  actor = self.gym.create_actor(env, asset, ...)
+                  props = self.gym.get_actor_dof_properties(actor)
+                  props["stiffness"][:] = 0.0
+                  props["damping"][:] = 0.0
+                  self.gym.set_actor_dof_properties(actor, props)
+                  self.envs.append(env)
+                  self.cartpole_handles.append(actor)
+
+     - .. code-block:: python
+
+          # self.cfg is CartpoleEnvCfg
+          def _setup_scene(self):
+              plan = cloner.clone_plan_from_env_0(self.cfg, self.cfg.scene.num_envs, self.cfg.scene.env_spacing)
+              self.cartpole = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
+              self.cfg.ground_cfg.spawn.func(self.cfg.ground_cfg.prim_path, self.cfg.ground_cfg.spawn)
+              self.cfg.light_cfg.spawn.func(self.cfg.light_cfg.prim_path, self.cfg.light_cfg.spawn)
+              self.scene.articulations["robot"] = self.cartpole
+              cloner.replicate(plan)
+
+The task owns one explicit publish, construct, and replicate lifecycle. It neither loops over
+environments nor discovers the completed stage.
 
 
 **Pre and Post Physics Step**

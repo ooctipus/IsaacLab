@@ -168,7 +168,7 @@ class DisassemblyEnv(DirectRLEnv):
         return torch.as_tensor(plug_grasps).to(self.device), torch.as_tensor(disassembly_dists).to(self.device)
 
     def _setup_scene(self):
-        plan = cloner.clone_plan_from_env_0(self.cfg, self.scene.num_envs, self.scene.cfg.env_spacing)
+        plan = cloner.clone_plan_from_env_0(self.cfg, self.cfg.scene.num_envs, self.cfg.scene.env_spacing)
         source_env = self.cfg.scene.clone_cfg.clone_template.format(0)
         for asset_cfg, prim_path in (
             (self.cfg.ground, self.cfg.ground.prim_path),

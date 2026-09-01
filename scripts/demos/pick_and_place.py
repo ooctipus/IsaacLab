@@ -225,7 +225,7 @@ class PickAndPlaceEnv(DirectRLEnv):
             self.instant_controls[:] = self._instant_key_controls["ZEROS"]
 
     def _setup_scene(self):
-        plan = cloner.clone_plan_from_env_0(self.cfg, self.scene.num_envs, self.scene.cfg.env_spacing)
+        plan = cloner.clone_plan_from_env_0(self.cfg, self.cfg.scene.num_envs, self.cfg.scene.env_spacing)
         self.pick_and_place = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
         self.cube = self.cfg.cube_cfg.class_type(self.cfg.cube_cfg)
         self.gripper = self.cfg.gripper_cfg.class_type(self.cfg.gripper_cfg)

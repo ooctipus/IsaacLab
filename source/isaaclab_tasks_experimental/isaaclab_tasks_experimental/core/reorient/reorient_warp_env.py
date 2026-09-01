@@ -674,7 +674,7 @@ class ReorientDirectWarpEnv(DirectRLEnvWarp):
         self.torch_episode_length_buf = self.episode_length_buf  # already a torch tensor via wp.to_torch
 
     def _setup_scene(self):
-        plan = cloner.clone_plan_from_env_0(self.cfg, self.scene.num_envs, self.scene.cfg.env_spacing)
+        plan = cloner.clone_plan_from_env_0(self.cfg, self.cfg.scene.num_envs, self.cfg.scene.env_spacing)
         self.hand = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
         self.object = self.cfg.object_cfg.class_type(self.cfg.object_cfg)
         self._joint_wrench_sensor = None

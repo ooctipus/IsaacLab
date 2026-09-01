@@ -57,7 +57,6 @@ def _build_plan(cfgs: Iterable[Any], num_clones: int, env_spacing: float, *, hom
         env_rows = [row for row, destination in enumerate(plan.destinations) if "{}" in destination]
         if any(not bool(plan.clone_mask[row].all()) or not under(plan.sources[row], source_env) for row in env_rows):
             raise ValueError("clone_plan_from_env_0 requires one homogeneous cfg-derived environment prototype.")
-    sim._validate_clone_plan(plan, env_spacing)
     if UsdReplicateContext in explicit_contexts or needs_usd_scene:
         sim.get_or_create_backend(UsdReplicateContext, sim.stage, clone_role="scene" if needs_usd_scene else None)
     return plan
@@ -146,7 +145,8 @@ def clone_plan_from_env_0(cfg: Any, num_envs: int, env_spacing: float) -> CloneP
     """Build and publish one homogeneous cfg-derived plan before prototype construction.
 
     Args:
-        cfg: Complete configuration root containing the clone policy and every prim author.
+        cfg: Complete configuration root containing one :class:`~isaaclab.cloner.CloneCfg` and every
+            prim-authoring cfg.
         num_envs: Number of target environments.
         env_spacing: Grid spacing between environment origins [m].
 

@@ -229,7 +229,7 @@ class CartpoleWarpEnv(DirectRLEnvWarp):
         self.torch_episode_length_buf = self.episode_length_buf  # already a torch tensor via wp.to_torch
 
     def _setup_scene(self) -> None:
-        plan = cloner.clone_plan_from_env_0(self.cfg, self.scene.num_envs, self.scene.cfg.env_spacing)
+        plan = cloner.clone_plan_from_env_0(self.cfg, self.cfg.scene.num_envs, self.cfg.scene.env_spacing)
         self.cartpole = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
         if self.cfg.ground_cfg is not None:
             self.cfg.ground_cfg.spawn.func(
