@@ -37,9 +37,8 @@ simulation_app = app_launcher.app
 import torch
 
 import isaaclab.sim as sim_utils
-from isaaclab import cloner as lab_cloner
 from isaaclab.assets import AssetBaseCfg
-from isaaclab.cloner import ReplicateSession
+from isaaclab.cloner import CloneCfg, ReplicateSession
 from isaaclab.sensors.contact_sensor import ContactSensorCfg
 from isaaclab.sim import SimulationCfg, SimulationContext
 from isaaclab.utils.timer import Timer
@@ -88,22 +87,11 @@ def main():
         debug_vis=False,  # not args_cli.headless,
         filter_prim_paths_expr=["/World/defaultGroundPlane/GroundPlane/CollisionPlane"],
     )
-    with ReplicateSession([ground_cfg, light_cfg, robot_cfg, contact_sensor_cfg], num_envs, 2.0, sim.device):
+    with ReplicateSession([CloneCfg(), ground_cfg, light_cfg, robot_cfg, contact_sensor_cfg], num_envs, 2.0):
         ground_cfg.spawn.func(ground_cfg.prim_path, ground_cfg.spawn)
         light_cfg.spawn.func(light_cfg.prim_path, light_cfg.spawn, translation=light_cfg.init_state.pos)
         robot = robot_cfg.class_type(robot_cfg)
         contact_sensor = contact_sensor_cfg.class_type(contact_sensor_cfg)
-    # filter collisions within each environment instance
-    plan = sim.get_clone_plan()
-    assert plan is not None
-    lab_cloner.filter_collisions(
-        sim.stage,
-        sim.cfg.physics_prim_path,
-        "/World/collisions",
-        lab_cloner.query.env_root_paths(plan),
-        global_paths=list(plan.collision_paths),
-    )
-
     # Play the simulator
     sim.reset()
     # print info

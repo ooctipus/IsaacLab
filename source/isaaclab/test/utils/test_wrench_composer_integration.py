@@ -47,7 +47,7 @@ def generate_cubes_scene(
         spawn=spawn_cfg,
         init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, height)),
     )
-    with cloner.ReplicateSession([cube_object_cfg], num_cubes, 1.0, device, env_template="/World/Table_{}"):
+    with cloner.ReplicateSession([cloner.CloneCfg(clone_template="/World/Table_{}"), cube_object_cfg], num_cubes, 1.0):
         cube_object = cube_object_cfg.class_type(cube_object_cfg)
     return cube_object, origins
 

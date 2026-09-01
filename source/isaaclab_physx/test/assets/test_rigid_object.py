@@ -32,7 +32,7 @@ import omni.physx
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import RigidObjectCfg
-from isaaclab.cloner import ReplicateSession
+from isaaclab.cloner import CloneCfg, ReplicateSession
 from isaaclab.sim import SimulationContext, build_simulation_context
 from isaaclab.sim.spawners import materials
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
@@ -93,7 +93,7 @@ def generate_cubes_scene(
         spawn=spawn_cfg,
         init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, height)),
     )
-    with ReplicateSession([cube_object_cfg], num_cubes, 1.0, device, env_template="/World/Table_{}"):
+    with ReplicateSession([CloneCfg(clone_template="/World/Table_{}"), cube_object_cfg], num_cubes, 1.0):
         cube_object = cube_object_cfg.class_type(cube_object_cfg)
     origins = SimulationContext.instance().get_clone_plan().positions
 

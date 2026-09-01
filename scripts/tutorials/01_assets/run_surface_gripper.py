@@ -65,12 +65,8 @@ def design_scene(sim: SimulationContext) -> tuple[dict, torch.Tensor]:
     gripper_cfg.shear_force_limit = 500.0  # [N] (Force limit in the direction perpendicular direction)
     gripper_cfg.coaxial_force_limit = 500.0  # [N] (Force limit in the direction of the gripper's axis)
     gripper_cfg.retry_interval = 0.1  # seconds (Time the gripper will stay in a grasping state)
-    with cloner.ReplicateSession(
-        (ground_cfg, light_cfg, robot_cfg, gripper_cfg),
-        2,
-        5.5,
-        sim.device,
-        env_template="/World/Origin{}",
+    with cloner.from_env_0(
+        (cloner.CloneCfg(clone_template="/World/Origin{}"), ground_cfg, light_cfg, robot_cfg, gripper_cfg), 2, 5.5
     ):
         ground_cfg.spawn.func(ground_cfg.prim_path, ground_cfg.spawn)
         light_cfg.spawn.func(light_cfg.prim_path, light_cfg.spawn)

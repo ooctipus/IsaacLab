@@ -229,7 +229,7 @@ def setup_nut_rgb_ff():
 def test_sensor_minimum_config(setup_minimum_config):
     """Test sensor with minimal configuration (no camera, no force field)."""
     sim, sensor_cfg, dt, robot_cfg, object_cfg, nut_cfg = setup_minimum_config
-    with cloner.ReplicateSession([robot_cfg, sensor_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), robot_cfg, sensor_cfg], 1, 0.0):
         _ = robot_cfg.class_type(robot_cfg)
         sensor_minimum = sensor_cfg.class_type(sensor_cfg)
     sim.reset()
@@ -261,7 +261,7 @@ def test_sensor_cam_size_false(setup_tactile_cam):
     """Test sensor initialization fails with incorrect camera image size."""
     sim, sensor_cfg, dt, robot_cfg, object_cfg, nut_cfg = setup_tactile_cam
     sensor_cfg.camera_cfg.height = 80
-    with cloner.ReplicateSession([sensor_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), sensor_cfg], 1, 0.0):
         _ = sensor_cfg.class_type(sensor_cfg)
     with pytest.raises(ValueError) as excinfo:
         sim.reset()
@@ -273,7 +273,7 @@ def test_sensor_cam_type_false(setup_tactile_cam):
     """Test sensor initialization fails with unsupported camera data types."""
     sim, sensor_cfg, dt, robot_cfg, object_cfg, nut_cfg = setup_tactile_cam
     sensor_cfg.camera_cfg.data_types = ["rgb"]
-    with cloner.ReplicateSession([sensor_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), sensor_cfg], 1, 0.0):
         _ = sensor_cfg.class_type(sensor_cfg)
     with pytest.raises(ValueError) as excinfo:
         sim.reset()
@@ -284,7 +284,7 @@ def test_sensor_cam_type_false(setup_tactile_cam):
 def test_sensor_cam_set(setup_tactile_cam):
     """Test sensor with camera configuration using existing camera prim."""
     sim, sensor_cfg, dt, robot_cfg, object_cfg, nut_cfg = setup_tactile_cam
-    with cloner.ReplicateSession([robot_cfg, sensor_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), robot_cfg, sensor_cfg], 1, 0.0):
         robot = robot_cfg.class_type(robot_cfg)
         sensor = sensor_cfg.class_type(sensor_cfg)
     sim.reset()
@@ -311,7 +311,7 @@ def test_sensor_cam_set_wrong_prim(setup_tactile_cam):
     """Test sensor initialization fails with invalid camera prim path."""
     sim, sensor_cfg, dt, robot_cfg, object_cfg, nut_cfg = setup_tactile_cam
     sensor_cfg.camera_cfg.prim_path = "/World/Robot/elastomer_tip/cam_wrong"
-    with cloner.ReplicateSession([robot_cfg, sensor_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), robot_cfg, sensor_cfg], 1, 0.0):
         robot = robot_cfg.class_type(robot_cfg)
         sensor = sensor_cfg.class_type(sensor_cfg)
     with pytest.raises(RuntimeError) as excinfo:
@@ -330,7 +330,7 @@ def test_sensor_cam_new_spawn(setup_tactile_cam):
     sensor_cfg.camera_cfg.spawn = sim_utils.PinholeCameraCfg(
         focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.01, 1.0e5)
     )
-    with cloner.ReplicateSession([robot_cfg, sensor_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), robot_cfg, sensor_cfg], 1, 0.0):
         robot = robot_cfg.class_type(robot_cfg)
         sensor = sensor_cfg.class_type(sensor_cfg)
     sim.reset()
@@ -353,7 +353,7 @@ def test_sensor_cam_new_spawn(setup_tactile_cam):
 def test_sensor_rgb_forcefield(setup_nut_rgb_ff):
     """Test sensor with both camera and force field enabled, detecting contact forces."""
     sim, sensor_cfg, dt, robot_cfg, cube_cfg, nut_cfg = setup_nut_rgb_ff
-    with cloner.ReplicateSession([robot_cfg, sensor_cfg, nut_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), robot_cfg, sensor_cfg, nut_cfg], 1, 0.0):
         robot = robot_cfg.class_type(robot_cfg)
         sensor = sensor_cfg.class_type(sensor_cfg)
         nut = nut_cfg.class_type(nut_cfg)
@@ -386,7 +386,7 @@ def test_sensor_no_contact_object(setup_nut_rgb_ff):
     """Test sensor with force field but no contact object specified."""
     sim, sensor_cfg, dt, robot_cfg, cube_cfg, nut_cfg = setup_nut_rgb_ff
     sensor_cfg.contact_object_prim_path_expr = None
-    with cloner.ReplicateSession([robot_cfg, sensor_cfg, nut_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), robot_cfg, sensor_cfg, nut_cfg], 1, 0.0):
         robot = robot_cfg.class_type(robot_cfg)
         sensor = sensor_cfg.class_type(sensor_cfg)
         nut = nut_cfg.class_type(nut_cfg)
@@ -415,7 +415,7 @@ def test_sensor_force_field_contact_object_not_found(setup_nut_rgb_ff):
 
     sensor_cfg.enable_camera_tactile = False
     sensor_cfg.contact_object_prim_path_expr = "/World/Nut/wrong_prim"
-    with cloner.ReplicateSession([robot_cfg, sensor_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), robot_cfg, sensor_cfg], 1, 0.0):
         robot = robot_cfg.class_type(robot_cfg)
         sensor = sensor_cfg.class_type(sensor_cfg)
     with pytest.raises(RuntimeError) as excinfo:
@@ -431,7 +431,7 @@ def test_sensor_force_field_contact_object_no_sdf(setup_nut_rgb_ff):
     sim, sensor_cfg, dt, robot_cfg, cube_cfg, NutCfg = setup_nut_rgb_ff
     sensor_cfg.enable_camera_tactile = False
     sensor_cfg.contact_object_prim_path_expr = "/World/Cube"
-    with cloner.ReplicateSession([robot_cfg, sensor_cfg, cube_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), robot_cfg, sensor_cfg, cube_cfg], 1, 0.0):
         robot = robot_cfg.class_type(robot_cfg)
         sensor = sensor_cfg.class_type(sensor_cfg)
         cube = cube_cfg.class_type(cube_cfg)
@@ -449,7 +449,7 @@ def test_sensor_update_period_mismatch(setup_nut_rgb_ff):
     sim, sensor_cfg, dt, robot_cfg, cube_cfg, nut_cfg = setup_nut_rgb_ff
     sensor_cfg.update_period = dt
     sensor_cfg.camera_cfg.update_period = dt * 2
-    with cloner.ReplicateSession([robot_cfg, sensor_cfg, nut_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), robot_cfg, sensor_cfg, nut_cfg], 1, 0.0):
         robot = robot_cfg.class_type(robot_cfg)
         sensor = sensor_cfg.class_type(sensor_cfg)
         nut = nut_cfg.class_type(nut_cfg)

@@ -90,34 +90,31 @@ def Xform "Robot"
     with build_simulation_context(
         device="cuda:0", gravity_enabled=False, add_ground_plane=False, auto_add_lighting=False
     ) as sim:
-        cfg = _VisualMaterialSceneCfg(num_envs=12, env_spacing=1.0, replicate_physics=False, filter_collisions=False)
+        cfg = _VisualMaterialSceneCfg(
+            num_envs=12,
+            env_spacing=1.0,
+            clone_cfg=cloner.CloneCfg(replicate_physics=False, filter_collisions=False),
+        )
         for variant in cfg.robot.spawn.assets_cfg:
             variant.usd_path = str(asset_path)
 
-        with cloner.ReplicateSession(
-            [cfg],
-            cfg.num_envs,
-            cfg.env_spacing,
-            sim.device,
-            env_template=cfg.clone_cfg.clone_template,
-            replicate_physics=cfg.replicate_physics,
-        ):
-            scene = cfg.class_type(cfg)
+        scene = cfg.class_type(cfg)
         sim.reset()
+        plan = sim.get_clone_plan()
 
         assert scene.num_envs == 12
-        assert len(scene.clone_plan.sources) == 4
-        assert scene.clone_plan.destinations == ("/World/envs/env_{}/Robot",) * 3 + ("/World/shared",)
-        assert scene.clone_plan.cfg_rows[id(cfg.robot)] == (0, 1, 2)
-        assert scene.clone_plan.cfg_rows[id(cfg.warm)] == (0, 1, 2)
-        assert scene.clone_plan.cfg_rows[id(cfg.cool)] == (0, 1, 2)
+        assert len(plan.sources) == 4
+        assert plan.destinations == ("/World/envs/env_{}/Robot",) * 3 + ("/World/shared",)
+        assert plan.cfg_rows[id(cfg.robot)] == (0, 1, 2)
+        assert plan.cfg_rows[id(cfg.warm)] == (0, 1, 2)
+        assert plan.cfg_rows[id(cfg.cool)] == (0, 1, 2)
         assert scene["warm"].num_instances == scene["cool"].num_instances == 12
         assert scene["shared"].num_instances == 1
-        robot_rows = scene.clone_plan.cfg_rows[id(cfg.robot)]
+        robot_rows = plan.cfg_rows[id(cfg.robot)]
         for env_id in range(scene.num_envs):
             for cloned_material in ("warm", "cool"):
                 assert scene.stage.GetPrimAtPath(f"/World/envs/env_{env_id}/Robot/{cloned_material}").IsValid()
-            variant = next(index for index, row in enumerate(robot_rows) if scene.clone_plan.clone_mask[row, env_id])
+            variant = next(index for index, row in enumerate(robot_rows) if plan.clone_mask[row, env_id])
             material_name = ("warm", "cool", None)[variant]
             material_path = (
                 "/World/shared" if material_name is None else f"/World/envs/env_{env_id}/Robot/{material_name}"

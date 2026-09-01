@@ -56,7 +56,7 @@ def test_asset_configs(registered_entities, device):
             # name the prim path
             entity_cfg.prim_path = "/World/asset"
             # create the asset / sensors
-            with cloner.ReplicateSession([entity_cfg], 1, 0.0, sim.device):
+            with cloner.ReplicateSession([cloner.CloneCfg(), entity_cfg], 1, 0.0):
                 entity: AssetBase = entity_cfg.class_type(entity_cfg)  # type: ignore
 
             # play the sim

@@ -92,7 +92,6 @@ from isaaclab_physx.sim.spawners.materials import PhysxRigidBodyMaterialCfg
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
-from isaaclab.cloner import ReplicateSession
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
 from isaaclab.sensors import CameraCfg
 from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR
@@ -407,17 +406,7 @@ def main():
             f"Invalid contact object type: '{args_cli.contact_object_type}'. Must be 'none', 'cube', or 'nut'."
         )
 
-    with ReplicateSession(
-        [scene_cfg],
-        scene_cfg.num_envs,
-        scene_cfg.env_spacing,
-        sim.device,
-        env_template=scene_cfg.clone_cfg.clone_template,
-        replicate_physics=scene_cfg.replicate_physics,
-    ):
-        scene = scene_cfg.class_type(scene_cfg)
-    if scene_cfg.filter_collisions and "physx" in sim.physics_backend:
-        scene.filter_collisions()
+    scene = scene_cfg.class_type(scene_cfg)
 
     # Initialize simulation
     sim.reset()

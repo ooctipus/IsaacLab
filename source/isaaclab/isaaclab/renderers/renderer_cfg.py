@@ -22,4 +22,7 @@ class RendererCfg:
     class_type: type[BaseRenderer] | str | None = None
     """Renderer implementation class. Concrete configs must set this field."""
 
+    cloning_contexts: tuple[str | type, ...] = ()
+    """Whole-scene clone contexts required by this renderer."""
+
     renderer_type: str = "default"

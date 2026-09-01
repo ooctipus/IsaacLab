@@ -28,16 +28,16 @@ class CartpoleCameraEnv(CartpoleEnv):
         if isinstance(cfg.observation_space, list):
             cfg.observation_space = [
                 int(cfg.observation_space[0]) * cfg.frame_stack,
-                int(cfg.scene.camera.height),
-                int(cfg.scene.camera.width),
+                int(cfg.tiled_camera.height),
+                int(cfg.tiled_camera.width),
             ]
 
         super().__init__(cfg, render_mode, **kwargs)
 
-        if len(self.cfg.scene.camera.data_types) != 1:
+        if len(self.cfg.tiled_camera.data_types) != 1:
             raise ValueError(
                 "The Cartpole camera environment only supports one image type at a time but the following were"
-                f" provided: {self.cfg.scene.camera.data_types}"
+                f" provided: {self.cfg.tiled_camera.data_types}"
             )
 
         self._stack: CircularBuffer | None = None
@@ -51,10 +51,11 @@ class CartpoleCameraEnv(CartpoleEnv):
     def _setup_scene(self):
         """Setup the scene with the cartpole and camera (no ground plane, which obstructs the view)."""
         super()._setup_scene()
-        self._tiled_camera = self.scene["camera"]
+        self._tiled_camera = self.cfg.tiled_camera.class_type(self.cfg.tiled_camera)
+        self.scene.sensors["tiled_camera"] = self._tiled_camera
 
     def _get_observations(self) -> dict:
-        data_type = self.cfg.scene.camera.data_types[0]
+        data_type = self.cfg.tiled_camera.data_types[0]
         camera_data = self._tiled_camera.data.output[data_type]
 
         rgb_like = is_rgb_like(data_type)

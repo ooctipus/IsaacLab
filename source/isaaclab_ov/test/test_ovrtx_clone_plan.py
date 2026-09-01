@@ -155,6 +155,7 @@ def test_clone_sources_in_ovrtx_uses_active_plan_rows():
         ),
         env_ids=torch.arange(4),
         positions=torch.zeros((4, 3)),
+        replicate_physics=True,
     )
     clone_calls: list[tuple[str, list[str]]] = []
 
@@ -183,6 +184,7 @@ def test_clone_sources_in_ovrtx_raises_on_clone_failure():
         clone_mask=torch.ones((1, 2), dtype=torch.bool),
         env_ids=torch.arange(2),
         positions=torch.zeros((2, 3)),
+        replicate_physics=True,
     )
 
     def _clone_usd(source: str, target_paths: list[str]) -> None:
@@ -204,6 +206,7 @@ def test_clone_sources_in_ovrtx_writes_plan_positions_after_cloning():
         clone_mask=torch.ones((1, 3), dtype=torch.bool),
         env_ids=torch.tensor([5, 11, 3]),
         positions=positions,
+        replicate_physics=True,
     )
     call_order: list[str] = []
     clone_calls: list[tuple[str, list[str]]] = []
@@ -244,6 +247,7 @@ def test_clone_sources_ovstage_writes_plan_positions_after_cloning(monkeypatch: 
         clone_mask=torch.tensor([[True, False, False], [False, True, True]]),
         env_ids=torch.tensor([7, 3, 12]),
         positions=positions,
+        replicate_physics=True,
     )
     events: list[tuple[str, str, object]] = []
     xforms: list[np.ndarray] = []
@@ -307,21 +311,9 @@ def test_write_file_creates_parent_directory_and_writes_utf8(tmp_path: Path):
     assert output_path.read_text(encoding="utf-8") == "#usda 1.0\n"
 
 
-@pytest.mark.parametrize(
-    "clone_plan",
-    [
-        None,
-        ClonePlan(
-            sources=("/World/envs/env_0",),
-            destinations=("/World/envs/env_{}",),
-            clone_mask=torch.ones((1, 2), dtype=torch.bool),
-            env_ids=torch.arange(2),
-        ),
-    ],
-)
-def test_prepare_stage_requires_published_plan_positions(monkeypatch: pytest.MonkeyPatch, clone_plan: ClonePlan | None):
-    """OVRTX stage preparation rejects an absent plan and plans missing positions."""
-    _patch_simulation_context(monkeypatch, clone_plan)
+def test_prepare_stage_requires_published_plan(monkeypatch: pytest.MonkeyPatch):
+    """OVRTX stage preparation rejects an absent plan."""
+    _patch_simulation_context(monkeypatch, None)
 
     with pytest.raises(RuntimeError, match="Clone plan with positions is required"):
         _make_ovrtx_renderer_without_backend().prepare_stage(_make_multi_env_stage(2), 2)
@@ -334,6 +326,7 @@ def test_prepare_stage_rejects_non_dense_environment_ids(monkeypatch: pytest.Mon
         clone_mask=torch.ones((1, 2), dtype=torch.bool),
         env_ids=torch.tensor([7, 3]),
         positions=torch.zeros((2, 3)),
+        replicate_physics=True,
     )
     _patch_simulation_context(monkeypatch, plan)
 
@@ -356,6 +349,7 @@ def test_prepare_stage_keeps_material_binding_inside_clone_source(monkeypatch: p
         clone_mask=torch.ones((1, num_envs), dtype=torch.bool),
         env_ids=torch.arange(num_envs),
         positions=torch.zeros((num_envs, 3)),
+        replicate_physics=True,
     )
     _patch_simulation_context(monkeypatch, plan)
     renderer = _make_ovrtx_renderer_without_backend()
@@ -381,6 +375,7 @@ def test_prepare_stage_writes_pre_ovrtx_stage_dump(tmp_path: Path, monkeypatch: 
             clone_mask=torch.ones((1, 2), dtype=torch.bool),
             env_ids=torch.arange(2),
             positions=torch.zeros((2, 3)),
+            replicate_physics=True,
         ),
     )
 
@@ -407,6 +402,7 @@ def test_prepare_stage_skips_temp_usd_write_when_temp_usd_dir_unset(monkeypatch:
             clone_mask=torch.ones((1, 2), dtype=torch.bool),
             env_ids=torch.arange(2),
             positions=torch.zeros((2, 3)),
+            replicate_physics=True,
         ),
     )
     write_calls: list[tuple[Path, str, str]] = []
@@ -519,6 +515,7 @@ def test_prepare_stage_stores_clone_plan_and_exports(monkeypatch: pytest.MonkeyP
         clone_mask=torch.ones((1, num_envs), dtype=torch.bool),
         env_ids=torch.arange(num_envs),
         positions=torch.zeros((num_envs, 3)),
+        replicate_physics=True,
     )
     _patch_simulation_context(monkeypatch, published)
 

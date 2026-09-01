@@ -78,9 +78,9 @@ when the simulation is played.
     implementation.
 
 
-As in the rigid-body tutorial, the clone session receives the complete scene configuration and constructs the
-deformable object through ``cfg.class_type(cfg)``. The same plan supplies every backend with the prototype paths
-and environment origins.
+As in the rigid-body tutorial, the clone session receives the complete declarative cfg roots and constructs the
+deformable object through ``cfg.class_type(cfg)``. Clone consumers receive their routed prototype paths and
+environment origins from the same plan.
 
 .. literalinclude:: ../../../../scripts/tutorials/01_assets/run_deformable_object.py
    :language: python

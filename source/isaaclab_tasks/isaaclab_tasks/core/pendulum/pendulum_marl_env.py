@@ -38,7 +38,20 @@ class PendulumMARLEnv(DirectMARLEnv):
         self._consecutive_upright_steps = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
 
     def _setup_scene(self):
-        self.robot = self.scene["robot"]
+        self.robot = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
+        self.cfg.ground_cfg.spawn.func(
+            self.cfg.ground_cfg.prim_path,
+            self.cfg.ground_cfg.spawn,
+            translation=self.cfg.ground_cfg.init_state.pos,
+            orientation=self.cfg.ground_cfg.init_state.rot,
+        )
+        self.cfg.light_cfg.spawn.func(
+            self.cfg.light_cfg.prim_path,
+            self.cfg.light_cfg.spawn,
+            translation=self.cfg.light_cfg.init_state.pos,
+            orientation=self.cfg.light_cfg.init_state.rot,
+        )
+        self.scene.articulations["robot"] = self.robot
 
     def _pre_physics_step(self, actions: dict[str, torch.Tensor]) -> None:
         self.actions = actions

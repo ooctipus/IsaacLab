@@ -63,7 +63,7 @@ def add_robots() -> Articulation:
     sim = sim_utils.SimulationContext.instance()
     assert sim is not None
     robot_cfg = RIDGEBACK_FRANKA_PANDA_CFG.replace(prim_path="{ENV_REGEX_NS}")
-    with cloner.ReplicateSession([robot_cfg], 2, 2.0, sim.device, env_template="/World/Robot_{}"):
+    with cloner.ReplicateSession([cloner.CloneCfg(clone_template="/World/Robot_{}"), robot_cfg], 2, 2.0):
         robot = robot_cfg.class_type(robot_cfg)
 
     return robot

@@ -83,10 +83,25 @@ class HandoverEnv(DirectMARLEnv):
         self.y_unit_tensor = torch.tensor([0, 1, 0], dtype=torch.float, device=self.device).repeat((self.num_envs, 1))
 
     def _setup_scene(self):
-        self.right_hand = self.scene["right_robot"]
-        self.left_hand = self.scene["left_robot"]
-        self.object = self.scene["object"]
+        self.right_hand = self.cfg.right_robot_cfg.class_type(self.cfg.right_robot_cfg)
+        self.left_hand = self.cfg.left_robot_cfg.class_type(self.cfg.left_robot_cfg)
+        self.object = self.cfg.object_cfg.class_type(self.cfg.object_cfg)
+        self.cfg.ground_cfg.spawn.func(
+            self.cfg.ground_cfg.prim_path,
+            self.cfg.ground_cfg.spawn,
+            translation=self.cfg.ground_cfg.init_state.pos,
+            orientation=self.cfg.ground_cfg.init_state.rot,
+        )
+        self.cfg.light_cfg.spawn.func(
+            self.cfg.light_cfg.prim_path,
+            self.cfg.light_cfg.spawn,
+            translation=self.cfg.light_cfg.init_state.pos,
+            orientation=self.cfg.light_cfg.init_state.rot,
+        )
         self.goal_markers = self.cfg.goal_object_cfg.class_type(self.cfg.goal_object_cfg)
+        self.scene.articulations["right_robot"] = self.right_hand
+        self.scene.articulations["left_robot"] = self.left_hand
+        self.scene.rigid_objects["object"] = self.object
 
     def _pre_physics_step(self, actions: dict[str, torch.Tensor]) -> None:
         self.actions = actions

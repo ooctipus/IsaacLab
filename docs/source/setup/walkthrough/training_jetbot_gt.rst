@@ -67,15 +67,10 @@ Next, we need to expand the initialization and setup steps to construct the data
 .. code-block:: python
 
     def _setup_scene(self):
-        with cloner.ReplicateSession():
-            self.robot = Articulation(self.cfg.robot_cfg)
-            # add ground plane
-            spawn_ground_plane(prim_path="/World/ground", cfg=GroundPlaneCfg())
-        # add articulation to scene
+        self.robot = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
+        self.cfg.ground_cfg.spawn.func(self.cfg.ground_cfg.prim_path, self.cfg.ground_cfg.spawn)
+        self.cfg.light_cfg.spawn.func(self.cfg.light_cfg.prim_path, self.cfg.light_cfg.spawn)
         self.scene.articulations["robot"] = self.robot
-        # add lights
-        light_cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
-        light_cfg.func("/World/Light", light_cfg)
 
         self.visualization_markers = define_markers()
 

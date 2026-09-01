@@ -80,7 +80,7 @@ def test_tiled_camera_deprecation_warning(setup_camera, device):
     camera_cfg.class_type = TiledCamera
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        with cloner.ReplicateSession([camera_cfg], 1, 0.0, sim.device):
+        with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg], 1, 0.0):
             camera = camera_cfg.class_type(camera_cfg)
         deprecation_warnings = [x for x in w if issubclass(x.category, DeprecationWarning)]
         assert len(deprecation_warnings) >= 1
@@ -115,7 +115,7 @@ def test_tiled_camera_is_camera_subclass(setup_camera, device):
     """TiledCamera is a subclass of Camera, so isinstance checks work."""
     sim, camera_cfg, dt = setup_camera
     camera_cfg.class_type = TiledCamera
-    with cloner.ReplicateSession([camera_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg], 1, 0.0):
         camera = camera_cfg.class_type(camera_cfg)
     assert isinstance(camera, Camera)
     assert isinstance(camera, TiledCamera)
@@ -130,7 +130,7 @@ def test_tiled_camera_basic_functionality(setup_camera, device):
     sim, camera_cfg, dt = setup_camera
     # Create camera
     camera_cfg.class_type = TiledCamera
-    with cloner.ReplicateSession([camera_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg], 1, 0.0):
         camera = camera_cfg.class_type(camera_cfg)
     # Play sim
     sim.reset()

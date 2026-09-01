@@ -30,6 +30,9 @@ class KitVisualizerCfg(VisualizerCfg):
     class_type: type[KitVisualizer] | str = "{DIR}.kit_visualizer:KitVisualizer"
     """Visualizer implementation class."""
 
+    cloning_contexts: tuple[str | type, ...] = ("isaaclab.cloner:UsdReplicateContext",)
+    """Clone the complete visualized scene through USD."""
+
     visualizer_type: str = "kit"
     """Type identifier for Kit visualizer."""
 

@@ -22,7 +22,7 @@ from isaaclab.physics import PhysicsManager
 
 
 def test_manager_registers_clone_resources_by_type(monkeypatch):
-    """PhysX declares its USD and native clone resources during manager initialization."""
+    """PhysX declares its native and stage clone resources during manager initialization."""
     stage = object()
     simulation = SimpleNamespace(
         cfg=SimpleNamespace(physics=object(), device="cpu"),
@@ -50,10 +50,9 @@ def test_manager_registers_clone_resources_by_type(monkeypatch):
     PhysxManager.initialize(simulation)
 
     assert simulation.get_or_create_backend.call_args_list == [
-        call(UsdReplicateContext, stage, clone_role="physics"),
         call(PhysxReplicateContext, stage, clone_role="physics"),
+        call(UsdReplicateContext, stage, clone_role="scene"),
     ]
-    assert PhysxReplicateContext.clones_whole_env is True
 
 
 @pytest.mark.parametrize("joint_has_rigid_body_api", [False, True])

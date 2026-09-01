@@ -31,7 +31,6 @@ from pxr import Gf, UsdGeom
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import AssetBaseCfg, RigidObjectCfg, RigidObjectCollectionCfg
-from isaaclab.cloner import ReplicateSession
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils.configclass import configclass
 
@@ -147,20 +146,8 @@ def main() -> None:
         sim = sim_utils.SimulationContext(sim_cfg)
         sim.set_camera_view(eye=(0.0, -18.0, 15.0), target=(0.0, 0.0, 0.0))
         scene_cfg = DominoSceneCfg(num_envs=1, env_spacing=1.0)
-        with ReplicateSession(
-            [scene_cfg],
-            scene_cfg.num_envs,
-            scene_cfg.env_spacing,
-            sim.device,
-            env_template=scene_cfg.clone_cfg.clone_template,
-            replicate_physics=scene_cfg.replicate_physics,
-        ):
-            _scene = scene_cfg.class_type(scene_cfg)
-        if scene_cfg.filter_collisions and "physx" in sim.physics_backend:
-            _scene.filter_collisions()
+        _scene = scene_cfg.class_type(scene_cfg)
         _apply_display_colors()
-        if NewtonManager._builder is None:
-            NewtonManager.instantiate_builder_from_stage()
         NewtonManager._builder.rigid_gap = 0.001
         sim.reset()
         print(

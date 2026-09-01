@@ -18,14 +18,12 @@ import pytest
 import torch
 from PIL import Image, ImageChops
 
-from isaaclab import cloner
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils.images import make_camera_output_grid, normalize_camera_output_for_display
 from isaaclab.utils.warp import ProxyArray
 
 from isaaclab_tasks.core.cartpole.cartpole_direct_camera_env_cfg import (
     CartpoleCameraEnvCfg,
-    CartpoleCameraSceneCfg,
     CartpoleTiledCameraCfg,
 )
 
@@ -1584,7 +1582,7 @@ def rendering_test_shadow_hand(
 
     @configclass
     class _ShadowHandCameraTestEnvCfg(ShadowHandCameraEnvCfg):
-        scene = ShadowHandCameraEnvCfg().scene.replace(camera=_ShadowHandTiledCameraTestCfg())
+        tiled_camera: _ShadowHandTiledCameraTestCfg = _ShadowHandTiledCameraTestCfg()
 
     override_args = [f"presets={_physics_preset_name(physics_backend)},{renderer},{data_types[0]}"]
 
@@ -1592,7 +1590,7 @@ def rendering_test_shadow_hand(
     env_cfg = _apply_overrides_to_env_cfg(env_cfg, override_args)
 
     env_cfg.scene.num_envs = 4
-    env_cfg.scene.camera.data_types = data_types
+    env_cfg.tiled_camera.data_types = data_types
 
     motion_data_type = _motion_data_type(data_types)
     _maybe_enable_physx_determinism_for_motion(env_cfg, physics_backend, motion_data_type)
@@ -1681,7 +1679,7 @@ def rendering_test_shadow_hand_yellow_bg(
 
     @configclass
     class _YellowBgEnvCfg(ShadowHandCameraEnvCfg):
-        scene = ShadowHandCameraEnvCfg().scene.replace(camera=_YellowBgTiledCameraCfg())
+        tiled_camera: _YellowBgTiledCameraCfg = _YellowBgTiledCameraCfg()
 
     env_cfg = _YellowBgEnvCfg()
     env_cfg.feature_extractor.enabled = False
@@ -1734,16 +1732,12 @@ def rendering_test_cartpole(
         motion_vectors = CartpoleTiledCameraCfg.BaseCartpoleTiledCameraCfg(data_types=["motion_vectors"])
 
     @configclass
-    class _CartpoleCameraTestSceneCfg(CartpoleCameraSceneCfg):
-        robot = CARTPOLE_CFG.replace(
+    class _BaseCartpoleCameraEnvTestCfg(CartpoleCameraEnvCfg.BaseCartpoleCameraEnvCfg):
+        robot_cfg = CARTPOLE_CFG.replace(
             prim_path="{ENV_REGEX_NS}/Robot",
             spawn=CARTPOLE_CFG.spawn.replace(semantic_tags=[("class", "cartpole")]),
         )
-        camera: _CartpoleTiledCameraTestCfg = _CartpoleTiledCameraTestCfg()
-
-    @configclass
-    class _BaseCartpoleCameraEnvTestCfg(CartpoleCameraEnvCfg.BaseCartpoleCameraEnvCfg):
-        scene: _CartpoleCameraTestSceneCfg = _CartpoleCameraTestSceneCfg(num_envs=512, env_spacing=20.0)
+        tiled_camera: _CartpoleTiledCameraTestCfg = _CartpoleTiledCameraTestCfg()
 
     @configclass
     class _CartpoleCameraTestEnvCfg(CartpoleCameraEnvCfg):
@@ -1764,9 +1758,9 @@ def rendering_test_cartpole(
     )
 
     env_cfg.scene.num_envs = 4
-    env_cfg.scene.camera.data_types = data_types
-    if getattr(env_cfg.scene.camera.renderer_cfg, "renderer_type", None) == "newton_warp":
-        env_cfg.scene.camera.renderer_cfg.render_order = "pixel_priority"
+    env_cfg.tiled_camera.data_types = data_types
+    if getattr(env_cfg.tiled_camera.renderer_cfg, "renderer_type", None) == "newton_warp":
+        env_cfg.tiled_camera.renderer_cfg.render_order = "pixel_priority"
 
     motion_data_type = _motion_data_type(data_types)
     _maybe_enable_physx_determinism_for_motion(env_cfg, physics_backend, motion_data_type)
@@ -2009,7 +2003,7 @@ def rendering_test_kuka_visual_material_randomization(
         "newton_renderer": NewtonWarpRendererCfg,
         "ovrtx_renderer": OVRTXRendererCfg,
     }[renderer]()
-    scene_cfg = InteractiveSceneCfg(num_envs=4, env_spacing=3.0, replicate_physics=True)
+    scene_cfg = InteractiveSceneCfg(num_envs=4, env_spacing=3.0)
     scene_cfg.sky_light = AssetBaseCfg(
         prim_path="/World/skyLight", spawn=sim_utils.DomeLightCfg(color=(1.0, 1.0, 1.0), intensity=750.0)
     )
@@ -2051,15 +2045,7 @@ def rendering_test_kuka_visual_material_randomization(
                 physics={"newton": NewtonCfg, "physx": PhysxCfg}[physics_backend](),
             )
         )
-        with cloner.ReplicateSession(
-            [scene_cfg],
-            scene_cfg.num_envs,
-            scene_cfg.env_spacing,
-            sim.device,
-            env_template=scene_cfg.clone_cfg.clone_template,
-            replicate_physics=scene_cfg.replicate_physics,
-        ):
-            scene = scene_cfg.class_type(scene_cfg)
+        scene = scene_cfg.class_type(scene_cfg)
         sim.reset()
         scene.reset()
 
@@ -2078,7 +2064,7 @@ def rendering_test_kuka_visual_material_randomization(
         assert set(scene.extras) == {"sky_light"}
         assert set(scene.sensors) == {"base_camera"}
         assert set(scene.visual_materials) == set(material_names)
-        assert len(scene.clone_plan.cfg_rows[id(scene_cfg.robot)]) == 2
+        assert len(sim.get_clone_plan().cfg_rows[id(scene_cfg.robot)]) == 2
         for material_name in material_names:
             material_cfg = SceneEntityCfg(material_name)
             material_cfg.resolve(scene)
@@ -2395,7 +2381,6 @@ def rendering_test_mpm_particles(
         scene: TestMPMParticleCameraSceneCfg = TestMPMParticleCameraSceneCfg(
             num_envs=4,
             env_spacing=3.0,
-            replicate_physics=True,
         )
         reset_cycle: bool = True
         reset_particle_max_yaw: float = 0.0

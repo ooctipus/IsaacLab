@@ -24,28 +24,6 @@ MOTIONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "motions"
 
 
 @configclass
-class HumanoidAmpSceneCfg(InteractiveSceneCfg):
-    """Humanoid, ground, and light constructed through one clone plan."""
-
-    ground = AssetBaseCfg(
-        prim_path="/World/ground",
-        spawn=sim_utils.GroundPlaneCfg(
-            physics_material=sim_utils.RigidBodyMaterialCfg(static_friction=1.0, dynamic_friction=1.0, restitution=0.0)
-        ),
-    )
-    robot: ArticulationCfg = HUMANOID_28_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot").replace(
-        actuators={
-            "body": ImplicitActuatorCfg(
-                joint_names_expr=[".*"], stiffness=None, damping=None, joint_velocity_limit={".*": 100.0}
-            ),
-        },
-    )
-    light = AssetBaseCfg(
-        prim_path="/World/Light", spawn=sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
-    )
-
-
-@configclass
 class HumanoidAmpEnvCfg(DirectRLEnvCfg):
     """Humanoid AMP environment config (base class)."""
 
@@ -80,8 +58,26 @@ class HumanoidAmpEnvCfg(DirectRLEnvCfg):
         physics=PhysxCfg(gpu_found_lost_pairs_capacity=2**23, gpu_total_aggregate_pairs_capacity=2**23),
     )
 
+    # assets
+    ground: AssetBaseCfg = AssetBaseCfg(
+        prim_path="/World/ground",
+        spawn=sim_utils.GroundPlaneCfg(
+            physics_material=sim_utils.RigidBodyMaterialCfg(static_friction=1.0, dynamic_friction=1.0, restitution=0.0)
+        ),
+    )
+    robot: ArticulationCfg = HUMANOID_28_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot").replace(
+        actuators={
+            "body": ImplicitActuatorCfg(
+                joint_names_expr=[".*"], stiffness=None, damping=None, joint_velocity_limit={".*": 100.0}
+            ),
+        },
+    )
+    light: AssetBaseCfg = AssetBaseCfg(
+        prim_path="/World/Light", spawn=sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
+    )
+
     # scene
-    scene: HumanoidAmpSceneCfg = HumanoidAmpSceneCfg(num_envs=4096, env_spacing=10.0, replicate_physics=True)
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=4096, env_spacing=10.0)
 
 
 @configclass

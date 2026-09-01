@@ -80,7 +80,7 @@ def generate_cubes_scene(
             rot=(1.0, 0.0, 0.0, 0.0),
         ),
     )
-    with cloner.ReplicateSession([cube_object_cfg], num_cubes, 1.0, device, env_template="/World/env_{}"):
+    with cloner.ReplicateSession([cloner.CloneCfg(clone_template="/World/env_{}"), cube_object_cfg], num_cubes, 1.0):
         cube_object = cube_object_cfg.class_type(cube_object_cfg)
     return cube_object
 
@@ -114,7 +114,7 @@ def generate_cloth_scene(
             rot=(1.0, 0.0, 0.0, 0.0),
         ),
     )
-    with cloner.ReplicateSession([cloth_object_cfg], num_cloths, 1.0, device, env_template="/World/env_{}"):
+    with cloner.ReplicateSession([cloner.CloneCfg(clone_template="/World/env_{}"), cloth_object_cfg], num_cloths, 1.0):
         return cloth_object_cfg.class_type(cloth_object_cfg)
 
 
@@ -151,7 +151,7 @@ def generate_cuboid_and_cylinder_scene(height: float = 1.0) -> tuple[DeformableO
     )
     sim = sim_utils.SimulationContext.instance()
     assert sim is not None
-    with cloner.ReplicateSession([cuboid_cfg, cylinder_cfg], 1, 0.0, sim.device, env_template="/World/env_{}"):
+    with cloner.ReplicateSession([cloner.CloneCfg(clone_template="/World/env_{}"), cuboid_cfg, cylinder_cfg], 1, 0.0):
         return cuboid_cfg.class_type(cuboid_cfg), cylinder_cfg.class_type(cylinder_cfg)
 
 

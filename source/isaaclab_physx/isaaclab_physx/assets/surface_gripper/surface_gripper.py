@@ -88,7 +88,7 @@ class SurfaceGripper(AssetBase):
             raise RuntimeError("SurfaceGripper requires an active SimulationContext.")
         plan = sim.get_clone_plan()
         if plan is None:
-            raise RuntimeError("SurfaceGripper must be constructed inside a ReplicateSession.")
+            raise RuntimeError("SurfaceGripper must be constructed inside a clone lifecycle.")
         # copy the configuration
         self._cfg = cfg.copy()
         self._cfg.prim_path = cloner.expand_env_regex_ns(self._cfg.prim_path, plan.env_template)

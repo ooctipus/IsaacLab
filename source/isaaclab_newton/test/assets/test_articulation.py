@@ -60,7 +60,7 @@ from isaaclab.actuators import (
 )
 from isaaclab.assets import ArticulationCfg
 from isaaclab.assets.articulation.ordering_resolvers import get_articulation_name_ordering
-from isaaclab.cloner import ReplicateSession
+from isaaclab.cloner import CloneCfg, ReplicateSession
 from isaaclab.controllers import (
     DifferentialIKController,
     DifferentialIKControllerCfg,
@@ -417,7 +417,7 @@ def generate_articulation(
 
     """
     articulation_cfg = articulation_cfg.replace(prim_path="/World/Env_[^/]*/Robot")
-    with ReplicateSession([articulation_cfg], num_articulations, 2.5, device, env_template="/World/Env_{}"):
+    with ReplicateSession([CloneCfg(clone_template="/World/Env_{}"), articulation_cfg], num_articulations, 2.5):
         articulation = articulation_cfg.class_type(articulation_cfg)
         if any(name in articulation_cfg.spawn.usd_path for name in _REVERSED_JOINT_USD_FILES):
             fix_reversed_joints(omni.usd.get_context().get_stage())
@@ -461,7 +461,7 @@ def _setup_franka_at_home_pose(sim, *, zero_actuator_pd: bool = False, disable_g
         cfg.actuators["panda_forearm"].stiffness = 0.0
         cfg.actuators["panda_forearm"].damping = 0.0
     cfg.spawn.rigid_props.disable_gravity = disable_gravity
-    with ReplicateSession([cfg], 1, 0.0, sim.device, env_template="/World/Env_{}"):
+    with ReplicateSession([CloneCfg(clone_template="/World/Env_{}"), cfg], 1, 0.0):
         robot = cfg.class_type(cfg)
     sim.reset()
     assert robot.is_initialized
@@ -856,14 +856,14 @@ def test_mjwarp_ordering_resolver_matches_newton_backend_names(sim, device, grav
         spawn=sim_utils.UsdFileCfg(usd_path=str(fixture_path)),
         actuators={},
     )
-    with ReplicateSession([articulation_cfg], 1, 0.0, sim.device):
+    with ReplicateSession([CloneCfg(), articulation_cfg], 1, 0.0):
         articulation = articulation_cfg.class_type(articulation_cfg)
 
     sim.reset()
     assert articulation.is_initialized
 
-    # Newton's native traversal is depth-first (see NewtonManager.instantiate_builder_from_stage),
-    # so the live backend view already reflects MJWarp order on this branching fixture. These
+    # Newton's native USD import traverses depth-first, so the live backend view already reflects
+    # MJWarp order on this branching fixture. These
     # values are the same ground truth isaaclab_physx's own
     # test_branching_fixture_resolves_distinct_conventions asserts for expected_mjwarp_*_names.
     assert tuple(articulation.backend_joint_names) == BRANCHING_MJWARP_JOINT_NAMES
@@ -908,7 +908,7 @@ def test_branching_fixture_physx_ordering_reorders_newton_to_bfs(sim, device, gr
         joint_ordering="physx",
         body_ordering="physx",
     )
-    with ReplicateSession([articulation_cfg], 1, 0.0, sim.device):
+    with ReplicateSession([CloneCfg(), articulation_cfg], 1, 0.0):
         articulation = articulation_cfg.class_type(articulation_cfg)
 
     sim.reset()
@@ -1497,7 +1497,7 @@ def test_set_body_inertial_properties_updates_inverses(
         actuators={},
         body_ordering="physx",
     )
-    with ReplicateSession([articulation_cfg], 1, 0.0, sim.device):
+    with ReplicateSession([CloneCfg(), articulation_cfg], 1, 0.0):
         articulation = articulation_cfg.class_type(articulation_cfg)
     sim.reset()
     assert articulation.data.body_ordering is not None
@@ -2074,7 +2074,7 @@ def test_out_of_range_default_joint_vel(sim, device, articulation_type):
         "panda_joint1": 100.0,
         "panda_joint[2, 4]": -60.0,
     }
-    with ReplicateSession([articulation_cfg], 1, 0.0, sim.device):
+    with ReplicateSession([CloneCfg(), articulation_cfg], 1, 0.0):
         articulation = articulation_cfg.class_type(articulation_cfg)
 
     # Check that the framework doesn't hold excessive strong references.
@@ -4017,7 +4017,7 @@ def test_heterogeneous_scene_per_view_shapes(sim, device, add_ground_plane, arti
     num_per_type = 1
     franka_cfg = FRANKA_PANDA_CFG.replace(prim_path="/World/Env_[^/]*/Franka")
     anymal_cfg = ANYMAL_C_CFG.replace(prim_path="/World/Env_[^/]*/Anymal")
-    with ReplicateSession([franka_cfg, anymal_cfg], num_per_type, 2.5, sim.device, env_template="/World/Env_{}"):
+    with ReplicateSession([CloneCfg(clone_template="/World/Env_{}"), franka_cfg, anymal_cfg], num_per_type, 2.5):
         franka = franka_cfg.class_type(franka_cfg)
         anymal = anymal_cfg.class_type(anymal_cfg)
     sim.reset()

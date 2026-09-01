@@ -83,8 +83,17 @@ class CabinetDirectEnv(DirectRLEnv):
         }
 
     def _setup_scene(self) -> None:
-        self._robot = self.scene["robot"]
-        self._cabinet = self.scene["cabinet"]
+        self._robot = self.cfg.robot.class_type(self.cfg.robot)
+        self._cabinet = self.cfg.cabinet.class_type(self.cfg.cabinet)
+        for asset_cfg in (self.cfg.plane, self.cfg.light):
+            asset_cfg.spawn.func(
+                asset_cfg.prim_path,
+                asset_cfg.spawn,
+                translation=asset_cfg.init_state.pos,
+                orientation=asset_cfg.init_state.rot,
+            )
+        self.scene.articulations["robot"] = self._robot
+        self.scene.articulations["cabinet"] = self._cabinet
 
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
         self.previous_actions[:] = self.actions

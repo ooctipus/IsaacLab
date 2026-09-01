@@ -43,9 +43,8 @@ from isaaclab_physx.renderers.kit_viewport_utils import _set_kit_camera_view
 
 import isaaclab.sim as sim_utils
 import isaaclab.terrains as terrain_gen
-from isaaclab import cloner as lab_cloner
 from isaaclab.assets import AssetBaseCfg, RigidObject, RigidObjectCfg
-from isaaclab.cloner import ReplicateSession
+from isaaclab.cloner import CloneCfg, ReplicateSession
 from isaaclab.sensors.pva import Pva, PvaCfg
 from isaaclab.sim import SimulationCfg, SimulationContext
 from isaaclab.terrains.config.rough import ROUGH_TERRAINS_CFG
@@ -80,20 +79,11 @@ def design_scene(sim: SimulationContext, num_envs: int = 2048) -> tuple[RigidObj
     )
     pva_cfg = PvaCfg(prim_path="{ENV_REGEX_NS}/ball", debug_vis=args_cli.visualize)
     pva_cfg.visualizer_cfg.markers["arrow"].scale = (1.0, 0.2, 0.2)
-    with ReplicateSession([terrain_cfg, light_cfg, ball_cfg, pva_cfg], num_envs, 2.0, sim.device):
+    with ReplicateSession([CloneCfg(), terrain_cfg, light_cfg, ball_cfg, pva_cfg], num_envs, 2.0):
         _ = terrain_cfg.class_type(terrain_cfg)
         light_cfg.spawn.func(light_cfg.prim_path, light_cfg.spawn)
         balls = ball_cfg.class_type(ball_cfg)
         pva = pva_cfg.class_type(pva_cfg)
-    plan = sim.get_clone_plan()
-    assert plan is not None
-    lab_cloner.filter_collisions(
-        sim.stage,
-        sim.cfg.physics_prim_path,
-        "/World/collisions",
-        lab_cloner.query.env_root_paths(plan),
-        global_paths=list(plan.collision_paths),
-    )
     return balls, pva
 
 

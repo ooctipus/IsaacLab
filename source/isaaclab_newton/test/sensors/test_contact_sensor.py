@@ -46,7 +46,6 @@ from physics.physics_test_utils import (
 )
 
 import isaaclab.sim as sim_utils
-from isaaclab import cloner
 from isaaclab.assets import Articulation, RigidObject, RigidObjectCfg
 from isaaclab.cloner.cloner_cfg import DEFAULT_ENV_TEMPLATE
 from isaaclab.scene import InteractiveSceneCfg
@@ -126,8 +125,7 @@ def test_contact_lifecycle(device: str, use_mujoco_contacts: bool, shape_type: S
             track_air_time=True,
         )
 
-        with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-            scene = scene_cfg.class_type(scene_cfg)
+        scene = scene_cfg.class_type(scene_cfg)
         sim.reset()
         scene.reset()
 
@@ -267,8 +265,7 @@ def test_horizontal_collision_detects_contact(device: str, use_mujoco_contacts: 
             history_length=3,
         )
 
-        with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-            scene = scene_cfg.class_type(scene_cfg)
+        scene = scene_cfg.class_type(scene_cfg)
         sim.reset()
         scene.reset()
 
@@ -376,8 +373,7 @@ def test_resting_object_contact_force(device: str, use_mujoco_contacts: bool):
             prim_path="{ENV_REGEX_NS}/BoxB", update_period=0.0, history_length=1
         )
 
-        with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-            scene = scene_cfg.class_type(scene_cfg)
+        scene = scene_cfg.class_type(scene_cfg)
         sim.reset()
         scene.reset()
 
@@ -458,8 +454,7 @@ def test_higher_drop_produces_larger_impact_force(device: str, use_mujoco_contac
             history_length=1,
         )
 
-        with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-            scene = scene_cfg.class_type(scene_cfg)
+        scene = scene_cfg.class_type(scene_cfg)
         sim.reset()
         scene.reset()
 
@@ -577,8 +572,7 @@ def test_filter_enables_force_matrix(device: str, use_mujoco_contacts: bool):
             filter_prim_paths_expr=["{ENV_REGEX_NS}/ObjectB"],
         )
 
-        with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-            scene = scene_cfg.class_type(scene_cfg)
+        scene = scene_cfg.class_type(scene_cfg)
         sim.reset()
         scene.reset()
 
@@ -711,8 +705,7 @@ def test_track_contact_points_reports_average_position(device: str, use_mujoco_c
             track_contact_points=True,
         )
 
-        with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-            scene = scene_cfg.class_type(scene_cfg)
+        scene = scene_cfg.class_type(scene_cfg)
         sim.reset()
         scene.reset()
 
@@ -884,8 +877,7 @@ def test_finger_contact_sensor_isolation(device: str, use_mujoco_contacts: bool,
             init_state=RigidObjectCfg.InitialStateCfg(pos=default_drop_pos),
         )
 
-        with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-            scene = scene_cfg.class_type(scene_cfg)
+        scene = scene_cfg.class_type(scene_cfg)
         sim.reset()
         scene.reset()
 
@@ -1020,8 +1012,7 @@ def test_sensor_metadata(device: str):
             update_period=0.0,
             history_length=1,
         )
-        with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-            scene = scene_cfg.class_type(scene_cfg)
+        scene = scene_cfg.class_type(scene_cfg)
         sim.reset()
         scene.reset()
 
@@ -1079,8 +1070,7 @@ def test_no_stale_data_after_scene_reset(device: str):
             track_contact_points=True,
         )
 
-        with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-            scene = scene_cfg.class_type(scene_cfg)
+        scene = scene_cfg.class_type(scene_cfg)
         sim.reset()
         scene.reset()
 

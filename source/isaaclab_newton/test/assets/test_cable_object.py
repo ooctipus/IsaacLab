@@ -97,7 +97,7 @@ def test_cable_collides_with_ground():
             ),
             init_state=CableObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 0.8)),
         )
-        with cloner.ReplicateSession([ground_cfg, cable_cfg], 1, 1.0, sim.device):
+        with cloner.ReplicateSession([cloner.CloneCfg(), ground_cfg, cable_cfg], 1, 1.0):
             ground_cfg.spawn.func(ground_cfg.prim_path, ground_cfg.spawn)
             cable = cable_cfg.class_type(cable_cfg)
         sim.reset()
@@ -142,8 +142,7 @@ def test_interactive_scene_manages_newton_cables():
 
     with build_simulation_context(sim_cfg=sim_cfg) as sim:
         scene_cfg = _CableSceneCfg(num_envs=2, env_spacing=1.0)
-        with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-            scene = scene_cfg.class_type(scene_cfg)
+        scene = scene_cfg.class_type(scene_cfg)
         sim.reset()
         scene.update(0.0)
 
@@ -255,8 +254,7 @@ def test_cable_mask_writes_update_selected_environments():
 
     with build_simulation_context(sim_cfg=sim_cfg) as sim:
         scene_cfg = _CableSceneCfg(num_envs=3, env_spacing=1.0)
-        with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-            scene = scene_cfg.class_type(scene_cfg)
+        scene = scene_cfg.class_type(scene_cfg)
         sim.reset()
         SimulationManager.forward()
         scene.update(0.0)
@@ -325,8 +323,7 @@ def test_proxy_coupler_runs_cable_in_vbd_entry():
 
     with build_simulation_context(sim_cfg=sim_cfg) as sim:
         scene_cfg = _ProxyCableSceneCfg(num_envs=1, env_spacing=1.0)
-        with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-            scene = scene_cfg.class_type(scene_cfg)
+        scene = scene_cfg.class_type(scene_cfg)
         sim.reset()
         scene.update(0.0)
 
@@ -352,8 +349,7 @@ def test_cable_mask_writes_are_cuda_graph_capturable(device):
 
     with build_simulation_context(sim_cfg=sim_cfg) as sim:
         scene_cfg = _CableSceneCfg(num_envs=3, env_spacing=1.0)
-        with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-            scene = scene_cfg.class_type(scene_cfg)
+        scene = scene_cfg.class_type(scene_cfg)
         sim.reset()
         scene.update(0.0)
         cable = scene["cable"]
@@ -403,8 +399,7 @@ def test_cable_callback_does_not_retain_asset():
 
     with build_simulation_context(sim_cfg=sim_cfg) as sim:
         scene_cfg = _CableSceneCfg(num_envs=1, env_spacing=1.0)
-        with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-            scene = scene_cfg.class_type(scene_cfg)
+        scene = scene_cfg.class_type(scene_cfg)
         sim.reset()
         cable = scene["cable"]
         callback_id = cable._physics_ready_handle.id

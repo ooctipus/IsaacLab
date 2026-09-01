@@ -453,12 +453,16 @@ def design_scene(
     if ray_cfg is not None:
         camera_cfgs["ray_caster_camera"] = ray_cfg
 
-    with cloner.ReplicateSession(
-        (ground_cfg, light_cfg, *object_cfgs.values(), *camera_cfgs.values()),
+    with cloner.from_env_0(
+        (
+            cloner.CloneCfg(clone_template="/World/Cameras/Camera_{}"),
+            ground_cfg,
+            light_cfg,
+            *object_cfgs.values(),
+            *camera_cfgs.values(),
+        ),
         max(num_tiled_cams, num_standard_cams, num_ray_caster_cams),
         0.0,
-        sim.device,
-        env_template="/World/Cameras/Camera_{}",
     ):
         ground_cfg.spawn.func(ground_cfg.prim_path, ground_cfg.spawn)
         light_cfg.spawn.func(light_cfg.prim_path, light_cfg.spawn)

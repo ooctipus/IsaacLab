@@ -120,7 +120,7 @@ def main():
     light_cfg = sim_utils.DistantLightCfg(intensity=2000)
     light_cfg.func("/World/light", light_cfg)
     with lab_cloner.ReplicateSession(
-        [terrain_importer_cfg, balls_cfg, *object_cfgs, ray_caster_cfg], num_envs, 10.0, sim.device
+        [lab_cloner.CloneCfg(), terrain_importer_cfg, balls_cfg, *object_cfgs, ray_caster_cfg], num_envs, 10.0
     ):
         _terrain = terrain_importer_cfg.class_type(terrain_importer_cfg)
         balls = balls_cfg.class_type(balls_cfg)

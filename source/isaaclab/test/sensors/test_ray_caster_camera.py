@@ -27,6 +27,7 @@ from pxr import Gf
 
 import isaaclab.sim as sim_utils
 from isaaclab import cloner
+from isaaclab.assets import AssetBaseCfg
 from isaaclab.sensors.camera import CameraCfg
 from isaaclab.sensors.ray_caster import RayCasterCameraCfg, patterns
 from isaaclab.sim import PinholeCameraCfg
@@ -119,7 +120,7 @@ def test_camera_init(setup_sim):
     """Test camera initialization."""
     sim, camera_cfg, dt = setup_sim
     # Create camera
-    with cloner.ReplicateSession([camera_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg], 1, 0.0):
         camera = camera_cfg.class_type(camera_cfg)
     # Play sim
     sim.reset()
@@ -157,7 +158,7 @@ def test_camera_resolution(setup_sim):
     """Test camera resolution is correctly set."""
     sim, camera_cfg, dt = setup_sim
     # Create camera
-    with cloner.ReplicateSession([camera_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg], 1, 0.0):
         camera = camera_cfg.class_type(camera_cfg)
     # Play sim
     sim.reset()
@@ -198,7 +199,7 @@ def test_depth_clipping(setup_sim):
     camera_cfg_max = copy.deepcopy(camera_cfg_zero)
     camera_cfg_max.prim_path = "/World/CameraMax"
     camera_cfg_max.depth_clipping_behavior = "max"
-    with cloner.ReplicateSession([camera_cfg_zero, camera_cfg_none, camera_cfg_max], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg_zero, camera_cfg_none, camera_cfg_max], 1, 0.0):
         camera_zero = camera_cfg_zero.class_type(camera_cfg_zero)
         camera_none = camera_cfg_none.class_type(camera_cfg_none)
         camera_max = camera_cfg_max.class_type(camera_cfg_max)
@@ -288,7 +289,9 @@ def test_camera_init_offset(setup_sim):
         convention="world",
     )
     cam_cfg_offset_world.prim_path = "/World/CameraOffsetWorld"
-    with cloner.ReplicateSession([cam_cfg_offset_ros, cam_cfg_offset_opengl, cam_cfg_offset_world], 1, 0.0, sim.device):
+    with cloner.ReplicateSession(
+        [cloner.CloneCfg(), cam_cfg_offset_ros, cam_cfg_offset_opengl, cam_cfg_offset_world], 1, 0.0
+    ):
         camera_ros = cam_cfg_offset_ros.class_type(cam_cfg_offset_ros)
         camera_opengl = cam_cfg_offset_opengl.class_type(cam_cfg_offset_opengl)
         camera_world = cam_cfg_offset_world.class_type(cam_cfg_offset_world)
@@ -318,7 +321,7 @@ def test_camera_init_intrinsic_matrix(setup_sim):
     """Test camera initialization from intrinsic matrix."""
     sim, camera_cfg, dt = setup_sim
     # get the first camera
-    with cloner.ReplicateSession([camera_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg], 1, 0.0):
         camera_1 = camera_cfg.class_type(camera_cfg)
     # get intrinsic matrix
     sim.reset()
@@ -344,7 +347,7 @@ def test_camera_init_intrinsic_matrix(setup_sim):
             "distance_to_image_plane",
         ],
     )
-    with cloner.ReplicateSession([camera_cfg, intrinsic_camera_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg, intrinsic_camera_cfg], 1, 0.0):
         camera_1 = camera_cfg.class_type(camera_cfg)
         camera_2 = intrinsic_camera_cfg.class_type(intrinsic_camera_cfg)
 
@@ -379,7 +382,7 @@ def test_multi_camera_init(setup_sim):
     # -- camera 2
     cam_cfg_2 = copy.deepcopy(camera_cfg)
     cam_cfg_2.prim_path = "/World/Camera_2"
-    with cloner.ReplicateSession([cam_cfg_1, cam_cfg_2], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), cam_cfg_1, cam_cfg_2], 1, 0.0):
         cam_1 = cam_cfg_1.class_type(cam_cfg_1)
         cam_2 = cam_cfg_2.class_type(cam_cfg_2)
 
@@ -409,7 +412,7 @@ def test_multi_camera_init(setup_sim):
 def test_camera_set_world_poses(setup_sim):
     """Test camera function to set specific world pose."""
     sim, camera_cfg, dt = setup_sim
-    with cloner.ReplicateSession([camera_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg], 1, 0.0):
         camera = camera_cfg.class_type(camera_cfg)
     # play sim
     sim.reset()
@@ -429,7 +432,7 @@ def test_camera_set_world_poses(setup_sim):
 def test_camera_set_world_poses_from_view(setup_sim):
     """Test camera function to set specific world pose from view."""
     sim, camera_cfg, dt = setup_sim
-    with cloner.ReplicateSession([camera_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg], 1, 0.0):
         camera = camera_cfg.class_type(camera_cfg)
     # play sim
     sim.reset()
@@ -453,7 +456,7 @@ def test_intrinsic_matrix(setup_sim):
     camera_cfg = copy.deepcopy(camera_cfg)
     camera_cfg.pattern_cfg.height = 240
     camera_cfg.pattern_cfg.width = 320
-    with cloner.ReplicateSession([camera_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg], 1, 0.0):
         camera = camera_cfg.class_type(camera_cfg)
     # play sim
     sim.reset()
@@ -504,7 +507,7 @@ def test_output_equal_to_usdcamera(setup_sim):
         ),
         offset=CameraCfg.OffsetCfg(pos=(0.0, 0.0, 0.0), rot=(0.0, 0.0, 0.0, 1.0)),
     )
-    with cloner.ReplicateSession([camera_cfg_warp, camera_cfg_usd], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg_warp, camera_cfg_usd], 1, 0.0):
         camera_warp = camera_cfg_warp.class_type(camera_cfg_warp)
         camera_usd = camera_cfg_usd.class_type(camera_cfg_usd)
 
@@ -608,7 +611,7 @@ def test_output_equal_to_usdcamera_offset(setup_sim):
             pos=(2.5, 2.5, 4.0), rot=(offset_rot[0], offset_rot[1], offset_rot[2], offset_rot[3]), convention="ros"
         ),
     )
-    with cloner.ReplicateSession([camera_cfg_warp, camera_cfg_usd], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg_warp, camera_cfg_usd], 1, 0.0):
         camera_warp = camera_cfg_warp.class_type(camera_cfg_warp)
         camera_usd = camera_cfg_usd.class_type(camera_cfg_usd)
 
@@ -698,7 +701,17 @@ def test_output_equal_to_usdcamera_prim_offset(setup_sim):
     prim_usd.GetAttribute("xformOp:translate").Set(tuple(POSITION))
     prim_usd.GetAttribute("xformOp:orient").Set(gf_quatf)
 
-    with cloner.ReplicateSession([camera_cfg_warp, camera_cfg_usd], 1, 0.0, sim.device):
+    with cloner.ReplicateSession(
+        [
+            cloner.CloneCfg(),
+            AssetBaseCfg(prim_path="/World/Camera_warp"),
+            AssetBaseCfg(prim_path="/World/Camera_usd"),
+            camera_cfg_warp,
+            camera_cfg_usd,
+        ],
+        1,
+        0.0,
+    ):
         camera_warp = camera_cfg_warp.class_type(camera_cfg_warp)
         camera_usd = camera_cfg_usd.class_type(camera_cfg_usd)
 
@@ -793,7 +806,7 @@ def test_output_equal_to_usd_camera_intrinsics(setup_sim, focal_length):
     camera_warp_cfg.pattern_cfg.vertical_aperture_offset = 0
     camera_usd_cfg.spawn.horizontal_aperture_offset = 0
     camera_usd_cfg.spawn.vertical_aperture_offset = 0
-    with cloner.ReplicateSession([camera_warp_cfg, camera_usd_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_warp_cfg, camera_usd_cfg], 1, 0.0):
         camera_warp = camera_warp_cfg.class_type(camera_warp_cfg)
         camera_usd = camera_usd_cfg.class_type(camera_usd_cfg)
 
@@ -913,7 +926,7 @@ def test_output_equal_to_usd_camera_when_intrinsics_set(setup_sim, focal_length_
             focal_length=focal_length, focus_distance=400.0, horizontal_aperture=aperture, clipping_range=(1e-4, 1.0e5)
         ),
     )
-    with cloner.ReplicateSession([camera_cfg_warp, camera_cfg_usd], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg_warp, camera_cfg_usd], 1, 0.0):
         camera_warp = camera_cfg_warp.class_type(camera_cfg_warp)
         camera_usd = camera_cfg_usd.class_type(camera_cfg_usd)
 
@@ -994,7 +1007,7 @@ def test_sensor_print(setup_sim):
     """Test sensor print is working correctly."""
     sim, camera_cfg, dt = setup_sim
     # Create sensor
-    with cloner.ReplicateSession([camera_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg], 1, 0.0):
         sensor = camera_cfg.class_type(camera_cfg)
     # Play sim
     sim.reset()
@@ -1043,7 +1056,7 @@ def test_depth_clipping_d2ip_and_d2c_are_independent(setup_sim):
     cfg_d2c = copy.deepcopy(base_cfg)
     cfg_d2c.prim_path = "/World/CameraD2C"
     cfg_d2c.data_types = ["distance_to_camera"]
-    with cloner.ReplicateSession([cfg_joint, cfg_d2ip, cfg_d2c], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), cfg_joint, cfg_d2ip, cfg_d2c], 1, 0.0):
         cam_joint = cfg_joint.class_type(cfg_joint)
         cam_d2ip = cfg_d2ip.class_type(cfg_d2ip)
         cam_d2c = cfg_d2c.class_type(cfg_d2c)
@@ -1072,7 +1085,7 @@ def test_depth_clipping_d2ip_and_d2c_are_independent(setup_sim):
 def test_frame_counter_increments_per_update(setup_sim):
     """frame counter must increment by exactly 1 per update() call and reset to 0 on reset()."""
     sim, camera_cfg, dt = setup_sim
-    with cloner.ReplicateSession([camera_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg], 1, 0.0):
         camera = camera_cfg.class_type(camera_cfg)
     sim.reset()
 
@@ -1109,7 +1122,7 @@ def test_set_intrinsic_matrices_updates_output(setup_sim):
     camera_cfg = copy.deepcopy(camera_cfg)
     camera_cfg.offset = RayCasterCameraCfg.OffsetCfg(pos=(0.0, 0.0, 5.0), rot=(0.0, 0.0, 0.0, 1.0), convention="world")
     camera_cfg.data_types = ["distance_to_camera"]
-    with cloner.ReplicateSession([camera_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg], 1, 0.0):
         camera = camera_cfg.class_type(camera_cfg)
     sim.reset()
 

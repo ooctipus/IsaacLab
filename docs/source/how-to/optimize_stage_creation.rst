@@ -37,7 +37,6 @@ to the USD context when ``SimulationContext`` is created with ``create_stage_in_
 
 .. code-block:: python
 
-    from isaaclab import cloner
     from isaaclab.sim import SimulationCfg, SimulationContext
     from isaaclab.sim.utils import use_stage
 
@@ -49,10 +48,7 @@ to the USD context when ``SimulationContext`` is created with ``create_stage_in_
     with use_stage(sim.stage):
         # create cartpole scene
         scene_cfg = CartpoleSceneCfg(num_envs=1024, env_spacing=2.0)
-        with cloner.ReplicateSession(
-            [scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device
-        ):
-            scene = scene_cfg.class_type(scene_cfg)
+        scene = scene_cfg.class_type(scene_cfg)
 
     sim.play()
 

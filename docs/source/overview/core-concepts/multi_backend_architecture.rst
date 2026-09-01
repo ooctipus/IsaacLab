@@ -138,27 +138,23 @@ construction and initialization.
 Scene Construction and Cloning
 ------------------------------
 
-Every environment uses one :class:`~isaaclab.cloner.ReplicateSession`. The session derives a flat
-:class:`~isaaclab.cloner.ClonePlan` from the resolved environment configuration and publishes it before
-constructing the scene. Asset and sensor constructors query that plan for their exact prototype paths.
-When construction finishes, the session dispatches the same plan once to every registered clone context.
+A declarative :class:`~isaaclab.scene.InteractiveScene` owns one clone lifecycle. It derives a flat
+:class:`~isaaclab.cloner.ClonePlan` from the resolved scene, simulation, renderer, and visualizer
+configuration and publishes it before constructing scene entities. Asset and sensor constructors
+query that plan for their exact prototype paths. When construction finishes, the lifecycle
+dispatches stage/native clone contexts. Model-role contexts read their routed rows from the same plan
+at the first hard reset, after any intervening stage edits.
 
 .. code-block:: python
 
-    from isaaclab import cloner
+    scene = env_cfg.scene.class_type(env_cfg.scene)
 
-    with cloner.ReplicateSession(
-        [env_cfg],
-        num_clones=env_cfg.scene.num_envs,
-        env_spacing=env_cfg.scene.env_spacing,
-        device=env_cfg.sim.device,
-        replicate_physics=env_cfg.scene.replicate_physics,
-    ):
-        scene = env_cfg.scene.class_type(env_cfg.scene)
-
-Environment base classes own this session. Task authors declare spawned assets and sensors as fields on
-their scene config; ``_setup_scene()`` only binds task-specific references or performs work that cannot be
-expressed as scene configuration.
+Manager-based and heterogeneous workflows declare spawned assets and sensors on their scene config.
+Homogeneous direct environments keep those cfgs on the direct env config. Their base class owns a
+:func:`~isaaclab.cloner.from_env_0` scope around construction of the plain scene and
+``_setup_scene()``; that scene joins the enclosing lifecycle instead of opening another one.
+Standalone direct workflows may use the same scope explicitly.
+:class:`~isaaclab.cloner.ReplicateSession` remains the lower-level general lifecycle used internally.
 
 Backend Selection
 -----------------

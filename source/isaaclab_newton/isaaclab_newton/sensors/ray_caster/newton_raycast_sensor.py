@@ -99,11 +99,9 @@ class _NewtonRayCasterPoseMixin:
 
     def _register_sites_for_expr(self, prim_expr: str) -> list[str]:
         """Register Newton sites for a prim expression."""
-        plan = sim_utils.SimulationContext.instance().get_clone_plan()
-        if plan is not None:
-            for destination_template in plan.destinations:
-                matched = cloner.path.match(prim_expr, destination_template)
-                if matched is not None and not matched.suffix:
+        if self.cfg.spawn is not None:
+            for source_root, destination, source_path, _ in cloner.query.iter_sources(self._clone_plan, prim_expr):
+                if "{}" in destination and source_path == source_root:
                     return [NewtonManager.cl_register_site(None, wp.transform(), per_world=True)]
 
         try:
@@ -271,12 +269,12 @@ class NewtonRaycastSensor(_NewtonRayCasterPoseMixin, BaseRayCaster):
     """The configuration parameters."""
 
     def __init__(self, cfg: NewtonRaycastSensorCfg):
+        self._sensor_task_name: str | None = None
         if cfg.max_distance <= 0.0:
             raise ValueError(f"max_distance must be positive, received {cfg.max_distance}.")
         NewtonManager._sensor_bvh_shape_flags |= newton.ShapeFlags.COLLIDE_SHAPES
         super().__init__(cfg)
         self._data = NewtonRaycastSensorData()
-        self._sensor_task_name: str | None = None
 
     @property
     def data(self) -> NewtonRaycastSensorData:

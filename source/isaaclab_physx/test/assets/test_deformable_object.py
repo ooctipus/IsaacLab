@@ -34,7 +34,7 @@ import carb
 import isaaclab.sim as sim_utils
 import isaaclab.utils.math as math_utils
 from isaaclab.assets import DeformableObjectCfg
-from isaaclab.cloner import ReplicateSession
+from isaaclab.cloner import CloneCfg, ReplicateSession
 from isaaclab.sim import build_simulation_context
 
 # Temporarily disabled: this suite intermittently aborts with SIGABRT on CI.
@@ -96,7 +96,7 @@ def generate_cubes_scene(
         spawn=spawn_cfg,
         init_state=DeformableObjectCfg.InitialStateCfg(pos=(0.0, 0.0, height), rot=initial_rot),
     )
-    with ReplicateSession([cube_object_cfg], num_cubes, 1.0, device, env_template="/World/Table_{}"):
+    with ReplicateSession([CloneCfg(clone_template="/World/Table_{}"), cube_object_cfg], num_cubes, 1.0):
         cube_object = cube_object_cfg.class_type(cube_object_cfg)
 
     return cube_object

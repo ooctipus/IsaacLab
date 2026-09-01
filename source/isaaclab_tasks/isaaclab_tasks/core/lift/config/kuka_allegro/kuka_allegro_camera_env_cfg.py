@@ -28,8 +28,6 @@ from .kuka_allegro_env_cfg import (
     KukaAllegroSceneCfg,
 )
 
-_SCENE_KWARGS = {"num_envs": 4096, "env_spacing": 3, "replicate_physics": True}
-
 
 @configclass
 class SingleCameraSceneCfg(KukaAllegroSceneCfg):
@@ -48,7 +46,7 @@ class DuoCameraSceneCfg(KukaAllegroSceneCfg):
 
 def _camera_env(base_cls, scene_cls, obs_cls):
     """Build a camera env config by swapping a camera scene and image observations onto a state env."""
-    return base_cls(scene=scene_cls(**_SCENE_KWARGS), observations=obs_cls())
+    return base_cls(scene=scene_cls(num_envs=4096, env_spacing=3), observations=obs_cls())
 
 
 @configclass

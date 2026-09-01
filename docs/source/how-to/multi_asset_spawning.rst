@@ -100,14 +100,14 @@ for example robots with different link lengths, or rigid objects with different 
 Physics replication in interactive scene
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The :attr:`scene.InteractiveSceneCfg.replicate_physics` flag is enabled by default. The flat clone
-plan gives the physics backend a separate row for every active variant, so heterogeneous assets do
-not require disabling physics replication. The example keeps it enabled.
+``scene.clone_cfg.replicate_physics`` is enabled by default. The flat clone plan gives the
+physics backend a separate row for every active variant, so heterogeneous assets do not require
+disabling physics replication. The example keeps it enabled.
 
-Disable physics replication only when a selected backend or prim type requires parsing each
-environment from USD. Newton does not support that mode, and its views currently require a uniform
-body layout, so the example selects one robot and rigid-object variant under Newton. For clone
-combinations and collision filtering, see :doc:`cloning`.
+Disable native physics replication only when a selected backend or prim type must parse each
+environment from USD. Mandatory model-building contexts still consume the plan. Newton views
+currently require a uniform body layout, so the example selects one robot and rigid-object variant
+under Newton. For clone combinations and collision filtering, see :doc:`cloning`.
 
 .. literalinclude:: ../../../scripts/demos/multi_asset.py
    :language: python

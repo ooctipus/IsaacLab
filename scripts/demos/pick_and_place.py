@@ -45,7 +45,7 @@ from isaaclab.assets import (
     RigidObjectCfg,
 )
 from isaaclab.envs import DirectRLEnv, DirectRLEnvCfg
-from isaaclab.markers import SPHERE_MARKER_CFG
+from isaaclab.markers import SPHERE_MARKER_CFG, VisualizationMarkersCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim import SimulationCfg
 from isaaclab.sim.spawners.from_files import GroundPlaneCfg
@@ -53,35 +53,6 @@ from isaaclab.utils.configclass import configclass
 from isaaclab.utils.math import sample_uniform
 
 from isaaclab_assets.robots.pick_and_place import PICK_AND_PLACE_CFG
-
-
-@configclass
-class PickAndPlaceSceneCfg(InteractiveSceneCfg):
-    """Robot, object, gripper, and static world authored through one clone plan."""
-
-    ground = AssetBaseCfg(prim_path="/World/ground", spawn=GroundPlaneCfg())
-    robot: ArticulationCfg = PICK_AND_PLACE_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-    cube: RigidObjectCfg = RigidObjectCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/Cube",
-        spawn=sim_utils.CuboidCfg(
-            size=(0.4, 0.4, 0.4),
-            rigid_props=sim_utils.RigidBodyPropertiesCfg(),
-            mass_props=sim_utils.MassPropertiesCfg(mass=1.0),
-            collision_props=sim_utils.CollisionPropertiesCfg(),
-            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.8, 0.0, 0.8)),
-        ),
-        init_state=RigidObjectCfg.InitialStateCfg(),
-    )
-    gripper = SurfaceGripperCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/picker_head/SurfaceGripper",
-        max_grip_distance=0.1,
-        shear_force_limit=500.0,
-        coaxial_force_limit=500.0,
-        retry_interval=0.2,
-    )
-    light = AssetBaseCfg(
-        prim_path="/World/Light", spawn=sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
-    )
 
 
 @configclass
@@ -113,8 +84,37 @@ class PickAndPlaceEnvCfg(DirectRLEnvCfg):
     y_dof_name = "y_axis"
     z_dof_name = "z_axis"
 
+    # assets
+    ground_cfg: AssetBaseCfg = AssetBaseCfg(prim_path="/World/ground", spawn=GroundPlaneCfg())
+    robot_cfg: ArticulationCfg = PICK_AND_PLACE_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+    cube_cfg: RigidObjectCfg = RigidObjectCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/Cube",
+        spawn=sim_utils.CuboidCfg(
+            size=(0.4, 0.4, 0.4),
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(),
+            mass_props=sim_utils.MassPropertiesCfg(mass=1.0),
+            collision_props=sim_utils.CollisionPropertiesCfg(),
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.8, 0.0, 0.8)),
+        ),
+        init_state=RigidObjectCfg.InitialStateCfg(),
+    )
+    gripper_cfg: SurfaceGripperCfg = SurfaceGripperCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/picker_head/SurfaceGripper",
+        max_grip_distance=0.1,
+        shear_force_limit=500.0,
+        coaxial_force_limit=500.0,
+        retry_interval=0.2,
+    )
+    light_cfg: AssetBaseCfg = AssetBaseCfg(
+        prim_path="/World/Light", spawn=sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
+    )
+    goal_marker_cfg: VisualizationMarkersCfg = SPHERE_MARKER_CFG.replace(
+        prim_path="/Visuals/Command/goal_position",
+        markers={"sphere": SPHERE_MARKER_CFG.markers["sphere"].replace(radius=0.25)},
+    )
+
     # scene
-    scene: PickAndPlaceSceneCfg = PickAndPlaceSceneCfg(num_envs=1, env_spacing=12.0, replicate_physics=True)
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=1, env_spacing=12.0)
 
     # reset logic
     # Initial position of the robot
@@ -224,9 +224,20 @@ class PickAndPlaceEnv(DirectRLEnv):
             self.instant_controls[:] = self._instant_key_controls["ZEROS"]
 
     def _setup_scene(self):
-        self.pick_and_place = self.scene["robot"]
-        self.cube = self.scene["cube"]
-        self.gripper = self.scene["gripper"]
+        self.pick_and_place = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
+        self.cube = self.cfg.cube_cfg.class_type(self.cfg.cube_cfg)
+        self.gripper = self.cfg.gripper_cfg.class_type(self.cfg.gripper_cfg)
+        self.goal_pos_visualizer = self.cfg.goal_marker_cfg.class_type(self.cfg.goal_marker_cfg)
+        for asset_cfg in (self.cfg.ground_cfg, self.cfg.light_cfg):
+            asset_cfg.spawn.func(
+                asset_cfg.prim_path,
+                asset_cfg.spawn,
+                translation=asset_cfg.init_state.pos,
+                orientation=asset_cfg.init_state.rot,
+            )
+        self.scene.articulations["robot"] = self.pick_and_place
+        self.scene.rigid_objects["cube"] = self.cube
+        self.scene.surface_grippers["gripper"] = self.gripper
 
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
         # Store the actions
@@ -393,19 +404,7 @@ class PickAndPlaceEnv(DirectRLEnv):
         self.pick_and_place.write_joint_velocity_to_sim_index(velocity=joint_vel, env_ids=env_ids)
 
     def _set_debug_vis_impl(self, debug_vis: bool):
-        # create markers if necessary for the first tome
-        if debug_vis:
-            if not hasattr(self, "goal_pos_visualizer"):
-                marker_cfg = SPHERE_MARKER_CFG.copy()
-                marker_cfg.markers["sphere"].radius = 0.25
-                # -- goal pose
-                marker_cfg.prim_path = "/Visuals/Command/goal_position"
-                self.goal_pos_visualizer = marker_cfg.class_type(marker_cfg)
-            # set their visibility to true
-            self.goal_pos_visualizer.set_visibility(True)
-        else:
-            if hasattr(self, "goal_pos_visualizer"):
-                self.goal_pos_visualizer.set_visibility(False)
+        self.goal_pos_visualizer.set_visibility(debug_vis)
 
     def _debug_vis_callback(self, event):
         # update the markers

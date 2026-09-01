@@ -101,44 +101,8 @@ class InteractiveSceneCfg:
     data is updated every time sensors are updated.
     """
 
-    replicate_physics: bool = True
-    """Enable/disable replication of physics schemas when using the Cloner APIs. Default is True.
-
-    If True, the simulation will have the same asset instances (USD prims) in all the cloned environments.
-    Internally, this ensures optimization in setting up the scene and parsing it via the physics stage parser.
-
-    If False, the simulation allows having separate asset instances (USD prims) in each environment.
-    This flexibility comes at a cost of slowdowns in setting up and parsing the scene.
-
-    .. note::
-        Optimized parsing of certain prim types (such as deformable objects) is not currently supported
-        by the physics engine. In these cases, this flag needs to be set to False.
-
-    .. attention::
-        Setting this flag to False is currently not supported on the Newton physics backend:
-        Newton discovers the scene through its replication path, which stage parsing cannot
-        replace for cloned environments.
-
-    .. note::
-        Environment base classes pass this flag to :class:`~isaaclab.cloner.ReplicateSession`.
-        When disabled, the session dispatches its plan only to scene clone contexts.
-    """
-
-    filter_collisions: bool = True
-    """Enable/disable collision filtering between cloned environments. Default is True.
-
-    If True, collisions will not occur between cloned environments.
-
-    If False, the simulation will generate collisions between environments.
-
-    .. note::
-        Collisions can only be filtered automatically in direct workflows when physics replication is enabled.
-        If :attr:`replicate_physics` is ``False`` and collision filtering is desired, make sure to call
-        ``scene.filter_collisions()``.
-    """
-
     clone_cfg: CloneCfg = CloneCfg()
-    """Clone execution and legal scene-combination configuration."""
+    """Environment replication policy and legal scene-combination configuration."""
 
 
 def add(

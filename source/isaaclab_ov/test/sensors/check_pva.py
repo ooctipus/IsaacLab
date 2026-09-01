@@ -26,7 +26,7 @@ from isaaclab_ov.physics import OvPhysxCfg
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import RigidObjectCfg
-from isaaclab.cloner import ReplicateSession
+from isaaclab.cloner import CloneCfg, ReplicateSession
 from isaaclab.sensors.pva import PvaCfg
 from isaaclab.sim import SimulationCfg, build_simulation_context
 
@@ -49,7 +49,7 @@ def main() -> None:
             init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 1.0)),
         )
         pva_cfg = PvaCfg(prim_path="/World/env_[^/]+/ball")
-        with ReplicateSession([ball_cfg, pva_cfg], num_envs, 5.0, sim.device, env_template="/World/env_{}"):
+        with ReplicateSession([CloneCfg(clone_template="/World/env_{}"), ball_cfg, pva_cfg], num_envs, 5.0):
             balls = ball_cfg.class_type(ball_cfg)
             pva = pva_cfg.class_type(pva_cfg)
         sim.reset()

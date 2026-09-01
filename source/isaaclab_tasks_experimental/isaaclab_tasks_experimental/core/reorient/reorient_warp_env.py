@@ -672,9 +672,29 @@ class ReorientDirectWarpEnv(DirectRLEnvWarp):
         self.torch_episode_length_buf = self.episode_length_buf  # already a torch tensor via wp.to_torch
 
     def _setup_scene(self):
-        self.hand = self.scene["robot"]
-        self.object = self.scene["object"]
+        self.hand = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
+        self.object = self.cfg.object_cfg.class_type(self.cfg.object_cfg)
+        self._joint_wrench_sensor = None
+        if self.cfg.joint_wrench_cfg is not None:
+            self._joint_wrench_sensor = self.cfg.joint_wrench_cfg.class_type(self.cfg.joint_wrench_cfg)
+        if self.cfg.ground_cfg is not None:
+            self.cfg.ground_cfg.spawn.func(
+                self.cfg.ground_cfg.prim_path,
+                self.cfg.ground_cfg.spawn,
+                translation=self.cfg.ground_cfg.init_state.pos,
+                orientation=self.cfg.ground_cfg.init_state.rot,
+            )
+        self.cfg.light_cfg.spawn.func(
+            self.cfg.light_cfg.prim_path,
+            self.cfg.light_cfg.spawn,
+            translation=self.cfg.light_cfg.init_state.pos,
+            orientation=self.cfg.light_cfg.init_state.rot,
+        )
         self.goal_markers = self.cfg.goal_object_cfg.class_type(self.cfg.goal_object_cfg)
+        self.scene.articulations["robot"] = self.hand
+        self.scene.rigid_objects["object"] = self.object
+        if self._joint_wrench_sensor is not None:
+            self.scene.sensors["joint_wrench"] = self._joint_wrench_sensor
 
     def _pre_physics_step(self, actions: wp.array) -> None:
         # Store actions in a persistent Warp buffer (analogous to `actions.clone()` in the Torch env).

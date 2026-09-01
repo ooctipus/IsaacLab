@@ -92,13 +92,11 @@ solver actually needs it:
   such as rebuilding a BVH.
 * ``_reset_solver_internals(world_mask)``: clear solver-owned state for reset
   environments.
-* ``start_simulation()`` or ``instantiate_builder_from_stage()``: customize model
-  building or post-finalize setup.
+* ``start_simulation()``: customize post-finalize setup. Clone-plan dispatch owns model building.
 * ``_register_builder_attributes(builder)``: register solver-specific Newton
   custom attributes (particle, shape, body) on the builder before particles or
   finalize run. The active manager class invokes this hook from
-  ``create_builder()``, ``start_simulation()``, and
-  ``instantiate_builder_from_stage()``.
+  ``create_builder()`` and ``start_simulation()``.
   :class:`~isaaclab_newton.physics.NewtonMPMManager` is the in-tree example —
   it registers ``mpm:young_modulus`` and the rest of the implicit MPM
   particle attributes.

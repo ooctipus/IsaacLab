@@ -7,96 +7,113 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar, Token
 from typing import TYPE_CHECKING, Any
 
 from pxr import Gf, Sdf, UsdGeom, Vt
 
 from isaaclab.sim import SimulationContext
-from isaaclab.utils.version import has_kit
 
-from .clone_plan import _make_clone_plan
-from .cloner_cfg import DEFAULT_ENV_TEMPLATE
-from .query import clone_rows, whole_env_copy
+from .clone_plan import _make_clone_plan, _plan_cfgs
+from .collision_filter import filter_collisions
+from .path import under
 from .usd import UsdReplicateContext
 
 if TYPE_CHECKING:
     from .clone_plan import ClonePlan
+    from .cloner_cfg import CloneCfg
 
 
-def _replicate(plan: ClonePlan, *, replicate_physics: bool = True) -> None:
-    """Dispatch ``plan`` once to every registered clone backend."""
+_ACTIVE_PLAN: ContextVar[ClonePlan | None] = ContextVar("isaaclab_clone_plan", default=None)
+
+
+def _active_plan() -> ClonePlan | None:
+    """Return the plan in the current lexical clone lifecycle."""
+    return _ACTIVE_PLAN.get()
+
+
+def _replicate(plan: ClonePlan) -> None:
+    """Dispatch stage cloning and queue model construction for first reset."""
     sim = SimulationContext.instance()
     if sim is None:
         raise RuntimeError("Clone-plan replication requires an active SimulationContext.")
-    contexts = [
-        sim._backend_registry[backend_type]
-        for backend_type, roles in sim._backend_clone_roles.items()
-        if replicate_physics or roles != {"physics"}
-    ]
-    rows = clone_rows(plan)
-    sources = [plan.sources[row] for row in rows]
-    destinations = [plan.destinations[row] for row in rows]
-    mask = plan.clone_mask[rows]
-    collapsed = whole_env_copy(plan)
+
+    context_rows = plan.context_rows
+    missing = [context_type for context_type in context_rows if context_type not in sim._backend_registry]
+    if missing:
+        names = ", ".join(f"{context_type.__module__}.{context_type.__qualname__}" for context_type in missing)
+        raise RuntimeError(f"Clone contexts must be registered before session dispatch: {names}.")
+
+    contexts = []
+    model_contexts = []
+    for context_type in context_rows:
+        roles = sim._backend_clone_roles.get(context_type, set())
+        context = sim._backend_registry[context_type]
+        if "model" in roles:
+            model_contexts.append(context)
+        elif not roles or "scene" in roles or (plan.replicate_physics and "physics" in roles):
+            contexts.append(context)
     for context in sorted(contexts, key=lambda item: item.replicate_priority):
-        if context.clones_whole_env and collapsed is not None:
-            context.replicate([collapsed[0]], [collapsed[1]], plan.env_ids, mask[:1], positions=plan.positions)
-        else:
-            context.replicate(sources, destinations, plan.env_ids, mask, positions=plan.positions)
-    sim._clone_plan_dispatched = True
+        context.replicate(plan)
+    sim._pending_clone_model_contexts = tuple(sorted(model_contexts, key=lambda item: item.replicate_priority))
 
 
 class ReplicateSession:
-    """Own and dispatch one clone plan around explicit scene construction.
+    """Own one clone plan around explicit scene construction.
 
     The session publishes the plan on entry, before cfg-owned constructors author their exact
-    prototype paths, and dispatches that same plan to registered backends on exit.
+    prototype paths. On exit it materializes the stage and queues model construction for the first
+    hard reset, after any intervening stage edits.
     """
 
-    def __init__(
-        self,
-        cfgs: Iterable[Any],
-        num_clones: int,
-        env_spacing: float,
-        device: str,
-        *,
-        replicate_physics: bool = True,
-        env_template: str = DEFAULT_ENV_TEMPLATE,
-    ):
+    def __init__(self, cfgs: Iterable[Any], num_clones: int, env_spacing: float):
         """Capture the declarative scene inputs for one cloning lifecycle.
 
         Args:
             cfgs: Resolved configuration roots. Every nested prim-authoring cfg is planned.
             num_clones: Number of target environments.
             env_spacing: Grid spacing between environment origins [m].
-            device: Torch device for plan tensors.
-            replicate_physics: Whether contexts used only by physics receive the plan.
-            env_template: Replicated environment path template; ``{}`` marks the environment index.
         """
         self._roots = tuple(cfgs)
-        self._replicate_physics = replicate_physics
-        self._kwargs = {
-            "num_clones": num_clones,
-            "env_spacing": env_spacing,
-            "device": device,
-            "env_template": env_template,
-        }
+        self._num_clones = num_clones
+        self._env_spacing = env_spacing
         self._plan: ClonePlan | None = None
+        self._clone_cfg: CloneCfg | None = None
+        self._active_plan_token: Token[ClonePlan | None] | None = None
 
     def __enter__(self) -> ReplicateSession:
         sim = SimulationContext.instance()
         if sim is None:
             raise RuntimeError("ReplicateSession requires an active SimulationContext.")
-        if self._plan is not None or sim.get_clone_plan() is not None:
-            raise RuntimeError("A SimulationContext owns exactly one ReplicateSession lifecycle.")
-        if has_kit() or not self._replicate_physics:
+        if self._plan is not None or sim.get_clone_plan() is not None or _active_plan() is not None:
+            raise RuntimeError("A SimulationContext owns exactly one clone lifecycle.")
+
+        plan_cfgs = _plan_cfgs((*self._roots, sim.cfg, *sim._get_visualizer_cfgs()))
+        clone_cfg, cfg_contexts, scene_contexts = plan_cfgs[2:]
+        self._clone_cfg = clone_cfg
+        explicit_contexts = {
+            context_type for contexts in cfg_contexts.values() if contexts is not None for context_type in contexts
+        } | set(scene_contexts)
+        if UsdReplicateContext in explicit_contexts and UsdReplicateContext not in sim._backend_registry:
+            sim.get_or_create_backend(UsdReplicateContext, sim.stage)
+        if UsdReplicateContext in scene_contexts or not clone_cfg.replicate_physics:
             sim.get_or_create_backend(UsdReplicateContext, sim.stage, clone_role="scene")
 
-        self._plan = _make_clone_plan(self._roots, **self._kwargs)
+        context_roles = {
+            context_type: set(sim._backend_clone_roles.get(context_type, ())) for context_type in sim._backend_registry
+        }
+        self._plan = _make_clone_plan(
+            *plan_cfgs,
+            num_clones=self._num_clones,
+            env_spacing=self._env_spacing,
+            device=sim.device,
+            context_roles=context_roles,
+        )
         sim.set_clone_plan(self._plan)
 
-        env_template = self._kwargs["env_template"]
+        env_template = clone_cfg.clone_template
         root_layer = sim.stage.GetRootLayer()
         UsdGeom.Xform.Define(sim.stage, env_template.rsplit("/", 1)[0])
         with Sdf.ChangeBlock():
@@ -108,9 +125,55 @@ class ReplicateSession:
                 translate.default = Gf.Vec3d(*position)
                 order = Sdf.AttributeSpec(root, "xformOpOrder", Sdf.ValueTypeNames.TokenArray)
                 order.default = Vt.TokenArray(["xformOp:translate"])
+        self._active_plan_token = _ACTIVE_PLAN.set(self._plan)
         return self
 
     def __exit__(self, exc_type, exc_value, traceback) -> None:
-        if exc_type is None:
-            assert self._plan is not None
-            _replicate(self._plan, replicate_physics=self._replicate_physics)
+        try:
+            if exc_type is None:
+                assert self._plan is not None and self._clone_cfg is not None
+                _replicate(self._plan)
+                sim = SimulationContext.instance()
+                assert sim is not None
+                physics_contexts = (
+                    sim._backend_registry[context_type]
+                    for context_type, roles in sim._backend_clone_roles.items()
+                    if "physics" in roles
+                )
+                if self._clone_cfg.filter_collisions and any(
+                    context.uses_physx_collision_groups for context in physics_contexts
+                ):
+                    filter_collisions(
+                        sim.stage,
+                        sim.cfg.physics_prim_path,
+                        "/World/collisions",
+                        [self._plan.env_template.format(int(env_id)) for env_id in self._plan.env_ids.tolist()],
+                        list(self._plan.collision_paths),
+                    )
+        finally:
+            if self._active_plan_token is not None:
+                _ACTIVE_PLAN.reset(self._active_plan_token)
+                self._active_plan_token = None
+
+
+@contextmanager
+def from_env_0(cfg: Any, num_envs: int, env_spacing: float) -> Iterator[None]:
+    """Construct one homogeneous environment prototype and replicate it to every environment.
+
+    The complete configuration root is planned before entering the scope. Every environment-scoped
+    cfg must therefore describe the same prototype; heterogeneous or multi-variant layouts belong in
+    an :class:`~isaaclab.scene.InteractiveSceneCfg` instead.
+
+    Args:
+        cfg: Complete configuration root containing the clone policy and every prim author.
+        num_envs: Number of target environments.
+        env_spacing: Grid spacing between environment origins [m].
+    """
+    with ReplicateSession((cfg,), num_envs, env_spacing) as session:
+        assert session._plan is not None
+        plan = session._plan
+        source_env = plan.env_template.format(int(plan.env_ids[0]))
+        env_rows = [row for row, destination in enumerate(plan.destinations) if "{}" in destination]
+        if any(not bool(plan.clone_mask[row].all()) or not under(plan.sources[row], source_env) for row in env_rows):
+            raise ValueError("from_env_0 requires one homogeneous cfg-derived environment prototype.")
+        yield

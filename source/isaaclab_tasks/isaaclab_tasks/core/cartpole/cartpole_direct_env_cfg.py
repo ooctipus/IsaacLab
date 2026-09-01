@@ -55,21 +55,6 @@ class CartpolePhysicsCfg(PresetCfg):
 
 
 @configclass
-class CartpoleSceneCfg(InteractiveSceneCfg):
-    """Cartpole assets constructed and cloned as one scene."""
-
-    ground = AssetBaseCfg(prim_path="/World/ground", spawn=sim_utils.GroundPlaneCfg())
-    robot: ArticulationCfg = CARTPOLE_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-    light = AssetBaseCfg(
-        prim_path="/World/Light",
-        spawn=sim_utils.DistantLightCfg(intensity=2000.0, color=(1.0, 1.0, 1.0)),
-        init_state=AssetBaseCfg.InitialStateCfg(
-            rot=(-0.14644663035869598, -0.3535534143447876, -0.3535534143447876, 0.8535533547401428)
-        ),
-    )
-
-
-@configclass
 class CartpoleEnvCfg(DirectRLEnvCfg):
     # env
     decimation = 2
@@ -82,11 +67,22 @@ class CartpoleEnvCfg(DirectRLEnvCfg):
     # simulation
     sim: SimulationCfg = SimulationCfg(dt=1 / 120, render_interval=decimation, physics=CartpolePhysicsCfg())
 
+    # assets
+    robot_cfg: ArticulationCfg = CARTPOLE_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+    ground_cfg: AssetBaseCfg | None = AssetBaseCfg(prim_path="/World/ground", spawn=sim_utils.GroundPlaneCfg())
+    light_cfg: AssetBaseCfg = AssetBaseCfg(
+        prim_path="/World/Light",
+        spawn=sim_utils.DistantLightCfg(intensity=2000.0, color=(1.0, 1.0, 1.0)),
+        init_state=AssetBaseCfg.InitialStateCfg(
+            rot=(-0.14644663035869598, -0.3535534143447876, -0.3535534143447876, 0.8535533547401428)
+        ),
+    )
+
     cart_dof_name = "slider_to_cart"
     pole_dof_name = "cart_to_pole"
 
     # scene
-    scene: CartpoleSceneCfg = CartpoleSceneCfg(num_envs=4096, env_spacing=4.0, replicate_physics=True)
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=4096, env_spacing=4.0)
 
     # reset
     max_cart_pos = 3.0  # the cart is reset if it exceeds that position [m]

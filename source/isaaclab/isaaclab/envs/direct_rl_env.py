@@ -21,6 +21,7 @@ import torch
 
 from isaaclab import cloner
 from isaaclab.managers import EventManager
+from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim import SimulationContext
 from isaaclab.sim.utils.stage import use_stage
 from isaaclab.utils.noise import NoiseModel
@@ -148,19 +149,13 @@ class DirectRLEnv(gym.Env):
         with Timer("[INFO]: Time taken for scene creation", "scene_creation", activity="Creating scene"):
             # set the stage context for scene creation steps which use the stage
             with use_stage(self.sim.stage):
-                with cloner.ReplicateSession(
-                    [self.cfg],
-                    num_clones=self.cfg.scene.num_envs,
-                    env_spacing=self.cfg.scene.env_spacing,
-                    device=self.device,
-                    env_template=self.cfg.scene.clone_cfg.clone_template,
-                    replicate_physics=self.cfg.scene.replicate_physics,
-                ):
+                if type(self.cfg.scene) is InteractiveSceneCfg:
+                    with cloner.from_env_0(self.cfg, self.cfg.scene.num_envs, self.cfg.scene.env_spacing):
+                        self.scene = self.cfg.scene.class_type(self.cfg.scene)
+                        self._setup_scene()
+                else:
                     self.scene = self.cfg.scene.class_type(self.cfg.scene)
                     self._setup_scene()
-                if self.cfg.scene.filter_collisions and "physx" in self.scene.physics_backend:
-                    self.scene.filter_collisions()
-            self.sim.register_interactive_scene(self.scene)
         print("[INFO]: Scene manager: ", self.scene)
 
         # create event manager

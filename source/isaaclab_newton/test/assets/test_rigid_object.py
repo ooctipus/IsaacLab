@@ -31,7 +31,7 @@ from newton import ModelFlags
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import RigidObjectCfg
-from isaaclab.cloner import ReplicateSession
+from isaaclab.cloner import CloneCfg, ReplicateSession
 from isaaclab.sim import SimulationCfg, SimulationContext, build_simulation_context
 from isaaclab.sim.spawners import materials
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
@@ -111,7 +111,7 @@ def generate_cubes_scene(
         spawn=spawn_cfg,
         init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, height)),
     )
-    with ReplicateSession([cube_object_cfg], num_cubes, 1.0, device, env_template="/World/Env_{}"):
+    with ReplicateSession([CloneCfg(clone_template="/World/Env_{}"), cube_object_cfg], num_cubes, 1.0):
         cube_object = cube_object_cfg.class_type(cube_object_cfg)
     origins = SimulationContext.instance().get_clone_plan().positions
 
@@ -852,7 +852,7 @@ def test_rigid_body_set_mass(num_cubes, device):
                 collision_props=sim_utils.CollisionPropertiesCfg(),
             ),
         )
-        with ReplicateSession([cube_object_cfg], num_cubes, 1.0, device, env_template="/World/Env_{}"):
+        with ReplicateSession([CloneCfg(clone_template="/World/Env_{}"), cube_object_cfg], num_cubes, 1.0):
             cube_object = cube_object_cfg.class_type(cube_object_cfg)
 
         # Play sim

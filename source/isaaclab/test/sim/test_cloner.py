@@ -19,10 +19,31 @@ from pxr import Usd
 
 import isaaclab.cloner.usd as usd_cloner
 import isaaclab.sim as sim_utils
-from isaaclab.cloner import UsdReplicateContext, grid_transforms
+from isaaclab.cloner import ClonePlan, UsdReplicateContext
+from isaaclab.cloner.clone_plan import _grid_positions
 from isaaclab.sim import build_simulation_context
 
 pytestmark = [pytest.mark.integration, pytest.mark.isaacsim_ci]
+
+
+def _plan(sources, destinations, env_ids, mask=None, positions=None):
+    if mask is None:
+        mask = torch.ones((len(sources), len(env_ids)), dtype=torch.bool)
+    if positions is None:
+        positions = torch.zeros((len(env_ids), 3))
+    return ClonePlan(
+        sources=tuple(sources),
+        destinations=tuple(destinations),
+        clone_mask=mask,
+        env_ids=env_ids,
+        positions=positions,
+        replicate_physics=True,
+    )
+
+
+def _replicate(context, plan, rows):
+    plan.context_rows[type(context)] = tuple(rows)
+    context.replicate(plan)
 
 
 @pytest.fixture
@@ -38,12 +59,13 @@ def test_usd_replicate_applies_each_row_mask(sim):
     env_ids = torch.arange(3, dtype=torch.long)
     mask = torch.tensor([[True, False, True], [False, True, False]])
 
-    UsdReplicateContext(sim.stage).replicate(
-        sources=["/World/template/A", "/World/template/B"],
-        destinations=["/World/envs/env_{}/A", "/World/envs/env_{}/B"],
-        env_ids=env_ids,
-        mask=mask,
+    plan = _plan(
+        ["/World/template/A", "/World/template/B"],
+        ["/World/envs/env_{}/A", "/World/envs/env_{}/B"],
+        env_ids,
+        mask,
     )
+    _replicate(UsdReplicateContext(sim.stage), plan, (0, 1))
 
     assert sim.stage.GetPrimAtPath("/World/envs/env_0/A").IsValid()
     assert sim.stage.GetPrimAtPath("/World/envs/env_1/B").IsValid()
@@ -55,17 +77,12 @@ def test_usd_context_preserves_asset_offset_below_positioned_env_roots(sim):
     """Environment origins move roots without overwriting a nested asset's local pose."""
     camera_offset = (0.57, -0.8, 0.5)
     env_ids = torch.arange(2, dtype=torch.long)
-    positions, _ = grid_transforms(2, 3.0)
+    positions = _grid_positions(2, 3.0)
     sim_utils.create_prim("/World/envs/env_0", "Xform")
     sim_utils.create_prim("/World/envs/env_0/Camera", "Camera", translation=camera_offset)
 
     context = UsdReplicateContext(sim.stage)
-    context.replicate(
-        ["/World/envs/env_0"],
-        ["/World/envs/env_{}"],
-        env_ids,
-        positions=positions,
-    )
+    _replicate(context, _plan(["/World/envs/env_0"], ["/World/envs/env_{}"], env_ids, positions=positions), (0,))
 
     for env_id in env_ids.tolist():
         env_prim = sim.stage.GetPrimAtPath(f"/World/envs/env_{env_id}")
@@ -78,11 +95,12 @@ def test_usd_replicate_orders_parent_before_child(sim):
     """Out-of-order rows still author a valid parent and child at every destination."""
     sim_utils.create_prim("/World/template/Parent/Child", "Xform")
 
-    UsdReplicateContext(sim.stage).replicate(
-        sources=["/World/template/Parent/Child", "/World/template/Parent"],
-        destinations=["/World/envs/env_{}/Parent/Child", "/World/envs/env_{}/Parent"],
-        env_ids=torch.arange(2),
+    plan = _plan(
+        ["/World/template/Parent/Child", "/World/template/Parent"],
+        ["/World/envs/env_{}/Parent/Child", "/World/envs/env_{}/Parent"],
+        torch.arange(2),
     )
+    _replicate(UsdReplicateContext(sim.stage), plan, (0, 1))
 
     for env_id in range(2):
         assert sim.stage.GetPrimAtPath(f"/World/envs/env_{env_id}/Parent").IsValid()
@@ -100,11 +118,8 @@ def test_usd_replicate_skips_self_copy(sim):
         return copy_spec(source_layer, source_path, destination_layer, destination_path, *args)
 
     with patch.object(usd_cloner.Sdf, "CopySpec", capture):
-        UsdReplicateContext(sim.stage).replicate(
-            ["/World/envs/env_0"],
-            ["/World/envs/env_{}"],
-            torch.arange(2),
-        )
+        plan = _plan(["/World/envs/env_0"], ["/World/envs/env_{}"], torch.arange(2))
+        _replicate(UsdReplicateContext(sim.stage), plan, (0,))
 
     assert calls and all(source != destination for source, destination in calls)
     assert sim.stage.GetPrimAtPath("/World/envs/env_1/Robot/base_link").IsValid()

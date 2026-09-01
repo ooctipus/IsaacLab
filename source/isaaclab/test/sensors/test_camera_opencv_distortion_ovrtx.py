@@ -43,7 +43,6 @@ if not _MISSING_MODULES:
     from isaaclab_ov.renderers import OVRTXRendererCfg
 
     import isaaclab.sim as sim_utils
-    from isaaclab import cloner
     from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
     from isaaclab.scene import InteractiveSceneCfg
     from isaaclab.sensors import CameraCfg
@@ -140,15 +139,7 @@ def _render_grid(distortion: OpenCvDistortionCfg, device: str) -> tuple[np.ndarr
         spawn=PinholeCameraCfg(focal_length=13.6, clipping_range=(0.001, 20.0), distortion=distortion),
         renderer_cfg=OVRTXRendererCfg(),
     )
-    with cloner.ReplicateSession(
-        [scene_cfg],
-        scene_cfg.num_envs,
-        scene_cfg.env_spacing,
-        sim.device,
-        env_template=scene_cfg.clone_cfg.clone_template,
-        replicate_physics=scene_cfg.replicate_physics,
-    ):
-        scene = scene_cfg.class_type(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
     camera = scene["camera"]
     try:
         sim.reset()

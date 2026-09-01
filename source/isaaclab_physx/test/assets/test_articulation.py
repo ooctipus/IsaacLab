@@ -43,7 +43,7 @@ import isaaclab.utils.math as math_utils
 import isaaclab.utils.string as string_utils
 from isaaclab.actuators import IdealPDActuatorCfg, ImplicitActuatorCfg
 from isaaclab.assets import ArticulationCfg, get_articulation_name_ordering
-from isaaclab.cloner import ReplicateSession
+from isaaclab.cloner import CloneCfg, ReplicateSession
 from isaaclab.controllers import (
     DifferentialIKController,
     DifferentialIKControllerCfg,
@@ -197,7 +197,7 @@ def generate_articulation(
 
     """
     articulation_cfg = articulation_cfg.replace(prim_path="/World/Env_[^/]*/Robot")
-    with ReplicateSession([articulation_cfg], num_articulations, 2.5, device, env_template="/World/Env_{}"):
+    with ReplicateSession([CloneCfg(clone_template="/World/Env_{}"), articulation_cfg], num_articulations, 2.5):
         articulation = articulation_cfg.class_type(articulation_cfg)
     translations = SimulationContext.instance().get_clone_plan().positions
 
@@ -243,7 +243,7 @@ def _setup_franka_at_home_pose(sim, *, zero_actuator_pd: bool = False, enable_ri
                 rigid_props=cfg.spawn.rigid_props.replace(disable_gravity=False),
             ),
         )
-    with ReplicateSession([cfg], 1, 0.0, sim.device, env_template="/World/Env_{}"):
+    with ReplicateSession([CloneCfg(clone_template="/World/Env_{}"), cfg], 1, 0.0):
         robot = cfg.class_type(cfg)
     sim.reset()
     assert robot.is_initialized
@@ -378,7 +378,7 @@ def test_live_manual_root_preserving_ordering_reorders_backend_reads_and_writes(
         joint_ordering=tuple(reversed(PANDA_JOINT_NAMES)),
         body_ordering=PANDA_ROOT_PRESERVING_REVERSED_BODY_NAMES,
     )
-    with ReplicateSession([articulation_cfg], 1, 0.0, sim.device):
+    with ReplicateSession([CloneCfg(), articulation_cfg], 1, 0.0):
         articulation = articulation_cfg.class_type(articulation_cfg)
 
     sim.reset()
@@ -461,7 +461,7 @@ def test_reversed_joint_dynamics_use_public_joint_basis(sim, device, gravity_ena
         ),
         actuators={},
     )
-    with ReplicateSession([articulation_cfg], 1, 0.0, sim.device):
+    with ReplicateSession([CloneCfg(), articulation_cfg], 1, 0.0):
         articulation = articulation_cfg.class_type(articulation_cfg)
         UsdPhysics.FixedJoint.Define(sim.stage, "/World/Robot/fixed_root").GetBody1Rel().SetTargets(
             ["/World/Robot/base"]
@@ -512,7 +512,7 @@ def test_live_floating_root_writers_match_identity_after_body_reordering(sim, de
         spawn=floating_spawn,
         body_ordering=tuple(reversed(PANDA_BODY_NAMES)),
     )
-    with ReplicateSession([identity_cfg, ordered_cfg], 1, 0.0, sim.device):
+    with ReplicateSession([CloneCfg(), identity_cfg, ordered_cfg], 1, 0.0):
         identity = identity_cfg.class_type(identity_cfg)
         ordered = ordered_cfg.class_type(ordered_cfg)
 
@@ -581,7 +581,7 @@ def test_live_direct_view_mass_inertia_writes_become_visible(sim, device, gravit
     """
     body_ordering_arg = None if body_ordering == "identity" else PANDA_ROOT_PRESERVING_REVERSED_BODY_NAMES
     articulation_cfg = FRANKA_PANDA_CFG.replace(prim_path="/World/Robot", body_ordering=body_ordering_arg)
-    with ReplicateSession([articulation_cfg], 1, 0.0, sim.device):
+    with ReplicateSession([CloneCfg(), articulation_cfg], 1, 0.0):
         articulation = articulation_cfg.class_type(articulation_cfg)
     sim.reset()
     assert articulation.is_initialized
@@ -635,7 +635,7 @@ def test_branching_fixture_resolves_distinct_conventions(sim, device, gravity_en
         joint_ordering="mjwarp",
         body_ordering="mjwarp",
     )
-    with ReplicateSession([articulation_cfg], 1, 0.0, sim.device):
+    with ReplicateSession([CloneCfg(), articulation_cfg], 1, 0.0):
         articulation = articulation_cfg.class_type(articulation_cfg)
     sim.reset()
     assert articulation.is_initialized
@@ -663,7 +663,7 @@ def test_unused_jacobian_ordering_map_is_none(sim, device, gravity_enabled, orde
         joint_ordering="mjwarp" if ordering_axis == "joint" else None,
         body_ordering="mjwarp" if ordering_axis == "body" else None,
     )
-    with ReplicateSession([articulation_cfg], 1, 0.0, sim.device):
+    with ReplicateSession([CloneCfg(), articulation_cfg], 1, 0.0):
         articulation = articulation_cfg.class_type(articulation_cfg)
     sim.reset()
     assert articulation.is_initialized
@@ -1131,7 +1131,7 @@ def test_out_of_range_default_joint_vel(sim, device):
         "panda_joint1": 100.0,
         "panda_joint[2, 4]": -60.0,
     }
-    with ReplicateSession([articulation_cfg], 1, 0.0, sim.device):
+    with ReplicateSession([CloneCfg(), articulation_cfg], 1, 0.0):
         articulation = articulation_cfg.class_type(articulation_cfg)
 
     # Check that the framework doesn't hold excessive strong references.

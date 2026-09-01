@@ -45,19 +45,6 @@ from isaaclab.utils.configclass import configclass
 ##
 
 
-def _create_scene(cfg: InteractiveSceneCfg, sim):
-    """Construct a scene through its cfg-owned clone lifecycle."""
-    with cloner.ReplicateSession(
-        [cfg],
-        cfg.num_envs,
-        cfg.env_spacing,
-        sim.device,
-        env_template=cfg.clone_cfg.clone_template,
-        replicate_physics=cfg.replicate_physics,
-    ):
-        return cfg.class_type(cfg)
-
-
 class ContactTestMode(Enum):
     """Enum to declare the type of contact sensor test to execute."""
 
@@ -439,7 +426,7 @@ def test_cube_stack_contact_filtering(setup_simulation, device, num_envs):
             update_period=0.0,
             filter_prim_paths_expr=["{ENV_REGEX_NS}/Cube_1"],
         )
-        scene = _create_scene(scene_cfg, sim)
+        scene = scene_cfg.class_type(scene_cfg)
 
         # Check that contact processing is enabled
         assert not settings.get("/physics/disableContactProcessing")
@@ -525,8 +512,8 @@ def test_nested_rigid_body_hierarchy(setup_simulation, device, num_envs):
             debug_vis=False,
             update_period=0.0,
         )
-        with cloner.ReplicateSession([root_cfg, contact_sensor_cfg], num_envs, 3.0, sim.device):
-            (source_path,) = cloner.query.cfg_source_paths(sim.get_clone_plan(), root_cfg)
+        with cloner.ReplicateSession([cloner.CloneCfg(), root_cfg, contact_sensor_cfg], num_envs, 3.0):
+            (source_path,) = cloner.query._cfg_source_paths(sim.get_clone_plan(), root_cfg)
             root_cfg.spawn.func(source_path, root_cfg.spawn)
             contact_sensor = contact_sensor_cfg.class_type(contact_sensor_cfg)
         env_origins = sim.get_clone_plan().positions.cpu().tolist()
@@ -586,7 +573,7 @@ def test_no_contact_reporting(setup_simulation):
             update_period=0.0,
             filter_prim_paths_expr=["{ENV_REGEX_NS}/Cube_1"],
         )
-        scene = _create_scene(scene_cfg, sim)
+        scene = scene_cfg.class_type(scene_cfg)
 
         # Force disable contact processing
         settings.set_bool("/physics/disableContactProcessing", True)
@@ -637,7 +624,7 @@ def test_contact_sensor_no_stale_data_after_reset(setup_simulation, device):
             update_period=0.0,
             history_length=10,
         )
-        scene = _create_scene(scene_cfg, sim)
+        scene = scene_cfg.class_type(scene_cfg)
         sim.reset()
         scene.reset()
 
@@ -691,7 +678,7 @@ def test_contact_history_updates_at_sensor_period(
             track_air_time=True,
             history_length=history_length,
         )
-        scene = _create_scene(scene_cfg, sim)
+        scene = scene_cfg.class_type(scene_cfg)
         sim.reset()
         scene.reset()
 
@@ -741,7 +728,7 @@ def test_sensor_print(setup_simulation):
             track_air_time=True,
             history_length=3,
         )
-        scene = _create_scene(scene_cfg, sim)
+        scene = scene_cfg.class_type(scene_cfg)
         # Play the simulator
         sim.reset()
         # print info
@@ -766,7 +753,7 @@ def test_contact_sensor_threshold(setup_simulation, device):
             track_air_time=True,
             history_length=3,
         )
-        scene = _create_scene(scene_cfg, sim)
+        scene = scene_cfg.class_type(scene_cfg)
         # Play the simulator
         sim.reset()
 
@@ -822,7 +809,7 @@ def test_friction_reporting(setup_simulation, grav_dir):
             filter_prim_paths_expr=filter_prim_paths_expr,
         )
 
-        scene = _create_scene(scene_cfg, sim)
+        scene = scene_cfg.class_type(scene_cfg)
 
         sim.reset()
 
@@ -875,7 +862,7 @@ def test_invalid_prim_paths_config(setup_simulation):
         )
 
         try:
-            _ = _create_scene(scene_cfg, sim)
+            _ = scene_cfg.class_type(scene_cfg)
 
             sim.reset()
 
@@ -911,7 +898,7 @@ def test_invalid_max_contact_points_config(setup_simulation):
         )
 
         try:
-            _ = _create_scene(scene_cfg, sim)
+            _ = scene_cfg.class_type(scene_cfg)
 
             sim.reset()
 
@@ -973,7 +960,7 @@ def _run_contact_sensor_test(
                         track_friction_forces=track_contact_data,
                         filter_prim_paths_expr=filter_prim_paths_expr,
                     )
-                    scene = _create_scene(scene_cfg, sim)
+                    scene = scene_cfg.class_type(scene_cfg)
 
                     # Play the simulation
                     sim.reset()

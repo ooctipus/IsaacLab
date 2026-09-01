@@ -338,10 +338,11 @@ golden-ratio hue palette to assign each class ID a distinct color.
 
 .. note::
 
-   **Auto-create streaming camera and Newton MJWarp (``replicate_physics=True``)**
+   **Auto-create streaming camera and Newton MJWarp (``CloneCfg.replicate_physics=True``)**
 
    When ``streaming_sensor_prim_path`` is ``None`` (auto-create mode), the visualizer
-   spawns a new camera prim after scene construction has already finalised Newton's clone plan.  With ``replicate_physics=True`` — which Newton MJWarp requires for
+   spawns a new camera prim after scene construction has already finalised Newton's clone plan. With
+   ``CloneCfg.replicate_physics=True`` — which Newton MJWarp requires for
    its high-performance sparse world replication — only ``env_0`` exists as a USD prim after
    physics init; ``env_1..N`` are handled internally by Newton without USD prims.  The
    spawned cameras at ``env_1..N`` are silently dropped, ``FrameView`` resolves only one
@@ -361,10 +362,9 @@ golden-ratio hue palette to assign each class ID a distinct color.
            streaming_envs=12,
        )
 
-   **Planned fix**: add a ``pre_physics_init`` hook to :class:`NewtonVisualizer` that
-   registers the streaming camera prim at ``env_0`` *before* Newton finalises its clone plan.
-   Newton then replicates the camera to all worlds automatically, restoring the full
-   auto-create experience (eye, lookat, follow target) on ``newton_mjwarp`` tasks.
+   An auto-created camera cannot be injected after planning. Supporting this mode requires deriving
+   its camera cfg from the resolved visualizer cfg and including it in the scene's ``ClonePlan``
+   before construction.
 
 Live Plots
 ~~~~~~~~~~

@@ -196,7 +196,7 @@ def test_stage_in_memory_with_clone_in_fabric(sim):
 
         # create environment clones using Isaac Lab's cloner utilities
         env_ids = torch.arange(num_clones, dtype=torch.long, device="cpu")
-        env_origins, _ = cloner.grid_transforms(num_clones, spacing=3.0, device="cpu")
+        env_origins = cloner.clone_plan._grid_positions(num_clones, spacing=3.0, device="cpu")
 
         # create source prim
         stage_in_memory.DefinePrim(source_prim_path, "Xform")
@@ -206,9 +206,17 @@ def test_stage_in_memory_with_clone_in_fabric(sim):
         env_fmt = "/World/envs/env_{}"
 
         # clone robots at target paths
-        cloner.UsdReplicateContext(stage_in_memory).replicate(
-            [env_fmt.format(0)], [env_fmt], env_ids, positions=env_origins
+        plan = cloner.ClonePlan(
+            sources=(env_fmt.format(0),),
+            destinations=(env_fmt,),
+            clone_mask=torch.ones((1, num_clones), dtype=torch.bool),
+            env_ids=env_ids,
+            positions=env_origins,
+            replicate_physics=True,
         )
+        context = cloner.UsdReplicateContext(stage_in_memory)
+        plan.context_rows[type(context)] = (0,)
+        context.replicate(plan)
 
     # verify prims exist in fabric stage using usdrt apis
     stage_id = sim_utils.get_current_stage_id()

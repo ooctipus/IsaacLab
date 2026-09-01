@@ -29,7 +29,6 @@ from isaaclab_ppisp import PpispCfg, normalize_ppisp_cfg
 from pxr import Gf, Sdf, Usd, UsdGeom, Vt
 
 import isaaclab.sim as sim_utils
-from isaaclab import cloner
 from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors.camera import CameraCfg
@@ -620,6 +619,8 @@ class SyntheticGaussianSceneCfg(InteractiveSceneCfg):
         spawn=sim_utils.UsdFileCfg(usd_path=""),  # filled in at runtime
     )
 
+    camera: CameraCfg | None = None
+
     anchor = RigidObjectCfg(
         prim_path="{ENV_REGEX_NS}/Anchor",
         spawn=sim_utils.CuboidCfg(
@@ -769,7 +770,7 @@ def _render_synthetic_gaussian_camera(
     sim = sim_utils.SimulationContext(sim_cfg)
     scene_cfg = SyntheticGaussianSceneCfg(num_envs=num_envs)
     scene_cfg.gaussian.spawn = sim_utils.UsdFileCfg(usd_path=usd_path)
-    camera_cfg = CameraCfg(
+    scene_cfg.camera = CameraCfg(
         prim_path=SYNTHETIC_GAUSSIAN_CAMERA_REGEX,
         update_period=0.0,
         height=height,
@@ -779,20 +780,12 @@ def _render_synthetic_gaussian_camera(
         isp_cfg=isp_cfg,
         renderer_cfg=renderer_cfg,
     )
-    with cloner.ReplicateSession(
-        [scene_cfg, camera_cfg],
-        scene_cfg.num_envs,
-        scene_cfg.env_spacing,
-        sim.device,
-        env_template=scene_cfg.clone_cfg.clone_template,
-        replicate_physics=scene_cfg.replicate_physics,
-    ):
-        scene = scene_cfg.class_type(scene_cfg)  # noqa: F841 — kept alive through rendering
-        if static_ppisp_cfg is not None:
-            author_static_ppisp_camera_attrs(sim.stage, ppisp_cfg=static_ppisp_cfg)
-        if controller_ppisp_cfg is not None:
-            author_controller_ppisp_camera_attrs(sim.stage, ppisp_cfg=controller_ppisp_cfg)
-        camera = camera_cfg.class_type(camera_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
+    if static_ppisp_cfg is not None:
+        author_static_ppisp_camera_attrs(sim.stage, ppisp_cfg=static_ppisp_cfg)
+    if controller_ppisp_cfg is not None:
+        author_controller_ppisp_camera_attrs(sim.stage, ppisp_cfg=controller_ppisp_cfg)
+    camera = scene["camera"]
     try:
         sim.reset()
         for _ in range(stabilisation_steps):

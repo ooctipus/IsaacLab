@@ -58,11 +58,22 @@ class AnymalCEnv(DirectRLEnv):
         self._undesired_contact_body_ids, _ = self._contact_sensor.find_sensors(".*THIGH")
 
     def _setup_scene(self):
-        self._robot = self.scene["robot"]
-        self._contact_sensor = self.scene["contact_sensor"]
+        self._robot = self.cfg.robot.class_type(self.cfg.robot)
+        self.cfg.terrain.num_envs = self.scene.num_envs
+        self.cfg.terrain.env_spacing = self.scene.cfg.env_spacing
+        self._terrain = self.cfg.terrain.class_type(self.cfg.terrain)
+        self._contact_sensor = self.cfg.contact_sensor.class_type(self.cfg.contact_sensor)
         if isinstance(self.cfg, AnymalCRoughEnvCfg):
-            self._height_scanner = self.scene["height_scanner"]
-        self._terrain = self.scene["terrain"]
+            self._height_scanner = self.cfg.height_scanner.class_type(self.cfg.height_scanner)
+            self.scene.sensors["height_scanner"] = self._height_scanner
+        self.cfg.light.spawn.func(
+            self.cfg.light.prim_path,
+            self.cfg.light.spawn,
+            translation=self.cfg.light.init_state.pos,
+            orientation=self.cfg.light.init_state.rot,
+        )
+        self.scene.articulations["robot"] = self._robot
+        self.scene.sensors["contact_sensor"] = self._contact_sensor
 
     def _pre_physics_step(self, actions: torch.Tensor):
         self._actions = actions.clone()

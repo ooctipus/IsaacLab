@@ -161,14 +161,12 @@ class Camera(SensorBase):
         # Spawn exactly the prototype the plan assigned this camera cfg.
         spawn = self.cfg.spawn
         if spawn is not None:
-            source_paths = cloner.query.cfg_source_paths(self._clone_plan, self._source_cfg)
+            source_paths = cloner.query._cfg_source_paths(self._clone_plan, self._source_cfg)
             spawn_targets = tuple(path for path in source_paths if path is not None)
             if not spawn_targets:
                 raise RuntimeError(f"Camera at {self.cfg.prim_path!r} has no populated clone-plan source.")
             for spawn_target in spawn_targets:
                 spawn.func(spawn_target, spawn, translation=self.cfg.offset.pos, orientation=rot_offset)
-                if not self.stage.GetPrimAtPath(spawn_target).IsValid():
-                    raise RuntimeError(f"Could not find camera prim with path {spawn_target!r}.")
 
         # Every renderer backend draws the visual-only geometry, so it must survive cloning even
         # when the run is otherwise headless. Declare that before clone-plan dispatch rather than

@@ -60,7 +60,7 @@ import isaaclab.sim as sim_utils  # noqa: E402
 import isaaclab.utils.math as math_utils  # noqa: E402
 from isaaclab import cloner  # noqa: E402
 from isaaclab.assets import ArticulationCfg, RigidObject, RigidObjectCfg  # noqa: E402
-from isaaclab.scene import InteractiveScene, InteractiveSceneCfg  # noqa: E402
+from isaaclab.scene import InteractiveSceneCfg  # noqa: E402
 from isaaclab.sensors.imu import Imu, ImuCfg  # noqa: E402
 from isaaclab.sim import SimulationCfg, build_simulation_context  # noqa: E402
 from isaaclab.utils.configclass import configclass  # noqa: E402
@@ -155,19 +155,6 @@ class _StaleResetSceneCfg(InteractiveSceneCfg):
     imu_cube: ImuCfg = ImuCfg(prim_path="{ENV_REGEX_NS}/cube")
 
 
-def _create_scene(cfg: InteractiveSceneCfg, sim) -> InteractiveScene:
-    """Construct a cfg-owned scene through its clone lifecycle."""
-    with cloner.ReplicateSession(
-        [cfg],
-        cfg.num_envs,
-        cfg.env_spacing,
-        sim.device,
-        env_template=cfg.clone_cfg.clone_template,
-        replicate_physics=cfg.replicate_physics,
-    ):
-        return cfg.class_type(cfg)
-
-
 # ---------------------------------------------------------------------------
 # Process-global device-mode lock (matches the rigid-object and contact-sensor
 # tests). The ovphysx wheel can only run one device per process; parametrized
@@ -236,11 +223,7 @@ def test_constant_velocity(sim_ctx, device):
     imu_ball_cfg = _make_imu_cfg("{ENV_REGEX_NS}/ball")
     imu_cube_cfg = _make_imu_cfg("{ENV_REGEX_NS}/cube")
     with cloner.ReplicateSession(
-        [ball_cfg, cube_cfg, imu_ball_cfg, imu_cube_cfg],
-        NUM_ENVS,
-        5.0,
-        sim_ctx.device,
-        env_template="/World/env_{}",
+        [cloner.CloneCfg(clone_template="/World/env_{}"), ball_cfg, cube_cfg, imu_ball_cfg, imu_cube_cfg], NUM_ENVS, 5.0
     ):
         balls = ball_cfg.class_type(ball_cfg)
         cubes = cube_cfg.class_type(cube_cfg)
@@ -296,11 +279,7 @@ def test_constant_acceleration(sim_ctx, device):
     ball_cfg = _make_ball_cfg()
     imu_ball_cfg = _make_imu_cfg("{ENV_REGEX_NS}/ball")
     with cloner.ReplicateSession(
-        [ball_cfg, imu_ball_cfg],
-        NUM_ENVS,
-        5.0,
-        sim_ctx.device,
-        env_template="/World/env_{}",
+        [cloner.CloneCfg(clone_template="/World/env_{}"), ball_cfg, imu_ball_cfg], NUM_ENVS, 5.0
     ):
         balls = ball_cfg.class_type(ball_cfg)
         imu_ball = imu_ball_cfg.class_type(imu_ball_cfg)
@@ -364,11 +343,9 @@ def test_offset_calculation(sim_ctx, device):
         offset=ImuCfg.OffsetCfg(pos=POS_OFFSET, rot=ROT_OFFSET),
     )
     with cloner.ReplicateSession(
-        [robot_cfg, imu_robot_imu_link_cfg, imu_robot_base_cfg],
+        [cloner.CloneCfg(clone_template="/World/env_{}"), robot_cfg, imu_robot_imu_link_cfg, imu_robot_base_cfg],
         NUM_ENVS,
         5.0,
-        sim_ctx.device,
-        env_template="/World/env_{}",
     ):
         robot = robot_cfg.class_type(robot_cfg)
         imu_robot_imu_link = imu_robot_imu_link_cfg.class_type(imu_robot_imu_link_cfg)
@@ -413,11 +390,7 @@ def test_env_ids_propagation(sim_ctx, device):
     robot_cfg = _make_anymal_cfg()
     imu_robot_imu_link_cfg = _make_imu_cfg("{ENV_REGEX_NS}/robot/base/imu_link")
     with cloner.ReplicateSession(
-        [robot_cfg, imu_robot_imu_link_cfg],
-        NUM_ENVS,
-        5.0,
-        sim_ctx.device,
-        env_template="/World/env_{}",
+        [cloner.CloneCfg(clone_template="/World/env_{}"), robot_cfg, imu_robot_imu_link_cfg], NUM_ENVS, 5.0
     ):
         robot = robot_cfg.class_type(robot_cfg)
         imu_robot_imu_link = imu_robot_imu_link_cfg.class_type(imu_robot_imu_link_cfg)
@@ -453,11 +426,7 @@ def test_sensor_initialization(sim_ctx, device):
     ball_cfg = _make_ball_cfg()
     imu_ball_cfg = _make_imu_cfg("{ENV_REGEX_NS}/ball")
     with cloner.ReplicateSession(
-        [ball_cfg, imu_ball_cfg],
-        NUM_ENVS,
-        5.0,
-        sim_ctx.device,
-        env_template="/World/env_{}",
+        [cloner.CloneCfg(clone_template="/World/env_{}"), ball_cfg, imu_ball_cfg], NUM_ENVS, 5.0
     ):
         ball_cfg.class_type(ball_cfg)
         imu_ball = imu_ball_cfg.class_type(imu_ball_cfg)
@@ -484,11 +453,7 @@ def test_gravity_at_rest(sim_ctx, device):
     ball_cfg = _make_ball_cfg()
     imu_ball_cfg = _make_imu_cfg("{ENV_REGEX_NS}/ball")
     with cloner.ReplicateSession(
-        [ball_cfg, imu_ball_cfg],
-        NUM_ENVS,
-        5.0,
-        sim_ctx.device,
-        env_template="/World/env_{}",
+        [cloner.CloneCfg(clone_template="/World/env_{}"), ball_cfg, imu_ball_cfg], NUM_ENVS, 5.0
     ):
         balls = ball_cfg.class_type(ball_cfg)
         imu_ball = imu_ball_cfg.class_type(imu_ball_cfg)
@@ -528,11 +493,7 @@ def test_freefall_acceleration(sim_ctx, device):
     ball_cfg = _make_ball_cfg(height=5.0)
     imu_ball_cfg = _make_imu_cfg("{ENV_REGEX_NS}/ball")
     with cloner.ReplicateSession(
-        [ball_cfg, imu_ball_cfg],
-        NUM_ENVS,
-        5.0,
-        sim_ctx.device,
-        env_template="/World/env_{}",
+        [cloner.CloneCfg(clone_template="/World/env_{}"), ball_cfg, imu_ball_cfg], NUM_ENVS, 5.0
     ):
         balls = ball_cfg.class_type(ball_cfg)
         imu_ball = imu_ball_cfg.class_type(imu_ball_cfg)
@@ -568,11 +529,7 @@ def test_reset(sim_ctx, device):
     ball_cfg = _make_ball_cfg()
     imu_ball_cfg = _make_imu_cfg("{ENV_REGEX_NS}/ball")
     with cloner.ReplicateSession(
-        [ball_cfg, imu_ball_cfg],
-        NUM_ENVS,
-        5.0,
-        sim_ctx.device,
-        env_template="/World/env_{}",
+        [cloner.CloneCfg(clone_template="/World/env_{}"), ball_cfg, imu_ball_cfg], NUM_ENVS, 5.0
     ):
         balls = ball_cfg.class_type(ball_cfg)
         imu_ball = imu_ball_cfg.class_type(imu_ball_cfg)
@@ -606,7 +563,7 @@ def test_reset(sim_ctx, device):
 def test_no_stale_data_after_scene_reset(sim_ctx, device):
     """Test ``scene.reset(env_ids)`` does not expose stale native velocity through ``imu.data``."""
     scene_cfg = _StaleResetSceneCfg(num_envs=1, env_spacing=2.0, lazy_sensor_update=False)
-    scene = _create_scene(scene_cfg, sim_ctx)
+    scene = scene_cfg.class_type(scene_cfg)
     sim_ctx.reset()
     scene.reset()
 
@@ -649,11 +606,7 @@ def test_indirect_attachment_usd(sim_ctx, device):
     imu_indirect_cfg = _make_imu_cfg("{ENV_REGEX_NS}/ball/imu_sub")
     imu_direct_cfg = _make_imu_cfg("{ENV_REGEX_NS}/ball", offset=ImuCfg.OffsetCfg(pos=sub_pos, rot=sub_rot))
     with cloner.ReplicateSession(
-        [ball_cfg, imu_indirect_cfg, imu_direct_cfg],
-        NUM_ENVS,
-        5.0,
-        sim_ctx.device,
-        env_template="/World/env_{}",
+        [cloner.CloneCfg(clone_template="/World/env_{}"), ball_cfg, imu_indirect_cfg, imu_direct_cfg], NUM_ENVS, 5.0
     ):
         balls = ball_cfg.class_type(ball_cfg)
         sim_utils.create_prim("/World/env_0/ball/imu_sub", "Xform", translation=sub_pos, orientation=sub_rot)
@@ -712,13 +665,7 @@ def test_attachment_validity(sim_ctx, device):
     rigid-body ancestor in its prim tree.
     """
     imu_world_cfg = ImuCfg(prim_path="{ENV_REGEX_NS}")
-    with cloner.ReplicateSession(
-        [imu_world_cfg],
-        NUM_ENVS,
-        5.0,
-        sim_ctx.device,
-        env_template="/World/env_{}",
-    ):
+    with cloner.ReplicateSession([cloner.CloneCfg(clone_template="/World/env_{}"), imu_world_cfg], NUM_ENVS, 5.0):
         _imu_world = imu_world_cfg.class_type(imu_world_cfg)
     with pytest.raises(RuntimeError) as exc_info:
         sim_ctx.reset()
@@ -731,11 +678,7 @@ def test_sensor_print(sim_ctx, device):
     ball_cfg = _make_ball_cfg()
     imu_ball_cfg = _make_imu_cfg("{ENV_REGEX_NS}/ball")
     with cloner.ReplicateSession(
-        [ball_cfg, imu_ball_cfg],
-        NUM_ENVS,
-        5.0,
-        sim_ctx.device,
-        env_template="/World/env_{}",
+        [cloner.CloneCfg(clone_template="/World/env_{}"), ball_cfg, imu_ball_cfg], NUM_ENVS, 5.0
     ):
         ball_cfg.class_type(ball_cfg)
         imu_ball = imu_ball_cfg.class_type(imu_ball_cfg)

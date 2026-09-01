@@ -44,7 +44,7 @@ def _expand_env_namespaces(value: Any, env_template: str, visited: set[int] | No
     if value is None or isinstance(value, (bytes, int, float, bool, type)) or callable(value):
         return value
     if isinstance(value, str):
-        return expand_env_regex_ns(value, env_template)
+        return expand_env_regex_ns(value, env_template) if "{ENV_REGEX_NS}" in value else value
     if visited is None:
         visited = set()
     if isinstance(value, tuple):
@@ -58,8 +58,8 @@ def _expand_env_namespaces(value: Any, env_template: str, visited: set[int] | No
         for key, child in value.items():
             value[key] = _expand_env_namespaces(child, env_template, visited)
     elif dataclasses.is_dataclass(value) and not isinstance(value, type):
-        for field in dataclasses.fields(value):
-            setattr(value, field.name, _expand_env_namespaces(getattr(value, field.name), env_template, visited))
+        for name, child in vars(value).items():
+            setattr(value, name, _expand_env_namespaces(child, env_template, visited))
     return value
 
 
@@ -91,13 +91,13 @@ class SensorBase(ABC):
             raise RuntimeError("Sensors require an active SimulationContext.")
         plan = sim.get_clone_plan()
         if plan is None:
-            raise RuntimeError("Sensors must be constructed inside a ReplicateSession.")
+            raise RuntimeError("Sensors must be constructed inside a clone lifecycle.")
         self.cfg = _expand_env_namespaces(self.cfg, plan.env_template)
         # flag for whether the sensor is initialized
         self._is_initialized = False
         # flag for whether the sensor is in visualization mode
         self._is_visualizing = False
-        # immutable clone plan that owns this sensor
+        # published clone plan that owns this sensor
         self._clone_plan: ClonePlan = plan
         self._sim = sim
         self.stage = sim.stage

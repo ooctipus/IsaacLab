@@ -82,7 +82,7 @@ def design_scene(sim: sim_utils.SimulationContext) -> tuple[dict, list[list[floa
     # Origin 2 with Anymal C
     sim_utils.create_prim("/World/Origin2", "Xform", translation=origins[1])
 
-    with cloner.ReplicateSession([franka_cfg, anymal_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), franka_cfg, anymal_cfg], 1, 0.0):
         franka = franka_cfg.class_type(franka_cfg)
         anymal_c = anymal_cfg.class_type(anymal_cfg)
 

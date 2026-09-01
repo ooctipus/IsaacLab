@@ -16,7 +16,7 @@ from isaaclab_ov.physics import OvPhysxCfg
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import RigidObjectCfg
-from isaaclab.cloner import ReplicateSession
+from isaaclab.cloner import CloneCfg, ReplicateSession
 from isaaclab.envs.mdp.events import randomize_physics_scene_gravity
 from isaaclab.managers import EventTermCfg
 from isaaclab.sim import SimulationCfg, build_simulation_context
@@ -36,7 +36,7 @@ def test_gravity_event_changes_rigid_body_motion():
                 collision_props=sim_utils.CollisionBaseCfg(),
             ),
         )
-        with ReplicateSession([cube_cfg], 1, 0.0, sim.device):
+        with ReplicateSession([CloneCfg(), cube_cfg], 1, 0.0):
             cube = cube_cfg.class_type(cube_cfg)
         sim.reset()
         dt = sim.get_physics_dt()

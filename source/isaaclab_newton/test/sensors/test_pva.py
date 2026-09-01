@@ -16,7 +16,6 @@ import warp as wp
 from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
 
 import isaaclab.sim as sim_utils
-from isaaclab import cloner
 from isaaclab.assets import RigidObject, RigidObjectCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors.pva import Pva, PvaCfg
@@ -69,8 +68,7 @@ def sim():
 def test_sensor_initialization(sim):
     """Test that the Newton PVA sensor initializes correctly."""
     scene_cfg = PvaTestSceneCfg(num_envs=2)
-    with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-        scene = scene_cfg.class_type(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
     sim.reset()
 
     pva: Pva = scene["pva"]
@@ -88,8 +86,7 @@ def test_sensor_initialization(sim):
 def test_data_shapes(sim):
     """Test that PVA output tensors have correct shapes."""
     scene_cfg = PvaTestSceneCfg(num_envs=2)
-    with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-        scene = scene_cfg.class_type(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
     sim.reset()
 
     sim.step()
@@ -109,8 +106,7 @@ def test_data_shapes(sim):
 def test_gravity_at_rest(sim):
     """Test that a resting PVA sensor reports correct projected gravity."""
     scene_cfg = PvaTestSceneCfg(num_envs=2)
-    with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-        scene = scene_cfg.class_type(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
     sim.reset()
 
     # Cube falls from z=1.0 (bottom at z=0.9), reaches ground in ~86 steps at 200 Hz.
@@ -128,8 +124,7 @@ def test_gravity_at_rest(sim):
 def test_velocity_at_rest(sim):
     """Test that a resting PVA sensor reports near-zero velocity."""
     scene_cfg = PvaTestSceneCfg(num_envs=2)
-    with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-        scene = scene_cfg.class_type(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
     sim.reset()
 
     for _ in range(200):
@@ -147,8 +142,7 @@ def test_velocity_at_rest(sim):
 def test_position_nonzero(sim):
     """Test that the PVA sensor reports a non-zero world-frame position."""
     scene_cfg = PvaTestSceneCfg(num_envs=2)
-    with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-        scene = scene_cfg.class_type(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
     sim.reset()
 
     sim.step()
@@ -163,8 +157,7 @@ def test_position_nonzero(sim):
 def test_reset(sim):
     """Test that reset zeroes out PVA data."""
     scene_cfg = PvaTestSceneCfg(num_envs=2)
-    with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-        scene = scene_cfg.class_type(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
     sim.reset()
 
     for _ in range(10):
@@ -222,8 +215,7 @@ class FreefallSceneCfg(InteractiveSceneCfg):
 def test_freefall_velocity_increases(sim):
     """Test that a freefalling body's downward velocity increases over time."""
     scene_cfg = FreefallSceneCfg(num_envs=2)
-    with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-        scene = scene_cfg.class_type(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
     sim.reset()
 
     for _ in range(50):
@@ -245,8 +237,7 @@ def test_freefall_acceleration(sim):
     downward). For an upright body, this is (0, 0, -9.81) in the body frame.
     """
     scene_cfg = FreefallSceneCfg(num_envs=2)
-    with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-        scene = scene_cfg.class_type(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
     sim.reset()
 
     for _ in range(10):
@@ -305,8 +296,7 @@ def test_offset_and_rotated_body(sim):
     frame should be approximately (0, -1, 0) instead of (0, 0, -1).
     """
     scene_cfg = OffsetRotatedSceneCfg(num_envs=2)
-    with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-        scene = scene_cfg.class_type(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
     sim.reset()
 
     sim.step()
@@ -338,8 +328,7 @@ def test_no_stale_data_after_scene_reset(sim):
     produce spurious finite-difference accelerations).
     """
     scene_cfg = PvaTestSceneCfg(num_envs=1)
-    with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-        scene = scene_cfg.class_type(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
     sim.reset()
     scene.reset()
 

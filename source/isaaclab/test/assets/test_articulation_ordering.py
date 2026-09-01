@@ -43,10 +43,14 @@ sim_stub.SimulationContext = _SimulationContext
 sim_stub.SpawnerCfg = _SpawnerCfg
 simulation_context_stub = types.ModuleType("isaaclab.sim.simulation_context")
 simulation_context_stub.SimulationContext = _SimulationContext
+schemas_actuators_stub = types.ModuleType("isaaclab.sim.schemas.schemas_actuators")
+schemas_actuators_stub.define_actuator_properties = lambda *args: None
 _inserted_sim_stub = "isaaclab.sim" not in sys.modules
 _inserted_sim_context_stub = "isaaclab.sim.simulation_context" not in sys.modules
+_inserted_schemas_actuators_stub = "isaaclab.sim.schemas.schemas_actuators" not in sys.modules
 sys.modules.setdefault("isaaclab.sim", sim_stub)
 sys.modules.setdefault("isaaclab.sim.simulation_context", simulation_context_stub)
+sys.modules.setdefault("isaaclab.sim.schemas.schemas_actuators", schemas_actuators_stub)
 
 
 asset_base_stub = types.ModuleType("isaaclab.assets.asset_base")
@@ -70,6 +74,8 @@ if _inserted_sim_stub:
     sys.modules.pop("isaaclab.sim", None)
 if _inserted_sim_context_stub:
     sys.modules.pop("isaaclab.sim.simulation_context", None)
+if _inserted_schemas_actuators_stub:
+    sys.modules.pop("isaaclab.sim.schemas.schemas_actuators", None)
 if _inserted_asset_base_stub:
     sys.modules.pop("isaaclab.assets.asset_base", None)
 if _inserted_sim_stub or _inserted_asset_base_stub:

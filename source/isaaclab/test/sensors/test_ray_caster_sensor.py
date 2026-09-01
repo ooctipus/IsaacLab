@@ -97,7 +97,7 @@ def test_world_alignment_ignores_sensor_pitch(sim_ground):
 
     upright_cfg = _ray_caster_cfg("/World/SensorUpright", "world")
     pitched_cfg = _ray_caster_cfg("/World/SensorPitched", "world")
-    with cloner.ReplicateSession([upright_cfg, pitched_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), upright_cfg, pitched_cfg], 1, 0.0):
         sensor_upright = upright_cfg.class_type(upright_cfg)
         sensor_pitched = pitched_cfg.class_type(pitched_cfg)
     sim.reset()
@@ -142,7 +142,7 @@ def test_base_alignment_rotates_ray_direction(sim_ground):
 
     world_cfg = _ray_caster_cfg("/World/SensorWorld", "world")
     base_cfg = _ray_caster_cfg("/World/SensorBase", "base")
-    with cloner.ReplicateSession([world_cfg, base_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), world_cfg, base_cfg], 1, 0.0):
         sensor_world = world_cfg.class_type(world_cfg)
         sensor_base = base_cfg.class_type(base_cfg)
     sim.reset()
@@ -207,7 +207,7 @@ def test_yaw_alignment_direction_unchanged(sim_ground):
 
     world_cfg = _cfg_with_offset("/World/SensorWorldY", "world")
     yaw_cfg = _cfg_with_offset("/World/SensorYaw", "yaw")
-    with cloner.ReplicateSession([world_cfg, yaw_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), world_cfg, yaw_cfg], 1, 0.0):
         sensor_world = world_cfg.class_type(world_cfg)
         sensor_yaw = yaw_cfg.class_type(yaw_cfg)
     sim.reset()
@@ -252,7 +252,7 @@ def test_ray_caster_reset_resamples_drift(sim_ground):
     sim_utils.create_prim("/World/Sensor", "Xform", translation=(0.0, 0.0, 2.0))
     cfg = _ray_caster_cfg("/World/Sensor", "world")
     cfg.drift_range = (0.01, 0.05)  # force non-zero drift
-    with cloner.ReplicateSession([cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), cfg], 1, 0.0):
         sensor = cfg.class_type(cfg)
     sim.reset()
     # sim.reset() initializes the sensor with zero drift; call sensor.reset() to resample
@@ -315,7 +315,7 @@ def test_ray_caster_tracks_physics_body_parent_motion(sim_ground):
     sim_utils.update_stage()
 
     sensor_cfg = _ray_caster_cfg(parent_path, "world")
-    with cloner.ReplicateSession([sensor_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), sensor_cfg], 1, 0.0):
         sensor = sensor_cfg.class_type(sensor_cfg)
     sim.reset()
     sensor.update(dt, force_recompute=True)

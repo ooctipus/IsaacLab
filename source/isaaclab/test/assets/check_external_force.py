@@ -66,7 +66,7 @@ def main():
 
     # Robots
     robot_cfg = ANYMAL_C_CFG.replace(prim_path="{ENV_REGEX_NS}")
-    with cloner.ReplicateSession([robot_cfg], 2, 1.0, sim.device, env_template="/World/Anymal_c/Robot_{}"):
+    with cloner.ReplicateSession([cloner.CloneCfg(clone_template="/World/Anymal_c/Robot_{}"), robot_cfg], 2, 1.0):
         robot = robot_cfg.class_type(robot_cfg)
 
     # Play the simulator

@@ -23,34 +23,6 @@ from isaaclab_tasks.utils import PresetCfg
 from isaaclab_assets.robots.cartpole import CARTPOLE_CFG
 
 
-def get_tiled_camera_cfg(data_type: str, width: int = 100, height: int = 100) -> CameraCfg:
-    return CameraCfg(
-        prim_path="{ENV_REGEX_NS}/Camera",
-        offset=CameraCfg.OffsetCfg(pos=(-5.0, 0.0, 2.0), rot=(0.0, 0.0, 0.0, 1.0), convention="world"),
-        data_types=[data_type],
-        spawn=sim_utils.PinholeCameraCfg(
-            focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 20.0)
-        ),
-        width=width,
-        height=height,
-    )
-
-
-@configclass
-class CartpoleCameraSceneCfg(InteractiveSceneCfg):
-    """Assets for the Cartpole camera showcase."""
-
-    robot: ArticulationCfg = CARTPOLE_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-    camera: CameraCfg = get_tiled_camera_cfg("rgb")
-    light = AssetBaseCfg(
-        prim_path="/World/Light",
-        spawn=sim_utils.DistantLightCfg(intensity=2000.0, color=(1.0, 1.0, 1.0)),
-        init_state=AssetBaseCfg.InitialStateCfg(
-            rot=(-0.14644663035869598, -0.3535534143447876, -0.3535534143447876, 0.8535533547401428)
-        ),
-    )
-
-
 @configclass
 class CartpoleCameraEnvCfg(DirectRLEnvCfg):
     """Base cartpole camera cfg for the observation/action-space showcase.
@@ -67,6 +39,27 @@ class CartpoleCameraEnvCfg(DirectRLEnvCfg):
     # simulation
     sim: SimulationCfg = SimulationCfg(dt=1 / 120, render_interval=decimation)
 
+    # assets and camera
+    robot_cfg: ArticulationCfg = CARTPOLE_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+    ground_cfg: AssetBaseCfg | None = None
+    tiled_camera: CameraCfg = CameraCfg(
+        prim_path="{ENV_REGEX_NS}/Camera",
+        offset=CameraCfg.OffsetCfg(pos=(-5.0, 0.0, 2.0), rot=(0.0, 0.0, 0.0, 1.0), convention="world"),
+        data_types=["rgb"],
+        spawn=sim_utils.PinholeCameraCfg(
+            focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 20.0)
+        ),
+        width=100,
+        height=100,
+    )
+    light_cfg: AssetBaseCfg = AssetBaseCfg(
+        prim_path="/World/Light",
+        spawn=sim_utils.DistantLightCfg(intensity=2000.0, color=(1.0, 1.0, 1.0)),
+        init_state=AssetBaseCfg.InitialStateCfg(
+            rot=(-0.14644663035869598, -0.3535534143447876, -0.3535534143447876, 0.8535533547401428)
+        ),
+    )
+
     cart_dof_name = "slider_to_cart"
     pole_dof_name = "cart_to_pole"
 
@@ -80,7 +73,7 @@ class CartpoleCameraEnvCfg(DirectRLEnvCfg):
     observation_space = [100, 100, 3]
 
     # scene
-    scene: CartpoleCameraSceneCfg = CartpoleCameraSceneCfg(num_envs=512, env_spacing=20.0)
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=512, env_spacing=20.0)
 
     # reset
     max_cart_pos = 3.0  # the cart is reset if it exceeds that position [m]

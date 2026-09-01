@@ -19,7 +19,6 @@ pytest.importorskip("ovphysx.types", reason="ovphysx wheel not installed")
 from isaaclab_ov.physics import OvPhysxCfg  # noqa: E402
 
 import isaaclab.sim as sim_utils  # noqa: E402
-from isaaclab import cloner  # noqa: E402
 from isaaclab.sim import SimulationCfg, build_simulation_context  # noqa: E402
 from isaaclab.sim.views import FrameView  # noqa: E402
 
@@ -68,7 +67,7 @@ def test_world_attached_source_prim_expands_from_clone_plan():
     ) as sim:
         sim._app_control_on_stop_handle = None
         cfg = _OvPhysxWorldFrameViewSceneCfg(num_envs=4, env_spacing=2.0)
-        scene = _create_scene(cfg, sim)
+        scene = cfg.class_type(cfg)
         sim.reset()
 
         stage = sim_utils.get_current_stage()
@@ -139,7 +138,7 @@ from frame_view_contract_utils import CHILD_OFFSET, ViewBundle  # noqa: E402
 from pxr import Gf  # noqa: E402
 
 from isaaclab.assets import AssetBaseCfg, RigidObjectCfg  # noqa: E402
-from isaaclab.scene import InteractiveScene, InteractiveSceneCfg  # noqa: E402
+from isaaclab.scene import InteractiveSceneCfg  # noqa: E402
 from isaaclab.utils.configclass import configclass  # noqa: E402
 
 
@@ -166,19 +165,6 @@ class _OvPhysxWorldFrameViewSceneCfg(_OvPhysxFrameViewSceneCfg):
     )
 
 
-def _create_scene(cfg: InteractiveSceneCfg, sim) -> InteractiveScene:
-    """Construct a cfg-owned scene through its clone lifecycle."""
-    with cloner.ReplicateSession(
-        [cfg],
-        cfg.num_envs,
-        cfg.env_spacing,
-        sim.device,
-        env_template=cfg.clone_cfg.clone_template,
-        replicate_physics=cfg.replicate_physics,
-    ):
-        return cfg.class_type(cfg)
-
-
 @pytest.fixture
 def view_factory():
     """OVPhysX factory: CameraMount child Xform at CHILD_OFFSET under each Cube body.
@@ -203,7 +189,7 @@ def view_factory():
         contexts.append(ctx)
 
         cfg = _OvPhysxFrameViewSceneCfg(num_envs=num_envs, env_spacing=2.0)
-        _create_scene(cfg, sim)
+        cfg.class_type(cfg)
 
         stage = sim_utils.get_current_stage()
         for i in range(num_envs):

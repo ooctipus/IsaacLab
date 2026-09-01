@@ -30,7 +30,7 @@ from isaaclab_ov.physics import OvPhysxCfg  # noqa: E402
 
 import isaaclab.sim as sim_utils  # noqa: E402
 from isaaclab.assets import RigidObjectCfg  # noqa: E402
-from isaaclab.cloner import ReplicateSession  # noqa: E402
+from isaaclab.cloner import CloneCfg, ReplicateSession  # noqa: E402
 from isaaclab.envs.mdp.events import _RandomizeRigidBodyMaterialOvPhysx  # noqa: E402
 from isaaclab.sim import SimulationCfg, build_simulation_context  # noqa: E402
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR  # noqa: E402
@@ -73,7 +73,7 @@ def _make_cubes(num_cubes: int, device: str) -> RigidObject:
         spawn=sim_utils.UsdFileCfg(usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd"),
         init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 1.0)),
     )
-    with ReplicateSession([cfg], num_cubes, 1.0, device, env_template="/World/Table_{}"):
+    with ReplicateSession([CloneCfg(clone_template="/World/Table_{}"), cfg], num_cubes, 1.0):
         return cfg.class_type(cfg)
 
 

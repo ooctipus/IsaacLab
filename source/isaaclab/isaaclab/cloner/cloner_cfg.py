@@ -46,8 +46,8 @@ class InclusionSet:
 class CloneCfg:
     """Configuration for environment replication.
 
-    Holds the knobs :class:`~isaaclab.scene.InteractiveScene` forwards to its
-    :class:`~isaaclab.cloner.ReplicateSession` when building per-env layouts.
+    The composition root passes this policy to :class:`~isaaclab.cloner.ReplicateSession`;
+    :class:`~isaaclab.scene.InteractiveScene` consumes the published plan.
     """
 
     clone_combinations: list[InclusionSet] = []
@@ -64,3 +64,12 @@ class CloneCfg:
     The regex form used to expand ``{ENV_REGEX_NS}`` cfg macros is
     ``clone_template.format("[^/]+")``, which confines the slot to one path segment.
     """
+
+    replicate_physics: bool = True
+    """Whether native physics replication contexts receive the clone plan.
+
+    Mandatory model publishers still consume the plan when this is disabled.
+    """
+
+    filter_collisions: bool = True
+    """Whether PhysX collision groups isolate cloned environments."""

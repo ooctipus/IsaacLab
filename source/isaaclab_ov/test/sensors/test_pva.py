@@ -49,7 +49,7 @@ import isaaclab.sim as sim_utils  # noqa: E402
 import isaaclab.utils.math as math_utils  # noqa: E402
 from isaaclab import cloner  # noqa: E402
 from isaaclab.assets import RigidObject, RigidObjectCfg  # noqa: E402
-from isaaclab.scene import InteractiveScene, InteractiveSceneCfg  # noqa: E402
+from isaaclab.scene import InteractiveSceneCfg  # noqa: E402
 from isaaclab.sensors.pva import Pva, PvaCfg  # noqa: E402
 from isaaclab.sim import SimulationCfg, build_simulation_context  # noqa: E402
 from isaaclab.utils.configclass import configclass  # noqa: E402
@@ -134,19 +134,6 @@ class _StaleResetSceneCfg(InteractiveSceneCfg):
     pva_cube: PvaCfg = PvaCfg(prim_path="{ENV_REGEX_NS}/cube")
 
 
-def _create_scene(cfg: InteractiveSceneCfg, sim) -> InteractiveScene:
-    """Construct a cfg-owned scene through its clone lifecycle."""
-    with cloner.ReplicateSession(
-        [cfg],
-        cfg.num_envs,
-        cfg.env_spacing,
-        sim.device,
-        env_template=cfg.clone_cfg.clone_template,
-        replicate_physics=cfg.replicate_physics,
-    ):
-        return cfg.class_type(cfg)
-
-
 # ---------------------------------------------------------------------------
 # Process-global device-mode lock (matches the IMU and contact-sensor tests).
 # The ovphysx wheel can only run one device per process; parametrized tests
@@ -217,11 +204,7 @@ def test_constant_velocity(sim_ctx, device):
     pva_ball_cfg = _make_pva_cfg("{ENV_REGEX_NS}/ball")
     pva_cube_cfg = _make_pva_cfg("{ENV_REGEX_NS}/cube")
     with cloner.ReplicateSession(
-        [ball_cfg, cube_cfg, pva_ball_cfg, pva_cube_cfg],
-        NUM_ENVS,
-        5.0,
-        sim_ctx.device,
-        env_template="/World/env_{}",
+        [cloner.CloneCfg(clone_template="/World/env_{}"), ball_cfg, cube_cfg, pva_ball_cfg, pva_cube_cfg], NUM_ENVS, 5.0
     ):
         balls = ball_cfg.class_type(ball_cfg)
         cubes = cube_cfg.class_type(cube_cfg)
@@ -316,11 +299,7 @@ def test_constant_acceleration(sim_ctx, device):
     ball_cfg = _make_ball_cfg()
     pva_ball_cfg = _make_pva_cfg("{ENV_REGEX_NS}/ball")
     with cloner.ReplicateSession(
-        [ball_cfg, pva_ball_cfg],
-        NUM_ENVS,
-        5.0,
-        sim_ctx.device,
-        env_template="/World/env_{}",
+        [cloner.CloneCfg(clone_template="/World/env_{}"), ball_cfg, pva_ball_cfg], NUM_ENVS, 5.0
     ):
         balls = ball_cfg.class_type(ball_cfg)
         pva_ball = pva_ball_cfg.class_type(pva_ball_cfg)
@@ -383,11 +362,7 @@ def test_offset_calculation(sim_ctx, device):
         offset=PvaCfg.OffsetCfg(pos=MOUNT_POS_OFFSET, rot=MOUNT_ROT_OFFSET),
     )
     with cloner.ReplicateSession(
-        [cube_cfg, pva_child_cfg, pva_direct_cfg],
-        NUM_ENVS,
-        5.0,
-        sim_ctx.device,
-        env_template="/World/env_{}",
+        [cloner.CloneCfg(clone_template="/World/env_{}"), cube_cfg, pva_child_cfg, pva_direct_cfg], NUM_ENVS, 5.0
     ):
         cubes = cube_cfg.class_type(cube_cfg)
         sim_utils.create_prim(
@@ -471,11 +446,7 @@ def test_env_ids_propagation(sim_ctx, device):
     cube_cfg = _make_cube_cfg()
     pva_cube_cfg = _make_pva_cfg("{ENV_REGEX_NS}/cube")
     with cloner.ReplicateSession(
-        [cube_cfg, pva_cube_cfg],
-        NUM_ENVS,
-        5.0,
-        sim_ctx.device,
-        env_template="/World/env_{}",
+        [cloner.CloneCfg(clone_template="/World/env_{}"), cube_cfg, pva_cube_cfg], NUM_ENVS, 5.0
     ):
         cubes = cube_cfg.class_type(cube_cfg)
         pva_cube = pva_cube_cfg.class_type(pva_cube_cfg)
@@ -519,11 +490,7 @@ def test_sensor_initialization(sim_ctx, device):
     ball_cfg = _make_ball_cfg()
     pva_ball_cfg = _make_pva_cfg("{ENV_REGEX_NS}/ball")
     with cloner.ReplicateSession(
-        [ball_cfg, pva_ball_cfg],
-        NUM_ENVS,
-        5.0,
-        sim_ctx.device,
-        env_template="/World/env_{}",
+        [cloner.CloneCfg(clone_template="/World/env_{}"), ball_cfg, pva_ball_cfg], NUM_ENVS, 5.0
     ):
         ball_cfg.class_type(ball_cfg)
         pva_ball = pva_ball_cfg.class_type(pva_ball_cfg)
@@ -559,11 +526,7 @@ def test_pose_w_packing(sim_ctx, device):
     ball_cfg = _make_ball_cfg()
     pva_ball_cfg = _make_pva_cfg("{ENV_REGEX_NS}/ball")
     with cloner.ReplicateSession(
-        [ball_cfg, pva_ball_cfg],
-        NUM_ENVS,
-        5.0,
-        sim_ctx.device,
-        env_template="/World/env_{}",
+        [cloner.CloneCfg(clone_template="/World/env_{}"), ball_cfg, pva_ball_cfg], NUM_ENVS, 5.0
     ):
         balls = ball_cfg.class_type(ball_cfg)
         pva_ball = pva_ball_cfg.class_type(pva_ball_cfg)
@@ -596,11 +559,7 @@ def test_projected_gravity_at_rest(sim_ctx, device):
     ball_cfg = _make_ball_cfg()
     pva_ball_cfg = _make_pva_cfg("{ENV_REGEX_NS}/ball")
     with cloner.ReplicateSession(
-        [ball_cfg, pva_ball_cfg],
-        NUM_ENVS,
-        5.0,
-        sim_ctx.device,
-        env_template="/World/env_{}",
+        [cloner.CloneCfg(clone_template="/World/env_{}"), ball_cfg, pva_ball_cfg], NUM_ENVS, 5.0
     ):
         balls = ball_cfg.class_type(ball_cfg)
         pva_ball = pva_ball_cfg.class_type(pva_ball_cfg)
@@ -631,11 +590,7 @@ def test_freefall_lin_acc(sim_ctx, device):
     ball_cfg = _make_ball_cfg(height=5.0)
     pva_ball_cfg = _make_pva_cfg("{ENV_REGEX_NS}/ball")
     with cloner.ReplicateSession(
-        [ball_cfg, pva_ball_cfg],
-        NUM_ENVS,
-        5.0,
-        sim_ctx.device,
-        env_template="/World/env_{}",
+        [cloner.CloneCfg(clone_template="/World/env_{}"), ball_cfg, pva_ball_cfg], NUM_ENVS, 5.0
     ):
         balls = ball_cfg.class_type(ball_cfg)
         pva_ball = pva_ball_cfg.class_type(pva_ball_cfg)
@@ -671,11 +626,7 @@ def test_reset(sim_ctx, device):
     ball_cfg = _make_ball_cfg()
     pva_ball_cfg = _make_pva_cfg("{ENV_REGEX_NS}/ball")
     with cloner.ReplicateSession(
-        [ball_cfg, pva_ball_cfg],
-        NUM_ENVS,
-        5.0,
-        sim_ctx.device,
-        env_template="/World/env_{}",
+        [cloner.CloneCfg(clone_template="/World/env_{}"), ball_cfg, pva_ball_cfg], NUM_ENVS, 5.0
     ):
         balls = ball_cfg.class_type(ball_cfg)
         pva_ball = pva_ball_cfg.class_type(pva_ball_cfg)
@@ -732,7 +683,7 @@ def test_reset(sim_ctx, device):
 def test_no_stale_data_after_scene_reset(sim_ctx, device):
     """Test ``scene.reset(env_ids)`` does not expose stale native velocity through ``pva.data``."""
     scene_cfg = _StaleResetSceneCfg(num_envs=1, env_spacing=2.0, lazy_sensor_update=False)
-    scene = _create_scene(scene_cfg, sim_ctx)
+    scene = scene_cfg.class_type(scene_cfg)
     sim_ctx.reset()
     scene.reset()
 
@@ -780,11 +731,7 @@ def test_indirect_attachment_usd(sim_ctx, device):
     pva_indirect_cfg = _make_pva_cfg("{ENV_REGEX_NS}/ball/pva_sub")
     pva_direct_cfg = _make_pva_cfg("{ENV_REGEX_NS}/ball", offset=PvaCfg.OffsetCfg(pos=sub_pos, rot=sub_rot))
     with cloner.ReplicateSession(
-        [ball_cfg, pva_indirect_cfg, pva_direct_cfg],
-        NUM_ENVS,
-        5.0,
-        sim_ctx.device,
-        env_template="/World/env_{}",
+        [cloner.CloneCfg(clone_template="/World/env_{}"), ball_cfg, pva_indirect_cfg, pva_direct_cfg], NUM_ENVS, 5.0
     ):
         balls = ball_cfg.class_type(ball_cfg)
         sim_utils.create_prim("/World/env_0/ball/pva_sub", "Xform", translation=sub_pos, orientation=sub_rot)
@@ -873,13 +820,7 @@ def test_attachment_validity(sim_ctx, device):
     a rigid-body ancestor in its prim tree.
     """
     pva_world_cfg = PvaCfg(prim_path="{ENV_REGEX_NS}")
-    with cloner.ReplicateSession(
-        [pva_world_cfg],
-        NUM_ENVS,
-        5.0,
-        sim_ctx.device,
-        env_template="/World/env_{}",
-    ):
+    with cloner.ReplicateSession([cloner.CloneCfg(clone_template="/World/env_{}"), pva_world_cfg], NUM_ENVS, 5.0):
         _pva_world = pva_world_cfg.class_type(pva_world_cfg)
     with pytest.raises(RuntimeError) as exc_info:
         sim_ctx.reset()
@@ -892,11 +833,7 @@ def test_sensor_print(sim_ctx, device):
     ball_cfg = _make_ball_cfg()
     pva_ball_cfg = _make_pva_cfg("{ENV_REGEX_NS}/ball")
     with cloner.ReplicateSession(
-        [ball_cfg, pva_ball_cfg],
-        NUM_ENVS,
-        5.0,
-        sim_ctx.device,
-        env_template="/World/env_{}",
+        [cloner.CloneCfg(clone_template="/World/env_{}"), ball_cfg, pva_ball_cfg], NUM_ENVS, 5.0
     ):
         ball_cfg.class_type(ball_cfg)
         pva_ball = pva_ball_cfg.class_type(pva_ball_cfg)

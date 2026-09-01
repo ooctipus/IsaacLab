@@ -1,6 +1,7 @@
 Changed
 ^^^^^^^
 
-* **Breaking:** Moved direct-task asset declarations into their scene cfgs so each environment has
-  one cfg-owned clone lifecycle. Custom direct tasks should declare assets on ``scene`` and use
-  ``_setup_scene()`` only to bind the constructed scene entities.
+* **Breaking:** Moved homogeneous direct-task asset declarations onto their direct env cfgs. The
+  direct environment base owns the ``from_env_0`` clone lifecycle; construct asset prototypes with
+  ``cfg.class_type(cfg)`` in ``_setup_scene()`` and register runtime entities on the plain scene. Use
+  a scene subclass when the workflow is declarative or heterogeneous.

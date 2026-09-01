@@ -49,7 +49,6 @@ import warp as wp
 from isaaclab_newton.benchmark._physics import create_microbenchmark_physics_cfg
 
 import isaaclab.sim as sim_utils
-from isaaclab.cloner import ReplicateSession
 
 
 def main():
@@ -62,17 +61,7 @@ def main():
             history_length=args_cli.history_length,
             num_envs=args_cli.num_envs,
         )
-        with ReplicateSession(
-            [scene_cfg],
-            scene_cfg.num_envs,
-            scene_cfg.env_spacing,
-            sim.device,
-            env_template=scene_cfg.clone_cfg.clone_template,
-            replicate_physics=scene_cfg.replicate_physics,
-        ):
-            scene = scene_cfg.class_type(scene_cfg)
-        if scene_cfg.filter_collisions and "physx" in sim.physics_backend:
-            scene.filter_collisions()
+        scene = scene_cfg.class_type(scene_cfg)
         sim.reset()
         scene.reset()
 

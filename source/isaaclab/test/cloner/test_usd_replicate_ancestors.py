@@ -9,7 +9,7 @@ import torch
 
 from pxr import Sdf, Usd
 
-from isaaclab.cloner import UsdReplicateContext
+from isaaclab.cloner import ClonePlan, UsdReplicateContext
 
 
 def _make_stage_with_source(source_path: str) -> Usd.Stage:
@@ -24,11 +24,17 @@ def test_usd_replicate_defines_nested_destination_ancestors():
     stage = _make_stage_with_source("/World/envs/env_0/Groceries/Object")
     stage.DefinePrim("/World/envs/env_1", "Xform")
 
-    UsdReplicateContext(stage).replicate(
-        sources=["/World/envs/env_0/Groceries/Object"],
-        destinations=["/World/envs/env_{}/Groceries/Object"],
+    plan = ClonePlan(
+        sources=("/World/envs/env_0/Groceries/Object",),
+        destinations=("/World/envs/env_{}/Groceries/Object",),
+        clone_mask=torch.ones((1, 2), dtype=torch.bool),
         env_ids=torch.tensor([0, 1]),
+        positions=torch.zeros((2, 3)),
+        replicate_physics=True,
     )
+    context = UsdReplicateContext(stage)
+    plan.context_rows[type(context)] = (0,)
+    context.replicate(plan)
 
     copied_scope = stage.GetPrimAtPath("/World/envs/env_1/Groceries")
     copied_prim = stage.GetPrimAtPath("/World/envs/env_1/Groceries/Object")
@@ -42,11 +48,17 @@ def test_usd_replicate_keeps_existing_ancestor_specs():
     for prefix in Sdf.Path("/World/envs/env_1/Groceries").GetPrefixes():
         stage.DefinePrim(prefix, "Xform")
 
-    UsdReplicateContext(stage).replicate(
-        sources=["/World/envs/env_0/Groceries/Object"],
-        destinations=["/World/envs/env_{}/Groceries/Object"],
+    plan = ClonePlan(
+        sources=("/World/envs/env_0/Groceries/Object",),
+        destinations=("/World/envs/env_{}/Groceries/Object",),
+        clone_mask=torch.ones((1, 2), dtype=torch.bool),
         env_ids=torch.tensor([0, 1]),
+        positions=torch.zeros((2, 3)),
+        replicate_physics=True,
     )
+    context = UsdReplicateContext(stage)
+    plan.context_rows[type(context)] = (0,)
+    context.replicate(plan)
 
     scope = stage.GetPrimAtPath("/World/envs/env_1/Groceries")
     assert scope.IsDefined()

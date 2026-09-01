@@ -29,7 +29,7 @@ from newton import ModelFlags
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import RigidObjectCfg, RigidObjectCollectionCfg
-from isaaclab.cloner import ReplicateSession
+from isaaclab.cloner import CloneCfg, ReplicateSession
 from isaaclab.sim import SimulationCfg, SimulationContext, build_simulation_context
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.math import (
@@ -115,7 +115,7 @@ def generate_cubes_scene(
     if spawn_unrelated_sibling:
         unrelated_cfg = RigidObjectCfg(prim_path="/World/Env_[^/]*/UnrelatedObject", spawn=spawn_cfg)
         session_cfgs.append(unrelated_cfg)
-    with ReplicateSession(session_cfgs, num_envs, 3.0, device, env_template="/World/Env_{}"):
+    with ReplicateSession((CloneCfg(clone_template="/World/Env_{}"), *session_cfgs), num_envs, 3.0):
         if spawn_unrelated_sibling:
             spawn_cfg.func("/World/Env_0/UnrelatedObject", spawn_cfg, translation=(0.0, -3.0, height))
         cube_object_collection = cube_object_collection_cfg.class_type(cube_object_collection_cfg)
@@ -198,7 +198,7 @@ def test_set_body_inertial_properties_updates_inverses(device):
                 for body_index in range(num_cubes)
             }
         )
-        with ReplicateSession([object_collection_cfg], num_envs, 1.0, device, env_template="/World/Env_{}"):
+        with ReplicateSession([CloneCfg(clone_template="/World/Env_{}"), object_collection_cfg], num_envs, 1.0):
             object_collection = object_collection_cfg.class_type(object_collection_cfg)
         sim.reset()
 

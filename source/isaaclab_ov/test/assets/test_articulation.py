@@ -86,7 +86,7 @@ import isaaclab.utils.string as string_utils  # noqa: E402
 from isaaclab.actuators import DelayedPDActuatorCfg, IdealPDActuatorCfg, ImplicitActuatorCfg  # noqa: E402
 from isaaclab.assets import ArticulationCfg, get_articulation_name_ordering  # noqa: E402
 from isaaclab.assets.articulation import ordering_kernels  # noqa: E402
-from isaaclab.cloner import ReplicateSession  # noqa: E402
+from isaaclab.cloner import CloneCfg, ReplicateSession  # noqa: E402
 from isaaclab.envs.mdp.terminations import joint_effort_out_of_limit  # noqa: E402
 from isaaclab.managers import SceneEntityCfg  # noqa: E402
 from isaaclab.sim import SimulationCfg, SimulationContext, build_simulation_context  # noqa: E402
@@ -392,7 +392,7 @@ def generate_articulation(
 
     """
     articulation_cfg = articulation_cfg.replace(prim_path="/World/Env_[^/]*/Robot")
-    with ReplicateSession([articulation_cfg], num_articulations, 2.5, device, env_template="/World/Env_{}"):
+    with ReplicateSession([CloneCfg(clone_template="/World/Env_{}"), articulation_cfg], num_articulations, 2.5):
         articulation = articulation_cfg.class_type(articulation_cfg)
     translations = SimulationContext.instance().get_clone_plan().positions
 
@@ -627,7 +627,7 @@ def test_reversed_joint_dynamics_use_public_joint_basis(sim, device, gravity_ena
         ),
         actuators={},
     )
-    with ReplicateSession([articulation_cfg], 1, 0.0, sim.device):
+    with ReplicateSession([CloneCfg(), articulation_cfg], 1, 0.0):
         articulation = articulation_cfg.class_type(articulation_cfg)
         UsdPhysics.FixedJoint.Define(sim.stage, "/World/Robot/fixed_root").GetBody1Rel().SetTargets(
             ["/World/Robot/base"]
@@ -1032,7 +1032,7 @@ def test_branching_fixture_physx_ordering_is_identity_on_ovphysx(sim, device):
         joint_ordering="physx",
         body_ordering="physx",
     )
-    with ReplicateSession([articulation_cfg], 1, 0.0, sim.device):
+    with ReplicateSession([CloneCfg(), articulation_cfg], 1, 0.0):
         articulation = articulation_cfg.class_type(articulation_cfg)
     sim.reset()
     assert articulation.is_initialized
@@ -1069,7 +1069,7 @@ def test_branching_fixture_mjwarp_ordering_reorders_ovphysx_to_dfs(sim, device):
         joint_ordering="mjwarp",
         body_ordering="mjwarp",
     )
-    with ReplicateSession([articulation_cfg], 1, 0.0, sim.device):
+    with ReplicateSession([CloneCfg(), articulation_cfg], 1, 0.0):
         articulation = articulation_cfg.class_type(articulation_cfg)
     sim.reset()
     assert articulation.is_initialized
@@ -1209,7 +1209,7 @@ def test_articulation_dynamics_reorder_body_rows_and_joint_axes(sim, device):
         joint_ordering="mjwarp",
         body_ordering="mjwarp",
     )
-    with ReplicateSession([articulation_cfg], 1, 0.0, sim.device):
+    with ReplicateSession([CloneCfg(), articulation_cfg], 1, 0.0):
         articulation = articulation_cfg.class_type(articulation_cfg)
     sim.reset()
 
@@ -1842,7 +1842,7 @@ def test_out_of_range_default_joint_vel(sim, device):
         "panda_joint1": 100.0,
         "panda_joint[2, 4]": -60.0,
     }
-    with ReplicateSession([articulation_cfg], 1, 0.0, sim.device):
+    with ReplicateSession([CloneCfg(), articulation_cfg], 1, 0.0):
         articulation = articulation_cfg.class_type(articulation_cfg)
 
     # Check that the framework doesn't hold excessive strong references.

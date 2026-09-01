@@ -63,7 +63,6 @@ import isaaclab.sim as sim_utils
 from isaaclab.app import launch_simulation
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 from isaaclab.benchmark import BaseIsaacLabBenchmark, SingleMeasurement
-from isaaclab.cloner import ReplicateSession
 from isaaclab.physics import PhysicsCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils.configclass import configclass
@@ -198,17 +197,7 @@ def main(
     # Start the timer for creating the scene
     setup_time_begin = time.perf_counter_ns()
     # Design scene
-    with ReplicateSession(
-        [scene_cfg],
-        scene_cfg.num_envs,
-        scene_cfg.env_spacing,
-        sim.device,
-        env_template=scene_cfg.clone_cfg.clone_template,
-        replicate_physics=scene_cfg.replicate_physics,
-    ):
-        scene = scene_cfg.class_type(scene_cfg)
-    if scene_cfg.filter_collisions and "physx" in sim.physics_backend:
-        scene.filter_collisions()
+    scene = scene_cfg.class_type(scene_cfg)
     # Stop the timer for creating the scene
     setup_time_end = time.perf_counter_ns()
 

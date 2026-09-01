@@ -514,8 +514,8 @@ def _get_mjwarp_names_from_newton_usd_builder(
 ) -> dict[Literal["joint", "body"], tuple[str, ...]] | None:
     """Build a lightweight Newton prototype view with MJWarp-style articulation names."""
     # NOTE: "dfs" and bodies_follow_joint_ordering=True mirror the defaults of
-    # Newton's ModelBuilder.add_usd. isaaclab_newton's NewtonManager calls
-    # add_usd (see instantiate_builder_from_stage) without passing
+    # Newton's ModelBuilder.add_usd. NewtonReplicateContext imports source builders
+    # without passing
     # joint_ordering/bodies_follow_joint_ordering, so a live Newton backend's
     # native order matches this emulation only because both sides currently
     # rely on the same Newton library defaults. The "mjwarp" convention's

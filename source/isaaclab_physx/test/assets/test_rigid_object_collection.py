@@ -26,7 +26,7 @@ from isaaclab_physx.assets import RigidObjectCollection
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import RigidObjectCfg, RigidObjectCollectionCfg
-from isaaclab.cloner import ReplicateSession
+from isaaclab.cloner import CloneCfg, ReplicateSession
 from isaaclab.sim import SimulationContext, build_simulation_context
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.math import (
@@ -87,7 +87,7 @@ def generate_cubes_scene(
         cube_config_dict[f"cube_{i}"] = cube_object_cfg
     # create the rigid object collection
     cube_object_collection_cfg = RigidObjectCollectionCfg(rigid_objects=cube_config_dict)
-    with ReplicateSession([cube_object_collection_cfg], num_envs, 3.0, device, env_template="/World/Table_{}"):
+    with ReplicateSession([CloneCfg(clone_template="/World/Table_{}"), cube_object_collection_cfg], num_envs, 3.0):
         cube_object_colection = cube_object_collection_cfg.class_type(cube_object_collection_cfg)
     origins = SimulationContext.instance().get_clone_plan().positions
 

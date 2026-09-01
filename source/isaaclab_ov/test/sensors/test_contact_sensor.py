@@ -123,19 +123,6 @@ def _ovphysx_sim_context(device: str, **kwargs):
     return build_simulation_context(device=device, sim_cfg=sim_cfg, **kwargs)
 
 
-def _create_scene(cfg: InteractiveSceneCfg, sim) -> InteractiveScene:
-    """Construct a cfg-owned scene through its clone lifecycle."""
-    with cloner.ReplicateSession(
-        [cfg],
-        cfg.num_envs,
-        cfg.env_spacing,
-        sim.device,
-        env_template=cfg.clone_cfg.clone_template,
-        replicate_physics=cfg.replicate_physics,
-    ):
-        return cfg.class_type(cfg)
-
-
 ##
 # Custom helper classes.
 ##
@@ -379,7 +366,7 @@ def test_cube_stack_contact_filtering(device, num_envs):
             update_period=0.0,
             filter_prim_paths_expr=["{ENV_REGEX_NS}/Cube_1"],
         )
-        scene = _create_scene(scene_cfg, sim)
+        scene = scene_cfg.class_type(scene_cfg)
 
         # Play the simulation
         sim.reset()
@@ -451,7 +438,7 @@ def test_no_contact_reporting():
             update_period=0.0,
             filter_prim_paths_expr=[],
         )
-        scene = _create_scene(scene_cfg, sim)
+        scene = scene_cfg.class_type(scene_cfg)
 
         # Play the simulation
         sim.reset()
@@ -506,7 +493,7 @@ def test_multi_body_per_sensor_indexing(device, num_envs):
             update_period=0.0,
             filter_prim_paths_expr=[],
         )
-        scene = _create_scene(scene_cfg, sim)
+        scene = scene_cfg.class_type(scene_cfg)
         sim.reset()
         contact_sensor: ContactSensor = scene["contact_sensor"]
 
@@ -586,8 +573,8 @@ def test_nested_rigid_body_hierarchy(device, num_envs):
         contact_sensor_cfg = ContactSensorCfg(
             prim_path="{ENV_REGEX_NS}/Robot/[^/]*", track_pose=False, debug_vis=False, update_period=0.0
         )
-        with cloner.ReplicateSession((robot_cfg, contact_sensor_cfg), num_envs, 3.0, sim.device):
-            source_path = cloner.query.cfg_source_paths(sim.get_clone_plan(), robot_cfg)[0]
+        with cloner.ReplicateSession((cloner.CloneCfg(), robot_cfg, contact_sensor_cfg), num_envs, 3.0):
+            source_path = cloner.query._cfg_source_paths(sim.get_clone_plan(), robot_cfg)[0]
             robot_cfg.spawn.func(source_path, robot_cfg.spawn)
             contact_sensor = contact_sensor_cfg.class_type(contact_sensor_cfg)
         sim.reset()
@@ -619,7 +606,7 @@ def test_sensor_print(device):
             track_air_time=True,
             history_length=3,
         )
-        scene = _create_scene(scene_cfg, sim)
+        scene = scene_cfg.class_type(scene_cfg)
         # Play the simulator
         sim.reset()
         # print info
@@ -641,7 +628,7 @@ def test_contact_sensor_threshold(device):
             track_air_time=True,
             history_length=3,
         )
-        scene = _create_scene(scene_cfg, sim)
+        scene = scene_cfg.class_type(scene_cfg)
         # Play the simulator
         sim.reset()
 
@@ -696,7 +683,7 @@ def test_friction_reporting(device, grav_dir):
             filter_prim_paths_expr=filter_prim_paths_expr,
         )
 
-        scene = _create_scene(scene_cfg, sim)
+        scene = scene_cfg.class_type(scene_cfg)
         sim.reset()
 
         scene["contact_sensor"].reset()
@@ -751,7 +738,7 @@ def test_invalid_prim_paths_config(device):
         )
 
         try:
-            _ = _create_scene(scene_cfg, sim)
+            _ = scene_cfg.class_type(scene_cfg)
             sim.reset()
             assert False, "Expected ValueError due to invalid contact sensor configuration."
         except ValueError:
@@ -787,7 +774,7 @@ def test_invalid_max_contact_points_config(device):
         )
 
         try:
-            _ = _create_scene(scene_cfg, sim)
+            _ = scene_cfg.class_type(scene_cfg)
             sim.reset()
             assert False, "Expected ValueError due to invalid contact sensor configuration."
         except ValueError:
@@ -840,7 +827,7 @@ def _run_contact_sensor_test(
                 track_friction_forces=False,
                 filter_prim_paths_expr=[],
             )
-            scene = _create_scene(scene_cfg, sim)
+            scene = scene_cfg.class_type(scene_cfg)
 
             # Play the simulation
             sim.reset()

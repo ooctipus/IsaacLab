@@ -18,7 +18,6 @@ from isaaclab_newton.assets.mpm_object.mpm_object import MPMObjectRegistryEntry,
 from isaaclab_newton.physics import MPMSolverCfg, NewtonCfg, NewtonMPMManager
 from isaaclab_newton.sim.spawners.mpm import MPMGridCfg, MPMParticleMaterialCfg, MPMPointsCfg
 
-from isaaclab import cloner
 from isaaclab.assets import RigidObjectCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim import SimulationCfg, build_simulation_context
@@ -117,8 +116,7 @@ def test_mpm_object_initializes_from_interactive_scene():
 
     with build_simulation_context(sim_cfg=sim_cfg) as sim:
         scene_cfg = MPMSceneCfg(num_envs=2, env_spacing=1.0)
-        with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-            scene = scene_cfg.class_type(scene_cfg)
+        scene = scene_cfg.class_type(scene_cfg)
         sim.reset()
 
         media = scene["media"]
@@ -173,8 +171,7 @@ def test_mpm_solver_refreshes_kinematic_rigid_body_transforms():
 
     with build_simulation_context(sim_cfg=sim_cfg) as sim:
         scene_cfg = MPMSceneCfg(num_envs=1, env_spacing=0.0)
-        with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-            scene = scene_cfg.class_type(scene_cfg)
+        scene = scene_cfg.class_type(scene_cfg)
         sim.reset()
 
         collider = scene["collider"]
@@ -217,8 +214,7 @@ def test_mpm_object_creates_usd_points_without_kit_visualizer(monkeypatch):
     with build_simulation_context(sim_cfg=sim_cfg) as sim:
         monkeypatch.setattr(sim, "resolve_visualizer_types", lambda: ["newton"])
         scene_cfg = MPMSceneCfg(num_envs=2, env_spacing=1.0)
-        with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-            scene = scene_cfg.class_type(scene_cfg)
+        scene = scene_cfg.class_type(scene_cfg)
 
         from pxr import UsdGeom  # noqa: PLC0415
 
@@ -269,8 +265,7 @@ def test_mpm_usd_points_follow_particle_state(monkeypatch):
     with build_simulation_context(sim_cfg=sim_cfg) as sim:
         monkeypatch.setattr(sim, "resolve_visualizer_types", lambda: ["newton"])
         scene_cfg = MPMSceneCfg(num_envs=1, env_spacing=0.0)
-        with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-            scene = scene_cfg.class_type(scene_cfg)
+        scene = scene_cfg.class_type(scene_cfg)
         sim.reset()
 
         from pxr import UsdGeom  # noqa: PLC0415

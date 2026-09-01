@@ -23,16 +23,6 @@ from isaaclab_tasks.core.cabinet.cabinet_env_cfg import (
 
 
 @configclass
-class CabinetDirectSceneCfg(InteractiveSceneCfg):
-    """Scene configuration shared by direct-workflow cabinet tasks."""
-
-    robot: ArticulationCfg = MISSING
-    cabinet: ArticulationCfg = CABINET_CFG
-    plane: AssetBaseCfg = PLANE_CFG
-    light: AssetBaseCfg = LIGHT_CFG
-
-
-@configclass
 class CabinetDirectEnvCfg(DirectRLEnvCfg):
     """Base configuration for the direct-workflow cabinet task."""
 
@@ -43,8 +33,14 @@ class CabinetDirectEnvCfg(DirectRLEnvCfg):
     observation_space = 31
     state_space = 0
     sim: CabinetSimCfg = CabinetSimCfg()
-    scene: CabinetDirectSceneCfg = CabinetDirectSceneCfg(num_envs=4096, env_spacing=2.0)
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=4096, env_spacing=2.0)
     events: EventCfg = EventCfg()
+
+    # assets
+    robot: ArticulationCfg = MISSING
+    cabinet: ArticulationCfg = CABINET_CFG
+    plane: AssetBaseCfg = PLANE_CFG
+    light: AssetBaseCfg = LIGHT_CFG
 
     # robot joints and frames -- set by a robot-specific subclass
     arm_joint_names: str | list[str] = MISSING

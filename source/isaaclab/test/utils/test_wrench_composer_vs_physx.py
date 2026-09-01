@@ -77,7 +77,7 @@ def generate_dual_cube_scene(
         init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, y_offset, height), rot=initial_rot),
     )
     with cloner.ReplicateSession(
-        [cube_composer_cfg, cube_raw_cfg], num_cubes, spacing, device, env_template="/World/Table_{}"
+        [cloner.CloneCfg(clone_template="/World/Table_{}"), cube_composer_cfg, cube_raw_cfg], num_cubes, spacing
     ):
         cube_composer = cube_composer_cfg.class_type(cube_composer_cfg)
         cube_raw = cube_raw_cfg.class_type(cube_raw_cfg)

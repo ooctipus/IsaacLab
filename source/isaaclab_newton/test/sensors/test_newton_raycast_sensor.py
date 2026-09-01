@@ -24,7 +24,6 @@ from isaaclab_newton.sensors import (
 from newton import ShapeFlags
 
 import isaaclab.sim as sim_utils
-from isaaclab import cloner
 from isaaclab.assets import RigidObject, RigidObjectCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors.camera import CameraCfg
@@ -123,8 +122,7 @@ def test_rays_hit_ground_plane(sim, global_world_only):
     """All rays of a downward grid pattern hit the global-world ground at the sensor height."""
     scene_cfg = RaycastTestSceneCfg(num_envs=2)
     scene_cfg.raycast.global_world_only = global_world_only
-    with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-        scene = scene_cfg.class_type(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
     expected_bvh_flags = ShapeFlags.VISIBLE | ShapeFlags.COLLIDE_SHAPES
     assert NewtonManager._sensor_bvh_shape_flags == expected_bvh_flags
     assert NewtonManager._builder.default_bvh_cfg.shape_flags == expected_bvh_flags
@@ -144,8 +142,7 @@ def test_rays_hit_ground_plane(sim, global_world_only):
 def test_generic_ray_caster_uses_newton_scene_bvh(sim):
     """The backend-dispatching ray caster selects the Newton BVH implementation."""
     scene_cfg = GenericRaycastTestSceneCfg(num_envs=1)
-    with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-        scene = scene_cfg.class_type(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
     sim.reset()
     sensor = _step_and_read(sim, scene)
 
@@ -169,8 +166,7 @@ def test_remaining_warp_mesh_factories_select_legacy_newton_adapters(sim):
 def test_bvh_refit_tracks_moving_geometry(sim):
     """Sliding a box under the sensor changes the hits, proving the BVH refits live."""
     scene_cfg = RaycastTestSceneCfg(num_envs=1)
-    with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-        scene = scene_cfg.class_type(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
     sim.reset()
     sensor = _step_and_read(sim, scene)
     torch.testing.assert_close(
@@ -210,8 +206,7 @@ class RaycastCameraSceneCfg(RaycastTestSceneCfg):
 def test_renderer_and_raycast_share_newton_manager_graph(sim):
     """Tiled-camera and ray-cast updates share the Newton manager graph."""
     scene_cfg = RaycastCameraSceneCfg(num_envs=1)
-    with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-        scene = scene_cfg.class_type(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
     sim.reset()
     sim.step()
     scene.update(sim.get_physics_dt())

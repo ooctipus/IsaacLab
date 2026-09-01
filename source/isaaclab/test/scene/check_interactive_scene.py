@@ -28,7 +28,6 @@ simulation_app = app_launcher.app
 """Rest everything follows."""
 
 import isaaclab.sim as sim_utils
-from isaaclab import cloner
 from isaaclab.assets import AssetBaseCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors.ray_caster import RayCasterCfg, patterns
@@ -88,18 +87,9 @@ def main():
     # Spawn things into stage
     with Timer("Setup scene"):
         scene_cfg = MySceneCfg(num_envs=args_cli.num_envs, env_spacing=5.0, lazy_sensor_update=False)
-        with cloner.ReplicateSession(
-            [scene_cfg],
-            scene_cfg.num_envs,
-            scene_cfg.env_spacing,
-            sim.device,
-            env_template=scene_cfg.clone_cfg.clone_template,
-            replicate_physics=scene_cfg.replicate_physics,
-        ):
-            scene = scene_cfg.class_type(scene_cfg)
+        scene = scene_cfg.class_type(scene_cfg)
 
     # Check that parsing happened as expected
-    assert len(scene.env_prim_paths) == args_cli.num_envs, "Number of environments does not match."
     assert scene.terrain is not None, "Terrain not found."
     assert len(scene.articulations) == 2, "Number of robots does not match."
     assert len(scene.sensors) == 1, "Number of sensors does not match."

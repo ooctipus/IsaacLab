@@ -33,18 +33,31 @@ args_cli = parser.parse_args()
 import torch
 
 import isaaclab.sim as sim_utils
-from isaaclab import cloner
 from isaaclab.assets import AssetBaseCfg
 
 ##
 # Pre-defined configs
 ##
 from isaaclab.physics import PhysicsCfg
+from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.utils.configclass import configclass
 
 from isaaclab_contrib.controllers.lee_position_control import LeePosController
 from isaaclab_contrib.controllers.lee_position_control_cfg import LeePosControllerCfg
 
 from isaaclab_assets.robots.arl_robot_1 import ARL_ROBOT_1_CFG
+
+
+@configclass
+class ArlRobotSceneCfg(InteractiveSceneCfg):
+    """Configuration for the ARL Robot 1 demo scene."""
+
+    ground = AssetBaseCfg(prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg())
+    robot = ARL_ROBOT_1_CFG.replace(prim_path="/World/Robot")
+    light = AssetBaseCfg(
+        prim_path="/World/DomeLight",
+        spawn=sim_utils.DomeLightCfg(intensity=1000.0, color=(0.53, 0.81, 0.92)),
+    )
 
 
 def main():
@@ -54,17 +67,10 @@ def main():
         sim_cfg = sim_utils.SimulationCfg(dt=0.01, device=args_cli.device, physics=physics_cfg)
         sim = sim_utils.SimulationContext(sim_cfg)
 
-        light_cfg = AssetBaseCfg(
-            prim_path="/World/DomeLight",
-            spawn=sim_utils.DomeLightCfg(intensity=1000.0, color=(0.53, 0.81, 0.92)),
-        )
-        ground_cfg = AssetBaseCfg(prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg())
-        robot_cfg = ARL_ROBOT_1_CFG.replace(prim_path="/World/Robot")
-        robot_cfg.actuators["thrusters"].dt = sim_cfg.dt
-        with cloner.ReplicateSession((light_cfg, ground_cfg, robot_cfg), 1, 0.0, sim.device):
-            light_cfg.spawn.func(light_cfg.prim_path, light_cfg.spawn)
-            ground_cfg.spawn.func(ground_cfg.prim_path, ground_cfg.spawn)
-            robot = robot_cfg.class_type(robot_cfg)
+        scene_cfg = ArlRobotSceneCfg(num_envs=1, env_spacing=0.0)
+        scene_cfg.robot.actuators["thrusters"].dt = sim_cfg.dt
+        scene = scene_cfg.class_type(scene_cfg)
+        robot = scene["robot"]
 
         # Play the simulator
         sim.reset()
@@ -81,7 +87,7 @@ def main():
         controller = LeePosController(controller_cfg, robot, num_envs=1, device=str(sim.device))
 
         # Get allocation matrix and compute pseudoinverse
-        allocation_matrix = torch.tensor(robot_cfg.allocation_matrix, device=sim.device, dtype=torch.float32)
+        allocation_matrix = torch.tensor(scene_cfg.robot.allocation_matrix, device=sim.device, dtype=torch.float32)
         # allocation_matrix is (6, num_thrusters), we need pseudoinverse for wrench -> thrust
         alloc_pinv = torch.linalg.pinv(allocation_matrix)  # Shape: (num_thrusters, 6)
 

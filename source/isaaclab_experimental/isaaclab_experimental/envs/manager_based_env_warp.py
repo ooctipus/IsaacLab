@@ -26,7 +26,6 @@ from typing import Any
 import torch
 import warp as wp
 
-from isaaclab import cloner
 from isaaclab.envs.common import VecEnvObs
 from isaaclab.envs.manager_based_env_cfg import ManagerBasedEnvCfg
 from isaaclab.envs.utils.io_descriptors import export_articulations_data, export_scene_data
@@ -139,18 +138,7 @@ class ManagerBasedEnvWarp:
             # set the stage context for scene creation steps which use the stage
             with use_stage(self.sim.stage):
                 scene_cfg = self.cfg.scene
-                with cloner.ReplicateSession(
-                    (self.cfg,),
-                    scene_cfg.num_envs,
-                    scene_cfg.env_spacing,
-                    self.sim.device,
-                    env_template=scene_cfg.clone_cfg.clone_template,
-                    replicate_physics=scene_cfg.replicate_physics,
-                ):
-                    self.scene = scene_cfg.class_type(scene_cfg)
-                if scene_cfg.filter_collisions and "physx" in self.scene.physics_backend:
-                    self.scene.filter_collisions()
-            self.sim.register_interactive_scene(self.scene)
+                self.scene = scene_cfg.class_type(scene_cfg)
         print("[INFO]: Scene manager: ", self.scene)
 
         # Shared per-env Warp RNG state (accessible to all managers/terms via `env`).

@@ -39,17 +39,15 @@ add_launcher_args(parser)
 parser.set_defaults(visualizer=["kit"])
 args_cli = parser.parse_args()
 
-import numpy as np
-import torch
-
 import isaaclab.sim as sim_utils
-from isaaclab import cloner
 from isaaclab.assets import AssetBaseCfg
 
 ##
 # Pre-defined configs
 ##
 from isaaclab.physics import PhysicsCfg
+from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.utils.configclass import configclass
 
 from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg  # isort:skip
 from isaaclab_assets.robots.allegro import ALLEGRO_HAND_CFG  # isort:skip
@@ -59,48 +57,37 @@ if TYPE_CHECKING:
     from isaaclab.assets import Articulation
 
 
-def define_origins(num_origins: int, spacing: float) -> list[list[float]]:
-    """Defines the origins of the scene."""
-    # create tensor based on number of environments
-    env_origins = torch.zeros(num_origins, 3)
-    # create a grid of origins
-    num_cols = np.floor(np.sqrt(num_origins))
-    num_rows = np.ceil(num_origins / num_cols)
-    xx, yy = torch.meshgrid(torch.arange(num_rows), torch.arange(num_cols), indexing="xy")
-    env_origins[:, 0] = spacing * xx.flatten()[:num_origins] - spacing * (num_rows - 1) / 2
-    env_origins[:, 1] = spacing * yy.flatten()[:num_origins] - spacing * (num_cols - 1) / 2
-    env_origins[:, 2] = 0.0
-    # return the origins
-    return env_origins.tolist()
+@configclass
+class DemoSceneCfg(InteractiveSceneCfg):
+    """Configuration for the dexterous-hand demo scene."""
 
-
-def design_scene(sim: "sim_utils.SimulationContext") -> tuple[dict, list[list[float]]]:
-    """Designs the scene."""
-    ground_cfg = AssetBaseCfg(prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg())
-    light_cfg = AssetBaseCfg(
+    ground: AssetBaseCfg = AssetBaseCfg(prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg())
+    light: AssetBaseCfg = AssetBaseCfg(
         prim_path="/World/Light",
         spawn=sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75)),
     )
-    origins = define_origins(num_origins=2, spacing=0.5)
+
+
+def design_scene() -> dict[str, "Articulation"]:
+    """Designs the scene."""
+    origins = ((-0.25, 0.0, 0.0), (0.25, 0.0, 0.0))
     allegro_cfg = ALLEGRO_HAND_CFG.replace(prim_path="/World/Origin1/Robot")
     shadow_hand_cfg = SHADOW_HAND_NEWTON_CFG if args_cli.physics == "newton_mjwarp" else SHADOW_HAND_CFG
     shadow_hand_cfg = shadow_hand_cfg.replace(prim_path="/World/Origin2/Robot")
     robot_cfgs = (allegro_cfg, shadow_hand_cfg)
-    with cloner.ReplicateSession((ground_cfg, light_cfg, *robot_cfgs), 1, 0.0, sim.device):
-        ground_cfg.spawn.func(ground_cfg.prim_path, ground_cfg.spawn)
-        light_cfg.spawn.func(light_cfg.prim_path, light_cfg.spawn)
-        for index, origin in enumerate(origins, start=1):
-            sim_utils.create_prim(f"/World/Origin{index}", "Xform", translation=origin)
-        robots = [cfg.class_type(cfg) for cfg in robot_cfgs]
-    scene_entities = dict(zip(("allegro", "shadow_hand"), robots, strict=True))
-    return scene_entities, origins
+    scene_cfg = DemoSceneCfg(num_envs=1, env_spacing=0.0)
+    for name, origin, robot_cfg in zip(("allegro", "shadow_hand"), origins, robot_cfgs, strict=True):
+        robot_cfg.init_state.pos = tuple(value + offset for value, offset in zip(robot_cfg.init_state.pos, origin))
+        setattr(scene_cfg, name, robot_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
+
+    return scene.articulations
 
 
-def run_simulator(sim: "sim_utils.SimulationContext", entities: dict[str, "Articulation"], origins: torch.Tensor):
+def run_simulator(sim: "sim_utils.SimulationContext", entities: dict[str, "Articulation"]):
     """Runs the simulation loop."""
     # Define simulation stepping
     sim_dt = sim.get_physics_dt()
-    sim_time = 0.0
     count = 0
     # Start with hand open
     grasp_mode = 0
@@ -109,13 +96,11 @@ def run_simulator(sim: "sim_utils.SimulationContext", entities: dict[str, "Artic
         # reset
         if count % 1000 == 0:
             # reset counters
-            sim_time = 0.0
             count = 0
             # reset robots
-            for index, robot in enumerate(entities.values()):
+            for robot in entities.values():
                 # root state
                 root_pose = robot.data.default_root_pose.torch.clone()
-                root_pose[:, :3] += origins[index]
                 robot.write_root_pose_to_sim_index(root_pose=root_pose)
                 root_vel = robot.data.default_root_vel.torch.clone()
                 robot.write_root_velocity_to_sim_index(root_velocity=root_vel)
@@ -142,8 +127,6 @@ def run_simulator(sim: "sim_utils.SimulationContext", entities: dict[str, "Artic
             robot.write_data_to_sim()
         # perform step
         sim.step()
-        # update sim-time
-        sim_time += sim_dt
         count += 1
         # update buffers
         for robot in entities.values():
@@ -170,14 +153,13 @@ def main():
         # Set main camera
         sim.set_camera_view(eye=[0.0, -0.5, 1.5], target=[0.0, -0.05, 0.45])
         # design scene
-        scene_entities, scene_origins = design_scene(sim)
-        scene_origins = torch.tensor(scene_origins, device=sim.device)
+        scene_entities = design_scene()
         # Play the simulator
         sim.reset()
         # Now we are ready!
         print("[INFO]: Setup complete...")
         # Run the simulator
-        run_simulator(sim, scene_entities, scene_origins)
+        run_simulator(sim, scene_entities)
 
 
 if __name__ == "__main__":

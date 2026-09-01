@@ -9,7 +9,6 @@ from types import SimpleNamespace
 
 import pytest
 import warp as wp
-from isaaclab_newton.cloner.replicate import NewtonReplicateContext
 from isaaclab_newton.physics import NewtonManager
 from isaaclab_newton.sim.spawners.materials import NewtonDeformableMaterialCfg
 
@@ -130,11 +129,6 @@ def test_builder_hook_resets_entry_offsets_on_first_environment():
 
     assert entry.particle_offsets == [0]
     assert entry.particles_per_body == 3
-
-
-def test_newton_clone_context_keeps_asset_rows():
-    """Newton imports every planned asset row rather than copying an environment subtree."""
-    assert NewtonReplicateContext.clones_whole_env is False
 
 
 def test_fabric_particle_sync_skips_missing_fabric_prim(monkeypatch):

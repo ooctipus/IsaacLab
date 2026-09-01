@@ -12,7 +12,7 @@ import torch
 
 from pxr import Sdf, Usd
 
-from isaaclab.cloner import UsdReplicateContext
+from isaaclab.cloner import ClonePlan, UsdReplicateContext
 
 
 def test_asset_clone_uses_native_relationship_path_mapping() -> None:
@@ -34,11 +34,17 @@ def test_asset_clone_uses_native_relationship_path_mapping() -> None:
     body = Sdf.RelationshipSpec(joint, "physics:body1", custom=False)
     body.targetPathList.explicitItems = [Sdf.Path("/World/envs/env_0/Robot/target")]
 
-    UsdReplicateContext(stage).replicate(
-        sources=["/World/envs/env_0/Robot"],
-        destinations=["/World/envs/env_{}/Robot"],
+    plan = ClonePlan(
+        sources=("/World/envs/env_0/Robot",),
+        destinations=("/World/envs/env_{}/Robot",),
+        clone_mask=torch.ones((1, 2), dtype=torch.bool),
         env_ids=torch.tensor([0, 2]),
+        positions=torch.zeros((2, 3)),
+        replicate_physics=True,
     )
+    context = UsdReplicateContext(stage)
+    plan.context_rows[type(context)] = (0,)
+    context.replicate(plan)
 
     cloned_binding = layer.GetRelationshipAtPath("/World/envs/env_2/Robot/source.material:binding")
     assert cloned_binding.targetPathList.explicitItems == [Sdf.Path("/World/envs/env_2/Robot/paint")]

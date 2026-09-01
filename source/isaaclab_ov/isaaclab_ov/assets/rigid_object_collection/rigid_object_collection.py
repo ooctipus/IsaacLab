@@ -81,11 +81,11 @@ class RigidObjectCollection(BaseRigidObjectCollection):
             raise RuntimeError("RigidObjectCollection requires an active SimulationContext.")
         plan = sim.get_clone_plan()
         if plan is None:
-            raise RuntimeError("RigidObjectCollection must be constructed inside a ReplicateSession.")
+            raise RuntimeError("RigidObjectCollection must be constructed inside a clone lifecycle.")
         for source_cfg, rigid_body_cfg in zip(cfg.rigid_objects.values(), self.cfg.rigid_objects.values(), strict=True):
             rigid_body_cfg.prim_path = cloner.expand_env_regex_ns(rigid_body_cfg.prim_path, plan.env_template)
             if rigid_body_cfg.spawn is not None:
-                source_paths = cloner.query.cfg_source_paths(plan, source_cfg)
+                source_paths = cloner.query._cfg_source_paths(plan, source_cfg)
                 active_paths = tuple(path for path in source_paths if path is not None)
                 spawn_path = (
                     source_paths
@@ -104,9 +104,6 @@ class RigidObjectCollection(BaseRigidObjectCollection):
                 )
             if not active_paths:
                 raise RuntimeError(f"Rigid object at {rigid_body_cfg.prim_path!r} is not covered by the clone plan.")
-            missing_path = next((path for path in active_paths if not sim.stage.GetPrimAtPath(path).IsValid()), None)
-            if missing_path is not None:
-                raise RuntimeError(f"Could not find prim with path {missing_path}.")
         # stores object names
         self._body_names_list: list[str] = []
         # binding manager over the fused multi-prim bindings; created in _initialize_impl

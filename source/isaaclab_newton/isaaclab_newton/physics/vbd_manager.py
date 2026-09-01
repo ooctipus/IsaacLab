@@ -49,21 +49,6 @@ class NewtonVBDManager(NewtonManager):
             setup_registered_deformable_fabric_sync(cls)
 
     @classmethod
-    def instantiate_builder_from_stage(cls) -> None:
-        """Create and color the VBD builder from the USD stage."""
-        super().instantiate_builder_from_stage()
-        if cls._builder is None:
-            raise RuntimeError("Newton stage import did not create a builder.")
-        cls._builder.color()
-
-    @classmethod
-    def _get_usd_import_ignore_paths(cls) -> list[str]:
-        """Return registered deformable mesh paths excluded from USD import."""
-        return [
-            path for entry in cls._deformable_registry for path in (entry.sim_mesh_prim_path, entry.vis_mesh_prim_path)
-        ]
-
-    @classmethod
     def _create_solver(cls, model: Model, solver_cfg: VBDSolverCfg) -> SolverVBD:
         """Construct the configured VBD solver."""
         return SolverVBD(model, **cls._filter_solver_kwargs(SolverVBD, solver_cfg))

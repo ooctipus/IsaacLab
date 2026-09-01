@@ -239,20 +239,18 @@ def _identifiers(tree: ast.AST) -> set[str]:
     }
 
 
-def test_material_initialization_orders_paths_by_plan_column(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_material_initialization_orders_paths_by_plan_column() -> None:
     plan = ClonePlan(
         sources=("/World/envs/env_42/Robot", "/World/envs/env_7/Robot"),
         destinations=("/World/envs/env_{}/Robot",) * 2,
         env_ids=torch.tensor([19, 42, 7]),
         clone_mask=torch.tensor([[True, True, False], [False, False, True]]),
-    )
-    simulation = SimpleNamespace(get_clone_plan=lambda: plan)
-    monkeypatch.setattr(
-        "isaaclab.assets.visual_material.visual_material.SimulationContext",
-        SimpleNamespace(instance=lambda: simulation),
+        positions=torch.zeros((3, 3)),
+        replicate_physics=True,
     )
     registered = []
     material = SimpleNamespace(
+        _clone_plan=plan,
         _is_per_env=True,
         _source_material_path="/World/envs/env_42/Robot/Looks/test",
         _source_shader_path="/World/envs/env_42/Robot/Looks/test/Shader",
@@ -282,19 +280,17 @@ def test_preview_surface_channels_follow_shader_id() -> None:
     assert _channel_specs(shader)["color"] == ("diffuseColor", (0.18, 0.18, 0.18))
 
 
-def test_material_initialization_rejects_partial_owner_row(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_material_initialization_rejects_partial_owner_row() -> None:
     plan = ClonePlan(
         sources=("/World/envs/env_0/Robot",),
         destinations=("/World/envs/env_{}/Robot",),
         env_ids=torch.arange(4),
         clone_mask=torch.tensor([[True, True, False, False]]),
-    )
-    simulation = SimpleNamespace(get_clone_plan=lambda: plan)
-    monkeypatch.setattr(
-        "isaaclab.assets.visual_material.visual_material.SimulationContext",
-        SimpleNamespace(instance=lambda: simulation),
+        positions=torch.zeros((4, 3)),
+        replicate_physics=True,
     )
     material = SimpleNamespace(
+        _clone_plan=plan,
         _is_per_env=True,
         _source_material_path="/World/envs/env_0/Robot/Looks/test",
         cfg=SimpleNamespace(prim_path="/World/envs/env_.*/Robot/Looks/test"),

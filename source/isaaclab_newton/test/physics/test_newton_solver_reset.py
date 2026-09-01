@@ -23,7 +23,7 @@ from newton.solvers import SolverMuJoCo
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import IdealPDActuatorCfg
 from isaaclab.assets import ArticulationCfg
-from isaaclab.cloner import ReplicateSession
+from isaaclab.cloner import CloneCfg, ReplicateSession
 from isaaclab.sim import SimulationCfg, build_simulation_context
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
@@ -46,7 +46,7 @@ def _generate_single_joint_articulations(num_articulations: int, device: str) ->
             ),
         },
     )
-    with ReplicateSession([articulation_cfg], num_articulations, 2.5, device, env_template="/World/Env_{}"):
+    with ReplicateSession([CloneCfg(clone_template="/World/Env_{}"), articulation_cfg], num_articulations, 2.5):
         return articulation_cfg.class_type(articulation_cfg)
 
 

@@ -18,6 +18,7 @@ from newton._src.usd.schemas import SchemaResolverNewton, SchemaResolverPhysx
 
 from pxr import Usd
 
+from isaaclab.cloner.query import _clone_mapping
 from isaaclab.physics import PhysicsManager
 from isaaclab.sim.utils.newton_model_utils import replace_newton_builder_shape_colors
 
@@ -31,6 +32,7 @@ from isaaclab_newton.physics.newton_manager_cfg import NewtonCfg
 from isaaclab_newton.renderers.visual_material import import_builder_visual_material_paths
 
 if TYPE_CHECKING:
+    from isaaclab.cloner import ClonePlan
     from isaaclab.sim import SimulationContext
 
 
@@ -101,10 +103,8 @@ def _build_newton_builder_from_mapping(
     sim_context: SimulationContext,
     stage: Usd.Stage,
     sources: Sequence[str],
-    destinations: Sequence[str],
-    env_ids: torch.Tensor,
     mapping: torch.Tensor,
-    positions: torch.Tensor | None = None,
+    positions: torch.Tensor,
     quaternions: torch.Tensor | None = None,
     up_axis: str = "Z",
     load_visual_shapes: bool = True,
@@ -116,8 +116,6 @@ def _build_newton_builder_from_mapping(
     committing path can retain them for single-model consumers such as the
     batched Newton IK action.
     """
-    if positions is None:
-        positions = torch.zeros((mapping.size(1), 3), device=mapping.device, dtype=torch.float32)
     if quaternions is None:
         quaternions = torch.zeros((mapping.size(1), 4), device=mapping.device, dtype=torch.float32)
         quaternions[:, 3] = 1.0
@@ -189,7 +187,7 @@ class NewtonReplicateContext:
     """Build one Newton model from a clone-plan mapping."""
 
     replicate_priority = 0
-    clones_whole_env = False
+    uses_physx_collision_groups = False
 
     def __init__(self, sim_context: SimulationContext, *, up_axis: str = "Z"):
         """Initialize the context.
@@ -201,26 +199,25 @@ class NewtonReplicateContext:
         self._sim = sim_context
         self.up_axis = up_axis
 
-    def replicate(
-        self,
-        sources: Sequence[str],
-        destinations: Sequence[str],
-        env_ids: torch.Tensor,
-        mapping: torch.Tensor,
-        *,
-        positions: torch.Tensor | None = None,
-        quaternions: torch.Tensor | None = None,
-    ) -> tuple[ModelBuilder, object, dict]:
-        """Build and publish the Newton model builder from one flat clone mapping.
+    def replicate(self, plan: ClonePlan) -> tuple[ModelBuilder, object, dict]:
+        """Build and publish the Newton model builder from routed plan rows.
 
         Args:
-            sources: Source prim paths used for cloning.
-            destinations: Destination prim path templates.
-            env_ids: Environment ids for destination worlds.
-            mapping: Boolean source-to-environment mapping matrix.
-            positions: Optional per-environment world positions [m].
-            quaternions: Optional per-environment orientations in xyzw order.
+            plan: Published replication layout.
         """
+        rows = plan.context_rows[type(self)]
+        if plan.replicate_physics:
+            sources, destinations, mapping = _clone_mapping(plan, rows, whole_env=True)
+        else:
+            pairs = plan.clone_mask[list(rows)].nonzero(as_tuple=False)
+            destinations = tuple(plan.destinations[rows[row]] for row, _column in pairs.tolist())
+            sources = tuple(
+                destination.format(int(plan.env_ids[column]))
+                for destination, (_row, column) in zip(destinations, pairs.tolist(), strict=True)
+            )
+            mapping = torch.zeros((len(pairs), len(plan.env_ids)), dtype=torch.bool, device=plan.clone_mask.device)
+            if len(pairs):
+                mapping[torch.arange(len(pairs), device=mapping.device), pairs[:, 1]] = True
         cfg = self._sim.cfg.physics
         if not isinstance(cfg, NewtonCfg):
             raise RuntimeError("Newton replication requires an active NewtonCfg.")
@@ -229,9 +226,6 @@ class NewtonReplicateContext:
             load_visual_shapes = bool(
                 self._sim.is_rendering or self._sim.can_render_rgb_array() or self._sim.visual_shapes_required
             )
-        plan = self._sim.get_clone_plan()
-        if plan is None:
-            raise RuntimeError("Newton replication requires an active clone plan.")
         global_paths = tuple(
             source
             for source, destination in zip(plan.sources, plan.destinations, strict=True)
@@ -241,16 +235,13 @@ class NewtonReplicateContext:
             sim_context=self._sim,
             stage=self._sim.stage,
             sources=sources,
-            destinations=destinations,
-            env_ids=env_ids,
             mapping=mapping,
-            positions=positions,
-            quaternions=quaternions,
+            positions=plan.positions,
             up_axis=self.up_axis,
             load_visual_shapes=load_visual_shapes,
             global_paths=global_paths,
         )
-        fabric_body_bindings = rename_builder_labels(builder, sources, destinations, env_ids, mapping)
+        fabric_body_bindings = rename_builder_labels(builder, sources, destinations, plan.env_ids, mapping)
         self._sim.physics_manager._set_clone_state(
             builder, site_index_map, fabric_body_bindings, world_xforms, source_builders, mapping.size(1)
         )

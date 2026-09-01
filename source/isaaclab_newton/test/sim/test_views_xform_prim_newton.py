@@ -28,8 +28,7 @@ from isaaclab_newton.physics.newton_manager import NewtonManager
 from isaaclab_newton.sim.views import NewtonSiteFrameView as FrameView
 
 import isaaclab.sim as sim_utils
-from isaaclab import cloner
-from isaaclab.assets import RigidObjectCfg
+from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim import SimulationCfg, build_simulation_context
 from isaaclab.utils.configclass import configclass
@@ -49,6 +48,12 @@ class _SceneCfg(InteractiveSceneCfg):
             collision_props=sim_utils.CollisionPropertiesCfg(),
         ),
         init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 1.0)),
+    )
+
+    camera_mount = AssetBaseCfg(
+        prim_path="{ENV_REGEX_NS}/Cube/CameraMount",
+        spawn=sim_utils.SensorFrameCfg(),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=CHILD_OFFSET),
     )
 
 
@@ -86,10 +91,8 @@ def view_factory():
         sim = ctx.__enter__()
         sim._app_control_on_stop_handle = None
         scene_cfg = _SceneCfg(num_envs=num_envs, env_spacing=2.0)
-        with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-            scene_cfg.class_type(scene_cfg)
-            sim_utils.create_prim("/World/envs/env_0/Cube/CameraMount", translation=CHILD_OFFSET)
-            view = FrameView("/World/envs/env_[^/]+/Cube/CameraMount", device=device)
+        scene_cfg.class_type(scene_cfg)
+        view = FrameView("/World/envs/env_[^/]+/Cube/CameraMount", device=device)
         sim.reset()
 
         return ViewBundle(
@@ -114,8 +117,7 @@ def test_reject_body_path(device):
     sim = ctx.__enter__()
     sim._app_control_on_stop_handle = None
     scene_cfg = _SceneCfg(num_envs=2, env_spacing=2.0)
-    with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-        scene_cfg.class_type(scene_cfg)
+    scene_cfg.class_type(scene_cfg)
     sim.reset()
 
     with pytest.raises(ValueError, match="physics body"):
@@ -130,8 +132,7 @@ def test_reject_shape_path(device):
     sim = ctx.__enter__()
     sim._app_control_on_stop_handle = None
     scene_cfg = _SceneCfg(num_envs=2, env_spacing=2.0)
-    with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-        scene_cfg.class_type(scene_cfg)
+    scene_cfg.class_type(scene_cfg)
     sim.reset()
 
     shape_labels = list(NewtonManager.get_model().shape_label)
@@ -151,13 +152,11 @@ def test_clone_plan_view_uses_source_child_without_destination_usd(device):
     sim = ctx.__enter__()
     sim._app_control_on_stop_handle = None
     scene_cfg = _SceneCfg(num_envs=num_envs, env_spacing=2.0)
-    with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-        scene_cfg.class_type(scene_cfg)
-        stage = sim_utils.get_current_stage()
-        assert stage.GetPrimAtPath("/World/envs/env_0/Cube").IsValid()
-        assert not stage.GetPrimAtPath("/World/envs/env_1/Cube").IsValid()
-        sim_utils.create_prim("/World/envs/env_0/Cube/CameraMount", translation=CHILD_OFFSET)
-        view = FrameView("/World/envs/env_[^/]+/Cube/CameraMount", device=device)
+    scene_cfg.class_type(scene_cfg)
+    stage = sim_utils.get_current_stage()
+    assert stage.GetPrimAtPath("/World/envs/env_0/Cube").IsValid()
+    assert not stage.GetPrimAtPath("/World/envs/env_1/Cube").IsValid()
+    view = FrameView("/World/envs/env_[^/]+/Cube/CameraMount", device=device)
     sim.reset()
 
     assert view.count == num_envs
@@ -176,9 +175,7 @@ def test_view_can_resolve_from_body_labels_after_reset(device):
     sim = ctx.__enter__()
     sim._app_control_on_stop_handle = None
     scene_cfg = _SceneCfg(num_envs=num_envs, env_spacing=2.0)
-    with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-        scene_cfg.class_type(scene_cfg)
-        sim_utils.create_prim("/World/envs/env_0/Cube/CameraMount", translation=CHILD_OFFSET)
+    scene_cfg.class_type(scene_cfg)
 
     sim.reset()
     view = FrameView("/World/envs/env_[^/]+/Cube/CameraMount", device=device)
@@ -201,8 +198,7 @@ def test_world_attached_returns_initial_pose(device):
     sim = ctx.__enter__()
     sim._app_control_on_stop_handle = None
     scene_cfg = _SceneCfg(num_envs=2, env_spacing=2.0)
-    with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-        scene_cfg.class_type(scene_cfg)
+    scene_cfg.class_type(scene_cfg)
 
     sim.reset()
     sim_utils.create_prim("/World/StaticMarker", translation=WORLD_MARKER_POS)
@@ -221,8 +217,7 @@ def test_world_attached_set_world_roundtrip(device):
     sim = ctx.__enter__()
     sim._app_control_on_stop_handle = None
     scene_cfg = _SceneCfg(num_envs=2, env_spacing=2.0)
-    with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-        scene_cfg.class_type(scene_cfg)
+    scene_cfg.class_type(scene_cfg)
 
     sim.reset()
     sim_utils.create_prim("/World/StaticMarker", translation=WORLD_MARKER_POS)

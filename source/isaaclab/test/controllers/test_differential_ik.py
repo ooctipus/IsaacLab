@@ -73,7 +73,7 @@ def test_franka_ik_pose_abs(sim):
 
     # Create robot instance
     robot_cfg = FRANKA_PANDA_HIGH_PD_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-    with cloner.ReplicateSession([robot_cfg], num_envs, 2.0, sim_context.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), robot_cfg], num_envs, 2.0):
         robot = robot_cfg.class_type(robot_cfg)
 
     # Create IK controller
@@ -93,7 +93,7 @@ def test_ur10_ik_pose_abs(sim):
     # Create robot instance
     robot_cfg = UR10_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
     robot_cfg.spawn.rigid_props.disable_gravity = True
-    with cloner.ReplicateSession([robot_cfg], num_envs, 2.0, sim_context.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), robot_cfg], num_envs, 2.0):
         robot = robot_cfg.class_type(robot_cfg)
 
     # Create IK controller

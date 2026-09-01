@@ -98,7 +98,9 @@ def main():
         ),
         init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 5.0)),
     )
-    with lab_cloner.ReplicateSession([terrain_importer_cfg, balls_cfg, ray_caster_cfg], num_envs, 2.0, sim.device):
+    with lab_cloner.ReplicateSession(
+        [lab_cloner.CloneCfg(), terrain_importer_cfg, balls_cfg, ray_caster_cfg], num_envs, 2.0
+    ):
         _ = terrain_importer_cfg.class_type(terrain_importer_cfg)
         balls = balls_cfg.class_type(balls_cfg)
         ray_caster = ray_caster_cfg.class_type(ray_caster_cfg)

@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 import torch
 
@@ -13,13 +13,17 @@ from omni.physx import get_physx_replicator_interface
 from pxr import Sdf, Usd, UsdUtils
 
 from isaaclab import cloner
+from isaaclab.cloner.query import _clone_mapping
+
+if TYPE_CHECKING:
+    from isaaclab.cloner import ClonePlan
 
 
 class PhysxReplicateContext:
     """Apply one clone-plan mapping through the PhysX replicator."""
 
     replicate_priority = 0
-    clones_whole_env = True
+    uses_physx_collision_groups = True
 
     def __init__(self, stage: Usd.Stage):
         """Initialize the context.
@@ -37,42 +41,40 @@ class PhysxReplicateContext:
         self._replicator = None
         self._registered = False
 
-    def replicate(
-        self,
-        sources: Sequence[str],
-        destinations: Sequence[str],
-        env_ids: torch.Tensor,
-        mapping: torch.Tensor,
-        *,
-        positions: torch.Tensor | None = None,
-        quaternions: torch.Tensor | None = None,
-        exclude_self_replication: bool = True,
-    ) -> None:
-        """Register the PhysX replicator for one flat clone mapping.
+    def replicate(self, plan: ClonePlan) -> None:
+        """Register the PhysX replicator for routed plan rows.
 
         Args:
-            sources: Source prim paths.
-            destinations: Destination path templates with ``"{}"`` for env id.
-            env_ids: Environment indices.
-            mapping: Bool/int mask selecting envs per source.
-            positions: Optional per-environment world positions [m], unused by PhysX.
-            quaternions: Optional per-environment orientations, unused by PhysX.
-            exclude_self_replication: Whether to skip replicating a source prim onto itself
-                when it also maps to other environments.
+            plan: Published replication layout.
         """
-        del positions, quaternions
+        rows = plan.context_rows[type(self)]
+        sources, destinations, mapping = _clone_mapping(plan, rows, whole_env=plan.positions.is_cuda)
+        use_env_ids = (
+            plan.positions.is_cuda
+            and sources == (plan.env_template.format(int(plan.env_ids[0])),)
+            and destinations == (plan.env_template,)
+        )
         physx_queue: list[tuple[str, str, tuple[int, ...]]] = []
 
         if mapping.size(1) <= 1:
             return
 
+        native_rows = set(rows)
+        has_usd_only_rows = any(
+            "{}" in destination and row not in native_rows and bool(plan.clone_mask[row].any())
+            for row, destination in enumerate(plan.destinations)
+        )
+        native_paths: list[str] = []
+
         for i, src in enumerate(sources):
-            worlds = env_ids[mapping[i].to(dtype=torch.bool)].tolist()
-            if exclude_self_replication:
-                matched = cloner.path.match(src, destinations[i])
-                if matched is not None and matched.instance.isdigit():
-                    filtered = [w for w in worlds if w != int(matched.instance)]
-                    worlds = filtered if filtered else worlds
+            worlds = plan.env_ids[mapping[i].to(dtype=torch.bool)].tolist()
+            if has_usd_only_rows:
+                native_paths.append(src)
+                native_paths.extend(destinations[i].format(int(world)) for world in worlds)
+            matched = cloner.path.match(src, destinations[i])
+            if matched is not None and matched.instance.isdigit():
+                filtered = [w for w in worlds if w != int(matched.instance)]
+                worlds = filtered if filtered else worlds
             physx_queue.append((src, destinations[i], tuple(map(int, worlds))))
 
         # Fully-heterogeneous 1:1 layouts have every source mapped only to its own
@@ -82,20 +84,15 @@ class PhysxReplicateContext:
         # PhysX-internal allocations summing to a problematic total across processes.
         # For these layouts the source prims are already in their correct env positions
         # and PhysX can parse them from the stage without any replicator registration.
-        def _is_self_only(src: str, destination: str, target_envs: tuple[int, ...]) -> bool:
-            if len(target_envs) != 1:
-                return False
-            pre, suf = cloner.path.split(destination)
-            return src == f"{pre}{target_envs[0]}{suf}"
-
-        if all(_is_self_only(src, dst, envs) for src, dst, envs in physx_queue):
+        if all(len(envs) == 1 and src == destination.format(envs[0]) for src, destination, envs in physx_queue):
             return
 
         current_worlds: list[int] = []
         current_template: str = ""
+        excluded_paths = list(dict.fromkeys(native_paths)) if has_usd_only_rows else ["/World/template", "/World/envs"]
 
         def attach_fn(_stage_id: int):
-            return ["/World/template", "/World/envs"]
+            return excluded_paths
 
         def rename_fn(_replicate_path: str, i: int):
             return current_template.format(current_worlds[i])
@@ -111,8 +108,7 @@ class PhysxReplicateContext:
                     _stage_id,
                     src,
                     len(current_worlds),
-                    # TODO: envIds needs to support heterogeneous setup. for now, we rely on USD collision filtering
-                    useEnvIds=False,
+                    useEnvIds=use_env_ids,
                     useFabricForReplication=False,
                 )
 

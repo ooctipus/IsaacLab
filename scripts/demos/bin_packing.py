@@ -58,7 +58,6 @@ import warp as wp
 
 import isaaclab.sim as sim_utils
 import isaaclab.utils.math as math_utils
-from isaaclab import cloner
 
 ##
 # Pre-defined configs
@@ -398,19 +397,11 @@ def main():
         sim.set_camera_view((4.0, 0.0, 4.0), (0.0, 0.0, 0.0))
 
         # Design scene
-        scene_cfg = BinPackingSceneCfg(num_envs=args_cli.num_envs, env_spacing=1.0, replicate_physics=True)
+        scene_cfg = BinPackingSceneCfg(num_envs=args_cli.num_envs, env_spacing=1.0)
         layouts = [combination.assets for combination in scene_cfg.clone_cfg.clone_combinations]
         print(f"[INFO] Drawn bin layouts (objects per layout): {[len(layout) for layout in layouts]}")
         with Timer("[INFO] Time to create scene: "):
-            with cloner.ReplicateSession(
-                [scene_cfg],
-                scene_cfg.num_envs,
-                scene_cfg.env_spacing,
-                sim.device,
-                env_template=scene_cfg.clone_cfg.clone_template,
-                replicate_physics=scene_cfg.replicate_physics,
-            ):
-                scene = scene_cfg.class_type(scene_cfg)
+            scene = scene_cfg.class_type(scene_cfg)
 
         # Play the simulator
         sim.reset()

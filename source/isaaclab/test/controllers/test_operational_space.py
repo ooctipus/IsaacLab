@@ -286,7 +286,7 @@ def test_franka_pose_abs_without_inertial_decoupling(sim):
         frame,
     ) = sim
 
-    with cloner.ReplicateSession([robot_cfg], num_envs, 2.0, sim_context.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), robot_cfg], num_envs, 2.0):
         robot = robot_cfg.class_type(robot_cfg)
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["pose_abs"],
@@ -336,7 +336,7 @@ def test_franka_pose_abs_with_partial_inertial_decoupling(sim):
         frame,
     ) = sim
 
-    with cloner.ReplicateSession([robot_cfg], num_envs, 2.0, sim_context.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), robot_cfg], num_envs, 2.0):
         robot = robot_cfg.class_type(robot_cfg)
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["pose_abs"],
@@ -389,7 +389,7 @@ def test_franka_pose_abs_fixed_impedance_with_gravity_compensation(sim):
     ) = sim
 
     robot_cfg.spawn.rigid_props.disable_gravity = False
-    with cloner.ReplicateSession([robot_cfg], num_envs, 2.0, sim_context.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), robot_cfg], num_envs, 2.0):
         robot = robot_cfg.class_type(robot_cfg)
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["pose_abs"],
@@ -440,7 +440,7 @@ def test_franka_pose_abs(sim):
         frame,
     ) = sim
 
-    with cloner.ReplicateSession([robot_cfg], num_envs, 2.0, sim_context.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), robot_cfg], num_envs, 2.0):
         robot = robot_cfg.class_type(robot_cfg)
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["pose_abs"],
@@ -491,7 +491,7 @@ def test_franka_pose_rel(sim):
         frame,
     ) = sim
 
-    with cloner.ReplicateSession([robot_cfg], num_envs, 2.0, sim_context.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), robot_cfg], num_envs, 2.0):
         robot = robot_cfg.class_type(robot_cfg)
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["pose_rel"],
@@ -542,7 +542,7 @@ def test_franka_pose_abs_variable_impedance(sim):
         frame,
     ) = sim
 
-    with cloner.ReplicateSession([robot_cfg], num_envs, 2.0, sim_context.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), robot_cfg], num_envs, 2.0):
         robot = robot_cfg.class_type(robot_cfg)
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["pose_abs"],
@@ -593,13 +593,10 @@ def test_franka_wrench_abs_open_loop(sim):
 
     contact_forces_cfg = _CONTACT_SENSOR_CFG.replace(history_length=50)
     with cloner.ReplicateSession(
-        [robot_cfg, _OBSTACLE_PARENT_CFG, *_WRENCH_OBSTACLE_CFGS, contact_forces_cfg],
-        num_envs,
-        2.0,
-        sim_context.device,
+        [cloner.CloneCfg(), robot_cfg, _OBSTACLE_PARENT_CFG, *_WRENCH_OBSTACLE_CFGS, contact_forces_cfg], num_envs, 2.0
     ):
         robot = robot_cfg.class_type(robot_cfg)
-        (parent_path,) = cloner.query.cfg_source_paths(sim_context.get_clone_plan(), _OBSTACLE_PARENT_CFG)
+        (parent_path,) = cloner.query._cfg_source_paths(sim_context.get_clone_plan(), _OBSTACLE_PARENT_CFG)
         _OBSTACLE_PARENT_CFG.spawn.func(parent_path, _OBSTACLE_PARENT_CFG.spawn)
         for obstacle_cfg in _WRENCH_OBSTACLE_CFGS:
             obstacle_cfg.class_type(obstacle_cfg)
@@ -650,13 +647,10 @@ def test_franka_wrench_abs_closed_loop(sim):
     ) = sim
 
     with cloner.ReplicateSession(
-        [robot_cfg, _OBSTACLE_PARENT_CFG, *_WRENCH_OBSTACLE_CFGS, _CONTACT_SENSOR_CFG],
-        num_envs,
-        2.0,
-        sim_context.device,
+        [cloner.CloneCfg(), robot_cfg, _OBSTACLE_PARENT_CFG, *_WRENCH_OBSTACLE_CFGS, _CONTACT_SENSOR_CFG], num_envs, 2.0
     ):
         robot = robot_cfg.class_type(robot_cfg)
-        (parent_path,) = cloner.query.cfg_source_paths(sim_context.get_clone_plan(), _OBSTACLE_PARENT_CFG)
+        (parent_path,) = cloner.query._cfg_source_paths(sim_context.get_clone_plan(), _OBSTACLE_PARENT_CFG)
         _OBSTACLE_PARENT_CFG.spawn.func(parent_path, _OBSTACLE_PARENT_CFG.spawn)
         for obstacle_cfg in _WRENCH_OBSTACLE_CFGS:
             obstacle_cfg.class_type(obstacle_cfg)
@@ -721,10 +715,10 @@ def test_franka_hybrid_decoupled_motion(sim):
         ),
     )
     with cloner.ReplicateSession(
-        [robot_cfg, _OBSTACLE_PARENT_CFG, obstacle_cfg, _CONTACT_SENSOR_CFG], num_envs, 2.0, sim_context.device
+        [cloner.CloneCfg(), robot_cfg, _OBSTACLE_PARENT_CFG, obstacle_cfg, _CONTACT_SENSOR_CFG], num_envs, 2.0
     ):
         robot = robot_cfg.class_type(robot_cfg)
-        (parent_path,) = cloner.query.cfg_source_paths(sim_context.get_clone_plan(), _OBSTACLE_PARENT_CFG)
+        (parent_path,) = cloner.query._cfg_source_paths(sim_context.get_clone_plan(), _OBSTACLE_PARENT_CFG)
         _OBSTACLE_PARENT_CFG.spawn.func(parent_path, _OBSTACLE_PARENT_CFG.spawn)
         obstacle_cfg.class_type(obstacle_cfg)
         contact_forces = _CONTACT_SENSOR_CFG.class_type(_CONTACT_SENSOR_CFG)
@@ -788,10 +782,10 @@ def test_franka_hybrid_variable_kp_impedance(sim):
         ),
     )
     with cloner.ReplicateSession(
-        [robot_cfg, _OBSTACLE_PARENT_CFG, obstacle_cfg, _CONTACT_SENSOR_CFG], num_envs, 2.0, sim_context.device
+        [cloner.CloneCfg(), robot_cfg, _OBSTACLE_PARENT_CFG, obstacle_cfg, _CONTACT_SENSOR_CFG], num_envs, 2.0
     ):
         robot = robot_cfg.class_type(robot_cfg)
-        (parent_path,) = cloner.query.cfg_source_paths(sim_context.get_clone_plan(), _OBSTACLE_PARENT_CFG)
+        (parent_path,) = cloner.query._cfg_source_paths(sim_context.get_clone_plan(), _OBSTACLE_PARENT_CFG)
         _OBSTACLE_PARENT_CFG.spawn.func(parent_path, _OBSTACLE_PARENT_CFG.spawn)
         obstacle_cfg.class_type(obstacle_cfg)
         contact_forces = _CONTACT_SENSOR_CFG.class_type(_CONTACT_SENSOR_CFG)
@@ -848,7 +842,7 @@ def test_franka_taskframe_pose_abs(sim):
         frame,
     ) = sim
 
-    with cloner.ReplicateSession([robot_cfg], num_envs, 2.0, sim_context.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), robot_cfg], num_envs, 2.0):
         robot = robot_cfg.class_type(robot_cfg)
     frame = "task"
     osc_cfg = OperationalSpaceControllerCfg(
@@ -900,7 +894,7 @@ def test_franka_taskframe_pose_rel(sim):
         frame,
     ) = sim
 
-    with cloner.ReplicateSession([robot_cfg], num_envs, 2.0, sim_context.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), robot_cfg], num_envs, 2.0):
         robot = robot_cfg.class_type(robot_cfg)
     frame = "task"
     osc_cfg = OperationalSpaceControllerCfg(
@@ -960,10 +954,10 @@ def test_franka_taskframe_hybrid(sim):
         ),
     )
     with cloner.ReplicateSession(
-        [robot_cfg, _OBSTACLE_PARENT_CFG, obstacle_cfg, _CONTACT_SENSOR_CFG], num_envs, 2.0, sim_context.device
+        [cloner.CloneCfg(), robot_cfg, _OBSTACLE_PARENT_CFG, obstacle_cfg, _CONTACT_SENSOR_CFG], num_envs, 2.0
     ):
         robot = robot_cfg.class_type(robot_cfg)
-        (parent_path,) = cloner.query.cfg_source_paths(sim_context.get_clone_plan(), _OBSTACLE_PARENT_CFG)
+        (parent_path,) = cloner.query._cfg_source_paths(sim_context.get_clone_plan(), _OBSTACLE_PARENT_CFG)
         _OBSTACLE_PARENT_CFG.spawn.func(parent_path, _OBSTACLE_PARENT_CFG.spawn)
         obstacle_cfg.class_type(obstacle_cfg)
         contact_forces = _CONTACT_SENSOR_CFG.class_type(_CONTACT_SENSOR_CFG)
@@ -1020,7 +1014,7 @@ def test_franka_pose_abs_without_inertial_decoupling_with_nullspace_centering(si
         frame,
     ) = sim
 
-    with cloner.ReplicateSession([robot_cfg], num_envs, 2.0, sim_context.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), robot_cfg], num_envs, 2.0):
         robot = robot_cfg.class_type(robot_cfg)
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["pose_abs"],
@@ -1071,7 +1065,7 @@ def test_franka_pose_abs_with_partial_inertial_decoupling_nullspace_centering(si
         frame,
     ) = sim
 
-    with cloner.ReplicateSession([robot_cfg], num_envs, 2.0, sim_context.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), robot_cfg], num_envs, 2.0):
         robot = robot_cfg.class_type(robot_cfg)
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["pose_abs"],
@@ -1125,7 +1119,7 @@ def test_franka_pose_abs_with_nullspace_centering(sim):
         frame,
     ) = sim
 
-    with cloner.ReplicateSession([robot_cfg], num_envs, 2.0, sim_context.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), robot_cfg], num_envs, 2.0):
         robot = robot_cfg.class_type(robot_cfg)
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["pose_abs"],
@@ -1186,10 +1180,10 @@ def test_franka_taskframe_hybrid_with_nullspace_centering(sim):
         ),
     )
     with cloner.ReplicateSession(
-        [robot_cfg, _OBSTACLE_PARENT_CFG, obstacle_cfg, _CONTACT_SENSOR_CFG], num_envs, 2.0, sim_context.device
+        [cloner.CloneCfg(), robot_cfg, _OBSTACLE_PARENT_CFG, obstacle_cfg, _CONTACT_SENSOR_CFG], num_envs, 2.0
     ):
         robot = robot_cfg.class_type(robot_cfg)
-        (parent_path,) = cloner.query.cfg_source_paths(sim_context.get_clone_plan(), _OBSTACLE_PARENT_CFG)
+        (parent_path,) = cloner.query._cfg_source_paths(sim_context.get_clone_plan(), _OBSTACLE_PARENT_CFG)
         _OBSTACLE_PARENT_CFG.spawn.func(parent_path, _OBSTACLE_PARENT_CFG.spawn)
         obstacle_cfg.class_type(obstacle_cfg)
         contact_forces = _CONTACT_SENSOR_CFG.class_type(_CONTACT_SENSOR_CFG)

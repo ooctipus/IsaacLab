@@ -46,7 +46,6 @@ parser.set_defaults(visualizer=["kit"])
 args_cli = parser.parse_args()
 
 import isaaclab.sim as sim_utils
-from isaaclab import cloner
 
 ##
 # Pre-defined configs
@@ -245,21 +244,13 @@ def main():
         sim.set_camera_view([2.5, 0.0, 4.0], [0.0, 0.0, 2.0])
 
         # Design scene
-        scene_cfg = MultiObjectSceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0, replicate_physics=True)
+        scene_cfg = MultiObjectSceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0)
         if args_cli.physics == "newton_mjwarp":
             # Newton views currently require a uniform body layout across worlds.
             scene_cfg.object.spawn.assets_cfg = scene_cfg.object.spawn.assets_cfg[1:2]
             scene_cfg.robot.spawn.usd_path = scene_cfg.robot.spawn.usd_path[0]
         with Timer("[INFO] Time to create scene: "):
-            with cloner.ReplicateSession(
-                [scene_cfg],
-                scene_cfg.num_envs,
-                scene_cfg.env_spacing,
-                sim.device,
-                env_template=scene_cfg.clone_cfg.clone_template,
-                replicate_physics=scene_cfg.replicate_physics,
-            ):
-                scene = scene_cfg.class_type(scene_cfg)
+            scene = scene_cfg.class_type(scene_cfg)
 
         # Play the simulator
         sim.reset()

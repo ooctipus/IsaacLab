@@ -16,7 +16,6 @@ import warp as wp
 from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
 
 import isaaclab.sim as sim_utils
-from isaaclab import cloner
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets import Articulation, ArticulationCfg
 from isaaclab.scene import InteractiveSceneCfg
@@ -152,8 +151,7 @@ def test_data_before_init_is_none():
 def test_initialization_and_shapes(sim):
     """Sensor initializes on sim reset and exposes correctly-shaped buffers."""
     scene_cfg = _SingleJointSceneCfg(num_envs=2)
-    with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-        scene = scene_cfg.class_type(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
     sim.reset()
 
     robot: Articulation = scene["robot"]
@@ -173,8 +171,7 @@ def test_initialization_and_shapes(sim):
 def test_multi_body_articulation(sim):
     """Cartpole (2 joints) exposes a wrench for each joint labelled by its child body."""
     scene_cfg = _CartpoleSceneCfg(num_envs=2)
-    with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-        scene = scene_cfg.class_type(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
     sim.reset()
 
     sensor: JointWrenchSensor = scene["wrench"]
@@ -192,8 +189,7 @@ def test_multi_body_articulation(sim):
 def test_nested_articulation_root_resolution(sim):
     """Sensor covers a nested articulation root from the configured asset prefix."""
     scene_cfg = _NestedRootAntSceneCfg(num_envs=1)
-    with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-        scene = scene_cfg.class_type(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
     sim.reset()
 
     robot: Articulation = scene["robot"]
@@ -324,8 +320,7 @@ def _compute_expected_wrench_in_joint_frame(
 def test_force_and_torque_components_at_rest(sim):
     """Component-level validation of force and torque against analytical expectations (gravity only)."""
     scene_cfg = _SingleJointSceneCfg(num_envs=1)
-    with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-        scene = scene_cfg.class_type(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
     sim.reset()
 
     sensor: JointWrenchSensor = scene["wrench"]
@@ -358,8 +353,7 @@ def test_wrench_with_external_force_and_torque(sim):
     and compare component-by-component.
     """
     scene_cfg = _SingleJointSceneCfg(num_envs=1)
-    with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-        scene = scene_cfg.class_type(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
     sim.reset()
 
     sensor: JointWrenchSensor = scene["wrench"]
@@ -408,8 +402,7 @@ def test_interior_joint_wrench_at_rest(sim):
     computed from each body's moment about the joint anchor.
     """
     scene_cfg = _CartpoleDampedSceneCfg(num_envs=1)
-    with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-        scene = scene_cfg.class_type(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
     sim.reset()
 
     sensor: JointWrenchSensor = scene["wrench"]
@@ -447,8 +440,7 @@ def test_interior_joint_wrench_at_rest(sim):
 def test_reset_zeros_buffers(sim):
     """Resetting the sensor clears the force / torque buffers."""
     scene_cfg = _SingleJointSceneCfg(num_envs=2)
-    with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-        scene = scene_cfg.class_type(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
     sim.reset()
 
     sensor: JointWrenchSensor = scene["wrench"]
@@ -470,8 +462,7 @@ def test_reset_zeros_buffers(sim):
 def test_reset_with_env_ids_only_zeros_selected_envs(sim):
     """Partial reset via env_ids should zero the selected envs and preserve the others."""
     scene_cfg = _SingleJointSceneCfg(num_envs=4)
-    with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-        scene = scene_cfg.class_type(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
     sim.reset()
 
     sensor: JointWrenchSensor = scene["wrench"]
@@ -498,8 +489,7 @@ def test_no_stale_data_after_scene_reset(sim):
     refetch from the Newton articulation view here (the wrench buffer reflects the previous step).
     """
     scene_cfg = _SingleJointSceneCfg(num_envs=1)
-    with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-        scene = scene_cfg.class_type(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
     sim.reset()
 
     sensor: JointWrenchSensor = scene["wrench"]

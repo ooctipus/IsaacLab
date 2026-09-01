@@ -38,7 +38,6 @@ from pxr import Usd, UsdGeom
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
-from isaaclab.cloner import ReplicateSession
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import Camera, CameraCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, retrieve_file_path
@@ -522,17 +521,7 @@ def main() -> None:
         sim_utils.create_new_stage()
         sim_cfg = make_sim_cfg()
         sim = sim_utils.SimulationContext(sim_cfg)
-        with ReplicateSession(
-            [scene_cfg],
-            scene_cfg.num_envs,
-            scene_cfg.env_spacing,
-            sim.device,
-            env_template=scene_cfg.clone_cfg.clone_template,
-            replicate_physics=scene_cfg.replicate_physics,
-        ):
-            scene = scene_cfg.class_type(scene_cfg)
-        if scene_cfg.filter_collisions and "physx" in sim.physics_backend:
-            scene.filter_collisions()
+        scene = scene_cfg.class_type(scene_cfg)
         print(f"[INFO] Referenced input scene into {args_cli.num_envs} env(s).", flush=True)
         print(f"[INFO] Duplicated-env camera path: {camera_prim_path}", flush=True)
         print(f"[INFO] Rendering {width}x{height} from source camera {source_camera_prim_path}.", flush=True)

@@ -36,6 +36,8 @@ def _empty_clone_plan() -> ClonePlan:
         destinations=(),
         clone_mask=torch.zeros(0, 0, dtype=torch.bool),
         env_ids=torch.empty(0, dtype=torch.long),
+        positions=torch.empty((0, 3)),
+        replicate_physics=True,
     )
 
 
@@ -214,6 +216,8 @@ def _prototype_only_scene():
         destinations=("/World/envs/env_{}/Robot",),
         clone_mask=torch.ones(1, 2, dtype=torch.bool),
         env_ids=torch.tensor([0, 1]),
+        positions=torch.zeros((2, 3)),
+        replicate_physics=True,
     )
     return stage, shape_paths, plan
 

@@ -5,13 +5,16 @@ Cloning Environments
 
 .. currentmodule:: isaaclab
 
-Isaac Lab describes a parallel scene once and gives every registered clone backend the same
-:class:`~isaaclab.cloner.ClonePlan`. No clone backend derives a second layout or copies state from
-another backend instance.
+Isaac Lab describes a parallel scene once in a :class:`~isaaclab.cloner.ClonePlan`. Each registered
+clone backend receives the plan-derived rows routed to it; no backend derives a second layout or
+copies state from another backend instance.
 
-The public composition root is :class:`~isaaclab.cloner.ReplicateSession`. It builds and publishes
+A declarative :class:`~isaaclab.scene.InteractiveScene` owns this lifecycle. It builds and publishes
 the plan before constructing scene entities, supplies each entity constructor with its exact
-prototype path, and dispatches the plan once when construction finishes.
+prototype path, dispatches the required clone contexts when construction finishes, and queues model
+construction for the first hard reset after any intervening stage edits. A homogeneous direct
+environment instead constructs its plain scene inside a base-owned :func:`~isaaclab.cloner.from_env_0`
+lifecycle.
 
 .. contents:: On this page
    :local:
@@ -40,6 +43,8 @@ A plan is a flat table with one row per independently copied asset variant:
      - Environment ids represented by the mask columns.
    * - ``positions``
      - Environment origins [m], shape ``[num_envs, 3]``.
+   * - ``replicate_physics``
+     - Whether physics clone contexts may reuse plan prototypes across environments.
 
 For a homogeneous robot and one shared ground plane, the plan remains asset-wise:
 
@@ -50,9 +55,9 @@ For a homogeneous robot and one shared ground plane, the plan remains asset-wise
    clone_mask   = [[1, 1, 1, 1],
                    [0, 0, 0, 0]]
 
-A backend that can copy a whole homogeneous environment may request that representation. The
-session collapses the asset rows only when doing so describes exactly the same layout; heterogeneous
-or partially populated plans stay asset-wise.
+A backend that can copy a whole homogeneous environment may request that representation. Its mapping
+query collapses the asset rows only when doing so describes exactly the same layout; heterogeneous or
+partially populated plans stay asset-wise.
 
 A cfg nested below another authored asset maps to its nearest parent's rows. The parent copy already
 contains that subtree, so the child does not create redundant replication work.
@@ -61,46 +66,50 @@ contains that subtree, so the child does not create redundant replication work.
 The single lifecycle
 --------------------
 
-Construct a simulation first, then enter one session rooted in the configuration that owns the
-scene. Construct cfg-owned objects with the standard ``cfg.class_type(cfg)`` convention:
+Construct a simulation first, then construct a declarative scene with the standard
+``cfg.class_type(cfg)`` convention. The scene owns its single clone lifecycle:
+
+.. code-block:: python
+
+   scene_cfg = MySceneCfg(num_envs=128, env_spacing=2.0)
+   scene = scene_cfg.class_type(scene_cfg)
+
+The lifecycle owns the order:
+
+#. Build and publish the plan.
+#. Author every environment root and its origin.
+#. Construct every asset and sensor from cfg. Constructors author only the exact prototype paths
+   assigned by the plan; input cfgs are not mutated.
+#. Dispatch stage and native clone contexts; each reads its routed rows from the published plan.
+#. Run collision filtering when ``CloneCfg`` enables it and PhysX requires it.
+#. Apply any required stage edits before initialization.
+#. On the first hard reset, construct model-role backends from the same plan before physics
+   finalization. A soft reset cannot skip this phase.
+
+Creating an asset outside this lifecycle is an ownership error: the plan would not contain it.
+Likewise, a second lifecycle cannot replace the plan on one
+:class:`~isaaclab.sim.SimulationContext`.
+
+For a homogeneous workflow that authors one prototype directly, use
+:func:`~isaaclab.cloner.from_env_0` around the cfg-owned constructors:
 
 .. code-block:: python
 
    from isaaclab import cloner
 
-   scene_cfg = MySceneCfg(num_envs=128, env_spacing=2.0)
-   with cloner.ReplicateSession(
-       [scene_cfg],
-       num_clones=scene_cfg.num_envs,
-       env_spacing=scene_cfg.env_spacing,
-       device=sim.device,
-       env_template=scene_cfg.clone_cfg.clone_template,
-       replicate_physics=scene_cfg.replicate_physics,
-   ):
-       scene = scene_cfg.class_type(scene_cfg)
+   cfg = (cloner.CloneCfg(), robot_cfg)
+   with cloner.from_env_0(cfg, num_envs=128, env_spacing=2.0):
+       robot = robot_cfg.class_type(robot_cfg)
 
-   if scene_cfg.filter_collisions and "physx" in scene.physics_backend:
-       scene.filter_collisions()
-
-The session owns the order:
-
-#. Build and publish the immutable plan.
-#. Author every environment root and its origin.
-#. Construct every asset and sensor from cfg. Constructors author only the exact prototype paths
-   assigned by the plan; input cfgs are not mutated.
-#. Dispatch the same plan once to each registered clone backend.
-#. Run collision filtering after replication when PhysX requires it.
-
-Creating an asset outside this lifecycle is an ownership error: the plan would not contain it.
-Likewise, a second session cannot replace the plan on one
-:class:`~isaaclab.sim.SimulationContext`.
+``from_env_0`` rejects multi-variant or partially populated layouts. Put those entities on an
+:class:`~isaaclab.scene.InteractiveSceneCfg`, whose scene-owned lifecycle keeps the asset-wise plan.
 
 
 Declaring a scene
 -----------------
 
-Manager-based and direct environments already provide the composition root. Put assets in the
-scene cfg rather than constructing an env-0 scene manually:
+Manager-based and heterogeneous environments put assets on an
+:class:`~isaaclab.scene.InteractiveSceneCfg`:
 
 .. code-block:: python
 
@@ -117,13 +126,19 @@ scene cfg rather than constructing an env-0 scene manually:
        )
 
 
-For a direct environment, ``_setup_scene()`` binds the objects that the cfg-owned scene already
-constructed:
+For a homogeneous direct environment, keep asset cfgs on the direct env cfg and construct its one
+prototype in ``_setup_scene()``. The direct environment base owns the surrounding
+:func:`~isaaclab.cloner.from_env_0` lifecycle:
 
 .. code-block:: python
 
+   class CartpoleEnvCfg(DirectRLEnvCfg):
+       robot_cfg = CARTPOLE_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+       scene = InteractiveSceneCfg(num_envs=128, env_spacing=2.0)
+
    def _setup_scene(self):
-       self.robot = self.scene.articulations["robot"]
+       self.robot = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
+       self.scene.articulations["robot"] = self.robot
 
 Do not clone by walking the completed stage or by building a second plan in ``_setup_scene()``.
 
@@ -149,9 +164,8 @@ path strings or rediscovering the stage:
 
    plan = sim.get_clone_plan()
 
-   cloner.query.path_to_clone(plan, "/World/envs/env_0/Obstacle", env_id=2)
-   cloner.query.path_env_ids(plan, "/World/envs/env_0/Obstacle")
    cloner.query.path_to_source(plan, "/World/envs/env_2/Obstacle")
+   list(cloner.query.iter_sources(plan, "/World/envs/env_[^/]+/Obstacle"))
 
 Use :func:`~isaaclab.cloner.query.iter_sources` when a destination template has several variants
 and the consumer needs every populated source. Query functions speak environment ids throughout;
@@ -161,8 +175,8 @@ mask column ``j`` represents ``env_ids[j]``.
 Backend ownership
 -----------------
 
-Each engine registers its clone context on :class:`~isaaclab.sim.SimulationContext`. The session
-dispatches each registered context once.
+Each engine registers its clone context on :class:`~isaaclab.sim.SimulationContext`. The lifecycle
+dispatches stage/native contexts once and queues model contexts for the first hard reset.
 
 The core contexts are:
 
@@ -173,14 +187,18 @@ The core contexts are:
    NewtonReplicateContext   builds the Newton model asset by asset
    OvReplicateContext       registers OvPhysX clone transforms
 
-USD copying runs before native physics consumes its destinations. Under Kit, the session obtains
-one shared USD context; a PhysX manager requesting the same type reuses it. Kitless Newton and
-OvPhysX paths avoid that redundant USD copy.
+USD copying runs before native physics consumes its destinations. Isaac Sim PhysX registers one USD
+scene context alongside its native PhysX context because native replication requires plan-authored
+destination topology on the stage. Both consume the same plan, and renderer or visualizer requests
+reuse that registered USD context, so the stage topology is copied once. Newton headless does not
+request USD unless a renderer or visualizer requires the complete stage, or native physics
+replication is disabled. In the latter mode Newton reads exact materialized per-environment paths
+after stage edits rather than rebuilding scene ownership by walking the stage.
 
 Collision filtering
 -------------------
 
 PhysX scenes need collision filtering after clone dispatch so environments do not collide with
-one another. :class:`~isaaclab.scene.InteractiveScene` derives shared collision roots from global
-plan rows and applies the pass when requested by its environment root. Newton isolates environments
+one another. Lifecycle exit derives collision roots from the plan and applies the pass when
+:attr:`~isaaclab.cloner.CloneCfg.filter_collisions` enables it. Newton isolates environments
 through its world model and does not need this pass.

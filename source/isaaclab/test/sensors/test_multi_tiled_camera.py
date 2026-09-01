@@ -83,7 +83,7 @@ def test_multi_tiled_camera_init(setup_camera):
         cfg.prim_path = f"{{ENV_REGEX_NS}}/CameraSensor_{i}"
         camera_cfgs.append(cfg)
     with cloner.ReplicateSession(
-        camera_cfgs, num_cameras_per_tiled_camera, 1.0, sim.device, env_template="/World/Origin_{}"
+        (cloner.CloneCfg(clone_template="/World/Origin_{}"), *camera_cfgs), num_cameras_per_tiled_camera, 1.0
     ):
         tiled_cameras = [cfg.class_type(cfg) for cfg in camera_cfgs]
     assert sim.get_setting("/isaaclab/render/rtx_sensors")
@@ -171,7 +171,7 @@ def test_all_annotators_multi_tiled_camera(setup_camera):
         cfg.prim_path = f"{{ENV_REGEX_NS}}/CameraSensor_{i}"
         camera_cfgs.append(cfg)
     with cloner.ReplicateSession(
-        camera_cfgs, num_cameras_per_tiled_camera, 1.0, sim.device, env_template="/World/Origin_{}"
+        (cloner.CloneCfg(clone_template="/World/Origin_{}"), *camera_cfgs), num_cameras_per_tiled_camera, 1.0
     ):
         tiled_cameras = [cfg.class_type(cfg) for cfg in camera_cfgs]
     assert sim.get_setting("/isaaclab/render/rtx_sensors")
@@ -265,7 +265,7 @@ def test_different_resolution_multi_tiled_camera(setup_camera):
         cfg.height, cfg.width = resolutions[i]
         camera_cfgs.append(cfg)
     with cloner.ReplicateSession(
-        camera_cfgs, num_cameras_per_tiled_camera, 1.0, sim.device, env_template="/World/Origin_{}"
+        (cloner.CloneCfg(clone_template="/World/Origin_{}"), *camera_cfgs), num_cameras_per_tiled_camera, 1.0
     ):
         tiled_cameras = [cfg.class_type(cfg) for cfg in camera_cfgs]
     assert sim.get_setting("/isaaclab/render/rtx_sensors")
@@ -327,7 +327,7 @@ def test_frame_offset_multi_tiled_camera(setup_camera):
         cfg.prim_path = f"{{ENV_REGEX_NS}}/CameraSensor_{i}"
         camera_cfgs.append(cfg)
     with cloner.ReplicateSession(
-        camera_cfgs, num_cameras_per_tiled_camera, 1.0, sim.device, env_template="/World/Origin_{}"
+        (cloner.CloneCfg(clone_template="/World/Origin_{}"), *camera_cfgs), num_cameras_per_tiled_camera, 1.0
     ):
         tiled_cameras = [cfg.class_type(cfg) for cfg in camera_cfgs]
 
@@ -395,7 +395,7 @@ def test_frame_different_poses_multi_tiled_camera(setup_camera):
         cfg.offset = TiledCameraCfg.OffsetCfg(pos=positions[i], rot=rotations[i], convention="ros")
         camera_cfgs.append(cfg)
     with cloner.ReplicateSession(
-        camera_cfgs, num_cameras_per_tiled_camera, 1.0, sim.device, env_template="/World/Origin_{}"
+        (cloner.CloneCfg(clone_template="/World/Origin_{}"), *camera_cfgs), num_cameras_per_tiled_camera, 1.0
     ):
         tiled_cameras = [cfg.class_type(cfg) for cfg in camera_cfgs]
 

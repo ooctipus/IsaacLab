@@ -7,14 +7,12 @@ from __future__ import annotations
 
 import isaaclab.sim as sim_utils
 from isaaclab.renderers import RendererCfg
+from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import CameraCfg, JointWrenchSensorCfg
 from isaaclab.utils.configclass import configclass
 
 from isaaclab_tasks.core.reorient.config.shadow_hand.feature_extractor import FeatureExtractorCfg
-from isaaclab_tasks.core.reorient.config.shadow_hand.shadow_hand_direct_env_cfg import (
-    ShadowHandEnvCfg,
-    ShadowHandSceneCfg,
-)
+from isaaclab_tasks.core.reorient.config.shadow_hand.shadow_hand_direct_env_cfg import ShadowHandEnvCfg
 from isaaclab_tasks.utils import PresetCfg
 from isaaclab_tasks.utils.presets import MultiBackendRendererCfg
 
@@ -161,20 +159,14 @@ class ShadowHandTiledCameraCfg(PresetCfg):
 
 
 @configclass
-class ShadowHandCameraSceneCfg(ShadowHandSceneCfg):
-    """Shadow hand scene with the sensors consumed by the camera task."""
-
-    num_envs = 1225
-    env_spacing = 2.0
-    ground = None
-    camera: ShadowHandTiledCameraCfg = ShadowHandTiledCameraCfg()
-    joint_wrench = JointWrenchSensorCfg(prim_path="{ENV_REGEX_NS}/Robot")
-
-
-@configclass
 class ShadowHandCameraEnvCfg(ShadowHandEnvCfg):
+    # sensors
+    tiled_camera: ShadowHandTiledCameraCfg = ShadowHandTiledCameraCfg()
+    joint_wrench_cfg = JointWrenchSensorCfg(prim_path="{ENV_REGEX_NS}/Robot")
+    ground_cfg = None
+
     # scene
-    scene: ShadowHandCameraSceneCfg = ShadowHandCameraSceneCfg()
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=1225, env_spacing=2.0)
 
     feature_extractor: FeatureExtractorCfg = FeatureExtractorCfg()
 
@@ -184,7 +176,7 @@ class ShadowHandCameraEnvCfg(ShadowHandEnvCfg):
 
     def validate_config(self):
         """Check renderer/data-type and feature-extractor compatibility."""
-        validate_shadow_hand_camera_settings(self.scene.camera, self.feature_extractor)
+        validate_shadow_hand_camera_settings(self.tiled_camera, self.feature_extractor)
 
     def play_mode(self):
         # play-mode overrides of parent

@@ -113,7 +113,7 @@ def generate_robot_and_two_cubes(
     sim = sim_utils.SimulationContext.instance()
     assert sim is not None
     with cloner.ReplicateSession(
-        [robot_cfg, colliding_cube_cfg, free_cube_cfg], 1, 0.0, sim.device, env_template="/World/env_{}"
+        [cloner.CloneCfg(clone_template="/World/env_{}"), robot_cfg, colliding_cube_cfg, free_cube_cfg], 1, 0.0
     ):
         robot = robot_cfg.class_type(robot_cfg)
         colliding_cube = colliding_cube_cfg.class_type(colliding_cube_cfg)
@@ -156,7 +156,7 @@ def generate_lateral_rigid_and_deformable_cubes(
     sim = sim_utils.SimulationContext.instance()
     assert sim is not None
     with cloner.ReplicateSession(
-        [rigid_cube_cfg, deformable_cube_cfg], 1, 0.0, sim.device, env_template="/World/env_{}"
+        [cloner.CloneCfg(clone_template="/World/env_{}"), rigid_cube_cfg, deformable_cube_cfg], 1, 0.0
     ):
         rigid_cube = rigid_cube_cfg.class_type(rigid_cube_cfg)
         deformable_cube = deformable_cube_cfg.class_type(deformable_cube_cfg)

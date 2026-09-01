@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
+from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -34,6 +35,7 @@ from isaaclab.assets import (
     VisualMaterial,
     VisualMaterialCfg,
 )
+from isaaclab.cloner.replicate_session import _active_plan
 from isaaclab.scene_data import REQUIRES_STAGE_AND_MODEL
 from isaaclab.sensors import CameraCfg, SensorBase, SensorBaseCfg
 from isaaclab.sim import SimulationContext
@@ -54,9 +56,8 @@ class InteractiveScene:
     Based on the specified number of environments, it clones the entities and groups them into different
     categories (e.g., articulations, sensors, etc.).
 
-    The enclosing composition root constructs a scene inside one
-    :class:`~isaaclab.cloner.ReplicateSession`. The session publishes the cfg-derived clone plan
-    before the scene authors its prototypes and dispatches that plan after construction.
+    The scene owns its cfg-derived clone lifecycle unless an enclosing composition root has
+    already published one, as in a direct environment.
 
     Each entity is registered to scene based on its name in the configuration class. For example, if the user
     specifies a robot in the configuration class as follows:
@@ -78,13 +79,11 @@ class InteractiveScene:
 
     .. code-block:: python
 
-        from isaaclab import cloner
         from isaaclab.sim import SimulationContext
 
         sim = SimulationContext()
         cfg = MySceneCfg(num_envs=128, env_spacing=2.0)
-        with cloner.ReplicateSession([cfg], cfg.num_envs, cfg.env_spacing, sim.device):
-            scene = cfg.class_type(cfg)
+        scene = cfg.class_type(cfg)
 
         # access the robot from the scene
         robot = scene["robot"]
@@ -126,76 +125,49 @@ class InteractiveScene:
         if self.sim is None:
             raise RuntimeError("InteractiveScene requires an active SimulationContext.")
         self.stage = self.sim.stage
-        self.physics_backend = self.sim.physics_manager.__name__.lower()
-        requested_viz_types = set(self.sim.resolve_visualizer_types())
-        self._physics_scene_path = self.sim.cfg.physics_prim_path
-        self._collisions_filtered = False
-        plan = self.sim.get_clone_plan()
-        if plan is None:
-            raise RuntimeError("InteractiveScene must be constructed inside a ReplicateSession.")
-        self._clone_plan = plan
-        self._env_fmt = plan.env_template
-        self.env_prim_paths = cloner.query.env_root_paths(plan)
-        if self._env_fmt != self.cfg.clone_cfg.clone_template or len(self.env_prim_paths) != self.cfg.num_envs:
-            raise ValueError("InteractiveSceneCfg layout must match the active clone plan.")
-
-        # allocate env indices
-        self._ALL_INDICES = torch.arange(self.cfg.num_envs, dtype=torch.long, device=self.device)
-        if self._is_scene_setup_from_cfg():
-            self._add_entities_from_cfg()
-
-        # Every sensor exists by now, so all visualizer and camera-renderer requirements are visible.
-        cam_types = [s.cfg.renderer_cfg.renderer_type for s in self._sensors.values() if isinstance(s.cfg, CameraCfg)]
-        for type_name in requested_viz_types.union(cam_types):
-            requires_stage, requires_model = REQUIRES_STAGE_AND_MODEL[type_name]
-            self.sim.requires_usd_stage |= requires_stage
-            self.sim.requires_newton_model |= requires_model
-
-    def filter_collisions(self, global_prim_paths: list[str] | None = None):
-        """Filter environments collisions.
-
-        Disables collisions between the environments in ``/World/envs/env_.*`` and enables collisions with the prims
-        in global prim paths (e.g. ground plane).
-
-        Args:
-            global_prim_paths: Extra global prim paths to enable collisions with. Plan-declared
-                global assets are included automatically.
-        """
-        if self._collisions_filtered:
-            return
-        # filter collisions within each environment instance
-        cloner.filter_collisions(
-            self.stage,
-            self.physics_scene_path,
-            "/World/collisions",
-            self.env_prim_paths,
-            global_paths=list(dict.fromkeys(self.global_prim_paths + list(global_prim_paths or []))),
+        owns_clone_lifecycle = _active_plan() is None
+        clone_lifecycle = (
+            cloner.ReplicateSession((cfg,), cfg.num_envs, cfg.env_spacing) if owns_clone_lifecycle else nullcontext()
         )
-        self._collisions_filtered = True
+        with clone_lifecycle:
+            plan = _active_plan()
+            if plan is None:
+                raise RuntimeError("InteractiveScene requires an active lexical clone lifecycle.")
+            if plan.env_template != cfg.clone_cfg.clone_template or len(plan.env_ids) != cfg.num_envs:
+                raise ValueError("InteractiveSceneCfg must match the active clone plan.")
+            self._clone_plan = plan
+            self._ALL_INDICES = plan.env_ids
+            if any(
+                name not in InteractiveSceneCfg.__dataclass_fields__ and value is not None
+                for name, value in vars(cfg).items()
+            ):
+                self._add_entities_from_cfg()
 
-    @property
-    def global_prim_paths(self) -> list[str]:
-        """Plan-owned prim roots configured to collide across environments."""
-        return list(self.clone_plan.collision_paths)
+            # Every sensor exists by now, so all visualizer and camera-renderer requirements are visible.
+            camera_types = [
+                sensor.cfg.renderer_cfg.renderer_type
+                for sensor in self._sensors.values()
+                if isinstance(sensor.cfg, CameraCfg)
+            ]
+            for type_name in set(self.sim.resolve_visualizer_types()).union(camera_types):
+                requires_stage, requires_model = REQUIRES_STAGE_AND_MODEL[type_name]
+                self.sim.requires_usd_stage |= requires_stage
+                self.sim.requires_newton_model |= requires_model
+        self.sim.register_interactive_scene(self)
 
     def __str__(self) -> str:
         """Returns a string representation of the scene."""
         msg = f"<class {self.__class__.__name__}>\n"
         msg += f"\tNumber of environments: {self.cfg.num_envs}\n"
         msg += f"\tEnvironment spacing   : {self.cfg.env_spacing}\n"
-        msg += f"\tSource prim name      : {self.env_prim_paths[0]}\n"
-        msg += f"\tGlobal prim paths     : {self.global_prim_paths}\n"
-        msg += f"\tReplicate physics     : {self.cfg.replicate_physics}"
+        msg += f"\tSource prim name      : {self._clone_plan.env_template.format(int(self._clone_plan.env_ids[0]))}\n"
+        msg += f"\tCollision roots      : {list(self._clone_plan.collision_paths)}\n"
+        msg += f"\tReplicate physics     : {self.cfg.clone_cfg.replicate_physics}"
         return msg
 
     """
     Properties.
     """
-
-    @property
-    def physics_scene_path(self) -> str:
-        """The path to the USD Physics Scene."""
-        return self._physics_scene_path
 
     @property
     def physics_dt(self) -> float:
@@ -210,12 +182,12 @@ class InteractiveScene:
     @property
     def env_ns(self) -> str:
         """The namespace ``/World/envs`` in which all environments are created."""
-        return self._env_fmt.rsplit("/", 1)[0]
+        return self._clone_plan.env_template.rsplit("/", 1)[0]
 
     @property
     def env_regex_ns(self) -> str:
         """The namespace ``/World/envs/env_[^/]+`` in which all environments are created."""
-        return self._env_fmt.format("[^/]+")
+        return self._clone_plan.env_template.format("[^/]+")
 
     @property
     def num_envs(self) -> int:
@@ -280,16 +252,6 @@ class InteractiveScene:
     def visual_materials(self) -> dict[str, VisualMaterial]:
         """Scene-declared runtime-writable visual materials."""
         return self._visual_materials
-
-    @property
-    def clone_plan(self) -> cloner.ClonePlan:
-        """Clone plan owned by this scene's replication lifecycle.
-
-        Forwards to :meth:`SimulationContext.get_clone_plan`, which is the canonical owner.
-        The plan records the source paths, destination templates, and the per-env source
-        assignment mask.
-        """
-        return self._clone_plan
 
     @property
     def extras(self) -> dict[str, AssetBaseCfg]:
@@ -632,17 +594,6 @@ class InteractiveScene:
     Internal methods.
     """
 
-    def _is_scene_setup_from_cfg(self) -> bool:
-        """Check if scene entities are setup from the config or not.
-
-        Returns:
-            True if scene entities are setup from the config, False otherwise.
-        """
-        return any(
-            not (asset_name in InteractiveSceneCfg.__dataclass_fields__ or asset_cfg is None)
-            for asset_name, asset_cfg in self.cfg.__dict__.items()
-        )
-
     def _add_entities_from_cfg(self):  # noqa: C901
         """Add scene entities from the config."""
         from isaaclab_physx.assets import SurfaceGripperCfg  # noqa: PLC0415
@@ -659,7 +610,7 @@ class InteractiveScene:
             all_items,
             key=lambda item: (
                 isinstance(item[1], SensorBaseCfg),
-                len(sim_utils.split_path_expr(getattr(item[1], "prim_path", ""))),
+                len(sim_utils.split_path_expr(item[1].prim_path)),
             ),
         )
 
@@ -691,7 +642,7 @@ class InteractiveScene:
             elif isinstance(asset_cfg, AssetBaseCfg):
                 # Static assets have no runtime class, so author their plan-owned prototypes here.
                 if asset_cfg.spawn is not None:
-                    source_paths = cloner.query.cfg_source_paths(self.clone_plan, asset_cfg)
+                    source_paths = cloner.query._cfg_source_paths(self._clone_plan, asset_cfg)
                     if isinstance(asset_cfg.spawn, (sim_utils.MultiAssetSpawnerCfg, sim_utils.MultiUsdFileCfg)):
                         asset_cfg.spawn.func(
                             source_paths,

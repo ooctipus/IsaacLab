@@ -47,19 +47,6 @@ PEND_ROT_OFFSET = (0.5, 0.5, 0.5, 0.5)
 _WORLD_PVA_CFG = PvaCfg(prim_path="/World/ground")
 
 
-def _create_scene(cfg: InteractiveSceneCfg, sim):
-    """Construct a scene through its cfg-owned clone lifecycle."""
-    with cloner.ReplicateSession(
-        [cfg],
-        cfg.num_envs,
-        cfg.env_spacing,
-        sim.device,
-        env_template=cfg.clone_cfg.clone_template,
-        replicate_physics=cfg.replicate_physics,
-    ):
-        return cfg.class_type(cfg)
-
-
 @configclass
 class MySceneCfg(InteractiveSceneCfg):
     """Example scene configuration."""
@@ -219,8 +206,13 @@ def setup_sim():
     with sim_utils.build_simulation_context(sim_cfg=sim_cfg) as sim:
         sim._app_control_on_stop_handle = None
         # construct scene
-        scene_cfg = MySceneCfg(num_envs=2, env_spacing=5.0, lazy_sensor_update=False, replicate_physics=False)
-        scene = _create_scene(scene_cfg, sim)
+        scene_cfg = MySceneCfg(
+            num_envs=2,
+            env_spacing=5.0,
+            lazy_sensor_update=False,
+            clone_cfg=cloner.CloneCfg(replicate_physics=False),
+        )
+        scene = scene_cfg.class_type(scene_cfg)
         # Both pendulum and pendulum2 use merge_fixed_joints=True, so the
         # fixed-joint child link imu_link is removed from the URDF before USD
         # conversion.  Recreate it as a plain Xform (no RigidBodyAPI) under each
@@ -805,7 +797,7 @@ def test_no_stale_data_after_scene_reset():
     with sim_utils.build_simulation_context(sim_cfg=sim_cfg) as sim:
         sim._app_control_on_stop_handle = None
         scene_cfg = _StaleResetSceneCfg(num_envs=1, env_spacing=2.0, lazy_sensor_update=False)
-        scene = _create_scene(scene_cfg, sim)
+        scene = scene_cfg.class_type(scene_cfg)
         sim.reset()
         scene.reset()
 

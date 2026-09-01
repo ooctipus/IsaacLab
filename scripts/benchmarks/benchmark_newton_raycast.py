@@ -43,7 +43,6 @@ from isaaclab_newton.sensors import LegacyRayCaster, NewtonRaycastSensorCfg
 import isaaclab.sim as sim_utils
 import isaaclab.terrains as terrain_gen
 from isaaclab.assets import RigidObjectCfg
-from isaaclab.cloner import ReplicateSession
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import RayCasterCfg
 from isaaclab.sensors.ray_caster.patterns import GridPatternCfg
@@ -123,17 +122,7 @@ def main():
         sim_cfg = sim_utils.SimulationCfg(dt=1 / 200, device=args_cli.device, physics=physics_cfg)
         sim = sim_utils.SimulationContext(sim_cfg)
         scene_cfg = _make_scene_cfg(args_cli.num_envs)
-        with ReplicateSession(
-            [scene_cfg],
-            scene_cfg.num_envs,
-            scene_cfg.env_spacing,
-            sim.device,
-            env_template=scene_cfg.clone_cfg.clone_template,
-            replicate_physics=scene_cfg.replicate_physics,
-        ):
-            scene = scene_cfg.class_type(scene_cfg)
-        if scene_cfg.filter_collisions and "physx" in sim.physics_backend:
-            scene.filter_collisions()
+        scene = scene_cfg.class_type(scene_cfg)
         sim.reset()
         sim.step()
         scene.update(sim.get_physics_dt())

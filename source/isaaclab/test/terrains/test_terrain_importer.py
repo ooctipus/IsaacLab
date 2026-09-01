@@ -16,7 +16,6 @@ from typing import Literal
 
 import numpy as np
 import pytest
-import torch
 import trimesh
 
 from pxr import UsdGeom
@@ -24,38 +23,10 @@ from pxr import UsdGeom
 import isaaclab.terrains as terrain_gen
 from isaaclab import cloner as lab_cloner
 from isaaclab.sim import PreviewSurfaceCfg, build_simulation_context, get_first_matching_child_prim
-from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.terrains.config.rough import ROUGH_TERRAINS_CFG
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
 pytestmark = pytest.mark.integration
-
-
-@pytest.mark.parametrize("device", ["cuda:0", "cpu"])
-@pytest.mark.parametrize("env_spacing", [1.0, 4.325, 8.0])
-@pytest.mark.parametrize("num_envs", [1, 4, 125, 379, 1024])
-def test_terrain_importer_env_origins(device, env_spacing, num_envs):
-    """Tests that env origins are consistent when computed using the TerrainImporter and Lab's grid_transforms."""
-    with build_simulation_context(device=device, auto_add_lighting=True) as sim:
-        sim._app_control_on_stop_handle = None
-        # create terrain importer
-        terrain_importer_cfg = TerrainImporterCfg(
-            num_envs=num_envs,
-            env_spacing=env_spacing,
-            prim_path="/World/ground",
-            terrain_type="plane",  # for flat ground, origins are in grid
-            terrain_generator=None,
-        )
-        with lab_cloner.ReplicateSession([terrain_importer_cfg], num_envs, env_spacing, sim.device):
-            terrain_importer = terrain_importer_cfg.class_type(terrain_importer_cfg)
-        # obtain env origins using terrain importer
-        terrain_importer_origins = terrain_importer.env_origins
-
-        # obtain env origins using Lab's grid_transforms
-        lab_grid_origins, _ = lab_cloner.grid_transforms(num_envs, spacing=env_spacing, device=sim.device)
-
-        # check if the env origins are the same
-        torch.testing.assert_close(terrain_importer_origins, lab_grid_origins, rtol=1e-5, atol=1e-5)
 
 
 @pytest.mark.parametrize("device", ["cuda:0", "cpu"])
@@ -71,7 +42,7 @@ def test_terrain_generation(device):
             terrain_generator=ROUGH_TERRAINS_CFG,
             num_envs=1,
         )
-        with lab_cloner.ReplicateSession([terrain_importer_cfg], 1, 1.0, sim.device):
+        with lab_cloner.ReplicateSession([lab_cloner.CloneCfg(), terrain_importer_cfg], 1, 1.0):
             terrain_importer = terrain_importer_cfg.class_type(terrain_importer_cfg)
 
         # check if mesh prim path exists
@@ -113,7 +84,7 @@ def test_plane(device, use_custom_material):
             env_spacing=1.0,
             visual_material=visual_material,
         )
-        with lab_cloner.ReplicateSession([terrain_importer_cfg], 1, 1.0, sim.device):
+        with lab_cloner.ReplicateSession([lab_cloner.CloneCfg(), terrain_importer_cfg], 1, 1.0):
             terrain_importer = terrain_importer_cfg.class_type(terrain_importer_cfg)
 
         # check if mesh prim path exists
@@ -138,7 +109,7 @@ def test_usd(device):
             num_envs=1,
             env_spacing=1.0,
         )
-        with lab_cloner.ReplicateSession([terrain_importer_cfg], 1, 1.0, sim.device):
+        with lab_cloner.ReplicateSession([lab_cloner.CloneCfg(), terrain_importer_cfg], 1, 1.0):
             terrain_importer = terrain_importer_cfg.class_type(terrain_importer_cfg)
 
         # check if mesh prim path exists

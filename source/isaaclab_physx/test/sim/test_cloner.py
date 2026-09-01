@@ -21,7 +21,7 @@ from isaaclab_physx.cloner import PhysxReplicateContext
 
 import isaaclab.cloner._fabric_notices as _fabric_notices
 import isaaclab.sim as sim_utils
-from isaaclab.cloner import UsdReplicateContext
+from isaaclab.cloner import ClonePlan, UsdReplicateContext
 from isaaclab.cloner._fabric_notices import disabled_fabric_change_notifies
 from isaaclab.sim import SimulationContext, build_simulation_context
 
@@ -54,27 +54,34 @@ def _replicate(
     env_ids,
     mapping,
     positions=None,
-    quaternions=None,
     device="cpu",
-    exclude_self_replication=True,
 ):
     """Apply one test mapping through the simulation-owned PhysX clone context."""
     del device
+    if positions is None:
+        positions = torch.zeros((len(env_ids), 3), device=env_ids.device)
     sim = SimulationContext.instance()
     context = (
         PhysxReplicateContext(stage)
         if sim is None
         else sim.get_or_create_backend(PhysxReplicateContext, stage, clone_role="physics")
     )
-    context.replicate(
-        sources,
-        destinations,
-        env_ids,
-        mapping,
+    plan = ClonePlan(
+        sources=tuple(sources),
+        destinations=tuple(destinations),
+        clone_mask=mapping,
+        env_ids=env_ids,
         positions=positions,
-        quaternions=quaternions,
-        exclude_self_replication=exclude_self_replication,
+        replicate_physics=True,
     )
+    plan.context_rows[type(context)] = tuple(range(len(sources)))
+    context.replicate(plan)
+
+
+def _replicate_usd(stage, plan, rows):
+    context = UsdReplicateContext(stage)
+    plan.context_rows[type(context)] = tuple(rows)
+    context.replicate(plan)
 
 
 @pytest.fixture(params=["cpu", "cuda"])
@@ -162,17 +169,64 @@ def test_physx_context_consumes_one_mapping(sim):
     mock_rep, replicate_calls = _make_mock_physx_rep()
     with patch("isaaclab_physx.cloner.replicate.get_physx_replicator_interface", return_value=mock_rep):
         ctx = PhysxReplicateContext(stage)
-        ctx.replicate(
-            sources=["/World/envs/env_0/Object"],
-            destinations=["/World/envs/env_{}/Object"],
-            env_ids=torch.arange(3, dtype=torch.long),
-            mapping=torch.ones((1, 3), dtype=torch.bool),
+        device = sim.cfg.device
+        plan = ClonePlan(
+            sources=("/World/envs/env_0/Object",),
+            destinations=("/World/envs/env_{}/Object",),
+            clone_mask=torch.ones((1, 3), dtype=torch.bool, device=device),
+            env_ids=torch.arange(3, dtype=torch.long, device=device),
+            positions=torch.zeros((3, 3), device=device),
+            replicate_physics=True,
         )
+        plan.context_rows[type(ctx)] = (0,)
+        ctx.replicate(plan)
         ctx.clear()
         ctx.clear()
 
     assert replicate_calls == [2]
+    assert mock_rep.replicate.call_args.kwargs["useEnvIds"] is plan.positions.is_cuda
     mock_rep.unregister_replicator.assert_called_once_with(ctx._stage_id)
+
+
+def test_physx_context_preserves_usd_only_row_in_mixed_plan(sim):
+    """Native replication excludes its body without hiding a USD-only sibling."""
+    stage = sim_utils.get_current_stage()
+    sim_utils.create_prim("/World/envs", "Xform")
+    for env_id in range(2):
+        sim_utils.create_prim(f"/World/envs/env_{env_id}", "Xform")
+
+    body_cfg = sim_utils.SphereCfg(
+        radius=0.1,
+        rigid_props=sim_utils.RigidBodyPropertiesCfg(),
+        mass_props=sim_utils.MassPropertiesCfg(mass=1.0),
+        collision_props=sim_utils.CollisionPropertiesCfg(),
+    )
+    body_cfg.func("/World/envs/env_0/Native", body_cfg)
+    body_cfg.func("/World/envs/env_0/UsdOnly", body_cfg)
+
+    device = sim.cfg.device
+    plan = ClonePlan(
+        sources=("/World/envs/env_0/Native", "/World/envs/env_0/UsdOnly"),
+        destinations=("/World/envs/env_{}/Native", "/World/envs/env_{}/UsdOnly"),
+        clone_mask=torch.ones((2, 2), dtype=torch.bool, device=device),
+        env_ids=torch.arange(2, dtype=torch.long, device=device),
+        positions=torch.zeros((2, 3), device=device),
+        replicate_physics=True,
+    )
+    usd_context = sim.get_or_create_backend(UsdReplicateContext, stage, clone_role="scene")
+    physx_context = sim.get_or_create_backend(PhysxReplicateContext, stage, clone_role="physics")
+    plan.context_rows[type(usd_context)] = (0, 1)
+    plan.context_rows[type(physx_context)] = (0,)
+    usd_context.replicate(plan)
+    physx_context.replicate(plan)
+
+    sim.reset()
+
+    physics_sim_view = sim.physics_manager.get_physics_sim_view()
+    native_view = physics_sim_view.create_rigid_body_view("/World/envs/env_*/Native")
+    usd_only_view = physics_sim_view.create_rigid_body_view("/World/envs/env_*/UsdOnly")
+    assert native_view.count == 2
+    assert usd_only_view.count == 2
 
 
 @pytest.mark.parametrize(
@@ -301,6 +355,7 @@ def test_physx_context_handles_heterogeneous_isolated_sources(sim, device):
         ("/World/envs/env_7/Object", 1),
     ]
     assert replicate_calls == expected, f"Expected {expected}, got {replicate_calls}."
+    assert all(call.kwargs["useEnvIds"] is False for call in mock_rep.replicate.call_args_list)
 
     # attach_fn always returns ["/World/template", "/World/envs"] so the replicator
     # owns all env prims.  Self-only sources get their physics body from the
@@ -351,7 +406,15 @@ def test_direct_clone_plan_multi_asset(sim):
     stage = sim_utils.get_current_stage()
     env_ids = torch.arange(num_clones, dtype=torch.long, device=sim.cfg.device)
     _replicate(stage, sources, destinations, env_ids, clone_mask, device=sim.cfg.device)
-    UsdReplicateContext(stage).replicate(sources, destinations, env_ids, clone_mask)
+    plan = ClonePlan(
+        sources=tuple(sources),
+        destinations=tuple(destinations),
+        clone_mask=clone_mask,
+        env_ids=env_ids,
+        positions=torch.zeros((len(env_ids), 3), device=env_ids.device),
+        replicate_physics=True,
+    )
+    _replicate_usd(stage, plan, range(len(sources)))
 
     primitive_prims = sim_utils.get_all_matching_child_prims(
         "/World/envs", predicate=lambda prim: prim.GetTypeName() in ["Cone", "Cube", "Sphere"]
@@ -395,7 +458,15 @@ def _run_colocation_collision_filter(sim, asset_cfg, expected_types, assert_coun
     stage = sim_utils.get_current_stage()
     env_ids = torch.arange(num_clones, dtype=torch.long, device=sim.cfg.device)
     _replicate(stage, sources, destinations, env_ids, clone_mask, device=sim.cfg.device)
-    UsdReplicateContext(stage).replicate(sources, destinations, env_ids, clone_mask)
+    plan = ClonePlan(
+        sources=tuple(sources),
+        destinations=tuple(destinations),
+        clone_mask=clone_mask,
+        env_ids=env_ids,
+        positions=torch.zeros((len(env_ids), 3), device=env_ids.device),
+        replicate_physics=True,
+    )
+    _replicate_usd(stage, plan, range(len(sources)))
 
     primitive_prims = sim_utils.get_all_matching_child_prims(
         "/World/envs", predicate=lambda prim: prim.GetTypeName() in expected_types
@@ -512,13 +583,15 @@ def _run_sphere_velocity_sim(sim, use_native_replication: bool, num_steps: int =
             device=sim.cfg.device,
         )
 
-    UsdReplicateContext(stage).replicate(
-        sources=["/World/envs/env_0"],
-        destinations=["/World/envs/env_{}"],
+    plan = ClonePlan(
+        sources=("/World/envs/env_0",),
+        destinations=("/World/envs/env_{}",),
+        clone_mask=mapping,
         env_ids=env_ids,
-        mask=mapping,
         positions=positions,
+        replicate_physics=True,
     )
+    _replicate_usd(stage, plan, (0,))
 
     sim.reset()
 

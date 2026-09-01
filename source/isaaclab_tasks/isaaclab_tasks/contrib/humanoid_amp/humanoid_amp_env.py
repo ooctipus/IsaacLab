@@ -49,7 +49,15 @@ class HumanoidAmpEnv(DirectRLEnv):
         )
 
     def _setup_scene(self):
-        self.robot = self.scene["robot"]
+        self.robot = self.cfg.robot.class_type(self.cfg.robot)
+        for asset_cfg in (self.cfg.ground, self.cfg.light):
+            asset_cfg.spawn.func(
+                asset_cfg.prim_path,
+                asset_cfg.spawn,
+                translation=asset_cfg.init_state.pos,
+                orientation=asset_cfg.init_state.rot,
+            )
+        self.scene.articulations["robot"] = self.robot
 
     def _pre_physics_step(self, actions: torch.Tensor):
         self.actions = actions.clone()

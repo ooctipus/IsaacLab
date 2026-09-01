@@ -18,7 +18,6 @@ import pytest
 import torch
 
 import isaaclab.sim as sim_utils
-from isaaclab import cloner
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets import ArticulationCfg, RigidObjectCfg
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
@@ -58,19 +57,6 @@ class MySceneCfg(InteractiveSceneCfg):
     )
 
 
-def create_scene(cfg: InteractiveSceneCfg, sim):
-    """Construct one cfg-owned scene through its clone lifecycle."""
-    with cloner.ReplicateSession(
-        [cfg],
-        cfg.num_envs,
-        cfg.env_spacing,
-        sim.device,
-        env_template=cfg.clone_cfg.clone_template,
-        replicate_physics=cfg.replicate_physics,
-    ):
-        return cfg.class_type(cfg)
-
-
 @pytest.fixture
 def setup_scene(request):
     """Create simulation context with the specified device."""
@@ -90,7 +76,8 @@ def setup_scene(request):
 def test_relative_flag(device, setup_scene):
     make_scene, sim = setup_scene
     scene_cfg = make_scene(num_envs=4)
-    scene = create_scene(scene_cfg, sim)
+    scene = scene_cfg.class_type(scene_cfg)
+    assert sim._interactive_scene is scene
     sim.reset()
 
     # test relative == False produces different result than relative == True
@@ -173,7 +160,7 @@ def test_relative_deformable_state():
 def test_reset_to_env_ids_input_types(device, setup_scene):
     make_scene, sim = setup_scene
     scene_cfg = make_scene(num_envs=4)
-    scene = create_scene(scene_cfg, sim)
+    scene = scene_cfg.class_type(scene_cfg)
     sim.reset()
 
     # test env_ids = None
@@ -224,10 +211,8 @@ def test_replicate_physics_flag_controls_physx_replicator(device, replicate_phys
 
     make_scene, sim = setup_scene
     scene_cfg = make_scene(num_envs=3)
-    scene_cfg.replicate_physics = replicate_physics
-    scene = create_scene(scene_cfg, sim)
-    if not scene.physics_backend.startswith("physx"):
-        pytest.skip("PhysX replicator flag is only meaningful on a PhysX backend.")
+    scene_cfg.clone_cfg.replicate_physics = replicate_physics
+    scene = scene_cfg.class_type(scene_cfg)
     sim.reset()
 
     if replicate_physics:

@@ -166,8 +166,7 @@ class FrankaHaplySceneCfg(InteractiveSceneCfg):
         init_state=AssetBaseCfg.InitialStateCfg(pos=(0.50, 0.0, 1.05), rot=(0.707, 0, 0, 0.707)),
     )
 
-    robot_cfg: ArticulationCfg = FRANKA_PANDA_HIGH_PD_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-    robot = robot_cfg.class_type(robot_cfg)
+    robot: ArticulationCfg = FRANKA_PANDA_HIGH_PD_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
     robot.init_state.pos = (-0.02, 0.0, 1.05)
     robot.spawn.activate_contact_sensors = True
 

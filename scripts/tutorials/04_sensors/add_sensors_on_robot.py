@@ -43,7 +43,6 @@ import torch
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
-from isaaclab.cloner import ReplicateSession
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
 from isaaclab.sensors import CameraCfg, ContactSensorCfg, RayCasterCfg, patterns
 from isaaclab.utils.configclass import configclass
@@ -169,17 +168,7 @@ def main():
     sim.set_camera_view(eye=[3.5, 3.5, 3.5], target=[0.0, 0.0, 0.0])
     # Design scene
     scene_cfg = SensorsSceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0)
-    with ReplicateSession(
-        [scene_cfg],
-        scene_cfg.num_envs,
-        scene_cfg.env_spacing,
-        sim.device,
-        env_template=scene_cfg.clone_cfg.clone_template,
-        replicate_physics=scene_cfg.replicate_physics,
-    ):
-        scene = scene_cfg.class_type(scene_cfg)
-    if scene_cfg.filter_collisions and "physx" in sim.physics_backend:
-        scene.filter_collisions()
+    scene = scene_cfg.class_type(scene_cfg)
     # Play the simulator
     sim.reset()
     # Now we are ready!

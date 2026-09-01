@@ -51,18 +51,14 @@ Below is an example skeleton of a task config class:
    from isaaclab.utils.configclass import configclass
    from isaaclab_assets.robots.cartpole import CARTPOLE_CFG
 
-
-   @configclass
-   class MySceneCfg(InteractiveSceneCfg):
-      robot: ArticulationCfg = CARTPOLE_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-
-
    @configclass
    class MyEnvCfg(DirectRLEnvCfg):
       # simulation
       sim: SimulationCfg = SimulationCfg()
+      # robot
+      robot_cfg: ArticulationCfg = CARTPOLE_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
       # scene
-      scene: MySceneCfg = MySceneCfg(num_envs=4096, env_spacing=4.0)
+      scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=4096, env_spacing=4.0)
       # env
       decimation = 2
       episode_length_s = 5.0
@@ -218,49 +214,54 @@ they should be moved to the RL config file in Isaac Lab.
 .. rubric:: Environment Creation
 
 IsaacGymEnvs created the simulator, loaded assets, and looped over environment handles inside
-``create_sim()``. Isaac Lab environment base classes create the simulation context and own one
-:class:`~isaaclab.cloner.ReplicateSession`. Declare scene entities on an
-:class:`~isaaclab.scene.InteractiveSceneCfg`; the session plans those configs, the scene constructs their
-source prototypes, and all clone backends consume that same plan.
+``create_sim()``. Isaac Lab environment base classes create the simulation context and own one clone
+lifecycle. Manager-based and heterogeneous workflows declare scene entities on an
+:class:`~isaaclab.scene.InteractiveSceneCfg`; homogeneous direct workflows declare them on the direct
+env cfg and construct one prototype in ``_setup_scene()``.
 
 .. code-block:: python
 
    import isaaclab.sim as sim_utils
-   from isaaclab.assets import AssetBaseCfg
-
-   @configclass
-   class CartpoleSceneCfg(InteractiveSceneCfg):
-      ground = AssetBaseCfg(prim_path="/World/ground", spawn=sim_utils.GroundPlaneCfg())
-      robot = CARTPOLE_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-      light = AssetBaseCfg(
-         prim_path="/World/Light",
-         spawn=sim_utils.DistantLightCfg(intensity=2000.0),
-      )
+   from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 
 
    @configclass
    class CartpoleEnvCfg(DirectRLEnvCfg):
-      scene: CartpoleSceneCfg = CartpoleSceneCfg(num_envs=4096, env_spacing=4.0)
+      robot_cfg: ArticulationCfg = CARTPOLE_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+      ground_cfg: AssetBaseCfg = AssetBaseCfg(
+         prim_path="/World/ground",
+         spawn=sim_utils.GroundPlaneCfg(),
+      )
+      light_cfg: AssetBaseCfg = AssetBaseCfg(
+         prim_path="/World/Light",
+         spawn=sim_utils.DistantLightCfg(intensity=2000.0),
+      )
+      scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=4096, env_spacing=4.0)
 
 
    class CartpoleEnv(DirectRLEnv):
       def _setup_scene(self):
-         self.cartpole = self.scene["robot"]
+         self.cartpole = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
+         self.cfg.ground_cfg.spawn.func(self.cfg.ground_cfg.prim_path, self.cfg.ground_cfg.spawn)
+         self.cfg.light_cfg.spawn.func(self.cfg.light_cfg.prim_path, self.cfg.light_cfg.spawn)
+         self.scene.articulations["robot"] = self.cartpole
 
-``_setup_scene()`` remains available for task-specific bindings such as the last line above. Do not spawn
-an asset there when it can be declared on the scene config.
+The direct environment base enters :func:`~isaaclab.cloner.from_env_0` around construction of the
+plain scene and ``_setup_scene()``. Every authored asset cfg must therefore be present on the direct
+env cfg before construction; ``_setup_scene()`` constructs the prototype and registers runtime
+entities on the scene.
 
 
 **Ground Plane**
 
-For a simple plane, declare the ground on the scene config:
+For a simple plane, declare the ground cfg on the direct environment config:
 
 .. code-block:: python
 
    import isaaclab.sim as sim_utils
    from isaaclab.assets import AssetBaseCfg
 
-   ground = AssetBaseCfg(prim_path="/World/ground", spawn=sim_utils.GroundPlaneCfg())
+   ground_cfg: AssetBaseCfg = AssetBaseCfg(prim_path="/World/ground", spawn=sim_utils.GroundPlaneCfg())
 
 Use :class:`~terrains.TerrainImporterCfg` instead when the task needs generated or imported terrain rather than a
 single plane.
@@ -279,13 +280,9 @@ including file path, simulation parameters, actuator properties, and initial sta
 .. code-block:: python
 
    from isaaclab.assets import ArticulationCfg
-   from isaaclab.scene import InteractiveSceneCfg
-   from isaaclab.utils.configclass import configclass
    from isaaclab_assets.robots.cartpole import CARTPOLE_CFG
 
-   @configclass
-   class CartpoleSceneCfg(InteractiveSceneCfg):
-       robot: ArticulationCfg = CARTPOLE_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+   robot_cfg: ArticulationCfg = CARTPOLE_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
 
 Within the :class:`~assets.ArticulationCfg`, the ``spawn`` attribute can be used to add the robot to the scene by
 specifying the path to the robot file. Reuse an existing asset configuration when one is available, as shown above.
@@ -295,9 +292,9 @@ and backend-specific schema classes from :mod:`isaaclab_physx.sim.schemas` or
 mapping. Joint properties are specified in the ``actuators`` dictionary, for example with
 :class:`~actuators.ImplicitActuatorCfg`. Joints with the same properties can be grouped using regular expressions.
 
-The :class:`~scene.InteractiveScene` constructs declared actors inside the replication lifecycle and owns them
-for simulation writes and resets. Task code retrieves an actor by its config field name, for example
-``self.cartpole = self.scene["robot"]``.
+The direct environment constructs the actor through ``self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)``
+inside ``_setup_scene()`` and registers it on ``self.scene.articulations`` for simulation writes and
+resets.
 
 **Simulation Parameters for Actors**
 
@@ -355,26 +352,24 @@ please refer to the :ref:`migrating-from-isaacgymenvs-comparing-simulation` sect
 
 **Cloner**
 
-Isaac Lab replaces the per-environment creation loop with one
-:class:`~isaaclab.cloner.ReplicateSession`. Environment base classes create it automatically from the
-resolved task config. The session publishes its plan, cfg-owned constructors author the plan's source
-prototypes, and session exit dispatches the plan once. Physics and visualization initialize afterward.
+Isaac Lab replaces the per-environment creation loop with one cfg-derived clone lifecycle. Environment
+base classes create it automatically from the resolved task config. It publishes its plan, cfg-owned
+constructors author the plan's source prototypes, and lifecycle exit dispatches each required
+stage/native clone context once.
+Isaac Sim PhysX performs one plan-driven USD topology pass before native PhysX replication; renderers
+and visualizers reuse that same stage context rather than exporting or copying it again. The physics
+manager already exists on the active ``SimulationContext``; after any required stage edits, the first
+hard reset constructs model-role backends from the same plan before physics finalization and
+visualization initialization.
 
-Standalone composition roots use the same lifecycle explicitly:
+A declarative :class:`~isaaclab.scene.InteractiveScene` owns that lifecycle directly:
 
 .. code-block:: python
 
-   with cloner.ReplicateSession(
-       [scene_cfg],
-       num_clones=scene_cfg.num_envs,
-       env_spacing=scene_cfg.env_spacing,
-       device=sim.device,
-       replicate_physics=scene_cfg.replicate_physics,
-   ):
-       scene = scene_cfg.class_type(scene_cfg)
+   scene = scene_cfg.class_type(scene_cfg)
 
-   if scene_cfg.filter_collisions and "physx" in scene.physics_backend:
-       scene.filter_collisions()
+Use :func:`~isaaclab.cloner.from_env_0` explicitly for a standalone homogeneous direct workflow.
+The lower-level :class:`~isaaclab.cloner.ReplicateSession` is only needed by general cloning tools.
 
 
 .. rubric:: Accessing States from Simulation
@@ -562,20 +557,24 @@ and :isaaclab-source:`Cartpole environment <source/isaaclab_tasks/isaaclab_tasks
 
 **Task Config**
 
-The IsaacGymEnvs YAML fields become typed config data. Keep scene entities in a dedicated scene config so
-the framework can plan every source before construction:
+The IsaacGymEnvs YAML fields become typed config data. Keep homogeneous direct-task asset cfgs on the
+direct environment config so the framework can plan every source before construction:
 
 .. code-block:: python
 
    @configclass
-   class CartpoleSceneCfg(InteractiveSceneCfg):
-       robot: ArticulationCfg = CARTPOLE_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-
-
-   @configclass
    class CartpoleEnvCfg(DirectRLEnvCfg):
        sim: SimulationCfg = SimulationCfg(dt=1 / 120, physics=CartpolePhysicsCfg())
-       scene: CartpoleSceneCfg = CartpoleSceneCfg(num_envs=4096, env_spacing=4.0)
+       robot_cfg: ArticulationCfg = CARTPOLE_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+       ground_cfg: AssetBaseCfg = AssetBaseCfg(
+           prim_path="/World/ground",
+           spawn=sim_utils.GroundPlaneCfg(),
+       )
+       light_cfg: AssetBaseCfg = AssetBaseCfg(
+           prim_path="/World/Light",
+           spawn=sim_utils.DistantLightCfg(intensity=2000.0),
+       )
+       scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=4096, env_spacing=4.0)
        cart_dof_name = "slider_to_cart"
        pole_dof_name = "cart_to_pole"
        decimation = 2
@@ -639,27 +638,21 @@ It is also no longer necessary to ``wrap`` and ``unwrap`` tensors.
 
 **Scene Setup**
 
-IsaacGymEnvs loaded an asset and created one actor handle per environment. In Isaac Lab, the scene
-configuration is the complete construction input. It declares global assets alongside replicated assets:
+IsaacGymEnvs loaded an asset and created one actor handle per environment. In a homogeneous Isaac Lab
+direct environment, the direct env configuration is the complete construction input. It declares
+global assets alongside replicated assets:
 
 .. code-block:: python
 
-   @configclass
-   class CartpoleSceneCfg(InteractiveSceneCfg):
-       ground = AssetBaseCfg(prim_path="/World/ground", spawn=sim_utils.GroundPlaneCfg())
-       robot: ArticulationCfg = CARTPOLE_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-       light = AssetBaseCfg(
-           prim_path="/World/Light",
-           spawn=sim_utils.DistantLightCfg(intensity=2000.0),
-       )
-
-
    class CartpoleEnv(DirectRLEnv):
        def _setup_scene(self):
-           self.cartpole = self.scene["robot"]
+           self.cartpole = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
+           self.cfg.ground_cfg.spawn.func(self.cfg.ground_cfg.prim_path, self.cfg.ground_cfg.spawn)
+           self.cfg.light_cfg.spawn.func(self.cfg.light_cfg.prim_path, self.cfg.light_cfg.spawn)
+           self.scene.articulations["robot"] = self.cartpole
 
-The environment base class constructs ``CartpoleSceneCfg`` inside its replication session. No task-level
-environment loop, clone call, or actor registration is required.
+The direct environment base class owns the surrounding :func:`~isaaclab.cloner.from_env_0` lifecycle.
+No task-level environment loop or clone call is required.
 
 
 **Pre and Post Physics Step**

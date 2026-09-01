@@ -31,7 +31,7 @@ import usdrt.Usd as UsdRtUsd
 from pxr import UsdUtils
 
 import isaaclab.sim as sim_utils
-from isaaclab.cloner import ReplicateSession
+from isaaclab.cloner import CloneCfg, ReplicateSession
 from isaaclab.sensors.camera import CameraCfg
 
 pytestmark = [pytest.mark.integration, pytest.mark.isaacsim_ci]
@@ -88,7 +88,7 @@ def test_real_feed_source_applies_local_policy_and_reads_cuda_from_cpu_camera():
         data_types=["rgb"],
         spawn=sim_utils.PinholeCameraCfg(),
     )
-    with ReplicateSession([camera_cfg, bystander_camera_cfg], 1, 0.0, sim.device):
+    with ReplicateSession([CloneCfg(), camera_cfg, bystander_camera_cfg], 1, 0.0):
         camera = camera_cfg.class_type(camera_cfg)
         bystander_camera = bystander_camera_cfg.class_type(bystander_camera_cfg)
     source = None

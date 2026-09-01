@@ -79,12 +79,24 @@ class FactoryEnv(DirectRLEnv):
         self.ep_success_times = torch.zeros((self.num_envs,), dtype=torch.long, device=self.device)
 
     def _setup_scene(self):
-        self._robot = self.scene["robot"]
-        self._fixed_asset = self.scene["fixed_asset"]
-        self._held_asset = self.scene["held_asset"]
+        source_env = self.cfg.scene.clone_cfg.clone_template.format(0)
+        for asset_cfg in (self.cfg.ground, self.cfg.table, self.cfg.light):
+            asset_cfg.spawn.func(
+                asset_cfg.prim_path.replace("{ENV_REGEX_NS}", source_env),
+                asset_cfg.spawn,
+                translation=asset_cfg.init_state.pos,
+                orientation=asset_cfg.init_state.rot,
+            )
+
+        self._robot, self._fixed_asset, self._held_asset = (
+            cfg.class_type(cfg) for cfg in (self.cfg.robot, self.cfg.fixed_asset, self.cfg.held_asset)
+        )
+        self.scene.articulations.update(robot=self._robot, fixed_asset=self._fixed_asset, held_asset=self._held_asset)
         if self.cfg_task.name == "gear_mesh":
-            self._small_gear_asset = self.scene["small_gear"]
-            self._large_gear_asset = self.scene["large_gear"]
+            self._small_gear_asset, self._large_gear_asset = (
+                cfg.class_type(cfg) for cfg in (self.cfg.small_gear, self.cfg.large_gear)
+            )
+            self.scene.articulations.update(small_gear=self._small_gear_asset, large_gear=self._large_gear_asset)
 
     def _compute_intermediate_values(self, dt):
         """Get values computed from raw tensors. This includes adding noise."""

@@ -120,7 +120,7 @@ def test_first_frame_is_textured_camera(setup_sim, device):
         ),
     )
     # Create camera
-    with cloner.ReplicateSession([camera_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg], 1, 0.0):
         camera = camera_cfg.class_type(camera_cfg)
 
     sim.reset()

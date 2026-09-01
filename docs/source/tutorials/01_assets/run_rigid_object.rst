@@ -54,10 +54,10 @@ the asset's spawning strategy, default initial state, and other meta-information
 the :class:`assets.RigidObject` class, it spawns the object and initializes the corresponding physics handles
 when the simulation is played.
 
-The rigid-object cfg uses ``{ENV_REGEX_NS}`` for its environment namespace. A
-:class:`~isaaclab.cloner.ReplicateSession` receives the complete scene configuration, creates the environment
-origins, and constructs the object through ``cfg.class_type(cfg)``. Its clone plan supplies the origins used
-when writing world-frame state.
+The rigid-object cfg uses ``{ENV_REGEX_NS}`` for its environment namespace.
+:func:`~isaaclab.cloner.from_env_0` receives the complete declarative cfg root, creates the environment
+origins, and constructs the object through ``cfg.class_type(cfg)``. Its clone plan supplies the origins
+used when writing world-frame state.
 
 .. literalinclude:: ../../../../scripts/tutorials/01_assets/run_rigid_object.py
    :language: python

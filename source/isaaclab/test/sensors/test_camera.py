@@ -110,7 +110,7 @@ def test_camera_init(setup_sim_camera):
     # Create camera configuration
     sim, camera_cfg, dt = setup_sim_camera
     # Create camera
-    with cloner.ReplicateSession([camera_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg], 1, 0.0):
         camera = camera_cfg.class_type(camera_cfg)
     # Check simulation parameter is set correctly
     assert sim.get_setting("/isaaclab/render/rtx_sensors")
@@ -173,7 +173,9 @@ def test_camera_init_offset(setup_sim_camera):
         convention="world",
     )
     cam_cfg_offset_world.prim_path = "/World/CameraOffsetWorld"
-    with cloner.ReplicateSession([cam_cfg_offset_ros, cam_cfg_offset_opengl, cam_cfg_offset_world], 1, 0.0, sim.device):
+    with cloner.ReplicateSession(
+        [cloner.CloneCfg(), cam_cfg_offset_ros, cam_cfg_offset_opengl, cam_cfg_offset_world], 1, 0.0
+    ):
         camera_ros = cam_cfg_offset_ros.class_type(cam_cfg_offset_ros)
         camera_opengl = cam_cfg_offset_opengl.class_type(cam_cfg_offset_opengl)
         camera_world = cam_cfg_offset_world.class_type(cam_cfg_offset_world)
@@ -228,7 +230,7 @@ def test_multi_camera_init(setup_sim_camera):
     # -- camera 2
     cam_cfg_2 = copy.deepcopy(camera_cfg)
     cam_cfg_2.prim_path = "/World/Camera_2"
-    with cloner.ReplicateSession([cam_cfg_1, cam_cfg_2], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), cam_cfg_1, cam_cfg_2], 1, 0.0):
         cam_1 = cam_cfg_1.class_type(cam_cfg_1)
         cam_2 = cam_cfg_2.class_type(cam_cfg_2)
 
@@ -260,7 +262,7 @@ def test_multi_camera_with_different_resolution(setup_sim_camera):
     cam_cfg_2.prim_path = "/World/Camera_2"
     cam_cfg_2.height = 240
     cam_cfg_2.width = 320
-    with cloner.ReplicateSession([cam_cfg_1, cam_cfg_2], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), cam_cfg_1, cam_cfg_2], 1, 0.0):
         cam_1 = cam_cfg_1.class_type(cam_cfg_1)
         cam_2 = cam_cfg_2.class_type(cam_cfg_2)
 
@@ -281,7 +283,7 @@ def test_camera_init_intrinsic_matrix(setup_sim_camera):
     """Test camera initialization from intrinsic matrix."""
     sim, camera_cfg, dt = setup_sim_camera
     # get the first camera
-    with cloner.ReplicateSession([camera_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg], 1, 0.0):
         camera_1 = camera_cfg.class_type(camera_cfg)
     # get intrinsic matrix
     sim.reset()
@@ -305,7 +307,7 @@ def test_camera_init_intrinsic_matrix(setup_sim_camera):
             clipping_range=(0.1, 1.0e5),
         ),
     )
-    with cloner.ReplicateSession([camera_cfg, intrinsic_camera_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg, intrinsic_camera_cfg], 1, 0.0):
         camera_1 = camera_cfg.class_type(camera_cfg)
         camera_2 = intrinsic_camera_cfg.class_type(intrinsic_camera_cfg)
 
@@ -338,7 +340,7 @@ def test_camera_set_world_poses(setup_sim_camera, update_latest_camera_pose):
     sim, camera_cfg, dt = setup_sim_camera
     camera_cfg.update_latest_camera_pose = update_latest_camera_pose
     # init camera
-    with cloner.ReplicateSession([camera_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg], 1, 0.0):
         camera = camera_cfg.class_type(camera_cfg)
     # play sim
     sim.reset()
@@ -359,7 +361,7 @@ def test_camera_set_world_poses_from_view(setup_sim_camera, update_latest_camera
     sim, camera_cfg, dt = setup_sim_camera
     camera_cfg.update_latest_camera_pose = update_latest_camera_pose
     # init camera
-    with cloner.ReplicateSession([camera_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg], 1, 0.0):
         camera = camera_cfg.class_type(camera_cfg)
     # play sim
     sim.reset()
@@ -382,7 +384,7 @@ def test_intrinsic_matrix(setup_sim_camera):
     # enable update latest camera pose
     camera_cfg.update_latest_camera_pose = True
     # init camera
-    with cloner.ReplicateSession([camera_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg], 1, 0.0):
         camera = camera_cfg.class_type(camera_cfg)
     # play sim
     sim.reset()
@@ -436,7 +438,7 @@ def test_depth_clipping(setup_sim_camera):
     camera_cfg_max = copy.deepcopy(camera_cfg_zero)
     camera_cfg_max.prim_path = "/World/CameraMax"
     camera_cfg_max.renderer_cfg.depth_clipping_behavior = "max"
-    with cloner.ReplicateSession([camera_cfg_zero, camera_cfg_none, camera_cfg_max], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg_zero, camera_cfg_none, camera_cfg_max], 1, 0.0):
         camera_zero = camera_cfg_zero.class_type(camera_cfg_zero)
         camera_none = camera_cfg_none.class_type(camera_cfg_none)
         camera_max = camera_cfg_max.class_type(camera_cfg_max)
@@ -533,7 +535,7 @@ def test_camera_resolution_all_colorize(setup_sim_camera):
     camera_cfg.renderer_cfg.colorize_instance_segmentation = True
     camera_cfg.renderer_cfg.colorize_semantic_segmentation = True
     # Create camera
-    with cloner.ReplicateSession([camera_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg], 1, 0.0):
         camera = camera_cfg.class_type(camera_cfg)
 
     # Play sim
@@ -596,7 +598,7 @@ def test_camera_resolution_no_colorize(setup_sim_camera):
     camera_cfg.renderer_cfg.colorize_instance_segmentation = False
     camera_cfg.renderer_cfg.colorize_semantic_segmentation = False
     # Create camera
-    with cloner.ReplicateSession([camera_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg], 1, 0.0):
         camera = camera_cfg.class_type(camera_cfg)
 
     # Play sim
@@ -660,7 +662,7 @@ def test_camera_large_resolution_all_colorize(setup_sim_camera):
     camera_cfg.width = 512
     camera_cfg.height = 512
     # Create camera
-    with cloner.ReplicateSession([camera_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg], 1, 0.0):
         camera = camera_cfg.class_type(camera_cfg)
 
     # Play sim
@@ -708,7 +710,7 @@ def test_camera_resolution_rgb_only(setup_sim_camera):
     sim, camera_cfg, dt = setup_sim_camera
     camera_cfg.data_types = ["rgb"]
     # Create camera
-    with cloner.ReplicateSession([camera_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg], 1, 0.0):
         camera = camera_cfg.class_type(camera_cfg)
 
     # Play sim
@@ -731,7 +733,7 @@ def test_camera_resolution_rgba_only(setup_sim_camera):
     sim, camera_cfg, dt = setup_sim_camera
     camera_cfg.data_types = ["rgba"]
     # Create camera
-    with cloner.ReplicateSession([camera_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg], 1, 0.0):
         camera = camera_cfg.class_type(camera_cfg)
 
     # Play sim
@@ -754,7 +756,7 @@ def test_camera_resolution_albedo_only(setup_sim_camera):
     sim, camera_cfg, dt = setup_sim_camera
     camera_cfg.data_types = ["albedo"]
     # Create camera
-    with cloner.ReplicateSession([camera_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg], 1, 0.0):
         camera = camera_cfg.class_type(camera_cfg)
 
     # Play sim
@@ -781,7 +783,7 @@ def test_camera_resolution_simple_shading_only(setup_sim_camera, data_type):
     sim, camera_cfg, dt = setup_sim_camera
     camera_cfg.data_types = [data_type]
     # Create camera
-    with cloner.ReplicateSession([camera_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg], 1, 0.0):
         camera = camera_cfg.class_type(camera_cfg)
 
     # Play sim
@@ -804,7 +806,7 @@ def test_camera_resolution_depth_only(setup_sim_camera):
     sim, camera_cfg, dt = setup_sim_camera
     camera_cfg.data_types = ["depth"]
     # Create camera
-    with cloner.ReplicateSession([camera_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg], 1, 0.0):
         camera = camera_cfg.class_type(camera_cfg)
 
     # Play sim
@@ -825,7 +827,7 @@ def test_sensor_print(setup_sim_camera):
     """Test sensor print is working correctly."""
     # Create sensor
     sim, camera_cfg, dt = setup_sim_camera
-    with cloner.ReplicateSession([camera_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg], 1, 0.0):
         sensor = camera_cfg.class_type(camera_cfg)
     # Play sim
     sim.reset()
@@ -870,7 +872,7 @@ def test_camera_multi_regex_init(setup_camera_device, device):
     num_cameras = 9
     camera_cfg = copy.deepcopy(camera_cfg)
     camera_cfg.prim_path = "{ENV_REGEX_NS}/CameraSensor"
-    with cloner.ReplicateSession([camera_cfg], num_cameras, 1.0, sim.device, env_template="/World/Origin_{}"):
+    with cloner.ReplicateSession([cloner.CloneCfg(clone_template="/World/Origin_{}"), camera_cfg], num_cameras, 1.0):
         camera = camera_cfg.class_type(camera_cfg)
 
     sim.reset()
@@ -923,7 +925,7 @@ def test_camera_all_annotators(setup_camera_device, device):
     camera_cfg = copy.deepcopy(camera_cfg)
     camera_cfg.data_types = all_annotator_types
     camera_cfg.prim_path = "{ENV_REGEX_NS}/CameraSensor"
-    with cloner.ReplicateSession([camera_cfg], num_cameras, 1.0, sim.device, env_template="/World/Origin_{}"):
+    with cloner.ReplicateSession([cloner.CloneCfg(clone_template="/World/Origin_{}"), camera_cfg], num_cameras, 1.0):
         camera = camera_cfg.class_type(camera_cfg)
 
     sim.reset()
@@ -987,7 +989,7 @@ def test_camera_segmentation_non_colorize(setup_camera_device, device):
     camera_cfg.renderer_cfg.colorize_semantic_segmentation = False
     camera_cfg.renderer_cfg.colorize_instance_segmentation = False
     camera_cfg.renderer_cfg.colorize_instance_id_segmentation = False
-    with cloner.ReplicateSession([camera_cfg], num_cameras, 1.0, sim.device, env_template="/World/Origin_{}"):
+    with cloner.ReplicateSession([cloner.CloneCfg(clone_template="/World/Origin_{}"), camera_cfg], num_cameras, 1.0):
         camera = camera_cfg.class_type(camera_cfg)
 
     sim.reset()
@@ -1012,7 +1014,7 @@ def test_camera_normals_unit_length(setup_camera_device, device):
     camera_cfg = copy.deepcopy(camera_cfg)
     camera_cfg.data_types = ["normals"]
     camera_cfg.prim_path = "{ENV_REGEX_NS}/CameraSensor"
-    with cloner.ReplicateSession([camera_cfg], num_cameras, 1.0, sim.device, env_template="/World/Origin_{}"):
+    with cloner.ReplicateSession([cloner.CloneCfg(clone_template="/World/Origin_{}"), camera_cfg], num_cameras, 1.0):
         camera = camera_cfg.class_type(camera_cfg)
 
     sim.reset()
@@ -1044,7 +1046,7 @@ def test_camera_data_types_ordering(setup_camera_device, device):
     camera_cfg_both = copy.deepcopy(camera_cfg)
     camera_cfg_both.data_types = ["distance_to_camera", "depth"]
     camera_cfg_both.prim_path = "/World/CameraBoth"
-    with cloner.ReplicateSession([camera_cfg_distance, camera_cfg_depth, camera_cfg_both], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg_distance, camera_cfg_depth, camera_cfg_both], 1, 0.0):
         camera_distance = camera_cfg_distance.class_type(camera_cfg_distance)
         camera_depth = camera_cfg_depth.class_type(camera_cfg_depth)
         camera_both = camera_cfg_both.class_type(camera_cfg_both)
@@ -1070,7 +1072,7 @@ def test_camera_frame_offset(setup_camera_device, device):
     camera_cfg = copy.deepcopy(camera_cfg)
     camera_cfg.height = 480
     camera_cfg.width = 480
-    with cloner.ReplicateSession([camera_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg], 1, 0.0):
         camera = camera_cfg.class_type(camera_cfg)
 
     stage = sim_utils.get_current_stage()
@@ -1152,7 +1154,7 @@ def test_camera_raises_on_unsupported_data_types(setup_sim_camera, data_types, e
             pass
 
     camera_cfg.renderer_cfg.class_type = _PartialRenderer
-    with cloner.ReplicateSession([camera_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg], 1, 0.0):
         camera = camera_cfg.class_type(camera_cfg)
     with pytest.raises(ValueError) as exc_info:
         sim.reset()
@@ -1168,7 +1170,7 @@ def test_camera_raises_on_instance_segmentation_fast(setup_sim_camera):
     sim, camera_cfg, dt = setup_sim_camera
     camera_cfg = copy.deepcopy(camera_cfg)
     camera_cfg.data_types = ["instance_segmentation_fast"]
-    with cloner.ReplicateSession([camera_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg], 1, 0.0):
         with pytest.raises(ValueError, match="instance_segmentation"):
             camera_cfg.class_type(camera_cfg)
 
@@ -1200,7 +1202,7 @@ def test_camera_pose_update_reflected_in_render(setup_camera_device, device):
             clipping_range=(0.1, 1.0e5),
         ),
     )
-    with cloner.ReplicateSession([cam_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), cam_cfg], 1, 0.0):
         camera = cam_cfg.class_type(cam_cfg)
     try:
         sim.reset()
@@ -1244,7 +1246,7 @@ def test_camera_invalidate_before_initialize(setup_sim_camera):
     """Invalidation on a camera that never initialized does not raise."""
     sim, camera_cfg, _ = setup_sim_camera
     camera_cfg = camera_cfg.replace(prim_path="/World/NeverInitialized", spawn=None)
-    with cloner.ReplicateSession([camera_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg], 1, 0.0):
         camera = camera_cfg.class_type(camera_cfg)
     try:
         assert camera._view is None

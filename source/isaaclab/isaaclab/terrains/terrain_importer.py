@@ -13,6 +13,7 @@ import torch
 import trimesh
 
 import isaaclab.sim as sim_utils
+from isaaclab.cloner.clone_plan import _grid_positions
 from isaaclab.markers import VisualizationMarkers
 from isaaclab.markers.config import FRAME_MARKER_CFG
 
@@ -400,10 +401,7 @@ class TerrainImporter:
 
     def _compute_env_origins_grid(self, num_envs: int, env_spacing: float) -> torch.Tensor:
         """Compute the origins of the environments in a grid based on configured spacing."""
-        from isaaclab.cloner import grid_transforms
-
-        env_origins, _ = grid_transforms(num_envs, env_spacing, device=self.device)
-        return env_origins
+        return _grid_positions(num_envs, env_spacing, device=self.device)
 
     """
     Deprecated.

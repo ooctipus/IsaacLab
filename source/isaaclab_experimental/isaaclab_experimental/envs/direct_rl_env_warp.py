@@ -29,6 +29,7 @@ from isaaclab.envs.direct_rl_env import DirectRLEnv
 from isaaclab.envs.direct_rl_env_cfg import DirectRLEnvCfg
 from isaaclab.envs.utils.spaces import sample_space, spec_to_gym_space
 from isaaclab.managers import EventManager
+from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim import SimulationContext
 from isaaclab.sim.utils import use_stage
 from isaaclab.utils.noise import NoiseModel
@@ -160,19 +161,13 @@ class DirectRLEnvWarp(DirectRLEnv):
             # set the stage context for scene creation steps which use the stage
             with use_stage(self.sim.stage):
                 scene_cfg = self.cfg.scene
-                with cloner.ReplicateSession(
-                    (self.cfg,),
-                    scene_cfg.num_envs,
-                    scene_cfg.env_spacing,
-                    self.sim.device,
-                    env_template=scene_cfg.clone_cfg.clone_template,
-                    replicate_physics=scene_cfg.replicate_physics,
-                ):
+                if type(scene_cfg) is InteractiveSceneCfg:
+                    with cloner.from_env_0(self.cfg, scene_cfg.num_envs, scene_cfg.env_spacing):
+                        self.scene = scene_cfg.class_type(scene_cfg)
+                        self._setup_scene()
+                else:
                     self.scene = scene_cfg.class_type(scene_cfg)
                     self._setup_scene()
-                if scene_cfg.filter_collisions and "physx" in self.scene.physics_backend:
-                    self.scene.filter_collisions()
-            self.sim.register_interactive_scene(self.scene)
         print("[INFO]: Scene manager: ", self.scene)
 
         # create event manager

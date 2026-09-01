@@ -37,7 +37,6 @@ pytest.importorskip("ovphysx.types", reason="ovphysx wheel not installed")
 from isaaclab_ov.physics import OvPhysxCfg  # noqa: E402
 
 import isaaclab.sim as sim_utils  # noqa: E402
-from isaaclab import cloner  # noqa: E402
 from isaaclab.actuators import ImplicitActuatorCfg  # noqa: E402
 from isaaclab.assets import Articulation, ArticulationCfg  # noqa: E402
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg  # noqa: E402
@@ -184,17 +183,9 @@ class _NestedRootAntSceneCfg(InteractiveSceneCfg):
     wrench = JointWrenchSensorCfg(prim_path="{ENV_REGEX_NS}/Robot")
 
 
-def _create_scene(cfg: InteractiveSceneCfg, sim) -> InteractiveScene:
+def _create_scene(cfg: InteractiveSceneCfg) -> InteractiveScene:
     """Construct a cfg-owned scene through its clone lifecycle."""
-    with cloner.ReplicateSession(
-        [cfg],
-        cfg.num_envs,
-        cfg.env_spacing,
-        sim.device,
-        env_template=cfg.clone_cfg.clone_template,
-        replicate_physics=cfg.replicate_physics,
-    ):
-        return cfg.class_type(cfg)
+    return cfg.class_type(cfg)
 
 
 @pytest.fixture
@@ -304,7 +295,7 @@ def test_data_before_init_is_none():
 @pytest.mark.parametrize("device", ["cuda:0", "cpu"])
 def test_initialization_and_shapes(sim, device):
     """Sensor initializes on sim reset and exposes correctly-shaped buffers."""
-    scene = _create_scene(_SingleJointSceneCfg(num_envs=2), sim)
+    scene = _create_scene(_SingleJointSceneCfg(num_envs=2))
     sim.reset()
 
     robot: Articulation = scene["robot"]
@@ -324,7 +315,7 @@ def test_initialization_and_shapes(sim, device):
 @pytest.mark.parametrize("device", ["cuda:0", "cpu"])
 def test_multi_body_articulation(sim, device):
     """Cartpole exposes a wrench for each link labelled by body name."""
-    scene = _create_scene(_CartpoleSceneCfg(num_envs=2), sim)
+    scene = _create_scene(_CartpoleSceneCfg(num_envs=2))
     sim.reset()
 
     robot: Articulation = scene["robot"]
@@ -344,7 +335,7 @@ def test_multi_body_articulation(sim, device):
 @pytest.mark.parametrize("device", ["cuda:0", "cpu"])
 def test_nested_articulation_root_resolution(sim, device):
     """Sensor accepts an asset prim path whose articulation root is nested in the USD asset."""
-    scene = _create_scene(_NestedRootAntSceneCfg(num_envs=1), sim)
+    scene = _create_scene(_NestedRootAntSceneCfg(num_envs=1))
     sim.reset()
 
     robot: Articulation = scene["robot"]
@@ -366,7 +357,7 @@ def test_nested_articulation_root_resolution(sim, device):
 @pytest.mark.parametrize("device", ["cuda:0", "cpu"])
 def test_force_and_torque_components_at_rest(sim, device):
     """Component-level validation of force and torque against the OVPhysX tensor API."""
-    scene = _create_scene(_SingleJointSceneCfg(num_envs=1), sim)
+    scene = _create_scene(_SingleJointSceneCfg(num_envs=1))
     sim.reset()
 
     sensor: JointWrenchSensor = scene["wrench"]
@@ -385,7 +376,7 @@ def test_force_and_torque_components_at_rest(sim, device):
 @pytest.mark.parametrize("device", ["cuda:0", "cpu"])
 def test_non_identity_joint_frame_transform(sim, device):
     """OVPhysX raw body-frame wrench is converted to the child-side joint frame."""
-    scene = _create_scene(_SingleJointSceneCfg(num_envs=1), sim)
+    scene = _create_scene(_SingleJointSceneCfg(num_envs=1))
     _set_child_joint_frame(scene, "Arm")
     sim.reset()
 
@@ -415,7 +406,7 @@ def test_non_identity_joint_frame_transform(sim, device):
 @pytest.mark.parametrize("device", ["cuda:0", "cpu"])
 def test_wrench_with_external_force_and_torque(sim, device):
     """Full wrench validation with external force and torque applied."""
-    scene = _create_scene(_SingleJointSceneCfg(num_envs=1), sim)
+    scene = _create_scene(_SingleJointSceneCfg(num_envs=1))
     sim.reset()
 
     sensor: JointWrenchSensor = scene["wrench"]
@@ -442,7 +433,7 @@ def test_wrench_with_external_force_and_torque(sim, device):
 @pytest.mark.parametrize("device", ["cuda:0", "cpu"])
 def test_interior_joint_wrench_at_rest(sim, device):
     """Interior joint wrench matches the raw OVPhysX incoming-joint tensor."""
-    scene = _create_scene(_CartpoleDampedSceneCfg(num_envs=1), sim)
+    scene = _create_scene(_CartpoleDampedSceneCfg(num_envs=1))
     sim.reset()
 
     sensor: JointWrenchSensor = scene["wrench"]
@@ -467,7 +458,7 @@ def test_interior_joint_wrench_at_rest(sim, device):
 @pytest.mark.parametrize("device", ["cuda:0", "cpu"])
 def test_sensor_print(sim, device):
     """Test that the sensor string representation works."""
-    scene = _create_scene(_SingleJointSceneCfg(num_envs=2), sim)
+    scene = _create_scene(_SingleJointSceneCfg(num_envs=2))
     sim.reset()
 
     sensor: JointWrenchSensor = scene["wrench"]
@@ -484,7 +475,7 @@ def test_sensor_print(sim, device):
 @pytest.mark.parametrize("device", ["cuda:0", "cpu"])
 def test_reset_zeros_buffers(sim, device):
     """Resetting the sensor clears the force / torque buffers."""
-    scene = _create_scene(_SingleJointSceneCfg(num_envs=2), sim)
+    scene = _create_scene(_SingleJointSceneCfg(num_envs=2))
     sim.reset()
 
     sensor: JointWrenchSensor = scene["wrench"]
@@ -505,7 +496,7 @@ def test_reset_zeros_buffers(sim, device):
 @pytest.mark.parametrize("device", ["cuda:0", "cpu"])
 def test_reset_with_env_ids_only_zeros_selected_envs(sim, device):
     """Partial reset via env_ids should zero the selected envs and preserve the others."""
-    scene = _create_scene(_SingleJointSceneCfg(num_envs=4), sim)
+    scene = _create_scene(_SingleJointSceneCfg(num_envs=4))
     sim.reset()
 
     sensor: JointWrenchSensor = scene["wrench"]
@@ -528,7 +519,7 @@ def test_reset_with_env_ids_only_zeros_selected_envs(sim, device):
 @pytest.mark.parametrize("device", ["cuda:0", "cpu"])
 def test_no_stale_data_after_scene_reset(sim, device):
     """Regression for #4970: ``scene.reset(env_ids)`` must not surface pre-reset wrenches (OVPhysX)."""
-    scene = _create_scene(_SingleJointSceneCfg(num_envs=1), sim)
+    scene = _create_scene(_SingleJointSceneCfg(num_envs=1))
     sim.reset()
 
     sensor: JointWrenchSensor = scene["wrench"]

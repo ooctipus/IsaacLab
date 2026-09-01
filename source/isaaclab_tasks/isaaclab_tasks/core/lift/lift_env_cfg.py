@@ -523,7 +523,7 @@ class ReorientEnvCfg(ManagerBasedRLEnvCfg):
     """Lift reorientation task definition, also the base definition for derivative Lift task and evaluation task"""
 
     # Scene settings
-    scene: SceneCfg = SceneCfg(num_envs=4096, env_spacing=3, replicate_physics=True)
+    scene: SceneCfg = SceneCfg(num_envs=4096, env_spacing=3)
     # Basic settings
     observations: ObservationsCfg = ObservationsCfg()
     actions: ActionsCfg = ActionsCfg()

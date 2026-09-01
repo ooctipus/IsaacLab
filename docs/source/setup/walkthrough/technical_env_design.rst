@@ -54,7 +54,8 @@ replace its contents with the following
 
   from isaac_lab_tutorial.robots.jetbot import JETBOT_CONFIG
 
-  from isaaclab.assets import ArticulationCfg
+  import isaaclab.sim as sim_utils
+  from isaaclab.assets import ArticulationCfg, AssetBaseCfg
   from isaaclab.envs import DirectRLEnvCfg
   from isaaclab.scene import InteractiveSceneCfg
   from isaaclab.sim import SimulationCfg
@@ -71,10 +72,16 @@ replace its contents with the following
       state_space = 0
       # simulation
       sim: SimulationCfg = SimulationCfg(dt=1 / 120, render_interval=decimation)
-      # robot(s)
-      robot_cfg: ArticulationCfg = JETBOT_CONFIG.replace(prim_path="/World/envs/env_.*/Robot")
+      # assets
+      robot_cfg: ArticulationCfg = JETBOT_CONFIG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+      ground_cfg: AssetBaseCfg = AssetBaseCfg(
+          prim_path="/World/ground", spawn=sim_utils.GroundPlaneCfg()
+      )
+      light_cfg: AssetBaseCfg = AssetBaseCfg(
+          prim_path="/World/Light", spawn=sim_utils.DomeLightCfg(intensity=2000.0)
+      )
       # scene
-      scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=100, env_spacing=4.0, replicate_physics=True)
+      scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=100, env_spacing=4.0)
       dof_names = ["left_wheel_joint", "right_wheel_joint"]
 
 Here we have, effectively, the same environment configuration as before, but with the Jetbot instead of the cartpole. The
@@ -105,17 +112,15 @@ replace the contents of the ``__init__`` and ``_setup_scene`` methods with the f
           self.dof_idx, _ = self.robot.find_joints(self.cfg.dof_names)
 
       def _setup_scene(self):
-          with cloner.ReplicateSession():
-              self.robot = Articulation(self.cfg.robot_cfg)
-              # add ground plane
-              spawn_ground_plane(prim_path="/World/ground", cfg=GroundPlaneCfg())
-          # add articulation to scene
+          self.robot = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
+          self.cfg.ground_cfg.spawn.func(self.cfg.ground_cfg.prim_path, self.cfg.ground_cfg.spawn)
+          self.cfg.light_cfg.spawn.func(self.cfg.light_cfg.prim_path, self.cfg.light_cfg.spawn)
           self.scene.articulations["robot"] = self.robot
-          # add lights
-          light_cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
-          light_cfg.func("/World/Light", light_cfg)
 
-Notice that the ``_setup_scene`` method doesn't change and the ``_init__`` method is simply grabbing the joint indices from the robot (remember, setup is called in super).
+The direct environment base runs ``_setup_scene`` inside its homogeneous
+:func:`~isaaclab.cloner.from_env_0` lifecycle. The method constructs the cfg-owned prototypes and
+registers the robot with the scene; ``__init__`` then records the wheel joint indices after the base
+setup returns.
 
 The next thing our environment needs is the definitions for how to handle actions, observations, and rewards. First, replace the contents of ``_pre_physics_step`` and
 ``_apply_action`` with the following.

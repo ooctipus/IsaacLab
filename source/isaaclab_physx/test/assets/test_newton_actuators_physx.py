@@ -33,7 +33,7 @@ from isaaclab_physx.physics import PhysxCfg
 
 from isaaclab.actuators import ActuatorNetLSTMCfg, ActuatorNetMLPCfg, IdealPDActuatorCfg, RemotizedPDActuatorCfg
 from isaaclab.actuators.newton import NewtonActuatorAdapter, PhysxActuatorWrapper, read_group_parameter
-from isaaclab.cloner import ReplicateSession
+from isaaclab.cloner import CloneCfg, ReplicateSession
 from isaaclab.sim import SimulationCfg, build_simulation_context
 from isaaclab.test.utils.actuator_equivalence import (
     CARTPOLE_EXPLICIT_ACTUATORS,
@@ -156,7 +156,7 @@ def _run_simulation(
             prim_path="/World/Env_[^/]*/Robot",
             joint_ordering=joint_ordering,
         )
-        with ReplicateSession([art_cfg], NUM_ENVS, 3.0, sim.device, env_template="/World/Env_{}"):
+        with ReplicateSession([CloneCfg(clone_template="/World/Env_{}"), art_cfg], NUM_ENVS, 3.0):
             articulation = art_cfg.class_type(art_cfg)
         sim.reset()
         assert articulation.is_initialized
@@ -327,7 +327,7 @@ def _assert_newton_actuator_uses_current_joint_state(
             prim_path="/World/Env_[^/]*/Robot",
             joint_ordering=joint_ordering,
         )
-        with ReplicateSession([art_cfg], NUM_ENVS, 3.0, sim.device, env_template="/World/Env_{}"):
+        with ReplicateSession([CloneCfg(clone_template="/World/Env_{}"), art_cfg], NUM_ENVS, 3.0):
             articulation = art_cfg.class_type(art_cfg)
         sim.reset()
         assert articulation.is_initialized
@@ -501,7 +501,7 @@ def _run_anymal_and_cartpole(use_newton_actuators: bool, *, num_steps: int = NUM
         )
         cartpole_cfg.init_state = cartpole_cfg.init_state.replace(pos=(0.0, 3.0, 2.0))
 
-        with ReplicateSession([anymal_cfg, cartpole_cfg], NUM_ENVS, 6.0, sim.device, env_template="/World/Env_{}"):
+        with ReplicateSession([CloneCfg(clone_template="/World/Env_{}"), anymal_cfg, cartpole_cfg], NUM_ENVS, 6.0):
             anymal = anymal_cfg.class_type(anymal_cfg)
             cartpole = cartpole_cfg.class_type(cartpole_cfg)
         sim.reset()
@@ -602,7 +602,7 @@ class TestRandomizeActuatorGainsViaEventsPhysx(unittest.TestCase):
                 actuators=IMPLICIT_ONLY_ACTUATORS,
                 prim_path="/World/Env_.*/Robot",
             )
-            with ReplicateSession([art_cfg], NUM_ENVS, 3.0, sim.device, env_template="/World/Env_{}"):
+            with ReplicateSession([CloneCfg(clone_template="/World/Env_{}"), art_cfg], NUM_ENVS, 3.0):
                 anymal = art_cfg.class_type(art_cfg)
             sim.reset()
 
@@ -646,7 +646,7 @@ class TestRandomizeActuatorGainsViaEventsPhysx(unittest.TestCase):
                 actuators=IDEAL_PD_ACTUATORS,
                 prim_path="/World/Env_[^/]*/Robot",
             )
-            with ReplicateSession([art_cfg], NUM_ENVS, 3.0, sim.device, env_template="/World/Env_{}"):
+            with ReplicateSession([CloneCfg(clone_template="/World/Env_{}"), art_cfg], NUM_ENVS, 3.0):
                 anymal = art_cfg.class_type(art_cfg)
             sim.reset()
 
@@ -696,7 +696,7 @@ class TestRandomizeActuatorGainsViaEventsPhysx(unittest.TestCase):
                 prim_path="/World/Env_[^/]*/Cartpole",
             )
             cartpole_cfg.init_state = cartpole_cfg.init_state.replace(pos=(0.0, 3.0, 2.0))
-            with ReplicateSession([anymal_cfg, cartpole_cfg], NUM_ENVS, 6.0, sim.device, env_template="/World/Env_{}"):
+            with ReplicateSession([CloneCfg(clone_template="/World/Env_{}"), anymal_cfg, cartpole_cfg], NUM_ENVS, 6.0):
                 anymal = anymal_cfg.class_type(anymal_cfg)
                 cartpole = cartpole_cfg.class_type(cartpole_cfg)
             sim.reset()
@@ -762,7 +762,7 @@ class TestActuatorStateReset(ActuatorStateResetBase, unittest.TestCase):
 
     def _make_articulation(self) -> Articulation:
         cfg = ANYMAL_C_CFG.replace(actuators=DELAYED_PD_ACTUATORS, prim_path="/World/Env_[^/]*/Robot")
-        with ReplicateSession([cfg], self.NUM_ENVS, 3.0, "cuda:0", env_template="/World/Env_{}"):
+        with ReplicateSession([CloneCfg(clone_template="/World/Env_{}"), cfg], self.NUM_ENVS, 3.0):
             return cfg.class_type(cfg)
 
     def _get_adapter(self, articulation):

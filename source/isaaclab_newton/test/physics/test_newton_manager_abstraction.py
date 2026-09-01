@@ -179,7 +179,6 @@ def test_clone_resource_is_owned_by_its_simulation(monkeypatch):
     assert "stage" not in resource.__dict__
     assert "device" not in resource.__dict__
     assert "load_visual_shapes" not in resource.__dict__
-    assert resource.clones_whole_env is False
 
 
 RIGID_BODY_FORCE_INPUT_SUPPORT = {
@@ -1251,10 +1250,8 @@ def test_initialize_solver_populates_canonical_state(
        to MJCF; a ground-plane-only scene fails MJCF conversion.
     3. Kamino's internal collision detector requires collidable geometry to
        construct its collision pipeline.
-    4. Pre-populating ``NewtonManager._builder`` causes
-       :meth:`NewtonManager.start_simulation` to skip
-       :meth:`instantiate_builder_from_stage`, so the test does not depend on
-       USD asset packages.
+    4. The test publishes a builder directly, as clone-plan dispatch does before
+       :meth:`NewtonManager.start_simulation`.
     """
     solver_cfg = solver_cfg_factory()
     sim_cfg = SimulationCfg(

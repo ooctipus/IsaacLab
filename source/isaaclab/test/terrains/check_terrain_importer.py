@@ -125,7 +125,7 @@ def main():
         )
     ball_cfg = RigidObjectCfg(prim_path="{ENV_REGEX_NS}/ball", spawn=ball_spawn_cfg)
     with lab_cloner.ReplicateSession(
-        (terrain_importer_cfg, light_cfg, ball_cfg), num_balls, terrain_importer_cfg.env_spacing, sim.device
+        (lab_cloner.CloneCfg(), terrain_importer_cfg, light_cfg, ball_cfg), num_balls, terrain_importer_cfg.env_spacing
     ):
         terrain_importer = terrain_importer_cfg.class_type(terrain_importer_cfg)
         light_cfg.spawn.func(light_cfg.prim_path, light_cfg.spawn)

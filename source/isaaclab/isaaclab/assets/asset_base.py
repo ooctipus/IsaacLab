@@ -128,7 +128,7 @@ class AssetBase(ABC):
             if not self._source_prim_paths:
                 raise RuntimeError(f"Asset at {self.cfg.prim_path!r} is not covered by the active clone plan.")
         else:
-            source_paths = cloner.query.cfg_source_paths(plan, cfg)
+            source_paths = cloner.query._cfg_source_paths(plan, cfg)
             self._source_prim_paths = tuple(path for path in source_paths if path is not None)
             if isinstance(self.cfg.spawn, (sim_utils.MultiAssetSpawnerCfg, sim_utils.MultiUsdFileCfg)):
                 self.cfg.spawn.func(
@@ -145,12 +145,6 @@ class AssetBase(ABC):
                         translation=self.cfg.init_state.pos,
                         orientation=self.cfg.init_state.rot,
                     )
-        missing_path = next(
-            (path for path in self._source_prim_paths if not self.stage.GetPrimAtPath(path).IsValid()), None
-        )
-        if missing_path is not None:
-            raise RuntimeError(f"Could not find prim with path {missing_path}.")
-
         # register various callback functions
         self._register_callbacks()
 

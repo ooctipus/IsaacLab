@@ -3,6 +3,8 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
+from dataclasses import MISSING
+
 from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
@@ -82,9 +84,93 @@ class CtrlCfg:
     kd_null = 6.3246
 
 
+_FIXED_ASSET_CFG = ArticulationCfg(
+    prim_path="{ENV_REGEX_NS}/FixedAsset",
+    spawn=sim_utils.UsdFileCfg(
+        usd_path="",
+        activate_contact_sensors=True,
+        rigid_props=sim_utils.RigidBodyPropertiesCfg(
+            disable_gravity=False,
+            max_depenetration_velocity=5.0,
+            linear_damping=0.0,
+            angular_damping=0.0,
+            max_linear_velocity=1000.0,
+            max_angular_velocity=3666.0,
+            enable_gyroscopic_forces=True,
+            solver_position_iteration_count=192,
+            solver_velocity_iteration_count=1,
+            max_contact_impulse=1e32,
+        ),
+        collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
+    ),
+    init_state=ArticulationCfg.InitialStateCfg(
+        pos=(0.6, 0.0, 0.05), rot=(0.0, 0.0, 0.0, 1.0), joint_pos={}, joint_vel={}
+    ),
+    actuators={},
+)
+_HELD_ASSET_CFG = _FIXED_ASSET_CFG.replace(
+    prim_path="{ENV_REGEX_NS}/HeldAsset",
+    spawn=_FIXED_ASSET_CFG.spawn.replace(rigid_props=_FIXED_ASSET_CFG.spawn.rigid_props.replace(disable_gravity=True)),
+    init_state=ArticulationCfg.InitialStateCfg(
+        pos=(0.0, 0.4, 0.1), rot=(0.0, 0.0, 0.0, 1.0), joint_pos={}, joint_vel={}
+    ),
+)
+_PEG_INSERT_TASK_CFG = PegInsert()
+_PEG_INSERT_FIXED_ASSET_CFG = _FIXED_ASSET_CFG.replace(
+    spawn=_FIXED_ASSET_CFG.spawn.replace(
+        usd_path=_PEG_INSERT_TASK_CFG.fixed_asset_cfg.usd_path,
+        mass_props=sim_utils.MassPropertiesCfg(mass=_PEG_INSERT_TASK_CFG.fixed_asset_cfg.mass),
+    )
+)
+_PEG_INSERT_HELD_ASSET_CFG = _HELD_ASSET_CFG.replace(
+    spawn=_HELD_ASSET_CFG.spawn.replace(
+        usd_path=_PEG_INSERT_TASK_CFG.held_asset_cfg.usd_path,
+        mass_props=sim_utils.MassPropertiesCfg(mass=_PEG_INSERT_TASK_CFG.held_asset_cfg.mass),
+    )
+)
+_GEAR_MESH_TASK_CFG = GearMesh()
+_GEAR_MESH_FIXED_ASSET_CFG = _FIXED_ASSET_CFG.replace(
+    spawn=_FIXED_ASSET_CFG.spawn.replace(
+        usd_path=_GEAR_MESH_TASK_CFG.fixed_asset_cfg.usd_path,
+        mass_props=sim_utils.MassPropertiesCfg(mass=_GEAR_MESH_TASK_CFG.fixed_asset_cfg.mass),
+    )
+)
+_GEAR_MESH_HELD_ASSET_CFG = _HELD_ASSET_CFG.replace(
+    spawn=_HELD_ASSET_CFG.spawn.replace(
+        usd_path=_GEAR_MESH_TASK_CFG.held_asset_cfg.usd_path,
+        mass_props=sim_utils.MassPropertiesCfg(mass=_GEAR_MESH_TASK_CFG.held_asset_cfg.mass),
+    )
+)
+_SMALL_GEAR_ASSET_CFG = _HELD_ASSET_CFG.replace(
+    prim_path="{ENV_REGEX_NS}/SmallGearAsset",
+    spawn=_FIXED_ASSET_CFG.spawn.replace(
+        usd_path=f"{ASSET_DIR}/factory_gear_small.usd", mass_props=sim_utils.MassPropertiesCfg(mass=0.019)
+    ),
+)
+_LARGE_GEAR_ASSET_CFG = _HELD_ASSET_CFG.replace(
+    prim_path="{ENV_REGEX_NS}/LargeGearAsset",
+    spawn=_FIXED_ASSET_CFG.spawn.replace(
+        usd_path=f"{ASSET_DIR}/factory_gear_large.usd", mass_props=sim_utils.MassPropertiesCfg(mass=0.019)
+    ),
+)
+_NUT_THREAD_TASK_CFG = NutThread()
+_NUT_THREAD_FIXED_ASSET_CFG = _FIXED_ASSET_CFG.replace(
+    spawn=_FIXED_ASSET_CFG.spawn.replace(
+        usd_path=_NUT_THREAD_TASK_CFG.fixed_asset_cfg.usd_path,
+        mass_props=sim_utils.MassPropertiesCfg(mass=_NUT_THREAD_TASK_CFG.fixed_asset_cfg.mass),
+    )
+)
+_NUT_THREAD_HELD_ASSET_CFG = _HELD_ASSET_CFG.replace(
+    spawn=_HELD_ASSET_CFG.spawn.replace(
+        usd_path=_NUT_THREAD_TASK_CFG.held_asset_cfg.usd_path,
+        mass_props=sim_utils.MassPropertiesCfg(mass=_NUT_THREAD_TASK_CFG.held_asset_cfg.mass),
+    )
+)
+
+
 @configclass
-class FactorySceneCfg(InteractiveSceneCfg):
-    """Factory assets constructed and cloned through one scene plan."""
+class FactoryEnvCfg(DirectRLEnvCfg):
+    """Configuration for the homogeneous Factory environments."""
 
     ground = AssetBaseCfg(
         prim_path="/World/ground",
@@ -164,119 +250,16 @@ class FactorySceneCfg(InteractiveSceneCfg):
             ),
         },
     )
-    fixed_asset: ArticulationCfg | None = None
-    held_asset: ArticulationCfg | None = None
+    fixed_asset: ArticulationCfg = MISSING
+    held_asset: ArticulationCfg = MISSING
     small_gear: ArticulationCfg | None = None
     large_gear: ArticulationCfg | None = None
     light = AssetBaseCfg(
         prim_path="/World/Light", spawn=sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
     )
 
-
-_FIXED_ASSET_CFG = ArticulationCfg(
-    prim_path="{ENV_REGEX_NS}/FixedAsset",
-    spawn=sim_utils.UsdFileCfg(
-        usd_path="",
-        activate_contact_sensors=True,
-        rigid_props=sim_utils.RigidBodyPropertiesCfg(
-            disable_gravity=False,
-            max_depenetration_velocity=5.0,
-            linear_damping=0.0,
-            angular_damping=0.0,
-            max_linear_velocity=1000.0,
-            max_angular_velocity=3666.0,
-            enable_gyroscopic_forces=True,
-            solver_position_iteration_count=192,
-            solver_velocity_iteration_count=1,
-            max_contact_impulse=1e32,
-        ),
-        collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
-    ),
-    init_state=ArticulationCfg.InitialStateCfg(
-        pos=(0.6, 0.0, 0.05), rot=(0.0, 0.0, 0.0, 1.0), joint_pos={}, joint_vel={}
-    ),
-    actuators={},
-)
-_HELD_ASSET_CFG = _FIXED_ASSET_CFG.replace(
-    prim_path="{ENV_REGEX_NS}/HeldAsset",
-    spawn=_FIXED_ASSET_CFG.spawn.replace(rigid_props=_FIXED_ASSET_CFG.spawn.rigid_props.replace(disable_gravity=True)),
-    init_state=ArticulationCfg.InitialStateCfg(
-        pos=(0.0, 0.4, 0.1), rot=(0.0, 0.0, 0.0, 1.0), joint_pos={}, joint_vel={}
-    ),
-)
-
-_PEG_INSERT_TASK_CFG = PegInsert()
-_PEG_INSERT_SCENE_CFG = FactorySceneCfg(
-    num_envs=128,
-    env_spacing=2.0,
-    fixed_asset=_FIXED_ASSET_CFG.replace(
-        spawn=_FIXED_ASSET_CFG.spawn.replace(
-            usd_path=_PEG_INSERT_TASK_CFG.fixed_asset_cfg.usd_path,
-            mass_props=sim_utils.MassPropertiesCfg(mass=_PEG_INSERT_TASK_CFG.fixed_asset_cfg.mass),
-        )
-    ),
-    held_asset=_HELD_ASSET_CFG.replace(
-        spawn=_HELD_ASSET_CFG.spawn.replace(
-            usd_path=_PEG_INSERT_TASK_CFG.held_asset_cfg.usd_path,
-            mass_props=sim_utils.MassPropertiesCfg(mass=_PEG_INSERT_TASK_CFG.held_asset_cfg.mass),
-        )
-    ),
-)
-
-_GEAR_MESH_TASK_CFG = GearMesh()
-_GEAR_MESH_SCENE_CFG = FactorySceneCfg(
-    num_envs=128,
-    env_spacing=2.0,
-    fixed_asset=_FIXED_ASSET_CFG.replace(
-        spawn=_FIXED_ASSET_CFG.spawn.replace(
-            usd_path=_GEAR_MESH_TASK_CFG.fixed_asset_cfg.usd_path,
-            mass_props=sim_utils.MassPropertiesCfg(mass=_GEAR_MESH_TASK_CFG.fixed_asset_cfg.mass),
-        )
-    ),
-    held_asset=_HELD_ASSET_CFG.replace(
-        spawn=_HELD_ASSET_CFG.spawn.replace(
-            usd_path=_GEAR_MESH_TASK_CFG.held_asset_cfg.usd_path,
-            mass_props=sim_utils.MassPropertiesCfg(mass=_GEAR_MESH_TASK_CFG.held_asset_cfg.mass),
-        )
-    ),
-    small_gear=_HELD_ASSET_CFG.replace(
-        prim_path="{ENV_REGEX_NS}/SmallGearAsset",
-        spawn=_FIXED_ASSET_CFG.spawn.replace(
-            usd_path=f"{ASSET_DIR}/factory_gear_small.usd", mass_props=sim_utils.MassPropertiesCfg(mass=0.019)
-        ),
-    ),
-    large_gear=_HELD_ASSET_CFG.replace(
-        prim_path="{ENV_REGEX_NS}/LargeGearAsset",
-        spawn=_FIXED_ASSET_CFG.spawn.replace(
-            usd_path=f"{ASSET_DIR}/factory_gear_large.usd", mass_props=sim_utils.MassPropertiesCfg(mass=0.019)
-        ),
-    ),
-)
-
-_NUT_THREAD_TASK_CFG = NutThread()
-_NUT_THREAD_SCENE_CFG = FactorySceneCfg(
-    num_envs=128,
-    env_spacing=2.0,
-    fixed_asset=_FIXED_ASSET_CFG.replace(
-        spawn=_FIXED_ASSET_CFG.spawn.replace(
-            usd_path=_NUT_THREAD_TASK_CFG.fixed_asset_cfg.usd_path,
-            mass_props=sim_utils.MassPropertiesCfg(mass=_NUT_THREAD_TASK_CFG.fixed_asset_cfg.mass),
-        )
-    ),
-    held_asset=_HELD_ASSET_CFG.replace(
-        spawn=_HELD_ASSET_CFG.spawn.replace(
-            usd_path=_NUT_THREAD_TASK_CFG.held_asset_cfg.usd_path,
-            mass_props=sim_utils.MassPropertiesCfg(mass=_NUT_THREAD_TASK_CFG.held_asset_cfg.mass),
-        )
-    ),
-)
-
-
-@configclass
-class FactoryEnvCfg(DirectRLEnvCfg):
     decimation = 8
     action_space = 6
-    # num_*: will be overwritten to correspond to obs_order, state_order.
     observation_space = 21
     state_space = 72
     obs_order: list = ["fingertip_pos_rel_fixed", "fingertip_quat", "ee_linvel", "ee_angvel"]
@@ -320,25 +303,29 @@ class FactoryEnvCfg(DirectRLEnvCfg):
         ),
     )
 
-    scene: FactorySceneCfg = FactorySceneCfg(num_envs=128, env_spacing=2.0)
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=128, env_spacing=2.0)
 
 
 @configclass
 class FactoryTaskPegInsertCfg(FactoryEnvCfg):
     task = _PEG_INSERT_TASK_CFG
-    scene = _PEG_INSERT_SCENE_CFG
-    episode_length_s = 10.0
+    fixed_asset = _PEG_INSERT_FIXED_ASSET_CFG
+    held_asset = _PEG_INSERT_HELD_ASSET_CFG
 
 
 @configclass
 class FactoryTaskGearMeshCfg(FactoryEnvCfg):
     task = _GEAR_MESH_TASK_CFG
-    scene = _GEAR_MESH_SCENE_CFG
+    fixed_asset = _GEAR_MESH_FIXED_ASSET_CFG
+    held_asset = _GEAR_MESH_HELD_ASSET_CFG
+    small_gear = _SMALL_GEAR_ASSET_CFG
+    large_gear = _LARGE_GEAR_ASSET_CFG
     episode_length_s = 20.0
 
 
 @configclass
 class FactoryTaskNutThreadCfg(FactoryEnvCfg):
     task = _NUT_THREAD_TASK_CFG
-    scene = _NUT_THREAD_SCENE_CFG
+    fixed_asset = _NUT_THREAD_FIXED_ASSET_CFG
+    held_asset = _NUT_THREAD_HELD_ASSET_CFG
     episode_length_s = 30.0

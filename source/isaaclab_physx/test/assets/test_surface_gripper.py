@@ -26,7 +26,7 @@ from isaaclab_physx.assets import SurfaceGripper, SurfaceGripperCfg
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets import Articulation, ArticulationCfg
-from isaaclab.cloner import ReplicateSession
+from isaaclab.cloner import CloneCfg, ReplicateSession
 from isaaclab.sim import SimulationContext, build_simulation_context
 from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR
 from isaaclab.utils.version import get_isaac_sim_version, has_kit
@@ -109,11 +109,7 @@ def generate_surface_gripper(
     articulation_cfg = articulation_cfg.replace(prim_path="/World/Env_[^/]*/Robot")
     surface_gripper_cfg = surface_gripper_cfg.replace(prim_path="/World/Env_[^/]*/Robot/Gripper/SurfaceGripper")
     with ReplicateSession(
-        [articulation_cfg, surface_gripper_cfg],
-        num_surface_grippers,
-        2.5,
-        device,
-        env_template="/World/Env_{}",
+        [CloneCfg(clone_template="/World/Env_{}"), articulation_cfg, surface_gripper_cfg], num_surface_grippers, 2.5
     ):
         articulation = articulation_cfg.class_type(articulation_cfg)
         surface_gripper = surface_gripper_cfg.class_type(surface_gripper_cfg)

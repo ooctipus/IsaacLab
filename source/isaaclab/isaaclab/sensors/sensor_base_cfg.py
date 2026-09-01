@@ -22,6 +22,14 @@ class SensorBaseCfg:
     The class should inherit from :class:`isaaclab.sensors.sensor_base.SensorBase`.
     """
 
+    cloning_contexts: tuple[str | type, ...] | None = ()
+    """Clone contexts requested for this sensor.
+
+    Sensors request no cfg-specific context by default. An explicit tuple routes the sensor's
+    plan rows through exactly those registered context types; ``None`` requests every registered
+    physics clone context.
+    """
+
     prim_path: str = MISSING
     """Prim path (or expression) to the sensor.
 

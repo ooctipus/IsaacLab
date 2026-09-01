@@ -60,9 +60,6 @@ class CtrlCfg:
 
     reset_joints = [0.0, 0.0, 0.0, -1.870, 0.0, 1.8675, 0.785398]
     reset_task_prop_gains = [1000, 1000, 1000, 50, 50, 50]
-    # reset_rot_deriv_scale = 1.0
-    # default_task_prop_gains = [1000, 1000, 1000, 50, 50, 50]
-    # reset_task_prop_gains = [300, 300, 300, 20, 20, 20]
     reset_rot_deriv_scale = 10.0
     default_task_prop_gains = [100, 100, 100, 30, 30, 30]
 
@@ -73,8 +70,8 @@ class CtrlCfg:
 
 
 @configclass
-class DisassemblySceneCfg(InteractiveSceneCfg):
-    """AutoMate disassembly assets constructed and cloned through one scene plan."""
+class DisassemblyEnvCfg(DirectRLEnvCfg):
+    """Configuration for the homogeneous AutoMate disassembly environment."""
 
     ground = AssetBaseCfg(
         prim_path="/World/ground",
@@ -208,12 +205,8 @@ class DisassemblySceneCfg(InteractiveSceneCfg):
         prim_path="/World/Light", spawn=sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
     )
 
-
-@configclass
-class DisassemblyEnvCfg(DirectRLEnvCfg):
     decimation = 8
     action_space = 6
-    # num_*: will be overwritten to correspond to obs_order, state_order.
     observation_space = 24
     state_space = 44
     obs_order: list = [
@@ -242,7 +235,6 @@ class DisassemblyEnvCfg(DirectRLEnvCfg):
     obs_rand: ObsRandCfg = ObsRandCfg()
     ctrl: CtrlCfg = CtrlCfg()
 
-    # episode_length_s = 10.0  # Probably need to override.
     episode_length_s = 5.0
     sim: SimulationCfg = SimulationCfg(
         device="cuda:0",
@@ -266,4 +258,4 @@ class DisassemblyEnvCfg(DirectRLEnvCfg):
         ),
     )
 
-    scene: DisassemblySceneCfg = DisassemblySceneCfg(num_envs=128, env_spacing=2.0)
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=128, env_spacing=2.0)

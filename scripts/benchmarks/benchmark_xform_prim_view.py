@@ -51,7 +51,6 @@ from pxr import Gf
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import RigidObjectCfg
-from isaaclab.cloner import ReplicateSession
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim import SimulationCfg, build_simulation_context
 from isaaclab.sim.views import UsdFrameView
@@ -99,17 +98,7 @@ def benchmark_frame_view(  # noqa: C901
         sim = ctx.__enter__()
         sim._app_control_on_stop_handle = None
         _scene_cfg = _NewtonSceneCfg(num_envs=num_envs, env_spacing=2.0)
-        with ReplicateSession(
-            [_scene_cfg],
-            _scene_cfg.num_envs,
-            _scene_cfg.env_spacing,
-            sim.device,
-            env_template=_scene_cfg.clone_cfg.clone_template,
-            replicate_physics=_scene_cfg.replicate_physics,
-        ):
-            _scene = _scene_cfg.class_type(_scene_cfg)
-        if _scene_cfg.filter_collisions and "physx" in sim.physics_backend:
-            _scene.filter_collisions()
+        _scene = _scene_cfg.class_type(_scene_cfg)
 
         stage = sim_utils.get_current_stage()
         for i in range(num_envs):

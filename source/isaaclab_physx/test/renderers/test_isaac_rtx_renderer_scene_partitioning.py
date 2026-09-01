@@ -53,19 +53,6 @@ from isaaclab_assets.robots.kuka_allegro import KUKA_ALLEGRO_CFG
 _ENV_VAR = "ISAAC_LAB_ENABLE_ISAAC_RTX_PER_ENV_SCENE_PARTITION"
 
 
-def _create_scene(cfg: InteractiveSceneCfg, sim):
-    """Construct a scene through its cfg-owned clone lifecycle."""
-    with cloner.ReplicateSession(
-        [cfg],
-        cfg.num_envs,
-        cfg.env_spacing,
-        sim.device,
-        env_template=cfg.clone_cfg.clone_template,
-        replicate_physics=cfg.replicate_physics,
-    ):
-        return cfg.class_type(cfg)
-
-
 def _isolation_renderer_cfg() -> IsaacRtxRendererCfg:
     """Disable spectator world-space layout for intentionally overlapping test environments.
 
@@ -153,7 +140,8 @@ def test_partitioning_isolates_rigid_object(monkeypatch: pytest.MonkeyPatch):
 
     with build_simulation_context(device="cuda:0", dt=1.0 / 60.0) as sim:
         sim._app_control_on_stop_handle = None
-        scene = _create_scene(_Scene(num_envs=4, env_spacing=0.0, replicate_physics=False), sim)
+        scene_cfg = _Scene(num_envs=4, env_spacing=0.0, clone_cfg=cloner.CloneCfg(replicate_physics=False))
+        scene = scene_cfg.class_type(scene_cfg)
         sim.reset()
         # one settle step so RigidObject data buffers are populated before we write into them
         sim.step()
@@ -273,7 +261,8 @@ def test_partitioning_isolates_articulation(monkeypatch: pytest.MonkeyPatch):
 
     with build_simulation_context(device="cuda:0", dt=1.0 / 60.0) as sim:
         sim._app_control_on_stop_handle = None
-        scene = _create_scene(_Scene(num_envs=4, env_spacing=0.0, replicate_physics=False), sim)
+        scene_cfg = _Scene(num_envs=4, env_spacing=0.0, clone_cfg=cloner.CloneCfg(replicate_physics=False))
+        scene = scene_cfg.class_type(scene_cfg)
         sim.reset()
 
         robot = scene["robot"]

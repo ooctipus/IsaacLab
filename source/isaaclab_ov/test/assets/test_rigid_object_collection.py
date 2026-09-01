@@ -40,7 +40,7 @@ from isaaclab_ov.physics import OvPhysxCfg  # noqa: E402
 
 import isaaclab.sim as sim_utils  # noqa: E402
 from isaaclab.assets import RigidObjectCfg, RigidObjectCollectionCfg  # noqa: E402
-from isaaclab.cloner import ReplicateSession  # noqa: E402
+from isaaclab.cloner import CloneCfg, ReplicateSession  # noqa: E402
 from isaaclab.sim import SimulationCfg, SimulationContext, build_simulation_context  # noqa: E402
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR  # noqa: E402
 from isaaclab.utils.math import (  # noqa: E402
@@ -151,7 +151,7 @@ def generate_cubes_scene(
         cube_config_dict[f"cube_{i}"] = cube_object_cfg
     # create the rigid object collection
     cube_object_collection_cfg = RigidObjectCollectionCfg(rigid_objects=cube_config_dict)
-    with ReplicateSession([cube_object_collection_cfg], num_envs, 3.0, device, env_template="/World/Table_{}"):
+    with ReplicateSession([CloneCfg(clone_template="/World/Table_{}"), cube_object_collection_cfg], num_envs, 3.0):
         cube_object_collection = cube_object_collection_cfg.class_type(cube_object_collection_cfg)
     origins = SimulationContext.instance().get_clone_plan().positions
 

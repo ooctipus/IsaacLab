@@ -44,7 +44,7 @@ def test_robot_load_performance(test_config, device):
         sim._app_control_on_stop_handle = None
         robot_cfg = test_config["robot_cfg"].replace(prim_path="{ENV_REGEX_NS}/Robot")
         with Timer(f"{test_config['name']} load time for device {device}") as timer:
-            with cloner.ReplicateSession([robot_cfg], NUM_ENVS, SPACING, device):
+            with cloner.ReplicateSession([cloner.CloneCfg(), robot_cfg], NUM_ENVS, SPACING):
                 robot = robot_cfg.class_type(robot_cfg)  # noqa: F841
             sim.reset()
             elapsed_time = timer.time_elapsed

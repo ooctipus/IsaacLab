@@ -66,12 +66,8 @@ def design_scene(sim: sim_utils.SimulationContext) -> dict:
             visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.0, 1.0)),
         ),
     )
-    with cloner.ReplicateSession(
-        (ground_cfg, light_cfg, ball_cfg, sensor_cfg),
-        4,
-        0.5,
-        sim.device,
-        env_template="/World/Origin{}",
+    with cloner.from_env_0(
+        (cloner.CloneCfg(clone_template="/World/Origin{}"), ground_cfg, light_cfg, ball_cfg, sensor_cfg), 4, 0.5
     ):
         ground_cfg.spawn.func(ground_cfg.prim_path, ground_cfg.spawn)
         light_cfg.spawn.func(light_cfg.prim_path, light_cfg.spawn)

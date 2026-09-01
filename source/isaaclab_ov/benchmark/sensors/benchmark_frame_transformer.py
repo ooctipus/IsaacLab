@@ -42,7 +42,6 @@ import isaaclab.sim as sim_utils
 from isaaclab.assets import RigidObjectCfg
 from isaaclab.benchmark import LatencyBenchmarkRunner, SingleMeasurement
 from isaaclab.benchmark.sensor_suites import add_sensor_latency_measurements, collect_sensor_latency_samples
-from isaaclab.cloner import ReplicateSession
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import FrameTransformerCfg, OffsetCfg
 from isaaclab.sim import SimulationCfg, build_simulation_context
@@ -95,17 +94,7 @@ def main() -> None:
                 for index in range(args_cli.num_target_frames)
             ],
         )
-        with ReplicateSession(
-            [scene_cfg],
-            scene_cfg.num_envs,
-            scene_cfg.env_spacing,
-            sim.device,
-            env_template=scene_cfg.clone_cfg.clone_template,
-            replicate_physics=scene_cfg.replicate_physics,
-        ):
-            scene = scene_cfg.class_type(scene_cfg)
-        if scene_cfg.filter_collisions and "physx" in sim.physics_backend:
-            scene.filter_collisions()
+        scene = scene_cfg.class_type(scene_cfg)
         sim.reset()
         scene.reset()
 

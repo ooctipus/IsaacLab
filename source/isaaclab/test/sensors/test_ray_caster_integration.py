@@ -119,7 +119,7 @@ def test_articulation_view_path(sim_ground):
     sim_utils.update_stage()
 
     sensor_cfg = _single_downward_ray_cfg(prim_path)
-    with cloner.ReplicateSession([sensor_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), sensor_cfg], 1, 0.0):
         sensor = sensor_cfg.class_type(sensor_cfg)
     sim.reset()
     sensor.update(_DT)
@@ -165,7 +165,7 @@ def test_rigid_body_view_path(sim_ground):
     sim_utils.update_stage()
 
     sensor_cfg = _single_downward_ray_cfg(prim_path)
-    with cloner.ReplicateSession([sensor_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), sensor_cfg], 1, 0.0):
         sensor = sensor_cfg.class_type(sensor_cfg)
     sim.reset()
     sensor.update(_DT)
@@ -224,7 +224,7 @@ def test_multi_mesh_camera_set_intrinsic_matrices(sim_ground_camera):
     """
     sim, camera_cfg = sim_ground_camera
 
-    with cloner.ReplicateSession([camera_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg], 1, 0.0):
         camera = camera_cfg.class_type(camera_cfg)
     sim.reset()
 
@@ -286,7 +286,7 @@ def test_multi_mesh_camera_d2ip_and_d2c_independent(sim_ground_camera):
     d2c_cfg.data_types = ["distance_to_camera"]
     d2c_cfg.max_distance = 4.5
     d2c_cfg.depth_clipping_behavior = "max"
-    with cloner.ReplicateSession([joint_cfg, d2ip_cfg, d2c_cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), joint_cfg, d2ip_cfg, d2c_cfg], 1, 0.0):
         cam_joint = joint_cfg.class_type(joint_cfg)
         cam_d2ip = d2ip_cfg.class_type(d2ip_cfg)
         cam_d2c = d2c_cfg.class_type(d2c_cfg)
@@ -337,7 +337,7 @@ def test_multi_mesh_env_mask_preserves_masked_buffers(sim_ground):
         pattern_cfg=patterns.GridPatternCfg(resolution=1.0, size=(0.0, 0.0), direction=(0.0, 0.0, -1.0)),
         ray_alignment="world",
     )
-    with cloner.ReplicateSession([cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), cfg], 1, 0.0):
         sensor = cfg.class_type(cfg)
     sim.reset()
 
@@ -428,7 +428,7 @@ def test_update_mesh_transforms_non_identity_offset(sim_ground):
         pattern_cfg=patterns.GridPatternCfg(resolution=1.0, size=(0.0, 0.0), direction=(0.0, 0.0, -1.0)),
         ray_alignment="world",
     )
-    with cloner.ReplicateSession([cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession([cloner.CloneCfg(), cfg], 1, 0.0):
         sensor = cfg.class_type(cfg)
     sim.reset()
     sensor.update(_DT, force_recompute=True)

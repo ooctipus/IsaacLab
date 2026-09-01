@@ -227,7 +227,21 @@ class CartpoleWarpEnv(DirectRLEnvWarp):
         self.torch_episode_length_buf = self.episode_length_buf  # already a torch tensor via wp.to_torch
 
     def _setup_scene(self) -> None:
-        self.cartpole = self.scene["robot"]
+        self.cartpole = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
+        if self.cfg.ground_cfg is not None:
+            self.cfg.ground_cfg.spawn.func(
+                self.cfg.ground_cfg.prim_path,
+                self.cfg.ground_cfg.spawn,
+                translation=self.cfg.ground_cfg.init_state.pos,
+                orientation=self.cfg.ground_cfg.init_state.rot,
+            )
+        self.cfg.light_cfg.spawn.func(
+            self.cfg.light_cfg.prim_path,
+            self.cfg.light_cfg.spawn,
+            translation=self.cfg.light_cfg.init_state.pos,
+            orientation=self.cfg.light_cfg.init_state.rot,
+        )
+        self.scene.articulations["robot"] = self.cartpole
 
     def _pre_physics_step(self, actions: wp.array) -> None:
         wp.launch(

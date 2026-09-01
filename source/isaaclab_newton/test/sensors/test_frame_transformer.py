@@ -19,7 +19,6 @@ from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
 
 import isaaclab.sim as sim_utils
 import isaaclab.utils.math as math_utils
-from isaaclab import cloner
 from isaaclab.assets import RigidObjectCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import FrameTransformerCfg, OffsetCfg
@@ -142,8 +141,7 @@ def test_frame_transformer_feet_wrt_base(sim):
             ),
         ],
     )
-    with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-        scene = scene_cfg.class_type(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
 
     # Play the simulator
     sim.reset()
@@ -253,8 +251,7 @@ def test_frame_transformer_feet_wrt_thigh(sim):
             ),
         ],
     )
-    with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-        scene = scene_cfg.class_type(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
 
     # Play the simulator
     sim.reset()
@@ -346,8 +343,7 @@ def test_frame_transformer_robot_body_to_external_cube(sim):
             ),
         ],
     )
-    with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-        scene = scene_cfg.class_type(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
 
     # Play the simulator
     sim.reset()
@@ -451,8 +447,7 @@ def test_frame_transformer_offset_frames(sim):
             ),
         ],
     )
-    with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-        scene = scene_cfg.class_type(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
 
     # Play the simulator
     sim.reset()
@@ -542,8 +537,7 @@ def test_frame_transformer_all_bodies(sim):
             ),
         ],
     )
-    with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-        scene = scene_cfg.class_type(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
 
     # Play the simulator
     sim.reset()
@@ -697,8 +691,7 @@ def test_frame_transformer_duplicate_body_names(sim, source_robot, path_prefix):
             ),
         ],
     )
-    with cloner.ReplicateSession([scene_cfg], scene_cfg.num_envs, scene_cfg.env_spacing, sim.device):
-        scene = scene_cfg.class_type(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
 
     # Play the simulator
     sim.reset()

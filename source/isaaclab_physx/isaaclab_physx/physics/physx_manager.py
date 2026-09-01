@@ -427,8 +427,8 @@ class PhysxManager(PhysicsManager):
 
         super().initialize(sim_context)
         cls._stage_id = get_current_stage_id()
-        sim_context.get_or_create_backend(UsdReplicateContext, sim_context.stage, clone_role="physics")
         sim_context.get_or_create_backend(PhysxReplicateContext, sim_context.stage, clone_role="physics")
+        sim_context.get_or_create_backend(UsdReplicateContext, sim_context.stage, clone_role="scene")
 
         cls._setup_subscriptions()
         cls._configure_physics()

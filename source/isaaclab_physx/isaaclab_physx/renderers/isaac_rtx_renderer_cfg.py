@@ -118,6 +118,9 @@ class IsaacRtxRendererCfg(RendererCfg):
     class_type: type[IsaacRtxRenderer] | str = "{DIR}.isaac_rtx_renderer:IsaacRtxRenderer"
     """Renderer implementation class."""
 
+    cloning_contexts: tuple[str | type, ...] = ("isaaclab.cloner:UsdReplicateContext",)
+    """Clone the complete rendered scene through USD."""
+
     renderer_type: str = "isaac_rtx"
     """Type identifier for Isaac RTX renderer."""
 

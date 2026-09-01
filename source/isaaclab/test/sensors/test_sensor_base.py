@@ -113,10 +113,10 @@ def _populate_scene(sim, sensor_cfg):
         AssetBaseCfg(prim_path="{ENV_REGEX_NS}/Cube", spawn=sim_utils.CuboidCfg(size=(0.5, 0.5, 0.5))),
         AssetBaseCfg(prim_path="{ENV_REGEX_NS}/Robot", spawn=sim_utils.CuboidCfg(size=(0.1, 0.1, 0.1))),
     )
-    with cloner.ReplicateSession((*cfgs, sensor_cfg), 5, 1.0, sim.device, replicate_physics=False):
+    with cloner.ReplicateSession((cloner.CloneCfg(replicate_physics=False), *cfgs, sensor_cfg), 5, 1.0):
         plan = sim.get_clone_plan()
         for cfg in cfgs:
-            source_path = cloner.query.cfg_source_paths(plan, cfg)[0]
+            source_path = cloner.query._cfg_source_paths(plan, cfg)[0]
             cfg.spawn.func(
                 source_path,
                 cfg.spawn,

@@ -10,12 +10,12 @@ and the contents of ``isaac_lab_tutorial_env_cfg.py``.  You should see something
 
   from isaaclab_assets.robots.cartpole import CARTPOLE_CFG
 
-  from isaaclab.assets import ArticulationCfg
+  import isaaclab.sim as sim_utils
+  from isaaclab.assets import ArticulationCfg, AssetBaseCfg
   from isaaclab.envs import DirectRLEnvCfg
   from isaaclab.scene import InteractiveSceneCfg
   from isaaclab.sim import SimulationCfg
   from isaaclab.utils.configclass import configclass
-
 
   @configclass
   class IsaacLabTutorialEnvCfg(DirectRLEnvCfg):
@@ -28,11 +28,17 @@ and the contents of ``isaac_lab_tutorial_env_cfg.py``.  You should see something
       # simulation
       sim: SimulationCfg = SimulationCfg(dt=1 / 120, render_interval=2)
 
-      # robot(s)
-      robot_cfg: ArticulationCfg = CARTPOLE_CFG.replace(prim_path="/World/envs/env_.*/Robot")
+      # assets
+      robot_cfg: ArticulationCfg = CARTPOLE_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+      ground_cfg: AssetBaseCfg = AssetBaseCfg(
+          prim_path="/World/ground", spawn=sim_utils.GroundPlaneCfg()
+      )
+      light_cfg: AssetBaseCfg = AssetBaseCfg(
+          prim_path="/World/Light", spawn=sim_utils.DomeLightCfg(intensity=2000.0)
+      )
 
       # scene
-      scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=4096, env_spacing=4.0, replicate_physics=True)
+      scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=4096, env_spacing=4.0)
 
       # Some more useful fields
       .
@@ -51,9 +57,10 @@ case we are using the :class:`DirectRLEnvCfg` class because we are interested in
 
 .. currentmodule:: isaaclab.sim
 
-The second thing to note is the content of the configuration class. As the author, you can specify any fields you desire but, generally speaking, there are three things you
-will always define here: The **sim**, the **scene**, and the **robot**. Notice that these fields are also configuration classes! Configuration classes
-are compositional in this way as a solution for cloning arbitrarily complex environments.
+The second thing to note is the content of the configuration class. The direct environment config is
+the composition root: it contains the **sim**, asset configs such as the **robot**, and the **scene**
+settings. These fields are also configuration classes. Keeping every authored asset config below this
+root lets Isaac Lab describe the complete homogeneous scene before constructing its prototype.
 
 The **sim** is an instance of :class:`SimulationCfg`, and this is the config that controls the nature of the simulated reality we are building. This field is a member
 of the base class, ``DirecRLEnvCfg``, but has a default sim configuration, so it's *technically* optional.   The ``SimulationCfg`` dictates
@@ -63,16 +70,16 @@ render every other frame).
 
 .. currentmodule:: isaaclab.scene
 
-The **scene** is an instance of :class:`InteractiveSceneCfg`. The scene describes what goes "on the stage" and manages those simulation entities to be cloned across environments.
-The scene is also a member of the base class ``DirectRLEnvCfg``, but unlike the sim it has no default and must be defined in every ``DirectRLEnvCfg``.  The ``InteractiveSceneCfg``
-describes how many copies of the scene we want to create for training purposes, as well as how far apart they should be spaced on the stage.
+The **scene** is an instance of :class:`InteractiveSceneCfg`. In this homogeneous direct workflow it
+holds the number of environments and their spacing; the asset configs remain on
+``IsaacLabTutorialEnvCfg`` and are constructed in ``_setup_scene``. A scene subclass is useful instead
+when a declarative or heterogeneous scene needs to own and construct its entities.
 
 .. currentmodule:: isaaclab.assets
 
-Finally we have the **robot** definition, which is an instance of  :class:`ArticulationCfg`. An environment could have multiple articulations, and so the presence of
-an ``ArticulationCfg`` is not strictly required in order to define a ``DirectRLEnv``.  Instead, the usual workflow is to define a regex path to the robot, and replace
-the ``prim_path`` attribute in the base configuration. In this case, ``CARTPOLE_CFG`` is a configuration defined in ``isaaclab_assets.robots.cartpole`` and by replacing
-the prim path with ``/World/envs/env_.*/Robot`` we are implicitly saying that every copy of the scene will have a robot named ``Robot``.
+The environment's **robot** definition is an :class:`ArticulationCfg`. Here ``CARTPOLE_CFG`` comes
+from ``isaaclab_assets.robots.cartpole``; replacing its path with ``{ENV_REGEX_NS}/Robot`` declares
+one prototype path that the homogeneous clone lifecycle expands under every environment root.
 
 
 The Environment
@@ -96,15 +103,10 @@ Next, let's take a look at the contents of the other python file in our task dir
           . . .
 
       def _setup_scene(self):
-          with cloner.ReplicateSession():
-              self.robot = Articulation(self.cfg.robot_cfg)
-              # add ground plane
-              spawn_ground_plane(prim_path="/World/ground", cfg=GroundPlaneCfg())
-          # add articulation to scene
+          self.robot = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
+          self.cfg.ground_cfg.spawn.func(self.cfg.ground_cfg.prim_path, self.cfg.ground_cfg.spawn)
+          self.cfg.light_cfg.spawn.func(self.cfg.light_cfg.prim_path, self.cfg.light_cfg.spawn)
           self.scene.articulations["robot"] = self.robot
-          # add lights
-          light_cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
-          light_cfg.func("/World/Light", light_cfg)
 
       def _pre_physics_step(self, actions: torch.Tensor) -> None:
           . . .
@@ -138,14 +140,10 @@ direct workflow exists and where most of our modifications will take place as we
 Currently, all of the member functions of ``IsaacLabTutorialEnv`` are directly inherited from the :class:`DirectRLEnv`. This
 known interface is how Isaac Lab and its supported RL frameworks interact with the environment.
 
-When the environment is initialized, it receives its own config as an argument, which is then immediately passed to super in order
-to initialize the ``DirectRLEnv``.  This super call also calls ``_setup_scene``, which actually constructs the scene and clones
-it appropriately. Notably is how the robot is created and registered to the scene in ``_setup_scene``.  First, the robot articulation
-is created by using the ``robot_config`` we defined in ``IsaacLabTutorialEnvCfg``: it doesn't exist before this point! When the
-articulation is created, the robot exists on the stage at ``/World/envs/env_0/Robot``.  The call to ``cloner.ReplicateSession`` then
-copies ``env_0`` appropriately.  At this point the robot exists as many copies on the stage, so all that's left is to notify the ``scene``
-object of the existence of this articulation to be tracked.  The articulations of the scene are kept as a dictionary, so ``scene.articulations["robot"] = self.robot``
-creates a new ``robot`` element of the ``articulations`` dictionary and sets the value to be ``self.robot``.
+When the environment is initialized, it passes its config to ``DirectRLEnv``. The base class opens a
+:func:`~isaaclab.cloner.from_env_0` lifecycle around construction of the plain scene and
+``_setup_scene``. The setup method constructs each cfg-owned prototype and registers runtime entities
+with the scene; the base class then replicates that homogeneous prototype from the shared clone plan.
 
 Notice also that the remaining functions do not take additional arguments except ``_reset_idx``.  This is because the environment only manages the application of
 actions to the agent being simulated, and then updating the sim.  This is what the ``_pre_physics_step`` and ``_apply_action`` steps are for: we set the drive commands

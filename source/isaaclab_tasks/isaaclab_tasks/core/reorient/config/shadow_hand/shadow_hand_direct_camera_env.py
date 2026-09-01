@@ -31,10 +31,10 @@ class ShadowHandCameraEnv(ReorientDirectEnv):
         self.feature_extractor = FeatureExtractor(
             self.cfg.feature_extractor,
             self.device,
-            self.cfg.scene.camera.data_types,
+            self.cfg.tiled_camera.data_types,
             self.cfg.log_dir,
-            height=self.cfg.scene.camera.height,
-            width=self.cfg.scene.camera.width,
+            height=self.cfg.tiled_camera.height,
+            width=self.cfg.tiled_camera.width,
         )
         # hide goal cubes
         self.goal_pos[:, :] = torch.tensor((-0.2, 0.1, 0.6), device=self.device)  # inside the tiled camera frustum
@@ -44,7 +44,8 @@ class ShadowHandCameraEnv(ReorientDirectEnv):
 
     def _setup_scene(self):
         super()._setup_scene()
-        self._tiled_camera = self.scene["camera"]
+        self._tiled_camera = self.cfg.tiled_camera.class_type(self.cfg.tiled_camera)
+        self.scene.sensors["tiled_camera"] = self._tiled_camera
 
     def _compute_image_observations(self):
         # generate ground truth keypoints for in-hand cube

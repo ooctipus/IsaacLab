@@ -14,7 +14,6 @@ from typing import Any
 
 import torch
 
-from isaaclab import cloner
 from isaaclab.app.loading_screen import report_activity
 from isaaclab.managers import ActionManager, EventManager, ObservationManager, RecorderManager
 from isaaclab.sim import SimulationContext
@@ -171,18 +170,7 @@ class ManagerBasedEnv:
         with Timer("[INFO]: Time taken for scene creation", "scene_creation", activity="Creating scene"):
             # set the stage context for scene creation steps which use the stage
             with use_stage(self.sim.stage):
-                with cloner.ReplicateSession(
-                    [self.cfg],
-                    num_clones=self.cfg.scene.num_envs,
-                    env_spacing=self.cfg.scene.env_spacing,
-                    device=self.device,
-                    env_template=self.cfg.scene.clone_cfg.clone_template,
-                    replicate_physics=self.cfg.scene.replicate_physics,
-                ):
-                    self.scene = self.cfg.scene.class_type(self.cfg.scene)
-                if self.cfg.scene.filter_collisions and "physx" in self.scene.physics_backend:
-                    self.scene.filter_collisions()
-            self.sim.register_interactive_scene(self.scene)
+                self.scene = self.cfg.scene.class_type(self.cfg.scene)
         print("[INFO]: Scene manager: ", self.scene)
 
         # create event manager

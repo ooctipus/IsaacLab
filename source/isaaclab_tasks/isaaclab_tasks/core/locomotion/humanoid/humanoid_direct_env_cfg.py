@@ -45,30 +45,6 @@ class HumanoidPhysicsCfg(PresetCfg):
 
 
 @configclass
-class HumanoidDirectSceneCfg(InteractiveSceneCfg):
-    """Humanoid, terrain, sensor, and light constructed through one clone plan."""
-
-    terrain = TerrainImporterCfg(
-        prim_path="/World/ground",
-        terrain_type="plane",
-        collision_group=-1,
-        physics_material=sim_utils.RigidBodyMaterialCfg(
-            friction_combine_mode="average",
-            restitution_combine_mode="average",
-            static_friction=1.0,
-            dynamic_friction=1.0,
-            restitution=0.0,
-        ),
-        debug_vis=False,
-    )
-    robot: ArticulationCfg = HUMANOID_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-    joint_wrench = JointWrenchSensorCfg(prim_path="{ENV_REGEX_NS}/Robot")
-    light = AssetBaseCfg(
-        prim_path="/World/Light", spawn=sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
-    )
-
-
-@configclass
 class HumanoidEnvCfg(DirectRLEnvCfg):
     """Configuration for the direct-workflow Humanoid walking environment."""
 
@@ -83,8 +59,28 @@ class HumanoidEnvCfg(DirectRLEnvCfg):
     # simulation
     sim: SimulationCfg = SimulationCfg(dt=1 / 120, render_interval=decimation, physics=HumanoidPhysicsCfg())
 
+    # assets
+    terrain: TerrainImporterCfg = TerrainImporterCfg(
+        prim_path="/World/ground",
+        terrain_type="plane",
+        collision_group=-1,
+        physics_material=sim_utils.RigidBodyMaterialCfg(
+            friction_combine_mode="average",
+            restitution_combine_mode="average",
+            static_friction=1.0,
+            dynamic_friction=1.0,
+            restitution=0.0,
+        ),
+        debug_vis=False,
+    )
+    robot: ArticulationCfg = HUMANOID_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+    joint_wrench: JointWrenchSensorCfg = JointWrenchSensorCfg(prim_path="{ENV_REGEX_NS}/Robot")
+    light_cfg: AssetBaseCfg = AssetBaseCfg(
+        prim_path="/World/Light", spawn=sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
+    )
+
     # scene
-    scene: HumanoidDirectSceneCfg = HumanoidDirectSceneCfg(num_envs=4096, env_spacing=5.0, replicate_physics=True)
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=4096, env_spacing=5.0)
 
     # effort scale per joint, keyed by joint name expression
     joint_gears: dict[str, float] = {

@@ -20,6 +20,7 @@ import warp as wp
 
 import isaaclab.sim as sim_utils
 from isaaclab import cloner
+from isaaclab.assets import AssetBaseCfg
 from isaaclab.sensors.ray_caster import RayCasterCfg, patterns
 from isaaclab.sensors.ray_caster.kernels import quat_yaw_only as _quat_yaw_only_func
 from isaaclab.terrains.trimesh.utils import make_plane
@@ -289,7 +290,11 @@ def test_raycaster_offset_does_not_affect_pos_w():
     dt = 0.01
     sim = sim_utils.SimulationContext(sim_utils.SimulationCfg(dt=dt))
 
-    with cloner.ReplicateSession([cfg], 1, 0.0, sim.device):
+    with cloner.ReplicateSession(
+        [cloner.CloneCfg(), AssetBaseCfg(prim_path="/World/ground"), AssetBaseCfg(prim_path="/World/Robot"), cfg],
+        1,
+        0.0,
+    ):
         sensor = cfg.class_type(cfg)
     sim.reset()
     sensor.update(dt)

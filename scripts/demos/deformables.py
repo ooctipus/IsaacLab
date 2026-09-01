@@ -58,8 +58,9 @@ import torch
 import tqdm
 
 import isaaclab.sim as sim_utils
-from isaaclab import cloner
 from isaaclab.assets import AssetBaseCfg
+from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.utils.configclass import configclass
 
 ##
 # Pre-defined configs
@@ -90,6 +91,17 @@ else:
     )
 
 
+@configclass
+class DemoSceneCfg(InteractiveSceneCfg):
+    """Configuration for the deformable-object demo scene."""
+
+    ground: AssetBaseCfg = AssetBaseCfg(prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg())
+    light: AssetBaseCfg = AssetBaseCfg(
+        prim_path="/World/light",
+        spawn=sim_utils.DomeLightCfg(intensity=3000.0, color=(0.75, 0.75, 0.75)),
+    )
+
+
 def define_origins(num_origins: int, radius: float = 2.0, center_height: float = 3.0) -> list[list[float]]:
     """Defines origins distributed on the surface of a sphere, sampled according to a Fibonacci lattice.
 
@@ -109,14 +121,8 @@ def define_origins(num_origins: int, radius: float = 2.0, center_height: float =
     return env_origins.tolist()
 
 
-def design_scene(sim: "sim_utils.SimulationContext") -> tuple[dict, list[list[float]]]:
+def design_scene() -> dict[str, "DeformableObject"]:
     """Designs the scene."""
-    ground_cfg = AssetBaseCfg(prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg())
-    light_cfg = AssetBaseCfg(
-        prim_path="/World/light",
-        spawn=sim_utils.DomeLightCfg(intensity=3000.0, color=(0.75, 0.75, 0.75)),
-    )
-
     # spawn a red cone
     cfg_sphere = sim_utils.MeshSphereCfg(
         radius=0.4,
@@ -219,20 +225,18 @@ def design_scene(sim: "sim_utils.SimulationContext") -> tuple[dict, list[list[fl
                 spawn=obj_cfg,
                 init_state=DeformableObjectCfg.InitialStateCfg(pos=origin),
             )
-    with cloner.ReplicateSession((ground_cfg, light_cfg, *deformable_cfgs.values()), 1, 0.0, sim.device):
-        ground_cfg.spawn.func(ground_cfg.prim_path, ground_cfg.spawn)
-        light_cfg.spawn.func(light_cfg.prim_path, light_cfg.spawn)
-        scene_entities = {name: cfg.class_type(cfg) for name, cfg in deformable_cfgs.items()}
+    scene_cfg = DemoSceneCfg(num_envs=1, env_spacing=0.0)
+    for name, deformable_cfg in deformable_cfgs.items():
+        setattr(scene_cfg, name, deformable_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
 
-    # return the scene information
-    return scene_entities, origins
+    return scene.deformable_objects
 
 
 def run_simulator(sim: "sim_utils.SimulationContext", entities: dict[str, "DeformableObject"]):
     """Runs the simulation loop."""
     # Define simulation stepping
     sim_dt = sim.get_physics_dt()
-    sim_time = 0.0
     count = 0
 
     # Step while a visualizer window is still open (or none exist, e.g. headless); works for kit and newton.
@@ -251,8 +255,6 @@ def run_simulator(sim: "sim_utils.SimulationContext", entities: dict[str, "Defor
             print("[INFO]: Resetting deformable object state...")
         # perform step
         sim.step()
-        # update sim-time
-        sim_time += sim_dt
         count += 1
         # update buffers
         for deform_body in entities.values():
@@ -281,7 +283,7 @@ def main():
         sim.set_camera_view([4.0, 4.0, 3.0], [0.5, 0.5, 0.0])
 
         # Design scene by adding assets to it
-        scene_entities, _ = design_scene(sim)
+        scene_entities = design_scene()
         # Play the simulator
         sim.reset()
         # Now we are ready!

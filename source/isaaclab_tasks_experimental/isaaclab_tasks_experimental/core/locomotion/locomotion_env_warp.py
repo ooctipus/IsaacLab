@@ -523,9 +523,19 @@ class LocomotionWarpEnv(DirectRLEnvWarp):
         self.torch_episode_length_buf = self.episode_length_buf  # already a torch tensor via wp.to_torch
 
     def _setup_scene(self) -> None:
-        self.robot = self.scene["robot"]
-        self.terrain = self.scene["terrain"]
-        self.joint_wrench = self.scene["joint_wrench"]
+        self.robot = self.cfg.robot.class_type(self.cfg.robot)
+        self.cfg.terrain.num_envs = self.scene.num_envs
+        self.cfg.terrain.env_spacing = self.scene.cfg.env_spacing
+        self.terrain = self.cfg.terrain.class_type(self.cfg.terrain)
+        self.joint_wrench = self.cfg.joint_wrench.class_type(self.cfg.joint_wrench)
+        self.cfg.light_cfg.spawn.func(
+            self.cfg.light_cfg.prim_path,
+            self.cfg.light_cfg.spawn,
+            translation=self.cfg.light_cfg.init_state.pos,
+            orientation=self.cfg.light_cfg.init_state.rot,
+        )
+        self.scene.articulations["robot"] = self.robot
+        self.scene.sensors["joint_wrench"] = self.joint_wrench
 
     def _pre_physics_step(self, actions: wp.array) -> None:
         self.actions.assign(actions)
