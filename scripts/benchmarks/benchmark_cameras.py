@@ -453,7 +453,7 @@ def design_scene(
     if ray_cfg is not None:
         camera_cfgs["ray_caster_camera"] = ray_cfg
 
-    with cloner.from_env_0(
+    plan = cloner.clone_plan_from_env_0(
         (
             cloner.CloneCfg(clone_template="/World/Cameras/Camera_{}"),
             ground_cfg,
@@ -463,11 +463,12 @@ def design_scene(
         ),
         max(num_tiled_cams, num_standard_cams, num_ray_caster_cams),
         0.0,
-    ):
-        ground_cfg.spawn.func(ground_cfg.prim_path, ground_cfg.spawn)
-        light_cfg.spawn.func(light_cfg.prim_path, light_cfg.spawn)
-        scene_entities = {name: cfg.class_type(cfg) for name, cfg in object_cfgs.items()}
-        scene_entities.update({name: cfg.class_type(cfg) for name, cfg in camera_cfgs.items()})
+    )
+    ground_cfg.spawn.func(ground_cfg.prim_path, ground_cfg.spawn)
+    light_cfg.spawn.func(light_cfg.prim_path, light_cfg.spawn)
+    scene_entities = {name: cfg.class_type(cfg) for name, cfg in object_cfgs.items()}
+    scene_entities.update({name: cfg.class_type(cfg) for name, cfg in camera_cfgs.items()})
+    cloner.replicate(plan)
     return scene_entities
 
 

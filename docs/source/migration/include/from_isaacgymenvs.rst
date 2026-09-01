@@ -246,8 +246,9 @@ env cfg and construct one prototype in ``_setup_scene()``.
          self.cfg.light_cfg.spawn.func(self.cfg.light_cfg.prim_path, self.cfg.light_cfg.spawn)
          self.scene.articulations["robot"] = self.cartpole
 
-The direct environment base enters :func:`~isaaclab.cloner.from_env_0` around construction of the
-plain scene and ``_setup_scene()``. Every authored asset cfg must therefore be present on the direct
+The direct environment base calls :func:`~isaaclab.cloner.clone_plan_from_env_0` before constructing
+the plain scene and running ``_setup_scene()``, then passes the published plan to
+:func:`~isaaclab.cloner.replicate`. Every authored asset cfg must therefore be present on the direct
 env cfg before construction; ``_setup_scene()`` constructs the prototype and registers runtime
 entities on the scene.
 
@@ -353,9 +354,9 @@ please refer to the :ref:`migrating-from-isaacgymenvs-comparing-simulation` sect
 **Cloner**
 
 Isaac Lab replaces the per-environment creation loop with one cfg-derived clone lifecycle. Environment
-base classes create it automatically from the resolved task config. It publishes its plan, cfg-owned
-constructors author the plan's source prototypes, and lifecycle exit dispatches each required
-stage/native clone context once.
+base classes create it automatically from the resolved task config. They publish the exhaustive plan,
+cfg-owned constructors author the plan's source prototypes, and an explicit replication call dispatches
+each required stage/native clone context once.
 Isaac Sim PhysX performs one plan-driven USD topology pass before native PhysX replication; renderers
 and visualizers reuse that same stage context rather than exporting or copying it again. The physics
 manager already exists on the active ``SimulationContext``; after any required stage edits, the first
@@ -368,8 +369,10 @@ A declarative :class:`~isaaclab.scene.InteractiveScene` owns that lifecycle dire
 
    scene = scene_cfg.class_type(scene_cfg)
 
-Use :func:`~isaaclab.cloner.from_env_0` explicitly for a standalone homogeneous direct workflow.
-The lower-level :class:`~isaaclab.cloner.ReplicateSession` is only needed by general cloning tools.
+For a standalone homogeneous direct workflow, call
+:func:`~isaaclab.cloner.clone_plan_from_env_0` before constructing the prototype and
+:func:`~isaaclab.cloner.replicate` afterward. The lower-level
+:class:`~isaaclab.cloner.ReplicateSession` is only needed by general cloning tools.
 
 
 .. rubric:: Accessing States from Simulation
@@ -651,8 +654,8 @@ global assets alongside replicated assets:
            self.cfg.light_cfg.spawn.func(self.cfg.light_cfg.prim_path, self.cfg.light_cfg.spawn)
            self.scene.articulations["robot"] = self.cartpole
 
-The direct environment base class owns the surrounding :func:`~isaaclab.cloner.from_env_0` lifecycle.
-No task-level environment loop or clone call is required.
+The direct environment base class publishes the homogeneous plan before ``_setup_scene()`` and
+dispatches it afterward. No task-level environment loop or clone call is required.
 
 
 **Pre and Post Physics Step**

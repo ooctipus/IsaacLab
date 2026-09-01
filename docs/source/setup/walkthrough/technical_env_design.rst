@@ -117,10 +117,9 @@ replace the contents of the ``__init__`` and ``_setup_scene`` methods with the f
           self.cfg.light_cfg.spawn.func(self.cfg.light_cfg.prim_path, self.cfg.light_cfg.spawn)
           self.scene.articulations["robot"] = self.robot
 
-The direct environment base runs ``_setup_scene`` inside its homogeneous
-:func:`~isaaclab.cloner.from_env_0` lifecycle. The method constructs the cfg-owned prototypes and
-registers the robot with the scene; ``__init__`` then records the wheel joint indices after the base
-setup returns.
+The direct environment base publishes its homogeneous plan before running ``_setup_scene`` and
+dispatches that plan afterward. The method constructs the cfg-owned prototypes and registers the
+robot with the scene; ``__init__`` then records the wheel joint indices after the base setup returns.
 
 The next thing our environment needs is the definitions for how to handle actions, observations, and rewards. First, replace the contents of ``_pre_physics_step`` and
 ``_apply_action`` with the following.

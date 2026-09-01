@@ -17,8 +17,8 @@ def expand_env_regex_ns(path_expr: str, env_template: str = DEFAULT_ENV_TEMPLATE
     """Replace the ``{ENV_REGEX_NS}`` macro with the environment namespace it stands for.
 
     The macro spares a configuration from spelling the namespace, and with it the segment
-    wildcard that names one environment. The replication session expands it against the
-    clone template while planning, and entity constructors expand it on their private cfg copy.
+    wildcard that names one environment. Clone planning expands it against the clone template,
+    and entity constructors expand it on their private cfg copy.
 
     Args:
         path_expr: Prim path expression, with or without the macro.
@@ -46,8 +46,8 @@ class InclusionSet:
 class CloneCfg:
     """Configuration for environment replication.
 
-    The composition root passes this policy to :class:`~isaaclab.cloner.ReplicateSession`;
-    :class:`~isaaclab.scene.InteractiveScene` consumes the published plan.
+    The composition root includes this policy in its configuration tree, and every scene
+    consumer receives the resulting published plan.
     """
 
     clone_combinations: list[InclusionSet] = []

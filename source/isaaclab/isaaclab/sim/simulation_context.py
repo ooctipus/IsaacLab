@@ -129,6 +129,7 @@ class SimulationContext:
         self._backend_registry: dict[type[object], object] = {}
         self._backend_clone_roles: dict[type[object], set[str]] = {}
         self._clone_plan: ClonePlan | None = None
+        self._clone_plan_dispatched: bool | None = False
         self._pending_clone_model_contexts: tuple[object, ...] = ()
 
         use_isaac_sim = has_kit()
@@ -760,6 +761,8 @@ class SimulationContext:
         Args:
             soft: If True, skip full reinitialization.
         """
+        if self._clone_plan is not None and not self._clone_plan_dispatched:
+            raise RuntimeError("Clone-plan dispatch must complete successfully before reset.")
         if self._pending_clone_model_contexts:
             if soft:
                 raise RuntimeError("The first reset must initialize clone-plan models with soft=False.")

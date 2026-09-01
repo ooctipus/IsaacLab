@@ -137,15 +137,16 @@ def design_scene(sim: sim_utils.SimulationContext) -> dict:
             spawn=shape_cfg,
             init_state=RigidObjectCfg.InitialStateCfg(pos=position),
         )
-    with cloner.from_env_0(
+    plan = cloner.clone_plan_from_env_0(
         (cloner.CloneCfg(clone_template="/World/Origin_{}"), ground_cfg, light_cfg, *object_cfgs.values(), camera_cfg),
         2,
         0.0,
-    ):
-        ground_cfg.spawn.func(ground_cfg.prim_path, ground_cfg.spawn)
-        light_cfg.spawn.func(light_cfg.prim_path, light_cfg.spawn)
-        scene_entities = {name: cfg.class_type(cfg) for name, cfg in object_cfgs.items()}
-        scene_entities["camera"] = camera_cfg.class_type(camera_cfg)
+    )
+    ground_cfg.spawn.func(ground_cfg.prim_path, ground_cfg.spawn)
+    light_cfg.spawn.func(light_cfg.prim_path, light_cfg.spawn)
+    scene_entities = {name: cfg.class_type(cfg) for name, cfg in object_cfgs.items()}
+    scene_entities["camera"] = camera_cfg.class_type(camera_cfg)
+    cloner.replicate(plan)
     return scene_entities
 
 

@@ -101,13 +101,14 @@ def design_scene(sim: sim_utils.SimulationContext) -> tuple[dict, torch.Tensor]:
         init_state=DeformableObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 1.0)),
         debug_vis=True,
     )
-    with cloner.from_env_0((cloner.CloneCfg(clone_template="/World/env_{}"), ground_cfg, light_cfg, cube_cfg), 4, 0.5):
-        ground_cfg.spawn.func(ground_cfg.prim_path, ground_cfg.spawn)
-        light_cfg.spawn.func(light_cfg.prim_path, light_cfg.spawn)
-        cube_object = cube_cfg.class_type(cube_cfg)
+    plan = cloner.clone_plan_from_env_0(
+        (cloner.CloneCfg(clone_template="/World/env_{}"), ground_cfg, light_cfg, cube_cfg), 4, 0.5
+    )
+    ground_cfg.spawn.func(ground_cfg.prim_path, ground_cfg.spawn)
+    light_cfg.spawn.func(light_cfg.prim_path, light_cfg.spawn)
+    cube_object = cube_cfg.class_type(cube_cfg)
+    cloner.replicate(plan)
 
-    plan = sim.get_clone_plan()
-    assert plan is not None and plan.positions is not None
     return {"cube_object": cube_object}, plan.positions
 
 

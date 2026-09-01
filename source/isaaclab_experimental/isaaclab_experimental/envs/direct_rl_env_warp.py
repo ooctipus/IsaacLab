@@ -162,9 +162,10 @@ class DirectRLEnvWarp(DirectRLEnv):
             with use_stage(self.sim.stage):
                 scene_cfg = self.cfg.scene
                 if type(scene_cfg) is InteractiveSceneCfg:
-                    with cloner.from_env_0(self.cfg, scene_cfg.num_envs, scene_cfg.env_spacing):
-                        self.scene = scene_cfg.class_type(scene_cfg)
-                        self._setup_scene()
+                    plan = cloner.clone_plan_from_env_0(self.cfg, scene_cfg.num_envs, scene_cfg.env_spacing)
+                    self.scene = scene_cfg.class_type(scene_cfg)
+                    self._setup_scene()
+                    cloner.replicate(plan)
                 else:
                     self.scene = scene_cfg.class_type(scene_cfg)
                     self._setup_scene()

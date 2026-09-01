@@ -7,7 +7,7 @@
 
 A plan is the whole description of a replication layout: which prototypes exist, where each
 one is cloned to, and which envs each one populates. It is built once, queried through
-:mod:`~isaaclab.cloner.query`, and executed by :class:`~isaaclab.cloner.ReplicateSession`.
+:mod:`~isaaclab.cloner.query`, and executed by :func:`~isaaclab.cloner.replicate`.
 
 Two internal constructors cover how a layout is specified:
 
@@ -143,6 +143,9 @@ class ClonePlan:
 
     replicate_physics: bool
     """Whether clone contexts may replicate one physics prototype across environments."""
+
+    filter_collisions: bool = True
+    """Whether PhysX collision filtering is applied after stage replication."""
 
     cfg_rows: dict[int, tuple[int, ...]] = field(default_factory=dict)
     """``id(cfg)`` to the nearest replication rows that cover it."""
@@ -520,6 +523,7 @@ def _make_clone_plan(  # noqa: C901
         env_ids=env_ids,
         positions=positions,
         replicate_physics=clone_cfg.replicate_physics,
+        filter_collisions=clone_cfg.filter_collisions,
         cfg_rows=cfg_rows,
         context_rows=context_rows,
         collision_paths=tuple(dict.fromkeys(collision_paths)),

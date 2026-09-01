@@ -13,8 +13,9 @@ A declarative :class:`~isaaclab.scene.InteractiveScene` owns this lifecycle. It 
 the plan before constructing scene entities, supplies each entity constructor with its exact
 prototype path, dispatches the required clone contexts when construction finishes, and queues model
 construction for the first hard reset after any intervening stage edits. A homogeneous direct
-environment instead constructs its plain scene inside a base-owned :func:`~isaaclab.cloner.from_env_0`
-lifecycle.
+environment instead uses a base-owned two-phase sequence: it calls
+:func:`~isaaclab.cloner.clone_plan_from_env_0` before constructing its plain scene and calls
+:func:`~isaaclab.cloner.replicate` after ``_setup_scene()``.
 
 .. contents:: On this page
    :local:
@@ -45,6 +46,16 @@ A plan is a flat table with one row per independently copied asset variant:
      - Environment origins [m], shape ``[num_envs, 3]``.
    * - ``replicate_physics``
      - Whether physics clone contexts may reuse plan prototypes across environments.
+   * - ``filter_collisions``
+     - Whether PhysX collision groups are authored after stage replication.
+   * - ``cfg_rows``
+     - Configuration identities mapped to their covering plan rows.
+   * - ``context_rows``
+     - Clone-context types mapped to the rows they consume.
+   * - ``collision_paths``
+     - Declared collision roots shared across environments.
+   * - ``env_template``
+     - Path template used for environment roots and namespace expansion.
 
 For a homogeneous robot and one shared ground plane, the plan remains asset-wise:
 
@@ -90,19 +101,21 @@ Creating an asset outside this lifecycle is an ownership error: the plan would n
 Likewise, a second lifecycle cannot replace the plan on one
 :class:`~isaaclab.sim.SimulationContext`.
 
-For a homogeneous workflow that authors one prototype directly, use
-:func:`~isaaclab.cloner.from_env_0` around the cfg-owned constructors:
+For a homogeneous workflow that authors one prototype directly, build and publish its plan before
+the cfg-owned constructors, then dispatch that same plan afterward:
 
 .. code-block:: python
 
    from isaaclab import cloner
 
    cfg = (cloner.CloneCfg(), robot_cfg)
-   with cloner.from_env_0(cfg, num_envs=128, env_spacing=2.0):
-       robot = robot_cfg.class_type(robot_cfg)
+   plan = cloner.clone_plan_from_env_0(cfg, num_envs=128, env_spacing=2.0)
+   robot = robot_cfg.class_type(robot_cfg)
+   cloner.replicate(plan)
 
-``from_env_0`` rejects multi-variant or partially populated layouts. Put those entities on an
-:class:`~isaaclab.scene.InteractiveSceneCfg`, whose scene-owned lifecycle keeps the asset-wise plan.
+:func:`~isaaclab.cloner.clone_plan_from_env_0` rejects multi-variant or partially populated layouts.
+Put those entities on an :class:`~isaaclab.scene.InteractiveSceneCfg`, whose scene-owned lifecycle
+keeps the asset-wise plan.
 
 
 Declaring a scene
@@ -127,8 +140,8 @@ Manager-based and heterogeneous environments put assets on an
 
 
 For a homogeneous direct environment, keep asset cfgs on the direct env cfg and construct its one
-prototype in ``_setup_scene()``. The direct environment base owns the surrounding
-:func:`~isaaclab.cloner.from_env_0` lifecycle:
+prototype in ``_setup_scene()``. The direct environment base publishes the cfg-derived plan before
+constructing the plain scene and dispatches it after ``_setup_scene()``:
 
 .. code-block:: python
 
@@ -199,6 +212,6 @@ Collision filtering
 -------------------
 
 PhysX scenes need collision filtering after clone dispatch so environments do not collide with
-one another. Lifecycle exit derives collision roots from the plan and applies the pass when
-:attr:`~isaaclab.cloner.CloneCfg.filter_collisions` enables it. Newton isolates environments
-through its world model and does not need this pass.
+one another. :func:`~isaaclab.cloner.replicate` derives collision roots from the plan and applies
+the pass when :attr:`~isaaclab.cloner.CloneCfg.filter_collisions` enables it. Newton isolates
+environments through its world model and does not need this pass.

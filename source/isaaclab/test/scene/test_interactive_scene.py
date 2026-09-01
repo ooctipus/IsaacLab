@@ -78,6 +78,9 @@ def test_relative_flag(device, setup_scene):
     scene_cfg = make_scene(num_envs=4)
     scene = scene_cfg.class_type(scene_cfg)
     assert sim._interactive_scene is scene
+    assert sim._clone_plan_dispatched is True
+    with pytest.raises(RuntimeError, match="after plan replication"):
+        scene_cfg.class_type(scene_cfg)
     sim.reset()
 
     # test relative == False produces different result than relative == True

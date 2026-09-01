@@ -61,15 +61,14 @@ def design_scene(sim: SimulationContext) -> tuple[dict, torch.Tensor]:
         ),
         init_state=RigidObjectCfg.InitialStateCfg(),
     )
-    with cloner.from_env_0(
+    plan = cloner.clone_plan_from_env_0(
         (cloner.CloneCfg(clone_template="/World/Origin{}"), ground_cfg, light_cfg, cone_cfg), 4, 0.5
-    ):
-        ground_cfg.spawn.func(ground_cfg.prim_path, ground_cfg.spawn)
-        light_cfg.spawn.func(light_cfg.prim_path, light_cfg.spawn)
-        cone_object = cone_cfg.class_type(cone_cfg)
+    )
+    ground_cfg.spawn.func(ground_cfg.prim_path, ground_cfg.spawn)
+    light_cfg.spawn.func(light_cfg.prim_path, light_cfg.spawn)
+    cone_object = cone_cfg.class_type(cone_cfg)
+    cloner.replicate(plan)
 
-    plan = sim.get_clone_plan()
-    assert plan is not None and plan.positions is not None
     return {"cone": cone_object}, plan.positions
 
 

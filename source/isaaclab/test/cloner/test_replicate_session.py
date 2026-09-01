@@ -61,6 +61,7 @@ def _simulation(registry=None, roles=None, stage=None):
         _backend_registry={} if registry is None else registry,
         _backend_clone_roles={} if roles is None else roles,
         _clone_plan=None,
+        _clone_plan_dispatched=False,
         _pending_clone_model_contexts=(),
         device="cpu",
         stage=stage,
@@ -103,36 +104,71 @@ def test_replicate_session_authors_every_environment_root(monkeypatch):
             assert tuple(prim.GetAttribute("xformOp:translate").Get()) == tuple(float(value) for value in position)
 
 
-def test_from_env_0_owns_one_lexical_homogeneous_lifecycle(monkeypatch):
-    """Direct construction shares the published plan and dispatches it once on scope exit."""
+def test_replicate_session_exception_makes_partial_plan_non_dispatchable(monkeypatch):
+    """Failed construction cannot later replicate a partial scene."""
     simulation = _simulation(stage=Usd.Stage.CreateInMemory())
-    asset_cfg = AssetBaseCfg(prim_path="{ENV_REGEX_NS}/Object", spawn=sim_utils.CuboidCfg(size=(0.1, 0.1, 0.1)))
-    replicated = []
     monkeypatch.setattr(SimulationContext, "instance", lambda: simulation)
-    monkeypatch.setattr(replicate_session, "_replicate", replicated.append)
 
-    with cloner.from_env_0([cloner.CloneCfg(), asset_cfg], 2, 1.0):
-        assert replicate_session._active_plan() is simulation.get_clone_plan()
-        assert replicated == []
+    with pytest.raises(RuntimeError, match="construction failed"):
+        with cloner.ReplicateSession([cloner.CloneCfg()], 2, 1.0):
+            raise RuntimeError("construction failed")
 
-    assert replicate_session._active_plan() is None
-    assert replicated == [simulation.get_clone_plan()]
+    assert simulation._clone_plan_dispatched is None
+    with pytest.raises(RuntimeError, match="exactly once"):
+        cloner.replicate(simulation.get_clone_plan())
 
 
-def test_from_env_0_accepts_an_empty_direct_scene(monkeypatch):
+def test_plan_publication_failure_is_non_dispatchable(monkeypatch):
+    """Partially authored environment frames cannot be replicated."""
+    simulation = _simulation(stage=Usd.Stage.CreateInMemory())
+    monkeypatch.setattr(SimulationContext, "instance", lambda: simulation)
+
+    def fail_publication(*_args):
+        raise RuntimeError("publication failed")
+
+    monkeypatch.setattr(replicate_session.Sdf, "CreatePrimInLayer", fail_publication)
+    with pytest.raises(RuntimeError, match="publication failed"):
+        cloner.clone_plan_from_env_0(cloner.CloneCfg(), 2, 1.0)
+
+    assert simulation._clone_plan_dispatched is None
+    with pytest.raises(RuntimeError, match="exactly once"):
+        cloner.replicate(simulation.get_clone_plan())
+
+
+def test_clone_plan_from_env_0_publishes_before_explicit_replication(monkeypatch):
+    """Direct construction receives the plan before explicit dispatch."""
+    context_type = type("SceneContext", (_Context,), {})
+    context = context_type("scene")
+    simulation = _simulation({context_type: context}, {context_type: {"scene"}}, Usd.Stage.CreateInMemory())
+    asset_cfg = AssetBaseCfg(
+        prim_path="{ENV_REGEX_NS}/Object",
+        spawn=sim_utils.CuboidCfg(size=(0.1, 0.1, 0.1)),
+        cloning_contexts=(context_type,),
+    )
+    monkeypatch.setattr(SimulationContext, "instance", lambda: simulation)
+
+    plan = cloner.clone_plan_from_env_0([cloner.CloneCfg(), asset_cfg], 2, 1.0)
+
+    assert simulation.get_clone_plan() is plan
+    assert simulation._clone_plan_dispatched is False
+    assert context.replicated == 0
+    cloner.replicate(plan)
+    assert simulation._clone_plan_dispatched is True
+    assert context.replicated == 1
+
+
+def test_clone_plan_from_env_0_accepts_an_empty_direct_scene(monkeypatch):
     """An empty direct environment is a valid homogeneous prototype."""
     simulation = _simulation(stage=Usd.Stage.CreateInMemory())
-    replicated = []
     monkeypatch.setattr(SimulationContext, "instance", lambda: simulation)
-    monkeypatch.setattr(replicate_session, "_replicate", replicated.append)
 
-    with cloner.from_env_0(cloner.CloneCfg(), 2, 1.0):
-        pass
+    plan = cloner.clone_plan_from_env_0(cloner.CloneCfg(), 2, 1.0)
+    cloner.replicate(plan)
 
-    assert replicated == [simulation.get_clone_plan()]
+    assert simulation._clone_plan_dispatched is True
 
 
-def test_from_env_0_rejects_multi_variant_layout(monkeypatch):
+def test_clone_plan_from_env_0_rejects_multi_variant_layout_before_publication(monkeypatch):
     """A heterogeneous cfg must use the InteractiveScene-owned lifecycle."""
     simulation = _simulation(stage=Usd.Stage.CreateInMemory())
     asset_cfg = AssetBaseCfg(
@@ -142,9 +178,10 @@ def test_from_env_0_rejects_multi_variant_layout(monkeypatch):
     monkeypatch.setattr(SimulationContext, "instance", lambda: simulation)
 
     with pytest.raises(ValueError, match="one homogeneous cfg-derived environment prototype"):
-        with cloner.from_env_0([cloner.CloneCfg(), asset_cfg], 2, 1.0):
-            pass
-    assert replicate_session._active_plan() is None
+        cloner.clone_plan_from_env_0([cloner.CloneCfg(replicate_physics=False), asset_cfg], 2, 1.0)
+    assert simulation.get_clone_plan() is None
+    assert simulation._backend_registry == {}
+    assert simulation._backend_clone_roles == {}
 
 
 def test_replicate_session_requires_one_clone_cfg(monkeypatch):
@@ -168,7 +205,7 @@ def test_session_registers_one_required_usd_scene_context(monkeypatch, replicate
     stage = Usd.Stage.CreateInMemory()
     simulation = _simulation(stage=stage)
     monkeypatch.setattr(SimulationContext, "instance", lambda: simulation)
-    monkeypatch.setattr(replicate_session, "_replicate", lambda *args, **kwargs: None)
+    monkeypatch.setattr(replicate_session, "replicate", lambda *args, **kwargs: None)
 
     roots = [cloner.CloneCfg(replicate_physics=replicate_physics)]
     if consumer is not None:
@@ -184,28 +221,12 @@ def test_session_does_not_infer_usd_context_from_runtime_capability(monkeypatch)
     """A clone backend is requested by cfg data, never by the installed runtime."""
     simulation = _simulation(stage=Usd.Stage.CreateInMemory())
     monkeypatch.setattr(SimulationContext, "instance", lambda: simulation)
-    monkeypatch.setattr(replicate_session, "_replicate", lambda *args, **kwargs: None)
+    monkeypatch.setattr(replicate_session, "replicate", lambda *args, **kwargs: None)
 
     with cloner.ReplicateSession([cloner.CloneCfg()], 2, 1.0):
         pass
 
     assert simulation._backend_registry == {}
-
-
-def test_session_materializes_usd_before_an_unreplicated_model(monkeypatch):
-    """An unreplicated model receives exact per-environment stage edits at first reset."""
-    model_type = type("Model", (_Context,), {})
-    simulation = _simulation(
-        {model_type: model_type("model")}, {model_type: {"physics", "model"}}, Usd.Stage.CreateInMemory()
-    )
-    monkeypatch.setattr(SimulationContext, "instance", lambda: simulation)
-    monkeypatch.setattr(replicate_session, "_replicate", lambda *args, **kwargs: None)
-
-    with cloner.ReplicateSession([cloner.CloneCfg(replicate_physics=False)], 2, 1.0):
-        pass
-
-    assert cloner.UsdReplicateContext in simulation._backend_registry
-    assert simulation._backend_clone_roles[cloner.UsdReplicateContext] == {"scene"}
 
 
 @pytest.mark.parametrize(("filter_collisions", "expected_calls"), [(True, 1), (False, 0)])
@@ -219,7 +240,6 @@ def test_session_owns_physx_collision_filtering(monkeypatch, filter_collisions, 
     simulation.cfg = SimpleNamespace(physics_prim_path="/physicsScene")
     calls = []
     monkeypatch.setattr(SimulationContext, "instance", lambda: simulation)
-    monkeypatch.setattr(replicate_session, "_replicate", lambda *args, **kwargs: None)
     monkeypatch.setattr(replicate_session, "filter_collisions", lambda *args: calls.append(args))
 
     clone_cfg = cloner.CloneCfg(clone_template="/Scene/worlds/world_{}", filter_collisions=filter_collisions)
@@ -343,7 +363,7 @@ def test_session_registers_explicit_usd_context_without_kit(monkeypatch):
         cloning_contexts=(cloner.UsdReplicateContext,),
     )
     monkeypatch.setattr(SimulationContext, "instance", lambda: simulation)
-    monkeypatch.setattr(replicate_session, "_replicate", lambda *args, **kwargs: None)
+    monkeypatch.setattr(replicate_session, "replicate", lambda *args, **kwargs: None)
 
     with cloner.ReplicateSession([cloner.CloneCfg(), cfg], 2, 1.0):
         pass
@@ -365,16 +385,43 @@ def test_replicate_dispatches_each_registered_context_once(monkeypatch):
     monkeypatch.setattr(SimulationContext, "instance", lambda: simulation)
     plan = _plan()
     plan.context_rows.update({per_asset_type: (0, 1), whole_env_type: (0, 1)})
+    simulation._clone_plan = plan
 
-    replicate_session._replicate(plan)
+    cloner.replicate(plan)
 
     assert per_asset.mappings[0][:2] == (plan.sources, plan.destinations)
     assert whole_env.mappings[0][0] == ("/World/envs/env_0",)
     assert per_asset.replicated == whole_env.replicated == 1
 
 
-def test_replicate_does_not_dispatch_inactive_variant_rows(monkeypatch):
-    """A bookkeeping slot with no environments must not ask a backend to parse a missing prim."""
+def test_replicate_rejects_a_plan_not_published_by_the_simulation(monkeypatch):
+    """Dispatch accepts only the plan owned by the active simulation."""
+    simulation = _simulation()
+    simulation._clone_plan = _plan(0)
+    monkeypatch.setattr(SimulationContext, "instance", lambda: simulation)
+
+    with pytest.raises(ValueError, match="plan published on the active SimulationContext"):
+        cloner.replicate(_plan(0))
+
+    assert simulation._clone_plan_dispatched is False
+
+
+def test_replicate_rejects_duplicate_dispatch(monkeypatch):
+    """A published plan can materialize its scene exactly once."""
+    simulation = _simulation()
+    plan = _plan(0)
+    simulation._clone_plan = plan
+    monkeypatch.setattr(SimulationContext, "instance", lambda: simulation)
+
+    cloner.replicate(plan)
+    with pytest.raises(RuntimeError, match="exactly once"):
+        cloner.replicate(plan)
+
+    assert simulation._clone_plan_dispatched is True
+
+
+def test_replicate_dispatches_only_context_routed_rows(monkeypatch):
+    """A context receives only the plan rows assigned to it."""
     context_type = type("Context", (_Context,), {})
     context = context_type("context")
     simulation = _simulation({context_type: context}, {context_type: {"scene"}})
@@ -382,8 +429,9 @@ def test_replicate_does_not_dispatch_inactive_variant_rows(monkeypatch):
     plan = _plan()
     plan.clone_mask[1] = False
     plan.context_rows[context_type] = (0,)
+    simulation._clone_plan = plan
 
-    replicate_session._replicate(plan)
+    cloner.replicate(plan)
 
     sources, destinations, mask = context.mappings[0]
     assert sources == plan.sources[:1]
@@ -399,8 +447,9 @@ def test_replicate_dispatches_empty_physics_plan(monkeypatch):
     monkeypatch.setattr(SimulationContext, "instance", lambda: simulation)
     plan = _plan(0)
     plan.context_rows[context_type] = ()
+    simulation._clone_plan = plan
 
-    replicate_session._replicate(plan)
+    cloner.replicate(plan)
 
     assert context.replicated == 1
 
@@ -427,8 +476,9 @@ def test_replicate_physics_false_skips_only_physics_only_contexts(monkeypatch):
     monkeypatch.setattr(SimulationContext, "instance", lambda: simulation)
     plan = _plan(1, replicate_physics=False)
     plan.context_rows.update({physics_type: (0,), model_type: (0,), shared_type: (0,), scene_type: (0,)})
+    simulation._clone_plan = plan
 
-    replicate_session._replicate(plan)
+    cloner.replicate(plan)
 
     assert physics.replicated == 0
     assert model.replicated == 0
@@ -438,7 +488,7 @@ def test_replicate_physics_false_skips_only_physics_only_contexts(monkeypatch):
 
 def test_first_hard_reset_dispatches_models_after_stage_edits_once(monkeypatch):
     """Model construction follows stage edits and precedes physics finalization exactly once."""
-    calls = ["stage_edit"]
+    calls = []
     model_type = type("Model", (_Context,), {})
     model = model_type("model", calls)
     simulation = _simulation({model_type: model}, {model_type: {"physics", "model"}})
@@ -453,12 +503,26 @@ def test_first_hard_reset_dispatches_models_after_stage_edits_once(monkeypatch):
     simulation._render_context = SimpleNamespace(finalize_consumers=lambda *_args, **_kwargs: None)
     monkeypatch.setattr(SimulationContext, "instance", lambda: simulation)
 
-    replicate_session._replicate(plan)
+    cloner.replicate(plan)
+    assert model.replicated == 0
+    assert simulation._pending_clone_model_contexts == (model,)
+    calls.append("stage_edit")
     SimulationContext.reset(simulation)
     SimulationContext.reset(simulation)
 
     assert calls == ["stage_edit", "model", "physics:False", "play", "physics:False", "play"]
     assert simulation._pending_clone_model_contexts == ()
+
+
+@pytest.mark.parametrize("dispatch_state", [False, None])
+def test_reset_rejects_a_plan_without_successful_dispatch(dispatch_state):
+    """Physics cannot initialize while clone dispatch is pending or failed."""
+    simulation = _simulation()
+    simulation._clone_plan = _plan(0)
+    simulation._clone_plan_dispatched = dispatch_state
+
+    with pytest.raises(RuntimeError, match="dispatch must complete"):
+        SimulationContext.reset(simulation)
 
 
 def test_soft_reset_cannot_skip_pending_model_initialization(monkeypatch):
@@ -471,7 +535,7 @@ def test_soft_reset_cannot_skip_pending_model_initialization(monkeypatch):
     simulation._clone_plan = plan
     simulation.physics_manager = SimpleNamespace(reset=lambda _soft: pytest.fail("physics reset ran"))
     monkeypatch.setattr(SimulationContext, "instance", lambda: simulation)
-    replicate_session._replicate(plan)
+    cloner.replicate(plan)
 
     with pytest.raises(RuntimeError, match="first reset must initialize clone-plan models"):
         SimulationContext.reset(simulation, soft=True)
@@ -491,6 +555,7 @@ def test_model_phase_does_not_repeat_a_successful_context_after_a_later_failure(
     failing = _FailingContext("failing")
     simulation = _simulation()
     simulation._clone_plan = _plan(0)
+    simulation._clone_plan_dispatched = True
     simulation._clone_plan.context_rows[type(first)] = ()
     simulation._pending_clone_model_contexts = (first, failing)
 
@@ -505,10 +570,12 @@ def test_replicate_rejects_an_unregistered_explicit_context(monkeypatch):
     context_type = type("MissingContext", (), {})
     plan = _plan(1)
     plan.context_rows[context_type] = (0,)
-    monkeypatch.setattr(SimulationContext, "instance", lambda: _simulation())
+    simulation = _simulation()
+    simulation._clone_plan = plan
+    monkeypatch.setattr(SimulationContext, "instance", lambda: simulation)
 
     with pytest.raises(RuntimeError, match="MissingContext"):
-        replicate_session._replicate(plan)
+        cloner.replicate(plan)
 
 
 def test_whole_environment_context_requires_every_routed_row(monkeypatch):
@@ -519,8 +586,9 @@ def test_whole_environment_context_requires_every_routed_row(monkeypatch):
     monkeypatch.setattr(SimulationContext, "instance", lambda: simulation)
     plan = _plan(2)
     plan.context_rows[context_type] = (0,)
+    simulation._clone_plan = plan
 
-    replicate_session._replicate(plan)
+    cloner.replicate(plan)
 
     assert context.mappings[0][0] == (plan.sources[0],)
 
@@ -540,7 +608,8 @@ def test_replicate_orders_contexts_by_priority(monkeypatch):
     monkeypatch.setattr(SimulationContext, "instance", lambda: simulation)
     plan = _plan(1)
     plan.context_rows.update({late_type: (0,), early_type: (0,)})
+    simulation._clone_plan = plan
 
-    replicate_session._replicate(plan)
+    cloner.replicate(plan)
 
     assert calls == ["early", "late"]

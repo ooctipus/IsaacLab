@@ -53,15 +53,14 @@ def design_scene(sim: SimulationContext) -> tuple[dict, torch.Tensor]:
         spawn=sim_utils.DomeLightCfg(intensity=3000.0, color=(0.75, 0.75, 0.75)),
     )
     cartpole_cfg = CARTPOLE_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-    with cloner.from_env_0(
+    plan = cloner.clone_plan_from_env_0(
         (cloner.CloneCfg(clone_template="/World/Origin{}"), ground_cfg, light_cfg, cartpole_cfg), 2, 1.0
-    ):
-        ground_cfg.spawn.func(ground_cfg.prim_path, ground_cfg.spawn)
-        light_cfg.spawn.func(light_cfg.prim_path, light_cfg.spawn)
-        cartpole = cartpole_cfg.class_type(cartpole_cfg)
+    )
+    ground_cfg.spawn.func(ground_cfg.prim_path, ground_cfg.spawn)
+    light_cfg.spawn.func(light_cfg.prim_path, light_cfg.spawn)
+    cartpole = cartpole_cfg.class_type(cartpole_cfg)
+    cloner.replicate(plan)
 
-    plan = sim.get_clone_plan()
-    assert plan is not None and plan.positions is not None
     return {"cartpole": cartpole}, plan.positions
 
 

@@ -3,22 +3,30 @@ Changed
 
 * **Breaking:** Consolidated cfg-derived cloning into one lifecycle. Construct a declarative or
   heterogeneous scene with ``scene_cfg.class_type(scene_cfg)``; ``InteractiveScene`` owns its
-  lifecycle. Homogeneous direct environment bases instead own a ``from_env_0`` lifecycle around a
-  plain scene and ``_setup_scene()``. Keep every authored asset cfg on the direct env cfg, construct
-  its prototype with ``cfg.class_type(cfg)``, and register runtime entities on the scene. Standalone
-  homogeneous workflows may use ``from_env_0`` explicitly; ``ReplicateSession`` remains the
-  lower-level lifecycle for general cloning tools. The lifecycle obtains stage and device from the
-  active ``SimulationContext``, dispatches each required stage/native context once on exit, and
-  queues model-role backends for the first hard reset after any intervening stage edits.
+  lifecycle. Homogeneous direct environment bases instead call ``clone_plan_from_env_0()`` before
+  constructing a plain scene and running ``_setup_scene()``, then call ``replicate()`` with that same
+  plan. Keep every authored asset cfg on the direct env cfg, construct its prototype with
+  ``cfg.class_type(cfg)``, and register runtime entities on the scene. Standalone homogeneous
+  workflows may use the same two-phase sequence explicitly; ``ReplicateSession`` remains the
+  lower-level lifecycle for general cloning tools. Planning obtains stage and device from the active
+  ``SimulationContext``; replication dispatches each required stage/native context once and queues
+  model-role backends for the first hard reset after any intervening stage edits.
+* **Breaking:** Changed ``clone_plan_from_env_0()`` to accept the complete cfg root, environment count,
+  and spacing and to publish its exhaustive plan before prototype construction. The former source,
+  destination, device, positions, and global-path arguments were removed. Call ``replicate(plan)``
+  after construction; it now obtains the stage and backend registry from the active
+  ``SimulationContext`` and the physics policy from the published plan instead of accepting
+  ``stage`` and ``replicate_physics`` arguments.
 * **Breaking:** Made ``ClonePlan`` exhaustive: shared assets now use plan rows and nested cfgs map
   to their nearest parent's rows. Read the active plan with
   ``SimulationContext.get_clone_plan()`` instead of ``ReplicateSession.plan`` or
   ``ClonePlan.global_paths``. Clone contexts now receive the published plan once and read their
   selected rows from ``ClonePlan.context_rows``. ``ClonePlan.replicate_physics`` carries the
-  declared policy into deferred model construction.
+  declared policy into deferred model construction. Manual construction now requires ``env_ids``,
+  ``positions``, and ``replicate_physics``; ``global_paths`` was removed.
 * **Breaking:** Moved ``replicate_physics`` and ``filter_collisions`` from
   ``InteractiveSceneCfg`` to its nested ``CloneCfg``. Configure either policy through
-  ``scene.clone_cfg``. ``ReplicateSession`` now applies collision filtering after clone dispatch.
+  ``scene.clone_cfg``. ``replicate()`` now applies collision filtering after clone dispatch.
 * **Breaking:** Added declarative whole-scene ``cloning_contexts`` to renderer and visualizer
   configs. ``IsaacRtxRendererCfg`` and ``KitVisualizerCfg`` request USD cloning explicitly;
   installing Kit alone no longer causes a USD copy.
@@ -31,12 +39,12 @@ Changed
 Removed
 ^^^^^^^
 
-* **Breaking:** Removed the public replication queue and standalone plan/dispatch functions:
-  ``REPLICATION_QUEUE``, ``queue_replication()``, ``replicate()``, ``usd_replicate()``,
-  ``clone_plan_from_env_0()``, ``make_clone_plan()``, ``make_valid_clone_combinations()``,
-  ``num_spawn_variants()``, ``random()``, and ``sequential()``. Use a declarative
-  ``InteractiveScene`` or ``from_env_0`` for a homogeneous prototype; low-level clone-context
-  callers pass the active plan to ``context.replicate(plan)``.
+* **Breaking:** Removed the public replication queue and legacy plan helpers:
+  ``REPLICATION_QUEUE``, ``queue_replication()``, ``add()``, ``usd_replicate()``, ``make_clone_plan()``,
+  ``make_valid_clone_combinations()``, ``num_spawn_variants()``, ``random()``, and ``sequential()``.
+  Use a declarative ``InteractiveScene`` or ``clone_plan_from_env_0()`` followed by ``replicate()``
+  for a homogeneous prototype; low-level clone-context callers pass the active plan to
+  ``context.replicate(plan)``.
   ``disabled_fabric_change_notifies()`` is now internal.
 * **Breaking:** Removed ``ReplicateSession.plan`` and its ``device``, ``stage``, ``global_paths``,
   ``clone_strategy``, ``valid_set``, ``replicate_physics``, and ``env_template`` arguments. Read the

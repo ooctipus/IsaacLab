@@ -45,7 +45,7 @@ def parse_cprofile_stats(
         top_n: Maximum number of functions to return. Ignored when
             *whitelist* is provided.
         whitelist: Optional list of ``fnmatch`` patterns to select specific
-            functions (e.g. ``["isaaclab.cloner.*:_replicate"]``).
+            functions (e.g. ``["isaaclab.cloner.*:replicate"]``).
 
     Returns:
         List of (label, tottime_ms, cumtime_ms, ncalls) tuples sorted by

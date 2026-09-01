@@ -24,8 +24,13 @@
 
    .. autosummary::
 
+      clone_plan_from_env_0
       expand_env_regex_ns
-      from_env_0
+      replicate
+
+   .. autofunction:: clone_plan_from_env_0
+
+   .. autofunction:: replicate
 
 Clone plan
 ~~~~~~~~~~

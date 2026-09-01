@@ -13,8 +13,8 @@ path, while :func:`iter_sources` yields every populated variant behind that path
 
 Environment ids are not mask columns. Column ``j`` stands for
 :attr:`~isaaclab.cloner.ClonePlan.env_ids`\\ ``[j]``, which is the number
-:class:`~isaaclab.cloner.ReplicateSession` formats into the template. These functions take
-and return environment ids throughout.
+the clone lifecycle formats into the template. These functions take and return environment ids
+throughout.
 
 Rows sharing one source or destination root are variants of the same asset, and the environment
 picks between them. ``test/cloner/test_clone_plan_algebra.py`` pins that down.

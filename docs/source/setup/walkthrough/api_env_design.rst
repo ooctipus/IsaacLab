@@ -140,10 +140,11 @@ direct workflow exists and where most of our modifications will take place as we
 Currently, all of the member functions of ``IsaacLabTutorialEnv`` are directly inherited from the :class:`DirectRLEnv`. This
 known interface is how Isaac Lab and its supported RL frameworks interact with the environment.
 
-When the environment is initialized, it passes its config to ``DirectRLEnv``. The base class opens a
-:func:`~isaaclab.cloner.from_env_0` lifecycle around construction of the plain scene and
+When the environment is initialized, it passes its config to ``DirectRLEnv``. The base class builds
+and publishes a cfg-derived homogeneous plan before constructing the plain scene and running
 ``_setup_scene``. The setup method constructs each cfg-owned prototype and registers runtime entities
-with the scene; the base class then replicates that homogeneous prototype from the shared clone plan.
+with the scene; the base class then passes that same published plan to
+:func:`~isaaclab.cloner.replicate`.
 
 Notice also that the remaining functions do not take additional arguments except ``_reset_idx``.  This is because the environment only manages the application of
 actions to the agent being simulated, and then updating the sim.  This is what the ``_pre_physics_step`` and ``_apply_action`` steps are for: we set the drive commands

@@ -35,7 +35,6 @@ from isaaclab.assets import (
     VisualMaterial,
     VisualMaterialCfg,
 )
-from isaaclab.cloner.replicate_session import _active_plan
 from isaaclab.scene_data import REQUIRES_STAGE_AND_MODEL
 from isaaclab.sensors import CameraCfg, SensorBase, SensorBaseCfg
 from isaaclab.sim import SimulationContext
@@ -125,14 +124,17 @@ class InteractiveScene:
         if self.sim is None:
             raise RuntimeError("InteractiveScene requires an active SimulationContext.")
         self.stage = self.sim.stage
-        owns_clone_lifecycle = _active_plan() is None
+        published_plan = self.sim.get_clone_plan()
+        if published_plan is not None and self.sim._clone_plan_dispatched is not False:
+            raise RuntimeError("InteractiveScene cannot join a clone lifecycle after plan replication.")
+        owns_clone_lifecycle = published_plan is None
         clone_lifecycle = (
             cloner.ReplicateSession((cfg,), cfg.num_envs, cfg.env_spacing) if owns_clone_lifecycle else nullcontext()
         )
         with clone_lifecycle:
-            plan = _active_plan()
+            plan = self.sim.get_clone_plan()
             if plan is None:
-                raise RuntimeError("InteractiveScene requires an active lexical clone lifecycle.")
+                raise RuntimeError("InteractiveScene requires a published clone plan.")
             if plan.env_template != cfg.clone_cfg.clone_template or len(plan.env_ids) != cfg.num_envs:
                 raise ValueError("InteractiveSceneCfg must match the active clone plan.")
             self._clone_plan = plan

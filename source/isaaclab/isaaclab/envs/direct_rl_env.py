@@ -150,9 +150,10 @@ class DirectRLEnv(gym.Env):
             # set the stage context for scene creation steps which use the stage
             with use_stage(self.sim.stage):
                 if type(self.cfg.scene) is InteractiveSceneCfg:
-                    with cloner.from_env_0(self.cfg, self.cfg.scene.num_envs, self.cfg.scene.env_spacing):
-                        self.scene = self.cfg.scene.class_type(self.cfg.scene)
-                        self._setup_scene()
+                    plan = cloner.clone_plan_from_env_0(self.cfg, self.cfg.scene.num_envs, self.cfg.scene.env_spacing)
+                    self.scene = self.cfg.scene.class_type(self.cfg.scene)
+                    self._setup_scene()
+                    cloner.replicate(plan)
                 else:
                     self.scene = self.cfg.scene.class_type(self.cfg.scene)
                     self._setup_scene()

@@ -150,10 +150,11 @@ at the first hard reset, after any intervening stage edits.
     scene = env_cfg.scene.class_type(env_cfg.scene)
 
 Manager-based and heterogeneous workflows declare spawned assets and sensors on their scene config.
-Homogeneous direct environments keep those cfgs on the direct env config. Their base class owns a
-:func:`~isaaclab.cloner.from_env_0` scope around construction of the plain scene and
-``_setup_scene()``; that scene joins the enclosing lifecycle instead of opening another one.
-Standalone direct workflows may use the same scope explicitly.
+Homogeneous direct environments keep those cfgs on the direct env config. Their base class calls
+:func:`~isaaclab.cloner.clone_plan_from_env_0` before constructing the plain scene and running
+``_setup_scene()``, then calls :func:`~isaaclab.cloner.replicate` with that same plan. The plain
+scene joins the published plan instead of opening another lifecycle. Standalone direct workflows
+may use the same two-phase sequence explicitly.
 :class:`~isaaclab.cloner.ReplicateSession` remains the lower-level general lifecycle used internally.
 
 Backend Selection
