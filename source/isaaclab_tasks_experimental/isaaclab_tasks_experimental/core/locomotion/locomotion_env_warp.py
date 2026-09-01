@@ -8,6 +8,7 @@ from __future__ import annotations
 import warp as wp
 from isaaclab_experimental.envs import DirectRLEnvWarp
 
+from isaaclab import cloner
 from isaaclab.envs import DirectRLEnvCfg
 from isaaclab.utils.string import resolve_matching_names_values
 
@@ -523,9 +524,10 @@ class LocomotionWarpEnv(DirectRLEnvWarp):
         self.torch_episode_length_buf = self.episode_length_buf  # already a torch tensor via wp.to_torch
 
     def _setup_scene(self) -> None:
-        self.robot = self.cfg.robot.class_type(self.cfg.robot)
         self.cfg.terrain.num_envs = self.scene.num_envs
         self.cfg.terrain.env_spacing = self.scene.cfg.env_spacing
+        plan = cloner.clone_plan_from_env_0(self.cfg, self.scene.num_envs, self.scene.cfg.env_spacing)
+        self.robot = self.cfg.robot.class_type(self.cfg.robot)
         self.terrain = self.cfg.terrain.class_type(self.cfg.terrain)
         self.joint_wrench = self.cfg.joint_wrench.class_type(self.cfg.joint_wrench)
         self.cfg.light_cfg.spawn.func(
@@ -536,6 +538,7 @@ class LocomotionWarpEnv(DirectRLEnvWarp):
         )
         self.scene.articulations["robot"] = self.robot
         self.scene.sensors["joint_wrench"] = self.joint_wrench
+        cloner.replicate(plan)
 
     def _pre_physics_step(self, actions: wp.array) -> None:
         self.actions.assign(actions)

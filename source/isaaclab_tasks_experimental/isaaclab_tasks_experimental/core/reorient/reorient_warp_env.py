@@ -13,6 +13,8 @@ import torch
 import warp as wp
 from isaaclab_experimental.envs import DirectRLEnvWarp
 
+from isaaclab import cloner
+
 if TYPE_CHECKING:
     from isaaclab_tasks.core.reorient.config.allegro_hand.allegro_hand_direct_env_cfg import AllegroHandEnvCfg
 
@@ -672,6 +674,7 @@ class ReorientDirectWarpEnv(DirectRLEnvWarp):
         self.torch_episode_length_buf = self.episode_length_buf  # already a torch tensor via wp.to_torch
 
     def _setup_scene(self):
+        plan = cloner.clone_plan_from_env_0(self.cfg, self.scene.num_envs, self.scene.cfg.env_spacing)
         self.hand = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
         self.object = self.cfg.object_cfg.class_type(self.cfg.object_cfg)
         self._joint_wrench_sensor = None
@@ -695,6 +698,7 @@ class ReorientDirectWarpEnv(DirectRLEnvWarp):
         self.scene.rigid_objects["object"] = self.object
         if self._joint_wrench_sensor is not None:
             self.scene.sensors["joint_wrench"] = self._joint_wrench_sensor
+        cloner.replicate(plan)
 
     def _pre_physics_step(self, actions: wp.array) -> None:
         # Store actions in a persistent Warp buffer (analogous to `actions.clone()` in the Torch env).

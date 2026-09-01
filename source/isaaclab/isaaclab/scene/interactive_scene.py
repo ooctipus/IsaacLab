@@ -7,12 +7,12 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
-from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from isaaclab_physx.assets import SurfaceGripper
 
+    from isaaclab.cloner import ClonePlan
     from isaaclab.terrains.terrain_importer import TerrainImporter
 
 import torch
@@ -55,8 +55,8 @@ class InteractiveScene:
     Based on the specified number of environments, it clones the entities and groups them into different
     categories (e.g., articulations, sensors, etc.).
 
-    The scene owns its cfg-derived clone lifecycle unless an enclosing composition root has
-    already published one, as in a direct environment.
+    A declarative scene owns its cfg-derived clone lifecycle. An empty scene only provides the
+    runtime entity registry; its caller owns cloning explicitly.
 
     Each entity is registered to scene based on its name in the configuration class. For example, if the user
     specifies a robot in the configuration class as follows:
@@ -123,38 +123,34 @@ class InteractiveScene:
         self.sim = SimulationContext.instance()
         if self.sim is None:
             raise RuntimeError("InteractiveScene requires an active SimulationContext.")
+        if getattr(self.sim, "_interactive_scene", None) is not None:
+            raise RuntimeError("A SimulationContext owns exactly one InteractiveScene.")
         self.stage = self.sim.stage
-        published_plan = self.sim.get_clone_plan()
-        if published_plan is not None and self.sim._clone_plan_dispatched is not False:
-            raise RuntimeError("InteractiveScene cannot join a clone lifecycle after plan replication.")
-        owns_clone_lifecycle = published_plan is None
-        clone_lifecycle = (
-            cloner.ReplicateSession((cfg,), cfg.num_envs, cfg.env_spacing) if owns_clone_lifecycle else nullcontext()
+        has_entities = any(
+            name not in InteractiveSceneCfg.__dataclass_fields__ and value is not None
+            for name, value in vars(cfg).items()
         )
-        with clone_lifecycle:
-            plan = self.sim.get_clone_plan()
-            if plan is None:
-                raise RuntimeError("InteractiveScene requires a published clone plan.")
-            if plan.env_template != cfg.clone_cfg.clone_template or len(plan.env_ids) != cfg.num_envs:
-                raise ValueError("InteractiveSceneCfg must match the active clone plan.")
-            self._clone_plan = plan
-            self._ALL_INDICES = plan.env_ids
-            if any(
-                name not in InteractiveSceneCfg.__dataclass_fields__ and value is not None
-                for name, value in vars(cfg).items()
-            ):
+        if self.sim.get_clone_plan() is not None:
+            raise RuntimeError("InteractiveScene must own its clone lifecycle or be constructed before task cloning.")
+        for type_name in self.sim.resolve_visualizer_types():
+            requires_stage, requires_model = REQUIRES_STAGE_AND_MODEL[type_name]
+            self.sim.requires_usd_stage |= requires_stage
+            self.sim.requires_newton_model |= requires_model
+        if has_entities:
+            with cloner.ReplicateSession((cfg,), cfg.num_envs, cfg.env_spacing):
+                plan = self.sim.get_clone_plan()
+                assert plan is not None
                 self._add_entities_from_cfg()
 
-            # Every sensor exists by now, so all visualizer and camera-renderer requirements are visible.
-            camera_types = [
-                sensor.cfg.renderer_cfg.renderer_type
-                for sensor in self._sensors.values()
-                if isinstance(sensor.cfg, CameraCfg)
-            ]
-            for type_name in set(self.sim.resolve_visualizer_types()).union(camera_types):
-                requires_stage, requires_model = REQUIRES_STAGE_AND_MODEL[type_name]
-                self.sim.requires_usd_stage |= requires_stage
-                self.sim.requires_newton_model |= requires_model
+                # Every declarative sensor exists by now, so its renderer requirements are visible.
+                for type_name in {
+                    sensor.cfg.renderer_cfg.renderer_type
+                    for sensor in self._sensors.values()
+                    if isinstance(sensor.cfg, CameraCfg)
+                }:
+                    requires_stage, requires_model = REQUIRES_STAGE_AND_MODEL[type_name]
+                    self.sim.requires_usd_stage |= requires_stage
+                    self.sim.requires_newton_model |= requires_model
         self.sim.register_interactive_scene(self)
 
     def __str__(self) -> str:
@@ -162,8 +158,10 @@ class InteractiveScene:
         msg = f"<class {self.__class__.__name__}>\n"
         msg += f"\tNumber of environments: {self.cfg.num_envs}\n"
         msg += f"\tEnvironment spacing   : {self.cfg.env_spacing}\n"
-        msg += f"\tSource prim name      : {self._clone_plan.env_template.format(int(self._clone_plan.env_ids[0]))}\n"
-        msg += f"\tCollision roots      : {list(self._clone_plan.collision_paths)}\n"
+        plan = self.sim.get_clone_plan()
+        if plan is not None:
+            msg += f"\tSource prim name      : {plan.env_template.format(int(plan.env_ids[0]))}\n"
+            msg += f"\tCollision roots      : {list(plan.collision_paths)}\n"
         msg += f"\tReplicate physics     : {self.cfg.clone_cfg.replicate_physics}"
         return msg
 
@@ -180,6 +178,19 @@ class InteractiveScene:
     def device(self) -> str:
         """The device on which the scene is created."""
         return self.sim.device
+
+    @property
+    def _clone_plan(self) -> ClonePlan:
+        """Return the plan owned by the active simulation."""
+        plan = self.sim.get_clone_plan()
+        if plan is None:
+            raise RuntimeError("The empty scene's caller must publish a clone plan before using scene layout data.")
+        return plan
+
+    @property
+    def _ALL_INDICES(self) -> torch.Tensor:
+        """All environment ids from the active clone plan."""
+        return self._clone_plan.env_ids
 
     @property
     def env_ns(self) -> str:
@@ -285,29 +296,34 @@ class InteractiveScene:
     Operations.
     """
 
-    def reset(self, env_ids: Sequence[int] | None = None):
+    def reset(self, env_ids: Sequence[int] | None = None, env_mask: wp.array | None = None):
         """Resets the scene entities.
 
         Args:
             env_ids: The indices of the environments to reset.
                 Defaults to None (all instances).
+            env_mask: Boolean Warp mask selecting environments to reset. When provided, it takes
+                precedence over ``env_ids`` for entities that support mask-native resets.
         """
         # -- assets
         for articulation in self._articulations.values():
-            articulation.reset(env_ids)
+            articulation.reset(env_ids, env_mask=env_mask)
         for cable_object in self._cable_objects.values():
             cable_object.reset(env_ids)
         for deformable_object in self._deformable_objects.values():
-            deformable_object.reset(env_ids)
+            deformable_object.reset(env_ids, env_mask=env_mask)
         for rigid_object in self._rigid_objects.values():
-            rigid_object.reset(env_ids)
+            rigid_object.reset(env_ids, env_mask=env_mask)
         for surface_gripper in self._surface_grippers.values():
-            surface_gripper.reset(env_ids)
+            if env_mask is None:
+                surface_gripper.reset(env_ids)
+            else:
+                surface_gripper.reset_mask(wp.to_torch(env_mask))
         for rigid_object_collection in self._rigid_object_collections.values():
-            rigid_object_collection.reset(env_ids)
+            rigid_object_collection.reset(env_ids, env_mask=env_mask)
         # -- sensors
         for sensor in self._sensors.values():
-            sensor.reset(env_ids)
+            sensor.reset(env_ids, env_mask=env_mask)
 
     def write_data_to_sim(self):
         """Writes the data of the scene entities to the simulation."""

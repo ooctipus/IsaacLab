@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 import torch
 
+from isaaclab import cloner
 from isaaclab.envs import DirectRLEnv
 from isaaclab.utils.math import sample_uniform, wrap_to_pi
 
@@ -33,6 +34,11 @@ class CartpoleEnv(DirectRLEnv):
         self.joint_vel = self.cartpole.data.joint_vel.torch
 
     def _setup_scene(self):
+        plan = cloner.clone_plan_from_env_0(self.cfg, self.scene.num_envs, self.scene.cfg.env_spacing)
+        self._setup_scene_entities()
+        cloner.replicate(plan)
+
+    def _setup_scene_entities(self):
         self.cartpole = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
         if self.cfg.ground_cfg is not None:
             self.cfg.ground_cfg.spawn.func(

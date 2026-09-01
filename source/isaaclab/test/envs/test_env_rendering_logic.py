@@ -19,6 +19,7 @@ from isaaclab_physx.physics import IsaacEvents
 from isaaclab_visualizers.kit import KitVisualizer, KitVisualizerCfg
 
 import isaaclab.sim as sim_utils
+from isaaclab import cloner
 from isaaclab.envs import (
     DirectRLEnv,
     DirectRLEnvCfg,
@@ -108,6 +109,10 @@ def create_direct_rl_env(render_interval: int, episode_length_steps: int | None 
 
     class Env(DirectRLEnv):
         """Test environment."""
+
+        def _setup_scene(self):
+            plan = cloner.clone_plan_from_env_0(self.cfg, self.scene.num_envs, self.scene.cfg.env_spacing)
+            cloner.replicate(plan)
 
         def _pre_physics_step(self, actions):
             pass

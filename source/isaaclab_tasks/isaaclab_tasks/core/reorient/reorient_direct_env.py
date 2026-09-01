@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 import torch
 
+from isaaclab import cloner
 from isaaclab.envs import DirectRLEnv
 from isaaclab.sensors import JointWrenchSensor
 from isaaclab.utils.math import (
@@ -169,6 +170,11 @@ class ReorientDirectEnv(DirectRLEnv):
         self._write_hand_joint_vel = self.hand.write_joint_velocity_to_sim_index
 
     def _setup_scene(self):
+        plan = cloner.clone_plan_from_env_0(self.cfg, self.scene.num_envs, self.scene.cfg.env_spacing)
+        self._setup_scene_entities()
+        cloner.replicate(plan)
+
+    def _setup_scene_entities(self):
         self.hand = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
         self.object = self.cfg.object_cfg.class_type(self.cfg.object_cfg)
         self._joint_wrench_sensor: JointWrenchSensor | None = None

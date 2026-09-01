@@ -48,9 +48,9 @@ class CartpoleCameraEnv(CartpoleEnv):
                 max_len=self.cfg.frame_stack, batch_size=self.num_envs, device=self.device, stack_dim=1
             )
 
-    def _setup_scene(self):
+    def _setup_scene_entities(self):
         """Setup the scene with the cartpole and camera (no ground plane, which obstructs the view)."""
-        super()._setup_scene()
+        super()._setup_scene_entities()
         self._tiled_camera = self.cfg.tiled_camera.class_type(self.cfg.tiled_camera)
         self.scene.sensors["tiled_camera"] = self._tiled_camera
 

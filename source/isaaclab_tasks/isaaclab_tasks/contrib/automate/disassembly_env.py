@@ -11,6 +11,7 @@ import torch
 import warp as wp
 
 import isaaclab.sim as sim_utils
+from isaaclab import cloner
 from isaaclab.envs import DirectRLEnv
 from isaaclab.utils.assets import retrieve_file_path
 from isaaclab.utils.math import (
@@ -167,6 +168,7 @@ class DisassemblyEnv(DirectRLEnv):
         return torch.as_tensor(plug_grasps).to(self.device), torch.as_tensor(disassembly_dists).to(self.device)
 
     def _setup_scene(self):
+        plan = cloner.clone_plan_from_env_0(self.cfg, self.scene.num_envs, self.scene.cfg.env_spacing)
         source_env = self.cfg.scene.clone_cfg.clone_template.format(0)
         for asset_cfg, prim_path in (
             (self.cfg.ground, self.cfg.ground.prim_path),
@@ -185,6 +187,7 @@ class DisassemblyEnv(DirectRLEnv):
         self.scene.articulations["robot"] = self._robot
         self.scene.articulations["fixed_asset"] = self._fixed_asset
         self.scene.rigid_objects["held_asset"] = self._held_asset
+        cloner.replicate(plan)
 
     def _compute_intermediate_values(self, dt):
         """Get values computed from raw tensors. This includes adding noise."""

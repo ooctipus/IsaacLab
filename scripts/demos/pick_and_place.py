@@ -39,6 +39,7 @@ import carb
 import omni
 
 import isaaclab.sim as sim_utils
+from isaaclab import cloner
 from isaaclab.assets import (
     ArticulationCfg,
     AssetBaseCfg,
@@ -224,6 +225,7 @@ class PickAndPlaceEnv(DirectRLEnv):
             self.instant_controls[:] = self._instant_key_controls["ZEROS"]
 
     def _setup_scene(self):
+        plan = cloner.clone_plan_from_env_0(self.cfg, self.scene.num_envs, self.scene.cfg.env_spacing)
         self.pick_and_place = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
         self.cube = self.cfg.cube_cfg.class_type(self.cfg.cube_cfg)
         self.gripper = self.cfg.gripper_cfg.class_type(self.cfg.gripper_cfg)
@@ -238,6 +240,7 @@ class PickAndPlaceEnv(DirectRLEnv):
         self.scene.articulations["robot"] = self.pick_and_place
         self.scene.rigid_objects["cube"] = self.cube
         self.scene.surface_grippers["gripper"] = self.gripper
+        cloner.replicate(plan)
 
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
         # Store the actions

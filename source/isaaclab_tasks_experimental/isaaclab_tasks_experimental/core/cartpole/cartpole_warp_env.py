@@ -11,6 +11,8 @@ import warp as wp
 from isaaclab_experimental.envs import DirectRLEnvWarp
 from isaaclab_experimental.utils.warp.utils import wrap_to_pi
 
+from isaaclab import cloner
+
 if TYPE_CHECKING:
     from isaaclab_tasks.core.cartpole.cartpole_direct_env_cfg import CartpoleEnvCfg
 
@@ -227,6 +229,7 @@ class CartpoleWarpEnv(DirectRLEnvWarp):
         self.torch_episode_length_buf = self.episode_length_buf  # already a torch tensor via wp.to_torch
 
     def _setup_scene(self) -> None:
+        plan = cloner.clone_plan_from_env_0(self.cfg, self.scene.num_envs, self.scene.cfg.env_spacing)
         self.cartpole = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
         if self.cfg.ground_cfg is not None:
             self.cfg.ground_cfg.spawn.func(
@@ -242,6 +245,7 @@ class CartpoleWarpEnv(DirectRLEnvWarp):
             orientation=self.cfg.light_cfg.init_state.rot,
         )
         self.scene.articulations["robot"] = self.cartpole
+        cloner.replicate(plan)
 
     def _pre_physics_step(self, actions: wp.array) -> None:
         wp.launch(

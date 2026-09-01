@@ -103,6 +103,8 @@ replace the contents of the ``__init__`` and ``_setup_scene`` methods with the f
 
 .. code-block:: python
 
+  from isaaclab import cloner
+
   class IsaacLabTutorialEnv(DirectRLEnv):
       cfg: IsaacLabTutorialEnvCfg
 
@@ -112,14 +114,16 @@ replace the contents of the ``__init__`` and ``_setup_scene`` methods with the f
           self.dof_idx, _ = self.robot.find_joints(self.cfg.dof_names)
 
       def _setup_scene(self):
+          plan = cloner.clone_plan_from_env_0(self.cfg, self.scene.num_envs, self.scene.cfg.env_spacing)
           self.robot = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
           self.cfg.ground_cfg.spawn.func(self.cfg.ground_cfg.prim_path, self.cfg.ground_cfg.spawn)
           self.cfg.light_cfg.spawn.func(self.cfg.light_cfg.prim_path, self.cfg.light_cfg.spawn)
           self.scene.articulations["robot"] = self.robot
+          cloner.replicate(plan)
 
-The direct environment base publishes its homogeneous plan before running ``_setup_scene`` and
-dispatches that plan afterward. The method constructs the cfg-owned prototypes and registers the
-robot with the scene; ``__init__`` then records the wheel joint indices after the base setup returns.
+The plain scene is a runtime registry. ``_setup_scene`` publishes its homogeneous plan before the
+cfg-owned constructors, registers the robot, and dispatches the plan afterward. ``__init__`` then
+records the wheel joint indices after setup returns.
 
 The next thing our environment needs is the definitions for how to handle actions, observations, and rewards. First, replace the contents of ``_pre_physics_step`` and
 ``_apply_action`` with the following.

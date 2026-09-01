@@ -93,6 +93,7 @@ Next, let's take a look at the contents of the other python file in our task dir
   .
   .
   .
+  from isaaclab import cloner
   from .isaac_lab_tutorial_env_cfg import IsaacLabTutorialEnvCfg
 
   class IsaacLabTutorialEnv(DirectRLEnv):
@@ -103,10 +104,12 @@ Next, let's take a look at the contents of the other python file in our task dir
           . . .
 
       def _setup_scene(self):
+          plan = cloner.clone_plan_from_env_0(self.cfg, self.scene.num_envs, self.scene.cfg.env_spacing)
           self.robot = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
           self.cfg.ground_cfg.spawn.func(self.cfg.ground_cfg.prim_path, self.cfg.ground_cfg.spawn)
           self.cfg.light_cfg.spawn.func(self.cfg.light_cfg.prim_path, self.cfg.light_cfg.spawn)
           self.scene.articulations["robot"] = self.robot
+          cloner.replicate(plan)
 
       def _pre_physics_step(self, actions: torch.Tensor) -> None:
           . . .
@@ -140,11 +143,9 @@ direct workflow exists and where most of our modifications will take place as we
 Currently, all of the member functions of ``IsaacLabTutorialEnv`` are directly inherited from the :class:`DirectRLEnv`. This
 known interface is how Isaac Lab and its supported RL frameworks interact with the environment.
 
-When the environment is initialized, it passes its config to ``DirectRLEnv``. The base class builds
-and publishes a cfg-derived homogeneous plan before constructing the plain scene and running
-``_setup_scene``. The setup method constructs each cfg-owned prototype and registers runtime entities
-with the scene; the base class then passes that same published plan to
-:func:`~isaaclab.cloner.replicate`.
+When the environment is initialized, ``DirectRLEnv`` constructs the configured plain scene as a
+runtime registry and invokes ``_setup_scene``. The setup method publishes the cfg-derived homogeneous
+plan, constructs and registers each cfg-owned prototype, then dispatches that same plan.
 
 Notice also that the remaining functions do not take additional arguments except ``_reset_idx``.  This is because the environment only manages the application of
 actions to the agent being simulated, and then updating the sim.  This is what the ``_pre_physics_step`` and ``_apply_action`` steps are for: we set the drive commands

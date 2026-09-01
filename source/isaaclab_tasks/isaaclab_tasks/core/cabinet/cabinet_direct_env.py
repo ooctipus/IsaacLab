@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 import torch
 
+from isaaclab import cloner
 from isaaclab.envs import DirectRLEnv
 from isaaclab.utils.math import combine_frame_transforms, matrix_from_quat
 
@@ -83,6 +84,7 @@ class CabinetDirectEnv(DirectRLEnv):
         }
 
     def _setup_scene(self) -> None:
+        plan = cloner.clone_plan_from_env_0(self.cfg, self.scene.num_envs, self.scene.cfg.env_spacing)
         self._robot = self.cfg.robot.class_type(self.cfg.robot)
         self._cabinet = self.cfg.cabinet.class_type(self.cfg.cabinet)
         for asset_cfg in (self.cfg.plane, self.cfg.light):
@@ -94,6 +96,7 @@ class CabinetDirectEnv(DirectRLEnv):
             )
         self.scene.articulations["robot"] = self._robot
         self.scene.articulations["cabinet"] = self._cabinet
+        cloner.replicate(plan)
 
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
         self.previous_actions[:] = self.actions

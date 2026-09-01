@@ -10,6 +10,7 @@ from collections.abc import Sequence
 
 import torch
 
+from isaaclab import cloner
 from isaaclab.assets import Articulation
 from isaaclab.envs import DirectMARLEnv
 from isaaclab.utils.math import quat_conjugate, quat_mul, sample_uniform, saturate, scale_transform, unscale_transform
@@ -83,6 +84,7 @@ class HandoverEnv(DirectMARLEnv):
         self.y_unit_tensor = torch.tensor([0, 1, 0], dtype=torch.float, device=self.device).repeat((self.num_envs, 1))
 
     def _setup_scene(self):
+        plan = cloner.clone_plan_from_env_0(self.cfg, self.scene.num_envs, self.scene.cfg.env_spacing)
         self.right_hand = self.cfg.right_robot_cfg.class_type(self.cfg.right_robot_cfg)
         self.left_hand = self.cfg.left_robot_cfg.class_type(self.cfg.left_robot_cfg)
         self.object = self.cfg.object_cfg.class_type(self.cfg.object_cfg)
@@ -102,6 +104,7 @@ class HandoverEnv(DirectMARLEnv):
         self.scene.articulations["right_robot"] = self.right_hand
         self.scene.articulations["left_robot"] = self.left_hand
         self.scene.rigid_objects["object"] = self.object
+        cloner.replicate(plan)
 
     def _pre_physics_step(self, actions: dict[str, torch.Tensor]) -> None:
         self.actions = actions

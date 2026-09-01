@@ -10,6 +10,7 @@ import numpy as np
 import torch
 import warp as wp
 
+from isaaclab import cloner
 from isaaclab.envs import DirectRLEnv
 from isaaclab.utils.math import quat_apply
 
@@ -49,6 +50,7 @@ class HumanoidAmpEnv(DirectRLEnv):
         )
 
     def _setup_scene(self):
+        plan = cloner.clone_plan_from_env_0(self.cfg, self.scene.num_envs, self.scene.cfg.env_spacing)
         self.robot = self.cfg.robot.class_type(self.cfg.robot)
         for asset_cfg in (self.cfg.ground, self.cfg.light):
             asset_cfg.spawn.func(
@@ -58,6 +60,7 @@ class HumanoidAmpEnv(DirectRLEnv):
                 orientation=asset_cfg.init_state.rot,
             )
         self.scene.articulations["robot"] = self.robot
+        cloner.replicate(plan)
 
     def _pre_physics_step(self, actions: torch.Tensor):
         self.actions = actions.clone()

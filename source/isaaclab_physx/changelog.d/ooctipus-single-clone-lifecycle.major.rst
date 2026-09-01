@@ -8,3 +8,9 @@ Changed
   ``physx_replicate()``; put assets on a declarative scene cfg or homogeneous direct env cfg instead
   of calling a PhysX replication entry point directly. Low-level callers now pass the published plan
   to ``PhysxReplicateContext.replicate(plan)`` once; ``queue()`` and ``queue_mapping()`` were removed.
+
+Fixed
+^^^^^
+
+* Fixed rigid-object and rigid-object-collection resets to honor Warp environment masks when
+  clearing external wrenches.

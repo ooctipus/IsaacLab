@@ -9,6 +9,7 @@ import torch
 import carb
 
 import isaaclab.sim as sim_utils
+from isaaclab import cloner
 from isaaclab.envs import DirectRLEnv
 from isaaclab.utils import math as torch_utils
 
@@ -79,6 +80,7 @@ class FactoryEnv(DirectRLEnv):
         self.ep_success_times = torch.zeros((self.num_envs,), dtype=torch.long, device=self.device)
 
     def _setup_scene(self):
+        plan = cloner.clone_plan_from_env_0(self.cfg, self.scene.num_envs, self.scene.cfg.env_spacing)
         source_env = self.cfg.scene.clone_cfg.clone_template.format(0)
         for asset_cfg in (self.cfg.ground, self.cfg.table, self.cfg.light):
             asset_cfg.spawn.func(
@@ -97,6 +99,7 @@ class FactoryEnv(DirectRLEnv):
                 cfg.class_type(cfg) for cfg in (self.cfg.small_gear, self.cfg.large_gear)
             )
             self.scene.articulations.update(small_gear=self._small_gear_asset, large_gear=self._large_gear_asset)
+        cloner.replicate(plan)
 
     def _compute_intermediate_values(self, dt):
         """Get values computed from raw tensors. This includes adding noise."""

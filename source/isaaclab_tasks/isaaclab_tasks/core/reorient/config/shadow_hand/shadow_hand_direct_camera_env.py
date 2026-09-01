@@ -42,8 +42,8 @@ class ShadowHandCameraEnv(ReorientDirectEnv):
         self.gt_keypoints = torch.ones(self.num_envs, 8, 3, dtype=torch.float32, device=self.device)
         self.goal_keypoints = torch.ones(self.num_envs, 8, 3, dtype=torch.float32, device=self.device)
 
-    def _setup_scene(self):
-        super()._setup_scene()
+    def _setup_scene_entities(self):
+        super()._setup_scene_entities()
         self._tiled_camera = self.cfg.tiled_camera.class_type(self.cfg.tiled_camera)
         self.scene.sensors["tiled_camera"] = self._tiled_camera
 

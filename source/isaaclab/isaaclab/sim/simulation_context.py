@@ -678,24 +678,51 @@ class SimulationContext:
         return self._scene_data_provider
 
     def register_interactive_scene(self, scene) -> None:
-        """Register the active scene so scene data providers can expose scene-owned sensors."""
+        """Register the active scene so scene data providers can expose scene-owned sensors.
+
+        Raises:
+            RuntimeError: If another scene is already registered.
+        """
+        current = getattr(self, "_interactive_scene", None)
+        if scene is not None and current is not None and current is not scene:
+            raise RuntimeError("A SimulationContext owns exactly one InteractiveScene.")
         self._interactive_scene = scene
         if self._scene_data_provider is not None:
             self._scene_data_provider.set_interactive_scene(scene)
 
     def get_clone_plan(self) -> ClonePlan | None:
-        """Return the clone plan published by the scene.
+        """Return the clone plan published by the active composition root.
 
-        The replication session publishes the plan before constructing scene entities, so every
-        constructor and registered backend consumes the published layout.
+        A declarative scene or an explicit direct-task lifecycle publishes the plan before
+        constructing scene entities, so every constructor and registered backend consumes the
+        same layout.
         """
         return self._clone_plan
 
     def set_clone_plan(self, plan: ClonePlan) -> None:
-        """Publish the simulation's single clone plan."""
+        """Publish the simulation's single clone plan.
+
+        Raises:
+            RuntimeError: If a plan is already published.
+        """
         if self._clone_plan is not None:
             raise RuntimeError("A SimulationContext owns exactly one clone-plan lifecycle.")
         self._clone_plan = plan
+
+    def _validate_clone_plan(self, plan: ClonePlan, env_spacing: float) -> None:
+        """Validate a prospective clone plan against the registered scene."""
+        scene = getattr(self, "_interactive_scene", None)
+        if scene is None:
+            return
+        cfg = scene.cfg
+        if (
+            plan.env_template != cfg.clone_cfg.clone_template
+            or len(plan.env_ids) != cfg.num_envs
+            or env_spacing != cfg.env_spacing
+            or plan.replicate_physics != cfg.clone_cfg.replicate_physics
+            or plan.filter_collisions != cfg.clone_cfg.filter_collisions
+        ):
+            raise ValueError("ClonePlan must match the registered InteractiveSceneCfg.")
 
     @property
     def visualizers(self) -> list[BaseVisualizer]:

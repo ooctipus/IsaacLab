@@ -214,14 +214,15 @@ they should be moved to the RL config file in Isaac Lab.
 .. rubric:: Environment Creation
 
 IsaacGymEnvs created the simulator, loaded assets, and looped over environment handles inside
-``create_sim()``. Isaac Lab environment base classes create the simulation context and own one clone
-lifecycle. Manager-based and heterogeneous workflows declare scene entities on an
+``create_sim()``. Isaac Lab environment base classes create the simulation context. Manager-based
+and heterogeneous workflows declare scene entities on an
 :class:`~isaaclab.scene.InteractiveSceneCfg`; homogeneous direct workflows declare them on the direct
-env cfg and construct one prototype in ``_setup_scene()``.
+env cfg and own their homogeneous clone lifecycle in ``_setup_scene()``.
 
 .. code-block:: python
 
    import isaaclab.sim as sim_utils
+   from isaaclab import cloner
    from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 
 
@@ -241,16 +242,16 @@ env cfg and construct one prototype in ``_setup_scene()``.
 
    class CartpoleEnv(DirectRLEnv):
       def _setup_scene(self):
+         plan = cloner.clone_plan_from_env_0(self.cfg, self.scene.num_envs, self.scene.cfg.env_spacing)
          self.cartpole = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
          self.cfg.ground_cfg.spawn.func(self.cfg.ground_cfg.prim_path, self.cfg.ground_cfg.spawn)
          self.cfg.light_cfg.spawn.func(self.cfg.light_cfg.prim_path, self.cfg.light_cfg.spawn)
          self.scene.articulations["robot"] = self.cartpole
+         cloner.replicate(plan)
 
-The direct environment base calls :func:`~isaaclab.cloner.clone_plan_from_env_0` before constructing
-the plain scene and running ``_setup_scene()``, then passes the published plan to
-:func:`~isaaclab.cloner.replicate`. Every authored asset cfg must therefore be present on the direct
-env cfg before construction; ``_setup_scene()`` constructs the prototype and registers runtime
-entities on the scene.
+The environment base constructs the plain scene registry and invokes ``_setup_scene()``. The setup
+method publishes before cfg-owned constructors and dispatches afterward. Every authored asset cfg
+must therefore be present on the direct env cfg before construction.
 
 
 **Ground Plane**
@@ -353,10 +354,10 @@ please refer to the :ref:`migrating-from-isaacgymenvs-comparing-simulation` sect
 
 **Cloner**
 
-Isaac Lab replaces the per-environment creation loop with one cfg-derived clone lifecycle. Environment
-base classes create it automatically from the resolved task config. They publish the exhaustive plan,
-cfg-owned constructors author the plan's source prototypes, and an explicit replication call dispatches
-each required stage/native clone context once.
+Isaac Lab replaces the per-environment creation loop with one cfg-derived clone lifecycle. A
+declarative scene owns it automatically; a homogeneous direct ``_setup_scene()`` owns it explicitly.
+The owner publishes the exhaustive plan, cfg-owned constructors author the plan's source prototypes,
+and one replication call dispatches each required stage/native clone context.
 Isaac Sim PhysX performs one plan-driven USD topology pass before native PhysX replication; renderers
 and visualizers reuse that same stage context rather than exporting or copying it again. The physics
 manager already exists on the active ``SimulationContext``; after any required stage edits, the first
@@ -369,7 +370,7 @@ A declarative :class:`~isaaclab.scene.InteractiveScene` owns that lifecycle dire
 
    scene = scene_cfg.class_type(scene_cfg)
 
-For a standalone homogeneous direct workflow, call
+For a homogeneous Direct task or standalone workflow, call
 :func:`~isaaclab.cloner.clone_plan_from_env_0` before constructing the prototype and
 :func:`~isaaclab.cloner.replicate` afterward. The lower-level
 :class:`~isaaclab.cloner.ReplicateSession` is only needed by general cloning tools.
@@ -561,7 +562,7 @@ and :isaaclab-source:`Cartpole environment <source/isaaclab_tasks/isaaclab_tasks
 **Task Config**
 
 The IsaacGymEnvs YAML fields become typed config data. Keep homogeneous direct-task asset cfgs on the
-direct environment config so the framework can plan every source before construction:
+direct environment config so ``_setup_scene()`` can plan every source before construction:
 
 .. code-block:: python
 
@@ -649,13 +650,15 @@ global assets alongside replicated assets:
 
    class CartpoleEnv(DirectRLEnv):
        def _setup_scene(self):
+           plan = cloner.clone_plan_from_env_0(self.cfg, self.scene.num_envs, self.scene.cfg.env_spacing)
            self.cartpole = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
            self.cfg.ground_cfg.spawn.func(self.cfg.ground_cfg.prim_path, self.cfg.ground_cfg.spawn)
            self.cfg.light_cfg.spawn.func(self.cfg.light_cfg.prim_path, self.cfg.light_cfg.spawn)
            self.scene.articulations["robot"] = self.cartpole
+           cloner.replicate(plan)
 
-The direct environment base class publishes the homogeneous plan before ``_setup_scene()`` and
-dispatches it afterward. No task-level environment loop or clone call is required.
+The task owns one explicit two-phase clone lifecycle; it does not loop over environments or discover
+the completed stage.
 
 
 **Pre and Post Physics Step**

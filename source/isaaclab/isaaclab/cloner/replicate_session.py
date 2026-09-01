@@ -57,6 +57,7 @@ def _build_plan(cfgs: Iterable[Any], num_clones: int, env_spacing: float, *, hom
         env_rows = [row for row, destination in enumerate(plan.destinations) if "{}" in destination]
         if any(not bool(plan.clone_mask[row].all()) or not under(plan.sources[row], source_env) for row in env_rows):
             raise ValueError("clone_plan_from_env_0 requires one homogeneous cfg-derived environment prototype.")
+    sim._validate_clone_plan(plan, env_spacing)
     if UsdReplicateContext in explicit_contexts or needs_usd_scene:
         sim.get_or_create_backend(UsdReplicateContext, sim.stage, clone_role="scene" if needs_usd_scene else None)
     return plan

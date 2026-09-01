@@ -10,6 +10,7 @@ from collections.abc import Sequence
 
 import torch
 
+from isaaclab import cloner
 from isaaclab.envs import DirectMARLEnv
 from isaaclab.utils.math import sample_uniform
 
@@ -38,6 +39,7 @@ class PendulumMARLEnv(DirectMARLEnv):
         self._consecutive_upright_steps = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
 
     def _setup_scene(self):
+        plan = cloner.clone_plan_from_env_0(self.cfg, self.scene.num_envs, self.scene.cfg.env_spacing)
         self.robot = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
         self.cfg.ground_cfg.spawn.func(
             self.cfg.ground_cfg.prim_path,
@@ -52,6 +54,7 @@ class PendulumMARLEnv(DirectMARLEnv):
             orientation=self.cfg.light_cfg.init_state.rot,
         )
         self.scene.articulations["robot"] = self.robot
+        cloner.replicate(plan)
 
     def _pre_physics_step(self, actions: dict[str, torch.Tensor]) -> None:
         self.actions = actions

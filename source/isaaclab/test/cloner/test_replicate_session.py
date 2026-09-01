@@ -68,7 +68,10 @@ def _simulation(registry=None, roles=None, stage=None):
         cfg=SimpleNamespace(physics_prim_path="/physicsScene"),
     )
     simulation.get_clone_plan = lambda: simulation._clone_plan
-    simulation.set_clone_plan = lambda plan: setattr(simulation, "_clone_plan", plan)
+    simulation._validate_clone_plan = lambda plan, env_spacing: SimulationContext._validate_clone_plan(
+        simulation, plan, env_spacing
+    )
+    simulation.set_clone_plan = lambda plan: SimulationContext.set_clone_plan(simulation, plan)
     simulation.get_or_create_backend = lambda backend_type, *args, **kwargs: SimulationContext.get_or_create_backend(
         simulation, backend_type, *args, **kwargs
     )
@@ -166,6 +169,30 @@ def test_clone_plan_from_env_0_accepts_an_empty_direct_scene(monkeypatch):
     cloner.replicate(plan)
 
     assert simulation._clone_plan_dispatched is True
+
+
+@pytest.mark.parametrize(
+    ("clone_cfg", "num_envs", "env_spacing"),
+    [
+        (cloner.CloneCfg(clone_template="/Other/env_{}"), 2, 1.0),
+        (cloner.CloneCfg(replicate_physics=False), 2, 1.0),
+        (cloner.CloneCfg(filter_collisions=False), 2, 1.0),
+        (cloner.CloneCfg(), 3, 1.0),
+        (cloner.CloneCfg(), 2, 2.0),
+    ],
+)
+def test_registered_scene_rejects_mismatched_plan(monkeypatch, clone_cfg, num_envs, env_spacing):
+    simulation = _simulation(stage=Usd.Stage.CreateInMemory())
+    simulation._interactive_scene = SimpleNamespace(
+        cfg=SimpleNamespace(clone_cfg=cloner.CloneCfg(), num_envs=2, env_spacing=1.0)
+    )
+    monkeypatch.setattr(SimulationContext, "instance", lambda: simulation)
+
+    with pytest.raises(ValueError, match="registered InteractiveSceneCfg"):
+        cloner.clone_plan_from_env_0(clone_cfg, num_envs, env_spacing)
+
+    assert simulation.get_clone_plan() is None
+    assert simulation._backend_registry == {}
 
 
 def test_clone_plan_from_env_0_rejects_multi_variant_layout_before_publication(monkeypatch):

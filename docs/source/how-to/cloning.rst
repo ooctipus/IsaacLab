@@ -13,9 +13,10 @@ A declarative :class:`~isaaclab.scene.InteractiveScene` owns this lifecycle. It 
 the plan before constructing scene entities, supplies each entity constructor with its exact
 prototype path, dispatches the required clone contexts when construction finishes, and queues model
 construction for the first hard reset after any intervening stage edits. A homogeneous direct
-environment instead uses a base-owned two-phase sequence: it calls
-:func:`~isaaclab.cloner.clone_plan_from_env_0` before constructing its plain scene and calls
-:func:`~isaaclab.cloner.replicate` after ``_setup_scene()``.
+environment instead uses a task-owned two-phase sequence. Its plain
+:class:`~isaaclab.scene.InteractiveScene` is only the runtime registry; ``_setup_scene()`` calls
+:func:`~isaaclab.cloner.clone_plan_from_env_0` before cfg-owned constructors and
+:func:`~isaaclab.cloner.replicate` afterward.
 
 .. contents:: On this page
    :local:
@@ -140,8 +141,7 @@ Manager-based and heterogeneous environments put assets on an
 
 
 For a homogeneous direct environment, keep asset cfgs on the direct env cfg and construct its one
-prototype in ``_setup_scene()``. The direct environment base publishes the cfg-derived plan before
-constructing the plain scene and dispatches it after ``_setup_scene()``:
+prototype in ``_setup_scene()``. The setup method owns the explicit plan, construction, and dispatch:
 
 .. code-block:: python
 
@@ -149,11 +149,15 @@ constructing the plain scene and dispatches it after ``_setup_scene()``:
        robot_cfg = CARTPOLE_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
        scene = InteractiveSceneCfg(num_envs=128, env_spacing=2.0)
 
-   def _setup_scene(self):
-       self.robot = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
-       self.scene.articulations["robot"] = self.robot
+   class CartpoleEnv(DirectRLEnv):
 
-Do not clone by walking the completed stage or by building a second plan in ``_setup_scene()``.
+       def _setup_scene(self):
+           plan = cloner.clone_plan_from_env_0(self.cfg, self.scene.num_envs, self.scene.cfg.env_spacing)
+           self.robot = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
+           self.scene.articulations["robot"] = self.robot
+           cloner.replicate(plan)
+
+Do not clone by walking the completed stage or open another lifecycle after prototype dispatch.
 
 
 Heterogeneous scenes

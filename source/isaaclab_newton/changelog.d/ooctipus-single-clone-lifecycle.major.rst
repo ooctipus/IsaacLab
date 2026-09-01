@@ -9,3 +9,9 @@ Changed
   ``queue_mapping()`` was removed. The first hard reset now builds the model after intervening stage
   edits. With physics replication disabled it imports exact per-environment paths derived from the
   plan instead of rebuilding scene ownership by walking the completed USD stage.
+
+Fixed
+^^^^^
+
+* Fixed rigid-object and rigid-object-collection resets to honor Warp environment masks when
+  clearing external wrenches.

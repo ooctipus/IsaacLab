@@ -9,6 +9,7 @@ from collections.abc import Sequence
 
 import torch
 
+from isaaclab import cloner
 from isaaclab.envs import DirectRLEnv, DirectRLEnvCfg
 from isaaclab.utils.math import (
     euler_xyz_from_quat,
@@ -57,9 +58,10 @@ class LocomotionDirectEnv(DirectRLEnv):
         self.prev_potentials = torch.zeros_like(self.potentials)
 
     def _setup_scene(self):
-        self.robot = self.cfg.robot.class_type(self.cfg.robot)
         self.cfg.terrain.num_envs = self.scene.num_envs
         self.cfg.terrain.env_spacing = self.scene.cfg.env_spacing
+        plan = cloner.clone_plan_from_env_0(self.cfg, self.scene.num_envs, self.scene.cfg.env_spacing)
+        self.robot = self.cfg.robot.class_type(self.cfg.robot)
         self.terrain = self.cfg.terrain.class_type(self.cfg.terrain)
         self.joint_wrench = self.cfg.joint_wrench.class_type(self.cfg.joint_wrench)
         self.cfg.light_cfg.spawn.func(
@@ -70,6 +72,7 @@ class LocomotionDirectEnv(DirectRLEnv):
         )
         self.scene.articulations["robot"] = self.robot
         self.scene.sensors["joint_wrench"] = self.joint_wrench
+        cloner.replicate(plan)
 
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
         self.actions = actions.clone()
