@@ -39,8 +39,7 @@ def filter_collisions(
 
     """
     # Deferred: importing pxr from the kit-less usd-core wheel before Kit boots corrupts Kit's
-    # own USD runtime. Keeping it in the body means resolving the ``cloner.filter_collisions``
-    # attribute stays pxr-free — only calling it, on a live PhysX stage, pulls pxr in.
+    # own USD runtime. Only a live PhysX replication session may import it safely.
     from pxr import Sdf, Usd, UsdGeom  # noqa: PLC0415
 
     scene_prim = stage.GetPrimAtPath(physicsscene_path)

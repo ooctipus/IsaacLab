@@ -14,10 +14,11 @@ import pytest
 import torch
 from isaaclab_newton.cloner import copy_newton_clone_source, newton_builder_world_hook
 from isaaclab_newton.cloner.replicate import NewtonReplicateContext
-from isaaclab_newton.physics import NewtonManager
+from isaaclab_newton.physics import NewtonCfg, NewtonManager
 
 from pxr import Usd, UsdGeom, UsdLux, UsdPhysics
 
+from isaaclab.cloner import ClonePlan
 from isaaclab.physics import PhysicsManager
 
 replicate_module = importlib.import_module("isaaclab_newton.cloner.replicate")
@@ -73,6 +74,47 @@ def test_copy_newton_clone_source_owns_mutable_geometry(monkeypatch):
     copied = copy_newton_clone_source("/World/Source")
 
     assert copied.shape_source[0] is not source.shape_source[0]
+
+
+def test_unreplicated_newton_model_imports_exact_materialized_plan_rows(monkeypatch):
+    """Deferred Newton construction preserves per-environment stage edits without discovery."""
+    plan = ClonePlan(
+        sources=("/World/envs/env_5/Robot", "/World/envs/env_3/Object"),
+        destinations=("/World/envs/env_{}/Robot", "/World/envs/env_{}/Object"),
+        clone_mask=torch.tensor([[True, False, True], [False, True, False]]),
+        env_ids=torch.tensor([5, 3, 12]),
+        positions=torch.zeros((3, 3)),
+        replicate_physics=False,
+    )
+    plan.context_rows[NewtonReplicateContext] = (0, 1)
+    manager = SimpleNamespace(_set_clone_state=mock.Mock())
+    simulation = SimpleNamespace(
+        cfg=SimpleNamespace(physics=NewtonCfg(load_visual_shapes=False), physics_prim_path="/physicsScene"),
+        physics_manager=manager,
+        stage=object(),
+    )
+    context = NewtonReplicateContext(simulation)
+    build = mock.Mock(return_value=(object(), object(), {}, [], {}))
+    rename = mock.Mock(return_value=[])
+    monkeypatch.setattr(replicate_module, "_build_newton_builder_from_mapping", build)
+    monkeypatch.setattr(replicate_module, "rename_builder_labels", rename)
+
+    context.replicate(plan)
+
+    kwargs = build.call_args.kwargs
+    assert kwargs["sources"] == (
+        "/World/envs/env_5/Robot",
+        "/World/envs/env_12/Robot",
+        "/World/envs/env_3/Object",
+    )
+    assert torch.equal(
+        kwargs["mapping"],
+        torch.tensor([[True, False, False], [False, False, True], [False, True, False]]),
+    )
+    assert rename.call_args.args[1:3] == (
+        kwargs["sources"],
+        ("/World/envs/env_{}/Robot", "/World/envs/env_{}/Robot", "/World/envs/env_{}/Object"),
+    )
 
 
 def test_explicit_global_import_uses_global_world(monkeypatch):

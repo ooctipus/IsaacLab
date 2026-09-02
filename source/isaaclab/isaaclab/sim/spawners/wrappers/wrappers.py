@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-import logging
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from pxr import Usd
@@ -16,24 +16,23 @@ from isaaclab.sim.spawners.from_files import UsdFileCfg
 if TYPE_CHECKING:
     from . import wrappers_cfg
 
-logger = logging.getLogger(__name__)
-
 
 def spawn_multi_asset(
-    prim_path: str,
+    prim_path: str | Sequence[str | None],
     cfg: wrappers_cfg.MultiAssetSpawnerCfg,
     translation: tuple[float, float, float] | None = None,
     orientation: tuple[float, float, float, float] | None = None,
     clone_in_fabric: bool = False,
     replicate_physics: bool = False,
 ) -> Usd.Prim:
-    """Spawn multiple assets into numbered prim paths derived from the provided configuration.
+    """Spawn multiple assets into numbered or explicitly supplied prim paths.
 
-    Assets are created in the order they appear in ``cfg.assets_cfg`` using the base name in ``prim_path``,
-    which must contain ``.*`` (for example, ``/World/Env_0/asset_.*`` spawns ``asset_0``, ``asset_1``, ...).
+    Assets are created in the order they appear in ``cfg.assets_cfg``. A string path derives
+    numbered siblings from its segment wildcard; a sequence supplies one exact path per variant,
+    with ``None`` retaining an inactive variant's slot without spawning it.
 
     Args:
-        prim_path: The prim path to spawn the assets.
+        prim_path: Wildcard path or exact per-variant paths to spawn the assets at.
         cfg: The configuration for spawning the assets.
         translation: The translation of the spawned assets. Default is None.
         orientation: The orientation of the spawned assets in (x, y, z, w) order. Default is None.
@@ -43,13 +42,12 @@ def spawn_multi_asset(
     Returns:
         The created prim at the first prim path.
     """
-    if cfg.spawn_paths is not None:
-        if len(cfg.spawn_paths) != len(cfg.assets_cfg):
+    if not isinstance(prim_path, str):
+        if len(prim_path) != len(cfg.assets_cfg):
             raise ValueError(
-                f"Expected spawn_paths to match assets_cfg length, got {len(cfg.spawn_paths)} and"
-                f" {len(cfg.assets_cfg)}."
+                f"Expected one prim path per asset configuration, got {len(prim_path)} and {len(cfg.assets_cfg)}."
             )
-        asset_prim_paths = list(cfg.spawn_paths)
+        asset_prim_paths = prim_path
     else:
         # split on separators only: a segment wildcard is written as a character class whose
         # text contains a '/' that is not a separator.
@@ -64,12 +62,6 @@ def spawn_multi_asset(
                 " (e.g. '.*' or '[^/]*') to indicate the path each individual multiple-asset to be spawned."
             )
         asset_prim_paths = [f"{prefix_path}/{base_glob.replace('*', str(i))}" for i in range(len(cfg.assets_cfg))]
-
-    if cfg.random_choice:
-        logger.warning(
-            "`random_choice` parameter in `spawn_multi_asset` is deprecated, and nothing will happen. "
-            "Use `isaaclab.scene.interactive_scene_cfg.InteractiveSceneCfg.random_heterogeneous_cloning` instead."
-        )
 
     spawned_prim_paths: list[str] = []
     for asset_prim_path, asset_cfg in zip(asset_prim_paths, cfg.assets_cfg):
@@ -103,7 +95,7 @@ def spawn_multi_asset(
 
 
 def spawn_multi_usd_file(
-    prim_path: str,
+    prim_path: str | Sequence[str | None],
     cfg: wrappers_cfg.MultiUsdFileCfg,
     translation: tuple[float, float, float] | None = None,
     orientation: tuple[float, float, float, float] | None = None,
@@ -116,7 +108,7 @@ def spawn_multi_usd_file(
     calls the :meth:`spawn_multi_asset` method to spawn them into the scene.
 
     Args:
-        prim_path: The prim path to spawn the assets.
+        prim_path: Wildcard path or exact per-variant paths to spawn the assets at.
         cfg: The configuration for spawning the assets.
         translation: The translation of the spawned assets. Default is None.
         orientation: The orientation of the spawned assets in (x, y, z, w) order. Default is None.
@@ -139,13 +131,13 @@ def spawn_multi_usd_file(
     usd_template_cfg = UsdFileCfg()
     for attr_name, attr_value in cfg.__dict__.items():
         # skip names we know are not present
-        if attr_name in ["func", "usd_path", "random_choice", "spawn_path", "spawn_paths"]:
+        if attr_name in ["func", "usd_path"]:
             continue
         # set the attribute into the template
         setattr(usd_template_cfg, attr_name, attr_value)
 
     # create multi asset configuration of USD files
-    multi_asset_cfg = MultiAssetSpawnerCfg(assets_cfg=[], spawn_paths=cfg.spawn_paths)
+    multi_asset_cfg = MultiAssetSpawnerCfg(assets_cfg=[])
     for usd_path in usd_paths:
         usd_cfg = usd_template_cfg.replace(usd_path=usd_path)
         multi_asset_cfg.assets_cfg.append(usd_cfg)

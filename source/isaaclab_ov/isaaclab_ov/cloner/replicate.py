@@ -41,9 +41,10 @@ def _matrix_to_clone_transform(matrix: Gf.Matrix4d) -> CloneTransform:
 
 
 class OvPhysxReplicateContext:
-    """Apply one clone plan to an OvPhysX simulation."""
+    """Apply one clone-plan mapping to an OvPhysX simulation."""
 
     replicate_priority = 0
+    uses_physx_collision_groups = True
 
     def __init__(self, sim_context: SimulationContext):
         """Initialize the context.
@@ -58,13 +59,14 @@ class OvPhysxReplicateContext:
             physics_scene_prim.CreateAttribute("physxScene:envIdInBoundsBitCount", Sdf.ValueTypeNames.Int).Set(4)
 
     def replicate(self, plan: ClonePlan) -> None:
-        """Publish clone operations from this context's plan rows.
+        """Publish clone operations from routed plan rows.
 
         Args:
-            plan: Replication layout shared by every clone backend.
+            plan: Published replication layout.
 
         Raises:
-            ValueError: If positions are malformed or an active source or source anchor prim is invalid.
+            ValueError: If a provided pose tensor is malformed or lacks a selected
+                environment, or if an active source or source anchor prim is invalid.
         """
         sources, destinations, mapping = _clone_mapping(plan, plan.context_rows[type(self)], whole_env=True)
         if plan.positions.shape != (len(plan.env_ids), 3):
@@ -102,13 +104,13 @@ class OvPhysxReplicateContext:
 
             targets: list[str] = []
             target_transforms: list[CloneTransform] = []
-            for env_id, position in zip(active_env_ids, active_positions, strict=True):
+            for env_id, pos in zip(active_env_ids, active_positions, strict=True):
                 if env_id == self_env_id:
                     continue
                 targets.append(destinations[i].format(env_id))
 
                 target_env_world = Gf.Matrix4d(1.0)
-                target_env_world.SetTranslateOnly(Gf.Vec3d(float(position[0]), float(position[1]), float(position[2])))
+                target_env_world.SetTranslateOnly(Gf.Vec3d(float(pos[0]), float(pos[1]), float(pos[2])))
                 target_transforms.append(_matrix_to_clone_transform(source_relative * target_env_world))
 
             if targets:

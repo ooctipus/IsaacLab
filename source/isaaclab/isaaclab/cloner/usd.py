@@ -35,6 +35,7 @@ class UsdReplicateContext:
 
     # USD destinations must exist before native physics contexts consume them.
     replicate_priority = -100
+    uses_physx_collision_groups = False
 
     def __init__(self, stage: Usd.Stage):
         """Initialize the context.

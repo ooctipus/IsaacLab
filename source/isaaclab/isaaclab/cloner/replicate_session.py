@@ -3,146 +3,219 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Post-construction clone-plan dispatch and :class:`ReplicateSession` sugar."""
+"""Clone-plan dispatch and :class:`ReplicateSession` lifecycle."""
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
-from typing import TYPE_CHECKING, Any
+from collections.abc import Iterable
+from typing import TYPE_CHECKING
+
+from pxr import Gf, Sdf, UsdGeom, Vt
 
 from isaaclab.sim import SimulationContext
 
-from .clone_plan import make_clone_plan
-from .cloner_cfg import DEFAULT_ENV_TEMPLATE
-from .cloner_strategies import sequential
+from .clone_plan import _asset_inventory, _make_clone_plan
+from .cloner_cfg import CloneCfg
+from .collision_filter import filter_collisions
+from .path import under
 from .usd import UsdReplicateContext
 
 if TYPE_CHECKING:
-    import torch
-
     from .clone_plan import ClonePlan
 
 
-REPLICATION_QUEUE: list[Any] = []
-"""Constructed cfgs consumed by post-construction :func:`clone_plan_from_env_0` workflows.
+def _build_plan(
+    clone_cfg: CloneCfg,
+    asset_cfgs: Iterable[object],
+    num_clones: int,
+    env_spacing: float,
+    *,
+    homogeneous: bool = False,
+) -> ClonePlan:
+    """Build one cfg-derived plan and register every context it declares."""
+    sim = SimulationContext.instance()
+    if sim is None:
+        raise RuntimeError("Clone planning requires an active SimulationContext.")
+    if sim.get_clone_plan() is not None:
+        raise RuntimeError("A SimulationContext owns exactly one clone lifecycle.")
 
-Cfg-first :class:`ReplicateSession` planning does not read the queue. Dispatch clears it
-without deriving any backend mapping from it.
-"""
+    cfgs, cfg_names, cfg_contexts = _asset_inventory(asset_cfgs)
+    explicit_contexts = {
+        context_type for contexts in cfg_contexts.values() if contexts is not None for context_type in contexts
+    }
+    context_roles = {
+        context_type: set(sim._backend_clone_roles.get(context_type, ())) for context_type in sim._backend_registry
+    }
+    needs_usd_scene = sim.requires_usd_stage or not clone_cfg.replicate_physics
+    if UsdReplicateContext in explicit_contexts or needs_usd_scene:
+        context_roles.setdefault(UsdReplicateContext, set())
+    if needs_usd_scene:
+        context_roles[UsdReplicateContext].add("scene")
+
+    plan = _make_clone_plan(
+        clone_cfg,
+        cfgs,
+        cfg_names,
+        cfg_contexts,
+        num_clones=num_clones,
+        env_spacing=env_spacing,
+        device=sim.device,
+        context_roles=context_roles,
+    )
+    if homogeneous:
+        source_env = plan.env_template.format(int(plan.env_ids[0]))
+        env_rows = [row for row, destination in enumerate(plan.destinations) if "{}" in destination]
+        if any(not bool(plan.clone_mask[row].all()) or not under(plan.sources[row], source_env) for row in env_rows):
+            raise ValueError("clone_plan_from_env_0 requires one homogeneous cfg-derived environment prototype.")
+    if UsdReplicateContext in explicit_contexts or needs_usd_scene:
+        sim.get_or_create_backend(UsdReplicateContext, sim.stage, clone_role="scene" if needs_usd_scene else None)
+    return plan
 
 
-def queue_replication(cfg: Any) -> None:
-    """Register a constructed cfg for post-construction clone planning.
+def _publish_plan(plan: ClonePlan) -> None:
+    """Publish a plan and author its environment frames before prototype construction."""
+    sim = SimulationContext.instance()
+    if sim is None:
+        raise RuntimeError("Clone planning requires an active SimulationContext.")
+    sim.set_clone_plan(plan)
+    sim._clone_plan_dispatched = None
+
+    root_layer = sim.stage.GetRootLayer()
+    UsdGeom.Xform.Define(sim.stage, plan.env_template.rsplit("/", 1)[0])
+    with Sdf.ChangeBlock():
+        for env_id, position in zip(plan.env_ids.tolist(), plan.positions.cpu().tolist(), strict=True):
+            root = Sdf.CreatePrimInLayer(root_layer, plan.env_template.format(env_id))
+            root.specifier = Sdf.SpecifierDef
+            root.typeName = "Xform"
+            translate = Sdf.AttributeSpec(root, "xformOp:translate", Sdf.ValueTypeNames.Double3)
+            translate.default = Gf.Vec3d(*position)
+            order = Sdf.AttributeSpec(root, "xformOpOrder", Sdf.ValueTypeNames.TokenArray)
+            order.default = Vt.TokenArray(["xformOp:translate"])
+    sim._clone_plan_dispatched = False
+
+
+def replicate(plan: ClonePlan) -> None:
+    """Replicate one published plan after its prototypes have been constructed.
 
     Args:
-        cfg: Asset cfg with resolved ``prim_path``.
+        plan: Plan returned by :func:`clone_plan_from_env_0`.
+
+    Raises:
+        RuntimeError: If no simulation is active, the plan cannot be dispatched, or a routed context is unregistered.
+        ValueError: If ``plan`` is not the active simulation's published plan.
     """
-    REPLICATION_QUEUE.append(cfg)
-
-
-def replicate(plan: ClonePlan, *, replicate_physics: bool = True) -> None:
-    """Dispatch a fully routed clone plan and publish it after replication.
-
-    Planning consumes cfg registrations; dispatch does not rediscover or reshape their mapping.
-    Every context is owned by the active :class:`~isaaclab.sim.SimulationContext` and receives
-    only ``plan``. The queue is cleared up front, so a backend failure cannot leak stale entries
-    into the next lifecycle.
-
-    Args:
-        plan: Replication layout to dispatch.
-        replicate_physics: Whether physics replication clones each environment. If False,
-            cloning is USD-only; an asset whose contexts are all physics-based is not cloned.
-    """
-    REPLICATION_QUEUE.clear()
     sim = SimulationContext.instance()
     if sim is None:
         raise RuntimeError("Clone-plan replication requires an active SimulationContext.")
-    missing = [context_type for context_type in plan.context_rows if context_type not in sim._backend_registry]
+    if sim.get_clone_plan() is not plan:
+        raise ValueError("replicate() requires the plan published on the active SimulationContext.")
+    if sim._clone_plan_dispatched is not False:
+        raise RuntimeError("A clone plan can be replicated exactly once.")
+
+    # Dispatch is a one-shot transition. A failure leaves the simulation unusable rather than
+    # retrying a partially replicated plan.
+    sim._clone_plan_dispatched = None
+    context_rows = plan.context_rows
+    missing = [context_type for context_type in context_rows if context_type not in sim._backend_registry]
     if missing:
         names = ", ".join(f"{context_type.__module__}.{context_type.__qualname__}" for context_type in missing)
         raise RuntimeError(f"Clone contexts must be registered before plan dispatch: {names}.")
 
     contexts = []
-    for context_type in plan.context_rows:
+    for context_type in context_rows:
         roles = sim._backend_clone_roles.get(context_type, set())
-        if replicate_physics or context_type is UsdReplicateContext or roles & {"model", "scene"}:
-            contexts.append(sim._backend_registry[context_type])
+        context = sim._backend_registry[context_type]
+        if "model" not in roles and (not roles or "scene" in roles or (plan.replicate_physics and "physics" in roles)):
+            contexts.append(context)
+
     for context in sorted(contexts, key=lambda item: item.replicate_priority):
         context.replicate(plan)
-    sim.set_clone_plan(plan)
+
+    physics_contexts = (
+        sim._backend_registry[context_type]
+        for context_type, roles in sim._backend_clone_roles.items()
+        if "physics" in roles
+    )
+    if plan.filter_collisions and any(context.uses_physx_collision_groups for context in physics_contexts):
+        filter_collisions(
+            sim.stage,
+            sim.cfg.physics_prim_path,
+            "/World/collisions",
+            [plan.env_template.format(int(env_id)) for env_id in plan.env_ids.tolist()],
+            list(plan.collision_paths),
+        )
+    sim._clone_plan_dispatched = True
+
+
+def clone_plan_from_env_0(
+    clone_cfg: CloneCfg, asset_cfgs: Iterable[object], num_envs: int, env_spacing: float
+) -> ClonePlan:
+    """Build and publish one homogeneous cfg-derived plan before prototype construction.
+
+    Args:
+        clone_cfg: Environment replication policy.
+        asset_cfgs: Participating asset, sensor, terrain, material, and marker cfgs.
+        num_envs: Number of target environments.
+        env_spacing: Grid spacing between environment origins [m].
+
+    Returns:
+        The plan to pass to :func:`replicate` after constructing the environment-zero prototypes.
+
+    Raises:
+        TypeError: If ``clone_cfg`` is not a clone policy or ``asset_cfgs`` contains one.
+        RuntimeError: If no simulation is active or it already owns a clone plan.
+        ValueError: If the cfgs do not describe one homogeneous environment prototype.
+    """
+    if not isinstance(clone_cfg, CloneCfg):
+        raise TypeError(f"clone_cfg must be a CloneCfg, got {type(clone_cfg).__name__}.")
+    asset_cfgs = tuple(asset_cfgs)
+    if any(isinstance(cfg, CloneCfg) for cfg in asset_cfgs):
+        raise TypeError("asset_cfgs must contain asset and sensor cfgs, not CloneCfg.")
+
+    plan = _build_plan(clone_cfg, asset_cfgs, num_envs, env_spacing, homogeneous=True)
+    _publish_plan(plan)
+    return plan
 
 
 class ReplicateSession:
-    """Folds :func:`make_clone_plan` and :func:`replicate` into a ``with`` block.
+    """Own one clone plan around explicit scene construction.
 
-    ``__enter__`` builds the complete plan and mutates each cfg's ``spawn_path``;
-    ``__exit__`` clears constructor registrations and dispatches that same plan.
-
-    Example:
-
-        .. code-block:: python
-
-            with cloner.ReplicateSession(cfgs, num_clones=128, env_spacing=2.0, device="cuda:0"):
-                for cfg in cfgs:
-                    cfg.class_type(cfg)
+    The session publishes the plan on entry, before cfg-owned constructors author their exact
+    prototype paths. On exit it materializes the stage and queues model construction for the first
+    hard reset, after any intervening stage edits.
     """
 
-    def __init__(
-        self,
-        cfgs: Iterable[Any],
-        num_clones: int,
-        env_spacing: float,
-        device: str,
-        *,
-        global_paths: tuple[str, ...] = (),
-        clone_strategy: Callable = sequential,
-        valid_set: torch.Tensor | None = None,
-        replicate_physics: bool = True,
-        env_template: str = DEFAULT_ENV_TEMPLATE,
-    ):
-        """Capture arguments for :func:`make_clone_plan` and :func:`replicate`.
+    def __init__(self, cfgs: Iterable[object], num_clones: int, env_spacing: float):
+        """Capture the declarative scene inputs for one cloning lifecycle.
 
         Args:
-            cfgs: Asset cfgs with resolved ``prim_path``.
-            num_clones: Number of target envs.
-            env_spacing: Grid spacing between env origins [m].
-            device: Torch device for plan tensors.
-            global_paths: Complete shared-asset roots declared by the composition root. Defaults to none.
-            clone_strategy: Prototype-to-env assignment function.
-            valid_set: Optional ``[num_combos, num_groups]`` long tensor of valid
-                prototype combinations; ``None`` uses the full cartesian product.
-            replicate_physics: Whether physics replication clones each environment;
-                forwarded to :func:`replicate`.
-            env_template: Path template for a replicated env prim, ``{}`` marking the env index.
+            cfgs: An iterable containing exactly one :class:`~isaaclab.cloner.CloneCfg` and every
+                participating prim-authoring cfg.
+            num_clones: Number of target environments.
+            env_spacing: Grid spacing between environment origins [m].
         """
-        self._cfgs = cfgs
-        self._replicate_physics = replicate_physics
-        self._kwargs = dict(
-            num_clones=num_clones,
-            env_spacing=env_spacing,
-            device=device,
-            global_paths=global_paths,
-            clone_strategy=clone_strategy,
-            valid_set=valid_set,
-            env_template=env_template,
-        )
+        cfgs = tuple(cfgs)
+        clone_cfgs = tuple(cfg for cfg in cfgs if isinstance(cfg, CloneCfg))
+        if len(clone_cfgs) != 1:
+            raise ValueError("ReplicateSession requires one CloneCfg as a top-level input.")
+        self._clone_cfg = clone_cfgs[0]
+        self._asset_cfgs = tuple(cfg for cfg in cfgs if cfg is not self._clone_cfg)
+        self._num_clones = num_clones
+        self._env_spacing = env_spacing
         self._plan: ClonePlan | None = None
 
     def __enter__(self) -> ReplicateSession:
-        self._plan = make_clone_plan(self._cfgs, **self._kwargs)
+        if self._plan is not None:
+            raise RuntimeError("A SimulationContext owns exactly one clone lifecycle.")
+        self._plan = _build_plan(self._clone_cfg, self._asset_cfgs, self._num_clones, self._env_spacing)
+        _publish_plan(self._plan)
         return self
 
     def __exit__(self, exc_type, exc_value, traceback) -> None:
         if exc_type is None:
             assert self._plan is not None
-            replicate(self._plan, replicate_physics=self._replicate_physics)
+            replicate(self._plan)
         else:
-            # Drop cfgs registered before the failure so the next session is clean.
-            REPLICATION_QUEUE.clear()
-
-    @property
-    def plan(self) -> ClonePlan:
-        """The :class:`~isaaclab.cloner.ClonePlan` produced in :meth:`__enter__`."""
-        if self._plan is None:
-            raise RuntimeError("ReplicateSession.plan is only available inside the with block.")
-        return self._plan
+            sim = SimulationContext.instance()
+            if sim is not None and sim.get_clone_plan() is self._plan:
+                sim._clone_plan_dispatched = None

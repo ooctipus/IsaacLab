@@ -450,6 +450,7 @@ class TestVisualizationClonePlan(unittest.TestCase):
             clone_mask=torch.ones((1, 4), dtype=torch.bool),
             env_ids=torch.arange(4),
             positions=torch.zeros((4, 3)),
+            replicate_physics=True,
         )
 
         entries = visualization_deformables_module._expand_clone_plan_deformable_entries([entry], clone_plan)
@@ -501,6 +502,7 @@ class TestVisualizationClonePlan(unittest.TestCase):
             clone_mask=torch.empty((0, 0), dtype=torch.bool),
             env_ids=torch.empty(0, dtype=torch.long),
             positions=torch.empty((0, 3)),
+            replicate_physics=True,
         )
 
         with (
@@ -527,7 +529,8 @@ class TestVisualizationClonePlan(unittest.TestCase):
             destinations=("/World/envs/env_{}/Object", "/World/envs/env_{}/Object"),
             clone_mask=torch.tensor([[True, False, True], [False, True, False]], dtype=torch.bool),
             env_ids=torch.tensor([0, 1, 2], dtype=torch.long),
-            positions=torch.tensor([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0], [6.0, 0.0, 0.0]]),
+            positions=torch.zeros((3, 3)),
+            replicate_physics=True,
         )
 
         with (

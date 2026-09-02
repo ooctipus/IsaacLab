@@ -20,9 +20,10 @@ if TYPE_CHECKING:
 
 
 class PhysxReplicateContext:
-    """Apply one clone plan through the PhysX replicator."""
+    """Apply one clone-plan mapping through the PhysX replicator."""
 
     replicate_priority = 0
+    uses_physx_collision_groups = True
 
     def __init__(self, stage: Usd.Stage):
         """Initialize the context.
@@ -41,10 +42,10 @@ class PhysxReplicateContext:
         self._registered = False
 
     def replicate(self, plan: ClonePlan) -> None:
-        """Register the PhysX replicator for this context's plan rows.
+        """Register the PhysX replicator for routed plan rows.
 
         Args:
-            plan: Replication layout shared by every clone backend.
+            plan: Published replication layout.
         """
         rows = plan.context_rows[type(self)]
         sources, destinations, mapping = _clone_mapping(plan, rows, whole_env=plan.positions.is_cuda)
@@ -72,7 +73,7 @@ class PhysxReplicateContext:
                 native_paths.extend(destinations[i].format(int(world)) for world in worlds)
             matched = cloner.path.match(src, destinations[i])
             if matched is not None and matched.instance.isdigit():
-                filtered = [world for world in worlds if world != int(matched.instance)]
+                filtered = [w for w in worlds if w != int(matched.instance)]
                 worlds = filtered if filtered else worlds
             physx_queue.append((src, destinations[i], tuple(map(int, worlds))))
 

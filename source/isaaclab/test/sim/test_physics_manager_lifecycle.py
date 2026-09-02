@@ -32,22 +32,30 @@ def test_backend_registry_uses_only_backend_type():
     context = object.__new__(SimulationContext)
     context._backend_registry = {}
     context._backend_clone_roles = {}
+    context._clone_plan = None
     created = []
 
     first = context.get_or_create_backend(Backend, 1, clone_role="physics")
     same = context.get_or_create_backend(Backend, 2, clone_role="model")
     other_type = context.get_or_create_backend(OtherBackend, 4, clone_role="scene")
-    same_other_type = context.get_or_create_backend(OtherBackend, 5, clone_role="model")
 
     assert same is first
-    assert same_other_type is other_type is not first
+    assert other_type is not first
     assert created == [1, 4]
     assert set(context._backend_registry) == {Backend, OtherBackend}
-    assert context._backend_clone_roles == {Backend: {"physics", "model"}, OtherBackend: {"scene", "model"}}
+    assert context._backend_clone_roles == {Backend: {"physics", "model"}, OtherBackend: {"scene"}}
     assert "resource_key" not in inspect.signature(SimulationContext.get_or_create_backend).parameters
     cfg_types = (PhysicsCfg, RendererCfg, VisualizerCfg)
     assert all("resource_key" not in cfg_type.__dataclass_fields__ for cfg_type in cfg_types)
 
+    hybrid_type = type("HybridBackend", (), {})
+    context.get_or_create_backend(hybrid_type, clone_role="model")
+    with pytest.raises(ValueError, match="cannot own both scene materialization and model construction"):
+        context.get_or_create_backend(hybrid_type, clone_role="scene")
+
+    context._clone_plan = object()
+    with pytest.raises(RuntimeError, match="before the clone plan is published"):
+        context.get_or_create_backend(type("LateBackend", (), {}), clone_role="scene")
     with pytest.raises(ValueError, match="Unknown clone role"):
         context.get_or_create_backend(Backend, clone_role="late")
 

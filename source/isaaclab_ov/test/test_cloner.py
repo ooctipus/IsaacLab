@@ -19,12 +19,10 @@ from isaaclab.cloner import ClonePlan
 
 
 def _context(stage) -> OvPhysxReplicateContext:
-    """Build a context with the manager surface used by cloning."""
     return OvPhysxReplicateContext(SimpleNamespace(stage=stage, physics_manager=OvPhysxManager))
 
 
-def _plan(sources, destinations, env_ids, mapping, positions=None) -> ClonePlan:
-    """Build one direct context input for backend-focused tests."""
+def _plan(sources, destinations, env_ids, mapping, positions=None):
     if positions is None:
         positions = torch.zeros((len(env_ids), 3))
     return ClonePlan(
@@ -33,8 +31,13 @@ def _plan(sources, destinations, env_ids, mapping, positions=None) -> ClonePlan:
         clone_mask=mapping,
         env_ids=env_ids,
         positions=positions,
-        context_rows={OvPhysxReplicateContext: tuple(range(len(sources)))},
+        replicate_physics=True,
     )
+
+
+def _replicate(context, plan):
+    plan.context_rows[type(context)] = tuple(range(len(plan.sources)))
+    context.replicate(plan)
 
 
 def test_context_is_simulation_owned():
@@ -69,14 +72,15 @@ def test_nested_clone_uses_final_target_pose(monkeypatch):
     )
 
     context = _context(stage)
-    context.replicate(
+    _replicate(
+        context,
         _plan(
             ["/World/envs/env_0/Robot", "/World/envs/env_9/Inactive"],
             ["/World/envs/env_{}/Robot", "/World/envs/env_{}/Inactive"],
             torch.tensor([0, 1]),
             torch.tensor([[True, True], [False, False]]),
             positions=torch.tensor([[4.0, 5.0, 6.0], [10.0, 20.0, 30.0]]),
-        )
+        ),
     )
 
     expected_orientation = torch.tensor([source_half_angle_sin, 0.0, 0.0, source_half_angle_cos])
@@ -112,13 +116,14 @@ def test_replicate_rejects_invalid_source_prim():
     context = _context(stage)
 
     with pytest.raises(ValueError, match="/World/envs/env_0"):
-        context.replicate(
+        _replicate(
+            context,
             _plan(
                 ["/World/envs/env_0/Robot"],
                 ["/World/envs/env_{}/Robot"],
                 torch.tensor([0, 1]),
                 torch.tensor([[True, True]]),
-            )
+            ),
         )
 
 
@@ -135,13 +140,14 @@ def test_replicate_rejects_invalid_source_anchor():
 
     context = _context(StageWithoutAnchor())
     with pytest.raises(ValueError, match="/World/envs/env_0"):
-        context.replicate(
+        _replicate(
+            context,
             _plan(
                 ["/World/envs/env_0/Robot"],
                 ["/World/envs/env_{}/Robot"],
                 torch.tensor([0, 1]),
                 torch.tensor([[True, True]]),
-            )
+            ),
         )
 
 
@@ -152,14 +158,15 @@ def test_replicate_rejects_pose_tensor_missing_selected_environment():
     context = _context(stage)
 
     with pytest.raises(ValueError, match="positions"):
-        context.replicate(
+        _replicate(
+            context,
             _plan(
                 ["/World/envs/env_0/Robot"],
                 ["/World/envs/env_{}/Robot"],
                 torch.tensor([0, 1]),
                 torch.tensor([[True, True]]),
                 positions=torch.zeros((1, 3)),
-            )
+            ),
         )
 
 
@@ -170,12 +177,13 @@ def test_replicate_rejects_malformed_pose_tensor():
     context = _context(stage)
 
     with pytest.raises(ValueError, match="positions must have shape"):
-        context.replicate(
+        _replicate(
+            context,
             _plan(
                 ["/World/envs/env_0/Robot"],
                 ["/World/envs/env_{}/Robot"],
                 torch.tensor([0, 1]),
                 torch.tensor([[True, True]]),
                 positions=torch.zeros((2, 2)),
-            )
+            ),
         )

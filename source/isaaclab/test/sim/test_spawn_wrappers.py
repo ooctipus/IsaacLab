@@ -162,7 +162,7 @@ def test_spawn_multiple_shapes_with_individual_settings(sim):
         assert prim.GetAttribute("physics:mass").Get() in mass_variations
 
 
-def test_spawn_multiple_shapes_with_explicit_spawn_paths(sim):
+def test_spawn_multiple_shapes_with_explicit_prim_paths(sim):
     """Multi-asset spawner accepts planned per-variant source paths."""
     sim_utils.create_prim("/World/planned", "Xform", translation=(0, 0, 0))
 
@@ -172,12 +172,11 @@ def test_spawn_multiple_shapes_with_explicit_spawn_paths(sim):
             sim_utils.CuboidCfg(size=(0.3, 0.3, 0.3)),
             sim_utils.SphereCfg(radius=0.3),
         ],
-        spawn_paths=["/World/planned/apple", None, "/World/planned/banana"],
         mass_props=sim_utils.MassPropertiesCfg(mass=1.0),
         collision_props=sim_utils.CollisionPropertiesCfg(),
     )
 
-    prim = cfg.func("/World/ignored_without_regex", cfg)
+    prim = cfg.func(("/World/planned/apple", None, "/World/planned/banana"), cfg)
 
     assert str(prim.GetPath()) == "/World/planned/apple"
     assert sim.stage.GetPrimAtPath("/World/planned/apple").IsValid()
@@ -186,15 +185,14 @@ def test_spawn_multiple_shapes_with_explicit_spawn_paths(sim):
     assert sim.stage.GetPrimAtPath("/World/planned/apple").GetAttribute("physics:mass").Get() == 1.0
 
 
-def test_spawn_multiple_shapes_spawn_paths_length_mismatch(sim):
+def test_spawn_multiple_shapes_prim_paths_length_mismatch(sim):
     """Explicit multi-asset paths must align one-to-one with variants."""
     cfg = sim_utils.MultiAssetSpawnerCfg(
         assets_cfg=[sim_utils.ConeCfg(radius=0.3, height=0.6), sim_utils.SphereCfg(radius=0.3)],
-        spawn_paths=["/World/planned/apple"],
     )
 
-    with pytest.raises(ValueError, match="spawn_paths"):
-        cfg.func("/World/ignored_without_regex", cfg)
+    with pytest.raises(ValueError, match="one prim path per asset configuration"):
+        cfg.func(("/World/planned/apple",), cfg)
 
 
 """

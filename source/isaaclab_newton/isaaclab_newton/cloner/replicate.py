@@ -184,9 +184,10 @@ def _build_newton_builder_from_mapping(
 
 
 class NewtonReplicateContext:
-    """Build one Newton model from a clone plan."""
+    """Build one Newton model from a clone-plan mapping."""
 
     replicate_priority = 0
+    uses_physx_collision_groups = False
 
     def __init__(self, sim_context: SimulationContext, *, up_axis: str = "Z"):
         """Initialize the context.
@@ -199,18 +200,24 @@ class NewtonReplicateContext:
         self.up_axis = up_axis
 
     def replicate(self, plan: ClonePlan) -> tuple[ModelBuilder, object, dict]:
-        """Build and publish the Newton model from this context's plan rows.
+        """Build and publish the Newton model builder from routed plan rows.
 
         Args:
-            plan: Replication layout shared by every clone backend.
-
-        Returns:
-            The populated builder, stage metadata, and injected site lookup.
-
-        Raises:
-            RuntimeError: If Newton replication is requested without an active Newton configuration.
+            plan: Published replication layout.
         """
-        sources, destinations, mapping = _clone_mapping(plan, plan.context_rows[type(self)], whole_env=True)
+        rows = plan.context_rows[type(self)]
+        if plan.replicate_physics:
+            sources, destinations, mapping = _clone_mapping(plan, rows, whole_env=True)
+        else:
+            pairs = plan.clone_mask[list(rows)].nonzero(as_tuple=False)
+            destinations = tuple(plan.destinations[rows[row]] for row, _column in pairs.tolist())
+            sources = tuple(
+                destination.format(int(plan.env_ids[column]))
+                for destination, (_row, column) in zip(destinations, pairs.tolist(), strict=True)
+            )
+            mapping = torch.zeros((len(pairs), len(plan.env_ids)), dtype=torch.bool, device=plan.clone_mask.device)
+            if len(pairs):
+                mapping[torch.arange(len(pairs), device=mapping.device), pairs[:, 1]] = True
         cfg = self._sim.cfg.physics
         if not isinstance(cfg, NewtonCfg):
             raise RuntimeError("Newton replication requires an active NewtonCfg.")
@@ -235,8 +242,7 @@ class NewtonReplicateContext:
             global_paths=global_paths,
         )
         fabric_body_bindings = rename_builder_labels(builder, sources, destinations, plan.env_ids, mapping)
-        manager = self._sim.physics_manager
-        manager._publish_clone_state(
+        self._sim.physics_manager._set_clone_state(
             builder, site_index_map, fabric_body_bindings, world_xforms, source_builders, mapping.size(1)
         )
         return builder, stage_info, site_index_map

@@ -128,6 +128,9 @@ class SimulationContext:
         self.cfg = SimulationCfg() if cfg is None else cfg
         self._backend_registry: dict[type[object], object] = {}
         self._backend_clone_roles: dict[type[object], set[str]] = {}
+        self._clone_plan: ClonePlan | None = None
+        self._clone_plan_dispatched: bool | None = False
+        self._clone_models_initialized: bool | None = False
 
         use_isaac_sim = has_kit()
         self._physics = _resolve_physics_cfg(self.cfg.physics, use_isaac_sim=use_isaac_sim)
@@ -194,10 +197,13 @@ class SimulationContext:
         # Set by the visualizers and renderers in use; read by the scene data provider.
         self.requires_usd_stage = False
         self.requires_newton_model = False
-        # Clone plan published by InteractiveScene after cloning. Providers (e.g. the
-        # Newton visualizer model rebuilder on a PhysX backend) consume this to derive
-        # their own backend args. None until a replication session publishes a plan.
-        self._clone_plan: ClonePlan | None = None
+        for type_name in self.resolve_visualizer_types():
+            requirements = REQUIRES_STAGE_AND_MODEL.get(type_name)
+            if requirements is None:
+                continue
+            requires_stage, requires_model = requirements
+            self.requires_usd_stage |= requires_stage
+            self.requires_newton_model |= requires_model
         # Default visualization dt used before/without visualizer initialization.
         physics_dt = getattr(self.cfg.physics, "dt", None)
         self._viz_dt = (physics_dt if physics_dt is not None else self.cfg.dt) * self.cfg.render_interval
@@ -679,23 +685,37 @@ class SimulationContext:
         return self._scene_data_provider
 
     def register_interactive_scene(self, scene) -> None:
-        """Register the active scene so scene data providers can expose scene-owned sensors."""
+        """Register the active scene so scene data providers can expose scene-owned sensors.
+
+        Raises:
+            RuntimeError: If another scene is already registered.
+        """
+        current = getattr(self, "_interactive_scene", None)
+        if scene is not None and current is not None and current is not scene:
+            raise RuntimeError("A SimulationContext owns exactly one InteractiveScene.")
         self._interactive_scene = scene
         if self._scene_data_provider is not None:
             self._scene_data_provider.set_interactive_scene(scene)
 
     def get_clone_plan(self) -> ClonePlan | None:
-        """Return the clone plan published by the scene.
+        """Return the clone plan published by the active composition root.
 
-        Set after replication. Consumed by scene data providers that build backend models
-        (e.g. Newton visualizer model on a PhysX backend) from the same plan the cloner used.
-        ``None`` until the scene replicates.
+        A declarative scene or an explicit direct-task lifecycle publishes the plan before
+        constructing scene entities, so every constructor and registered backend consumes the
+        same layout.
         """
         return self._clone_plan
 
-    def set_clone_plan(self, plan: ClonePlan | None) -> None:
-        """Set the cloner's clone plan."""
+    def set_clone_plan(self, plan: ClonePlan) -> None:
+        """Publish the simulation's single clone plan.
+
+        Raises:
+            RuntimeError: If a plan is already published.
+        """
+        if self._clone_plan is not None:
+            raise RuntimeError("A SimulationContext owns exactly one clone-plan lifecycle.")
         self._clone_plan = plan
+        self._clone_models_initialized = False
 
     @property
     def visualizers(self) -> list[BaseVisualizer]:
@@ -761,6 +781,25 @@ class SimulationContext:
         Args:
             soft: If True, skip full reinitialization.
         """
+        if self._clone_plan is not None and not self._clone_plan_dispatched:
+            raise RuntimeError("Clone-plan dispatch must complete successfully before reset.")
+        if self._clone_plan is not None and self._clone_models_initialized is None:
+            raise RuntimeError("Clone-plan model initialization failed; the simulation cannot be reset.")
+        if self._clone_plan is not None and not self._clone_models_initialized:
+            model_contexts = sorted(
+                (
+                    self._backend_registry[context_type]
+                    for context_type in self._clone_plan.context_rows
+                    if "model" in self._backend_clone_roles.get(context_type, ())
+                ),
+                key=lambda context: context.replicate_priority,
+            )
+            if model_contexts and soft:
+                raise RuntimeError("The first reset must initialize clone-plan models with soft=False.")
+            self._clone_models_initialized = None
+            for context in model_contexts:
+                context.replicate(self._clone_plan)
+            self._clone_models_initialized = True
         self.physics_manager.reset(soft)
         for viz in self._visualizers:
             viz.reset(soft)
@@ -965,8 +1004,8 @@ class SimulationContext:
         Args:
             backend_type: Backend class to construct when the resource does not exist.
             *args: Positional arguments used only when constructing the resource.
-            clone_role: ``"physics"`` for native physics replication, ``"model"`` for model
-                construction, or ``"scene"`` for whole-scene materialization.
+            clone_role: ``"physics"`` for native physics replication, ``"model"`` for a mandatory
+                model publisher, or ``"scene"`` for another whole-scene consumer.
             **kwargs: Keyword arguments used only when constructing the resource.
 
         Returns:
@@ -974,6 +1013,11 @@ class SimulationContext:
         """
         if clone_role not in (None, "physics", "model", "scene"):
             raise ValueError(f"Unknown clone role: {clone_role!r}.")
+        registered_roles = self._backend_clone_roles.get(backend_type, ())
+        if self._clone_plan is not None and clone_role is not None and clone_role not in registered_roles:
+            raise RuntimeError("Clone roles must be registered before the clone plan is published.")
+        if clone_role is not None and {clone_role, *registered_roles} >= {"model", "scene"}:
+            raise ValueError("One clone context cannot own both scene materialization and model construction.")
         if backend_type not in self._backend_registry:
             self._backend_registry[backend_type] = backend_type(*args, **kwargs)
         if clone_role is not None:
