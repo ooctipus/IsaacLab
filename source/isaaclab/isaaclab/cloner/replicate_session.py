@@ -17,40 +17,10 @@ from isaaclab.sim import SimulationContext
 from .clone_plan import make_clone_plan
 from .cloner_cfg import DEFAULT_ENV_TEMPLATE
 from .cloner_strategies import sequential
-from .path import under
-from .query import path_to_source
 from .usd import UsdReplicateContext
 
 if TYPE_CHECKING:
     from .clone_plan import ClonePlan
-
-
-REPLICATION_QUEUE: list[Any] = []
-"""Constructed cfgs consumed by post-construction :func:`clone_plan_from_env_0` workflows.
-
-Cfg-first :class:`ReplicateSession` planning does not read the queue. Dispatch clears it
-without deriving any backend mapping from it.
-"""
-
-
-def queue_replication(cfg: Any) -> None:
-    """Register a constructed cfg or verify that the active plan owns it.
-
-    Args:
-        cfg: Asset cfg with resolved ``prim_path``.
-    """
-    sim = SimulationContext.instance()
-    plan = None if sim is None else sim.get_clone_plan()
-    if plan is None:
-        REPLICATION_QUEUE.append(cfg)
-        return
-
-    global_owned = any(under(cfg.prim_path, root) for root in plan.global_paths)
-    if not sim._clone_plan_consumed and (id(cfg) in plan.cfg_rows or global_owned):
-        return
-    if cfg.spawn is None and (global_owned or path_to_source(plan, cfg.prim_path) is not None):
-        return
-    raise RuntimeError(f"{type(cfg).__name__} at {cfg.prim_path!r} is not owned by the active ClonePlan.")
 
 
 def replicate(plan: ClonePlan, *, replicate_physics: bool = True) -> None:
@@ -58,15 +28,13 @@ def replicate(plan: ClonePlan, *, replicate_physics: bool = True) -> None:
 
     Planning derives routing from the input cfgs; dispatch does not rediscover or reshape that mapping.
     Every context is owned by the active :class:`~isaaclab.sim.SimulationContext` and receives
-    only ``plan``. The queue is cleared up front, so a backend failure cannot leak stale entries
-    into the next lifecycle.
+    only ``plan``.
 
     Args:
         plan: Replication layout to dispatch.
         replicate_physics: Whether physics replication clones each environment. If False,
             cloning is USD-only; an asset whose contexts are all physics-based is not cloned.
     """
-    REPLICATION_QUEUE.clear()
     sim = SimulationContext.instance()
     if sim is None:
         raise RuntimeError("Clone-plan replication requires an active SimulationContext.")
@@ -152,8 +120,6 @@ class ReplicateSession:
             assert self._plan is not None
             replicate(self._plan, replicate_physics=self._replicate_physics)
         else:
-            # Drop cfgs registered before the failure so the next session is clean.
-            REPLICATION_QUEUE.clear()
             sim = SimulationContext.instance()
             if sim is not None and sim.get_clone_plan() is self._plan:
                 sim.set_clone_plan(None)

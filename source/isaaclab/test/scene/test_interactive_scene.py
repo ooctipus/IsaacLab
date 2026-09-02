@@ -220,10 +220,8 @@ def test_empty_scene_leaves_clone_lifecycle_to_caller():
 
         assert sim.get_clone_plan() is None
         torch.testing.assert_close(scene.env_origins, torch.from_numpy(cloner.grid_transforms(4, 1.0)[0]))
-        positions = cloner.grid_transforms(4, 2.0)[0]
-        env_template = scene.cfg.clone_cfg.clone_template
-        sim.set_clone_plan(cloner.clone_plan_from_env_0(env_template.format(0), env_template, 4, positions))
-        torch.testing.assert_close(scene.env_origins, torch.from_numpy(positions))
+        plan = cloner.clone_plan_from_env_0(scene.cfg.clone_cfg, (), 4, 2.0)
+        torch.testing.assert_close(scene.env_origins, torch.from_numpy(plan.positions))
 
 
 @pytest.mark.parametrize("device", ["cuda:0"])

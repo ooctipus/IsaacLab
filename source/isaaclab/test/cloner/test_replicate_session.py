@@ -69,29 +69,6 @@ def test_make_clone_plan_routes_default_and_explicit_contexts(monkeypatch):
     assert empty.global_paths == ("/World/Ground",)
 
 
-def test_queue_accepts_only_cfgs_owned_by_published_plan(monkeypatch):
-    """Cfg-first constructors cannot escape the published plan."""
-    planned = SimpleNamespace(prim_path="/World/envs/env_[^/]+/Robot", spawn=object())
-    unplanned = SimpleNamespace(prim_path="/World/envs/env_[^/]+/Object", spawn=object())
-    covered_reference = SimpleNamespace(prim_path="/World/envs/env_[^/]+/Existing", spawn=None)
-    unplanned_reference = SimpleNamespace(prim_path="/World/Outside", spawn=None)
-    plan = _plan()
-    plan.cfg_rows[id(planned)] = (0,)
-    simulation = SimpleNamespace(get_clone_plan=lambda: plan, _clone_plan_consumed=False)
-    replicate_session.REPLICATION_QUEUE.clear()
-    monkeypatch.setattr(SimulationContext, "instance", lambda: simulation)
-
-    replicate_session.queue_replication(planned)
-    with pytest.raises(RuntimeError, match="not owned"):
-        replicate_session.queue_replication(unplanned)
-    simulation._clone_plan_consumed = True
-    replicate_session.queue_replication(covered_reference)
-    with pytest.raises(RuntimeError, match="not owned"):
-        replicate_session.queue_replication(unplanned_reference)
-
-    assert replicate_session.REPLICATION_QUEUE == []
-
-
 @pytest.mark.parametrize("valid_set", [np.asarray([["0"]]), np.asarray([[0 + 1j]])])
 def test_make_clone_plan_rejects_non_integer_combinations(valid_set):
     """Prototype indices must be integer data rather than values NumPy can coerce to integers."""
@@ -191,10 +168,8 @@ def test_replicate_rejects_a_second_dispatch(monkeypatch):
     simulation.set_clone_plan = lambda value: SimulationContext.set_clone_plan(simulation, value)
     simulation._consume_clone_plan = lambda value: SimulationContext._consume_clone_plan(simulation, value)
     monkeypatch.setattr(SimulationContext, "instance", lambda: simulation)
-    replicate_session.REPLICATION_QUEUE.append(object())
 
     with pytest.raises(RuntimeError, match="consumed"):
         replicate_session.replicate(plan)
-    assert replicate_session.REPLICATION_QUEUE == []
     with pytest.raises(RuntimeError, match="consumed"):
         simulation.set_clone_plan(None)
