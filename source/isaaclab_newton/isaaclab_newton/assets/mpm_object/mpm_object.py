@@ -451,7 +451,7 @@ def _resolve_particle_asset_paths(prim_path: str, num_instances: int) -> list[st
 
     sim = sim_utils.SimulationContext.instance()
     clone_plan = sim.get_clone_plan() if sim is not None else None
-    if clone_plan is not None and clone_plan.env_ids is not None:
+    if clone_plan is not None:
         paths_by_env_id: dict[int, str] = {}
         for _, template, _, env_ids in iter_sources(clone_plan, prim_path):
             matched = cloner_path.match(prim_path, template)

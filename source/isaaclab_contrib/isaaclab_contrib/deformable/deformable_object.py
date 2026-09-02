@@ -16,6 +16,7 @@ import warp as wp
 from isaaclab_newton.physics import NewtonManager as SimulationManager
 
 import isaaclab.sim as sim_utils
+from isaaclab import cloner
 from isaaclab.assets.deformable_object.base_deformable_object import BaseDeformableObject
 from isaaclab.markers import VisualizationMarkers
 from isaaclab.physics import PhysicsEvent
@@ -39,8 +40,8 @@ from .kernels import (
 class DeformableRegistryEntry:
     """Entry in the deformable body registry.
 
-    Registered by :class:`DeformableObject` during ``__init__``, consumed by
-    the Newton clone context inside the per-world ``begin_world``/``end_world`` loop.
+    Registered by :class:`DeformableObject` during ``__init__``, consumed by the Newton clone
+    context inside the per-world ``begin_world``/``end_world`` loop.
     After replication, ``particle_offsets`` and ``particles_per_body`` are filled in
     so the asset can bind to the correct particle ranges.
     """
@@ -65,7 +66,7 @@ class DeformableRegistryEntry:
     k_mu: float = 1e5
     k_lambda: float = 1e5
     k_damp: float = 0.0
-    # Filled by the Newton clone context:
+    # Filled by Newton clone-plan dispatch:
     particle_offsets: list[int] = field(default_factory=list)
     particles_per_body: int = 0
 
@@ -687,24 +688,18 @@ class DeformableObject(BaseDeformableObject):
         """
         from pxr import Gf, UsdGeom, UsdShade
 
-        # Resolve the path of the actually-spawned template prim. This must mirror
-        # :meth:`AssetBase.__init__`: ``spawn_path`` is set by ``InteractiveScene``
-        # when the asset is part of the template-based cloning flow (the spawn
-        # lives at ``/World/template/<Asset>/proto_asset_*`` and per-env clones at
-        # ``/World/envs/env_*/<Asset>`` are not yet authored). For Direct envs
-        # that spawn straight at the cloned regex, ``spawn_path`` is unset, so
-        # we fall back to ``prim_path`` — which already matches the spawned prim.
-        # The cloned-regex ``cfg.prim_path`` is still used below to build the
-        # registry entry's :attr:`sim_mesh_prim_path` / :attr:`vis_mesh_prim_path`
-        # so post-replicate consumers resolve all per-env clones.
-        lookup_path = (
-            self.cfg.spawn.spawn_path
-            if self.cfg.spawn is not None and self.cfg.spawn.spawn_path is not None
-            else self.cfg.prim_path
-        )
-        template_prim = sim_utils.find_first_matching_prim(lookup_path)
-        if template_prim is None:
-            raise RuntimeError(f"Failed to find prim for expression: '{lookup_path}'.")
+        sim = sim_utils.SimulationContext.instance()
+        assert sim is not None
+        plan = sim.get_clone_plan()
+        assert plan is not None
+        resolved = cloner.query.path_to_source(plan, self.cfg.prim_path)
+        if resolved is None:
+            raise RuntimeError(f"Clone plan does not own deformable path '{self.cfg.prim_path}'.")
+        source_path, _, suffix = resolved
+        lookup_path = source_path + suffix
+        template_prim = self.stage.GetPrimAtPath(lookup_path)
+        if not template_prim.IsValid():
+            raise RuntimeError(f"Failed to find planned deformable prototype: '{lookup_path}'.")
         template_prim_path = template_prim.GetPrimPath()
 
         # Discover sim / visual mesh prims under the template.
@@ -869,7 +864,7 @@ class DeformableObject(BaseDeformableObject):
         if self._num_instances == 0:
             raise RuntimeError(
                 f"No deformable body instances found for '{self.cfg.prim_path}'. "
-                "Ensure clone-plan replication or MODEL_INIT processed the registry."
+                "Ensure clone-plan dispatch or MODEL_INIT processed the registry."
             )
 
         logger.info("Newton deformable object initialized at: %s", self.cfg.prim_path)

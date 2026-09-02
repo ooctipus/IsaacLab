@@ -28,7 +28,7 @@ from isaaclab_newton.physics.newton_manager import NewtonManager
 from isaaclab_newton.sim.views import NewtonSiteFrameView as FrameView
 
 import isaaclab.sim as sim_utils
-from isaaclab.assets import RigidObjectCfg
+from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
 from isaaclab.sim import SimulationCfg, build_simulation_context
 from isaaclab.utils.configclass import configclass
@@ -48,6 +48,12 @@ class _SceneCfg(InteractiveSceneCfg):
             collision_props=sim_utils.CollisionPropertiesCfg(),
         ),
         init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 1.0)),
+    )
+
+    camera_mount = AssetBaseCfg(
+        prim_path="{ENV_REGEX_NS}/Cube/CameraMount",
+        spawn=sim_utils.SensorFrameCfg(),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=CHILD_OFFSET),
     )
 
 
@@ -85,7 +91,6 @@ def view_factory():
         sim = ctx.__enter__()
         sim._app_control_on_stop_handle = None
         InteractiveScene(_SceneCfg(num_envs=num_envs, env_spacing=2.0))
-        sim_utils.create_prim("/World/envs/env_0/Cube/CameraMount", translation=CHILD_OFFSET)
         view = FrameView("/World/envs/env_[^/]+/Cube/CameraMount", device=device)
         sim.reset()
 
@@ -144,12 +149,9 @@ def test_clone_plan_view_uses_source_child_without_destination_usd(device):
     sim = ctx.__enter__()
     sim._app_control_on_stop_handle = None
     InteractiveScene(_SceneCfg(num_envs=num_envs, env_spacing=2.0))
-
     stage = sim_utils.get_current_stage()
     assert stage.GetPrimAtPath("/World/envs/env_0/Cube").IsValid()
     assert not stage.GetPrimAtPath("/World/envs/env_1/Cube").IsValid()
-    sim_utils.create_prim("/World/envs/env_0/Cube/CameraMount", translation=CHILD_OFFSET)
-
     view = FrameView("/World/envs/env_[^/]+/Cube/CameraMount", device=device)
     sim.reset()
 
@@ -169,7 +171,6 @@ def test_view_can_resolve_from_body_labels_after_reset(device):
     sim = ctx.__enter__()
     sim._app_control_on_stop_handle = None
     InteractiveScene(_SceneCfg(num_envs=num_envs, env_spacing=2.0))
-    sim_utils.create_prim("/World/envs/env_0/Cube/CameraMount", translation=CHILD_OFFSET)
 
     sim.reset()
     view = FrameView("/World/envs/env_[^/]+/Cube/CameraMount", device=device)

@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 import newton
@@ -14,7 +13,6 @@ import warp as wp
 
 import isaaclab.sim as sim_utils
 from isaaclab import cloner
-from isaaclab.cloner.cloner_cfg import DEFAULT_ENV_TEMPLATE
 from isaaclab.sensors.ray_caster.base_ray_caster import BaseRayCaster
 from isaaclab.sensors.ray_caster.kernels import ALIGNMENT_BASE, update_ray_caster_kernel
 from isaaclab.utils.warp import ProxyArray
@@ -64,16 +62,12 @@ def _gather_pose_by_index_kernel(
     quat_dst[index] = quat_src[source_index]
 
 
-# the clone slot, spelled the way every other destination expression spells it, so patterns
-# built here compare equal to ones built from the destination template.
-_ENV_SLOT_NS = DEFAULT_ENV_TEMPLATE.format("[^/]+")
-_CONCRETE_ENV_NS = re.compile(rf"^{re.escape(DEFAULT_ENV_TEMPLATE.format(''))}\d+/")
-
-
-def _newton_body_pattern(body_path: str) -> str:
+def _newton_body_pattern(body_path: str, env_template: str) -> str:
     """Convert a concrete environment index to a prototype body pattern."""
-    body_path = body_path.replace("{}", "[^/]+")
-    return _CONCRETE_ENV_NS.sub(_ENV_SLOT_NS + "/", body_path)
+    matched = cloner.path.match(body_path, env_template)
+    if matched is None:
+        return body_path.replace("{}", "[^/]+")
+    return env_template.format("[^/]+") + matched.suffix
 
 
 def _identity_offsets(count: int, device: str) -> tuple[wp.array, wp.array]:
@@ -99,11 +93,9 @@ class _NewtonRayCasterPoseMixin:
 
     def _register_sites_for_expr(self, prim_expr: str) -> list[str]:
         """Register Newton sites for a prim expression."""
-        plan = sim_utils.SimulationContext.instance().get_clone_plan()
-        if plan is not None:
-            for destination_template in plan.destinations:
-                matched = cloner.path.match(prim_expr, destination_template)
-                if matched is not None and not matched.suffix:
+        if self.cfg.spawn is not None:
+            for source_root, destination, source_path, _ in cloner.query.iter_sources(self._clone_plan, prim_expr):
+                if "{}" in destination and source_path == source_root:
                     return [NewtonManager.cl_register_site(None, wp.transform(), per_world=True)]
 
         try:
@@ -122,7 +114,8 @@ class _NewtonRayCasterPoseMixin:
         quat = fixed_quat or (0.0, 0.0, 0.0, 1.0)
         site_transform = wp.transform(wp.vec3(*pos), wp.quat(*quat))
 
-        return [NewtonManager.cl_register_site(_newton_body_pattern(body_expr), site_transform)]
+        body_pattern = _newton_body_pattern(body_expr, self._clone_plan.env_template)
+        return [NewtonManager.cl_register_site(body_pattern, site_transform)]
 
     def _initialize_pose_tracking(self: Any) -> None:
         """Resolve registered site labels and allocate pose buffers."""
@@ -271,12 +264,12 @@ class NewtonRaycastSensor(_NewtonRayCasterPoseMixin, BaseRayCaster):
     """The configuration parameters."""
 
     def __init__(self, cfg: NewtonRaycastSensorCfg):
+        self._sensor_task_name: str | None = None
         if cfg.max_distance <= 0.0:
             raise ValueError(f"max_distance must be positive, received {cfg.max_distance}.")
         NewtonManager._sensor_bvh_shape_flags |= newton.ShapeFlags.COLLIDE_SHAPES
         super().__init__(cfg)
         self._data = NewtonRaycastSensorData()
-        self._sensor_task_name: str | None = None
 
     @property
     def data(self) -> NewtonRaycastSensorData:

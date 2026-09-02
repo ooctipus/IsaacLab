@@ -30,8 +30,9 @@ from pxr import Gf, Sdf, Usd, UsdGeom  # noqa: E402
 
 import isaaclab.sim as sim_utils  # noqa: E402
 import isaaclab.utils.math as math_utils  # noqa: E402
+from isaaclab import cloner  # noqa: E402
 from isaaclab.assets import DeformableObject, DeformableObjectCfg, RigidObjectCfg  # noqa: E402
-from isaaclab.scene import InteractiveScene, InteractiveSceneCfg  # noqa: E402
+from isaaclab.scene import InteractiveSceneCfg  # noqa: E402
 from isaaclab.sim import SimulationCfg, build_simulation_context  # noqa: E402
 from isaaclab.utils.configclass import configclass  # noqa: E402
 
@@ -92,7 +93,6 @@ class HeterogeneousMixedDeformableRigidSceneCfg(InteractiveSceneCfg):
             ],
             rigid_props=PhysxRigidBodyPropertiesCfg(disable_gravity=True),
             collision_props=PhysxCollisionPropertiesCfg(collision_enabled=True),
-            random_choice=False,
         ),
         init_state=RigidObjectCfg.InitialStateCfg(pos=(0.35, 0.0, 1.0)),
     )
@@ -105,21 +105,17 @@ def _ovphysx_sim_context(device: str, *, gravity_enabled: bool = True):
     return build_simulation_context(device=device, sim_cfg=sim_cfg, auto_add_lighting=True)
 
 
-def _generate_deformable_scene(
+def _make_deformable_cfg(
     spawn: sim_utils.SpawnerCfg,
-    num_objects: int = 2,
     height: float = 1.0,
     initial_rot: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 1.0),
-) -> DeformableObject:
-    """Create independently authored deformables beneath matching parent prims."""
-    for index in range(num_objects):
-        sim_utils.create_prim(f"/World/Table_{index}", "Xform", translation=(index * 1.0, 0.0, height))
-    cfg = DeformableObjectCfg(
-        prim_path="/World/Table_[^/]*/Object",
+) -> DeformableObjectCfg:
+    """Declare a deformable beneath each table environment."""
+    return DeformableObjectCfg(
+        prim_path="{ENV_REGEX_NS}/Object",
         spawn=spawn,
         init_state=DeformableObjectCfg.InitialStateCfg(pos=(0.0, 0.0, height), rot=initial_rot),
     )
-    return DeformableObject(cfg=cfg)
 
 
 def _assert_finite_deformable_state(deformable: DeformableObject) -> None:
@@ -164,7 +160,9 @@ def _run_cpu_deformable_initialization(result_queue: Any) -> None:
     """Run the CPU initialization contract in a fresh spawned process."""
     try:
         with _ovphysx_sim_context(device="cpu") as sim:
-            deformable = _generate_deformable_scene(pre_tetrahedralized_deformable_spawn_cfg(), num_objects=5)
+            cfg = _make_deformable_cfg(pre_tetrahedralized_deformable_spawn_cfg())
+            with cloner.ReplicateSession([cloner.CloneCfg(clone_template="/World/Table_{}"), cfg], 5, 1.0):
+                deformable = cfg.class_type(cfg)
             assert sys.getrefcount(deformable) < 10
             try:
                 sim.reset()
@@ -190,9 +188,9 @@ def _run_cpu_deformable_initialization(result_queue: Any) -> None:
 def test_initialization(num_objects: int, material_path: str | None):
     """Test volume deformable initialization and public buffer shapes."""
     with _ovphysx_sim_context(device="cuda:0") as sim:
-        deformable = _generate_deformable_scene(
-            pre_tetrahedralized_deformable_spawn_cfg(material_path=material_path), num_objects=num_objects
-        )
+        cfg = _make_deformable_cfg(pre_tetrahedralized_deformable_spawn_cfg(material_path=material_path))
+        with cloner.ReplicateSession([cloner.CloneCfg(clone_template="/World/Table_{}"), cfg], num_objects, 1.0):
+            deformable = cfg.class_type(cfg)
 
         assert sys.getrefcount(deformable) < 10
         sim.reset()
@@ -233,11 +231,11 @@ def test_absolute_material_sibling_prefix_is_not_expanded():
     """Keep a shared absolute material exact when its path only textually prefixes the asset path."""
     with _ovphysx_sim_context(device="cuda:0") as sim:
         material_path = "/World/Table_0/ObjectSiblingMaterial"
-        deformable = _generate_deformable_scene(
-            pre_tetrahedralized_deformable_spawn_cfg(material_path=material_path), num_objects=2
-        )
+        cfg = _make_deformable_cfg(pre_tetrahedralized_deformable_spawn_cfg(material_path=material_path))
         distractor_cfg = PhysxDeformableBodyMaterialCfg()
-        distractor_cfg.func("/World/Table_1/ObjectSiblingMaterial", distractor_cfg)
+        with cloner.ReplicateSession([cloner.CloneCfg(clone_template="/World/Table_{}"), cfg], 2, 1.0):
+            deformable = cfg.class_type(cfg)
+            distractor_cfg.func("/World/Table_1/ObjectSiblingMaterial", distractor_cfg)
 
         sim.reset()
 
@@ -251,7 +249,9 @@ def test_initialization_surface_deformable():
     """Test surface deformable initialization and unsupported target writes."""
     with _ovphysx_sim_context(device="cuda:0") as sim:
         num_objects = 2
-        deformable = _generate_deformable_scene(pretriangulated_surface_deformable_spawn_cfg(), num_objects=num_objects)
+        cfg = _make_deformable_cfg(pretriangulated_surface_deformable_spawn_cfg())
+        with cloner.ReplicateSession([cloner.CloneCfg(clone_template="/World/Table_{}"), cfg], num_objects, 1.0):
+            deformable = cfg.class_type(cfg)
 
         sim.reset()
 
@@ -307,7 +307,9 @@ def test_set_nodal_state():
     """Test combined nodal state writes while independently randomizing position and velocity."""
     with _ovphysx_sim_context(device="cuda:0") as sim:
         num_objects = 2
-        deformable = _generate_deformable_scene(pre_tetrahedralized_deformable_spawn_cfg(), num_objects=num_objects)
+        cfg = _make_deformable_cfg(pre_tetrahedralized_deformable_spawn_cfg())
+        with cloner.ReplicateSession([cloner.CloneCfg(clone_template="/World/Table_{}"), cfg], num_objects, 1.0):
+            deformable = cfg.class_type(cfg)
         sim.reset()
 
         for state_type_to_randomize in ["nodal_pos_w", "nodal_vel_w"]:
@@ -344,7 +346,9 @@ def test_indexed_partial_write_preserves_retained_aliased_slice_in_simulator(
 ) -> None:
     """Preserve a retained selected command while hydrating stale rows from OVPhysX."""
     with _ovphysx_sim_context(device="cuda:0") as sim:
-        deformable = _generate_deformable_scene(pre_tetrahedralized_deformable_spawn_cfg(), num_objects=2)
+        cfg = _make_deformable_cfg(pre_tetrahedralized_deformable_spawn_cfg())
+        with cloner.ReplicateSession([cloner.CloneCfg(clone_template="/World/Table_{}"), cfg], 2, 1.0):
+            deformable = cfg.class_type(cfg)
         sim.reset()
 
         retained = getattr(deformable.data, property_name).torch
@@ -375,7 +379,9 @@ def test_indexed_partial_write_preserves_retained_aliased_slice_in_simulator(
 def test_set_nodal_state_with_applied_transform(num_objects: int, randomize_pos: bool, randomize_rot: bool):
     """Test combined nodal state writes after applying rigid transforms."""
     with _ovphysx_sim_context(device="cuda:0", gravity_enabled=False) as sim:
-        deformable = _generate_deformable_scene(pre_tetrahedralized_deformable_spawn_cfg(), num_objects=num_objects)
+        cfg = _make_deformable_cfg(pre_tetrahedralized_deformable_spawn_cfg())
+        with cloner.ReplicateSession([cloner.CloneCfg(clone_template="/World/Table_{}"), cfg], num_objects, 1.0):
+            deformable = cfg.class_type(cfg)
         sim.reset()
 
         for _ in range(5):
@@ -414,7 +420,9 @@ def test_set_nodal_state_with_applied_transform(num_objects: int, randomize_pos:
 def test_set_kinematic_targets():
     """Test pinning one volume deformable while another falls under gravity."""
     with _ovphysx_sim_context(device="cuda:0", gravity_enabled=True) as sim:
-        deformable = _generate_deformable_scene(pre_tetrahedralized_deformable_spawn_cfg(), num_objects=2, height=1.0)
+        cfg = _make_deformable_cfg(pre_tetrahedralized_deformable_spawn_cfg(), height=1.0)
+        with cloner.ReplicateSession([cloner.CloneCfg(clone_template="/World/Table_{}"), cfg], 2, 1.0):
+            deformable = cfg.class_type(cfg)
         sim.reset()
 
         nodal_kinematic_targets = wp.to_torch(
@@ -450,7 +458,9 @@ def test_set_kinematic_targets():
 def test_volume_deformable_reads_writes_targets_materials_and_steps():
     """Exercise authored volume state, topology, targets, materials, and stepping."""
     with _ovphysx_sim_context(device="cuda:0") as sim:
-        deformable = _generate_deformable_scene(pre_tetrahedralized_deformable_spawn_cfg())
+        cfg = _make_deformable_cfg(pre_tetrahedralized_deformable_spawn_cfg())
+        with cloner.ReplicateSession([cloner.CloneCfg(clone_template="/World/Table_{}"), cfg], 2, 1.0):
+            deformable = cfg.class_type(cfg)
 
         sim.reset()
 
@@ -564,7 +574,9 @@ def test_volume_deformable_reads_writes_targets_materials_and_steps():
 def test_surface_deformable_reads_writes_materials_and_steps():
     """Exercise authored surface state, topology, materials, and stepping."""
     with _ovphysx_sim_context(device="cuda:0") as sim:
-        deformable = _generate_deformable_scene(pretriangulated_surface_deformable_spawn_cfg())
+        cfg = _make_deformable_cfg(pretriangulated_surface_deformable_spawn_cfg())
+        with cloner.ReplicateSession([cloner.CloneCfg(clone_template="/World/Table_{}"), cfg], 2, 1.0):
+            deformable = cfg.class_type(cfg)
 
         sim.reset()
 
@@ -666,7 +678,8 @@ def test_surface_deformable_reads_writes_materials_and_steps():
 def test_deformable_interactive_scene_uses_full_authored_stage():
     """Initialize cloned deformable bodies and materials from the full authored stage."""
     with _ovphysx_sim_context(device="cuda:0") as sim:
-        scene = InteractiveScene(DeformableSceneCfg(num_envs=3, env_spacing=0.75, lazy_sensor_update=False))
+        cfg = DeformableSceneCfg(num_envs=3, env_spacing=0.75, lazy_sensor_update=False)
+        scene = cfg.class_type(cfg)
 
         sim.reset()
 
@@ -685,7 +698,9 @@ def test_deformable_interactive_scene_uses_full_authored_stage():
 def test_forced_rewarm_rebuilds_deformable_bindings():
     """Replace deformable bindings when a forced re-warm replaces the attached stage."""
     with _ovphysx_sim_context(device="cuda:0") as sim:
-        deformable = _generate_deformable_scene(pre_tetrahedralized_deformable_spawn_cfg(), num_objects=2)
+        cfg = _make_deformable_cfg(pre_tetrahedralized_deformable_spawn_cfg())
+        with cloner.ReplicateSession([cloner.CloneCfg(clone_template="/World/Table_{}"), cfg], 2, 1.0):
+            deformable = cfg.class_type(cfg)
         sim.reset()
 
         original_view = deformable.root_view
@@ -707,7 +722,8 @@ def test_forced_rewarm_rebuilds_deformable_bindings():
 def test_mixed_deformable_rigid_scene_does_not_duplicate_runtime_clones():
     """Keep deformable, material, and rigid clone counts aligned in a mixed scene."""
     with _ovphysx_sim_context(device="cuda:0") as sim:
-        scene = InteractiveScene(MixedDeformableRigidSceneCfg(num_envs=3, env_spacing=0.75, lazy_sensor_update=False))
+        cfg = MixedDeformableRigidSceneCfg(num_envs=3, env_spacing=0.75, lazy_sensor_update=False)
+        scene = cfg.class_type(cfg)
 
         sim.reset()
 
@@ -727,29 +743,13 @@ def test_mixed_deformable_rigid_scene_does_not_duplicate_runtime_clones():
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="OVPhysX deformables require CUDA")
-def test_heterogeneous_mixed_deformable_rigid_scene_materializes_missing_targets(
-    monkeypatch: pytest.MonkeyPatch,
-):
+def test_heterogeneous_mixed_deformable_rigid_scene_materializes_missing_targets():
     """Materialize missing rigid targets beside full-stage deformable clones without duplicates."""
-    from isaaclab import cloner
-
-    clone_cfg_type = cloner.CloneCfg
-    monkeypatch.setattr(
-        cloner,
-        "CloneCfg",
-        lambda device: clone_cfg_type(device=device, clone_strategy=cloner.sequential),
-    )
-
     with _ovphysx_sim_context(device="cuda:0") as sim:
         num_envs = 4
-        scene = InteractiveScene(
-            HeterogeneousMixedDeformableRigidSceneCfg(
-                num_envs=num_envs,
-                env_spacing=1.0,
-                lazy_sensor_update=False,
-            )
-        )
-        plan = scene.clone_plan
+        cfg = HeterogeneousMixedDeformableRigidSceneCfg(num_envs=num_envs, env_spacing=1.0, lazy_sensor_update=False)
+        scene = cfg.class_type(cfg)
+        plan = sim.get_clone_plan()
         assert plan is not None
         shape_rows = plan.cfg_rows[id(scene.cfg.shape)]
         shape_mask = plan.clone_mask[list(shape_rows)]

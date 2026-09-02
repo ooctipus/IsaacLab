@@ -29,8 +29,9 @@ from pxr import Gf, UsdGeom, UsdPhysics
 
 import isaaclab.sim as sim_utils
 import isaaclab.sim.schemas as schemas
+from isaaclab import cloner
 from isaaclab.app.settings_manager import get_settings_manager
-from isaaclab.assets import RigidObject, RigidObjectCfg
+from isaaclab.assets import AssetBaseCfg, RigidObject, RigidObjectCfg
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
 from isaaclab.sensors import ContactSensor, ContactSensorCfg
 from isaaclab.sensors.contact_sensor import BaseContactSensor
@@ -425,7 +426,7 @@ def test_cube_stack_contact_filtering(setup_simulation, device, num_envs):
             update_period=0.0,
             filter_prim_paths_expr=["{ENV_REGEX_NS}/Cube_1"],
         )
-        scene = InteractiveScene(scene_cfg)
+        scene = scene_cfg.class_type(scene_cfg)
 
         # Check that contact processing is enabled
         assert not settings.get("/physics/disableContactProcessing")
@@ -460,7 +461,7 @@ def test_cube_stack_contact_filtering(setup_simulation, device, num_envs):
         assert contact_sensor.data.net_forces_w.torch.sum().item() > 0.0
 
 
-def _author_nested_chain(prim_path: str):
+def _author_nested_chain(prim_path: str, _cfg: sim_utils.SpawnerCfg):
     """Author a chain of kinematic rigid bodies whose link prims are nested under each other.
 
     Mirrors the layout produced by the URDF importer in Isaac Sim 6.0+, where each child
@@ -486,6 +487,7 @@ def _author_nested_chain(prim_path: str):
         UsdPhysics.CollisionAPI.Apply(geom.GetPrim())
     # add the contact-report schema to every nested link
     schemas.activate_contact_sensors(prim_path)
+    return stage.GetPrimAtPath(prim_path)
 
 
 @pytest.mark.isaacsim_ci
@@ -498,26 +500,23 @@ def test_nested_rigid_body_hierarchy(setup_simulation, device, num_envs):
     parent-level name alternation, which cannot address bodies nested under other
     bodies, so sensor initialization failed on URDF-importer-style assets.
 
-    The chains are authored directly under each environment prim (no scene/cloner):
-    the sensor path under test only depends on the prims existing on the stage.
+    The prototype chain and sensor are declared to one clone plan, then replicated to every environment.
     """
     sim_dt, durations, terrains, devices, settings = setup_simulation
     with build_simulation_context(device=device, dt=sim_dt, add_lighting=False) as sim:
         sim._app_control_on_stop_handle = None
-        stage = get_current_stage()
-        env_origins = [(3.0 * env_id, 0.0, 0.0) for env_id in range(num_envs)]
-        for env_id, origin in enumerate(env_origins):
-            env_xform = UsdGeom.Xform.Define(stage, f"/World/envs/env_{env_id}")
-            env_xform.AddTranslateOp().Set(Gf.Vec3d(*origin))
-            _author_nested_chain(f"/World/envs/env_{env_id}/Robot")
-        contact_sensor = ContactSensor(
-            ContactSensorCfg(
-                prim_path="{ENV_REGEX_NS}/Robot/[^/]*",
-                track_pose=True,
-                debug_vis=False,
-                update_period=0.0,
-            )
+        root_cfg = AssetBaseCfg(prim_path="{ENV_REGEX_NS}/Robot", spawn=sim_utils.SpawnerCfg(func=_author_nested_chain))
+        contact_sensor_cfg = ContactSensorCfg(
+            prim_path="{ENV_REGEX_NS}/Robot/[^/]*",
+            track_pose=True,
+            debug_vis=False,
+            update_period=0.0,
         )
+        with cloner.ReplicateSession([cloner.CloneCfg(), root_cfg, contact_sensor_cfg], num_envs, 3.0):
+            (source_path,) = cloner.query._cfg_source_paths(sim.get_clone_plan(), root_cfg)
+            root_cfg.spawn.func(source_path, root_cfg.spawn)
+            contact_sensor = contact_sensor_cfg.class_type(contact_sensor_cfg)
+        env_origins = sim.get_clone_plan().positions.cpu().tolist()
         sim.reset()
 
         # all three nested bodies must be resolved into the views (pre-fix: init raised);
@@ -574,7 +573,7 @@ def test_no_contact_reporting(setup_simulation):
             update_period=0.0,
             filter_prim_paths_expr=["{ENV_REGEX_NS}/Cube_1"],
         )
-        scene = InteractiveScene(scene_cfg)
+        scene = scene_cfg.class_type(scene_cfg)
 
         # Force disable contact processing
         settings.set_bool("/physics/disableContactProcessing", True)
@@ -625,7 +624,7 @@ def test_contact_sensor_no_stale_data_after_reset(setup_simulation, device):
             update_period=0.0,
             history_length=10,
         )
-        scene = InteractiveScene(scene_cfg)
+        scene = scene_cfg.class_type(scene_cfg)
         sim.reset()
         scene.reset()
 
@@ -679,7 +678,7 @@ def test_contact_history_updates_at_sensor_period(
             track_air_time=True,
             history_length=history_length,
         )
-        scene = InteractiveScene(scene_cfg)
+        scene = scene_cfg.class_type(scene_cfg)
         sim.reset()
         scene.reset()
 
@@ -729,7 +728,7 @@ def test_sensor_print(setup_simulation):
             track_air_time=True,
             history_length=3,
         )
-        scene = InteractiveScene(scene_cfg)
+        scene = scene_cfg.class_type(scene_cfg)
         # Play the simulator
         sim.reset()
         # print info
@@ -754,7 +753,7 @@ def test_contact_sensor_threshold(setup_simulation, device):
             track_air_time=True,
             history_length=3,
         )
-        scene = InteractiveScene(scene_cfg)
+        scene = scene_cfg.class_type(scene_cfg)
         # Play the simulator
         sim.reset()
 
@@ -810,7 +809,7 @@ def test_friction_reporting(setup_simulation, grav_dir):
             filter_prim_paths_expr=filter_prim_paths_expr,
         )
 
-        scene = InteractiveScene(scene_cfg)
+        scene = scene_cfg.class_type(scene_cfg)
 
         sim.reset()
 
@@ -863,7 +862,7 @@ def test_invalid_prim_paths_config(setup_simulation):
         )
 
         try:
-            _ = InteractiveScene(scene_cfg)
+            _ = scene_cfg.class_type(scene_cfg)
 
             sim.reset()
 
@@ -899,7 +898,7 @@ def test_invalid_max_contact_points_config(setup_simulation):
         )
 
         try:
-            _ = InteractiveScene(scene_cfg)
+            _ = scene_cfg.class_type(scene_cfg)
 
             sim.reset()
 
@@ -961,7 +960,7 @@ def _run_contact_sensor_test(
                         track_friction_forces=track_contact_data,
                         filter_prim_paths_expr=filter_prim_paths_expr,
                     )
-                    scene = InteractiveScene(scene_cfg)
+                    scene = scene_cfg.class_type(scene_cfg)
 
                     # Play the simulation
                     sim.reset()

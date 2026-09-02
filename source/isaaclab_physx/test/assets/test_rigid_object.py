@@ -19,6 +19,7 @@ simulation_app = AppLauncher(headless=True, device=resolve_test_sim_device()).ap
 
 import sys
 from typing import Literal
+from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
@@ -26,9 +27,13 @@ import warp as wp
 from flaky import flaky
 from isaaclab_physx.assets import RigidObject
 
+import omni.kit.app
+import omni.physx
+
 import isaaclab.sim as sim_utils
 from isaaclab.assets import RigidObjectCfg
-from isaaclab.sim import build_simulation_context
+from isaaclab.cloner import CloneCfg, ReplicateSession
+from isaaclab.sim import SimulationContext, build_simulation_context
 from isaaclab.sim.spawners import materials
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
 from isaaclab.utils.math import (
@@ -62,11 +67,6 @@ def generate_cubes_scene(
         A tuple containing the rigid object representing the cubes and the origins of the cubes.
 
     """
-    origins = torch.tensor([(i * 1.0, 0, height) for i in range(num_cubes)]).to(device)
-    # Create Top-level Xforms, one for each cube
-    for i, origin in enumerate(origins):
-        sim_utils.create_prim(f"/World/Table_{i}", "Xform", translation=origin)
-
     # Resolve spawn configuration
     if api == "none":
         # since no rigid body properties defined, this is just a static collider
@@ -93,7 +93,9 @@ def generate_cubes_scene(
         spawn=spawn_cfg,
         init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, height)),
     )
-    cube_object = RigidObject(cfg=cube_object_cfg)
+    with ReplicateSession([CloneCfg(clone_template="/World/Table_{}"), cube_object_cfg], num_cubes, 1.0):
+        cube_object = cube_object_cfg.class_type(cube_object_cfg)
+    origins = SimulationContext.instance().get_clone_plan().positions
 
     return cube_object, origins
 
@@ -1270,11 +1272,6 @@ def test_warmup_attach_stage_not_called_for_cpu():
     API, ``attach_stage`` is not called, and ``force_load_physics_from_usd`` is called
     exactly once during CPU warmup.
     """
-    from unittest.mock import MagicMock, patch
-
-    import omni.kit.app
-    import omni.physx
-
     with build_simulation_context(device="cpu", add_ground_plane=True, dt=0.01, auto_add_lighting=True) as sim:
         sim._app_control_on_stop_handle = None
         generate_cubes_scene(num_cubes=1, height=1.0, device="cpu")

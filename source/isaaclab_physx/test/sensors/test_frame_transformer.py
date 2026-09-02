@@ -26,7 +26,7 @@ from isaaclab_physx.sensors.frame_transformer.frame_transformer_data import Fram
 import isaaclab.sim as sim_utils
 import isaaclab.utils.math as math_utils
 from isaaclab.assets import RigidObjectCfg
-from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
+from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import FrameTransformerCfg, OffsetCfg
 from isaaclab.sensors.frame_transformer import BaseFrameTransformer
 from isaaclab.terrains import TerrainImporterCfg
@@ -142,7 +142,7 @@ def test_frame_transformer_feet_wrt_base(sim):
             ),
         ],
     )
-    scene = InteractiveScene(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
 
     # Play the simulator
     sim.reset()
@@ -252,7 +252,7 @@ def test_frame_transformer_feet_wrt_thigh(sim):
             ),
         ],
     )
-    scene = InteractiveScene(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
 
     # Play the simulator
     sim.reset()
@@ -344,7 +344,7 @@ def test_frame_transformer_robot_body_to_external_cube(sim):
             ),
         ],
     )
-    scene = InteractiveScene(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
 
     # Play the simulator
     sim.reset()
@@ -449,7 +449,7 @@ def test_frame_transformer_offset_frames(sim):
             ),
         ],
     )
-    scene = InteractiveScene(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
 
     # Play the simulator
     sim.reset()
@@ -536,7 +536,7 @@ def test_frame_transformer_all_bodies(sim):
             ),
         ],
     )
-    scene = InteractiveScene(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
 
     # Play the simulator
     sim.reset()
@@ -628,7 +628,7 @@ def test_sensor_print(sim):
             ),
         ],
     )
-    scene = InteractiveScene(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
 
     # Play the simulator
     sim.reset()
@@ -712,7 +712,7 @@ def test_frame_transformer_duplicate_body_names(sim, source_robot, path_prefix):
             ),
         ],
     )
-    scene = InteractiveScene(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
 
     # Play the simulator
     sim.reset()

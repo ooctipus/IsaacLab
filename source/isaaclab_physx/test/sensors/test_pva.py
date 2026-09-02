@@ -22,10 +22,11 @@ from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
 import isaaclab.utils.math as math_utils
+from isaaclab import cloner
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets import ArticulationCfg, RigidObjectCfg
 from isaaclab.markers.config import GREEN_ARROW_X_MARKER_CFG, RED_ARROW_X_MARKER_CFG
-from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
+from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors.pva import Pva, PvaCfg
 from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils.configclass import configclass
@@ -43,6 +44,7 @@ ROT_OFFSET = (0, 0, 0.7071068, 0.7071068)
 # offset of imu_link from link_1 on simple_2_link
 PEND_POS_OFFSET = (0.4, 0.0, 0.1)
 PEND_ROT_OFFSET = (0.5, 0.5, 0.5, 0.5)
+_WORLD_PVA_CFG = PvaCfg(prim_path="/World/ground")
 
 
 @configclass
@@ -204,8 +206,13 @@ def setup_sim():
     with sim_utils.build_simulation_context(sim_cfg=sim_cfg) as sim:
         sim._app_control_on_stop_handle = None
         # construct scene
-        scene_cfg = MySceneCfg(num_envs=2, env_spacing=5.0, lazy_sensor_update=False, replicate_physics=False)
-        scene = InteractiveScene(scene_cfg)
+        scene_cfg = MySceneCfg(
+            num_envs=2,
+            env_spacing=5.0,
+            lazy_sensor_update=False,
+            clone_cfg=cloner.CloneCfg(replicate_physics=False),
+        )
+        scene = scene_cfg.class_type(scene_cfg)
         # Both pendulum and pendulum2 use merge_fixed_joints=True, so the
         # fixed-joint child link imu_link is removed from the URDF before USD
         # conversion.  Recreate it as a plain Xform (no RigidBodyAPI) under each
@@ -723,9 +730,8 @@ def test_attachment_validity(setup_sim):
     It must be somehow attached to something implementing physics.
     """
     sim, scene = setup_sim
-    pva_world_cfg = PvaCfg(prim_path="/World/envs/env_0")
     with pytest.raises(RuntimeError) as exc_info:
-        pva_world = Pva(pva_world_cfg)
+        pva_world = _WORLD_PVA_CFG.class_type(_WORLD_PVA_CFG)
         pva_world._initialize_impl()
     assert exc_info.type is RuntimeError and "find a rigid body ancestor prim" in str(exc_info.value)
 
@@ -791,7 +797,7 @@ def test_no_stale_data_after_scene_reset():
     with sim_utils.build_simulation_context(sim_cfg=sim_cfg) as sim:
         sim._app_control_on_stop_handle = None
         scene_cfg = _StaleResetSceneCfg(num_envs=1, env_spacing=2.0, lazy_sensor_update=False)
-        scene = InteractiveScene(scene_cfg)
+        scene = scene_cfg.class_type(scene_cfg)
         sim.reset()
         scene.reset()
 

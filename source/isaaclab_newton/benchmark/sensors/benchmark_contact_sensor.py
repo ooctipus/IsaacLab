@@ -49,7 +49,6 @@ import warp as wp
 from isaaclab_newton.benchmark._physics import create_microbenchmark_physics_cfg
 
 import isaaclab.sim as sim_utils
-from isaaclab.scene import InteractiveScene
 
 
 def main():
@@ -62,7 +61,7 @@ def main():
             history_length=args_cli.history_length,
             num_envs=args_cli.num_envs,
         )
-        scene = InteractiveScene(scene_cfg)
+        scene = scene_cfg.class_type(scene_cfg)
         sim.reset()
         scene.reset()
 

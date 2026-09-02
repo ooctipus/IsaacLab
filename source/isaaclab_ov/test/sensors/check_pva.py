@@ -25,8 +25,9 @@ import torch
 from isaaclab_ov.physics import OvPhysxCfg
 
 import isaaclab.sim as sim_utils
-from isaaclab.assets import RigidObject, RigidObjectCfg
-from isaaclab.sensors.pva import Pva, PvaCfg
+from isaaclab.assets import RigidObjectCfg
+from isaaclab.cloner import CloneCfg, ReplicateSession
+from isaaclab.sensors.pva import PvaCfg
 from isaaclab.sim import SimulationCfg, build_simulation_context
 
 
@@ -41,20 +42,16 @@ def main() -> None:
             collision_props=sim_utils.CollisionPropertiesCfg(),
             visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.0, 1.0)),
         )
-        # /World/env_<i> Xforms are siblings under /World — no envs container needed
         num_envs = 2
-        for i in range(num_envs):
-            sim_utils.create_prim(f"/World/env_{i}", "Xform", translation=(i * 5.0, 0.0, 0.0))
-            spawn_cfg.func(f"/World/env_{i}/ball", spawn_cfg, translation=(0.0, 0.0, 1.0))
-
-        balls = RigidObject(
-            RigidObjectCfg(
-                prim_path="/World/env_[^/]+/ball",
-                spawn=None,
-                init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 1.0)),
-            )
+        ball_cfg = RigidObjectCfg(
+            prim_path="/World/env_[^/]+/ball",
+            spawn=spawn_cfg,
+            init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 1.0)),
         )
-        pva = Pva(PvaCfg(prim_path="/World/env_[^/]+/ball"))
+        pva_cfg = PvaCfg(prim_path="/World/env_[^/]+/ball")
+        with ReplicateSession([CloneCfg(clone_template="/World/env_{}"), ball_cfg, pva_cfg], num_envs, 5.0):
+            balls = ball_cfg.class_type(ball_cfg)
+            pva = pva_cfg.class_type(pva_cfg)
         sim.reset()
 
         dt = sim.get_physics_dt()

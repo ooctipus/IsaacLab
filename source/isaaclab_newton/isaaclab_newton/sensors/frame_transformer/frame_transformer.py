@@ -49,35 +49,34 @@ class FrameTransformer(BaseFrameTransformer):
 
         Registers site requests via :meth:`NewtonManager.cl_register_site` for
         the source frame, each target frame, and a shared world-origin reference.
-        Sites are injected into prototype builders by ``newton_replicate`` before
-        replication, so they end up correctly in each world.
+        Sites are injected into prototype builders during clone-plan dispatch, so
+        they end up correctly in each world.
 
         Args:
             cfg: Configuration parameters.
         """
         # initialize base class (registers PHYSICS_READY callback for _initialize_impl)
         super().__init__(cfg)
-
         self._data: FrameTransformerData = FrameTransformerData()
         self._newton_transforms = None
         self._stride: int = 0
 
         self._sensor_index: int | None = None
-        self._source_frame_body_name: str = split_path_expr(cfg.prim_path)[-1]
+        self._source_frame_body_name: str = split_path_expr(self.cfg.prim_path)[-1]
 
         # Register world-origin reference site
         self._world_origin_label = NewtonManager.cl_register_site(None, wp.transform())
 
         # Register source site
-        source_offset = wp.transform(cfg.source_frame_offset.pos, cfg.source_frame_offset.rot)
-        self._source_label = NewtonManager.cl_register_site(cfg.prim_path, source_offset)
+        source_offset = wp.transform(self.cfg.source_frame_offset.pos, self.cfg.source_frame_offset.rot)
+        self._source_label = NewtonManager.cl_register_site(self.cfg.prim_path, source_offset)
 
         # Register target sites
         self._target_labels: list[str] = []
         self._target_frame_body_names: list[str] = []
         self._num_targets: int = 0
 
-        for target_frame in cfg.target_frames:
+        for target_frame in self.cfg.target_frames:
             target_offset = wp.transform(target_frame.offset.pos, target_frame.offset.rot)
             label = NewtonManager.cl_register_site(target_frame.prim_path, target_offset)
 
@@ -87,11 +86,11 @@ class FrameTransformer(BaseFrameTransformer):
             self._num_targets += 1
 
         # Set target frame names for base class find_bodies() and data container
-        self._target_frame_names = [t.name or split_path_expr(t.prim_path)[-1] for t in cfg.target_frames]
+        self._target_frame_names = [t.name or split_path_expr(t.prim_path)[-1] for t in self.cfg.target_frames]
         self._data._target_frame_names = self._target_frame_names
 
         logger.info(
-            f"FrameTransformer '{cfg.prim_path}': source='{self._source_frame_body_name}', "
+            f"FrameTransformer '{self.cfg.prim_path}': source='{self._source_frame_body_name}', "
             f"{self._num_targets} target(s) registered"
         )
 

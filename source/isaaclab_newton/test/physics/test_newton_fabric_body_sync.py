@@ -257,7 +257,6 @@ def test_root_pose_write_is_visible_on_next_render_without_step():
     with build_simulation_context(sim_cfg=sim_cfg) as sim:
         sim._app_control_on_stop_handle = None
         scene = InteractiveScene(_RenderSceneCfg(num_envs=1, env_spacing=2.0))
-        sim.register_interactive_scene(scene)
         try:
             sim.reset()
             scene.reset()
@@ -369,7 +368,6 @@ def test_cable_points_follow_newton_segments_after_step_and_reset():
     with build_simulation_context(sim_cfg=sim_cfg) as sim:
         sim._app_control_on_stop_handle = None
         scene = InteractiveScene(_CableRenderSceneCfg(num_envs=2, env_spacing=2.0))
-        sim.register_interactive_scene(scene)
         try:
             sim.reset()
             scene.reset()

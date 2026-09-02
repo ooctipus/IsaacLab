@@ -18,7 +18,8 @@ from isaaclab_newton.physics import NewtonCfg, VBDSolverCfg, XPBDSolverCfg
 from isaaclab_newton.physics import NewtonManager as SimulationManager
 
 import isaaclab.sim as sim_utils
-from isaaclab.assets import CableObjectCfg, RigidObjectCfg
+from isaaclab import cloner
+from isaaclab.assets import AssetBaseCfg, CableObjectCfg, RigidObjectCfg
 from isaaclab.envs.mdp.events import reset_scene_to_default
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
 from isaaclab.sim import GroundPlaneCfg, SimulationCfg, UsdPhysicsCollisionCfg, build_simulation_context
@@ -81,24 +82,24 @@ def test_cable_collides_with_ground():
     )
 
     with build_simulation_context(sim_cfg=sim_cfg) as sim:
-        ground_cfg = GroundPlaneCfg()
-        ground_cfg.func("/World/Ground", ground_cfg)
-        cable = NewtonCableObject(
-            CableObjectCfg(
-                prim_path="/World/Env_0/Cable",
-                spawn=CableCfg(
-                    positions=[(0.05 * index, 0.0, 0.0) for index in range(11)],
-                    physics_material=CableMaterialCfg(
-                        thickness=0.01,
-                        density=100.0,
-                        stretch_stiffness=3.18309886e8,
-                        bend_stiffness=2.03718327e9,
-                    ),
-                    collision_props=[UsdPhysicsCollisionCfg(collision_enabled=True)],
+        ground_cfg = AssetBaseCfg(prim_path="/World/Ground", spawn=GroundPlaneCfg())
+        cable_cfg = CableObjectCfg(
+            prim_path="{ENV_REGEX_NS}/Cable",
+            spawn=CableCfg(
+                positions=[(0.05 * index, 0.0, 0.0) for index in range(11)],
+                physics_material=CableMaterialCfg(
+                    thickness=0.01,
+                    density=100.0,
+                    stretch_stiffness=3.18309886e8,
+                    bend_stiffness=2.03718327e9,
                 ),
-                init_state=CableObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 0.8)),
-            )
+                collision_props=[UsdPhysicsCollisionCfg(collision_enabled=True)],
+            ),
+            init_state=CableObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 0.8)),
         )
+        with cloner.ReplicateSession([cloner.CloneCfg(), ground_cfg, cable_cfg], 1, 1.0):
+            ground_cfg.spawn.func(ground_cfg.prim_path, ground_cfg.spawn)
+            cable = cable_cfg.class_type(cable_cfg)
         sim.reset()
 
         contact_seen = False

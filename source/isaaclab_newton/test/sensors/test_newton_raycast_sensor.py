@@ -21,10 +21,12 @@ from isaaclab_newton.sensors import (
     NewtonRaycastSensor,
     NewtonRaycastSensorCfg,
 )
+from isaaclab_newton.sensors.ray_caster.newton_raycast_sensor import _newton_body_pattern
 from newton import ShapeFlags
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import RigidObject, RigidObjectCfg
+from isaaclab.cloner import CloneCfg
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
 from isaaclab.sensors.camera import CameraCfg
 from isaaclab.sensors.ray_caster import MultiMeshRayCaster, MultiMeshRayCasterCamera, RayCasterCamera, RayCasterCfg
@@ -117,16 +119,24 @@ def _step_and_read(sim, scene) -> NewtonRaycastSensor:
     return scene["raycast"]
 
 
+def test_body_pattern_uses_clone_template():
+    """Concrete source paths are generalized through the active clone template."""
+    assert (
+        _newton_body_pattern("/World/scenes/scene_7/Robot/base", "/World/scenes/scene_{}")
+        == "/World/scenes/scene_[^/]+/Robot/base"
+    )
+
+
 @pytest.mark.parametrize("global_world_only", [False, True])
 def test_rays_hit_ground_plane(sim, global_world_only):
     """All rays of a downward grid pattern hit the global-world ground at the sensor height."""
     scene_cfg = RaycastTestSceneCfg(num_envs=2)
     scene_cfg.raycast.global_world_only = global_world_only
-    scene = InteractiveScene(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
     expected_bvh_flags = ShapeFlags.VISIBLE | ShapeFlags.COLLIDE_SHAPES
     assert NewtonManager._sensor_bvh_shape_flags == expected_bvh_flags
-    assert NewtonManager._builder.default_bvh_cfg.shape_flags == expected_bvh_flags
     sim.reset()
+    assert NewtonManager._builder.default_bvh_cfg.shape_flags == expected_bvh_flags
     sensor = _step_and_read(sim, scene)
 
     hits = sensor.data.ray_hits_w.torch
@@ -140,8 +150,10 @@ def test_rays_hit_ground_plane(sim, global_world_only):
 
 
 def test_generic_ray_caster_uses_newton_scene_bvh(sim):
-    """The backend-dispatching ray caster selects the Newton BVH implementation."""
-    scene = InteractiveScene(GenericRaycastTestSceneCfg(num_envs=1))
+    """The backend-dispatching ray caster selects the Newton BVH with a custom clone template."""
+    scene = InteractiveScene(
+        GenericRaycastTestSceneCfg(num_envs=1, clone_cfg=CloneCfg(clone_template="/World/scenes/scene_{}"))
+    )
     sim.reset()
     sensor = _step_and_read(sim, scene)
 

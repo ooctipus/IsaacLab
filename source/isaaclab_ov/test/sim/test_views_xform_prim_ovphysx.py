@@ -66,14 +66,11 @@ def test_world_attached_source_prim_expands_from_clone_plan():
         device=device, sim_cfg=OVPHYSX_SIM_CFG, auto_add_lighting=False, add_ground_plane=False
     ) as sim:
         sim._app_control_on_stop_handle = None
-        scene = InteractiveScene(_OvPhysxFrameViewSceneCfg(num_envs=4, env_spacing=2.0))
+        cfg = _OvPhysxWorldFrameViewSceneCfg(num_envs=4, env_spacing=2.0)
+        scene = cfg.class_type(cfg)
         sim.reset()
 
         stage = sim_utils.get_current_stage()
-        prim = stage.DefinePrim("/World/envs/env_0/WorldCamera", "Xform")
-        sim_utils.standardize_xform_ops(prim)
-        prim.GetAttribute("xformOp:translate").Set(Gf.Vec3d(0.25, -0.5, 1.0))
-
         view = FrameView("/World/envs/env_[^/]+/WorldCamera", device=device)
 
         assert not stage.GetPrimAtPath("/World/envs/env_1/WorldCamera").IsValid()
@@ -140,8 +137,8 @@ from frame_view_contract_utils import CHILD_OFFSET, ViewBundle  # noqa: E402
 
 from pxr import Gf  # noqa: E402
 
-from isaaclab.assets import RigidObjectCfg  # noqa: E402
-from isaaclab.scene import InteractiveScene, InteractiveSceneCfg  # noqa: E402
+from isaaclab.assets import AssetBaseCfg, RigidObjectCfg  # noqa: E402
+from isaaclab.scene import InteractiveSceneCfg  # noqa: E402
 from isaaclab.utils.configclass import configclass  # noqa: E402
 
 
@@ -156,6 +153,15 @@ class _OvPhysxFrameViewSceneCfg(InteractiveSceneCfg):
             collision_props=sim_utils.CollisionPropertiesCfg(),
         ),
         init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 1.0)),
+    )
+
+
+@configclass
+class _OvPhysxWorldFrameViewSceneCfg(_OvPhysxFrameViewSceneCfg):
+    world_camera: AssetBaseCfg = AssetBaseCfg(
+        prim_path="{ENV_REGEX_NS}/WorldCamera",
+        spawn=sim_utils.SensorFrameCfg(),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.25, -0.5, 1.0)),
     )
 
 
@@ -182,7 +188,8 @@ def view_factory():
         sim._app_control_on_stop_handle = None
         contexts.append(ctx)
 
-        InteractiveScene(_OvPhysxFrameViewSceneCfg(num_envs=num_envs, env_spacing=2.0))
+        cfg = _OvPhysxFrameViewSceneCfg(num_envs=num_envs, env_spacing=2.0)
+        cfg.class_type(cfg)
 
         stage = sim_utils.get_current_stage()
         for i in range(num_envs):

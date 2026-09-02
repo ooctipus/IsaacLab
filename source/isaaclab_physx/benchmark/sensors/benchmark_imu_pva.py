@@ -49,7 +49,7 @@ import isaaclab.sim as sim_utils
 from isaaclab.assets import RigidObjectCfg
 from isaaclab.benchmark import LatencyBenchmarkRunner, SingleMeasurement
 from isaaclab.benchmark.sensor_suites import add_sensor_latency_measurements, collect_sensor_latency_samples
-from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
+from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import ImuCfg, PvaCfg
 from isaaclab.utils.configclass import configclass
 
@@ -86,7 +86,7 @@ def main() -> None:
     else:
         scene_cfg.pva = PvaCfg(prim_path="{ENV_REGEX_NS}/Body")
 
-    scene = InteractiveScene(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
     sim.reset()
     scene.reset()
     sensor = scene[args_cli.sensor]

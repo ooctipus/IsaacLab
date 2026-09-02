@@ -58,8 +58,9 @@ import omni.client  # noqa: E402,F401
 
 import isaaclab.sim as sim_utils  # noqa: E402
 import isaaclab.utils.math as math_utils  # noqa: E402
-from isaaclab.assets import Articulation, RigidObject, RigidObjectCfg  # noqa: E402
-from isaaclab.scene import InteractiveScene, InteractiveSceneCfg  # noqa: E402
+from isaaclab import cloner  # noqa: E402
+from isaaclab.assets import ArticulationCfg, RigidObject, RigidObjectCfg  # noqa: E402
+from isaaclab.scene import InteractiveSceneCfg  # noqa: E402
 from isaaclab.sensors.imu import Imu, ImuCfg  # noqa: E402
 from isaaclab.sim import SimulationCfg, build_simulation_context  # noqa: E402
 from isaaclab.utils.configclass import configclass  # noqa: E402
@@ -87,26 +88,8 @@ ROT_OFFSET = (0, 0, 0.7071068, 0.7071068)
 # ---------------------------------------------------------------------------
 
 
-def _spawn_envs(num_envs: int) -> None:
-    """Create per-env Xform containers at ``/World/env_<i>``.
-
-    These match the prim-path layout the IMU's attachment-validity test
-    expects, and provide a parent for per-env asset spawns.
-    """
-    # /World/env_<i> Xforms are siblings under /World — no envs container needed
-    for i in range(num_envs):
-        sim_utils.create_prim(f"/World/env_{i}", "Xform", translation=(i * 5.0, 0.0, 0.0))
-
-
-def _spawn_balls(num_envs: int, height: float = 0.5) -> RigidObject:
-    """Spawn a sphere rigid body at ``/World/env_<i>/ball`` for each env.
-
-    Returns the :class:`RigidObject` whose binding pattern matches all spawned
-    instances. The :class:`RigidObject` does the per-env spawning itself when
-    ``spawn`` is set; we only have to create the env Xform containers first
-    (handled by :func:`_spawn_envs`). The prim path is a regex; the ovphysx
-    binding pattern underneath it is an fnmatch glob.
-    """
+def _make_ball_cfg(height: float = 0.5) -> RigidObjectCfg:
+    """Declare a sphere rigid body in each environment."""
     spawn_cfg = sim_utils.SphereCfg(
         radius=0.25,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(),
@@ -114,16 +97,15 @@ def _spawn_balls(num_envs: int, height: float = 0.5) -> RigidObject:
         collision_props=sim_utils.CollisionPropertiesCfg(),
         visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.0, 1.0)),
     )
-    cfg = RigidObjectCfg(
-        prim_path="/World/env_[^/]+/ball",
+    return RigidObjectCfg(
+        prim_path="{ENV_REGEX_NS}/ball",
         spawn=spawn_cfg,
         init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, height)),
     )
-    return RigidObject(cfg)
 
 
-def _spawn_cubes(num_envs: int, height: float = 0.5) -> RigidObject:
-    """Spawn a cube rigid body at ``/World/env_<i>/cube`` for each env."""
+def _make_cube_cfg(height: float = 0.5) -> RigidObjectCfg:
+    """Declare a cube rigid body in each environment."""
     spawn_cfg = sim_utils.CuboidCfg(
         size=(0.25, 0.25, 0.25),
         rigid_props=sim_utils.RigidBodyPropertiesCfg(),
@@ -131,36 +113,29 @@ def _spawn_cubes(num_envs: int, height: float = 0.5) -> RigidObject:
         collision_props=sim_utils.CollisionPropertiesCfg(),
         visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.0, 1.0)),
     )
-    cfg = RigidObjectCfg(
-        prim_path="/World/env_[^/]+/cube",
+    return RigidObjectCfg(
+        prim_path="{ENV_REGEX_NS}/cube",
         spawn=spawn_cfg,
         init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, -2.0, height)),
     )
-    return RigidObject(cfg)
 
 
-def _spawn_anymal(num_envs: int) -> Articulation:
-    """Spawn the Anymal-C articulation at ``/World/env_<i>/robot`` for each env.
-
-    Uses :data:`~isaaclab_assets.robots.anymal.ANYMAL_C_CFG` directly so the
-    actuator and init-state configuration matches the PhysX reference test.
-    The :class:`Articulation` performs the per-env spawn itself once the env
-    Xform containers exist; :func:`_spawn_envs` must be called first.
-    """
-    cfg = ANYMAL_C_CFG.replace(prim_path="/World/env_[^/]+/robot")
+def _make_anymal_cfg() -> ArticulationCfg:
+    """Declare the Anymal-C articulation in each environment."""
+    cfg = ANYMAL_C_CFG.replace(prim_path="{ENV_REGEX_NS}/robot")
     cfg.init_state.pos = (0.0, 2.0, 1.0)
     # bump solver iteration counts to match the PhysX test's scene cfg
     cfg.spawn.articulation_props.solver_position_iteration_count = 32
     cfg.spawn.articulation_props.solver_velocity_iteration_count = 32
-    return Articulation(cfg)
+    return cfg
 
 
-def _make_imu(prim_path: str, offset: ImuCfg.OffsetCfg | None = None) -> Imu:
-    """Create an :class:`Imu` with the given prim path and optional offset."""
+def _make_imu_cfg(prim_path: str, offset: ImuCfg.OffsetCfg | None = None) -> ImuCfg:
+    """Declare an IMU with the given prim path and optional offset."""
     cfg = ImuCfg(prim_path=prim_path)
     if offset is not None:
         cfg.offset = offset
-    return Imu(cfg)
+    return cfg
 
 
 @configclass
@@ -243,11 +218,17 @@ def test_constant_velocity(sim_ctx, device):
     same at every time step: in each step we set the same velocity, so the
     finite-difference derivative settles to zero (plus the gravity bias).
     """
-    _spawn_envs(NUM_ENVS)
-    balls = _spawn_balls(NUM_ENVS)
-    cubes = _spawn_cubes(NUM_ENVS)
-    imu_ball = _make_imu("/World/env_[^/]+/ball")
-    imu_cube = _make_imu("/World/env_[^/]+/cube")
+    ball_cfg = _make_ball_cfg()
+    cube_cfg = _make_cube_cfg()
+    imu_ball_cfg = _make_imu_cfg("{ENV_REGEX_NS}/ball")
+    imu_cube_cfg = _make_imu_cfg("{ENV_REGEX_NS}/cube")
+    with cloner.ReplicateSession(
+        [cloner.CloneCfg(clone_template="/World/env_{}"), ball_cfg, cube_cfg, imu_ball_cfg, imu_cube_cfg], NUM_ENVS, 5.0
+    ):
+        balls = ball_cfg.class_type(ball_cfg)
+        cubes = cube_cfg.class_type(cube_cfg)
+        imu_ball = imu_ball_cfg.class_type(imu_ball_cfg)
+        imu_cube = imu_cube_cfg.class_type(imu_cube_cfg)
     sim_ctx.reset()
 
     prev_lin_acc_ball = torch.zeros((NUM_ENVS, 3), dtype=torch.float32, device=device)
@@ -295,9 +276,13 @@ def test_constant_velocity(sim_ctx, device):
 @pytest.mark.parametrize("device", _DEVICES)
 def test_constant_acceleration(sim_ctx, device):
     """Test the IMU sensor with a constant acceleration."""
-    _spawn_envs(NUM_ENVS)
-    balls = _spawn_balls(NUM_ENVS)
-    imu_ball = _make_imu("/World/env_[^/]+/ball")
+    ball_cfg = _make_ball_cfg()
+    imu_ball_cfg = _make_imu_cfg("{ENV_REGEX_NS}/ball")
+    with cloner.ReplicateSession(
+        [cloner.CloneCfg(clone_template="/World/env_{}"), ball_cfg, imu_ball_cfg], NUM_ENVS, 5.0
+    ):
+        balls = ball_cfg.class_type(ball_cfg)
+        imu_ball = imu_ball_cfg.class_type(imu_ball_cfg)
     sim_ctx.reset()
 
     dt = sim_ctx.get_physics_dt()
@@ -351,13 +336,20 @@ def test_offset_calculation(sim_ctx, device):
     matching the location of ``imu_link``, and one directly at ``imu_link``
     — should produce identical readings.
     """
-    _spawn_envs(NUM_ENVS)
-    robot = _spawn_anymal(NUM_ENVS)
-    imu_robot_imu_link = _make_imu("/World/env_[^/]+/robot/base/imu_link")
-    imu_robot_base = _make_imu(
-        "/World/env_[^/]+/robot/base",
+    robot_cfg = _make_anymal_cfg()
+    imu_robot_imu_link_cfg = _make_imu_cfg("{ENV_REGEX_NS}/robot/base/imu_link")
+    imu_robot_base_cfg = _make_imu_cfg(
+        "{ENV_REGEX_NS}/robot/base",
         offset=ImuCfg.OffsetCfg(pos=POS_OFFSET, rot=ROT_OFFSET),
     )
+    with cloner.ReplicateSession(
+        [cloner.CloneCfg(clone_template="/World/env_{}"), robot_cfg, imu_robot_imu_link_cfg, imu_robot_base_cfg],
+        NUM_ENVS,
+        5.0,
+    ):
+        robot = robot_cfg.class_type(robot_cfg)
+        imu_robot_imu_link = imu_robot_imu_link_cfg.class_type(imu_robot_imu_link_cfg)
+        imu_robot_base = imu_robot_base_cfg.class_type(imu_robot_base_cfg)
     sim_ctx.reset()
 
     dt = sim_ctx.get_physics_dt()
@@ -395,9 +387,13 @@ def test_offset_calculation(sim_ctx, device):
 @pytest.mark.parametrize("device", _DEVICES)
 def test_env_ids_propagation(sim_ctx, device):
     """Test that ``env_ids`` argument propagates through update and reset methods."""
-    _spawn_envs(NUM_ENVS)
-    robot = _spawn_anymal(NUM_ENVS)
-    imu_robot_imu_link = _make_imu("/World/env_[^/]+/robot/base/imu_link")
+    robot_cfg = _make_anymal_cfg()
+    imu_robot_imu_link_cfg = _make_imu_cfg("{ENV_REGEX_NS}/robot/base/imu_link")
+    with cloner.ReplicateSession(
+        [cloner.CloneCfg(clone_template="/World/env_{}"), robot_cfg, imu_robot_imu_link_cfg], NUM_ENVS, 5.0
+    ):
+        robot = robot_cfg.class_type(robot_cfg)
+        imu_robot_imu_link = imu_robot_imu_link_cfg.class_type(imu_robot_imu_link_cfg)
     sim_ctx.reset()
 
     dt = sim_ctx.get_physics_dt()
@@ -427,9 +423,13 @@ def test_env_ids_propagation(sim_ctx, device):
 @pytest.mark.parametrize("device", _DEVICES)
 def test_sensor_initialization(sim_ctx, device):
     """Test that the OVPhysX IMU sensor initializes correctly."""
-    _spawn_envs(NUM_ENVS)
-    _spawn_balls(NUM_ENVS)
-    imu_ball = _make_imu("/World/env_[^/]+/ball")
+    ball_cfg = _make_ball_cfg()
+    imu_ball_cfg = _make_imu_cfg("{ENV_REGEX_NS}/ball")
+    with cloner.ReplicateSession(
+        [cloner.CloneCfg(clone_template="/World/env_{}"), ball_cfg, imu_ball_cfg], NUM_ENVS, 5.0
+    ):
+        ball_cfg.class_type(ball_cfg)
+        imu_ball = imu_ball_cfg.class_type(imu_ball_cfg)
     sim_ctx.reset()
 
     assert imu_ball.num_instances == NUM_ENVS
@@ -450,9 +450,13 @@ def test_gravity_at_rest(sim_ctx, device):
     finite-difference acceleration of the *applied* velocity converges to zero
     and only the +g gravity bias remains.
     """
-    _spawn_envs(NUM_ENVS)
-    balls = _spawn_balls(NUM_ENVS)
-    imu_ball = _make_imu("/World/env_[^/]+/ball")
+    ball_cfg = _make_ball_cfg()
+    imu_ball_cfg = _make_imu_cfg("{ENV_REGEX_NS}/ball")
+    with cloner.ReplicateSession(
+        [cloner.CloneCfg(clone_template="/World/env_{}"), ball_cfg, imu_ball_cfg], NUM_ENVS, 5.0
+    ):
+        balls = ball_cfg.class_type(ball_cfg)
+        imu_ball = imu_ball_cfg.class_type(imu_ball_cfg)
     sim_ctx.reset()
 
     dt = sim_ctx.get_physics_dt()
@@ -486,9 +490,13 @@ def test_freefall_acceleration(sim_ctx, device):
     In freefall the finite-difference world-frame acceleration (~``-g``) cancels
     the IMU's gravity bias (``+g``), so the reading converges to ``[0, 0, 0]``.
     """
-    _spawn_envs(NUM_ENVS)
-    balls = _spawn_balls(NUM_ENVS, height=5.0)
-    imu_ball = _make_imu("/World/env_[^/]+/ball")
+    ball_cfg = _make_ball_cfg(height=5.0)
+    imu_ball_cfg = _make_imu_cfg("{ENV_REGEX_NS}/ball")
+    with cloner.ReplicateSession(
+        [cloner.CloneCfg(clone_template="/World/env_{}"), ball_cfg, imu_ball_cfg], NUM_ENVS, 5.0
+    ):
+        balls = ball_cfg.class_type(ball_cfg)
+        imu_ball = imu_ball_cfg.class_type(imu_ball_cfg)
     sim_ctx.reset()
 
     dt = sim_ctx.get_physics_dt()
@@ -518,9 +526,13 @@ def test_reset(sim_ctx, device):
     buffers are zero.  We read the raw warp arrays directly because accessing
     ``imu.data`` triggers a lazy re-fill that masks reset bugs.
     """
-    _spawn_envs(NUM_ENVS)
-    balls = _spawn_balls(NUM_ENVS)
-    imu_ball = _make_imu("/World/env_[^/]+/ball")
+    ball_cfg = _make_ball_cfg()
+    imu_ball_cfg = _make_imu_cfg("{ENV_REGEX_NS}/ball")
+    with cloner.ReplicateSession(
+        [cloner.CloneCfg(clone_template="/World/env_{}"), ball_cfg, imu_ball_cfg], NUM_ENVS, 5.0
+    ):
+        balls = ball_cfg.class_type(ball_cfg)
+        imu_ball = imu_ball_cfg.class_type(imu_ball_cfg)
     sim_ctx.reset()
 
     dt = sim_ctx.get_physics_dt()
@@ -551,7 +563,7 @@ def test_reset(sim_ctx, device):
 def test_no_stale_data_after_scene_reset(sim_ctx, device):
     """Test ``scene.reset(env_ids)`` does not expose stale native velocity through ``imu.data``."""
     scene_cfg = _StaleResetSceneCfg(num_envs=1, env_spacing=2.0, lazy_sensor_update=False)
-    scene = InteractiveScene(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
     sim_ctx.reset()
     scene.reset()
 
@@ -588,16 +600,18 @@ def test_indirect_attachment_usd(sim_ctx, device):
     IMU at it.  The composed offset should match the directly-configured
     offset; ``ang_vel_b`` and ``lin_acc_b`` should agree.
     """
-    _spawn_envs(NUM_ENVS)
-    balls = _spawn_balls(NUM_ENVS)
-    # Add a non-physics Xform child under each ball at a known offset; the IMU
-    # must resolve the rigid-body ancestor (the ball) and recover the offset.
     sub_pos = (0.4, 0.0, 0.1)
     sub_rot = (0.5, 0.5, 0.5, 0.5)
-    for i in range(NUM_ENVS):
-        sim_utils.create_prim(f"/World/env_{i}/ball/imu_sub", "Xform", translation=sub_pos, orientation=sub_rot)
-    imu_indirect = _make_imu("/World/env_[^/]+/ball/imu_sub")
-    imu_direct = _make_imu("/World/env_[^/]+/ball", offset=ImuCfg.OffsetCfg(pos=sub_pos, rot=sub_rot))
+    ball_cfg = _make_ball_cfg()
+    imu_indirect_cfg = _make_imu_cfg("{ENV_REGEX_NS}/ball/imu_sub")
+    imu_direct_cfg = _make_imu_cfg("{ENV_REGEX_NS}/ball", offset=ImuCfg.OffsetCfg(pos=sub_pos, rot=sub_rot))
+    with cloner.ReplicateSession(
+        [cloner.CloneCfg(clone_template="/World/env_{}"), ball_cfg, imu_indirect_cfg, imu_direct_cfg], NUM_ENVS, 5.0
+    ):
+        balls = ball_cfg.class_type(ball_cfg)
+        sim_utils.create_prim("/World/env_0/ball/imu_sub", "Xform", translation=sub_pos, orientation=sub_rot)
+        imu_indirect = imu_indirect_cfg.class_type(imu_indirect_cfg)
+        imu_direct = imu_direct_cfg.class_type(imu_direct_cfg)
     sim_ctx.reset()
 
     torch.testing.assert_close(
@@ -650,22 +664,24 @@ def test_attachment_validity(sim_ctx, device):
     An IMU cannot be attached directly to the world Xform — it must have a
     rigid-body ancestor in its prim tree.
     """
-    _spawn_envs(NUM_ENVS)
-    sim_ctx.reset()
-
-    imu_world_cfg = ImuCfg(prim_path="/World/env_0")
+    imu_world_cfg = ImuCfg(prim_path="{ENV_REGEX_NS}")
+    with cloner.ReplicateSession([cloner.CloneCfg(clone_template="/World/env_{}"), imu_world_cfg], NUM_ENVS, 5.0):
+        _imu_world = imu_world_cfg.class_type(imu_world_cfg)
     with pytest.raises(RuntimeError) as exc_info:
-        imu_world = Imu(imu_world_cfg)
-        imu_world._initialize_impl()
+        sim_ctx.reset()
     assert exc_info.type is RuntimeError and "find a rigid body ancestor prim" in str(exc_info.value)
 
 
 @pytest.mark.parametrize("device", _DEVICES)
 def test_sensor_print(sim_ctx, device):
     """Test ``__str__`` is implemented and exposes the prim path and binding pattern."""
-    _spawn_envs(NUM_ENVS)
-    _spawn_balls(NUM_ENVS)
-    imu_ball = _make_imu("/World/env_[^/]+/ball")
+    ball_cfg = _make_ball_cfg()
+    imu_ball_cfg = _make_imu_cfg("{ENV_REGEX_NS}/ball")
+    with cloner.ReplicateSession(
+        [cloner.CloneCfg(clone_template="/World/env_{}"), ball_cfg, imu_ball_cfg], NUM_ENVS, 5.0
+    ):
+        ball_cfg.class_type(ball_cfg)
+        imu_ball = imu_ball_cfg.class_type(imu_ball_cfg)
     sim_ctx.reset()
 
     s = str(imu_ball)

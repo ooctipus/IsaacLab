@@ -76,7 +76,6 @@ from newton.sensors import SensorContact as NewtonContactSensor
 from newton.sensors import SensorFrameTransform
 from newton.sensors import SensorIMU as NewtonSensorIMU
 from newton.solvers import SolverBase, SolverKamino
-from newton.usd import SchemaResolverNewton, SchemaResolverPhysx
 
 from pxr import Usd, UsdGeom
 
@@ -88,7 +87,6 @@ from isaaclab.scene_data.deformable_vis_remap import (
     launch_batch_volume_vis_remap,
 )
 from isaaclab.sim import SimulationContext
-from isaaclab.sim.utils.newton_model_utils import replace_newton_builder_shape_colors
 from isaaclab.sim.utils.queries import has_deformable_curve_api
 from isaaclab.sim.utils.stage import get_current_stage
 from isaaclab.utils import checked_apply
@@ -97,10 +95,6 @@ from isaaclab.utils.timer import Timer
 from isaaclab.utils.version import has_kit
 from isaaclab.utils.warp.index_kernel import IndexKernelDispatcher
 
-from isaaclab_newton.cloner.newton_clone_utils import (
-    _restore_visible_colliders_without_visual_shapes,
-    replicate_builder_mapping,
-)
 from isaaclab_newton.cloner.replicate import NewtonReplicateContext
 from isaaclab_newton.physics.featherstone_manager_cfg import FeatherstoneSolverCfg
 from isaaclab_newton.physics.mjwarp_manager_cfg import MJWarpSolverCfg
@@ -111,7 +105,6 @@ from isaaclab_newton.physics.xpbd_manager_cfg import XPBDSolverCfg
 from isaaclab_newton.renderers.visual_material import (
     VisualMaterialWriter,
     VisualShapeColorWriter,
-    import_builder_visual_material_paths,
 )
 
 if TYPE_CHECKING:
@@ -527,6 +520,7 @@ class NewtonManager(PhysicsManager):
         """
         super().initialize(sim_context)
         sim_context.get_or_create_backend(NewtonReplicateContext, sim_context, clone_role="physics")
+        sim_context.get_or_create_backend(NewtonReplicateContext, sim_context, clone_role="model")
 
         # Newton-specific setup: get gravity from SimulationCfg (not physics manager cfg)
         sim = PhysicsManager._sim
@@ -1155,7 +1149,7 @@ class NewtonManager(PhysicsManager):
         NewtonManager._builder = builder
 
     @staticmethod
-    def _publish_clone_state(
+    def _set_clone_state(
         builder: ModelBuilder,
         site_index_map: dict,
         fabric_body_bindings: list[tuple[str, int]],
@@ -1225,9 +1219,9 @@ class NewtonManager(PhysicsManager):
     def cl_register_site(cls, body_pattern: str | None, xform: wp.transform, *, per_world: bool = False) -> str:
         """Register a site request for injection into prototypes before replication.
 
-        Sensors call this during ``__init__``. Sites are injected into prototype
-        builders by :meth:`_cl_inject_sites` (called from ``newton_replicate``)
-        before ``add_builder``, so they replicate correctly per-world.
+        Sensors call this during ``__init__``. Clone contexts inject the sites
+        into prototype builders before ``add_builder``, so they replicate
+        correctly per-world.
 
         Identical ``(body_pattern, per_world, transform)`` registrations share sites.
 
@@ -1297,8 +1291,8 @@ class NewtonManager(PhysicsManager):
         (``body_pattern is None``) are added to *main_builder* with
         ``body=-1``.
 
-        Returns source-builder-local shape indices so that ``newton_replicate`` can
-        compute final indices during replication without a second pattern match.
+        Returns source-builder-local shape indices so clone contexts can compute
+        final indices during replication without a second pattern match.
 
         Pending requests are cleared after processing.
 
@@ -1354,46 +1348,6 @@ class NewtonManager(PhysicsManager):
 
         cls._cl_pending_sites.clear()
         return global_site_indices, source_site_indices, env_root_sites
-
-    @classmethod
-    def _cl_inject_sites_fallback(cls) -> None:
-        """Inject pending sites into the flat builder (no-replication path).
-
-        Populates :attr:`_cl_site_index_map` with the unified per-world structure:
-
-        - Global sites (``body_pattern is None``): ``(shape_idx, None)``
-        - Local and world sites: ``(None, [[idx, ...]])`` — one sublist for the single world.
-        """
-        builder = cls._builder
-        body_labels = list(builder.body_label)
-
-        for (body_pattern, per_world, _xform_key), (label, xform) in cls._cl_pending_sites.items():
-            if per_world:
-                site_idx = builder.add_site(body=-1, xform=xform, label=label)
-                cls._cl_site_index_map[label] = (None, [[site_idx]])
-                continue
-            if body_pattern is None:
-                site_idx = builder.add_site(body=-1, xform=xform, label=label)
-                cls._cl_site_index_map[label] = (site_idx, None)
-            else:
-                try:
-                    matched_indices, matched_names = resolve_matching_names(body_pattern, body_labels)
-                except ValueError as e:
-                    raise ValueError(
-                        f"Site '{label}' with body_pattern '{body_pattern}' matched no bodies "
-                        f"in the flat builder. Available body labels: {body_labels}."
-                    ) from e
-
-                site_indices: list[int] = []
-                for body_idx in matched_indices:
-                    site_label = f"{builder.body_label[body_idx]}/{label}"
-                    site_idx = builder.add_site(body=body_idx, xform=xform, label=site_label)
-                    site_indices.append(site_idx)
-
-                # Single world (no replication): one-element outer list
-                cls._cl_site_index_map[label] = (None, [site_indices])
-
-        cls._cl_pending_sites.clear()
 
     @classmethod
     def add_model_change(cls, change: ModelFlags) -> None:
@@ -1547,17 +1501,12 @@ class NewtonManager(PhysicsManager):
 
         cls._drain_stale_cuda_error()
 
-        # Create builder from USD stage if not provided
         if cls._builder is None:
-            cls.instantiate_builder_from_stage()
+            raise RuntimeError("Newton clone-plan dispatch did not publish a model builder before simulation start.")
         cls._register_builder_attributes(cls._builder)
 
         logger.info("Dispatching MODEL_INIT callbacks")
         cls.dispatch_event(PhysicsEvent.MODEL_INIT)
-
-        # Inject any pending site requests (no-replication fallback path).
-        # In the replication path, _cl_inject_sites() already ran from newton_replicate.
-        cls._cl_inject_sites_fallback()
 
         device = PhysicsManager._device
         logger.info(f"Finalizing model on device: {device}")
@@ -1859,125 +1808,6 @@ class NewtonManager(PhysicsManager):
             )
             ignore_paths.append(prim.GetPath().pathString)
         return ignore_paths
-
-    @classmethod
-    def _get_usd_import_ignore_paths(cls) -> list[str]:
-        """Return solver-specific prim paths excluded from USD import."""
-        return []
-
-    @classmethod
-    def instantiate_builder_from_stage(cls):
-        """Create builder from USD stage.
-
-        Detects env Xforms (e.g. ``/World/Env_0``, ``/World/Env_1``) and builds
-        each as a separate Newton world via ``begin_world``/``end_world``.
-        Falls back to a flat ``add_usd`` when no env Xforms are found.
-
-        """
-        import re
-
-        from pxr import UsdGeom
-
-        stage = get_current_stage()
-        up_axis = UsdGeom.GetStageUpAxis(stage)
-
-        # Scan /World children for env-like Xforms (Env_0, env_1, ...)
-        env_pattern = re.compile(r"^[Ee]nv_(\d+)$")
-        world_prim = stage.GetPrimAtPath("/World")
-        env_paths: list[tuple[int, str]] = []
-        if world_prim and world_prim.IsValid():
-            for child in world_prim.GetChildren():
-                m = env_pattern.match(child.GetName())
-                if m:
-                    env_paths.append((int(m.group(1)), child.GetPath().pathString))
-        env_paths.sort(key=lambda x: x[0])
-
-        builder = cls.create_builder(up_axis=up_axis)
-
-        schema_resolvers = [SchemaResolverNewton(), SchemaResolverPhysx()]
-
-        # NOTE: None of the add_usd calls below pass joint_ordering or
-        # bodies_follow_joint_ordering, so the live articulation's native
-        # joint/body order comes from Newton's ModelBuilder.add_usd defaults
-        # (joint_ordering="dfs", bodies_follow_joint_ordering=True).
-        # isaaclab.assets.articulation.ordering_resolvers hardcodes matching
-        # constants to emulate that same order for cross-backend name
-        # resolution (see _get_mjwarp_names_from_newton_usd_builder). If
-        # ordering arguments are ever passed here, update the resolver
-        # constants in lockstep or MJWarp resolution will silently diverge
-        # from the live backend.
-        hf_ignore_paths = cls._inject_terrain_heightfields(stage, builder, root_paths=("/",))
-        solver_ignore_paths = cls._get_usd_import_ignore_paths()
-
-        if not env_paths:
-            # No env Xforms — flat loading
-            import_result = builder.add_usd(
-                stage, ignore_paths=[*hf_ignore_paths, *solver_ignore_paths], schema_resolvers=schema_resolvers
-            )
-            _restore_visible_colliders_without_visual_shapes(builder, stage, import_result["path_shape_map"])
-            replace_newton_builder_shape_colors(builder, stage)
-            import_builder_visual_material_paths(builder, stage)
-            NewtonManager._world_xforms = [wp.transform()]
-            for hook in cls._per_world_builder_hooks:
-                hook(builder, 0, [0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0])
-        else:
-            # Load everything except the env subtrees (ground plane, lights, etc.)
-            # and any terrain colliders already added as heightfields above.
-            ignore_paths = [path for _, path in env_paths] + hf_ignore_paths + solver_ignore_paths
-            import_result = builder.add_usd(stage, ignore_paths=ignore_paths, schema_resolvers=schema_resolvers)
-            _restore_visible_colliders_without_visual_shapes(builder, stage, import_result["path_shape_map"])
-            replace_newton_builder_shape_colors(builder, stage)
-            import_builder_visual_material_paths(builder, stage)
-
-            _, proto_path = env_paths[0]
-            source_builders = {proto_path: cls.create_builder(up_axis=up_axis)}
-            import_result = source_builders[proto_path].add_usd(
-                stage,
-                root_path=proto_path,
-                ignore_paths=solver_ignore_paths,
-                schema_resolvers=schema_resolvers,
-            )
-            _restore_visible_colliders_without_visual_shapes(
-                source_builders[proto_path], stage, import_result["path_shape_map"]
-            )
-            replace_newton_builder_shape_colors(source_builders[proto_path], stage)
-            import_builder_visual_material_paths(source_builders[proto_path], stage)
-            cls._cl_protos = source_builders
-
-            global_site_indices, source_site_indices, env_root_sites = cls._cl_inject_sites(builder, source_builders)
-            xform_cache = UsdGeom.XformCache()
-            poses = []
-            for _, env_path in env_paths:
-                world_xform = xform_cache.GetLocalToWorldTransform(stage.GetPrimAtPath(env_path))
-                translation = world_xform.ExtractTranslation()
-                rotation = world_xform.ExtractRotationQuat()
-                imag = rotation.GetImaginary()
-                poses.append(
-                    (
-                        (translation[0], translation[1], translation[2]),
-                        (imag[0], imag[1], imag[2], rotation.GetReal()),
-                    )
-                )
-
-            positions = torch.tensor([pos for pos, _ in poses], dtype=torch.float32)
-            quaternions = torch.tensor([quat for _, quat in poses], dtype=torch.float32)
-            mapping = torch.ones((1, len(env_paths)), dtype=torch.bool)
-            replicate_args = (builder, (proto_path,), mapping, positions, quaternions, source_builders)
-            local_site_map, world_xforms = replicate_builder_mapping(
-                *replicate_args,
-                source_site_indices=source_site_indices,
-                env_root_sites=env_root_sites,
-                per_world_builder_hooks=cls._per_world_builder_hooks,
-            )
-
-            NewtonManager._cl_site_index_map = {label: (idx, None) for label, idx in global_site_indices.items()}
-            NewtonManager._cl_site_index_map.update(
-                (label, (None, per_world)) for label, per_world in local_site_map.items()
-            )
-            NewtonManager._world_xforms = world_xforms
-            NewtonManager._num_envs = len(env_paths)
-
-        cls.set_builder(builder)
 
     @classmethod
     def _initialize_contacts(cls) -> None:

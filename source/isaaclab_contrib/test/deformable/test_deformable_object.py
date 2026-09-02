@@ -29,6 +29,7 @@ from isaaclab_newton.sim.spawners.materials import (
 
 import isaaclab.sim as sim_utils
 import isaaclab.utils.math as math_utils
+from isaaclab import cloner
 from isaaclab.assets import DeformableObject, DeformableObjectCfg
 from isaaclab.sim import SimulationCfg, build_simulation_context
 
@@ -62,12 +63,8 @@ def generate_cubes_scene(
     Returns:
         The deformable object representing the cubes.
     """
-    origins = torch.tensor([(i * 1.0, 0, height) for i in range(num_cubes)]).to(device)
-    for i, origin in enumerate(origins):
-        sim_utils.create_prim(f"/World/env_{i}", "Xform", translation=origin)
-
     cube_object_cfg = DeformableObjectCfg(
-        prim_path="/World/env_[^/]+/Cube",
+        prim_path="{ENV_REGEX_NS}/Cube",
         spawn=sim_utils.MeshCuboidCfg(
             size=(0.1, 0.1, 0.1),
             deformable_props=NewtonDeformableBodyPropertiesCfg(),
@@ -83,7 +80,8 @@ def generate_cubes_scene(
             rot=(1.0, 0.0, 0.0, 0.0),
         ),
     )
-    cube_object = DeformableObject(cfg=cube_object_cfg)
+    with cloner.ReplicateSession([cloner.CloneCfg(clone_template="/World/env_{}"), cube_object_cfg], num_cubes, 1.0):
+        cube_object = cube_object_cfg.class_type(cube_object_cfg)
     return cube_object
 
 
@@ -102,12 +100,8 @@ def generate_cloth_scene(
     Returns:
         The deformable object representing the cloths.
     """
-    origins = torch.tensor([(i * 1.0, 0, height) for i in range(num_cloths)]).to(device)
-    for i, origin in enumerate(origins):
-        sim_utils.create_prim(f"/World/env_{i}", "Xform", translation=origin)
-
     cloth_object_cfg = DeformableObjectCfg(
-        prim_path="/World/env_[^/]+/Cloth",
+        prim_path="{ENV_REGEX_NS}/Cloth",
         spawn=sim_utils.MeshRectangleCfg(
             size=(0.2, 0.2),
             resolution=(3, 3),
@@ -120,15 +114,14 @@ def generate_cloth_scene(
             rot=(1.0, 0.0, 0.0, 0.0),
         ),
     )
-    return DeformableObject(cfg=cloth_object_cfg)
+    with cloner.ReplicateSession([cloner.CloneCfg(clone_template="/World/env_{}"), cloth_object_cfg], num_cloths, 1.0):
+        return cloth_object_cfg.class_type(cloth_object_cfg)
 
 
 def generate_cuboid_and_cylinder_scene(height: float = 1.0) -> tuple[DeformableObject, DeformableObject]:
     """Generate two independent deformable assets with different mesh shapes."""
-    sim_utils.create_prim("/World/env_0", "Xform", translation=(0.0, 0.0, 0.0))
-
     cuboid_cfg = DeformableObjectCfg(
-        prim_path="/World/env_[^/]+/Cuboid",
+        prim_path="{ENV_REGEX_NS}/Cuboid",
         spawn=sim_utils.MeshCuboidCfg(
             size=(0.16, 0.08, 0.12),
             deformable_props=NewtonDeformableBodyPropertiesCfg(),
@@ -142,7 +135,7 @@ def generate_cuboid_and_cylinder_scene(height: float = 1.0) -> tuple[DeformableO
         init_state=DeformableObjectCfg.InitialStateCfg(pos=(0.0, 0.0, height)),
     )
     cylinder_cfg = DeformableObjectCfg(
-        prim_path="/World/env_[^/]+/Cylinder",
+        prim_path="{ENV_REGEX_NS}/Cylinder",
         spawn=sim_utils.MeshCylinderCfg(
             radius=0.06,
             height=0.14,
@@ -156,7 +149,10 @@ def generate_cuboid_and_cylinder_scene(height: float = 1.0) -> tuple[DeformableO
         ),
         init_state=DeformableObjectCfg.InitialStateCfg(pos=(0.4, 0.0, height + 0.2)),
     )
-    return DeformableObject(cfg=cuboid_cfg), DeformableObject(cfg=cylinder_cfg)
+    sim = sim_utils.SimulationContext.instance()
+    assert sim is not None
+    with cloner.ReplicateSession([cloner.CloneCfg(clone_template="/World/env_{}"), cuboid_cfg, cylinder_cfg], 1, 0.0):
+        return cuboid_cfg.class_type(cuboid_cfg), cylinder_cfg.class_type(cylinder_cfg)
 
 
 @pytest.fixture
