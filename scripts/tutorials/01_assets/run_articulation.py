@@ -54,7 +54,7 @@ def design_scene(sim: SimulationContext) -> tuple[dict, torch.Tensor]:
     )
     cartpole_cfg = CARTPOLE_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
     plan = cloner.clone_plan_from_env_0(
-        (cloner.CloneCfg(clone_template="/World/Origin{}"), ground_cfg, light_cfg, cartpole_cfg), 2, 1.0
+        cloner.CloneCfg(clone_template="/World/Origin{}"), (ground_cfg, light_cfg, cartpole_cfg), 2, 1.0
     )
     ground_cfg.spawn.func(ground_cfg.prim_path, ground_cfg.spawn)
     light_cfg.spawn.func(light_cfg.prim_path, light_cfg.spawn)

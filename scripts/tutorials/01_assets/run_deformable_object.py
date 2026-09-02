@@ -102,7 +102,7 @@ def design_scene(sim: sim_utils.SimulationContext) -> tuple[dict, torch.Tensor]:
         debug_vis=True,
     )
     plan = cloner.clone_plan_from_env_0(
-        (cloner.CloneCfg(clone_template="/World/env_{}"), ground_cfg, light_cfg, cube_cfg), 4, 0.5
+        cloner.CloneCfg(clone_template="/World/env_{}"), (ground_cfg, light_cfg, cube_cfg), 4, 0.5
     )
     ground_cfg.spawn.func(ground_cfg.prim_path, ground_cfg.spawn)
     light_cfg.spawn.func(light_cfg.prim_path, light_cfg.spawn)

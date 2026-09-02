@@ -109,8 +109,8 @@ the cfg-owned constructors, then dispatch that same plan afterward:
 
    from isaaclab import cloner
 
-   cfg = (cloner.CloneCfg(), robot_cfg)
-   plan = cloner.clone_plan_from_env_0(cfg, num_envs=128, env_spacing=2.0)
+   asset_cfgs = (robot_cfg,)
+   plan = cloner.clone_plan_from_env_0(cloner.CloneCfg(), asset_cfgs, num_envs=128, env_spacing=2.0)
    robot = robot_cfg.class_type(robot_cfg)
    cloner.replicate(plan)
 
@@ -152,7 +152,10 @@ prototype in ``_setup_scene()``. The setup method owns the explicit plan, constr
    class CartpoleEnv(DirectRLEnv):
 
        def _setup_scene(self):
-           plan = cloner.clone_plan_from_env_0(self.cfg, self.cfg.scene.num_envs, self.cfg.scene.env_spacing)
+           asset_cfgs = (self.cfg.robot_cfg,)
+           plan = cloner.clone_plan_from_env_0(
+               self.cfg.scene.clone_cfg, asset_cfgs, self.cfg.scene.num_envs, self.cfg.scene.env_spacing
+           )
            self.robot = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
            self.scene.articulations["robot"] = self.robot
            cloner.replicate(plan)

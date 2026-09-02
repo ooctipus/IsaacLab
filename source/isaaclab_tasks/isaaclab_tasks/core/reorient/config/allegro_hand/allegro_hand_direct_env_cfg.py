@@ -8,7 +8,7 @@ from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
 from isaaclab.envs import DirectRLEnvCfg
 from isaaclab.markers import VisualizationMarkersCfg
 from isaaclab.scene import InteractiveSceneCfg
-from isaaclab.sensors import JointWrenchSensorCfg
+from isaaclab.sensors import CameraCfg, JointWrenchSensorCfg
 from isaaclab.sim import SimulationCfg
 from isaaclab.sim.spawners.materials import RigidBodyMaterialBaseCfg
 from isaaclab.utils.configclass import configclass
@@ -45,6 +45,7 @@ class AllegroHandEnvCfg(DirectRLEnvCfg):
     # assets
     robot_cfg: ArticulationCfg = ALLEGRO_HAND_ROBOT_CFG
     object_cfg: RigidObjectCfg = CUBE_CFG
+    tiled_camera: CameraCfg | None = None
     joint_wrench_cfg: JointWrenchSensorCfg | None = None
     ground_cfg: AssetBaseCfg | None = AssetBaseCfg(
         prim_path="/World/ground", spawn=sim_utils.GroundPlaneCfg(), collision_group=-1

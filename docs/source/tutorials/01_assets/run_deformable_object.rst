@@ -78,8 +78,8 @@ when the simulation is played.
     implementation.
 
 
-As in the rigid-body tutorial, the clone session receives the complete declarative cfg roots and constructs the
-deformable object through ``cfg.class_type(cfg)``. Clone consumers receive their routed prototype paths and
+As in the rigid-body tutorial, the clone session receives the clone policy and explicit asset cfgs and constructs
+the deformable object through ``cfg.class_type(cfg)``. Clone consumers receive their routed prototype paths and
 environment origins from the same plan.
 
 .. literalinclude:: ../../../../scripts/tutorials/01_assets/run_deformable_object.py

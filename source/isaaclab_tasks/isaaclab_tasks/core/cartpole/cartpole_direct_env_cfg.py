@@ -20,6 +20,7 @@ from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 from isaaclab.envs import DirectRLEnvCfg
 from isaaclab.physics import PhysxAutoCfg
 from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.sensors import CameraCfg
 from isaaclab.sim import SimulationCfg
 from isaaclab.utils.configclass import configclass
 from isaaclab.visualizers import VisualizerCfg
@@ -69,6 +70,7 @@ class CartpoleEnvCfg(DirectRLEnvCfg):
 
     # assets
     robot_cfg: ArticulationCfg = CARTPOLE_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+    tiled_camera: CameraCfg | None = None
     ground_cfg: AssetBaseCfg | None = AssetBaseCfg(prim_path="/World/ground", spawn=sim_utils.GroundPlaneCfg())
     light_cfg: AssetBaseCfg = AssetBaseCfg(
         prim_path="/World/Light",

@@ -34,7 +34,10 @@ class CartpoleEnv(DirectRLEnv):
         self.joint_vel = self.cartpole.data.joint_vel.torch
 
     def _setup_scene(self):
-        plan = cloner.clone_plan_from_env_0(self.cfg, self.cfg.scene.num_envs, self.cfg.scene.env_spacing)
+        asset_cfgs = self.cfg.robot_cfg, self.cfg.tiled_camera, self.cfg.ground_cfg, self.cfg.light_cfg
+        plan = cloner.clone_plan_from_env_0(
+            self.cfg.scene.clone_cfg, asset_cfgs, self.cfg.scene.num_envs, self.cfg.scene.env_spacing
+        )
         self._setup_scene_entities()
         cloner.replicate(plan)
 

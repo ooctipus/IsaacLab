@@ -126,9 +126,18 @@ class InteractiveScene:
         if getattr(self.sim, "_interactive_scene", None) is not None:
             raise RuntimeError("A SimulationContext owns exactly one InteractiveScene.")
         self.stage = self.sim.stage
-        has_entities = any(
-            name not in InteractiveSceneCfg.__dataclass_fields__ and value is not None
-            for name, value in vars(cfg).items()
+        entity_items = sorted(
+            (
+                (name, value)
+                for name, value in vars(cfg).items()
+                if name not in InteractiveSceneCfg.__dataclass_fields__ and value is not None
+            ),
+            key=lambda item: (
+                isinstance(item[1], SensorBaseCfg),
+                0
+                if isinstance(item[1], RigidObjectCollectionCfg)
+                else len(sim_utils.split_path_expr(item[1].prim_path)),
+            ),
         )
         if self.sim.get_clone_plan() is not None:
             raise RuntimeError("InteractiveScene must own its clone lifecycle or be constructed before task cloning.")
@@ -136,11 +145,13 @@ class InteractiveScene:
             requires_stage, requires_model = REQUIRES_STAGE_AND_MODEL[type_name]
             self.sim.requires_usd_stage |= requires_stage
             self.sim.requires_newton_model |= requires_model
-        if has_entities:
-            with cloner.ReplicateSession((cfg,), cfg.num_envs, cfg.env_spacing):
-                plan = self.sim.get_clone_plan()
-                assert plan is not None
-                self._add_entities_from_cfg()
+        if entity_items:
+            asset_cfgs = {
+                name: value.rigid_objects if isinstance(value, RigidObjectCollectionCfg) else value
+                for name, value in entity_items
+            }
+            with cloner.ReplicateSession((cfg.clone_cfg, asset_cfgs), cfg.num_envs, cfg.env_spacing):
+                self._add_entities_from_cfg(entity_items)
 
                 # Every declarative sensor exists by now, so its renderer requirements are visible.
                 for type_name in {
@@ -612,27 +623,13 @@ class InteractiveScene:
     Internal methods.
     """
 
-    def _add_entities_from_cfg(self):  # noqa: C901
+    def _add_entities_from_cfg(self, entity_items: Sequence[tuple[str, Any]]):  # noqa: C901
         """Add scene entities from the config."""
         from isaaclab_physx.assets import SurfaceGripperCfg  # noqa: PLC0415
 
         from isaaclab.terrains.terrain_importer_cfg import TerrainImporterCfg  # noqa: PLC0415
 
-        # Parent prototypes must exist before anything spawned below them; sensors initialize last.
-        all_items = [
-            (k, v)
-            for k, v in self.cfg.__dict__.items()
-            if k not in InteractiveSceneCfg.__dataclass_fields__ and v is not None
-        ]
-        ordered_items = sorted(
-            all_items,
-            key=lambda item: (
-                isinstance(item[1], SensorBaseCfg),
-                len(sim_utils.split_path_expr(item[1].prim_path)),
-            ),
-        )
-
-        for asset_name, asset_cfg in ordered_items:
+        for asset_name, asset_cfg in entity_items:
             # create asset
             if isinstance(asset_cfg, TerrainImporterCfg):
                 # terrains are special entities since they define environment origins

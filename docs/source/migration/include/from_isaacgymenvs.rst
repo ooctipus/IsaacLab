@@ -244,7 +244,10 @@ env cfg and own their homogeneous clone lifecycle in ``_setup_scene()``.
       cfg: CartpoleEnvCfg
 
       def _setup_scene(self):
-         plan = cloner.clone_plan_from_env_0(self.cfg, self.cfg.scene.num_envs, self.cfg.scene.env_spacing)
+         asset_cfgs = self.cfg.robot_cfg, self.cfg.ground_cfg, self.cfg.light_cfg
+         plan = cloner.clone_plan_from_env_0(
+             self.cfg.scene.clone_cfg, asset_cfgs, self.cfg.scene.num_envs, self.cfg.scene.env_spacing
+         )
          self.cartpole = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
          self.cfg.ground_cfg.spawn.func(self.cfg.ground_cfg.prim_path, self.cfg.ground_cfg.spawn)
          self.cfg.light_cfg.spawn.func(self.cfg.light_cfg.prim_path, self.cfg.light_cfg.spawn)
@@ -252,10 +255,9 @@ env cfg and own their homogeneous clone lifecycle in ``_setup_scene()``.
          cloner.replicate(plan)
 
 Here ``self.cfg`` is the :class:`CartpoleEnvCfg` instance; only ``self.cfg.scene`` is its nested
-:class:`~isaaclab.scene.InteractiveSceneCfg`. The cloner accepts a generic configuration root and
-collects its single :class:`~isaaclab.cloner.CloneCfg` together with every nested prim-authoring cfg.
-It does not inspect the registered scene object. Passing the complete Direct cfg avoids maintaining a
-second asset and sensor list that can omit a camera, marker, or another scene declaration.
+:class:`~isaaclab.scene.InteractiveSceneCfg`. The cloner receives the explicit clone policy and prim
+authors. It does not inspect either environment cfg. The tuple is the construction boundary: a camera,
+marker, or other prim author constructed below must appear in it.
 
 The environment base constructs the plain scene registry and invokes ``_setup_scene()``. The setup
 method publishes before cfg-owned constructors and dispatches afterward. Every authored asset cfg
@@ -678,7 +680,10 @@ and constructs one plan-owned prototype:
 
           # self.cfg is CartpoleEnvCfg
           def _setup_scene(self):
-              plan = cloner.clone_plan_from_env_0(self.cfg, self.cfg.scene.num_envs, self.cfg.scene.env_spacing)
+              asset_cfgs = self.cfg.robot_cfg, self.cfg.ground_cfg, self.cfg.light_cfg
+              plan = cloner.clone_plan_from_env_0(
+                  self.cfg.scene.clone_cfg, asset_cfgs, self.cfg.scene.num_envs, self.cfg.scene.env_spacing
+              )
               self.cartpole = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
               self.cfg.ground_cfg.spawn.func(self.cfg.ground_cfg.prim_path, self.cfg.ground_cfg.spawn)
               self.cfg.light_cfg.spawn.func(self.cfg.light_cfg.prim_path, self.cfg.light_cfg.spawn)

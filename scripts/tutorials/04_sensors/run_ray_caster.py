@@ -67,7 +67,7 @@ def design_scene(sim: sim_utils.SimulationContext) -> dict:
         ),
     )
     plan = cloner.clone_plan_from_env_0(
-        (cloner.CloneCfg(clone_template="/World/Origin{}"), ground_cfg, light_cfg, ball_cfg, sensor_cfg), 4, 0.5
+        cloner.CloneCfg(clone_template="/World/Origin{}"), (ground_cfg, light_cfg, ball_cfg, sensor_cfg), 4, 0.5
     )
     ground_cfg.spawn.func(ground_cfg.prim_path, ground_cfg.spawn)
     light_cfg.spawn.func(light_cfg.prim_path, light_cfg.spawn)

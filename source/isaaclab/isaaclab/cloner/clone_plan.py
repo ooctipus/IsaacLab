@@ -47,22 +47,23 @@ def _plan_cfgs(
     tuple[type[object], ...],
 ]:
     """Collect declared prim authors, their scene bindings, clone policy, and context routing."""
+    cfgs = tuple(cfgs)
+    clone_cfgs = tuple(cfg for cfg in cfgs if isinstance(cfg, CloneCfg))
+    if len(clone_cfgs) != 1:
+        raise ValueError("One clone lifecycle requires one CloneCfg as a top-level input.")
+
     found: list[Any] = []
     names: dict[int, str] = {}
     scene_consumers: list[Any] = []
-    clone_cfg: CloneCfg | None = None
+    clone_cfg = clone_cfgs[0]
     visited: set[int] = set()
 
     def visit(value: Any, binding: str | None, naming_boundary: bool = False) -> None:
-        nonlocal clone_cfg
         if value is None or isinstance(value, (str, bytes, int, float, bool, type)) or callable(value):
             return
         identity = id(value)
         if isinstance(value, CloneCfg):
-            if clone_cfg is not None and clone_cfg is not value:
-                raise ValueError("One clone lifecycle cannot contain multiple CloneCfg instances.")
-            clone_cfg = value
-            return
+            raise TypeError("CloneCfg must be supplied directly, not discovered inside another cfg.")
         if identity in visited:
             if binding is not None and identity in names and names[identity] != binding:
                 raise ValueError(f"One cfg cannot be bound as both {names[identity]!r} and {binding!r}.")
@@ -83,19 +84,31 @@ def _plan_cfgs(
                     names[identity] = binding
             elif "cloning_contexts" in instance_fields:
                 scene_consumers.append(value)
-            owns_clone_cfg = any(isinstance(child, CloneCfg) for _, child in child_items)
             for name, child in child_items:
-                visit(child, name if naming_boundary or owns_clone_cfg else binding)
+                visit(child, name if naming_boundary else binding)
             return
         else:
             return
         for child in children:
             visit(child, binding)
 
+    def visit_participant(value: Any, binding: str | None = None) -> None:
+        if value is None:
+            return
+        if isinstance(value, dict):
+            for name, child in value.items():
+                visit_participant(child, str(name) if binding is None else binding)
+            return
+        if not dataclasses.is_dataclass(value) or isinstance(value, type):
+            raise TypeError(f"Clone participants must be prim-authoring cfgs, got {type(value).__name__}.")
+        fields = vars(value)
+        if "prim_path" not in fields and "cloning_contexts" not in fields:
+            raise TypeError(f"Clone participants must be prim-authoring cfgs, got {type(value).__name__}.")
+        visit(value, binding, naming_boundary=binding is None)
+
     for cfg in cfgs:
-        visit(cfg, None, naming_boundary=True)
-    if clone_cfg is None:
-        raise ValueError("One clone lifecycle requires one CloneCfg in its configuration roots.")
+        if cfg is not clone_cfg:
+            visit_participant(cfg)
 
     cfg_contexts: dict[int, tuple[type[object], ...] | None] = {}
     for cfg in found:

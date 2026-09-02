@@ -5,6 +5,7 @@
 
 """Architecture and dispatch tests for the single clone-plan lifecycle."""
 
+from dataclasses import dataclass
 from types import SimpleNamespace
 
 import pytest
@@ -96,6 +97,34 @@ def test_clone_planning_does_not_depend_on_registered_scene():
     assert not hasattr(SimulationContext, "_validate_clone_plan")
 
 
+def test_clone_plan_from_env_0_requires_explicit_cfgs(monkeypatch):
+    """A Direct environment cfg is not an implicit clone-participant inventory."""
+
+    @dataclass
+    class DirectCfg:
+        class_type: object
+        robot_cfg: object
+
+    @dataclass
+    class NonAuthorCfg:
+        class_type: object
+
+    simulation = _simulation(stage=Usd.Stage.CreateInMemory())
+    monkeypatch.setattr(SimulationContext, "instance", lambda: simulation)
+
+    direct_cfg = DirectCfg(object, AssetBaseCfg(prim_path="/World/Asset"))
+    with pytest.raises(TypeError, match="prim-authoring cfgs"):
+        cloner.clone_plan_from_env_0(cloner.CloneCfg(), [direct_cfg], 2, 1.0)
+    with pytest.raises(TypeError, match="prim-authoring cfgs"):
+        cloner.clone_plan_from_env_0(cloner.CloneCfg(), [NonAuthorCfg(object)], 2, 1.0)
+    with pytest.raises(TypeError, match="clone_cfg must be a CloneCfg"):
+        cloner.clone_plan_from_env_0(AssetBaseCfg(prim_path="/World/Asset"), (), 2, 1.0)
+    with pytest.raises(TypeError, match="not CloneCfg"):
+        cloner.clone_plan_from_env_0(cloner.CloneCfg(), [cloner.CloneCfg()], 2, 1.0)
+
+    assert simulation.get_clone_plan() is None
+
+
 def test_replicate_session_authors_every_environment_root(monkeypatch):
     """The composition root authors environment frames before entity construction."""
     stage = Usd.Stage.CreateInMemory()
@@ -133,7 +162,7 @@ def test_plan_publication_failure_is_non_dispatchable(monkeypatch):
 
     monkeypatch.setattr(replicate_session.Sdf, "CreatePrimInLayer", fail_publication)
     with pytest.raises(RuntimeError, match="publication failed"):
-        cloner.clone_plan_from_env_0(cloner.CloneCfg(), 2, 1.0)
+        cloner.clone_plan_from_env_0(cloner.CloneCfg(), (), 2, 1.0)
 
     assert simulation._clone_plan_dispatched is None
     with pytest.raises(RuntimeError, match="exactly once"):
@@ -152,7 +181,7 @@ def test_clone_plan_from_env_0_publishes_before_explicit_replication(monkeypatch
     )
     monkeypatch.setattr(SimulationContext, "instance", lambda: simulation)
 
-    plan = cloner.clone_plan_from_env_0([cloner.CloneCfg(), asset_cfg], 2, 1.0)
+    plan = cloner.clone_plan_from_env_0(cloner.CloneCfg(), (asset_cfg,), 2, 1.0)
 
     assert simulation.get_clone_plan() is plan
     assert simulation._clone_plan_dispatched is False
@@ -167,7 +196,7 @@ def test_clone_plan_from_env_0_accepts_an_empty_direct_scene(monkeypatch):
     simulation = _simulation(stage=Usd.Stage.CreateInMemory())
     monkeypatch.setattr(SimulationContext, "instance", lambda: simulation)
 
-    plan = cloner.clone_plan_from_env_0(cloner.CloneCfg(), 2, 1.0)
+    plan = cloner.clone_plan_from_env_0(cloner.CloneCfg(), (), 2, 1.0)
     cloner.replicate(plan)
 
     assert simulation._clone_plan_dispatched is True
@@ -183,7 +212,7 @@ def test_clone_plan_from_env_0_rejects_multi_variant_layout_before_publication(m
     monkeypatch.setattr(SimulationContext, "instance", lambda: simulation)
 
     with pytest.raises(ValueError, match="one homogeneous cfg-derived environment prototype"):
-        cloner.clone_plan_from_env_0([cloner.CloneCfg(replicate_physics=False), asset_cfg], 2, 1.0)
+        cloner.clone_plan_from_env_0(cloner.CloneCfg(replicate_physics=False), (asset_cfg,), 2, 1.0)
     assert simulation.get_clone_plan() is None
     assert simulation._backend_registry == {}
     assert simulation._backend_clone_roles == {}

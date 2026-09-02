@@ -5,16 +5,16 @@ Changed
   heterogeneous scene with ``scene_cfg.class_type(scene_cfg)``; ``InteractiveScene`` owns its
   lifecycle. A homogeneous direct ``_setup_scene()`` instead calls ``clone_plan_from_env_0()`` before
   cfg-owned constructors and ``replicate()`` afterward; its plain scene is only the runtime registry.
-  Keep every authored asset cfg on the direct env cfg, construct its prototype with
-  ``cfg.class_type(cfg)``, and register runtime entities on the scene. Standalone homogeneous
+  Keep every authored asset cfg on the direct env cfg, pass those cfgs explicitly, construct each
+  prototype with ``cfg.class_type(cfg)``, and register runtime entities on the scene. Standalone homogeneous
   workflows may use the same two-phase sequence explicitly; ``ReplicateSession`` remains the
   lower-level lifecycle for general cloning tools. Planning obtains stage and device from the active
   ``SimulationContext``; replication dispatches each required stage/native context once and queues
   model-role backends for the first hard reset after any intervening stage edits.
 * Moved Warp-mask scene reset support into ``InteractiveScene`` so every frontend uses the
   cfg-selected scene class instead of a parallel Warp-only scene implementation.
-* **Breaking:** Changed ``clone_plan_from_env_0()`` to accept the complete cfg root, environment count,
-  and spacing and to publish its exhaustive plan before prototype construction. The former source,
+* **Breaking:** Changed ``clone_plan_from_env_0()`` to accept the explicit ``CloneCfg`` and prim-author
+  cfgs, environment count, and spacing and to publish its exhaustive plan before prototype construction. The former source,
   destination, device, positions, and global-path arguments were removed. Call ``replicate(plan)``
   after construction; it now obtains the stage and backend registry from the active
   ``SimulationContext`` and the physics policy from the published plan instead of accepting

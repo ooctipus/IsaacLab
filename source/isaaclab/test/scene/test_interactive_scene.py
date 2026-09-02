@@ -125,7 +125,7 @@ def test_plain_scene_is_a_registry_until_its_caller_clones(device):
         with pytest.raises(RuntimeError, match="owns exactly one InteractiveScene"):
             scene_cfg.class_type(scene_cfg)
 
-        plan = cloner.clone_plan_from_env_0(scene_cfg, scene_cfg.num_envs, scene_cfg.env_spacing)
+        plan = cloner.clone_plan_from_env_0(scene_cfg.clone_cfg, (), scene_cfg.num_envs, scene_cfg.env_spacing)
         cloner.replicate(plan)
 
         assert sim.get_clone_plan() is plan

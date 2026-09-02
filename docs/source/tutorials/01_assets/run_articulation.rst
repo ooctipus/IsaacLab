@@ -44,9 +44,9 @@ For the cart-pole, we use its pre-defined configuration object, which is an inst
 default initial state, actuator models for different joints, and other meta-information. A deeper-dive into how to
 create this configuration object is provided in the :ref:`how-to-write-articulation-config` tutorial.
 
-The clone session receives the complete declarative cfg roots, creates both environment origins, and constructs
-the cart-pole through the standard ``cfg.class_type(cfg)`` convention. The resulting clone plan also owns the
-origins used when writing world-frame state.
+The clone session receives the clone policy and explicit asset cfgs, creates both environment origins, and
+constructs the cart-pole through the standard ``cfg.class_type(cfg)`` convention. The resulting clone plan also
+owns the origins used when writing world-frame state.
 
 .. literalinclude:: ../../../../scripts/tutorials/01_assets/run_articulation.py
    :language: python

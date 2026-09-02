@@ -454,8 +454,8 @@ def design_scene(
         camera_cfgs["ray_caster_camera"] = ray_cfg
 
     plan = cloner.clone_plan_from_env_0(
+        cloner.CloneCfg(clone_template="/World/Cameras/Camera_{}"),
         (
-            cloner.CloneCfg(clone_template="/World/Cameras/Camera_{}"),
             ground_cfg,
             light_cfg,
             *object_cfgs.values(),

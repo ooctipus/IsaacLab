@@ -80,7 +80,19 @@ class FactoryEnv(DirectRLEnv):
         self.ep_success_times = torch.zeros((self.num_envs,), dtype=torch.long, device=self.device)
 
     def _setup_scene(self):
-        plan = cloner.clone_plan_from_env_0(self.cfg, self.cfg.scene.num_envs, self.cfg.scene.env_spacing)
+        asset_cfgs = (
+            self.cfg.ground,
+            self.cfg.table,
+            self.cfg.light,
+            self.cfg.robot,
+            self.cfg.fixed_asset,
+            self.cfg.held_asset,
+            self.cfg.small_gear,
+            self.cfg.large_gear,
+        )
+        plan = cloner.clone_plan_from_env_0(
+            self.cfg.scene.clone_cfg, asset_cfgs, self.cfg.scene.num_envs, self.cfg.scene.env_spacing
+        )
         source_env = self.cfg.scene.clone_cfg.clone_template.format(0)
         for asset_cfg in (self.cfg.ground, self.cfg.table, self.cfg.light):
             asset_cfg.spawn.func(

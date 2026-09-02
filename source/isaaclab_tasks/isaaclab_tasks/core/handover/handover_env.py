@@ -84,7 +84,17 @@ class HandoverEnv(DirectMARLEnv):
         self.y_unit_tensor = torch.tensor([0, 1, 0], dtype=torch.float, device=self.device).repeat((self.num_envs, 1))
 
     def _setup_scene(self):
-        plan = cloner.clone_plan_from_env_0(self.cfg, self.cfg.scene.num_envs, self.cfg.scene.env_spacing)
+        asset_cfgs = (
+            self.cfg.right_robot_cfg,
+            self.cfg.left_robot_cfg,
+            self.cfg.object_cfg,
+            self.cfg.ground_cfg,
+            self.cfg.light_cfg,
+            self.cfg.goal_object_cfg,
+        )
+        plan = cloner.clone_plan_from_env_0(
+            self.cfg.scene.clone_cfg, asset_cfgs, self.cfg.scene.num_envs, self.cfg.scene.env_spacing
+        )
         self.right_hand = self.cfg.right_robot_cfg.class_type(self.cfg.right_robot_cfg)
         self.left_hand = self.cfg.left_robot_cfg.class_type(self.cfg.left_robot_cfg)
         self.object = self.cfg.object_cfg.class_type(self.cfg.object_cfg)

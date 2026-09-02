@@ -170,7 +170,18 @@ class ReorientDirectEnv(DirectRLEnv):
         self._write_hand_joint_vel = self.hand.write_joint_velocity_to_sim_index
 
     def _setup_scene(self):
-        plan = cloner.clone_plan_from_env_0(self.cfg, self.cfg.scene.num_envs, self.cfg.scene.env_spacing)
+        asset_cfgs = (
+            self.cfg.robot_cfg,
+            self.cfg.object_cfg,
+            self.cfg.tiled_camera,
+            self.cfg.joint_wrench_cfg,
+            self.cfg.ground_cfg,
+            self.cfg.light_cfg,
+            self.cfg.goal_object_cfg,
+        )
+        plan = cloner.clone_plan_from_env_0(
+            self.cfg.scene.clone_cfg, asset_cfgs, self.cfg.scene.num_envs, self.cfg.scene.env_spacing
+        )
         self._setup_scene_entities()
         cloner.replicate(plan)
 

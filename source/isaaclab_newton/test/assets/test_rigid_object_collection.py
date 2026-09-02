@@ -111,7 +111,7 @@ def generate_cubes_scene(
         cube_config_dict[f"cube_{i}"] = cube_object_cfg
     # create the rigid object collection
     cube_object_collection_cfg = RigidObjectCollectionCfg(rigid_objects=cube_config_dict)
-    session_cfgs = [cube_object_collection_cfg]
+    session_cfgs = [cube_object_collection_cfg.rigid_objects]
     if spawn_unrelated_sibling:
         unrelated_cfg = RigidObjectCfg(prim_path="/World/Env_[^/]*/UnrelatedObject", spawn=spawn_cfg)
         session_cfgs.append(unrelated_cfg)
@@ -198,7 +198,9 @@ def test_set_body_inertial_properties_updates_inverses(device):
                 for body_index in range(num_cubes)
             }
         )
-        with ReplicateSession([CloneCfg(clone_template="/World/Env_{}"), object_collection_cfg], num_envs, 1.0):
+        with ReplicateSession(
+            [CloneCfg(clone_template="/World/Env_{}"), object_collection_cfg.rigid_objects], num_envs, 1.0
+        ):
             object_collection = object_collection_cfg.class_type(object_collection_cfg)
         sim.reset()
 

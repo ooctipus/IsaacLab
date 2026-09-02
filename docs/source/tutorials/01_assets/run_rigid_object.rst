@@ -55,8 +55,8 @@ the :class:`assets.RigidObject` class, it spawns the object and initializes the 
 when the simulation is played.
 
 The rigid-object cfg uses ``{ENV_REGEX_NS}`` for its environment namespace.
-:func:`~isaaclab.cloner.clone_plan_from_env_0` receives the complete declarative cfg root, publishes
-the plan, and creates the environment origins before the object is constructed through
+:func:`~isaaclab.cloner.clone_plan_from_env_0` receives the clone policy and explicit asset cfgs,
+publishes the plan, and creates the environment origins before the object is constructed through
 ``cfg.class_type(cfg)``. :func:`~isaaclab.cloner.replicate` then dispatches that same plan, whose
 origins are used when writing world-frame state.
 

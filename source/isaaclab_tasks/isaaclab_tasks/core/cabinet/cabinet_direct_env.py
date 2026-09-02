@@ -84,7 +84,10 @@ class CabinetDirectEnv(DirectRLEnv):
         }
 
     def _setup_scene(self) -> None:
-        plan = cloner.clone_plan_from_env_0(self.cfg, self.cfg.scene.num_envs, self.cfg.scene.env_spacing)
+        asset_cfgs = self.cfg.robot, self.cfg.cabinet, self.cfg.plane, self.cfg.light
+        plan = cloner.clone_plan_from_env_0(
+            self.cfg.scene.clone_cfg, asset_cfgs, self.cfg.scene.num_envs, self.cfg.scene.env_spacing
+        )
         self._robot = self.cfg.robot.class_type(self.cfg.robot)
         self._cabinet = self.cfg.cabinet.class_type(self.cfg.cabinet)
         for asset_cfg in (self.cfg.plane, self.cfg.light):

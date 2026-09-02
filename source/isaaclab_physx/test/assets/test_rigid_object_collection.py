@@ -87,7 +87,9 @@ def generate_cubes_scene(
         cube_config_dict[f"cube_{i}"] = cube_object_cfg
     # create the rigid object collection
     cube_object_collection_cfg = RigidObjectCollectionCfg(rigid_objects=cube_config_dict)
-    with ReplicateSession([CloneCfg(clone_template="/World/Table_{}"), cube_object_collection_cfg], num_envs, 3.0):
+    with ReplicateSession(
+        [CloneCfg(clone_template="/World/Table_{}"), cube_object_collection_cfg.rigid_objects], num_envs, 3.0
+    ):
         cube_object_colection = cube_object_collection_cfg.class_type(cube_object_collection_cfg)
     origins = SimulationContext.instance().get_clone_plan().positions
 

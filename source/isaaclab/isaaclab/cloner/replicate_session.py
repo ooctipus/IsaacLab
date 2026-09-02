@@ -8,13 +8,14 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from pxr import Gf, Sdf, UsdGeom, Vt
 
 from isaaclab.sim import SimulationContext
 
 from .clone_plan import _make_clone_plan, _plan_cfgs
+from .cloner_cfg import CloneCfg
 from .collision_filter import filter_collisions
 from .path import under
 from .usd import UsdReplicateContext
@@ -23,7 +24,7 @@ if TYPE_CHECKING:
     from .clone_plan import ClonePlan
 
 
-def _build_plan(cfgs: Iterable[Any], num_clones: int, env_spacing: float, *, homogeneous: bool = False) -> ClonePlan:
+def _build_plan(cfgs: Iterable[object], num_clones: int, env_spacing: float, *, homogeneous: bool = False) -> ClonePlan:
     """Build one cfg-derived plan and register every context it declares."""
     sim = SimulationContext.instance()
     if sim is None:
@@ -31,7 +32,7 @@ def _build_plan(cfgs: Iterable[Any], num_clones: int, env_spacing: float, *, hom
     if sim.get_clone_plan() is not None:
         raise RuntimeError("A SimulationContext owns exactly one clone lifecycle.")
 
-    plan_cfgs = _plan_cfgs((*cfgs, sim.cfg, *sim._get_visualizer_cfgs()))
+    plan_cfgs = _plan_cfgs((*cfgs, *sim._get_visualizer_cfgs()))
     clone_cfg, cfg_contexts, scene_contexts = plan_cfgs[2:]
     explicit_contexts = {
         context_type for contexts in cfg_contexts.values() if contexts is not None for context_type in contexts
@@ -141,12 +142,14 @@ def replicate(plan: ClonePlan) -> None:
     sim._clone_plan_dispatched = True
 
 
-def clone_plan_from_env_0(cfg: Any, num_envs: int, env_spacing: float) -> ClonePlan:
+def clone_plan_from_env_0(
+    clone_cfg: CloneCfg, asset_cfgs: Iterable[object], num_envs: int, env_spacing: float
+) -> ClonePlan:
     """Build and publish one homogeneous cfg-derived plan before prototype construction.
 
     Args:
-        cfg: Complete configuration root containing one :class:`~isaaclab.cloner.CloneCfg` and every
-            prim-authoring cfg.
+        clone_cfg: Environment replication policy.
+        asset_cfgs: Participating asset, sensor, terrain, material, and marker cfgs.
         num_envs: Number of target environments.
         env_spacing: Grid spacing between environment origins [m].
 
@@ -154,10 +157,17 @@ def clone_plan_from_env_0(cfg: Any, num_envs: int, env_spacing: float) -> CloneP
         The plan to pass to :func:`replicate` after constructing the environment-zero prototypes.
 
     Raises:
+        TypeError: If ``clone_cfg`` is not a clone policy or ``asset_cfgs`` contains one.
         RuntimeError: If no simulation is active or it already owns a clone plan.
-        ValueError: If ``cfg`` does not describe one homogeneous environment prototype.
+        ValueError: If the cfgs do not describe one homogeneous environment prototype.
     """
-    plan = _build_plan((cfg,), num_envs, env_spacing, homogeneous=True)
+    if not isinstance(clone_cfg, CloneCfg):
+        raise TypeError(f"clone_cfg must be a CloneCfg, got {type(clone_cfg).__name__}.")
+    asset_cfgs = tuple(asset_cfgs)
+    if any(isinstance(cfg, CloneCfg) for cfg in asset_cfgs):
+        raise TypeError("asset_cfgs must contain asset and sensor cfgs, not CloneCfg.")
+
+    plan = _build_plan((clone_cfg, *asset_cfgs), num_envs, env_spacing, homogeneous=True)
     _publish_plan(plan)
     return plan
 
@@ -170,15 +180,16 @@ class ReplicateSession:
     hard reset, after any intervening stage edits.
     """
 
-    def __init__(self, cfgs: Iterable[Any], num_clones: int, env_spacing: float):
+    def __init__(self, cfgs: Iterable[object], num_clones: int, env_spacing: float):
         """Capture the declarative scene inputs for one cloning lifecycle.
 
         Args:
-            cfgs: Resolved configuration roots. Every nested prim-authoring cfg is planned.
+            cfgs: An iterable containing exactly one :class:`~isaaclab.cloner.CloneCfg` and every
+                participating prim-authoring cfg.
             num_clones: Number of target environments.
             env_spacing: Grid spacing between environment origins [m].
         """
-        self._roots = tuple(cfgs)
+        self._cfgs = tuple(cfgs)
         self._num_clones = num_clones
         self._env_spacing = env_spacing
         self._plan: ClonePlan | None = None
@@ -186,7 +197,7 @@ class ReplicateSession:
     def __enter__(self) -> ReplicateSession:
         if self._plan is not None:
             raise RuntimeError("A SimulationContext owns exactly one clone lifecycle.")
-        self._plan = _build_plan(self._roots, self._num_clones, self._env_spacing)
+        self._plan = _build_plan(self._cfgs, self._num_clones, self._env_spacing)
         _publish_plan(self._plan)
         return self
 

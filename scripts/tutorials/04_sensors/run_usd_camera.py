@@ -138,7 +138,8 @@ def design_scene(sim: sim_utils.SimulationContext) -> dict:
             init_state=RigidObjectCfg.InitialStateCfg(pos=position),
         )
     plan = cloner.clone_plan_from_env_0(
-        (cloner.CloneCfg(clone_template="/World/Origin_{}"), ground_cfg, light_cfg, *object_cfgs.values(), camera_cfg),
+        cloner.CloneCfg(clone_template="/World/Origin_{}"),
+        (ground_cfg, light_cfg, *object_cfgs.values(), camera_cfg),
         2,
         0.0,
     )

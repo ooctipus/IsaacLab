@@ -74,7 +74,10 @@ def design_scene(sim: sim_utils.SimulationContext):
         spawn=sim_utils.DistantLightCfg(intensity=600.0, color=(0.75, 0.75, 0.75)),
     )
     plan = cloner.clone_plan_from_env_0(
-        (cloner.CloneCfg(clone_template="/World/Origin_{}"), ground_cfg, light_cfg, camera_cfg), args_cli.num_envs, 0.0
+        cloner.CloneCfg(clone_template="/World/Origin_{}"),
+        (ground_cfg, light_cfg, camera_cfg),
+        args_cli.num_envs,
+        0.0,
     )
     ground_cfg.spawn.func(ground_cfg.prim_path, ground_cfg.spawn)
     light_cfg.spawn.func(light_cfg.prim_path, light_cfg.spawn)

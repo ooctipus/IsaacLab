@@ -121,40 +121,6 @@ def test_clone_plan_carries_the_declared_physics_replication_policy():
     assert plan.replicate_physics is False
 
 
-def test_make_clone_plan_reads_nested_direct_cfg_and_expands_its_namespace():
-    """The plan discovers an asset declared as data inside a direct-environment cfg."""
-
-    @dataclass
-    class DirectCfg:
-        asset: object
-
-    asset = _SpawnCfg(prim_path="{ENV_REGEX_NS}/Object", spawn=sim_utils.SphereCfg(radius=0.1))
-
-    plan = _make_clone_plan([DirectCfg(asset)], num_clones=2, env_spacing=1.0, device="cpu")
-
-    assert plan.sources == ("/World/envs/env_0/Object",)
-    assert plan.destinations == ("/World/envs/env_{}/Object",)
-    assert plan.cfg_rows == {id(asset): (0,)}
-
-
-def test_plan_discovery_ignores_deleted_inherited_dataclass_fields():
-    """Configclass fields deleted by a derived scene do not remain traversal inputs."""
-
-    @dataclass
-    class DirectCfg:
-        clone_cfg: cloner.CloneCfg
-        asset: object
-        deleted_asset: object
-
-    asset = _SpawnCfg(prim_path="{ENV_REGEX_NS}/Object", spawn=sim_utils.SphereCfg(radius=0.1))
-    cfg = DirectCfg(cloner.CloneCfg(), asset, object())
-    del cfg.deleted_asset
-
-    plan = _build_clone_plan(*_plan_cfgs([cfg]), num_clones=2, env_spacing=1.0, device="cpu", context_roles={})
-
-    assert plan.cfg_rows == {id(asset): (0,)}
-
-
 def test_make_clone_plan_owns_and_deduplicates_global_visualization_marker_cfgs():
     """Global marker cfgs share one plan row instead of relying on stage discovery."""
     marker_cfgs = [
@@ -312,29 +278,35 @@ def test_spawnless_reference_reuses_nearest_author_across_roots():
 
 def test_clone_plan_consumes_the_interleaved_combination_prefix():
     """Small scenes retain one environment from each declared combination."""
-
-    @dataclass
-    class SceneCfg:
-        clone_cfg: cloner.CloneCfg
-        robot: object
-        prop: object
-
     robot = _SpawnCfg("{ENV_REGEX_NS}/Robot", sim_utils.CuboidCfg(size=(0.1, 0.1, 0.1)))
     prop = _SpawnCfg("{ENV_REGEX_NS}/Prop", sim_utils.SphereCfg(radius=0.1))
-    cfg = SceneCfg(
-        cloner.CloneCfg(
-            clone_combinations=[
-                cloner.InclusionSet(assets=["robot"]),
-                cloner.InclusionSet(assets=["prop"]),
-            ]
-        ),
-        robot,
-        prop,
+    clone_cfg = cloner.CloneCfg(
+        clone_combinations=[
+            cloner.InclusionSet(assets=["robot"]),
+            cloner.InclusionSet(assets=["prop"]),
+        ]
     )
 
-    plan = _build_clone_plan(*_plan_cfgs([cfg]), num_clones=2, env_spacing=1.0, device="cpu", context_roles={})
+    plan = _build_clone_plan(
+        *_plan_cfgs([clone_cfg, {"robot": robot, "prop": prop}]),
+        num_clones=2,
+        env_spacing=1.0,
+        device="cpu",
+        context_roles={},
+    )
 
     assert plan.clone_mask.tolist() == [[True, False], [False, True]]
+
+
+def test_nested_asset_mapping_preserves_its_outer_binding():
+    """A composite asset remains one named participant without whole-cfg discovery."""
+    first = _SpawnCfg("{ENV_REGEX_NS}/First", sim_utils.CuboidCfg(size=(0.1, 0.1, 0.1)))
+    second = _SpawnCfg("{ENV_REGEX_NS}/Second", sim_utils.SphereCfg(radius=0.1))
+
+    cfgs, names, *_ = _plan_cfgs([cloner.CloneCfg(), {"collection": {"first": first, "second": second}}])
+
+    assert cfgs == (first, second)
+    assert names == {id(first): "collection", id(second): "collection"}
 
 
 # (path, root) pairs spanning the ordinary cases plus the stage root and trailing slashes.
