@@ -315,7 +315,7 @@ def test_prepare_stage_requires_published_plan(monkeypatch: pytest.MonkeyPatch):
     """OVRTX stage preparation rejects an absent plan."""
     _patch_simulation_context(monkeypatch, None)
 
-    with pytest.raises(RuntimeError, match="Clone plan with positions is required"):
+    with pytest.raises(RuntimeError, match="Clone plan is required"):
         _make_ovrtx_renderer_without_backend().prepare_stage(_make_multi_env_stage(2), 2)
 
 
