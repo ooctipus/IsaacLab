@@ -19,14 +19,14 @@ from isaaclab_tasks.utils import resolve_task_config
 
 
 @pytest.mark.parametrize(
-    "task_name,presets",
+    "task_name,presets,camera_name",
     [
-        ("Isaac-Reorient-Cube-Shadow-Camera-Direct", "ovphysx,ovrtx,rgb"),
-        ("Isaac-Reorient-KukaAllegro-Camera", "ovphysx,ovrtx,rgb64,single_camera,cube"),
-        ("Isaac-Lift-KukaAllegro-Camera", "ovphysx,ovrtx,rgb64,single_camera,cube"),
+        ("Isaac-Reorient-Cube-Shadow-Camera-Direct", "ovphysx,ovrtx,rgb", "camera"),
+        ("Isaac-Reorient-KukaAllegro-Camera", "ovphysx,ovrtx,rgb64,single_camera,cube", "base_camera"),
+        ("Isaac-Lift-KukaAllegro-Camera", "ovphysx,ovrtx,rgb64,single_camera,cube", "base_camera"),
     ],
 )
-def test_ovphysx_camera_preset_resolves_kitless(task_name: str, presets: str):
+def test_ovphysx_camera_preset_resolves_kitless(task_name: str, presets: str, camera_name: str):
     """OVPhysX camera presets should select kitless physics and rendering backends."""
     old_argv = sys.argv.copy()
     try:
@@ -35,7 +35,7 @@ def test_ovphysx_camera_preset_resolves_kitless(task_name: str, presets: str):
     finally:
         sys.argv = old_argv
 
-    camera_cfg = env_cfg.tiled_camera if hasattr(env_cfg, "tiled_camera") else env_cfg.scene.base_camera
+    camera_cfg = getattr(env_cfg.scene, camera_name)
 
     assert isinstance(env_cfg.sim.physics, OvPhysxCfg)
     assert isinstance(camera_cfg.renderer_cfg, OVRTXRendererCfg)

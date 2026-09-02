@@ -10,7 +10,7 @@ from isaaclab_ov.physics import OvPhysxCfg
 from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
-from isaaclab.assets import ArticulationCfg
+from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 from isaaclab.envs import DirectRLEnvCfg
 from isaaclab.physics import PhysxAutoCfg
 from isaaclab.scene import InteractiveSceneCfg
@@ -58,7 +58,9 @@ class HumanoidEnvCfg(DirectRLEnvCfg):
 
     # simulation
     sim: SimulationCfg = SimulationCfg(dt=1 / 120, render_interval=decimation, physics=HumanoidPhysicsCfg())
-    terrain = TerrainImporterCfg(
+
+    # assets
+    terrain: TerrainImporterCfg = TerrainImporterCfg(
         prim_path="/World/ground",
         terrain_type="plane",
         collision_group=-1,
@@ -71,14 +73,14 @@ class HumanoidEnvCfg(DirectRLEnvCfg):
         ),
         debug_vis=False,
     )
-
-    # scene
-    scene: InteractiveSceneCfg = InteractiveSceneCfg(
-        num_envs=4096, env_spacing=5.0, replicate_physics=True, clone_in_fabric=True
+    robot: ArticulationCfg = HUMANOID_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+    joint_wrench: JointWrenchSensorCfg = JointWrenchSensorCfg(prim_path="{ENV_REGEX_NS}/Robot")
+    light_cfg: AssetBaseCfg = AssetBaseCfg(
+        prim_path="/World/Light", spawn=sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
     )
 
-    # robot
-    robot: ArticulationCfg = HUMANOID_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+    # scene
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=4096, env_spacing=5.0)
 
     # effort scale per joint, keyed by joint name expression
     joint_gears: dict[str, float] = {
@@ -93,8 +95,6 @@ class HumanoidEnvCfg(DirectRLEnvCfg):
         ".*_foot.*": 22.5,
     }
 
-    # sensors
-    joint_wrench: JointWrenchSensorCfg = JointWrenchSensorCfg(prim_path="{ENV_REGEX_NS}/Robot")
     feet_body_names: list[str] = ["left_foot", "right_foot"]
 
     # walk target, relative to the environment origin

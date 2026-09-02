@@ -10,11 +10,9 @@ from typing import TYPE_CHECKING
 
 import torch
 
-import isaaclab.sim as sim_utils
 from isaaclab import cloner
-from isaaclab.assets import Articulation
 from isaaclab.envs import DirectRLEnv
-from isaaclab.sim.spawners.from_files import GroundPlaneCfg, spawn_ground_plane
+from isaaclab.scene_data import REQUIRES_STAGE_AND_MODEL
 from isaaclab.utils.math import sample_uniform, wrap_to_pi
 
 if TYPE_CHECKING:
@@ -37,25 +35,33 @@ class CartpoleEnv(DirectRLEnv):
         self.joint_vel = self.cartpole.data.joint_vel.torch
 
     def _setup_scene(self):
-        self.cartpole = Articulation(self.cfg.robot_cfg)
-        spawn_ground_plane(prim_path="/World/ground", cfg=GroundPlaneCfg())
-        src, dest = "/World/envs/env_0", "/World/envs/env_{}"
-        pos = cloner.grid_transforms(self.scene.num_envs, self.scene.cfg.env_spacing, device=self.device)[0]
-        global_paths = ("/World/ground",)
-        plan = cloner.clone_plan_from_env_0(src, dest, self.scene.num_envs, self.device, pos, global_paths=global_paths)
+        asset_cfgs = self.cfg.robot_cfg, self.cfg.tiled_camera, self.cfg.ground_cfg, self.cfg.light_cfg
+        if self.cfg.tiled_camera is not None:
+            requires_stage, requires_model = REQUIRES_STAGE_AND_MODEL[self.cfg.tiled_camera.renderer_cfg.renderer_type]
+            self.sim.requires_usd_stage |= requires_stage
+            self.sim.requires_newton_model |= requires_model
+        plan = cloner.clone_plan_from_env_0(
+            self.cfg.scene.clone_cfg, asset_cfgs, self.cfg.scene.num_envs, self.cfg.scene.env_spacing
+        )
+        self._setup_scene_entities()
         cloner.replicate(plan)
-        # PhysX replication requires explicit collision filtering between environments.
-        if "physx" in self.scene.physics_backend:
-            self.scene.filter_collisions(global_prim_paths=[])
 
-        # add articulation to scene
-        self.scene.articulations["cartpole"] = self.cartpole
-
-        # add lights
-        light_cfg = sim_utils.DistantLightCfg(intensity=2000.0, color=(1.0, 1.0, 1.0))
-        # quaternion for euler angles (roll, pitch, yaw) = (0, -45, -45) degrees
-        light_orientation = (-0.14644663035869598, -0.3535534143447876, -0.3535534143447876, 0.8535533547401428)
-        light_cfg.func("/World/Light", light_cfg, orientation=light_orientation)
+    def _setup_scene_entities(self):
+        self.cartpole = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
+        if self.cfg.ground_cfg is not None:
+            self.cfg.ground_cfg.spawn.func(
+                self.cfg.ground_cfg.prim_path,
+                self.cfg.ground_cfg.spawn,
+                translation=self.cfg.ground_cfg.init_state.pos,
+                orientation=self.cfg.ground_cfg.init_state.rot,
+            )
+        self.cfg.light_cfg.spawn.func(
+            self.cfg.light_cfg.prim_path,
+            self.cfg.light_cfg.spawn,
+            translation=self.cfg.light_cfg.init_state.pos,
+            orientation=self.cfg.light_cfg.init_state.rot,
+        )
+        self.scene.articulations["robot"] = self.cartpole
 
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
         self.actions = self.action_scale * actions.clone()

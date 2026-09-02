@@ -84,15 +84,11 @@ component yet:
      - ``PhysxSceneDataBackend`` (in :mod:`isaaclab_physx.physics`)
      - ``NewtonSceneDataBackend`` (in :mod:`isaaclab_newton.physics`)
      - ``OvPhysxSceneDataBackend`` (in :mod:`isaaclab_ov.physics`)
-   * - Cloner
+   * - Clone plan consumer
      - :class:`~isaaclab.cloner.UsdReplicateContext`
      - :class:`~isaaclab_physx.cloner.PhysxReplicateContext`
      - :class:`~isaaclab_newton.cloner.NewtonReplicateContext`
      - :class:`~isaaclab_ov.cloner.OvPhysxReplicateContext`
-
-Each context consumes the same :class:`~isaaclab.cloner.ClonePlan` through
-``context.replicate(plan)``. The core cloner owns plan construction and dispatch;
-backend contexts only execute the rows routed to them.
 
 The Factory Pattern
 -------------------
@@ -138,6 +134,27 @@ other declarative configs:
 The config determines the implementation independently of the physics backend. ``RenderContext``
 retains one renderer for each equal renderer config, while ``SimulationContext`` owns visualizer
 construction and initialization.
+
+Scene Construction and Cloning
+------------------------------
+
+A declarative :class:`~isaaclab.scene.InteractiveScene` owns one clone lifecycle. It derives a flat
+:class:`~isaaclab.cloner.ClonePlan` from the resolved scene, simulation, renderer, and visualizer
+configuration and publishes it before constructing scene entities. Asset and sensor constructors
+query that plan for their exact prototype paths. When construction finishes, the lifecycle
+dispatches stage/native clone contexts. Model-role contexts read their routed rows from the same plan
+at the first hard reset, after any intervening stage edits.
+
+.. code-block:: python
+
+    scene = env_cfg.scene.class_type(env_cfg.scene)
+
+Manager-based and heterogeneous workflows declare spawned assets and sensors on their scene config.
+Homogeneous direct environments keep those cfgs on the direct env config. Their plain scene is a
+runtime registry, and ``_setup_scene()`` calls :func:`~isaaclab.cloner.clone_plan_from_env_0` before
+cfg-owned constructors and :func:`~isaaclab.cloner.replicate` afterward. The environment base only
+constructs the configured scene and invokes setup; it does not choose a cloning strategy.
+:class:`~isaaclab.cloner.ReplicateSession` remains the lower-level general lifecycle used internally.
 
 Backend Selection
 -----------------

@@ -20,6 +20,7 @@ simulation_app = app_launcher.app
 # Define a fixture to replace setUpClass
 import pytest
 
+from isaaclab import cloner
 from isaaclab.assets import AssetBase, AssetBaseCfg
 from isaaclab.sim import build_simulation_context
 
@@ -55,7 +56,8 @@ def test_asset_configs(registered_entities, device):
             # name the prim path
             entity_cfg.prim_path = "/World/asset"
             # create the asset / sensors
-            entity: AssetBase = entity_cfg.class_type(entity_cfg)  # type: ignore
+            with cloner.ReplicateSession([cloner.CloneCfg(), entity_cfg], 1, 0.0):
+                entity: AssetBase = entity_cfg.class_type(entity_cfg)  # type: ignore
 
             # play the sim
             sim.reset()

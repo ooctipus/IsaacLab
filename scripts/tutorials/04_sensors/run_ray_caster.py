@@ -34,45 +34,30 @@ simulation_app = app_launcher.app
 import torch
 
 import isaaclab.sim as sim_utils
-from isaaclab.assets import RigidObject, RigidObjectCfg
+from isaaclab import cloner
+from isaaclab.assets import AssetBaseCfg, RigidObject, RigidObjectCfg
 from isaaclab.sensors.ray_caster import RayCaster, RayCasterCfg, patterns
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.timer import Timer
 
 
-def define_sensor() -> RayCaster:
-    """Defines the ray-caster sensor to add to the scene."""
-    # Create a ray-caster sensor
-    ray_caster_cfg = RayCasterCfg(
-        prim_path="/World/Origin.*/ball",
+def design_scene(sim: sim_utils.SimulationContext) -> dict:
+    """Design the scene."""
+    sensor_cfg = RayCasterCfg(
+        prim_path="{ENV_REGEX_NS}/ball",
+        spawn=None,
         mesh_prim_paths=["/World/ground"],
         pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=(2.0, 2.0)),
         ray_alignment="yaw",
         debug_vis=not args_cli.headless,
     )
-    ray_caster = RayCaster(cfg=ray_caster_cfg)
-
-    return ray_caster
-
-
-def design_scene() -> dict:
-    """Design the scene."""
-    # Populate scene
-    # -- Rough terrain
-    cfg = sim_utils.UsdFileCfg(usd_path=f"{ISAAC_NUCLEUS_DIR}/Environments/Terrains/rough_plane.usd")
-    cfg.func("/World/ground", cfg)
-    # -- Light
-    cfg = sim_utils.DistantLightCfg(intensity=2000)
-    cfg.func("/World/light", cfg)
-
-    # Create separate groups called "Origin1", "Origin2", "Origin3"
-    # Each group will have a robot in it
-    origins = [[0.25, 0.25, 0.0], [-0.25, 0.25, 0.0], [0.25, -0.25, 0.0], [-0.25, -0.25, 0.0]]
-    for i, origin in enumerate(origins):
-        sim_utils.create_prim(f"/World/Origin{i}", "Xform", translation=origin)
-    # -- Balls
-    cfg = RigidObjectCfg(
-        prim_path="/World/Origin.*/ball",
+    ground_cfg = AssetBaseCfg(
+        prim_path="/World/ground",
+        spawn=sim_utils.UsdFileCfg(usd_path=f"{ISAAC_NUCLEUS_DIR}/Environments/Terrains/rough_plane.usd"),
+    )
+    light_cfg = AssetBaseCfg(prim_path="/World/light", spawn=sim_utils.DistantLightCfg(intensity=2000))
+    ball_cfg = RigidObjectCfg(
+        prim_path="{ENV_REGEX_NS}/ball",
         spawn=sim_utils.SphereCfg(
             radius=0.25,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(),
@@ -81,9 +66,14 @@ def design_scene() -> dict:
             visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.0, 1.0)),
         ),
     )
-    balls = RigidObject(cfg)
-    # -- Sensors
-    ray_caster = define_sensor()
+    plan = cloner.clone_plan_from_env_0(
+        cloner.CloneCfg(clone_template="/World/Origin{}"), (ground_cfg, light_cfg, ball_cfg, sensor_cfg), 4, 0.5
+    )
+    ground_cfg.spawn.func(ground_cfg.prim_path, ground_cfg.spawn)
+    light_cfg.spawn.func(light_cfg.prim_path, light_cfg.spawn)
+    balls = ball_cfg.class_type(ball_cfg)
+    ray_caster = sensor_cfg.class_type(sensor_cfg)
+    cloner.replicate(plan)
 
     # return the scene information
     scene_entities = {"balls": balls, "ray_caster": ray_caster}
@@ -134,7 +124,7 @@ def main():
     # Set main camera
     sim.set_camera_view([0.0, 15.0, 15.0], [0.0, 0.0, -2.5])
     # Design scene
-    scene_entities = design_scene()
+    scene_entities = design_scene(sim)
     # Play simulator
     sim.reset()
     # Now we are ready!

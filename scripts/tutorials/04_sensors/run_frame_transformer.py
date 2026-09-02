@@ -44,65 +44,47 @@ from isaacsim.util.debug_draw import _debug_draw as omni_debug_draw
 
 import isaaclab.sim as sim_utils
 import isaaclab.utils.math as math_utils
-from isaaclab.assets import Articulation
+from isaaclab.assets import AssetBaseCfg
 from isaaclab.markers import VisualizationMarkers
 from isaaclab.markers.config import FRAME_MARKER_CFG
-from isaaclab.sensors import FrameTransformer, FrameTransformerCfg, OffsetCfg
-from isaaclab.sim import SimulationContext
+from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
+from isaaclab.sensors import FrameTransformerCfg, OffsetCfg
+from isaaclab.utils.configclass import configclass
 
 ##
 # Pre-defined configs
 ##
 from isaaclab_assets.robots.anymal import ANYMAL_C_CFG  # isort:skip
 
-ROBOT_PRIM_PATH = "/World/envs/env_0/Robot"
-ROBOT_PRIM_PATH_EXPR = "/World/envs/env_.*/Robot"
+_ROT_OFFSET = math_utils.quat_from_euler_xyz(torch.zeros(1), torch.zeros(1), torch.tensor(-math.pi / 2))
+_POS_OFFSET = math_utils.quat_apply(_ROT_OFFSET, torch.tensor([0.08795, 0.01305, -0.33797]))
 
 
-def define_sensor() -> FrameTransformer:
-    """Defines the FrameTransformer sensor to add to the scene."""
-    # define offset
-    rot_offset = math_utils.quat_from_euler_xyz(torch.zeros(1), torch.zeros(1), torch.tensor(-math.pi / 2))
-    pos_offset = math_utils.quat_apply(rot_offset, torch.tensor([0.08795, 0.01305, -0.33797]))
+@configclass
+class FrameTransformerSceneCfg(InteractiveSceneCfg):
+    """Configuration for the frame-transformer tutorial scene."""
 
-    # Example using .* to get full body + LF_FOOT
-    frame_transformer_cfg = FrameTransformerCfg(
-        prim_path=f"{ROBOT_PRIM_PATH_EXPR}/base",
+    ground = AssetBaseCfg(prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg())
+    robot = ANYMAL_C_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+    frame_transformer = FrameTransformerCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/base",
         target_frames=[
-            FrameTransformerCfg.FrameCfg(prim_path=f"{ROBOT_PRIM_PATH_EXPR}/.*"),
+            FrameTransformerCfg.FrameCfg(prim_path="{ENV_REGEX_NS}/Robot/.*"),
             FrameTransformerCfg.FrameCfg(
-                prim_path=f"{ROBOT_PRIM_PATH_EXPR}/LF_SHANK",
+                prim_path="{ENV_REGEX_NS}/Robot/LF_SHANK",
                 name="LF_FOOT_USER",
-                offset=OffsetCfg(pos=tuple(pos_offset.tolist()), rot=tuple(rot_offset[0].tolist())),
+                offset=OffsetCfg(pos=tuple(_POS_OFFSET.tolist()), rot=tuple(_ROT_OFFSET[0].tolist())),
             ),
         ],
         debug_vis=False,
     )
-    frame_transformer = FrameTransformer(frame_transformer_cfg)
-
-    return frame_transformer
-
-
-def design_scene() -> dict:
-    """Design the scene."""
-    # Populate scene
-    # -- Ground-plane
-    cfg = sim_utils.GroundPlaneCfg()
-    cfg.func("/World/defaultGroundPlane", cfg)
-    # -- Lights
-    cfg = sim_utils.DistantLightCfg(intensity=3000.0, color=(0.75, 0.75, 0.75))
-    cfg.func("/World/Light", cfg)
-    # -- Robot
-    robot = Articulation(ANYMAL_C_CFG.replace(prim_path=ROBOT_PRIM_PATH))
-    # -- Sensors
-    frame_transformer = define_sensor()
-
-    # return the scene information
-    scene_entities = {"robot": robot, "frame_transformer": frame_transformer}
-    return scene_entities
+    light = AssetBaseCfg(
+        prim_path="/World/Light",
+        spawn=sim_utils.DistantLightCfg(intensity=3000.0, color=(0.75, 0.75, 0.75)),
+    )
 
 
-def run_simulator(sim: sim_utils.SimulationContext, scene_entities: dict):
+def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
     """Run the simulator."""
     # Define simulation stepping
     sim_dt = sim.get_physics_dt()
@@ -110,8 +92,8 @@ def run_simulator(sim: sim_utils.SimulationContext, scene_entities: dict):
     count = 0
 
     # extract entities for simplified notation
-    robot: Articulation = scene_entities["robot"]
-    frame_transformer: FrameTransformer = scene_entities["frame_transformer"]
+    robot = scene["robot"]
+    frame_transformer = scene["frame_transformer"]
 
     # We only want one visualization at a time. This visualizer will be used
     # to step through each frame so the user can verify that the correct frame
@@ -173,17 +155,18 @@ def main():
     """Main function."""
     # Load kit helper
     sim_cfg = sim_utils.SimulationCfg(dt=0.005, device=args_cli.device)
-    sim = SimulationContext(sim_cfg)
+    sim = sim_utils.SimulationContext(sim_cfg)
     # Set main camera
     sim.set_camera_view(eye=[2.5, 2.5, 2.5], target=[0.0, 0.0, 0.0])
     # Design scene
-    scene_entities = design_scene()
+    scene_cfg = FrameTransformerSceneCfg(num_envs=1, env_spacing=0.0)
+    scene = scene_cfg.class_type(scene_cfg)
     # Play the simulator
     sim.reset()
     # Now we are ready!
     print("[INFO]: Setup complete...")
     # Run the simulator
-    run_simulator(sim, scene_entities)
+    run_simulator(sim, scene)
 
 
 if __name__ == "__main__":

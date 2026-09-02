@@ -22,6 +22,7 @@ import torch
 import warp as wp
 
 import isaaclab.sim as sim_utils
+from isaaclab import cloner
 from isaaclab.assets import RigidObject, RigidObjectCfg
 from isaaclab.sim import build_simulation_context
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
@@ -36,20 +37,18 @@ def generate_cubes_scene(
 ) -> tuple[RigidObject, torch.Tensor]:
     """Generate a scene with the provided number of cubes."""
     origins = torch.tensor([(i * 1.0, 0, height) for i in range(num_cubes)]).to(device)
-    for i, origin in enumerate(origins):
-        sim_utils.create_prim(f"/World/Table_{i}", "Xform", translation=origin)
-
     spawn_cfg = sim_utils.UsdFileCfg(
         usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd",
         rigid_props=sim_utils.RigidBodyPropertiesCfg(),
     )
 
     cube_object_cfg = RigidObjectCfg(
-        prim_path="/World/Table_[^/]*/Object",
+        prim_path="{ENV_REGEX_NS}/Object",
         spawn=spawn_cfg,
         init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, height)),
     )
-    cube_object = RigidObject(cfg=cube_object_cfg)
+    with cloner.ReplicateSession([cloner.CloneCfg(clone_template="/World/Table_{}"), cube_object_cfg], num_cubes, 1.0):
+        cube_object = cube_object_cfg.class_type(cube_object_cfg)
     return cube_object, origins
 
 

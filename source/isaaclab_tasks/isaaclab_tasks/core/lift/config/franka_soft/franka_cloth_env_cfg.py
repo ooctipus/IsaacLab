@@ -24,6 +24,7 @@ from isaaclab_physx.sim.spawners.materials import PhysxSurfaceDeformableBodyMate
 import isaaclab.sim as sim_utils
 from isaaclab.assets import RigidObjectCfg
 from isaaclab.assets.deformable_object import DeformableObjectCfg
+from isaaclab.cloner import CloneCfg
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
@@ -200,14 +201,12 @@ class FrankaClothSceneCfg(_FrankaSoftSceneCfg):
 class FrankaClothScenePresetCfg(PresetCfg):
     """Preset config for the Franka surface deformable scene."""
 
-    newton_mjwarp_vbd_proxy: FrankaClothSceneCfg = FrankaClothSceneCfg(
-        num_envs=2048, env_spacing=2.0, replicate_physics=True
-    )
+    newton_mjwarp_vbd_proxy: FrankaClothSceneCfg = FrankaClothSceneCfg(num_envs=2048, env_spacing=2.0)
 
     # Isaac Sim PhysX does not support replicating physics for deformable objects
-    physx: FrankaClothSceneCfg = FrankaClothSceneCfg(num_envs=2048, env_spacing=2.0, replicate_physics=False)
+    physx = FrankaClothSceneCfg(num_envs=2048, env_spacing=2.0, clone_cfg=CloneCfg(replicate_physics=False))
     isaacsim_physx = physx
-    ovphysx: FrankaClothSceneCfg = FrankaClothSceneCfg(num_envs=2048, env_spacing=2.0, replicate_physics=True)
+    ovphysx: FrankaClothSceneCfg = FrankaClothSceneCfg(num_envs=2048, env_spacing=2.0)
 
     default = newton_mjwarp_vbd_proxy
 
@@ -223,14 +222,10 @@ class FrankaClothCameraSceneCfg(FrankaClothSceneCfg):
 class FrankaClothCameraScenePresetCfg(PresetCfg):
     """Scene presets for visual Franka cloth lifting."""
 
-    newton_mjwarp_vbd_proxy: FrankaClothCameraSceneCfg = FrankaClothCameraSceneCfg(
-        num_envs=128, env_spacing=2.5, replicate_physics=True
-    )
-    physx: FrankaClothCameraSceneCfg = FrankaClothCameraSceneCfg(num_envs=128, env_spacing=2.5, replicate_physics=False)
+    newton_mjwarp_vbd_proxy: FrankaClothCameraSceneCfg = FrankaClothCameraSceneCfg(num_envs=128, env_spacing=2.5)
+    physx = FrankaClothCameraSceneCfg(num_envs=128, env_spacing=2.5, clone_cfg=CloneCfg(replicate_physics=False))
     isaacsim_physx = physx
-    ovphysx: FrankaClothCameraSceneCfg = FrankaClothCameraSceneCfg(
-        num_envs=128, env_spacing=2.5, replicate_physics=True
-    )
+    ovphysx: FrankaClothCameraSceneCfg = FrankaClothCameraSceneCfg(num_envs=128, env_spacing=2.5)
     default = newton_mjwarp_vbd_proxy
 
 

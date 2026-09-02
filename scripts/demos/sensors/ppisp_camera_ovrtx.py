@@ -19,6 +19,7 @@ OVRTX must run kit-less: launch this script with ``uv run python``.
 
 import argparse
 import os
+import tempfile
 from typing import Any
 
 import matplotlib.pyplot as plt
@@ -37,7 +38,7 @@ from pxr import Usd, UsdGeom
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
-from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
+from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import Camera, CameraCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, retrieve_file_path
 from isaaclab.utils.configclass import configclass
@@ -139,6 +140,9 @@ class PpispCameraOvrtxSceneCfg(InteractiveSceneCfg):
         spawn=sim_utils.UsdFileCfg(usd_path=""),
     )
 
+    ppisp_camera: CameraCfg | None = None
+    baseline_camera: CameraCfg | None = None
+
     anchor = RigidObjectCfg(
         prim_path="{ENV_REGEX_NS}/Anchor",
         spawn=sim_utils.CuboidCfg(
@@ -236,14 +240,14 @@ def source_camera_path_to_default_rel_path(source_stage: Usd.Stage, source_camer
     return source_camera_prim_path[len(default_prefix) :]
 
 
-def source_camera_path_to_env_regex(source_stage: Usd.Stage, source_camera_prim_path: str) -> str:
-    """Map a source camera path to the duplicated-env camera regex."""
+def source_camera_path_to_env_path(source_stage: Usd.Stage, source_camera_prim_path: str) -> str:
+    """Map a source camera path to its path under each duplicated env."""
     camera_rel_path = source_camera_path_to_default_rel_path(source_stage, source_camera_prim_path)
-    return f"/World/envs/env_.*/Scene/{camera_rel_path}"
+    return f"{{ENV_REGEX_NS}}/Scene/{camera_rel_path}"
 
 
-def bake_source_camera_pose_to_envs(source_stage: Usd.Stage, source_camera_prim_path: str) -> None:
-    """Bake the selected USD camera pose at ``camera_time_code`` into duplicated env camera prims."""
+def prepare_input_scene(source_stage: Usd.Stage, source_camera_prim_path: str, prepared_path: str) -> str:
+    """Write a layer referencing the input scene with the selected camera baked and visible."""
     default_prim = source_stage.GetDefaultPrim()
     if not default_prim:
         raise RuntimeError("Input scene must have a defaultPrim so it can be referenced under each env.")
@@ -252,44 +256,36 @@ def bake_source_camera_pose_to_envs(source_stage: Usd.Stage, source_camera_prim_
     if not source_camera_prim or not source_camera_prim.IsValid():
         raise RuntimeError(f"Camera prim not found: {source_camera_prim_path}")
 
-    time_code = Usd.TimeCode(args_cli.camera_time_code)
-    source_cache = UsdGeom.XformCache(time_code)
-    source_default_world = source_cache.GetLocalToWorldTransform(default_prim)
-    source_camera_world = source_cache.GetLocalToWorldTransform(source_camera_prim)
-    source_camera_in_default = source_camera_world * source_default_world.GetInverse()
-
-    stage = sim_utils.get_current_stage()
-    target_cache = UsdGeom.XformCache(Usd.TimeCode.Default())
-    camera_rel_path = source_camera_path_to_default_rel_path(source_stage, source_camera_prim_path)
-    scene_prims = sim_utils.find_matching_prims("/World/envs/env_.*/Scene", stage)
-    if not scene_prims:
-        raise RuntimeError("No duplicated scene prims found under /World/envs.")
-
-    authored_count = 0
-    for scene_prim in scene_prims:
-        scene_path = scene_prim.GetPath().pathString
-        target_camera_path = f"{scene_path}/{camera_rel_path}"
-        target_camera_prim = stage.GetPrimAtPath(target_camera_path)
-        if not target_camera_prim or not target_camera_prim.IsValid():
-            raise RuntimeError(f"Duplicated camera prim not found: {target_camera_path}")
-
-        target_scene_world = target_cache.GetLocalToWorldTransform(scene_prim)
-        target_parent_world = target_cache.GetLocalToWorldTransform(target_camera_prim.GetParent())
-        target_camera_world = source_camera_in_default * target_scene_world
-        target_camera_local = target_camera_world * target_parent_world.GetInverse()
-        target_camera_local.Orthonormalize()
-
-        xformable = UsdGeom.Xformable(target_camera_prim)
-        xformable.ClearXformOpOrder()
-        xform_op = xformable.AddTransformOp(UsdGeom.XformOp.PrecisionDouble, "ppispCameraPose")
-        xform_op.Set(target_camera_local, Usd.TimeCode.Default())
-        xformable.SetXformOpOrder([xform_op])
-        authored_count += 1
-
-    print(
-        f"[INFO] Baked camera pose at USD time {args_cli.camera_time_code:g} into {authored_count} env camera(s).",
-        flush=True,
+    baked_cache = UsdGeom.XformCache(Usd.TimeCode(args_cli.camera_time_code))
+    camera_in_default = (
+        baked_cache.GetLocalToWorldTransform(source_camera_prim)
+        * baked_cache.GetLocalToWorldTransform(default_prim).GetInverse()
     )
+    default_cache = UsdGeom.XformCache(Usd.TimeCode.Default())
+    parent_in_default = (
+        default_cache.GetLocalToWorldTransform(source_camera_prim.GetParent())
+        * default_cache.GetLocalToWorldTransform(default_prim).GetInverse()
+    )
+    camera_local = camera_in_default * parent_in_default.GetInverse()
+    camera_local.Orthonormalize()
+
+    stage = Usd.Stage.CreateNew(prepared_path)
+    root_prim = stage.OverridePrim(default_prim.GetPath())
+    root_prim.GetReferences().AddReference(args_cli.input_scene)
+    stage.SetDefaultPrim(root_prim)
+
+    camera_rel_path = source_camera_path_to_default_rel_path(source_stage, source_camera_prim_path)
+    camera_prim = stage.OverridePrim(root_prim.GetPath().AppendPath(camera_rel_path))
+    xformable = UsdGeom.Xformable(camera_prim)
+    xformable.ClearXformOpOrder()
+    xform_op = xformable.AddTransformOp(UsdGeom.XformOp.PrecisionDouble, "ppispCameraPose")
+    xform_op.Set(camera_local, Usd.TimeCode.Default())
+    xformable.SetXformOpOrder([xform_op])
+    UsdGeom.Imageable(camera_prim).MakeVisible()
+    stage.Save()
+
+    print(f"[INFO] Baked camera pose at USD time {args_cli.camera_time_code:g} into {prepared_path}.", flush=True)
+    return prepared_path
 
 
 def get_render_product_resolution(render_product_prim: Usd.Prim | None) -> tuple[int, int] | None:
@@ -336,40 +332,24 @@ def make_ppisp_cfg(camera_prim: Usd.Prim, num_ppisp_bindings: int) -> PpispCfg:
     return ppisp_cfg
 
 
-def create_duplicated_env_scene() -> InteractiveScene:
-    """Create a production-style duplicated-env scene for tiled camera rendering."""
-    scene_cfg = PpispCameraOvrtxSceneCfg(num_envs=args_cli.num_envs, env_spacing=args_cli.env_spacing)
-    scene_cfg.input_scene.spawn = sim_utils.UsdFileCfg(usd_path=args_cli.input_scene)
-    scene = InteractiveScene(scene_cfg)
-    print(f"[INFO] Referenced input scene into {args_cli.num_envs} env(s).", flush=True)
-    return scene
-
-
-def make_matched_camera_prims_visible(stage: Usd.Stage, camera_prim_path: str) -> None:
-    """Make duplicated camera prims visible for OVRTX render product discovery."""
-    for prim in sim_utils.find_matching_prims(camera_prim_path, stage):
-        UsdGeom.Imageable(prim).MakeVisible()
-
-
-def make_camera(
+def make_camera_cfg(
     camera_prim_path: str,
+    renderer_cfg: Any,
     *,
     ppisp_cfg: PpispCfg | None,
     width: int,
     height: int,
-) -> Camera:
-    """Create a baseline or PPISP camera sensor for the duplicated-env camera batch."""
-    return Camera(
-        CameraCfg(
-            prim_path=camera_prim_path,
-            update_period=0.0,
-            height=height,
-            width=width,
-            data_types=["rgb"],
-            spawn=None,
-            isp_cfg=ppisp_cfg,
-            renderer_cfg=make_renderer_cfg(),
-        )
+) -> CameraCfg:
+    """Describe a baseline or PPISP camera sensor for the duplicated-env camera batch."""
+    return CameraCfg(
+        prim_path=camera_prim_path,
+        update_period=0.0,
+        height=height,
+        width=width,
+        data_types=["rgb"],
+        spawn=None,
+        isp_cfg=ppisp_cfg,
+        renderer_cfg=renderer_cfg,
     )
 
 
@@ -521,36 +501,39 @@ def main() -> None:
         raise RuntimeError(f"Failed to open input scene: {args_cli.input_scene}")
     source_camera_prim_path, render_product_prim, ppisp_camera_prim = resolve_source_camera_binding(source_stage)
     ppisp_cfg = make_ppisp_cfg(ppisp_camera_prim, len(find_ppisp_camera_bindings(source_stage)))
-    camera_prim_path = source_camera_path_to_env_regex(source_stage, source_camera_prim_path)
+    camera_prim_path = source_camera_path_to_env_path(source_stage, source_camera_prim_path)
     width, height = resolve_image_shape(render_product_prim)
 
-    sim_utils.create_new_stage()
-    sim_cfg = make_sim_cfg()
-    sim = sim_utils.SimulationContext(sim_cfg)
+    with tempfile.TemporaryDirectory(prefix="isaaclab-ppisp-ovrtx-") as prepared_dir:
+        input_scene = prepare_input_scene(
+            source_stage, source_camera_prim_path, os.path.join(prepared_dir, "prepared_scene.usda")
+        )
+        scene_cfg = PpispCameraOvrtxSceneCfg(num_envs=args_cli.num_envs, env_spacing=args_cli.env_spacing)
+        scene_cfg.input_scene.spawn = sim_utils.UsdFileCfg(usd_path=input_scene)
+        renderer_cfg = make_renderer_cfg()
+        scene_cfg.ppisp_camera = make_camera_cfg(
+            camera_prim_path, renderer_cfg, ppisp_cfg=ppisp_cfg, width=width, height=height
+        )
+        scene_cfg.baseline_camera = make_camera_cfg(
+            camera_prim_path, renderer_cfg, ppisp_cfg=None, width=width, height=height
+        )
 
-    scene = create_duplicated_env_scene()
-    bake_source_camera_pose_to_envs(source_stage, source_camera_prim_path)
-    make_matched_camera_prims_visible(sim_utils.get_current_stage(), camera_prim_path)
-    ppisp_camera = make_camera(
-        camera_prim_path,
-        ppisp_cfg=ppisp_cfg,
-        width=width,
-        height=height,
-    )
-    baseline_camera = make_camera(camera_prim_path, ppisp_cfg=None, width=width, height=height)
-    print(f"[INFO] Duplicated-env camera regex: {camera_prim_path}", flush=True)
-    print(f"[INFO] Rendering {width}x{height} from source camera {source_camera_prim_path}.", flush=True)
+        sim_utils.create_new_stage()
+        sim_cfg = make_sim_cfg()
+        sim = sim_utils.SimulationContext(sim_cfg)
+        scene = scene_cfg.class_type(scene_cfg)
+        print(f"[INFO] Referenced input scene into {args_cli.num_envs} env(s).", flush=True)
+        print(f"[INFO] Duplicated-env camera path: {camera_prim_path}", flush=True)
+        print(f"[INFO] Rendering {width}x{height} from source camera {source_camera_prim_path}.", flush=True)
 
-    try:
-        sim.reset()
-        print("[INFO]: Setup complete. Saving comparison images during simulation.", flush=True)
-        run_simulator(sim, baseline_camera, ppisp_camera)
-    finally:
-        del ppisp_camera
-        del baseline_camera
-        del scene
-        sim.stop()
-        sim.clear_instance()
+        try:
+            sim.reset()
+            print("[INFO]: Setup complete. Saving comparison images during simulation.", flush=True)
+            run_simulator(sim, scene["baseline_camera"], scene["ppisp_camera"])
+        finally:
+            del scene
+            sim.stop()
+            sim.clear_instance()
 
 
 if __name__ == "__main__":

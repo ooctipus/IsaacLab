@@ -18,8 +18,14 @@ import pytest
 import torch
 from PIL import Image, ImageChops
 
+from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils.images import make_camera_output_grid, normalize_camera_output_for_display
 from isaaclab.utils.warp import ProxyArray
+
+from isaaclab_tasks.core.cartpole.cartpole_direct_camera_env_cfg import (
+    CartpoleCameraEnvCfg,
+    CartpoleTiledCameraCfg,
+)
 
 if TYPE_CHECKING:
     from pxr import Sdf
@@ -1576,7 +1582,7 @@ def rendering_test_shadow_hand(
 
     @configclass
     class _ShadowHandCameraTestEnvCfg(ShadowHandCameraEnvCfg):
-        tiled_camera = _ShadowHandTiledCameraTestCfg()
+        tiled_camera: _ShadowHandTiledCameraTestCfg = _ShadowHandTiledCameraTestCfg()
 
     override_args = [f"presets={_physics_preset_name(physics_backend)},{renderer},{data_types[0]}"]
 
@@ -1710,8 +1716,6 @@ def rendering_test_cartpole(
 
     from isaaclab.utils.configclass import configclass
 
-    from isaaclab_tasks.core.cartpole.cartpole_direct_camera_env_cfg import CartpoleCameraEnvCfg, CartpoleTiledCameraCfg
-
     from isaaclab_assets.robots.cartpole import CARTPOLE_CFG
 
     @configclass
@@ -1733,32 +1737,19 @@ def rendering_test_cartpole(
             prim_path="{ENV_REGEX_NS}/Robot",
             spawn=CARTPOLE_CFG.spawn.replace(semantic_tags=[("class", "cartpole")]),
         )
+        tiled_camera: _CartpoleTiledCameraTestCfg = _CartpoleTiledCameraTestCfg()
 
     @configclass
     class _CartpoleCameraTestEnvCfg(CartpoleCameraEnvCfg):
         # Use the semantically-tagged robot (class:cartpole) so semantic_segmentation produces a non-trivial
         # idToLabels mapping; the base env's semantic_segmentation variant leaves the robot untagged.
-        semantic_segmentation = _BaseCartpoleCameraEnvTestCfg(
-            observation_space=[4, 96, 96], tiled_camera=_CartpoleTiledCameraTestCfg()
-        )
-        distance_to_camera = _BaseCartpoleCameraEnvTestCfg(
-            observation_space=[1, 96, 96], tiled_camera=_CartpoleTiledCameraTestCfg()
-        )
-        distance_to_image_plane = _BaseCartpoleCameraEnvTestCfg(
-            observation_space=[1, 96, 96], tiled_camera=_CartpoleTiledCameraTestCfg()
-        )
-        normals = _BaseCartpoleCameraEnvTestCfg(
-            observation_space=[3, 96, 96], tiled_camera=_CartpoleTiledCameraTestCfg()
-        )
-        instance_segmentation = _BaseCartpoleCameraEnvTestCfg(
-            observation_space=[4, 96, 96], tiled_camera=_CartpoleTiledCameraTestCfg()
-        )
-        instance_id_segmentation_fast = _BaseCartpoleCameraEnvTestCfg(
-            observation_space=[4, 96, 96], tiled_camera=_CartpoleTiledCameraTestCfg()
-        )
-        motion_vectors = CartpoleCameraEnvCfg.BaseCartpoleCameraEnvCfg(
-            observation_space=[2, 96, 96], tiled_camera=_CartpoleTiledCameraTestCfg()
-        )
+        semantic_segmentation = _BaseCartpoleCameraEnvTestCfg(observation_space=[4, 96, 96])
+        distance_to_camera = _BaseCartpoleCameraEnvTestCfg(observation_space=[1, 96, 96])
+        distance_to_image_plane = _BaseCartpoleCameraEnvTestCfg(observation_space=[1, 96, 96])
+        normals = _BaseCartpoleCameraEnvTestCfg(observation_space=[3, 96, 96])
+        instance_segmentation = _BaseCartpoleCameraEnvTestCfg(observation_space=[4, 96, 96])
+        instance_id_segmentation_fast = _BaseCartpoleCameraEnvTestCfg(observation_space=[4, 96, 96])
+        motion_vectors = _BaseCartpoleCameraEnvTestCfg(observation_space=[2, 96, 96])
 
     preset_data_type = "semantic_segmentation" if "semantic_segmentation" in data_types else data_types[0]
     env_cfg = _CartpoleCameraTestEnvCfg()
@@ -2002,7 +1993,6 @@ def rendering_test_kuka_visual_material_randomization(
     import isaaclab.sim as sim_utils
     from isaaclab.assets import AssetBaseCfg, VisualMaterial, VisualMaterialCfg
     from isaaclab.managers import SceneEntityCfg
-    from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
     from isaaclab.sensors import CameraCfg
 
     from isaaclab_assets.robots import KUKA_ALLEGRO_CFG
@@ -2013,7 +2003,7 @@ def rendering_test_kuka_visual_material_randomization(
         "newton_renderer": NewtonWarpRendererCfg,
         "ovrtx_renderer": OVRTXRendererCfg,
     }[renderer]()
-    scene_cfg = InteractiveSceneCfg(num_envs=4, env_spacing=3.0, replicate_physics=True)
+    scene_cfg = InteractiveSceneCfg(num_envs=4, env_spacing=3.0)
     scene_cfg.sky_light = AssetBaseCfg(
         prim_path="/World/skyLight", spawn=sim_utils.DomeLightCfg(color=(1.0, 1.0, 1.0), intensity=750.0)
     )
@@ -2043,7 +2033,7 @@ def rendering_test_kuka_visual_material_randomization(
     robot_spawn = KUKA_ALLEGRO_CFG.spawn.replace(activate_contact_sensors=False, visual_material_bindings=bindings)
     scene_cfg.robot = KUKA_ALLEGRO_CFG.replace(
         prim_path="{ENV_REGEX_NS}/Robot",
-        spawn=sim_utils.MultiAssetSpawnerCfg(assets_cfg=[robot_spawn, robot_spawn.copy()], random_choice=False),
+        spawn=sim_utils.MultiAssetSpawnerCfg(assets_cfg=[robot_spawn, robot_spawn.copy()]),
     )
 
     sim = None
@@ -2055,7 +2045,7 @@ def rendering_test_kuka_visual_material_randomization(
                 physics={"newton": NewtonCfg, "physx": PhysxCfg}[physics_backend](),
             )
         )
-        scene = InteractiveScene(scene_cfg)
+        scene = scene_cfg.class_type(scene_cfg)
         sim.reset()
         scene.reset()
 
@@ -2074,7 +2064,7 @@ def rendering_test_kuka_visual_material_randomization(
         assert set(scene.extras) == {"sky_light"}
         assert set(scene.sensors) == {"base_camera"}
         assert set(scene.visual_materials) == set(material_names)
-        assert len(scene.clone_plan.cfg_rows[id(scene_cfg.robot)]) == 2
+        assert len(sim.get_clone_plan().cfg_rows[id(scene_cfg.robot)]) == 2
         for material_name in material_names:
             material_cfg = SceneEntityCfg(material_name)
             material_cfg.resolve(scene)
@@ -2391,8 +2381,6 @@ def rendering_test_mpm_particles(
         scene: TestMPMParticleCameraSceneCfg = TestMPMParticleCameraSceneCfg(
             num_envs=4,
             env_spacing=3.0,
-            replicate_physics=True,
-            clone_in_fabric=True,
         )
         reset_cycle: bool = True
         reset_particle_max_yaw: float = 0.0

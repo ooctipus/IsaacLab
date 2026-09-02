@@ -39,14 +39,15 @@ add_launcher_args(parser)
 parser.set_defaults(visualizer=["kit"])
 args_cli = parser.parse_args()
 
-import torch
-
 import isaaclab.sim as sim_utils
+from isaaclab.assets import AssetBaseCfg
 
 ##
 # Pre-defined configs
 ##
 from isaaclab.physics import PhysicsCfg
+from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.utils.configclass import configclass
 
 from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg  # isort:skip
 from isaaclab_assets.robots.cassie import CASSIE_CFG  # isort:skip
@@ -56,50 +57,52 @@ if TYPE_CHECKING:
     from isaaclab.assets import Articulation
 
 
-def design_scene(sim: "sim_utils.SimulationContext") -> tuple[list, torch.Tensor]:
+@configclass
+class DemoSceneCfg(InteractiveSceneCfg):
+    """Configuration for the biped demo scene."""
+
+    ground: AssetBaseCfg = AssetBaseCfg(prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg())
+    light: AssetBaseCfg = AssetBaseCfg(
+        prim_path="/World/Light",
+        spawn=sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75)),
+    )
+
+
+def design_scene() -> list["Articulation"]:
     """Designs the scene."""
-    # Ground-plane
-    cfg = sim_utils.GroundPlaneCfg()
-    cfg.func("/World/defaultGroundPlane", cfg)
-    # Lights
-    cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
-    cfg.func("/World/Light", cfg)
+    origins = [
+        [0.0, -1.0, 0.0],
+        [0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+    ]
 
-    # Define origins
-    origins = torch.tensor(
-        [
-            [0.0, -1.0, 0.0],
-            [0.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-        ]
-    ).to(device=sim.device)
+    names = ("cassie", "h1", "g1")
+    robot_cfgs = (
+        CASSIE_CFG.replace(prim_path="/World/Cassie"),
+        H1_CFG.replace(prim_path="/World/H1"),
+        G1_CFG.replace(prim_path="/World/G1"),
+    )
+    scene_cfg = DemoSceneCfg(num_envs=1, env_spacing=0.0)
+    for name, origin, robot_cfg in zip(names, origins, robot_cfgs, strict=True):
+        robot_cfg.init_state.pos = tuple(value + offset for value, offset in zip(robot_cfg.init_state.pos, origin))
+        setattr(scene_cfg, name, robot_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
 
-    # Robots
-    cassie_cfg = CASSIE_CFG.replace(prim_path="/World/Cassie")
-    cassie = cassie_cfg.class_type(cassie_cfg)
-    h1_cfg = H1_CFG.replace(prim_path="/World/H1")
-    h1 = h1_cfg.class_type(h1_cfg)
-    g1_cfg = G1_CFG.replace(prim_path="/World/G1")
-    g1 = g1_cfg.class_type(g1_cfg)
-    robots = [cassie, h1, g1]
-
-    return robots, origins
+    return list(scene.articulations.values())
 
 
-def run_simulator(sim: "sim_utils.SimulationContext", robots: list["Articulation"], origins: torch.Tensor):
+def run_simulator(sim: "sim_utils.SimulationContext", robots: list["Articulation"]):
     """Runs the simulation loop."""
     # Define simulation stepping
     sim_dt = sim.get_physics_dt()
-    sim_time = 0.0
     count = 0
     # Step while a visualizer window is still open (or none exist, e.g. headless); works for kit and newton.
     while sim.is_headless_or_exist_active_visualizer():
         # reset
         if count % 200 == 0:
             # reset counters
-            sim_time = 0.0
             count = 0
-            for index, robot in enumerate(robots):
+            for robot in robots:
                 # reset dof state
                 joint_pos, joint_vel = (
                     robot.data.default_joint_pos.torch,
@@ -108,7 +111,6 @@ def run_simulator(sim: "sim_utils.SimulationContext", robots: list["Articulation
                 robot.write_joint_position_to_sim_index(position=joint_pos)
                 robot.write_joint_velocity_to_sim_index(velocity=joint_vel)
                 root_pose = robot.data.default_root_pose.torch.clone()
-                root_pose[:, :3] += origins[index]
                 robot.write_root_pose_to_sim_index(root_pose=root_pose)
                 root_vel = robot.data.default_root_vel.torch.clone()
                 robot.write_root_velocity_to_sim_index(root_velocity=root_vel)
@@ -121,8 +123,6 @@ def run_simulator(sim: "sim_utils.SimulationContext", robots: list["Articulation
             robot.write_data_to_sim()
         # perform step
         sim.step()
-        # update sim-time
-        sim_time += sim_dt
         count += 1
         # update buffers
         for robot in robots:
@@ -149,7 +149,7 @@ def main():
         sim.set_camera_view(eye=[3.0, 0.0, 2.25], target=[0.0, 0.0, 1.0])
 
         # design scene
-        robots, origins = design_scene(sim)
+        robots = design_scene()
 
         # Play the simulator
         sim.reset()
@@ -158,7 +158,7 @@ def main():
         print("[INFO]: Setup complete...")
 
         # Run the simulator
-        run_simulator(sim, robots, origins)
+        run_simulator(sim, robots)
 
 
 if __name__ == "__main__":

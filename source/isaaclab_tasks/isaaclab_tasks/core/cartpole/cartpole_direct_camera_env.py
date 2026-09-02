@@ -8,10 +8,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
-import isaaclab.sim as sim_utils
-from isaaclab import cloner
-from isaaclab.assets import Articulation
-from isaaclab.sensors import Camera, save_images_to_file
+from isaaclab.sensors import save_images_to_file
 from isaaclab.utils.buffers import CircularBuffer
 from isaaclab.utils.images import is_rgb_like, normalize_camera_image
 
@@ -51,27 +48,11 @@ class CartpoleCameraEnv(CartpoleEnv):
                 max_len=self.cfg.frame_stack, batch_size=self.num_envs, device=self.device, stack_dim=1
             )
 
-    def _setup_scene(self):
+    def _setup_scene_entities(self):
         """Setup the scene with the cartpole and camera (no ground plane, which obstructs the view)."""
-        self.cartpole = Articulation(self.cfg.robot_cfg)
-        self._tiled_camera = Camera(self.cfg.tiled_camera)
-        src, dest = "/World/envs/env_0", "/World/envs/env_{}"
-        pos = cloner.grid_transforms(self.scene.num_envs, self.scene.cfg.env_spacing, device=self.device)[0]
-        plan = cloner.clone_plan_from_env_0(src, dest, self.scene.num_envs, self.device, pos)
-        cloner.replicate(plan)
-
-        # PhysX replication requires explicit collision filtering between environments.
-        if "physx" in self.scene.physics_backend:
-            self.scene.filter_collisions(global_prim_paths=[])
-
-        # add articulation and sensors to scene
-        self.scene.articulations["cartpole"] = self.cartpole
+        super()._setup_scene_entities()
+        self._tiled_camera = self.cfg.tiled_camera.class_type(self.cfg.tiled_camera)
         self.scene.sensors["tiled_camera"] = self._tiled_camera
-        # add lights
-        light_cfg = sim_utils.DistantLightCfg(intensity=2000.0, color=(1.0, 1.0, 1.0))
-        # quaternion for euler angles (roll, pitch, yaw) = (0, -45, -45) degrees
-        light_orientation = (-0.14644663035869598, -0.3535534143447876, -0.3535534143447876, 0.8535533547401428)
-        light_cfg.func("/World/Light", light_cfg, orientation=light_orientation)
 
     def _get_observations(self) -> dict:
         data_type = self.cfg.tiled_camera.data_types[0]

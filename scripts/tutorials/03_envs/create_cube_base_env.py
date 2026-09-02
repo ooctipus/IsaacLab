@@ -55,6 +55,7 @@ import torch
 import isaaclab.envs.mdp as mdp
 import isaaclab.sim as sim_utils
 from isaaclab.assets import AssetBaseCfg, RigidObject, RigidObjectCfg
+from isaaclab.cloner import CloneCfg
 from isaaclab.envs import ManagerBasedEnv, ManagerBasedEnvCfg
 from isaaclab.managers import ActionTerm, ActionTermCfg, SceneEntityCfg
 from isaaclab.managers import EventTermCfg as EventTerm
@@ -289,7 +290,7 @@ class CubeEnvCfg(ManagerBasedEnvCfg):
     # The flag 'replicate_physics' is set to False, which means that the cube is not replicated
     # across multiple environments but rather each environment gets its own cube instance.
     # This allows modifying the cube's properties independently for each environment.
-    scene: MySceneCfg = MySceneCfg(num_envs=args_cli.num_envs, env_spacing=2.5, replicate_physics=False)
+    scene = MySceneCfg(num_envs=args_cli.num_envs, env_spacing=2.5, clone_cfg=CloneCfg(replicate_physics=False))
 
     # Basic settings
     observations: ObservationsCfg = ObservationsCfg()

@@ -156,7 +156,6 @@ class ShadowHandManagerEventPresetCfg(PresetCfg):
 class ShadowHandRobotCfg(PresetCfg):
     physx = SHADOW_HAND_CFG.replace(
         prim_path="{ENV_REGEX_NS}/Robot",
-        spawn=SHADOW_HAND_CFG.spawn.replace(spawn_path="/World/envs/env_0/Robot"),
         init_state=ArticulationCfg.InitialStateCfg(
             pos=(0.0, 0.0, 0.5),
             rot=(0.0, 0.0, 0.0, 1.0),
@@ -169,15 +168,11 @@ class ShadowHandRobotCfg(PresetCfg):
     # only the finger gains.
     newton_mjwarp = SHADOW_HAND_NEWTON_CFG.replace(
         prim_path="{ENV_REGEX_NS}/Robot",
-        spawn=SHADOW_HAND_NEWTON_CFG.spawn.replace(spawn_path="/World/envs/env_0/Robot"),
     )
     ovphysx = SHADOW_HAND_CFG.replace(
         prim_path="{ENV_REGEX_NS}/Robot",
         # OVPhysX does not expose the fixed-tendon runtime API, so spawn without tendon overrides.
-        spawn=SHADOW_HAND_CFG.spawn.replace(
-            spawn_path="/World/envs/env_0/Robot",
-            fixed_tendons_props=None,
-        ),
+        spawn=SHADOW_HAND_CFG.spawn.replace(fixed_tendons_props=None),
         init_state=ArticulationCfg.InitialStateCfg(
             pos=(0.0, 0.0, 0.5),
             rot=(0.0, 0.0, 0.0, 1.0),
@@ -190,7 +185,6 @@ class ShadowHandRobotCfg(PresetCfg):
 CUBE_CFG = RigidObjectCfg(
     prim_path="{ENV_REGEX_NS}/object",
     spawn=sim_utils.UsdFileCfg(
-        spawn_path="/World/envs/env_0/object",
         usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd",
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             kinematic_enabled=False,

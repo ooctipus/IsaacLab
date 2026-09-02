@@ -111,7 +111,6 @@ class MultiObjectSceneCfg(InteractiveSceneCfg):
                 sim_utils.CuboidCfg(size=(0.3, 0.3, 0.3), **PURPLE_MATERIAL),
                 sim_utils.SphereCfg(radius=0.3, **PURPLE_MATERIAL),
             ],
-            random_choice=False,
             **OBJECT_PHYSICS,
         ),
         init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 2.0)),
@@ -146,7 +145,6 @@ class MultiObjectSceneCfg(InteractiveSceneCfg):
                 f"{ISAACLAB_NUCLEUS_DIR}/Robots/ANYbotics/ANYmal-C/anymal_c.usd",
                 f"{ISAACLAB_NUCLEUS_DIR}/Robots/ANYbotics/ANYmal-D/anymal_d.usd",
             ],
-            random_choice=False,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 disable_gravity=False,
                 retain_accelerations=False,
@@ -246,7 +244,7 @@ def main():
         sim.set_camera_view([2.5, 0.0, 4.0], [0.0, 0.0, 2.0])
 
         # Design scene
-        scene_cfg = MultiObjectSceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0, replicate_physics=True)
+        scene_cfg = MultiObjectSceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0)
         if args_cli.physics == "newton_mjwarp":
             # Newton views currently require a uniform body layout across worlds.
             scene_cfg.object.spawn.assets_cfg = scene_cfg.object.spawn.assets_cfg[1:2]

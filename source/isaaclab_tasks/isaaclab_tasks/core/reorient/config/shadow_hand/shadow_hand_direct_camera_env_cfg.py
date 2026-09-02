@@ -8,7 +8,7 @@ from __future__ import annotations
 import isaaclab.sim as sim_utils
 from isaaclab.renderers import RendererCfg
 from isaaclab.scene import InteractiveSceneCfg
-from isaaclab.sensors import CameraCfg
+from isaaclab.sensors import CameraCfg, JointWrenchSensorCfg
 from isaaclab.utils.configclass import configclass
 
 from isaaclab_tasks.core.reorient.config.shadow_hand.feature_extractor import FeatureExtractorCfg
@@ -80,7 +80,6 @@ class _ShadowHandBaseTiledCameraCfg(CameraCfg):
     )
     data_types: list[str] = []
     spawn: sim_utils.PinholeCameraCfg = sim_utils.PinholeCameraCfg(
-        spawn_path="/World/envs/env_0/Camera",
         focal_length=24.0,
         focus_distance=400.0,
         horizontal_aperture=20.955,
@@ -161,11 +160,14 @@ class ShadowHandTiledCameraCfg(PresetCfg):
 
 @configclass
 class ShadowHandCameraEnvCfg(ShadowHandEnvCfg):
-    # scene
-    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=1225, env_spacing=2.0, replicate_physics=True)
-
-    # camera — data-type and renderer backend selectable via CLI presets
+    # sensors
     tiled_camera: ShadowHandTiledCameraCfg = ShadowHandTiledCameraCfg()
+    joint_wrench_cfg = JointWrenchSensorCfg(prim_path="{ENV_REGEX_NS}/Robot")
+    ground_cfg = None
+
+    # scene
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=1225, env_spacing=2.0)
+
     feature_extractor: FeatureExtractorCfg = FeatureExtractorCfg()
 
     # env

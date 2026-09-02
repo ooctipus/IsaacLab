@@ -8,24 +8,18 @@ from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils.configclass import configclass
 
-from isaaclab_tasks.contrib.factory.factory_env_cfg import (
-    OBS_DIM_CFG,
-    STATE_DIM_CFG,
-    CtrlCfg,
-    FactoryEnvCfg,
-    ObsRandCfg,
-)
+import isaaclab_tasks.contrib.factory.factory_env_cfg as factory_cfg
 
 from .forge_events import randomize_dead_zone
 from .forge_tasks_cfg import ForgeGearMesh, ForgeNutThread, ForgePegInsert, ForgeTask
 
-OBS_DIM_CFG.update({"force_threshold": 1, "ft_force": 3})
+factory_cfg.OBS_DIM_CFG.update({"force_threshold": 1, "ft_force": 3})
 
-STATE_DIM_CFG.update({"force_threshold": 1, "ft_force": 3})
+factory_cfg.STATE_DIM_CFG.update({"force_threshold": 1, "ft_force": 3})
 
 
 @configclass
-class ForgeCtrlCfg(CtrlCfg):
+class ForgeCtrlCfg(factory_cfg.CtrlCfg):
     """Controller and action-space configuration for the FORGE environments.
 
     In the FORGE environments, policy actions encode absolute pose targets relative to the fixed
@@ -55,7 +49,7 @@ class ForgeCtrlCfg(CtrlCfg):
 
 
 @configclass
-class ForgeObsRandCfg(ObsRandCfg):
+class ForgeObsRandCfg(factory_cfg.ObsRandCfg):
     fingertip_pos = 0.00025
     fingertip_rot_deg = 0.1
     ft_force = 1.0
@@ -118,7 +112,7 @@ class EventCfg:
 
 
 @configclass
-class ForgeEnvCfg(FactoryEnvCfg):
+class ForgeEnvCfg(factory_cfg.FactoryEnvCfg):
     action_space: int = 7
     obs_rand: ForgeObsRandCfg = ForgeObsRandCfg()
     ctrl: ForgeCtrlCfg = ForgeCtrlCfg()
@@ -157,20 +151,24 @@ class ForgeEnvCfg(FactoryEnvCfg):
 
 @configclass
 class ForgeTaskPegInsertCfg(ForgeEnvCfg):
-    task_name = "peg_insert"
     task = ForgePegInsert()
-    episode_length_s = 10.0
+    fixed_asset = factory_cfg._PEG_INSERT_FIXED_ASSET_CFG
+    held_asset = factory_cfg._PEG_INSERT_HELD_ASSET_CFG
 
 
 @configclass
 class ForgeTaskGearMeshCfg(ForgeEnvCfg):
-    task_name = "gear_mesh"
     task = ForgeGearMesh()
+    fixed_asset = factory_cfg._GEAR_MESH_FIXED_ASSET_CFG
+    held_asset = factory_cfg._GEAR_MESH_HELD_ASSET_CFG
+    small_gear = factory_cfg._SMALL_GEAR_ASSET_CFG
+    large_gear = factory_cfg._LARGE_GEAR_ASSET_CFG
     episode_length_s = 20.0
 
 
 @configclass
 class ForgeTaskNutThreadCfg(ForgeEnvCfg):
-    task_name = "nut_thread"
     task = ForgeNutThread()
+    fixed_asset = factory_cfg._NUT_THREAD_FIXED_ASSET_CFG
+    held_asset = factory_cfg._NUT_THREAD_HELD_ASSET_CFG
     episode_length_s = 30.0

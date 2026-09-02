@@ -294,12 +294,12 @@ disabled unless explicitly selected:
         large: CameraSettingsCfg = CameraSettingsCfg(width=256, height=256)
 
     @configclass
-    class SceneCfg:
-        camera: CameraPresetCfg = CameraPresetCfg()
+    class EnvCfg:
+        tiled_camera: CameraPresetCfg = CameraPresetCfg()
 
-Here, ``env.scene.camera`` resolves to ``None`` by default. A registered task using
+Here, ``env.tiled_camera`` resolves to ``None`` by default. A registered task using
 this config can activate the large camera with the path selector
-``env.scene.camera=large``.
+``env.tiled_camera=large``.
 
 
 .. _hydra-backend-solver-presets:

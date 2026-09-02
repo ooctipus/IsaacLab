@@ -3,15 +3,18 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
+from dataclasses import MISSING
+
 from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
-from isaaclab.assets import ArticulationCfg
+from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 from isaaclab.envs import DirectRLEnvCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim import SimulationCfg
 from isaaclab.sim.spawners.materials.physics_materials_cfg import RigidBodyMaterialCfg
+from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.configclass import configclass
 
 from .factory_tasks_cfg import ASSET_DIR, FactoryTask, GearMesh, NutThread, PegInsert
@@ -81,57 +84,104 @@ class CtrlCfg:
     kd_null = 6.3246
 
 
+_FIXED_ASSET_CFG = ArticulationCfg(
+    prim_path="{ENV_REGEX_NS}/FixedAsset",
+    spawn=sim_utils.UsdFileCfg(
+        usd_path="",
+        activate_contact_sensors=True,
+        rigid_props=sim_utils.RigidBodyPropertiesCfg(
+            disable_gravity=False,
+            max_depenetration_velocity=5.0,
+            linear_damping=0.0,
+            angular_damping=0.0,
+            max_linear_velocity=1000.0,
+            max_angular_velocity=3666.0,
+            enable_gyroscopic_forces=True,
+            solver_position_iteration_count=192,
+            solver_velocity_iteration_count=1,
+            max_contact_impulse=1e32,
+        ),
+        collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
+    ),
+    init_state=ArticulationCfg.InitialStateCfg(
+        pos=(0.6, 0.0, 0.05), rot=(0.0, 0.0, 0.0, 1.0), joint_pos={}, joint_vel={}
+    ),
+    actuators={},
+)
+_HELD_ASSET_CFG = _FIXED_ASSET_CFG.replace(
+    prim_path="{ENV_REGEX_NS}/HeldAsset",
+    spawn=_FIXED_ASSET_CFG.spawn.replace(rigid_props=_FIXED_ASSET_CFG.spawn.rigid_props.replace(disable_gravity=True)),
+    init_state=ArticulationCfg.InitialStateCfg(
+        pos=(0.0, 0.4, 0.1), rot=(0.0, 0.0, 0.0, 1.0), joint_pos={}, joint_vel={}
+    ),
+)
+_PEG_INSERT_TASK_CFG = PegInsert()
+_PEG_INSERT_FIXED_ASSET_CFG = _FIXED_ASSET_CFG.replace(
+    spawn=_FIXED_ASSET_CFG.spawn.replace(
+        usd_path=_PEG_INSERT_TASK_CFG.fixed_asset_cfg.usd_path,
+        mass_props=sim_utils.MassPropertiesCfg(mass=_PEG_INSERT_TASK_CFG.fixed_asset_cfg.mass),
+    )
+)
+_PEG_INSERT_HELD_ASSET_CFG = _HELD_ASSET_CFG.replace(
+    spawn=_HELD_ASSET_CFG.spawn.replace(
+        usd_path=_PEG_INSERT_TASK_CFG.held_asset_cfg.usd_path,
+        mass_props=sim_utils.MassPropertiesCfg(mass=_PEG_INSERT_TASK_CFG.held_asset_cfg.mass),
+    )
+)
+_GEAR_MESH_TASK_CFG = GearMesh()
+_GEAR_MESH_FIXED_ASSET_CFG = _FIXED_ASSET_CFG.replace(
+    spawn=_FIXED_ASSET_CFG.spawn.replace(
+        usd_path=_GEAR_MESH_TASK_CFG.fixed_asset_cfg.usd_path,
+        mass_props=sim_utils.MassPropertiesCfg(mass=_GEAR_MESH_TASK_CFG.fixed_asset_cfg.mass),
+    )
+)
+_GEAR_MESH_HELD_ASSET_CFG = _HELD_ASSET_CFG.replace(
+    spawn=_HELD_ASSET_CFG.spawn.replace(
+        usd_path=_GEAR_MESH_TASK_CFG.held_asset_cfg.usd_path,
+        mass_props=sim_utils.MassPropertiesCfg(mass=_GEAR_MESH_TASK_CFG.held_asset_cfg.mass),
+    )
+)
+_SMALL_GEAR_ASSET_CFG = _HELD_ASSET_CFG.replace(
+    prim_path="{ENV_REGEX_NS}/SmallGearAsset",
+    spawn=_FIXED_ASSET_CFG.spawn.replace(
+        usd_path=f"{ASSET_DIR}/factory_gear_small.usd", mass_props=sim_utils.MassPropertiesCfg(mass=0.019)
+    ),
+)
+_LARGE_GEAR_ASSET_CFG = _HELD_ASSET_CFG.replace(
+    prim_path="{ENV_REGEX_NS}/LargeGearAsset",
+    spawn=_FIXED_ASSET_CFG.spawn.replace(
+        usd_path=f"{ASSET_DIR}/factory_gear_large.usd", mass_props=sim_utils.MassPropertiesCfg(mass=0.019)
+    ),
+)
+_NUT_THREAD_TASK_CFG = NutThread()
+_NUT_THREAD_FIXED_ASSET_CFG = _FIXED_ASSET_CFG.replace(
+    spawn=_FIXED_ASSET_CFG.spawn.replace(
+        usd_path=_NUT_THREAD_TASK_CFG.fixed_asset_cfg.usd_path,
+        mass_props=sim_utils.MassPropertiesCfg(mass=_NUT_THREAD_TASK_CFG.fixed_asset_cfg.mass),
+    )
+)
+_NUT_THREAD_HELD_ASSET_CFG = _HELD_ASSET_CFG.replace(
+    spawn=_HELD_ASSET_CFG.spawn.replace(
+        usd_path=_NUT_THREAD_TASK_CFG.held_asset_cfg.usd_path,
+        mass_props=sim_utils.MassPropertiesCfg(mass=_NUT_THREAD_TASK_CFG.held_asset_cfg.mass),
+    )
+)
+
+
 @configclass
 class FactoryEnvCfg(DirectRLEnvCfg):
-    decimation = 8
-    action_space = 6
-    # num_*: will be overwritten to correspond to obs_order, state_order.
-    observation_space = 21
-    state_space = 72
-    obs_order: list = ["fingertip_pos_rel_fixed", "fingertip_quat", "ee_linvel", "ee_angvel"]
-    state_order: list = [
-        "fingertip_pos",
-        "fingertip_quat",
-        "ee_linvel",
-        "ee_angvel",
-        "joint_pos",
-        "held_pos",
-        "held_pos_rel_fixed",
-        "held_quat",
-        "fixed_pos",
-        "fixed_quat",
-    ]
+    """Configuration for the homogeneous Factory environments."""
 
-    task_name: str = "peg_insert"  # peg_insert, gear_mesh, nut_thread
-    task: FactoryTask = FactoryTask()
-    obs_rand: ObsRandCfg = ObsRandCfg()
-    ctrl: CtrlCfg = CtrlCfg()
-
-    episode_length_s = 10.0  # Probably need to override.
-    sim: SimulationCfg = SimulationCfg(
-        device="cuda:0",
-        dt=1 / 120,
-        gravity=(0.0, 0.0, -9.81),
-        physics=PhysxCfg(
-            solver_type=1,
-            max_position_iteration_count=192,  # Important to avoid interpenetration.
-            max_velocity_iteration_count=1,
-            bounce_threshold_velocity=0.2,
-            friction_offset_threshold=0.01,
-            friction_correlation_distance=0.00625,
-            gpu_max_rigid_contact_count=2**23,
-            gpu_max_rigid_patch_count=2**23,
-            gpu_collision_stack_size=2**28,
-            gpu_max_num_partitions=1,  # Important for stable simulation.
-        ),
-        physics_material=RigidBodyMaterialCfg(
-            static_friction=1.0,
-            dynamic_friction=1.0,
-        ),
+    ground = AssetBaseCfg(
+        prim_path="/World/ground",
+        spawn=sim_utils.GroundPlaneCfg(),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.0, 0.0, -1.05)),
     )
-
-    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=128, env_spacing=2.0, clone_in_fabric=True)
-
+    table = AssetBaseCfg(
+        prim_path="{ENV_REGEX_NS}/Table",
+        spawn=sim_utils.UsdFileCfg(usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Mounts/SeattleLabTable/table_instanceable.usd"),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.55, 0.0, 0.0), rot=(0.0, 0.0, 0.70711, 0.70711)),
+    )
     robot = ArticulationCfg(
         prim_path="{ENV_REGEX_NS}/Robot",
         spawn=sim_utils.UsdFileCfg(
@@ -200,24 +250,82 @@ class FactoryEnvCfg(DirectRLEnvCfg):
             ),
         },
     )
+    fixed_asset: ArticulationCfg = MISSING
+    held_asset: ArticulationCfg = MISSING
+    small_gear: ArticulationCfg | None = None
+    large_gear: ArticulationCfg | None = None
+    light = AssetBaseCfg(
+        prim_path="/World/Light", spawn=sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
+    )
+
+    decimation = 8
+    action_space = 6
+    observation_space = 21
+    state_space = 72
+    obs_order: list = ["fingertip_pos_rel_fixed", "fingertip_quat", "ee_linvel", "ee_angvel"]
+    state_order: list = [
+        "fingertip_pos",
+        "fingertip_quat",
+        "ee_linvel",
+        "ee_angvel",
+        "joint_pos",
+        "held_pos",
+        "held_pos_rel_fixed",
+        "held_quat",
+        "fixed_pos",
+        "fixed_quat",
+    ]
+
+    task: FactoryTask = FactoryTask()
+    obs_rand: ObsRandCfg = ObsRandCfg()
+    ctrl: CtrlCfg = CtrlCfg()
+
+    episode_length_s = 10.0  # Probably need to override.
+    sim: SimulationCfg = SimulationCfg(
+        device="cuda:0",
+        dt=1 / 120,
+        gravity=(0.0, 0.0, -9.81),
+        physics=PhysxCfg(
+            solver_type=1,
+            max_position_iteration_count=192,  # Important to avoid interpenetration.
+            max_velocity_iteration_count=1,
+            bounce_threshold_velocity=0.2,
+            friction_offset_threshold=0.01,
+            friction_correlation_distance=0.00625,
+            gpu_max_rigid_contact_count=2**23,
+            gpu_max_rigid_patch_count=2**23,
+            gpu_collision_stack_size=2**28,
+            gpu_max_num_partitions=1,  # Important for stable simulation.
+        ),
+        physics_material=RigidBodyMaterialCfg(
+            static_friction=1.0,
+            dynamic_friction=1.0,
+        ),
+    )
+
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=128, env_spacing=2.0)
 
 
 @configclass
 class FactoryTaskPegInsertCfg(FactoryEnvCfg):
-    task_name = "peg_insert"
-    task = PegInsert()
-    episode_length_s = 10.0
+    task = _PEG_INSERT_TASK_CFG
+    fixed_asset = _PEG_INSERT_FIXED_ASSET_CFG
+    held_asset = _PEG_INSERT_HELD_ASSET_CFG
 
 
 @configclass
 class FactoryTaskGearMeshCfg(FactoryEnvCfg):
-    task_name = "gear_mesh"
-    task = GearMesh()
+    task = _GEAR_MESH_TASK_CFG
+    fixed_asset = _GEAR_MESH_FIXED_ASSET_CFG
+    held_asset = _GEAR_MESH_HELD_ASSET_CFG
+    small_gear = _SMALL_GEAR_ASSET_CFG
+    large_gear = _LARGE_GEAR_ASSET_CFG
     episode_length_s = 20.0
 
 
 @configclass
 class FactoryTaskNutThreadCfg(FactoryEnvCfg):
-    task_name = "nut_thread"
-    task = NutThread()
+    task = _NUT_THREAD_TASK_CFG
+    fixed_asset = _NUT_THREAD_FIXED_ASSET_CFG
+    held_asset = _NUT_THREAD_HELD_ASSET_CFG
     episode_length_s = 30.0

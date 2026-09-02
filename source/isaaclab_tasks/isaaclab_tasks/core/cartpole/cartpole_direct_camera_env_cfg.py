@@ -50,8 +50,9 @@ class CartpoleCameraEnvCfg(PresetCfg):
     class BaseCartpoleCameraEnvCfg(CartpoleEnvCfg):
         """Camera variant of :class:`CartpoleEnvCfg` — only the fields that differ are overridden."""
 
-        # camera
+        # camera and ground
         tiled_camera: CartpoleTiledCameraCfg = CartpoleTiledCameraCfg()
+        ground_cfg = None
         write_image_to_file = False
 
         frame_stack: int = 2
@@ -67,7 +68,7 @@ class CartpoleCameraEnvCfg(PresetCfg):
         state_space = 4
 
         # scene: fewer, more-spaced envs and no fabric cloning so the camera renders cleanly
-        scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=512, env_spacing=20.0, replicate_physics=True)
+        scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=512, env_spacing=20.0)
 
         # reset: smaller initial pole angle than the proprioceptive task
         initial_pole_angle_range = (-0.125 * math.pi, 0.125 * math.pi)  # [rad]

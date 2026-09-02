@@ -213,49 +213,67 @@ they should be moved to the RL config file in Isaac Lab.
 
 .. rubric:: Environment Creation
 
-In IsaacGymEnvs, environment creation generally included four components: creating the sim object with ``create_sim()``,
-creating the ground plane, importing the assets from MJCF or URDF files, and finally creating the environments
-by looping through each environment and adding actors into the environments.
+IsaacGymEnvs created the simulator, loaded assets, and looped over environment handles inside
+``create_sim()``. Isaac Lab environment base classes create the simulation context. Manager-based
+and heterogeneous workflows declare scene entities on an
+:class:`~isaaclab.scene.InteractiveSceneCfg`; homogeneous direct workflows declare them on the direct
+env cfg and own their homogeneous clone lifecycle in ``_setup_scene()``.
 
-Isaac Lab no longer requires calling the ``create_sim()`` method to retrieve the sim object. Instead, the simulation
-context is retrieved automatically by the framework. It is also no longer required to use the ``sim`` as an
-argument for the simulation APIs.
+.. code-block:: python
 
-In replacement of ``create_sim()``, tasks can implement the ``_setup_scene()`` method in Isaac Lab.
-This method can be used for adding actors into the scene, adding ground plane, cloning the actors, and
-adding any other optional objects into the scene, such as lights.
+   import isaaclab.sim as sim_utils
+   from isaaclab import cloner
+   from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 
-+------------------------------------------------------------------------------+------------------------------------------------------------------------+
-| IsaacGymEnvs                                                                 | Isaac Lab                                                              |
-+------------------------------------------------------------------------------+------------------------------------------------------------------------+
-|.. code-block:: python                                                        |.. code-block:: python                                                  |
-|                                                                              |                                                                        |
-|   def create_sim(self):                                                      |   def _setup_scene(self):                                              |
-|     # set the up axis to be z-up                                             |     self.cartpole = Articulation(self.cfg.robot_cfg)                   |
-|     self.up_axis = self.cfg["sim"]["up_axis"]                                |     # add ground plane                                                 |
-|                                                                              |     spawn_ground_plane(                                                |
-|                                                                              |         prim_path="/World/ground", cfg=GroundPlaneCfg())               |
-|     self.sim = super().create_sim(self.device_id, self.graphics_device_id,   |     # create and apply a clone plan                                    |
-|                                     self.physics_engine, self.sim_params)    |     plan = cloner.clone_plan_from_env_0(..., global_paths=...)         |
-|     self._create_ground_plane()                                              |     cloner.replicate(plan)                                             |
-|     self._create_envs(self.num_envs, self.cfg["env"]['envSpacing'],          |     # add articulation to scene                                        |
-|                         int(np.sqrt(self.num_envs)))                         |     self.scene.articulations["cartpole"] = self.cartpole               |
-|                                                                              |     # add lights                                                       |
-|                                                                              |     light_cfg = sim_utils.DomeLightCfg(intensity=2000.0)               |
-|                                                                              |     light_cfg.func("/World/Light", light_cfg)                          |
-+------------------------------------------------------------------------------+------------------------------------------------------------------------+
+
+   @configclass
+   class CartpoleEnvCfg(DirectRLEnvCfg):
+      robot_cfg: ArticulationCfg = CARTPOLE_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+      ground_cfg: AssetBaseCfg = AssetBaseCfg(
+         prim_path="/World/ground",
+         spawn=sim_utils.GroundPlaneCfg(),
+      )
+      light_cfg: AssetBaseCfg = AssetBaseCfg(
+         prim_path="/World/Light",
+         spawn=sim_utils.DistantLightCfg(intensity=2000.0),
+      )
+      scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=4096, env_spacing=4.0)
+
+
+   class CartpoleEnv(DirectRLEnv):
+      cfg: CartpoleEnvCfg
+
+      def _setup_scene(self):
+         asset_cfgs = self.cfg.robot_cfg, self.cfg.ground_cfg, self.cfg.light_cfg
+         plan = cloner.clone_plan_from_env_0(
+             self.cfg.scene.clone_cfg, asset_cfgs, self.cfg.scene.num_envs, self.cfg.scene.env_spacing
+         )
+         self.cartpole = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
+         self.cfg.ground_cfg.spawn.func(self.cfg.ground_cfg.prim_path, self.cfg.ground_cfg.spawn)
+         self.cfg.light_cfg.spawn.func(self.cfg.light_cfg.prim_path, self.cfg.light_cfg.spawn)
+         self.scene.articulations["robot"] = self.cartpole
+         cloner.replicate(plan)
+
+Here ``self.cfg`` is the :class:`CartpoleEnvCfg` instance; only ``self.cfg.scene`` is its nested
+:class:`~isaaclab.scene.InteractiveSceneCfg`. The cloner receives the explicit clone policy and prim
+authors. It does not inspect either environment cfg. The tuple is the construction boundary: a camera,
+marker, or other prim author constructed below must appear in it.
+
+The environment base constructs the plain scene registry and invokes ``_setup_scene()``. The setup
+method publishes before cfg-owned constructors and dispatches afterward. Every authored asset cfg
+must therefore be present on the direct env cfg before construction.
 
 
 **Ground Plane**
 
-For a simple plane, spawn the ground directly in ``_setup_scene()``:
+For a simple plane, declare the ground cfg on the direct environment config:
 
 .. code-block:: python
 
-   from isaaclab.sim.spawners.from_files import GroundPlaneCfg, spawn_ground_plane
+   import isaaclab.sim as sim_utils
+   from isaaclab.assets import AssetBaseCfg
 
-   def _setup_scene(self):
-       spawn_ground_plane(prim_path="/World/ground", cfg=GroundPlaneCfg())
+   ground_cfg: AssetBaseCfg = AssetBaseCfg(prim_path="/World/ground", spawn=sim_utils.GroundPlaneCfg())
 
 Use :class:`~terrains.TerrainImporterCfg` instead when the task needs generated or imported terrain rather than a
 single plane.
@@ -286,11 +304,9 @@ and backend-specific schema classes from :mod:`isaaclab_physx.sim.schemas` or
 mapping. Joint properties are specified in the ``actuators`` dictionary, for example with
 :class:`~actuators.ImplicitActuatorCfg`. Joints with the same properties can be grouped using regular expressions.
 
-Actors are added to the scene by simply calling ``self.cartpole = Articulation(self.cfg.robot_cfg)``,
-where ``self.cfg.robot_cfg`` is an :class:`~assets.ArticulationCfg` object. Once initialized, they should also
-be added to the :class:`~scene.InteractiveScene` by calling ``self.scene.articulations["cartpole"] = self.cartpole``
-so that the :class:`~scene.InteractiveScene` can traverse through actors in the scene for writing values to the
-simulation and resetting.
+The direct environment constructs the actor through ``self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)``
+inside ``_setup_scene()`` and registers it on ``self.scene.articulations`` for simulation writes and
+resets.
 
 **Simulation Parameters for Actors**
 
@@ -348,31 +364,26 @@ please refer to the :ref:`migrating-from-isaacgymenvs-comparing-simulation` sect
 
 **Cloner**
 
-Isaac Lab provides :mod:`isaaclab.cloner` for replication during the scene creation process.
-In IsaacGymEnvs, scenes had to be created by looping through the number of environments.
-Within each iteration, actors were added to each environment and their handles had to be cached.
-Isaac Lab eliminates the need for that loop by building one source environment and applying a clone plan.
-The scene creation process is as follow:
+Isaac Lab replaces the per-environment creation loop with one cfg-derived clone lifecycle. A
+declarative scene owns it automatically; a homogeneous direct ``_setup_scene()`` owns it explicitly.
+The owner publishes the exhaustive plan, cfg-owned constructors author the plan's source prototypes,
+and one replication call dispatches each required stage/native clone context.
+Isaac Sim PhysX performs one plan-driven USD topology pass before native PhysX replication; renderers
+and visualizers reuse that same stage context rather than exporting or copying it again. The physics
+manager already exists on the active ``SimulationContext``; after any required stage edits, the first
+hard reset constructs model-role backends from the same plan before physics finalization and
+visualization initialization.
 
-#. Construct a single environment (what the scene would look like if number of environments = 1)
-#. Create a plan with :func:`isaaclab.cloner.clone_plan_from_env_0` and apply it with
-   :func:`isaaclab.cloner.replicate`
-#. Call ``filter_collisions()`` for PhysX environments when collision filtering is required
-
+A declarative :class:`~isaaclab.scene.InteractiveScene` owns that lifecycle directly:
 
 .. code-block:: python
 
-   self.cartpole = Articulation(self.cfg.robot_cfg)
+   scene = scene_cfg.class_type(scene_cfg)
 
-   src, dest = "/World/envs/env_0", "/World/envs/env_{}"
-   positions = cloner.grid_transforms(
-       self.scene.num_envs, self.scene.cfg.env_spacing, device=self.device
-   )[0]
-   plan = cloner.clone_plan_from_env_0(src, dest, self.scene.num_envs, self.device, positions)
-   cloner.replicate(plan)
-
-   if "physx" in self.scene.physics_backend:
-       self.scene.filter_collisions(global_prim_paths=[])
+For a homogeneous Direct task or standalone workflow, call
+:func:`~isaaclab.cloner.clone_plan_from_env_0` before constructing the prototype and
+:func:`~isaaclab.cloner.replicate` afterward. The lower-level
+:class:`~isaaclab.cloner.ReplicateSession` is only needed by general cloning tools.
 
 
 .. rubric:: Accessing States from Simulation
@@ -385,9 +396,9 @@ This approach eliminates the need of retrieving body handles to slice states for
 
 .. code-block:: python
 
-   self._robot = Articulation(self.cfg.robot)
-   self._cabinet = Articulation(self.cfg.cabinet)
-   self._object = RigidObject(self.cfg.object_cfg)
+   self._robot = self.scene["robot"]
+   self._cabinet = self.scene["cabinet"]
+   self._object = self.scene["object"]
 
 
 Isaac Lab removes the ``acquire`` and ``refresh`` calls. Physics states are read from asset data objects and written
@@ -560,55 +571,42 @@ and :isaaclab-source:`Cartpole environment <source/isaaclab_tasks/isaaclab_tasks
 
 **Task Config**
 
-+--------------------------------------------------------+---------------------------------------------------------------------+
-| IsaacGymEnvs                                           | Isaac Lab                                                           |
-+--------------------------------------------------------+---------------------------------------------------------------------+
-|.. code-block:: yaml                                    |.. code-block:: python                                               |
-|                                                        |                                                                     |
-| # used to create the object                            | @configclass                                                        |
-| name: Cartpole                                         | class CartpoleEnvCfg(DirectRLEnvCfg):                               |
-|                                                        |                                                                     |
-| physics_engine: ${..physics_engine}                    |     # simulation                                                    |
-|                                                        |     sim: SimulationCfg = SimulationCfg(                             |
-|                                                        |         dt=1 / 120, physics=CartpolePhysicsCfg())                   |
-| # if given, will override the device setting in gym.   |     # robot                                                         |
-| env:                                                   |     robot_cfg: ArticulationCfg = CARTPOLE_CFG.replace(              |
-|   numEnvs: ${resolve_default:512,${...num_envs}}       |         prim_path="{ENV_REGEX_NS}/Robot")                           |
-|   envSpacing: 4.0                                      |     cart_dof_name = "slider_to_cart"                                |
-|   resetDist: 3.0                                       |     pole_dof_name = "cart_to_pole"                                  |
-|   maxEffort: 400.0                                     |     # scene                                                         |
-|                                                        |     scene: InteractiveSceneCfg = InteractiveSceneCfg(               |
-|   clipObservations: 5.0                                |         num_envs=4096, env_spacing=4.0, replicate_physics=True,     |
-|                                                        |         clone_in_fabric=True)                                       |
-|   clipActions: 1.0                                     |     # env                                                           |
-|                                                        |     decimation = 2                                                  |
-|   asset:                                               |     episode_length_s = 5.0                                          |
-|     assetRoot: "../../assets"                          |     action_scale = 100.0  # [N]                                     |
-|     assetFileName: "urdf/cartpole.urdf"                |     action_space = 1                                                |
-|                                                        |     observation_space = 4                                           |
-|   enableCameraSensors: False                           |     state_space = 0                                                 |
-|                                                        |     # reset                                                         |
-| sim:                                                   |     max_cart_pos = 3.0                                              |
-|   dt: 0.0166 # 1/60 s                                  |     initial_cart_position_range = (-1.0, 1.0)  # [m]                |
-|   substeps: 2                                          |     initial_cart_velocity_range = (-0.5, 0.5)  # [m/s]              |
-|   up_axis: "z"                                         |     rew_scale_alive = 1.0                                           |
-|   use_gpu_pipeline: ${eq:${...pipeline},"gpu"}         |     rew_scale_terminated = -2.0                                     |
-|   gravity: [0.0, 0.0, -9.81]                           |     rew_scale_pole_pos = -1.0                                       |
-|   physx:                                               |     rew_scale_cart_vel = -0.01                                      |
-|     num_threads: ${....num_threads}                    |     rew_scale_pole_vel = -0.005                                     |
-|     solver_type: ${....solver_type}                    |     initial_pole_angle_range = (                                    |
-|     use_gpu: ${contains:"cuda",${....sim_device}}      |         -0.25 * math.pi, 0.25 * math.pi)  # [rad]                   |
-|     num_position_iterations: 4                         |                                                                     |
-|     num_velocity_iterations: 0                         |     initial_pole_velocity_range = (                                 |
-|     contact_offset: 0.02                               |                                                                     |
-|     rest_offset: 0.001                                 |         -0.25 * math.pi, 0.25 * math.pi)  # [rad/s]                 |
-|     bounce_threshold_velocity: 0.2                     |                                                                     |
-|     max_depenetration_velocity: 100.0                  |                                                                     |
-|     default_buffer_size_multiplier: 2.0                |                                                                     |
-|     max_gpu_contact_pairs: 1048576 # 1024*1024         |                                                                     |
-|     num_subscenes: ${....num_subscenes}                |                                                                     |
-|     contact_collection: 0                              |                                                                     |
-+--------------------------------------------------------+---------------------------------------------------------------------+
+The IsaacGymEnvs YAML fields become typed config data. Keep homogeneous direct-task asset cfgs on the
+direct environment config so ``_setup_scene()`` can plan every source before construction:
+
+.. code-block:: python
+
+   @configclass
+   class CartpoleEnvCfg(DirectRLEnvCfg):
+       sim: SimulationCfg = SimulationCfg(dt=1 / 120, physics=CartpolePhysicsCfg())
+       robot_cfg: ArticulationCfg = CARTPOLE_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+       ground_cfg: AssetBaseCfg = AssetBaseCfg(
+           prim_path="/World/ground",
+           spawn=sim_utils.GroundPlaneCfg(),
+       )
+       light_cfg: AssetBaseCfg = AssetBaseCfg(
+           prim_path="/World/Light",
+           spawn=sim_utils.DistantLightCfg(intensity=2000.0),
+       )
+       scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=4096, env_spacing=4.0)
+       cart_dof_name = "slider_to_cart"
+       pole_dof_name = "cart_to_pole"
+       decimation = 2
+       episode_length_s = 5.0
+       action_scale = 100.0  # [N]
+       action_space = 1
+       observation_space = 4
+       state_space = 0
+       max_cart_pos = 3.0  # [m]
+       initial_cart_position_range = (-1.0, 1.0)  # [m]
+       initial_cart_velocity_range = (-0.5, 0.5)  # [m/s]
+       initial_pole_angle_range = (-0.25 * math.pi, 0.25 * math.pi)  # [rad]
+       initial_pole_velocity_range = (-0.25 * math.pi, 0.25 * math.pi)  # [rad/s]
+       rew_scale_alive = 1.0
+       rew_scale_terminated = -2.0
+       rew_scale_pole_pos = -1.0
+       rew_scale_cart_vel = -0.01
+       rew_scale_pole_vel = -0.005
 
 
 
@@ -654,98 +652,46 @@ It is also no longer necessary to ``wrap`` and ``unwrap`` tensors.
 
 **Scene Setup**
 
-Scene setup is now done through the ``Cloner`` API and by specifying actor attributes in config objects.
-This eliminates the need to loop through the number of environments to set up the environments and avoids
-the need to set simulation parameters for actors in the task implementation.
+IsaacGymEnvs loaded an asset, created every environment and actor, configured each actor, and retained
+their handles in a loop. A homogeneous Isaac Lab Direct task instead declares those properties in cfgs
+and constructs one plan-owned prototype:
 
-+------------------------------------------------------------------------+---------------------------------------------------------------------+
-| IsaacGymEnvs                                                           | Isaac Lab                                                           |
-+------------------------------------------------------------------------+---------------------------------------------------------------------+
-|.. code-block:: python                                                  |.. code-block:: python                                               |
-|                                                                        |                                                                     |
-| def create_sim(self):                                                  | def _setup_scene(self):                                             |
-|     # set the up axis to be z-up given that assets are y-up by default |     self.cartpole = Articulation(self.cfg.robot_cfg)                |
-|     self.up_axis = self.cfg["sim"]["up_axis"]                          |     # add ground plane                                              |
-|                                                                        |     spawn_ground_plane(prim_path="/World/ground",                   |
-|     self.sim = super().create_sim(self.device_id,                      |         cfg=GroundPlaneCfg())                                       |
-|         self.graphics_device_id, self.physics_engine,                  |     src, dest = "/World/envs/env_0", "/World/envs/env_{}"           |
-|         self.sim_params)                                               |     positions = cloner.grid_transforms(                             |
-|     self._create_ground_plane()                                        |         self.scene.num_envs, self.scene.cfg.env_spacing,            |
-|     self._create_envs(self.num_envs,                                   |         device=self.device)[0]                                      |
-|         self.cfg["env"]['envSpacing'],                                 |     global_paths = ("/World/ground",)                               |
-|         int(np.sqrt(self.num_envs)))                                   |     plan = cloner.clone_plan_from_env_0(                            |
-|                                                                        |         src, dest, self.scene.num_envs, self.device, positions,     |
-|                                                                        |         global_paths=global_paths)                                  |
-|                                                                        |     cloner.replicate(plan)                                          |
-| def _create_ground_plane(self):                                        |     if "physx" in self.scene.physics_backend:                       |
-|     plane_params = gymapi.PlaneParams()                                |         self.scene.filter_collisions(global_prim_paths=[])          |
-|     # set the normal force to be z dimension                           |     self.scene.articulations["cartpole"] = self.cartpole            |
-|     plane_params.normal = (gymapi.Vec3(0.0, 0.0, 1.0)                  |     light_cfg = sim_utils.DistantLightCfg(                          |
-|         if self.up_axis == 'z'                                         |         intensity=2000.0, color=(1.0, 1.0, 1.0))                    |
-|         else gymapi.Vec3(0.0, 1.0, 0.0))                               |     light_cfg.func("/World/Light", light_cfg)                       |
-|     self.gym.add_ground(self.sim, plane_params)                        |                                                                     |
-|                                                                        | # In CartpoleEnvCfg:                                                |
-| def _create_envs(self, num_envs, spacing, num_per_row):                | robot_cfg: ArticulationCfg = CARTPOLE_CFG.replace(                  |
-|     # define plane on which environments are initialized               |     prim_path="{ENV_REGEX_NS}/Robot")                               |
-|     lower = (gymapi.Vec3(0.5 * -spacing, -spacing, 0.0)                | scene: InteractiveSceneCfg = InteractiveSceneCfg(                   |
-|         if self.up_axis == 'z'                                         |     num_envs=4096,                                                  |
-|         else gymapi.Vec3(0.5 * -spacing, 0.0, -spacing))               |     env_spacing=4.0,                                                |
-|     upper = gymapi.Vec3(0.5 * spacing, spacing, spacing)               |     replicate_physics=True,                                         |
-|                                                                        |     clone_in_fabric=True,                                           |
-|     asset_root = os.path.join(os.path.dirname(                         | )                                                                   |
-|         os.path.abspath(__file__)), "../../assets")                    |                                                                     |
-|     asset_file = "urdf/cartpole.urdf"                                  |                                                                     |
-|                                                                        |                                                                     |
-|     if "asset" in self.cfg["env"]:                                     |                                                                     |
-|         asset_root = os.path.join(os.path.dirname(                     |                                                                     |
-|             os.path.abspath(__file__)),                                |                                                                     |
-|             self.cfg["env"]["asset"].get("assetRoot", asset_root))     |                                                                     |
-|         asset_file = self.cfg["env"]["asset"].get(                     |                                                                     |
-|             "assetFileName", asset_file)                               |                                                                     |
-|                                                                        |                                                                     |
-|     asset_path = os.path.join(asset_root, asset_file)                  |                                                                     |
-|     asset_root = os.path.dirname(asset_path)                           |                                                                     |
-|     asset_file = os.path.basename(asset_path)                          |                                                                     |
-|                                                                        |                                                                     |
-|     asset_options = gymapi.AssetOptions()                              |                                                                     |
-|     asset_options.fix_base_link = True                                 |                                                                     |
-|     cartpole_asset = self.gym.load_asset(self.sim,                     |                                                                     |
-|         asset_root, asset_file, asset_options)                         |                                                                     |
-|     self.num_dof = self.gym.get_asset_dof_count(                       |                                                                     |
-|         cartpole_asset)                                                |                                                                     |
-|                                                                        |                                                                     |
-|     pose = gymapi.Transform()                                          |                                                                     |
-|     if self.up_axis == 'z':                                            |                                                                     |
-|         pose.p.z = 2.0                                                 |                                                                     |
-|         pose.r = gymapi.Quat(0.0, 0.0, 0.0, 1.0)                       |                                                                     |
-|     else:                                                              |                                                                     |
-|         pose.p.y = 2.0                                                 |                                                                     |
-|         pose.r = gymapi.Quat(                                          |                                                                     |
-|             -np.sqrt(2)/2, 0.0, 0.0, np.sqrt(2)/2)                     |                                                                     |
-|                                                                        |                                                                     |
-|     self.cartpole_handles = []                                         |                                                                     |
-|     self.envs = []                                                     |                                                                     |
-|     for i in range(self.num_envs):                                     |                                                                     |
-|         # create env instance                                          |                                                                     |
-|         env_ptr = self.gym.create_env(                                 |                                                                     |
-|             self.sim, lower, upper, num_per_row                        |                                                                     |
-|         )                                                              |                                                                     |
-|         cartpole_handle = self.gym.create_actor(                       |                                                                     |
-|             env_ptr, cartpole_asset, pose,                             |                                                                     |
-|             "cartpole", i, 1, 0)                                       |                                                                     |
-|                                                                        |                                                                     |
-|         dof_props = self.gym.get_actor_dof_properties(                 |                                                                     |
-|             env_ptr, cartpole_handle)                                  |                                                                     |
-|         dof_props['driveMode'][0] = gymapi.DOF_MODE_EFFORT             |                                                                     |
-|         dof_props['driveMode'][1] = gymapi.DOF_MODE_NONE               |                                                                     |
-|         dof_props['stiffness'][:] = 0.0                                |                                                                     |
-|         dof_props['damping'][:] = 0.0                                  |                                                                     |
-|         self.gym.set_actor_dof_properties(env_ptr, c                   |                                                                     |
-|             artpole_handle, dof_props)                                 |                                                                     |
-|                                                                        |                                                                     |
-|         self.envs.append(env_ptr)                                      |                                                                     |
-|         self.cartpole_handles.append(cartpole_handle)                  |                                                                     |
-+------------------------------------------------------------------------+---------------------------------------------------------------------+
+.. list-table::
+   :widths: 1 1
+   :header-rows: 1
+
+   * - IsaacGymEnvs
+     - Isaac Lab
+   * - .. code-block:: python
+
+          def _create_envs(self):
+              asset = self.gym.load_asset(...)
+              for i in range(self.num_envs):
+                  env = self.gym.create_env(...)
+                  actor = self.gym.create_actor(env, asset, ...)
+                  props = self.gym.get_actor_dof_properties(actor)
+                  props["stiffness"][:] = 0.0
+                  props["damping"][:] = 0.0
+                  self.gym.set_actor_dof_properties(actor, props)
+                  self.envs.append(env)
+                  self.cartpole_handles.append(actor)
+
+     - .. code-block:: python
+
+          # self.cfg is CartpoleEnvCfg
+          def _setup_scene(self):
+              asset_cfgs = self.cfg.robot_cfg, self.cfg.ground_cfg, self.cfg.light_cfg
+              plan = cloner.clone_plan_from_env_0(
+                  self.cfg.scene.clone_cfg, asset_cfgs, self.cfg.scene.num_envs, self.cfg.scene.env_spacing
+              )
+              self.cartpole = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
+              self.cfg.ground_cfg.spawn.func(self.cfg.ground_cfg.prim_path, self.cfg.ground_cfg.spawn)
+              self.cfg.light_cfg.spawn.func(self.cfg.light_cfg.prim_path, self.cfg.light_cfg.spawn)
+              self.scene.articulations["robot"] = self.cartpole
+              cloner.replicate(plan)
+
+The task owns one explicit publish, construct, and replicate lifecycle. It neither loops over
+environments nor discovers the completed stage.
 
 
 **Pre and Post Physics Step**

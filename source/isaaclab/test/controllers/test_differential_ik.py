@@ -39,8 +39,7 @@ pytestmark = pytest.mark.integration
 @pytest.fixture
 def sim():
     """Create a simulation context for testing."""
-    # Wait for spawning
-    stage = sim_utils.create_new_stage()
+    sim_utils.create_new_stage()
     # Constants
     num_envs = 1
     # Load kit helper
@@ -52,16 +51,6 @@ def sim():
     # Create a ground plane
     cfg = sim_utils.GroundPlaneCfg()
     cfg.func("/World/GroundPlane", cfg)
-
-    # Create environment clones using Isaac Lab's cloner utilities
-    env_prim_paths = [f"/World/envs/env_{i}" for i in range(num_envs)]
-    env_fmt = "/World/envs/env_{}"
-    env_ids = torch.arange(num_envs, dtype=torch.long, device=sim.device)
-    env_origins, _ = cloner.grid_transforms(num_envs, spacing=2.0, device=sim.device)
-    # create source prim
-    stage.DefinePrim(env_prim_paths[0], "Xform")
-    # clone the env xform
-    cloner.usd_replicate(stage, [env_fmt.format(0)], [env_fmt], env_ids, positions=env_origins)
 
     # Define goals for the arm (x, y, z, qx, qy, qz, qw)
     ee_goals_set = [
@@ -84,7 +73,8 @@ def test_franka_ik_pose_abs(sim):
 
     # Create robot instance
     robot_cfg = FRANKA_PANDA_HIGH_PD_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-    robot = Articulation(cfg=robot_cfg)
+    with cloner.ReplicateSession([cloner.CloneCfg(), robot_cfg], num_envs, 2.0):
+        robot = robot_cfg.class_type(robot_cfg)
 
     # Create IK controller
     diff_ik_cfg = DifferentialIKControllerCfg(command_type="pose", use_relative_mode=False, ik_method="dls")
@@ -103,7 +93,8 @@ def test_ur10_ik_pose_abs(sim):
     # Create robot instance
     robot_cfg = UR10_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
     robot_cfg.spawn.rigid_props.disable_gravity = True
-    robot = Articulation(cfg=robot_cfg)
+    with cloner.ReplicateSession([cloner.CloneCfg(), robot_cfg], num_envs, 2.0):
+        robot = robot_cfg.class_type(robot_cfg)
 
     # Create IK controller
     diff_ik_cfg = DifferentialIKControllerCfg(command_type="pose", use_relative_mode=False, ik_method="dls")

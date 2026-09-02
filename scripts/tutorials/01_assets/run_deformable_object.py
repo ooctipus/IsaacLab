@@ -48,32 +48,21 @@ import torch
 
 import isaaclab.sim as sim_utils
 import isaaclab.utils.math as math_utils
+from isaaclab import cloner
+from isaaclab.assets import AssetBaseCfg, DeformableObjectCfg
 from isaaclab.physics import PhysicsCfg
 
 if TYPE_CHECKING:
     from isaaclab.assets import DeformableObject
 
 
-def design_scene():
+def design_scene(sim: sim_utils.SimulationContext) -> tuple[dict, torch.Tensor]:
     """Designs the scene."""
-    from isaaclab.assets import DeformableObject, DeformableObjectCfg
-
-    # Ground-plane
-    cfg = sim_utils.GroundPlaneCfg()
-    cfg.func("/World/defaultGroundPlane", cfg)
-    # Lights
-    cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.8, 0.8, 0.8))
-    cfg.func("/World/Light", cfg)
-
-    # Create a dictionary for the scene entities
-    scene_entities = {}
-
-    # Create separate groups called "env_0", "env_1", ...
-    # Newton's scene loader requires the "env_\d+" naming convention to
-    # detect per-environment Xforms and replicate them as separate worlds.
-    origins = [[0.25, 0.25, 0.0], [-0.25, 0.25, 0.0], [0.25, -0.25, 0.0], [-0.25, -0.25, 0.0]]
-    for i, origin in enumerate(origins):
-        sim_utils.create_prim(f"/World/env_{i}", "Xform", translation=origin)
+    ground_cfg = AssetBaseCfg(prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg())
+    light_cfg = AssetBaseCfg(
+        prim_path="/World/Light",
+        spawn=sim_utils.DomeLightCfg(intensity=2000.0, color=(0.8, 0.8, 0.8)),
+    )
 
     youngs_modulus = 1e5
     poissons_ratio = 0.4
@@ -100,9 +89,8 @@ def design_scene():
             poissons_ratio=poissons_ratio, youngs_modulus=youngs_modulus, density=density
         )
 
-    # 3D Deformable Object
-    cfg = DeformableObjectCfg(
-        prim_path="/World/env_.*/Cube",
+    cube_cfg = DeformableObjectCfg(
+        prim_path="{ENV_REGEX_NS}/Cube",
         spawn=sim_utils.MeshCuboidCfg(
             size=(0.2, 0.2, 0.2),
             deformable_props=deformable_props,
@@ -113,12 +101,15 @@ def design_scene():
         init_state=DeformableObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 1.0)),
         debug_vis=True,
     )
+    plan = cloner.clone_plan_from_env_0(
+        cloner.CloneCfg(clone_template="/World/env_{}"), (ground_cfg, light_cfg, cube_cfg), 4, 0.5
+    )
+    ground_cfg.spawn.func(ground_cfg.prim_path, ground_cfg.spawn)
+    light_cfg.spawn.func(light_cfg.prim_path, light_cfg.spawn)
+    cube_object = cube_cfg.class_type(cube_cfg)
+    cloner.replicate(plan)
 
-    cube_object = DeformableObject(cfg=cfg)
-    scene_entities["cube_object"] = cube_object
-
-    # return the scene information
-    return scene_entities, origins
+    return {"cube_object": cube_object}, plan.positions
 
 
 def run_simulator(sim: sim_utils.SimulationContext, entities: dict, origins: torch.Tensor):
@@ -200,8 +191,7 @@ def main():
         # Set main camera
         sim.set_camera_view(eye=[2.0, 2.0, 2.0], target=[0.0, 0.0, 0.75])
         # Design scene
-        scene_entities, scene_origins = design_scene()
-        scene_origins = torch.tensor(scene_origins, device=sim.device)
+        scene_entities, scene_origins = design_scene(sim)
         # Play the simulator
         sim.reset()
         # Now we are ready!

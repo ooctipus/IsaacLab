@@ -47,7 +47,7 @@ class KeyboardAssetCfg(PresetCfg):
     default = ArticulationCfg(
         prim_path="{ENV_REGEX_NS}/Keyboard",
         articulation_root_prim_path="/parts/part_.*",
-        spawn=MultiAssetSpawnerCfg(assets_cfg=list(TYPING_KEYBOARD_POOL.spawners_partitioned), random_choice=False),
+        spawn=MultiAssetSpawnerCfg(assets_cfg=list(TYPING_KEYBOARD_POOL.spawners_partitioned)),
         init_state=ArticulationCfg.InitialStateCfg(
             # Pose used by the training checkpoint: centered in the SO-101 workspace and rotated -90 degrees.
             pos=(0.285, 0.0, 0.01),
@@ -61,7 +61,7 @@ class KeyboardAssetCfg(PresetCfg):
     # ArticulationData reads only the first articulation per env, so separate parts would be invisible).
     newton_mjwarp = default.replace(
         articulation_root_prim_path=None,
-        spawn=MultiAssetSpawnerCfg(assets_cfg=list(TYPING_KEYBOARD_POOL.spawners_single), random_choice=False),
+        spawn=MultiAssetSpawnerCfg(assets_cfg=list(TYPING_KEYBOARD_POOL.spawners_single)),
     )
     isaacsim_physx = default
 
@@ -317,7 +317,7 @@ class PhysicsCfg(PresetCfg):
 
 @configclass
 class SO101KeyboardEnvCfg(ManagerBasedRLEnvCfg):
-    scene: SO101SceneCfg = SO101SceneCfg(num_envs=4096, env_spacing=1.0, replicate_physics=True)
+    scene: SO101SceneCfg = SO101SceneCfg(num_envs=4096, env_spacing=1.0)
     observations: SO101ObservationsCfg = SO101ObservationsCfg()
     actions: SO101RelJointPosActionCfg = SO101RelJointPosActionCfg()
     commands: CommandsCfg = CommandsCfg()

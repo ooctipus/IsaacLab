@@ -25,7 +25,6 @@ through the auto-tune functionality.
 
 import argparse
 from collections.abc import Callable
-from dataclasses import MISSING
 
 from isaaclab.app import AppLauncher
 
@@ -259,13 +258,13 @@ import psutil
 import torch
 
 import isaaclab.sim as sim_utils
-from isaaclab.assets import RigidObject, RigidObjectCfg
+from isaaclab import cloner
+from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
 from isaaclab.benchmark import BaseIsaacLabBenchmark, DictMeasurement, SingleMeasurement
 from isaaclab.scene.interactive_scene import InteractiveScene
+from isaaclab.scene_data import REQUIRES_STAGE_AND_MODEL
 from isaaclab.sensors import (
-    Camera,
     CameraCfg,
-    RayCasterCamera,
     RayCasterCameraCfg,
     patterns,
 )
@@ -278,38 +277,20 @@ Camera Creation
 """
 
 
-def _get_camera_class_name(camera_cfg: type[CameraCfg]) -> str:
-    """Return the configured camera sensor class name."""
-    class_type_field = camera_cfg.__dataclass_fields__["class_type"]
-    if class_type_field.default is not MISSING:
-        class_type = class_type_field.default
-    elif class_type_field.default_factory is not MISSING:
-        class_type = class_type_field.default_factory()
-    else:
-        raise AttributeError(f"{camera_cfg.__name__} has no default class_type.")
-
-    if hasattr(class_type, "__name__"):
-        return class_type.__name__
-    return str(class_type).rsplit(":", maxsplit=1)[-1]
-
-
 def create_camera_base(
     camera_cfg: type[CameraCfg],
     num_cams: int,
     data_types: list[str],
     height: int,
     width: int,
-    prim_path: str | None = None,
-    instantiate: bool = True,
-) -> Camera | CameraCfg | None:
-    """Generalized function to create a camera or tiled camera sensor."""
-    # If valid camera settings are provided, create the camera
+    prim_path: str,
+) -> CameraCfg | None:
+    """Create a camera configuration when its requested dimensions are valid."""
     if num_cams <= 0 or len(data_types) <= 0 or height <= 0 or width <= 0:
         return None
 
-    name = _get_camera_class_name(camera_cfg)
-    cfg = camera_cfg(
-        prim_path=prim_path if prim_path is not None else f"/World/{name}_.*/{name}",
+    return camera_cfg(
+        prim_path=prim_path,
         update_period=0,
         height=height,
         width=width,
@@ -318,79 +299,37 @@ def create_camera_base(
             focal_length=24, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 1e4)
         ),
     )
-    if instantiate:
-        # Create the necessary prims
-        for idx in range(num_cams):
-            sim_utils.create_prim(f"/World/{name}_{idx:02d}", "Xform")
-        return cfg.class_type(cfg=cfg)
-
-    return cfg
 
 
-def create_tiled_cameras(
-    num_cams: int = 2, data_types: list[str] | None = None, height: int = 100, width: int = 120
-) -> Camera | None:
-    if data_types is None:
-        data_types = ["rgb", "depth"]
-    """Defines the camera sensor to add to the scene."""
-    return create_camera_base(
-        camera_cfg=CameraCfg,
-        num_cams=num_cams,
-        data_types=data_types,
-        height=height,
-        width=width,
-    )
-
-
-def create_cameras(
-    num_cams: int = 2, data_types: list[str] | None = None, height: int = 100, width: int = 120
-) -> Camera | None:
-    """Defines the Standard cameras."""
-    if data_types is None:
-        data_types = ["rgb", "depth"]
-    return create_camera_base(
-        camera_cfg=CameraCfg, num_cams=num_cams, data_types=data_types, height=height, width=width
-    )
-
-
-def create_ray_caster_cameras(
+def _create_ray_caster_camera_cfg(
     num_cams: int = 2,
     data_types: list[str] = ["distance_to_image_plane"],
     mesh_prim_paths: list[str] = ["/World/ground"],
     height: int = 100,
     width: int = 120,
-    prim_path: str = "/World/RayCasterCamera_.*/RayCaster",
-    instantiate: bool = True,
-) -> RayCasterCamera | RayCasterCameraCfg | None:
-    """Create the raycaster cameras; different configuration than Standard/Tiled camera"""
-    for idx in range(num_cams):
-        sim_utils.create_prim(f"/World/RayCasterCamera_{idx:02d}/RayCaster", "Xform")
-
-    if num_cams > 0 and len(data_types) > 0 and height > 0 and width > 0:
-        cam_cfg = RayCasterCameraCfg(
-            prim_path=prim_path,
-            mesh_prim_paths=mesh_prim_paths,
-            update_period=0,
-            offset=RayCasterCameraCfg.OffsetCfg(pos=(0.0, 0.0, 0.0), rot=(1.0, 0.0, 0.0, 0.0)),
-            data_types=data_types,
-            debug_vis=False,
-            pattern_cfg=patterns.PinholeCameraPatternCfg(
-                focal_length=24.0,
-                horizontal_aperture=20.955,
-                height=480,
-                width=640,
-            ),
-        )
-        if instantiate:
-            return RayCasterCamera(cfg=cam_cfg)
-        else:
-            return cam_cfg
-
-    else:
+    prim_path: str = "{ENV_REGEX_NS}/RayCasterCamera",
+) -> RayCasterCameraCfg | None:
+    """Create a ray-caster camera configuration when its requested dimensions are valid."""
+    if num_cams <= 0 or len(data_types) <= 0 or height <= 0 or width <= 0:
         return None
+    return RayCasterCameraCfg(
+        prim_path=prim_path,
+        spawn=sim_utils.SensorFrameCfg(),
+        mesh_prim_paths=mesh_prim_paths,
+        update_period=0,
+        offset=RayCasterCameraCfg.OffsetCfg(pos=(0.0, 0.0, 0.0), rot=(1.0, 0.0, 0.0, 0.0)),
+        data_types=data_types,
+        debug_vis=False,
+        pattern_cfg=patterns.PinholeCameraPatternCfg(
+            focal_length=24.0,
+            horizontal_aperture=20.955,
+            height=height,
+            width=width,
+        ),
+    )
 
 
-def create_tiled_camera_cfg(prim_path: str) -> CameraCfg:
+def create_tiled_camera_cfg(prim_path: str) -> CameraCfg | None:
     """Grab a simple camera config for injecting into task environments."""
     return create_camera_base(
         CameraCfg,
@@ -399,11 +338,10 @@ def create_tiled_camera_cfg(prim_path: str) -> CameraCfg:
         width=args_cli.width,
         height=args_cli.height,
         prim_path="{ENV_REGEX_NS}/" + prim_path,
-        instantiate=False,
     )
 
 
-def create_standard_camera_cfg(prim_path: str) -> CameraCfg:
+def create_standard_camera_cfg(prim_path: str) -> CameraCfg | None:
     """Grab a simple standard camera config for injecting into task environments."""
     return create_camera_base(
         CameraCfg,
@@ -412,13 +350,12 @@ def create_standard_camera_cfg(prim_path: str) -> CameraCfg:
         width=args_cli.width,
         height=args_cli.height,
         prim_path="{ENV_REGEX_NS}/" + prim_path,
-        instantiate=False,
     )
 
 
-def create_ray_caster_camera_cfg(prim_path: str) -> RayCasterCameraCfg:
+def create_ray_caster_camera_cfg(prim_path: str) -> RayCasterCameraCfg | None:
     """Grab a simple ray caster config for injecting into task environments."""
-    return create_ray_caster_cameras(
+    return _create_ray_caster_camera_cfg(
         num_cams=args_cli.num_ray_caster_cameras,
         data_types=args_cli.ray_caster_camera_data_types,
         width=args_cli.width,
@@ -433,6 +370,7 @@ Scene Creation
 
 
 def design_scene(
+    sim: sim_utils.SimulationContext,
     num_tiled_cams: int = 2,
     num_standard_cams: int = 0,
     num_ray_caster_cams: int = 0,
@@ -452,20 +390,12 @@ def design_scene(
     if ray_caster_camera_data_types is None:
         ray_caster_camera_data_types = ["distance_to_image_plane"]
 
-    # Populate scene
-    # -- Ground-plane
-    cfg = sim_utils.GroundPlaneCfg()
-    cfg.func("/World/ground", cfg)
-    # -- Lights
-    cfg = sim_utils.DistantLightCfg(intensity=3000.0, color=(0.75, 0.75, 0.75))
-    cfg.func("/World/Light", cfg)
-
-    # Create a dictionary for the scene entities
-    scene_entities = {}
-
-    # Xform to hold objects
-    sim_utils.create_prim("/World/Objects", "Xform")
-    # Random objects
+    ground_cfg = AssetBaseCfg(prim_path="/World/ground", spawn=sim_utils.GroundPlaneCfg())
+    light_cfg = AssetBaseCfg(
+        prim_path="/World/Light",
+        spawn=sim_utils.DistantLightCfg(intensity=3000.0, color=(0.75, 0.75, 0.75)),
+    )
+    object_cfgs = {}
     for i in range(num_objects):
         # sample random position
         position = np.random.rand(3) - np.asarray([0.05, 0.05, -1.0])
@@ -488,34 +418,63 @@ def design_scene(
         elif prim_type == "Cylinder":
             shape_cfg = sim_utils.CylinderCfg(radius=0.25, height=0.25, **common_properties)
         # Rigid Object
-        obj_cfg = RigidObjectCfg(
+        object_cfgs[f"rigid_object{i}"] = RigidObjectCfg(
             prim_path=f"/World/Objects/Obj_{i:02d}",
             spawn=shape_cfg,
             init_state=RigidObjectCfg.InitialStateCfg(pos=position),
         )
-        scene_entities[f"rigid_object{i}"] = RigidObject(cfg=obj_cfg)
-
-    # Sensors
-    standard_camera = create_cameras(
-        num_cams=num_standard_cams, data_types=standard_camera_data_types, height=height, width=width
+    camera_cfgs = {}
+    standard_cfg = create_camera_base(
+        CameraCfg,
+        num_cams=num_standard_cams,
+        data_types=standard_camera_data_types,
+        height=height,
+        width=width,
+        prim_path="{ENV_REGEX_NS}/StandardCamera",
     )
-    tiled_camera = create_tiled_cameras(
-        num_cams=num_tiled_cams, data_types=tiled_camera_data_types, height=height, width=width
+    if standard_cfg is not None:
+        camera_cfgs["standard_camera"] = standard_cfg
+    tiled_cfg = create_camera_base(
+        CameraCfg,
+        num_cams=num_tiled_cams,
+        data_types=tiled_camera_data_types,
+        height=height,
+        width=width,
+        prim_path="{ENV_REGEX_NS}/TiledCamera",
     )
-    ray_caster_camera = create_ray_caster_cameras(
+    if tiled_cfg is not None:
+        camera_cfgs["tiled_camera"] = tiled_cfg
+    ray_cfg = _create_ray_caster_camera_cfg(
         num_cams=num_ray_caster_cams,
         data_types=ray_caster_camera_data_types,
         mesh_prim_paths=mesh_prim_paths,
         height=height,
         width=width,
     )
-    # return the scene information
-    if tiled_camera is not None:
-        scene_entities["tiled_camera"] = tiled_camera
-    if standard_camera is not None:
-        scene_entities["standard_camera"] = standard_camera
-    if ray_caster_camera is not None:
-        scene_entities["ray_caster_camera"] = ray_caster_camera
+    if ray_cfg is not None:
+        camera_cfgs["ray_caster_camera"] = ray_cfg
+
+    for cfg in camera_cfgs.values():
+        if isinstance(cfg, CameraCfg):
+            requires_stage, requires_model = REQUIRES_STAGE_AND_MODEL[cfg.renderer_cfg.renderer_type]
+            sim.requires_usd_stage |= requires_stage
+            sim.requires_newton_model |= requires_model
+    plan = cloner.clone_plan_from_env_0(
+        cloner.CloneCfg(clone_template="/World/Cameras/Camera_{}"),
+        (
+            ground_cfg,
+            light_cfg,
+            *object_cfgs.values(),
+            *camera_cfgs.values(),
+        ),
+        max(num_tiled_cams, num_standard_cams, num_ray_caster_cams),
+        0.0,
+    )
+    ground_cfg.spawn.func(ground_cfg.prim_path, ground_cfg.spawn)
+    light_cfg.spawn.func(light_cfg.prim_path, light_cfg.spawn)
+    scene_entities = {name: cfg.class_type(cfg) for name, cfg in object_cfgs.items()}
+    scene_entities.update({name: cfg.class_type(cfg) for name, cfg in camera_cfgs.items()})
+    cloner.replicate(plan)
     return scene_entities
 
 
@@ -806,6 +765,7 @@ def main():
         # Set main camera
         sim.set_camera_view([2.5, 2.5, 2.5], [0.0, 0.0, 0.0])
         scene_entities = design_scene(
+            sim,
             num_tiled_cams=args_cli.num_tiled_cameras,
             num_standard_cams=args_cli.num_standard_cameras,
             num_ray_caster_cams=args_cli.num_ray_caster_cameras,

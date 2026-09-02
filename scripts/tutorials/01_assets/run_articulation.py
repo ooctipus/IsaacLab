@@ -35,7 +35,8 @@ simulation_app = app_launcher.app
 import torch
 
 import isaaclab.sim as sim_utils
-from isaaclab.assets import Articulation
+from isaaclab import cloner
+from isaaclab.assets import Articulation, AssetBaseCfg
 from isaaclab.sim import SimulationContext
 
 ##
@@ -44,31 +45,23 @@ from isaaclab.sim import SimulationContext
 from isaaclab_assets import CARTPOLE_CFG  # isort:skip
 
 
-def design_scene() -> tuple[dict, list[list[float]]]:
+def design_scene(sim: SimulationContext) -> tuple[dict, torch.Tensor]:
     """Designs the scene."""
-    # Ground-plane
-    cfg = sim_utils.GroundPlaneCfg()
-    cfg.func("/World/defaultGroundPlane", cfg)
-    # Lights
-    cfg = sim_utils.DomeLightCfg(intensity=3000.0, color=(0.75, 0.75, 0.75))
-    cfg.func("/World/Light", cfg)
+    ground_cfg = AssetBaseCfg(prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg())
+    light_cfg = AssetBaseCfg(
+        prim_path="/World/Light",
+        spawn=sim_utils.DomeLightCfg(intensity=3000.0, color=(0.75, 0.75, 0.75)),
+    )
+    cartpole_cfg = CARTPOLE_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+    plan = cloner.clone_plan_from_env_0(
+        cloner.CloneCfg(clone_template="/World/Origin{}"), (ground_cfg, light_cfg, cartpole_cfg), 2, 1.0
+    )
+    ground_cfg.spawn.func(ground_cfg.prim_path, ground_cfg.spawn)
+    light_cfg.spawn.func(light_cfg.prim_path, light_cfg.spawn)
+    cartpole = cartpole_cfg.class_type(cartpole_cfg)
+    cloner.replicate(plan)
 
-    # Create separate groups called "Origin1", "Origin2"
-    # Each group will have a robot in it
-    origins = [[0.0, 0.0, 0.0], [-1.0, 0.0, 0.0]]
-    # Origin 1
-    sim_utils.create_prim("/World/Origin1", "Xform", translation=origins[0])
-    # Origin 2
-    sim_utils.create_prim("/World/Origin2", "Xform", translation=origins[1])
-
-    # Articulation
-    cartpole_cfg = CARTPOLE_CFG.copy()
-    cartpole_cfg.prim_path = "/World/Origin.*/Robot"
-    cartpole = Articulation(cfg=cartpole_cfg)
-
-    # return the scene information
-    scene_entities = {"cartpole": cartpole}
-    return scene_entities, origins
+    return {"cartpole": cartpole}, plan.positions
 
 
 def run_simulator(sim: sim_utils.SimulationContext, entities: dict[str, Articulation], origins: torch.Tensor):
@@ -129,8 +122,7 @@ def main():
     # Set main camera
     sim.set_camera_view([2.5, 0.0, 4.0], [0.0, 0.0, 2.0])
     # Design scene
-    scene_entities, scene_origins = design_scene()
-    scene_origins = torch.tensor(scene_origins, device=sim.device)
+    scene_entities, scene_origins = design_scene(sim)
     # Play the simulator
     sim.reset()
     # Now we are ready!

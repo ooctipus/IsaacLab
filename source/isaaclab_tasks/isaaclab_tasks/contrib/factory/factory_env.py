@@ -10,11 +10,8 @@ import carb
 
 import isaaclab.sim as sim_utils
 from isaaclab import cloner
-from isaaclab.assets import Articulation
 from isaaclab.envs import DirectRLEnv
-from isaaclab.sim.spawners.from_files import GroundPlaneCfg, spawn_ground_plane
 from isaaclab.utils import math as torch_utils
-from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
 from . import factory_control, factory_utils
 from .factory_env_cfg import OBS_DIM_CFG, STATE_DIM_CFG, FactoryEnvCfg
@@ -83,41 +80,38 @@ class FactoryEnv(DirectRLEnv):
         self.ep_success_times = torch.zeros((self.num_envs,), dtype=torch.long, device=self.device)
 
     def _setup_scene(self):
-        """Initialize simulation scene."""
-        spawn_ground_plane(prim_path="/World/ground", cfg=GroundPlaneCfg(), translation=(0.0, 0.0, -1.05))
-
-        # spawn a usd file of a table into the scene
-        cfg = sim_utils.UsdFileCfg(usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Mounts/SeattleLabTable/table_instanceable.usd")
-        cfg.func(
-            "/World/envs/env_[^/]+/Table", cfg, translation=(0.55, 0.0, 0.0), orientation=(0.0, 0.0, 0.70711, 0.70711)
+        asset_cfgs = (
+            self.cfg.ground,
+            self.cfg.table,
+            self.cfg.light,
+            self.cfg.robot,
+            self.cfg.fixed_asset,
+            self.cfg.held_asset,
+            self.cfg.small_gear,
+            self.cfg.large_gear,
         )
+        plan = cloner.clone_plan_from_env_0(
+            self.cfg.scene.clone_cfg, asset_cfgs, self.cfg.scene.num_envs, self.cfg.scene.env_spacing
+        )
+        source_env = self.cfg.scene.clone_cfg.clone_template.format(0)
+        for asset_cfg in (self.cfg.ground, self.cfg.table, self.cfg.light):
+            asset_cfg.spawn.func(
+                asset_cfg.prim_path.replace("{ENV_REGEX_NS}", source_env),
+                asset_cfg.spawn,
+                translation=asset_cfg.init_state.pos,
+                orientation=asset_cfg.init_state.rot,
+            )
 
-        self._robot = Articulation(self.cfg.robot)
-        self._fixed_asset = Articulation(self.cfg_task.fixed_asset)
-        self._held_asset = Articulation(self.cfg_task.held_asset)
+        self._robot, self._fixed_asset, self._held_asset = (
+            cfg.class_type(cfg) for cfg in (self.cfg.robot, self.cfg.fixed_asset, self.cfg.held_asset)
+        )
+        self.scene.articulations.update(robot=self._robot, fixed_asset=self._fixed_asset, held_asset=self._held_asset)
         if self.cfg_task.name == "gear_mesh":
-            self._small_gear_asset = Articulation(self.cfg_task.small_gear_cfg)
-            self._large_gear_asset = Articulation(self.cfg_task.large_gear_cfg)
-        src, dest = "/World/envs/env_0", "/World/envs/env_{}"
-        pos = cloner.grid_transforms(self.scene.num_envs, self.scene.cfg.env_spacing, device=self.device)[0]
-        global_paths = ("/World/ground",)
-        plan = cloner.clone_plan_from_env_0(src, dest, self.scene.num_envs, self.device, pos, global_paths=global_paths)
+            self._small_gear_asset, self._large_gear_asset = (
+                cfg.class_type(cfg) for cfg in (self.cfg.small_gear, self.cfg.large_gear)
+            )
+            self.scene.articulations.update(small_gear=self._small_gear_asset, large_gear=self._large_gear_asset)
         cloner.replicate(plan)
-
-        # PhysX replication requires explicit collision filtering between environments.
-        if "physx" in self.scene.physics_backend:
-            self.scene.filter_collisions()
-
-        self.scene.articulations["robot"] = self._robot
-        self.scene.articulations["fixed_asset"] = self._fixed_asset
-        self.scene.articulations["held_asset"] = self._held_asset
-        if self.cfg_task.name == "gear_mesh":
-            self.scene.articulations["small_gear"] = self._small_gear_asset
-            self.scene.articulations["large_gear"] = self._large_gear_asset
-
-        # add lights
-        light_cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
-        light_cfg.func("/World/Light", light_cfg)
 
     def _compute_intermediate_values(self, dt):
         """Get values computed from raw tensors. This includes adding noise."""

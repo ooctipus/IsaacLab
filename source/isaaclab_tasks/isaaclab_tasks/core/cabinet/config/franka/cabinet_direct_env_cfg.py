@@ -7,23 +7,16 @@ from __future__ import annotations
 
 from isaaclab.utils.configclass import configclass
 
-from isaaclab_tasks.core.cabinet.cabinet_direct_env_cfg import CabinetDirectEnvCfg, CabinetDirectSceneCfg
+from isaaclab_tasks.core.cabinet.cabinet_direct_env_cfg import CabinetDirectEnvCfg
 
 from isaaclab_assets.robots.franka import FRANKA_PANDA_CFG
-
-
-@configclass
-class FrankaCabinetDirectSceneCfg(CabinetDirectSceneCfg):
-    """Direct-workflow cabinet scene configured for the Franka robot."""
-
-    robot = FRANKA_PANDA_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
 
 
 @configclass
 class FrankaCabinetDirectEnvCfg(CabinetDirectEnvCfg):
     """Direct-workflow cabinet task with a Franka Panda arm."""
 
-    scene: FrankaCabinetDirectSceneCfg = FrankaCabinetDirectSceneCfg(num_envs=4096, env_spacing=2.0)
+    robot = FRANKA_PANDA_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
 
     arm_joint_names: str | list[str] = "panda_joint.*"
     finger_joint_names: str | list[str] = "panda_finger_joint.*"

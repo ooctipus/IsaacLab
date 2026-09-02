@@ -10,10 +10,6 @@ from typing import TYPE_CHECKING
 
 import torch
 
-import isaaclab.sim as sim_utils
-from isaaclab import cloner
-from isaaclab.assets import Articulation, RigidObject
-from isaaclab.sensors import Camera
 from isaaclab.utils.math import scale_transform
 
 from isaaclab_tasks.core.reorient.config.shadow_hand.feature_extractor import FeatureExtractor
@@ -46,27 +42,10 @@ class ShadowHandCameraEnv(ReorientDirectEnv):
         self.gt_keypoints = torch.ones(self.num_envs, 8, 3, dtype=torch.float32, device=self.device)
         self.goal_keypoints = torch.ones(self.num_envs, 8, 3, dtype=torch.float32, device=self.device)
 
-    def _setup_scene(self):
-        # add hand, in-hand object, and goal object
-        self.hand = Articulation(self.cfg.robot_cfg)
-        self.object: Articulation | RigidObject = self.cfg.object_cfg.class_type(self.cfg.object_cfg)
-        self._joint_wrench_sensor = self._create_joint_wrench_sensor()
-        self._tiled_camera = Camera(self.cfg.tiled_camera)
-        src, dest = "/World/envs/env_0", "/World/envs/env_{}"
-        pos = cloner.grid_transforms(self.scene.num_envs, self.scene.cfg.env_spacing, device=self.device)[0]
-        plan = cloner.clone_plan_from_env_0(src, dest, self.scene.num_envs, self.device, pos)
-        cloner.replicate(plan)
-        # PhysX replication requires explicit collision filtering between environments.
-        if "physx" in self.scene.physics_backend:
-            self.scene.filter_collisions(global_prim_paths=[])
-        # add articulation to scene - we must register to scene to randomize with EventManager
-        self.scene.articulations["robot"] = self.hand
-        self.scene.rigid_objects["object"] = self.object
-        self.scene.sensors["joint_wrench"] = self._joint_wrench_sensor
+    def _setup_scene_entities(self):
+        super()._setup_scene_entities()
+        self._tiled_camera = self.cfg.tiled_camera.class_type(self.cfg.tiled_camera)
         self.scene.sensors["tiled_camera"] = self._tiled_camera
-        # add lights
-        light_cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
-        light_cfg.func("/World/Light", light_cfg)
 
     def _compute_image_observations(self):
         # generate ground truth keypoints for in-hand cube

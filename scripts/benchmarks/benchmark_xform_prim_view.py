@@ -97,7 +97,7 @@ def benchmark_frame_view(  # noqa: C901
         ctx = build_simulation_context(device=device, sim_cfg=newton_cfg, add_ground_plane=True)
         sim = ctx.__enter__()
         sim._app_control_on_stop_handle = None
-        InteractiveScene(_NewtonSceneCfg(num_envs=num_envs, env_spacing=2.0))
+        _scene = InteractiveScene(_NewtonSceneCfg(num_envs=num_envs, env_spacing=2.0))
 
         stage = sim_utils.get_current_stage()
         for i in range(num_envs):

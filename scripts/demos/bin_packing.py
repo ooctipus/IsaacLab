@@ -63,7 +63,7 @@ import isaaclab.utils.math as math_utils
 # Pre-defined configs
 ##
 from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
-from isaaclab.cloner import CloneCfg, InclusionSet, sequential
+from isaaclab.cloner import CloneCfg, InclusionSet
 from isaaclab.physics import PhysicsCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim import schemas
@@ -287,7 +287,6 @@ class BinPackingSceneCfg(InteractiveSceneCfg):
                 for _ in range(NUM_LAYOUTS - 1)
             ),
         ],
-        clone_strategy=sequential,
     )
 
 
@@ -398,7 +397,7 @@ def main():
         sim.set_camera_view((4.0, 0.0, 4.0), (0.0, 0.0, 0.0))
 
         # Design scene
-        scene_cfg = BinPackingSceneCfg(num_envs=args_cli.num_envs, env_spacing=1.0, replicate_physics=True)
+        scene_cfg = BinPackingSceneCfg(num_envs=args_cli.num_envs, env_spacing=1.0)
         layouts = [combination.assets for combination in scene_cfg.clone_cfg.clone_combinations]
         print(f"[INFO] Drawn bin layouts (objects per layout): {[len(layout) for layout in layouts]}")
         with Timer("[INFO] Time to create scene: "):

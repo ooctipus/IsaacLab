@@ -183,7 +183,6 @@ elif args_cli.asset_type == "objects":
         prim_path="{ENV_REGEX_NS}/Object",
         spawn=sim_utils.MultiAssetSpawnerCfg(
             assets_cfg=object_assets_cfg,
-            random_choice=True,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 solver_position_iteration_count=4, solver_velocity_iteration_count=0
             ),
@@ -314,8 +313,6 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
 def main():
     """Main function."""
     with launch_simulation(cfg=PhysicsCfg(), launcher_args=args_cli) as physics_cfg:
-        from isaaclab.scene import InteractiveScene
-
         # Initialize the simulation context
         sim_cfg = sim_utils.SimulationCfg(
             dt=0.005,
@@ -327,8 +324,8 @@ def main():
         # Set main camera
         sim.set_camera_view(eye=[3.5, 3.5, 3.5], target=[0.0, 0.0, 0.0])
         # design scene
-        scene_cfg = RaycasterSensorSceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0, replicate_physics=True)
-        scene = InteractiveScene(scene_cfg)
+        scene_cfg = RaycasterSensorSceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0)
+        scene = scene_cfg.class_type(scene_cfg)
 
         if args_cli.asset_type == "objects":
             randomize_shape_color(scene_cfg.asset.prim_path.format(ENV_REGEX_NS="/World/envs/env_.*"))

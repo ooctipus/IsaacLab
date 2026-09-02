@@ -42,10 +42,24 @@ if args_cli.num_segments < 2:
     parser.error("--num_segments must be at least 2.")
 
 import isaaclab.sim as sim_utils
+from isaaclab.assets import AssetBaseCfg, CableObjectCfg
 from isaaclab.physics import PhysicsCfg
+from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.utils.configclass import configclass
 
 if TYPE_CHECKING:
     from isaaclab.assets import CableObject
+
+
+@configclass
+class DemoSceneCfg(InteractiveSceneCfg):
+    """Configuration for the cable-pile demo scene."""
+
+    ground: AssetBaseCfg = AssetBaseCfg(prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg())
+    light: AssetBaseCfg = AssetBaseCfg(
+        prim_path="/World/light",
+        spawn=sim_utils.DomeLightCfg(intensity=3000.0, color=(0.75, 0.75, 0.75)),
+    )
 
 
 def design_scene(num_cables: int, num_segments: int, colorize: bool) -> dict[str, CableObject]:
@@ -56,13 +70,6 @@ def design_scene(num_cables: int, num_segments: int, colorize: bool) -> dict[str
         num_segments: Number of segments per cable.
         colorize: Whether to give each cable a random visual material.
     """
-    from isaaclab.assets import CableObject, CableObjectCfg
-
-    ground_cfg = sim_utils.GroundPlaneCfg()
-    ground_cfg.func("/World/defaultGroundPlane", ground_cfg)
-    light_cfg = sim_utils.DomeLightCfg(intensity=3000.0, color=(0.75, 0.75, 0.75))
-    light_cfg.func("/World/light", light_cfg)
-
     cable_length = 0.5
     segment_length = cable_length / num_segments
     thickness = 0.01
@@ -77,7 +84,7 @@ def design_scene(num_cables: int, num_segments: int, colorize: bool) -> dict[str
     positions = [(index * segment_length, 0.0, 0.0) for index in range(num_segments + 1)]
 
     print(f"[INFO]: Spawning {num_cables} cables...")
-    entities: dict[str, CableObject] = {}
+    cable_cfgs = {}
     for index in range(num_cables):
         angle = random.uniform(0.0, 2.0 * math.pi)
         position = (
@@ -91,7 +98,7 @@ def design_scene(num_cables: int, num_segments: int, colorize: bool) -> dict[str
             visual_material = sim_utils.PreviewSurfaceCfg(
                 diffuse_color=(random.random(), random.random(), random.random())
             )
-        cfg = CableObjectCfg(
+        cable_cfgs[f"cable_{index:03d}"] = CableObjectCfg(
             prim_path=f"/World/Env_0/Cable{index:03d}",
             spawn=sim_utils.CableCfg(
                 positions=positions,
@@ -106,9 +113,13 @@ def design_scene(num_cables: int, num_segments: int, colorize: bool) -> dict[str
             ),
             init_state=CableObjectCfg.InitialStateCfg(pos=position, rot=orientation),
         )
-        entities[f"cable_{index:03d}"] = CableObject(cfg=cfg)
 
-    return entities
+    scene_cfg = DemoSceneCfg(num_envs=1, env_spacing=0.0)
+    for name, cable_cfg in cable_cfgs.items():
+        setattr(scene_cfg, name, cable_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
+
+    return scene.cable_objects
 
 
 def reset_cables(entities: dict[str, CableObject]) -> None:

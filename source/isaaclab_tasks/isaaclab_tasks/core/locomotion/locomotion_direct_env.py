@@ -9,9 +9,7 @@ from collections.abc import Sequence
 
 import torch
 
-import isaaclab.sim as sim_utils
 from isaaclab import cloner
-from isaaclab.assets import Articulation
 from isaaclab.envs import DirectRLEnv, DirectRLEnvCfg
 from isaaclab.utils.math import (
     euler_xyz_from_quat,
@@ -60,26 +58,29 @@ class LocomotionDirectEnv(DirectRLEnv):
         self.prev_potentials = torch.zeros_like(self.potentials)
 
     def _setup_scene(self):
-        self.robot = Articulation(self.cfg.robot)
-        # add ground plane
-        self.cfg.terrain.num_envs = self.scene.cfg.num_envs
-        self.cfg.terrain.env_spacing = self.scene.cfg.env_spacing
+        self.cfg.terrain.num_envs = self.cfg.scene.num_envs
+        self.cfg.terrain.env_spacing = self.cfg.scene.env_spacing
+        asset_cfgs = (
+            self.cfg.robot,
+            self.cfg.terrain,
+            self.cfg.joint_wrench,
+            self.cfg.light_cfg,
+        )
+        plan = cloner.clone_plan_from_env_0(
+            self.cfg.scene.clone_cfg, asset_cfgs, self.cfg.scene.num_envs, self.cfg.scene.env_spacing
+        )
+        self.robot = self.cfg.robot.class_type(self.cfg.robot)
         self.terrain = self.cfg.terrain.class_type(self.cfg.terrain)
-        src, dest = "/World/envs/env_0", "/World/envs/env_{}"
-        pos = cloner.grid_transforms(self.scene.num_envs, self.scene.cfg.env_spacing, device=self.device)[0]
-        global_paths = (self.cfg.terrain.prim_path,)
-        plan = cloner.clone_plan_from_env_0(src, dest, self.scene.num_envs, self.device, pos, global_paths=global_paths)
-        cloner.replicate(plan)
-        # PhysX replication requires explicit collision filtering between environments.
-        if "physx" in self.scene.physics_backend:
-            self.scene.filter_collisions(global_prim_paths=[self.cfg.terrain.prim_path])
-        # add articulation and the feet wrench sensor to scene
-        self.scene.articulations["robot"] = self.robot
         self.joint_wrench = self.cfg.joint_wrench.class_type(self.cfg.joint_wrench)
+        self.cfg.light_cfg.spawn.func(
+            self.cfg.light_cfg.prim_path,
+            self.cfg.light_cfg.spawn,
+            translation=self.cfg.light_cfg.init_state.pos,
+            orientation=self.cfg.light_cfg.init_state.rot,
+        )
+        self.scene.articulations["robot"] = self.robot
         self.scene.sensors["joint_wrench"] = self.joint_wrench
-        # add lights
-        light_cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
-        light_cfg.func("/World/Light", light_cfg)
+        cloner.replicate(plan)
 
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
         self.actions = actions.clone()

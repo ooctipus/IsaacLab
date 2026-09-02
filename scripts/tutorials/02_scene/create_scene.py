@@ -121,7 +121,7 @@ def main():
     sim.set_camera_view([2.5, 0.0, 4.0], [0.0, 0.0, 2.0])
     # Design scene
     scene_cfg = CartpoleSceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0)
-    scene = InteractiveScene(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
     # Play the simulator
     sim.reset()
     # Now we are ready!

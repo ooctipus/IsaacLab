@@ -171,7 +171,6 @@ def main(
     """Main function."""
     # Import runtime classes only now that the simulation app has been launched. These modules import
     # USD/``omni`` bindings at import time, so importing them before the app is running crashes the simulator.
-    from isaaclab.scene import InteractiveScene
     from isaaclab.sim import SimulationContext
 
     # Load kit helper
@@ -198,7 +197,7 @@ def main(
     # Start the timer for creating the scene
     setup_time_begin = time.perf_counter_ns()
     # Design scene
-    scene = InteractiveScene(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
     # Stop the timer for creating the scene
     setup_time_end = time.perf_counter_ns()
 

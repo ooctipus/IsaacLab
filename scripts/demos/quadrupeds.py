@@ -39,15 +39,17 @@ add_launcher_args(parser)
 parser.set_defaults(visualizer=["kit"])
 args_cli = parser.parse_args()
 
-import numpy as np
 import torch
 
 import isaaclab.sim as sim_utils
+from isaaclab.assets import AssetBaseCfg
 
 ##
 # Pre-defined configs
 ##
 from isaaclab.physics import PhysicsCfg
+from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.utils.configclass import configclass
 
 from isaaclab_assets.robots.anymal import ANYMAL_B_CFG, ANYMAL_C_CFG, ANYMAL_D_CFG  # isort:skip
 from isaaclab_assets.robots.spot import SPOT_CFG  # isort:skip
@@ -57,90 +59,41 @@ if TYPE_CHECKING:
     from isaaclab.assets import Articulation
 
 
-def define_origins(num_origins: int, spacing: float) -> torch.Tensor:
-    """Defines the origins of the scene."""
-    # create tensor based on number of environments
-    env_origins = torch.zeros(num_origins, 3)
-    # create a grid of origins
-    num_cols = np.floor(np.sqrt(num_origins))
-    num_rows = np.ceil(num_origins / num_cols)
-    xx, yy = torch.meshgrid(torch.arange(num_rows), torch.arange(num_cols), indexing="xy")
-    env_origins[:, 0] = spacing * xx.flatten()[:num_origins] - spacing * (num_rows - 1) / 2
-    env_origins[:, 1] = spacing * yy.flatten()[:num_origins] - spacing * (num_cols - 1) / 2
-    env_origins[:, 2] = 0.0
-    # return the origins
-    return env_origins
+@configclass
+class DemoSceneCfg(InteractiveSceneCfg):
+    """Configuration for the quadruped demo scene."""
+
+    ground: AssetBaseCfg = AssetBaseCfg(prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg())
+    light: AssetBaseCfg = AssetBaseCfg(
+        prim_path="/World/Light",
+        spawn=sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75)),
+    )
 
 
-def design_scene() -> tuple[dict, torch.Tensor]:
+def design_scene() -> dict[str, "Articulation"]:
     """Designs the scene."""
-    # Ground-plane
-    cfg = sim_utils.GroundPlaneCfg()
-    cfg.func("/World/defaultGroundPlane", cfg)
-    # Lights
-    cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
-    cfg.func("/World/Light", cfg)
+    origins = (
+        (-1.875, -0.625, 0.0),
+        (-0.625, -0.625, 0.0),
+        (0.625, -0.625, 0.0),
+        (1.875, -0.625, 0.0),
+        (-1.875, 0.625, 0.0),
+        (-0.625, 0.625, 0.0),
+        (0.625, 0.625, 0.0),
+    )
+    names = ("anymal_b", "anymal_c", "anymal_d", "unitree_a1", "unitree_go1", "unitree_go2", "spot")
+    templates = (ANYMAL_B_CFG, ANYMAL_C_CFG, ANYMAL_D_CFG, UNITREE_A1_CFG, UNITREE_GO1_CFG, UNITREE_GO2_CFG, SPOT_CFG)
+    robot_cfgs = tuple(cfg.replace(prim_path=f"/World/Origin{index}/Robot") for index, cfg in enumerate(templates, 1))
+    scene_cfg = DemoSceneCfg(num_envs=1, env_spacing=0.0)
+    for name, origin, robot_cfg in zip(names, origins, robot_cfgs, strict=True):
+        robot_cfg.init_state.pos = tuple(value + offset for value, offset in zip(robot_cfg.init_state.pos, origin))
+        setattr(scene_cfg, name, robot_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
 
-    # Create separate groups called "Origin1", "Origin2", "Origin3"
-    # Each group will have a mount and a robot on top of it
-    origins = define_origins(num_origins=7, spacing=1.25)
-
-    # Origin 1 with Anymal B
-    sim_utils.create_prim("/World/Origin1", "Xform", translation=origins[0])
-    # -- Robot
-    anymal_b_cfg = ANYMAL_B_CFG.replace(prim_path="/World/Origin1/Robot")
-    anymal_b = anymal_b_cfg.class_type(anymal_b_cfg)
-
-    # Origin 2 with Anymal C
-    sim_utils.create_prim("/World/Origin2", "Xform", translation=origins[1])
-    # -- Robot
-    anymal_c_cfg = ANYMAL_C_CFG.replace(prim_path="/World/Origin2/Robot")
-    anymal_c = anymal_c_cfg.class_type(anymal_c_cfg)
-
-    # Origin 3 with Anymal D
-    sim_utils.create_prim("/World/Origin3", "Xform", translation=origins[2])
-    # -- Robot
-    anymal_d_cfg = ANYMAL_D_CFG.replace(prim_path="/World/Origin3/Robot")
-    anymal_d = anymal_d_cfg.class_type(anymal_d_cfg)
-
-    # Origin 4 with Unitree A1
-    sim_utils.create_prim("/World/Origin4", "Xform", translation=origins[3])
-    # -- Robot
-    unitree_a1_cfg = UNITREE_A1_CFG.replace(prim_path="/World/Origin4/Robot")
-    unitree_a1 = unitree_a1_cfg.class_type(unitree_a1_cfg)
-
-    # Origin 5 with Unitree Go1
-    sim_utils.create_prim("/World/Origin5", "Xform", translation=origins[4])
-    # -- Robot
-    unitree_go1_cfg = UNITREE_GO1_CFG.replace(prim_path="/World/Origin5/Robot")
-    unitree_go1 = unitree_go1_cfg.class_type(unitree_go1_cfg)
-
-    # Origin 6 with Unitree Go2
-    sim_utils.create_prim("/World/Origin6", "Xform", translation=origins[5])
-    # -- Robot
-    unitree_go2_cfg = UNITREE_GO2_CFG.replace(prim_path="/World/Origin6/Robot")
-    unitree_go2 = unitree_go2_cfg.class_type(unitree_go2_cfg)
-
-    # Origin 7 with Boston Dynamics Spot
-    sim_utils.create_prim("/World/Origin7", "Xform", translation=origins[6])
-    # -- Robot
-    spot_cfg = SPOT_CFG.replace(prim_path="/World/Origin7/Robot")
-    spot = spot_cfg.class_type(spot_cfg)
-
-    # return the scene information
-    scene_entities = {
-        "anymal_b": anymal_b,
-        "anymal_c": anymal_c,
-        "anymal_d": anymal_d,
-        "unitree_a1": unitree_a1,
-        "unitree_go1": unitree_go1,
-        "unitree_go2": unitree_go2,
-        "spot": spot,
-    }
-    return scene_entities, origins
+    return scene.articulations
 
 
-def run_simulator(sim: "sim_utils.SimulationContext", entities: dict[str, "Articulation"], origins: torch.Tensor):
+def run_simulator(sim: "sim_utils.SimulationContext", entities: dict[str, "Articulation"]):
     """Runs the simulation loop."""
     # Define simulation stepping
     sim_dt = sim.get_physics_dt()
@@ -152,10 +105,9 @@ def run_simulator(sim: "sim_utils.SimulationContext", entities: dict[str, "Artic
             # reset counters
             count = 0
             # reset robots
-            for index, robot in enumerate(entities.values()):
+            for robot in entities.values():
                 # root state
                 root_pose = robot.data.default_root_pose.torch.clone()
-                root_pose[:, :3] += origins[index]
                 robot.write_root_pose_to_sim_index(root_pose=root_pose)
                 root_vel = robot.data.default_root_vel.torch.clone()
                 robot.write_root_velocity_to_sim_index(root_velocity=root_vel)
@@ -191,11 +143,10 @@ def main():
         sim_cfg: sim_utils.SimulationCfg = sim_utils.SimulationCfg(dt=dt, device=args_cli.device, physics=physics_cfg)
         sim = sim_utils.SimulationContext(sim_cfg)
         sim.set_camera_view(eye=[2.5, 2.5, 2.5], target=[0.0, 0.0, 0.0])
-        scene_entities, scene_origins = design_scene()
-        scene_origins = scene_origins.to(sim.device)
+        scene_entities = design_scene()
         sim.reset()
         print("[INFO]: Setup complete...")
-        run_simulator(sim, scene_entities, scene_origins)
+        run_simulator(sim, scene_entities)
 
 
 if __name__ == "__main__":

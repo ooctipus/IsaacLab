@@ -406,7 +406,7 @@ def main():
             f"Invalid contact object type: '{args_cli.contact_object_type}'. Must be 'none', 'cube', or 'nut'."
         )
 
-    scene = InteractiveScene(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
 
     # Initialize simulation
     sim.reset()

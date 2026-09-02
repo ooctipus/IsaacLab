@@ -21,35 +21,34 @@ In this case, we will define two arrow ``VisualizationMarkers``: one to represen
 represent the command direction.  When the policy is fully trained, these arrows should be aligned! Having these visualizations in place
 early helps us avoid "silent bugs": issues in the code that do not cause it to crash.
 
-To begin, we need to define the marker config and then instantiate the markers with that config. Add the following to the global scope of ``isaac_lab_tutorial_env.py``
+To begin, add the marker config to ``IsaacLabTutorialEnvCfg`` so it participates in the same
+clone plan as every other scene author:
 
 .. code-block:: python
 
-  from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
+  from isaaclab.markers import VisualizationMarkersCfg
   from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
   import isaaclab.utils.math as math_utils
 
-  def define_markers() -> VisualizationMarkers:
-      """Define markers with various different shapes."""
-      marker_cfg = VisualizationMarkersCfg(
-          prim_path="/Visuals/myMarkers",
-          markers={
-                  "forward": sim_utils.UsdFileCfg(
-                      usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/UIElements/arrow_x.usd",
-                      scale=(0.25, 0.25, 0.5),
-                      visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 1.0)),
-                  ),
-                  "command": sim_utils.UsdFileCfg(
-                      usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/UIElements/arrow_x.usd",
-                      scale=(0.25, 0.25, 0.5),
-                      visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
-                  ),
-          },
-      )
-      return VisualizationMarkers(cfg=marker_cfg)
+  # Add this field to IsaacLabTutorialEnvCfg.
+  visualization_markers_cfg: VisualizationMarkersCfg = VisualizationMarkersCfg(
+      prim_path="/Visuals/myMarkers",
+      markers={
+          "forward": sim_utils.UsdFileCfg(
+              usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/UIElements/arrow_x.usd",
+              scale=(0.25, 0.25, 0.5),
+              visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 1.0)),
+          ),
+          "command": sim_utils.UsdFileCfg(
+              usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/UIElements/arrow_x.usd",
+              scale=(0.25, 0.25, 0.5),
+              visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
+          ),
+      },
+  )
 
-The ``VisualizationMarkersCfg`` defines USD prims to serve as the "marker".  Any prim will do, but generally you want to keep markers as simple as possible because the cloning of markers occurs at runtime on every time step.
-This is because the purpose of these markers is for *debug visualization only* and not to be a part of the simulation: the user has full control over how many markers to draw when and where.
+The ``VisualizationMarkersCfg`` defines USD prims to serve as the "marker". Any prim will do, but generally you want to keep markers as simple as possible because their transforms are updated at runtime on every time step.
+The marker prototypes are constructed once during scene setup. Because these markers are for *debug visualization only* and not part of the simulation, the user has full control over how many markers to draw and where.
 NVIDIA provides several simple meshes on our public nucleus server, located at ``ISAAC_NUCLEUS_DIR``, and for obvious reasons we choose to use ``arrow_x.usd``.
 
 For a more detailed example of using ``VisualizationMarkers`` checkout the ``markers.py`` demo!
@@ -66,18 +65,26 @@ Next, we need to expand the initialization and setup steps to construct the data
 
 .. code-block:: python
 
-    def _setup_scene(self):
-        with cloner.ReplicateSession():
-            self.robot = Articulation(self.cfg.robot_cfg)
-            # add ground plane
-            spawn_ground_plane(prim_path="/World/ground", cfg=GroundPlaneCfg())
-        # add articulation to scene
-        self.scene.articulations["robot"] = self.robot
-        # add lights
-        light_cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
-        light_cfg.func("/World/Light", light_cfg)
+    from isaaclab import cloner
 
-        self.visualization_markers = define_markers()
+    def _setup_scene(self):
+        asset_cfgs = (
+            self.cfg.robot_cfg,
+            self.cfg.ground_cfg,
+            self.cfg.light_cfg,
+            self.cfg.visualization_markers_cfg,
+        )
+        plan = cloner.clone_plan_from_env_0(
+            self.cfg.scene.clone_cfg, asset_cfgs, self.cfg.scene.num_envs, self.cfg.scene.env_spacing
+        )
+        self.robot = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
+        self.cfg.ground_cfg.spawn.func(self.cfg.ground_cfg.prim_path, self.cfg.ground_cfg.spawn)
+        self.cfg.light_cfg.spawn.func(self.cfg.light_cfg.prim_path, self.cfg.light_cfg.spawn)
+        self.scene.articulations["robot"] = self.robot
+        self.visualization_markers = self.cfg.visualization_markers_cfg.class_type(
+            self.cfg.visualization_markers_cfg
+        )
+        cloner.replicate(plan)
 
         # setting aside useful variables for later
         self.up_dir = torch.tensor([0.0, 0.0, 1.0]).cuda()

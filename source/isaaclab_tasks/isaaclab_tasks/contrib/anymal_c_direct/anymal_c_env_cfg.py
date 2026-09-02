@@ -7,7 +7,7 @@ from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.envs.mdp as mdp
 import isaaclab.sim as sim_utils
-from isaaclab.assets import ArticulationCfg
+from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 from isaaclab.envs import DirectRLEnvCfg
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import SceneEntityCfg
@@ -74,7 +74,9 @@ class AnymalCFlatEnvCfg(DirectRLEnvCfg):
             restitution=0.0,
         ),
     )
-    terrain = TerrainImporterCfg(
+
+    # assets and sensors
+    terrain: TerrainImporterCfg = TerrainImporterCfg(
         prim_path="/World/ground",
         terrain_type="plane",
         collision_group=-1,
@@ -87,18 +89,19 @@ class AnymalCFlatEnvCfg(DirectRLEnvCfg):
         ),
         debug_vis=False,
     )
-
-    # scene
-    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=4096, env_spacing=4.0, replicate_physics=True)
-
-    # events
-    events: EventCfg = EventCfg()
-
-    # robot
     robot: ArticulationCfg = ANYMAL_C_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
     contact_sensor: ContactSensorCfg = ContactSensorCfg(
         prim_path="{ENV_REGEX_NS}/Robot/[^/]*", history_length=3, update_period=0.005, track_air_time=True
     )
+    light: AssetBaseCfg = AssetBaseCfg(
+        prim_path="/World/Light", spawn=sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
+    )
+
+    # scene
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=4096, env_spacing=4.0)
+
+    # events
+    events: EventCfg = EventCfg()
 
     # reward scales
     lin_vel_reward_scale = 1.0
@@ -127,7 +130,7 @@ class AnymalCRoughEnvCfg(AnymalCFlatEnvCfg):
     # env
     observation_space = 235
 
-    terrain = TerrainImporterCfg(
+    terrain: TerrainImporterCfg = TerrainImporterCfg(
         prim_path="/World/ground",
         terrain_type="generator",
         terrain_generator=ROUGH_TERRAINS_CFG,
@@ -140,14 +143,11 @@ class AnymalCRoughEnvCfg(AnymalCFlatEnvCfg):
             dynamic_friction=1.0,
         ),
         visual_material=sim_utils.MdlFileCfg(
-            mdl_path="{NVIDIA_NUCLEUS_DIR}/Materials/Base/Architecture/Shingles_01.mdl",
-            project_uvw=True,
+            mdl_path="{NVIDIA_NUCLEUS_DIR}/Materials/Base/Architecture/Shingles_01.mdl", project_uvw=True
         ),
         debug_vis=False,
     )
-
-    # we add a height scanner for perceptive locomotion
-    height_scanner = RayCasterCfg(
+    height_scanner: RayCasterCfg = RayCasterCfg(
         prim_path="{ENV_REGEX_NS}/Robot/base",
         offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 20.0)),
         ray_alignment="yaw",
