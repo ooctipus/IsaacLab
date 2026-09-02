@@ -13,16 +13,17 @@ simulation_app = AppLauncher(headless=True).app
 """Rest everything follows."""
 
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 import torch
+import warp as wp
 
 import isaaclab.sim as sim_utils
+from isaaclab import cloner
 from isaaclab.actuators import ImplicitActuatorCfg
-from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg, RigidObjectCollectionCfg
-from isaaclab.cloner import CloneCfg
+from isaaclab.assets import ArticulationCfg, RigidObjectCfg
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
-from isaaclab.sensors import ContactSensorCfg
 from isaaclab.sim import build_simulation_context
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.configclass import configclass
@@ -78,7 +79,11 @@ def setup_scene(request):
 def test_relative_flag(device, setup_scene):
     make_scene, sim = setup_scene
     scene_cfg = make_scene(num_envs=4)
-    scene = InteractiveScene(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
+    assert sim._interactive_scene is scene
+    assert sim._clone_plan_dispatched is True
+    with pytest.raises(RuntimeError, match="owns exactly one InteractiveScene"):
+        scene_cfg.class_type(scene_cfg)
     sim.reset()
 
     # test relative == False produces different result than relative == True
@@ -105,6 +110,52 @@ def test_relative_flag(device, setup_scene):
     assert_state_different(prev_state, next_state)
     scene.reset_to(prev_state, is_relative=True)
     assert_state_equal(prev_state, scene.get_state(is_relative=True))
+
+
+@pytest.mark.parametrize("device", ["cuda:0", "cpu"])
+def test_plain_scene_is_a_registry_until_its_caller_clones(device):
+    with build_simulation_context(device=device) as sim:
+        scene_cfg = InteractiveSceneCfg(num_envs=2, env_spacing=1.0)
+        scene = scene_cfg.class_type(scene_cfg)
+
+        assert sim.get_clone_plan() is None
+        assert "Number of environments: 2" in str(scene)
+        with pytest.raises(RuntimeError, match="caller must publish"):
+            scene.env_origins
+        with pytest.raises(RuntimeError, match="owns exactly one InteractiveScene"):
+            scene_cfg.class_type(scene_cfg)
+
+        plan = cloner.clone_plan_from_env_0(scene_cfg.clone_cfg, (), scene_cfg.num_envs, scene_cfg.env_spacing)
+        cloner.replicate(plan)
+
+        assert sim.get_clone_plan() is plan
+        torch.testing.assert_close(scene.env_origins, plan.positions)
+
+
+def test_reset_forwards_warp_mask():
+    env_ids = torch.tensor([0])
+    env_mask = wp.array([True, False], dtype=wp.bool, device="cpu")
+    masked_entities = [Mock() for _ in range(5)]
+    cable = Mock()
+    surface_gripper = Mock()
+    scene = SimpleNamespace(
+        _articulations={"articulation": masked_entities[0]},
+        _cable_objects={"cable": cable},
+        _deformable_objects={"deformable": masked_entities[1]},
+        _rigid_objects={"rigid": masked_entities[2]},
+        _surface_grippers={"gripper": surface_gripper},
+        _rigid_object_collections={"collection": masked_entities[3]},
+        _sensors={"sensor": masked_entities[4]},
+    )
+
+    InteractiveScene.reset(scene, env_ids, env_mask)
+
+    for entity in masked_entities:
+        assert entity.reset.call_args.args[0] is env_ids
+        assert entity.reset.call_args.kwargs["env_mask"] is env_mask
+    cable.reset.assert_called_once_with(env_ids)
+    surface_gripper.reset.assert_not_called()
+    torch.testing.assert_close(surface_gripper.reset_mask.call_args.args[0], wp.to_torch(env_mask))
 
 
 def test_relative_deformable_state():
@@ -161,7 +212,7 @@ def test_relative_deformable_state():
 def test_reset_to_env_ids_input_types(device, setup_scene):
     make_scene, sim = setup_scene
     scene_cfg = make_scene(num_envs=4)
-    scene = InteractiveScene(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
     sim.reset()
 
     # test env_ids = None
@@ -180,34 +231,6 @@ def test_reset_to_env_ids_input_types(device, setup_scene):
     scene["robot"].write_joint_velocity_to_sim_index(velocity=joint_vel)
     scene.reset_to(prev_state, env_ids=torch.arange(scene.num_envs, device=scene.device, dtype=torch.int32))
     assert_state_equal(prev_state, scene.get_state())
-
-
-def test_scene_publishes_plan_via_replicate(monkeypatch: pytest.MonkeyPatch):
-    """A cfg-driven scene forwards its plan and physics policy to cloner.replicate.
-
-    Uses a test-seam fake to isolate this unit test from real backend dispatch; queue
-    lifecycle is owned by :func:`replicate` itself (snapshot-and-clear) and does not
-    need any cleanup hook here.
-    """
-    import isaaclab.cloner.replicate_session as replicate_session_module
-
-    captured: list = []
-
-    def fake_replicate(plan, *, replicate_physics=True):
-        captured.append((plan, replicate_physics))
-
-    monkeypatch.setattr(replicate_session_module, "replicate", fake_replicate)
-
-    with build_simulation_context(device="cpu", auto_add_lighting=False, add_ground_plane=False) as sim:
-        sim._app_control_on_stop_handle = None
-        InteractiveScene(MySceneCfg(num_envs=4, env_spacing=1.0))
-
-    assert len(captured) == 1
-    plan, replicate_physics = captured[0]
-    assert plan.sources == ("/World/envs/env_0",)
-    assert plan.destinations == ("/World/envs/env_{}",)
-    assert plan.clone_mask.shape == (1, 4)
-    assert replicate_physics is True
 
 
 @pytest.mark.parametrize("device", ["cuda:0"])
@@ -240,10 +263,8 @@ def test_replicate_physics_flag_controls_physx_replicator(device, replicate_phys
 
     make_scene, sim = setup_scene
     scene_cfg = make_scene(num_envs=3)
-    scene_cfg.replicate_physics = replicate_physics
-    scene = InteractiveScene(scene_cfg)
-    if not scene.physics_backend.startswith("physx"):
-        pytest.skip("PhysX replicator flag is only meaningful on a PhysX backend.")
+    scene_cfg.clone_cfg.replicate_physics = replicate_physics
+    scene = scene_cfg.class_type(scene_cfg)
     sim.reset()
 
     if replicate_physics:
@@ -258,74 +279,6 @@ def test_replicate_physics_flag_controls_physx_replicator(device, replicate_phys
         scene.update(sim.get_physics_dt())
     assert torch.isfinite(scene["rigid_obj"].data.root_pos_w.torch).all()
     assert torch.isfinite(scene["robot"].data.joint_pos.torch).all()
-
-
-def test_cfg_cloning_contexts_override_backend_default(monkeypatch: pytest.MonkeyPatch):
-    """AssetBaseCfg.cloning_contexts replaces the backend default stack for that asset."""
-    import isaaclab.cloner.replicate_session as replicate_session_module
-    from isaaclab.cloner import REPLICATION_QUEUE
-
-    # keep the queue for inspection: the fake drain does not clear it
-    monkeypatch.setattr(replicate_session_module, "replicate", lambda plan, *, stage, replicate_physics=True: None)
-
-    with build_simulation_context(device="cpu", auto_add_lighting=False, add_ground_plane=False) as sim:
-        sim._app_control_on_stop_handle = None
-        scene_cfg = MySceneCfg(num_envs=2, env_spacing=1.0)
-        scene_cfg.rigid_obj.cloning_contexts = ("isaaclab.cloner:UsdReplicateContext",)
-        try:
-            InteractiveScene(scene_cfg)
-            queued_by_path = {cfg.prim_path: cfg for cfg in REPLICATION_QUEUE}
-            # the override rides the queued cfg; resolution happens at replicate()
-            assert queued_by_path["/World/envs/env_[^/]+/RigidObj"].cloning_contexts == (
-                "isaaclab.cloner:UsdReplicateContext",
-            )
-            # untouched asset resolves to the backend default stack at replicate()
-            assert queued_by_path["/World/envs/env_[^/]+/Robot"].cloning_contexts is None
-        finally:
-            REPLICATION_QUEUE.clear()
-
-
-def test_collect_asset_cfgs_resolves_env_regex_macros_and_declares_globals():
-    """The composition root separates cloneable configs from shared prim roots."""
-    scene = object.__new__(InteractiveScene)
-    cube_cfg = RigidObjectCfg(
-        prim_path="{ENV_REGEX_NS}/Cube",
-        spawn=sim_utils.CuboidCfg(size=(0.1, 0.1, 0.1)),
-    )
-    shape_cfg = RigidObjectCfg(
-        prim_path="{ENV_REGEX_NS}/Shape",
-        spawn=sim_utils.MultiAssetSpawnerCfg(
-            assets_cfg=[sim_utils.ConeCfg(radius=0.1, height=0.2), sim_utils.SphereCfg(radius=0.1)]
-        ),
-    )
-    scene.cfg = SimpleNamespace(
-        num_envs=2,
-        objects=RigidObjectCollectionCfg(rigid_objects={"cube": cube_cfg, "shape": shape_cfg}),
-        ground=AssetBaseCfg(prim_path="/World/Ground", spawn=sim_utils.GroundPlaneCfg()),
-    )
-    scene.cloner_cfg = CloneCfg()
-    scene._env_fmt = scene.cloner_cfg.clone_template
-
-    cfgs, global_paths = scene._collect_asset_cfgs()
-
-    prim_paths = sorted(c.prim_path for c in cfgs)
-    assert prim_paths == ["/World/envs/env_[^/]+/Cube", "/World/envs/env_[^/]+/Shape"]
-    assert global_paths == ("/World/Ground",)
-
-
-def test_collect_asset_cfgs_excludes_entities_without_spawners():
-    """Only configs that can author clone sources reach make_clone_plan."""
-
-    scene = object.__new__(InteractiveScene)
-    sensor = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot")
-    scene.cfg = SimpleNamespace(num_envs=1, sensor=sensor)
-    scene.cloner_cfg = CloneCfg()
-    scene._env_fmt = scene.cloner_cfg.clone_template
-
-    cfgs, global_paths = scene._collect_asset_cfgs()
-
-    assert cfgs == []
-    assert global_paths == ()
 
 
 def assert_state_equal(s1: dict, s2: dict, path=""):

@@ -32,18 +32,16 @@ import warp as wp
 from pxr import UsdGeom, UsdPhysics
 
 import isaaclab.sim as sim_utils
-from isaaclab.cloner.clone_plan import ClonePlan
+from isaaclab import cloner
 from isaaclab.sensors.ray_caster import (
-    MultiMeshRayCaster,
-    MultiMeshRayCasterCamera,
     MultiMeshRayCasterCameraCfg,
     MultiMeshRayCasterCfg,
-    RayCaster,
     RayCasterCfg,
     patterns,
 )
 from isaaclab.terrains.trimesh.utils import make_plane
 from isaaclab.terrains.utils import create_prim_from_mesh
+from isaaclab.utils.math import quat_from_euler_xyz
 
 pytestmark = pytest.mark.integration
 
@@ -77,14 +75,6 @@ def _single_downward_ray_cfg(prim_path: str) -> RayCasterCfg:
         pattern_cfg=patterns.GridPatternCfg(resolution=1.0, size=(0.0, 0.0), direction=(0.0, 0.0, -1.0)),
         ray_alignment="world",
     )
-
-
-def _spawn_cube_part(part_path: str, translation: tuple[float, float, float]) -> None:
-    """Create a small mesh-bearing part under an Xform target."""
-    stage = sim_utils.get_current_stage()
-    sim_utils.create_prim(part_path, "Xform", translation=translation, stage=stage)
-    cube = cast(Any, UsdGeom.Cube.Define(stage, f"{part_path}/Mesh"))
-    cube.CreateSizeAttr().Set(0.35)
 
 
 @pytest.fixture
@@ -128,7 +118,9 @@ def test_articulation_view_path(sim_ground):
     UsdPhysics.CollisionAPI.Apply(stage.GetPrimAtPath(cube_path))
     sim_utils.update_stage()
 
-    sensor = RayCaster(_single_downward_ray_cfg(prim_path))
+    sensor_cfg = _single_downward_ray_cfg(prim_path)
+    with cloner.ReplicateSession([cloner.CloneCfg(), sensor_cfg], 1, 0.0):
+        sensor = sensor_cfg.class_type(sensor_cfg)
     sim.reset()
     sensor.update(_DT)
 
@@ -172,7 +164,9 @@ def test_rigid_body_view_path(sim_ground):
     UsdPhysics.CollisionAPI.Apply(stage.GetPrimAtPath(cube_path))
     sim_utils.update_stage()
 
-    sensor = RayCaster(_single_downward_ray_cfg(prim_path))
+    sensor_cfg = _single_downward_ray_cfg(prim_path)
+    with cloner.ReplicateSession([cloner.CloneCfg(), sensor_cfg], 1, 0.0):
+        sensor = sensor_cfg.class_type(sensor_cfg)
     sim.reset()
     sensor.update(_DT)
 
@@ -200,6 +194,7 @@ def sim_ground_camera():
 
     camera_cfg = MultiMeshRayCasterCameraCfg(
         prim_path="/World/Camera",
+        spawn=sim_utils.SensorFrameCfg(),
         mesh_prim_paths=[_GROUND_PATH],
         update_period=0,
         offset=MultiMeshRayCasterCameraCfg.OffsetCfg(pos=(0.0, 0.0, 5.0), rot=(0.0, 0.0, 0.0, 1.0), convention="world"),
@@ -212,8 +207,6 @@ def sim_ground_camera():
         ),
         data_types=["distance_to_camera"],
     )
-
-    sim_utils.create_prim("/World/Camera", "Xform")
 
     yield sim, camera_cfg
 
@@ -231,7 +224,8 @@ def test_multi_mesh_camera_set_intrinsic_matrices(sim_ground_camera):
     """
     sim, camera_cfg = sim_ground_camera
 
-    camera = MultiMeshRayCasterCamera(cfg=camera_cfg)
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg], 1, 0.0):
+        camera = camera_cfg.class_type(camera_cfg)
     sim.reset()
 
     # Capture output with default intrinsics
@@ -280,24 +274,22 @@ def test_multi_mesh_camera_d2ip_and_d2c_independent(sim_ground_camera):
     joint_cfg.data_types = ["distance_to_image_plane", "distance_to_camera"]
     joint_cfg.max_distance = 4.5  # camera is 5 m up, so some rays should be clipped
     joint_cfg.depth_clipping_behavior = "max"
-    sim_utils.create_prim("/World/CameraJoint", "Xform")
-    cam_joint = MultiMeshRayCasterCamera(joint_cfg)
 
     d2ip_cfg = copy.deepcopy(base_cfg)
     d2ip_cfg.prim_path = "/World/CameraD2IP"
     d2ip_cfg.data_types = ["distance_to_image_plane"]
     d2ip_cfg.max_distance = 4.5
     d2ip_cfg.depth_clipping_behavior = "max"
-    sim_utils.create_prim("/World/CameraD2IP", "Xform")
-    cam_d2ip = MultiMeshRayCasterCamera(d2ip_cfg)
 
     d2c_cfg = copy.deepcopy(base_cfg)
     d2c_cfg.prim_path = "/World/CameraD2C"
     d2c_cfg.data_types = ["distance_to_camera"]
     d2c_cfg.max_distance = 4.5
     d2c_cfg.depth_clipping_behavior = "max"
-    sim_utils.create_prim("/World/CameraD2C", "Xform")
-    cam_d2c = MultiMeshRayCasterCamera(d2c_cfg)
+    with cloner.ReplicateSession([cloner.CloneCfg(), joint_cfg, d2ip_cfg, d2c_cfg], 1, 0.0):
+        cam_joint = joint_cfg.class_type(joint_cfg)
+        cam_d2ip = d2ip_cfg.class_type(d2ip_cfg)
+        cam_d2c = d2c_cfg.class_type(d2c_cfg)
 
     sim.reset()
 
@@ -324,88 +316,6 @@ def test_multi_mesh_camera_d2ip_and_d2c_independent(sim_ground_camera):
 
 
 @pytest.mark.isaacsim_ci
-def test_multi_mesh_uses_clone_plan_geometry_and_backend_object_pose(sim_ground):
-    """ClonePlan supplies source geometry while PhysX supplies per-env object poses."""
-    sim = sim_ground
-    num_envs = 3
-    stage = sim_utils.get_current_stage()
-
-    def _create_object_body(path: str) -> None:
-        sim_utils.create_prim(path, "Xform", stage=stage)
-        body_prim = cast(Any, stage.GetPrimAtPath(path))
-        UsdPhysics.RigidBodyAPI.Apply(body_prim)
-        mass_api = cast(Any, UsdPhysics.MassAPI.Apply(body_prim))
-        mass_api.CreateMassAttr().Set(1.0)
-        body_prim.GetAttribute("physics:kinematicEnabled").Set(True)
-        collision = cast(Any, UsdGeom.Cube.Define(stage, f"{path}/Collision"))
-        collision.CreateSizeAttr().Set(0.1)
-        UsdPhysics.CollisionAPI.Apply(stage.GetPrimAtPath(f"{path}/Collision"))
-
-    sim_utils.create_prim("/World/envs", "Xform", stage=stage)
-    for env_id in range(num_envs):
-        sim_utils.create_prim(f"/World/envs/env_{env_id}", "Xform", translation=(3.0 * env_id, 0.0, 0.0), stage=stage)
-        sim_utils.create_prim(f"/World/envs/env_{env_id}/Sensor", "Xform", translation=(0.0, 0.0, 3.0), stage=stage)
-        _create_object_body(f"/World/envs/env_{env_id}/Object")
-
-    # Representative source assets live in the first concrete cloned instances,
-    # matching the scene convention used by the cloner. Env 2 has an object
-    # body for backend pose tracking, but intentionally has no destination mesh.
-    _spawn_cube_part("/World/envs/env_0/Object/part_0", (0.0, 0.0, 0.0))
-    _spawn_cube_part("/World/envs/env_1/Object/part_0", (0.0, 0.0, 0.0))
-
-    # This test intentionally does not author /env_2/Object/part_0. ClonePlan
-    # selects source geometry; the object body view supplies env_2's live pose.
-    sim.set_clone_plan(
-        ClonePlan(
-            sources=("/World/envs/env_0/Object", "/World/envs/env_1/Object"),
-            destinations=("/World/envs/env_{}/Object", "/World/envs/env_{}/Object"),
-            clone_mask=torch.tensor([[True, False, True], [False, True, False]], dtype=torch.bool, device=sim.device),
-            env_ids=torch.arange(3, dtype=torch.long, device=sim.device),
-            positions=torch.tensor([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0], [6.0, 0.0, 0.0]], device=sim.device),
-            cfg_rows={},
-        )
-    )
-    sim_utils.update_stage()
-
-    cfg = MultiMeshRayCasterCfg(
-        prim_path="{ENV_REGEX_NS}/Sensor",
-        mesh_prim_paths=[
-            MultiMeshRayCasterCfg.RaycastTargetCfg(
-                prim_expr="{ENV_REGEX_NS}/Object/part_[^/]*",
-                track_mesh_transforms=True,
-            ),
-        ],
-        update_period=0,
-        offset=MultiMeshRayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 0.0), rot=(0.0, 0.0, 0.0, 1.0)),
-        debug_vis=False,
-        pattern_cfg=patterns.GridPatternCfg(resolution=0.5, size=(1.0, 0.0), direction=(0.0, 0.0, -1.0)),
-        ray_alignment="world",
-    )
-    sensor = MultiMeshRayCaster(cfg)
-    sim.reset()
-    sensor.update(_DT, force_recompute=True)
-
-    env0_object = stage.GetPrimAtPath("/World/envs/env_0/Object")
-    env1_object = stage.GetPrimAtPath("/World/envs/env_1/Object")
-    assert env0_object is not None and env0_object.IsValid()
-    assert env1_object is not None and env1_object.IsValid()
-    env2_part = stage.GetPrimAtPath("/World/envs/env_2/Object/part_0")
-    assert env2_part is None or not env2_part.IsValid()
-
-    # Geometry is selected from ClonePlan entries, but poses come from the batched object view.
-    mesh_ids = wp.to_torch(sensor._mesh_ids_wp).cpu()
-    mesh_positions = wp.to_torch(sensor._mesh_positions_w).cpu()
-    assert sensor._mesh_ids_wp.shape == (num_envs, 1)
-    assert mesh_ids[2, 0] == mesh_ids[0, 0]
-    torch.testing.assert_close(mesh_positions[:, 0, 0], torch.tensor([0.0, 3.0, 6.0]), atol=0.15, rtol=0.0)
-
-    hits = sensor.data.ray_hits_w.torch
-    assert torch.isfinite(hits[0]).any(), "env_0 should hit the env_0 source geometry"
-    assert torch.isfinite(hits[1]).any(), "env_1 should hit the env_1 source geometry"
-    assert torch.isfinite(hits[2]).any(), "env_2 should hit env_0 geometry at env_2's backend object pose"
-
-
-@pytest.mark.isaacsim_ci
 def test_multi_mesh_env_mask_preserves_masked_buffers(sim_ground):
     """Masked environments must retain their pre-update buffer values.
 
@@ -427,7 +337,8 @@ def test_multi_mesh_env_mask_preserves_masked_buffers(sim_ground):
         pattern_cfg=patterns.GridPatternCfg(resolution=1.0, size=(0.0, 0.0), direction=(0.0, 0.0, -1.0)),
         ray_alignment="world",
     )
-    sensor = MultiMeshRayCaster(cfg)
+    with cloner.ReplicateSession([cloner.CloneCfg(), cfg], 1, 0.0):
+        sensor = cfg.class_type(cfg)
     sim.reset()
 
     # First update: populate buffers with real values
@@ -469,8 +380,6 @@ def test_update_mesh_transforms_non_identity_offset(sim_ground):
     Warp mesh vertices so backend body poses remain the single runtime pose source.
     """
     sim = sim_ground
-
-    from isaaclab.utils.math import quat_from_euler_xyz
 
     # 90 deg yaw quaternion in xyzw
     yaw90 = quat_from_euler_xyz(torch.tensor([0.0]), torch.tensor([0.0]), torch.tensor([torch.pi / 2]))
@@ -519,7 +428,8 @@ def test_update_mesh_transforms_non_identity_offset(sim_ground):
         pattern_cfg=patterns.GridPatternCfg(resolution=1.0, size=(0.0, 0.0), direction=(0.0, 0.0, -1.0)),
         ray_alignment="world",
     )
-    sensor = MultiMeshRayCaster(cfg)
+    with cloner.ReplicateSession([cloner.CloneCfg(), cfg], 1, 0.0):
+        sensor = cfg.class_type(cfg)
     sim.reset()
     sensor.update(_DT, force_recompute=True)
 

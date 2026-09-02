@@ -23,7 +23,7 @@ simulation_app = app_launcher.app
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import AssetBaseCfg
-from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
+from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils.configclass import configclass
 
 pytestmark = pytest.mark.integration
@@ -58,7 +58,7 @@ def test_non_headless_launch():
     sim = sim_utils.SimulationContext(sim_cfg)
     # design scene
     scene_cfg = SensorsSceneCfg(num_envs=1, env_spacing=2.0)
-    scene = InteractiveScene(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
     print(scene)
     # Play the simulator
     sim.reset()

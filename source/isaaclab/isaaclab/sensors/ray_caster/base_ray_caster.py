@@ -17,7 +17,7 @@ from pxr import Gf, Usd, UsdGeom
 
 import isaaclab.sim as sim_utils
 import isaaclab.utils.math as math_utils
-from isaaclab.cloner import queue_replication
+from isaaclab import cloner
 from isaaclab.markers import VisualizationMarkers
 from isaaclab.terrains.trimesh.utils import make_plane
 from isaaclab.utils.warp import ProxyArray, convert_to_warp_mesh
@@ -70,7 +70,14 @@ class BaseRayCaster(SensorBase):
         """
         BaseRayCaster._instance_count += 1
         super().__init__(cfg)
-        queue_replication(self._source_cfg)
+        if self.cfg.spawn is not None:
+            source_paths = tuple(
+                path for path in cloner.query._cfg_source_paths(self._clone_plan, self._source_cfg) if path
+            )
+            if not source_paths:
+                raise RuntimeError(f"Ray caster at {self.cfg.prim_path!r} has no populated clone-plan source.")
+            for source_path in source_paths:
+                self.cfg.spawn.func(source_path, self.cfg.spawn)
         self._data = RayCasterData()
 
     def __str__(self) -> str:

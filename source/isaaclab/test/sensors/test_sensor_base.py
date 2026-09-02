@@ -24,8 +24,11 @@ import warp as wp
 from pxr import UsdPhysics
 
 import isaaclab.sim as sim_utils
+from isaaclab import cloner
+from isaaclab.assets import AssetBaseCfg
 from isaaclab.sensors import SensorBase, SensorBaseCfg
 from isaaclab.utils.configclass import configclass
+from isaaclab.utils.string import ResolvableString
 
 pytestmark = pytest.mark.integration
 
@@ -80,31 +83,46 @@ class DummySensor(SensorBase):
 
 
 @configclass
+class DummyNestedCfg:
+    class_type: str = "math:sin"
+    prim_path: str = "{ENV_REGEX_NS}/Nested"
+
+
+@configclass
 class DummySensorCfg(SensorBaseCfg):
     class_type = DummySensor
 
     prim_path = "{ENV_REGEX_NS}/Cube/dummy_sensor"
+    nested = DummyNestedCfg()
 
 
-def _populate_scene():
-    """"""
-
-    # Ground-plane
-    cfg = sim_utils.GroundPlaneCfg()
-    cfg.func("/World/defaultGroundPlane", cfg)
-    # Lights
-    cfg = sim_utils.SphereLightCfg()
-    cfg.func("/World/Light/GreySphere", cfg, translation=(4.5, 3.5, 10.0))
-    cfg.func("/World/Light/WhiteSphere", cfg, translation=(-4.5, 3.5, 10.0))
-
-    # create prims
-    for i in range(5):
-        _ = sim_utils.create_prim(
-            f"/World/envs/env_{i:02d}/Cube",
-            "Cube",
-            translation=(i * 1.0, 0.0, 0.0),
-            scale=(0.25, 0.25, 0.25),
-        )
+def _populate_scene(sim, sensor_cfg):
+    """Build the test geometry through one declarative clone lifecycle."""
+    cfgs = (
+        AssetBaseCfg(prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg()),
+        AssetBaseCfg(
+            prim_path="/World/Light/GreySphere",
+            spawn=sim_utils.SphereLightCfg(),
+            init_state=AssetBaseCfg.InitialStateCfg(pos=(4.5, 3.5, 10.0)),
+        ),
+        AssetBaseCfg(
+            prim_path="/World/Light/WhiteSphere",
+            spawn=sim_utils.SphereLightCfg(),
+            init_state=AssetBaseCfg.InitialStateCfg(pos=(-4.5, 3.5, 10.0)),
+        ),
+        AssetBaseCfg(prim_path="{ENV_REGEX_NS}/Cube", spawn=sim_utils.CuboidCfg(size=(0.5, 0.5, 0.5))),
+        AssetBaseCfg(prim_path="{ENV_REGEX_NS}/Robot", spawn=sim_utils.CuboidCfg(size=(0.1, 0.1, 0.1))),
+    )
+    with cloner.ReplicateSession((cloner.CloneCfg(replicate_physics=False), *cfgs, sensor_cfg), 5, 1.0):
+        plan = sim.get_clone_plan()
+        for cfg in cfgs:
+            source_path = cloner.query._cfg_source_paths(plan, cfg)[0]
+            cfg.spawn.func(
+                source_path,
+                cfg.spawn,
+                translation=cfg.init_state.pos,
+                orientation=cfg.init_state.rot,
+            )
 
 
 @pytest.fixture
@@ -118,10 +136,8 @@ def create_dummy_sensor(request, device):
     sim_cfg = sim_utils.SimulationCfg(device=device, dt=dt)
     sim = sim_utils.SimulationContext(sim_cfg)
 
-    # create sensor
-    _populate_scene()
-
     sensor_cfg = DummySensorCfg()
+    _populate_scene(sim, sensor_cfg)
 
     sim_utils.update_stage()
 
@@ -137,7 +153,7 @@ def test_sensor_init(create_dummy_sensor, device):
     """Test that the sensor initializes, steps without update, and forces update."""
 
     sensor_cfg, sim, dt = create_dummy_sensor
-    sensor = DummySensor(cfg=sensor_cfg)
+    sensor = sensor_cfg.class_type(sensor_cfg)
 
     # Play sim
     sim.step()
@@ -168,6 +184,17 @@ def test_sensor_init(create_dummy_sensor, device):
         )
 
 
+@pytest.mark.parametrize("device", ("cpu",))
+def test_sensor_cfg_copy_preserves_callable_strings(create_dummy_sensor, device):
+    """Test that namespace expansion preserves callable strings in nested configs."""
+    sensor_cfg, _, _ = create_dummy_sensor
+    sensor = sensor_cfg.class_type(sensor_cfg)
+
+    assert isinstance(sensor.cfg.nested.class_type, ResolvableString)
+    assert sensor.cfg.nested.class_type(0.0) == 0.0
+    assert sensor.cfg.nested.prim_path == "/World/envs/env_[^/]+/Nested"
+
+
 @pytest.mark.parametrize("device", ("cpu", "cuda"))
 def test_sensor_update_rate(create_dummy_sensor, device):
     """Test that the update_rate configuration parameter works by checking the value of the data is old for an update
@@ -175,7 +202,7 @@ def test_sensor_update_rate(create_dummy_sensor, device):
     """
     sensor_cfg, sim, dt = create_dummy_sensor
     sensor_cfg.update_period = 2 * dt
-    sensor = DummySensor(cfg=sensor_cfg)
+    sensor = sensor_cfg.class_type(sensor_cfg)
 
     # Play sim
     sim.step()
@@ -200,7 +227,7 @@ def test_sensor_update_rate(create_dummy_sensor, device):
 def test_sensor_reset(create_dummy_sensor, device):
     """Test that sensor can be reset for all or partial env ids."""
     sensor_cfg, sim, dt = create_dummy_sensor
-    sensor = DummySensor(cfg=sensor_cfg)
+    sensor = sensor_cfg.class_type(sensor_cfg)
 
     # Play sim
     sim.step()
@@ -250,7 +277,7 @@ def test_sensor_reset(create_dummy_sensor, device):
 def test_repeated_data_reads_update_backend_once(create_dummy_sensor, device):
     """Test that repeated data reads update the backend once per sensor update."""
     sensor_cfg, sim, dt = create_dummy_sensor
-    sensor = DummySensor(cfg=sensor_cfg)
+    sensor = sensor_cfg.class_type(sensor_cfg)
     sim.step()
     sim.reset()
 
@@ -266,7 +293,7 @@ def test_repeated_data_reads_update_backend_once(create_dummy_sensor, device):
 def test_reset_invalidates_cached_sensor_data(create_dummy_sensor, device):
     """Test that full and partial resets each invalidate cached sensor data once."""
     sensor_cfg, sim, _ = create_dummy_sensor
-    sensor = DummySensor(cfg=sensor_cfg)
+    sensor = sensor_cfg.class_type(sensor_cfg)
     sim.step()
     sim.reset()
     _ = sensor.data
@@ -297,7 +324,7 @@ def test_reset_invalidates_cached_sensor_data(create_dummy_sensor, device):
 def test_force_recompute_bypasses_sensor_data_cache(create_dummy_sensor, device):
     """Test that forced recomputation bypasses a consumed freshness generation."""
     sensor_cfg, sim, _ = create_dummy_sensor
-    sensor = DummySensor(cfg=sensor_cfg)
+    sensor = sensor_cfg.class_type(sensor_cfg)
     sim.step()
     sim.reset()
     _ = sensor.data
@@ -313,7 +340,7 @@ def test_force_recompute_bypasses_sensor_data_cache(create_dummy_sensor, device)
 def test_repeated_data_reads_are_graph_safe(create_dummy_sensor, device):
     """Test that CUDA graph capture records one backend refresh for repeated reads."""
     sensor_cfg, sim, dt = create_dummy_sensor
-    sensor = DummySensor(cfg=sensor_cfg)
+    sensor = sensor_cfg.class_type(sensor_cfg)
     sim.step()
     sim.reset()
 
@@ -336,7 +363,7 @@ def test_rigid_body_ancestor_expr_trims_only_terminal_suffix(create_dummy_sensor
     """Test that ancestor expression trimming keeps repeated path segments above the sensor."""
     sensor_cfg, _, _ = create_dummy_sensor
 
-    parent_path = "/World/envs/env_00/Robot/link"
+    parent_path = "/World/envs/env_0/Robot/link"
     child_path = parent_path + "/link"
     sim_utils.create_prim(parent_path, "Xform")
     sim_utils.create_prim(child_path, "Xform")
@@ -344,7 +371,7 @@ def test_rigid_body_ancestor_expr_trims_only_terminal_suffix(create_dummy_sensor
     sim_utils.update_stage()
 
     sensor_cfg.prim_path = "{ENV_REGEX_NS}/Robot/link/link"
-    sensor = DummySensor(cfg=sensor_cfg)
+    sensor = sensor_cfg.class_type(sensor_cfg)
 
     rigid_parent_expr, fixed_pos_b, fixed_quat_b = sensor._resolve_rigid_body_ancestor_expr()
 

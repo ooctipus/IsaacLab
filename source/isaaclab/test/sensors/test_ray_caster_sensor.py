@@ -17,8 +17,11 @@ import numpy as np
 import pytest
 import torch
 
+from pxr import UsdGeom, UsdPhysics
+
 import isaaclab.sim as sim_utils
-from isaaclab.sensors.ray_caster import RayCaster, RayCasterCfg, patterns
+from isaaclab import cloner
+from isaaclab.sensors.ray_caster import RayCasterCfg, patterns
 from isaaclab.terrains.trimesh.utils import make_plane
 from isaaclab.terrains.utils import create_prim_from_mesh
 from isaaclab.utils.math import quat_from_euler_xyz
@@ -92,8 +95,11 @@ def test_world_alignment_ignores_sensor_pitch(sim_ground):
         orientation=tuple(pitch_quat[0].tolist()),  # xyzw
     )
 
-    sensor_upright = RayCaster(_ray_caster_cfg("/World/SensorUpright", "world"))
-    sensor_pitched = RayCaster(_ray_caster_cfg("/World/SensorPitched", "world"))
+    upright_cfg = _ray_caster_cfg("/World/SensorUpright", "world")
+    pitched_cfg = _ray_caster_cfg("/World/SensorPitched", "world")
+    with cloner.ReplicateSession([cloner.CloneCfg(), upright_cfg, pitched_cfg], 1, 0.0):
+        sensor_upright = upright_cfg.class_type(upright_cfg)
+        sensor_pitched = pitched_cfg.class_type(pitched_cfg)
     sim.reset()
 
     dt = 0.01
@@ -134,8 +140,11 @@ def test_base_alignment_rotates_ray_direction(sim_ground):
     sim_utils.create_prim("/World/SensorWorld", "Xform", translation=(0.0, 0.0, 2.0), orientation=orientation)
     sim_utils.create_prim("/World/SensorBase", "Xform", translation=(0.0, 0.0, 2.0), orientation=orientation)
 
-    sensor_world = RayCaster(_ray_caster_cfg("/World/SensorWorld", "world"))
-    sensor_base = RayCaster(_ray_caster_cfg("/World/SensorBase", "base"))
+    world_cfg = _ray_caster_cfg("/World/SensorWorld", "world")
+    base_cfg = _ray_caster_cfg("/World/SensorBase", "base")
+    with cloner.ReplicateSession([cloner.CloneCfg(), world_cfg, base_cfg], 1, 0.0):
+        sensor_world = world_cfg.class_type(world_cfg)
+        sensor_base = base_cfg.class_type(base_cfg)
     sim.reset()
 
     dt = 0.01
@@ -196,8 +205,11 @@ def test_yaw_alignment_direction_unchanged(sim_ground):
             ray_alignment=alignment,
         )
 
-    sensor_world = RayCaster(_cfg_with_offset("/World/SensorWorldY", "world"))
-    sensor_yaw = RayCaster(_cfg_with_offset("/World/SensorYaw", "yaw"))
+    world_cfg = _cfg_with_offset("/World/SensorWorldY", "world")
+    yaw_cfg = _cfg_with_offset("/World/SensorYaw", "yaw")
+    with cloner.ReplicateSession([cloner.CloneCfg(), world_cfg, yaw_cfg], 1, 0.0):
+        sensor_world = world_cfg.class_type(world_cfg)
+        sensor_yaw = yaw_cfg.class_type(yaw_cfg)
     sim.reset()
 
     dt = 0.01
@@ -240,7 +252,8 @@ def test_ray_caster_reset_resamples_drift(sim_ground):
     sim_utils.create_prim("/World/Sensor", "Xform", translation=(0.0, 0.0, 2.0))
     cfg = _ray_caster_cfg("/World/Sensor", "world")
     cfg.drift_range = (0.01, 0.05)  # force non-zero drift
-    sensor = RayCaster(cfg)
+    with cloner.ReplicateSession([cloner.CloneCfg(), cfg], 1, 0.0):
+        sensor = cfg.class_type(cfg)
     sim.reset()
     # sim.reset() initializes the sensor with zero drift; call sensor.reset() to resample
     # from the configured drift_range before we capture the baseline.
@@ -279,8 +292,6 @@ def test_ray_caster_reset_resamples_drift(sim_ground):
 @pytest.mark.isaacsim_ci
 def test_ray_caster_tracks_physics_body_parent_motion(sim_ground):
     """RayCaster pose must follow its physics-body parent after simulation steps."""
-    from pxr import UsdGeom, UsdPhysics  # noqa: PLC0415
-
     sim = sim_ground
     dt = 0.01
     parent_path = "/World/PhysicsParent"
@@ -303,7 +314,9 @@ def test_ray_caster_tracks_physics_body_parent_motion(sim_ground):
     UsdPhysics.CollisionAPI.Apply(stage.GetPrimAtPath(cube_path))
     sim_utils.update_stage()
 
-    sensor = RayCaster(_ray_caster_cfg(parent_path, "world"))
+    sensor_cfg = _ray_caster_cfg(parent_path, "world")
+    with cloner.ReplicateSession([cloner.CloneCfg(), sensor_cfg], 1, 0.0):
+        sensor = sensor_cfg.class_type(sensor_cfg)
     sim.reset()
     sensor.update(dt, force_recompute=True)
     pos_before = sensor.data.pos_w.torch[0].clone()

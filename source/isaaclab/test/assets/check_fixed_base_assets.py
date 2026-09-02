@@ -36,6 +36,7 @@ import numpy as np
 import torch
 
 import isaaclab.sim as sim_utils
+from isaaclab import cloner
 from isaaclab.assets import Articulation
 
 ##
@@ -59,7 +60,7 @@ def define_origins(num_origins: int, spacing: float) -> list[list[float]]:
     return env_origins.tolist()
 
 
-def design_scene() -> tuple[dict, list[list[float]]]:
+def design_scene(sim: sim_utils.SimulationContext) -> tuple[dict, list[list[float]]]:
     """Designs the scene."""
     # Ground-plane
     cfg = sim_utils.GroundPlaneCfg()
@@ -72,17 +73,18 @@ def design_scene() -> tuple[dict, list[list[float]]]:
     # Each group will have a mount and a robot on top of it
     origins = define_origins(num_origins=4, spacing=2.0)
 
+    franka_cfg = FRANKA_PANDA_CFG.replace(prim_path="/World/Origin1/Robot")
+    anymal_cfg = ANYMAL_C_CFG.replace(prim_path="/World/Origin2/Robot")
+    anymal_cfg.spawn.articulation_props.fix_root_link = True
+
     # Origin 1 with Franka Panda
     sim_utils.create_prim("/World/Origin1", "Xform", translation=origins[0])
-    # -- Robot
-    franka = Articulation(FRANKA_PANDA_CFG.replace(prim_path="/World/Origin1/Robot"))
-
     # Origin 2 with Anymal C
     sim_utils.create_prim("/World/Origin2", "Xform", translation=origins[1])
-    # -- Robot
-    robot_cfg = ANYMAL_C_CFG.replace(prim_path="/World/Origin2/Robot")
-    robot_cfg.spawn.articulation_props.fix_root_link = True
-    anymal_c = Articulation(robot_cfg)
+
+    with cloner.ReplicateSession([cloner.CloneCfg(), franka_cfg, anymal_cfg], 1, 0.0):
+        franka = franka_cfg.class_type(franka_cfg)
+        anymal_c = anymal_cfg.class_type(anymal_cfg)
 
     # return the scene information
     scene_entities = {
@@ -150,7 +152,7 @@ def main():
     # Set main camera
     sim.set_camera_view(eye=[2.5, 2.5, 2.5], target=[0.0, 0.0, 0.0])
     # design scene
-    scene_entities, scene_origins = design_scene()
+    scene_entities, scene_origins = design_scene(sim)
     scene_origins = torch.tensor(scene_origins, device=sim.device)
     # Play the simulator
     sim.reset()

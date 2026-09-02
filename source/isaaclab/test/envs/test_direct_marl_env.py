@@ -20,17 +20,29 @@ simulation_app = AppLauncher(headless=True).app
 import pytest
 
 import isaaclab.sim as sim_utils
+from isaaclab import cloner
 from isaaclab.envs import DirectMARLEnv
 from isaaclab.test.env_cfgs import make_empty_direct_marl_env_cfg
 
 pytestmark = pytest.mark.integration
 
 
+class EmptyDirectMARLEnv(DirectMARLEnv):
+    """Direct MARL test environment with an explicit empty clone lifecycle."""
+
+    def _setup_scene(self):
+        assert self.sim.get_clone_plan() is None
+        plan = cloner.clone_plan_from_env_0(
+            self.cfg.scene.clone_cfg, (), self.cfg.scene.num_envs, self.cfg.scene.env_spacing
+        )
+        cloner.replicate(plan)
+
+
 @pytest.mark.parametrize("device", ["cuda:0", "cpu"])
 def test_initialization_and_close(device):
     """DirectMARLEnv initializes its spaces and releases its simulation context."""
     sim_utils.create_new_stage()
-    env = DirectMARLEnv(cfg=make_empty_direct_marl_env_cfg(device=device))
+    env = EmptyDirectMARLEnv(cfg=make_empty_direct_marl_env_cfg(device=device))
 
     try:
         assert not env._is_closed
@@ -52,7 +64,7 @@ def test_reset_invalidates_renderer_scene_state_cadence():
     env = None
     try:
         sim_utils.create_new_stage()
-        env = DirectMARLEnv(cfg=make_empty_direct_marl_env_cfg())
+        env = EmptyDirectMARLEnv(cfg=make_empty_direct_marl_env_cfg())
         env._get_observations = lambda: {}
         env.sim.render_context._last_scene_state_step = 7
 

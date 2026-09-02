@@ -34,7 +34,6 @@ from isaaclab.sim.utils import use_stage
 from isaaclab.utils.seed import configure_seed
 from isaaclab.utils.timer import Timer
 
-from isaaclab_experimental.envs.interactive_scene_warp import InteractiveSceneWarp as InteractiveScene
 from isaaclab_experimental.utils.manager_call_switch import ManagerCallMode, ManagerCallSwitch
 from isaaclab_experimental.utils.warp import resolve_1d_mask
 
@@ -138,8 +137,7 @@ class ManagerBasedEnvWarp:
         with Timer("[INFO]: Time taken for scene creation", "scene_creation"):
             # set the stage context for scene creation steps which use the stage
             with use_stage(self.sim.stage):
-                self.scene = InteractiveScene(self.cfg.scene)
-                # attach_stage_to_usd_context()
+                self.scene = self.cfg.scene.class_type(self.cfg.scene)
         print("[INFO]: Scene manager: ", self.scene)
 
         # Shared per-env Warp RNG state (accessible to all managers/terms via `env`).

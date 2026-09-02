@@ -10,7 +10,6 @@ from dataclasses import MISSING
 from typing import TYPE_CHECKING
 
 from isaaclab.cloner import CloneCfg, InclusionSet
-from isaaclab.cloner import add as clone_add
 from isaaclab.utils import find_unique_string_name
 from isaaclab.utils.configclass import configclass
 
@@ -102,53 +101,8 @@ class InteractiveSceneCfg:
     data is updated every time sensors are updated.
     """
 
-    replicate_physics: bool = True
-    """Enable/disable replication of physics schemas when using the Cloner APIs. Default is True.
-
-    If True, the simulation will have the same asset instances (USD prims) in all the cloned environments.
-    Internally, this ensures optimization in setting up the scene and parsing it via the physics stage parser.
-
-    If False, the simulation allows having separate asset instances (USD prims) in each environment.
-    This flexibility comes at a cost of slowdowns in setting up and parsing the scene.
-
-    .. note::
-        Optimized parsing of certain prim types (such as deformable objects) is not currently supported
-        by the physics engine. In these cases, this flag needs to be set to False.
-
-    .. attention::
-        Setting this flag to False is currently not supported on the Newton physics backend:
-        Newton discovers the scene through its replication path, which stage parsing cannot
-        replace for cloned environments.
-
-    .. note::
-        The scene pipes this flag into :attr:`~isaaclab.cloner.CloneCfg.replicate_physics`;
-        the policy is applied by :func:`~isaaclab.cloner.replicate`. Direct workflows that
-        call :func:`~isaaclab.cloner.replicate` themselves pass ``replicate_physics``
-        explicitly.
-    """
-
-    filter_collisions: bool = True
-    """Enable/disable collision filtering between cloned environments. Default is True.
-
-    If True, collisions will not occur between cloned environments.
-
-    If False, the simulation will generate collisions between environments.
-
-    .. note::
-        Collisions can only be filtered automatically in direct workflows when physics replication is enabled.
-        If :attr:`replicated_physics` is ``False`` and collision filtering is desired, make sure to call
-        ``scene.filter_collisions()``.
-    """
-
-    clone_in_fabric: bool = False
-    """Deprecated legacy Fabric cloning flag. Default is False.
-
-    Queued replication no longer forwards this flag to the PhysX replicator;
-    ``useFabricForReplication`` is always ``False``.
-    """
-
     clone_cfg: CloneCfg = CloneCfg()
-    """Clone execution and legal scene-combination configuration."""
+    """Environment replication policy and legal scene-combination configuration."""
 
 
 def add(
@@ -202,7 +156,10 @@ def add(
 
     # an empty clone configuration is homogeneous: make the base combination explicit
     if not target.clone_cfg.clone_combinations:
-        clone_add(target.clone_cfg, InclusionSet(assets=[name for name, _ in target_assets]))
+        target.clone_cfg.clone_combinations = [
+            *target.clone_cfg.clone_combinations,
+            InclusionSet(assets=[name for name, _ in target_assets]),
+        ]
 
     # a duplicate is an asset equal to an existing binding; each binding is
     # reused at most once per call so distinct twins survive
@@ -223,7 +180,10 @@ def add(
             paths.add(cfg.prim_path)
         added_names.append(target_name)
 
-    clone_add(target.clone_cfg, InclusionSet(assets=list(dict.fromkeys(added_names))))
+    target.clone_cfg.clone_combinations = [
+        *target.clone_cfg.clone_combinations,
+        InclusionSet(assets=list(dict.fromkeys(added_names))),
+    ]
     return target
 
 

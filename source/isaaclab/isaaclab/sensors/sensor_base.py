@@ -11,6 +11,7 @@ Each sensor class should inherit from this class and implement the abstract meth
 
 from __future__ import annotations
 
+import dataclasses
 import inspect
 import logging
 import sys
@@ -38,6 +39,30 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _expand_env_namespaces(value: Any, env_template: str, visited: set[int] | None = None) -> Any:
+    """Expand namespace macros throughout one private sensor cfg tree."""
+    if value is None or isinstance(value, (bytes, int, float, bool, type)) or callable(value):
+        return value
+    if isinstance(value, str):
+        return expand_env_regex_ns(value, env_template) if "{ENV_REGEX_NS}" in value else value
+    if visited is None:
+        visited = set()
+    if isinstance(value, tuple):
+        return tuple(_expand_env_namespaces(child, env_template, visited) for child in value)
+    if id(value) in visited:
+        return value
+    visited.add(id(value))
+    if isinstance(value, list):
+        value[:] = (_expand_env_namespaces(child, env_template, visited) for child in value)
+    elif isinstance(value, dict):
+        for key, child in value.items():
+            value[key] = _expand_env_namespaces(child, env_template, visited)
+    elif dataclasses.is_dataclass(value) and not isinstance(value, type):
+        for name, child in vars(value).items():
+            setattr(value, name, _expand_env_namespaces(child, env_template, visited))
+    return value
+
+
 class SensorBase(ABC):
     """The base class for implementing a sensor.
 
@@ -58,19 +83,24 @@ class SensorBase(ABC):
         """
         # check that the config is valid
         cfg.validate()
-        # expand the namespace macro for sensors built outside the scene, which has already
-        # expanded it for the ones it collects
-        cfg.prim_path = expand_env_regex_ns(cfg.prim_path)
         # store inputs
         self._source_cfg = cfg
         self.cfg = cfg.copy()
+        sim = sim_utils.SimulationContext.instance()
+        if sim is None:
+            raise RuntimeError("Sensors require an active SimulationContext.")
+        plan = sim.get_clone_plan()
+        if plan is None:
+            raise RuntimeError("Sensors must be constructed inside a clone lifecycle.")
+        self.cfg = _expand_env_namespaces(self.cfg, plan.env_template)
         # flag for whether the sensor is initialized
         self._is_initialized = False
         # flag for whether the sensor is in visualization mode
         self._is_visualizing = False
-        # clone plan used for this sensor's latest initialization
-        self._clone_plan: ClonePlan | None = None
-        self.stage = sim_utils.get_current_stage()
+        # published clone plan that owns this sensor
+        self._clone_plan: ClonePlan = plan
+        self._sim = sim
+        self.stage = sim.stage
 
         # register various callback functions
         self._register_callbacks()
@@ -229,32 +259,14 @@ class SensorBase(ABC):
     @abstractmethod
     def _initialize_impl(self):
         """Initializes the sensor-related handles and internal buffers."""
-        # Obtain Simulation Context
-        sim = sim_utils.SimulationContext.instance()
-        if sim is None:
-            raise RuntimeError("Simulation Context is not initialized!")
+        sim = self._sim
         # Obtain device and backend
         self._device = sim.device
         self._backend = sim.backend
         self._sim_physics_dt = sim.get_physics_dt()
-        # Count number of environments. Prefer the active simulation's clone plan when USD
-        # only carries the env_0 prototype (e.g. Newton clones solver-side).
-        self._clone_plan = sim.get_clone_plan()
-        clone_plan = self._clone_plan
-        clone_plan_matches = ()
-        if clone_plan is not None:
-            clone_plan_matches = tuple(cloner.query.iter_sources(clone_plan, self.cfg.prim_path))
-        if clone_plan_matches:
-            self._parent_prims = []
-            self._num_envs = int(clone_plan.clone_mask.shape[1])
-        elif clone_plan is not None:
-            env_prim_path_expr = "/".join(sim_utils.split_path_expr(self.cfg.prim_path)[:-1])
-            self._parent_prims = sim_utils.find_matching_prims(env_prim_path_expr)
-            self._num_envs = int(clone_plan.env_ids.numel())
-        else:
-            env_prim_path_expr = "/".join(sim_utils.split_path_expr(self.cfg.prim_path)[:-1])
-            self._parent_prims = sim_utils.find_matching_prims(env_prim_path_expr)
-            self._num_envs = len(self._parent_prims)
+        if next(cloner.query.iter_sources(self._clone_plan, self.cfg.prim_path), None) is None:
+            raise RuntimeError(f"Sensor at {self.cfg.prim_path!r} is not covered by the clone plan.")
+        self._num_envs = int(self._clone_plan.clone_mask.shape[1])
         # Create warp env mask arrays for "all envs" cases and resets.
         # Note: We use wp.to_torch() to create zero-copy torch tensor views of warp arrays.
         # This allows warp arrays to be passed to warp kernels while the corresponding torch
@@ -359,7 +371,6 @@ class SensorBase(ABC):
     def _invalidate_initialize_callback(self, event):
         """Invalidates the scene elements."""
         self._is_initialized = False
-        self._clone_plan = None
         sim_ctx = sim_utils.SimulationContext.instance()
         if sim_ctx is not None:
             sim_ctx.vis_marker_registry.clear_debug_vis_callback(self)

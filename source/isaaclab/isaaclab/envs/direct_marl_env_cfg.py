@@ -112,7 +112,8 @@ class DirectMARLEnvCfg:
     scene: InteractiveSceneCfg = MISSING
     """Scene settings.
 
-    Please refer to the :class:`isaaclab.scene.InteractiveSceneCfg` class for more details.
+    Use the exact base cfg for a homogeneous direct workflow and declare its assets on this
+    environment cfg. Subclass it only for a declarative heterogeneous scene.
     """
 
     events: object = None

@@ -15,8 +15,6 @@ from pxr import Sdf, UsdShade
 
 from isaaclab import cloner
 from isaaclab.assets.asset_base import AssetBase
-from isaaclab.sim import SimulationContext
-from isaaclab.sim.utils import find_matching_prim_paths
 
 from .visual_material_cfg import VisualMaterialCfg
 
@@ -53,9 +51,8 @@ class VisualMaterial(AssetBase):
 
     def __init__(self, cfg: VisualMaterialCfg):
         super().__init__(cfg)
-        self._render_context = SimulationContext.instance().render_context
-        source_material_paths = tuple(find_matching_prim_paths(self.cfg.prim_path))
-        self._source_material_path = source_material_paths[0]
+        self._render_context = self._sim.render_context
+        self._source_material_path = self._source_prim_paths[0]
         self._is_per_env = self._source_material_path != self.cfg.prim_path
         material = UsdShade.Material(self.stage.GetPrimAtPath(self._source_material_path))
         if not material:
@@ -135,17 +132,12 @@ class VisualMaterial(AssetBase):
         pass
 
     def _initialize_impl(self) -> None:
-        plan = SimulationContext.instance().get_clone_plan()
         if self._is_per_env:
-            assert plan is not None and plan.env_ids is not None
-            plan_env_ids = plan.env_ids.detach().cpu().tolist()
-            columns = {env_id: column for column, env_id in enumerate(plan_env_ids)}
-            material_paths = [""] * len(plan_env_ids)
-            for source_root, destination, source_path, env_ids in cloner.query.iter_sources(plan, self.cfg.prim_path):
+            columns = {env_id: column for column, env_id in enumerate(self._clone_plan.env_ids.tolist())}
+            material_paths = [""] * len(self._clone_plan.env_ids)
+            for root, dest, source_path, env_ids in cloner.query.iter_sources(self._clone_plan, self.cfg.prim_path):
                 for env_id in env_ids:
-                    material_paths[columns[env_id]] = cloner.path.rebase(
-                        source_path, source_root, destination.format(env_id)
-                    )
+                    material_paths[columns[env_id]] = cloner.path.rebase(source_path, root, dest.format(env_id))
             if not all(material_paths):
                 raise ValueError(
                     f"Per-environment material {self._source_material_path!r} must populate every environment."

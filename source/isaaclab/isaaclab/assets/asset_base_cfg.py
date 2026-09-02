@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import MISSING
-from typing import Any, Literal
+from typing import Literal
 
 from isaaclab.sim import SpawnerCfg
 from isaaclab.utils.configclass import configclass
@@ -47,13 +47,11 @@ class AssetBaseCfg:
     """
 
     cloning_contexts: tuple[str | type, ...] | None = None
-    """Cloning contexts for this asset. Defaults to None.
+    """Clone contexts requested for this asset.
 
-    Entries are ``"module:ContextClass"`` references (or classes). If None, planning
-    routes the asset to contexts registered for the simulation's physics clone role.
-    An empty tuple requests no explicit physics context.
-    :class:`~isaaclab.cloner.UsdReplicateContext` is still added automatically when ``spawn``
-    is set and Kit is available; listing it explicitly forces USD replication even without Kit.
+    ``None`` routes the asset through every registered physics clone context. An explicit
+    tuple routes it through exactly those registered context types, while ``()`` requests no
+    cfg-specific cloning.
     """
 
     prim_path: str = MISSING
@@ -98,17 +96,3 @@ class AssetBaseCfg:
     When ``None`` (the default), shape checks follow Python's ``__debug__``
     flag — enabled in normal mode, disabled with ``python -O``.
     """
-
-    def _post_spawn(self, stage: Any) -> None:
-        """Hook invoked by :class:`~isaaclab.assets.AssetBase` after the asset's prims are
-        spawned and verified to exist on the stage.
-
-        The default implementation is a no-op. Subclasses that need to author additional
-        USD schemas tied to this asset (for example, :class:`~isaaclab.assets.ArticulationCfg`
-        which authors ``NewtonActuator`` prims from its ``actuators`` mapping) should
-        override this method.
-
-        Args:
-            stage: The USD stage on which the asset was spawned.
-        """
-        pass

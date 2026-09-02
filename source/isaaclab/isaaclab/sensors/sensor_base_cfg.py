@@ -23,12 +23,11 @@ class SensorBaseCfg:
     """
 
     cloning_contexts: tuple[str | type, ...] | None = ()
-    """Cloning contexts for this sensor. Defaults to no explicit cloning context.
+    """Clone contexts requested for this sensor.
 
-    Sensors carry no physics of their own. When the sensor has a spawner, USD replication is
-    added automatically under Kit. Listing :class:`~isaaclab.cloner.UsdReplicateContext`
-    explicitly forces USD replication without Kit; see
-    :attr:`~isaaclab.assets.AssetBaseCfg.cloning_contexts`.
+    Sensors request no cfg-specific context by default. An explicit tuple routes the sensor's
+    plan rows through exactly those registered context types; ``None`` requests every registered
+    physics clone context.
     """
 
     prim_path: str = MISSING

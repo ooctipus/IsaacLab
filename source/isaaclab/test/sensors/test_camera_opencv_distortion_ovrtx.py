@@ -44,8 +44,8 @@ if not _MISSING_MODULES:
 
     import isaaclab.sim as sim_utils
     from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
-    from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
-    from isaaclab.sensors import Camera, CameraCfg
+    from isaaclab.scene import InteractiveSceneCfg
+    from isaaclab.sensors import CameraCfg
     from isaaclab.sim import SimulationCfg
     from isaaclab.sim.spawners.sensors.sensors_cfg import (
         OpenCvDistortionCfg,
@@ -123,25 +123,24 @@ def _render_grid(distortion: OpenCvDistortionCfg, device: str) -> tuple[np.ndarr
     sim = sim_utils.SimulationContext(
         SimulationCfg(dt=SIM_DT, physics=NewtonCfg(solver_cfg=MJWarpSolverCfg(), num_substeps=1), device=device)
     )
-    scene = InteractiveScene(_DistortionSceneCfg(num_envs=1, env_spacing=20.0))
-
     rot = tuple(
         quat_from_matrix(
             create_rotation_matrix_from_view(torch.tensor([_CAM_EYE]), torch.tensor([_CAM_TARGET]), up_axis="Z")
         )[0].tolist()
     )
-    camera = Camera(
-        CameraCfg(
-            prim_path="{ENV_REGEX_NS}/Camera",
-            update_period=0.0,
-            height=HEIGHT,
-            width=WIDTH,
-            data_types=["rgb"],
-            offset=CameraCfg.OffsetCfg(pos=_CAM_EYE, rot=rot, convention="opengl"),
-            spawn=PinholeCameraCfg(focal_length=13.6, clipping_range=(0.001, 20.0), distortion=distortion),
-            renderer_cfg=OVRTXRendererCfg(),
-        )
+    scene_cfg = _DistortionSceneCfg(num_envs=1, env_spacing=20.0)
+    scene_cfg.camera = CameraCfg(
+        prim_path="{ENV_REGEX_NS}/Camera",
+        update_period=0.0,
+        height=HEIGHT,
+        width=WIDTH,
+        data_types=["rgb"],
+        offset=CameraCfg.OffsetCfg(pos=_CAM_EYE, rot=rot, convention="opengl"),
+        spawn=PinholeCameraCfg(focal_length=13.6, clipping_range=(0.001, 20.0), distortion=distortion),
+        renderer_cfg=OVRTXRendererCfg(),
     )
+    scene = scene_cfg.class_type(scene_cfg)
+    camera = scene["camera"]
     try:
         sim.reset()
         for _ in range(WARMUP_STEPS):

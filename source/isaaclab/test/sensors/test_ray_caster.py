@@ -18,7 +18,13 @@ import trimesh
 # Import after app launch
 import warp as wp
 
+import isaaclab.sim as sim_utils
+from isaaclab import cloner
+from isaaclab.assets import AssetBaseCfg
+from isaaclab.sensors.ray_caster import RayCasterCfg, patterns
 from isaaclab.sensors.ray_caster.kernels import quat_yaw_only as _quat_yaw_only_func
+from isaaclab.terrains.trimesh.utils import make_plane
+from isaaclab.terrains.utils import create_prim_from_mesh
 from isaaclab.utils.math import matrix_from_quat, quat_from_euler_xyz, random_orientation, yaw_quat
 from isaaclab.utils.warp.kernels import raycast_mesh_masked_kernel as _raycast_mesh_masked_kernel
 from isaaclab.utils.warp.ops import convert_to_warp_mesh, raycast_dynamic_meshes, raycast_mesh
@@ -261,11 +267,6 @@ def test_raycaster_offset_does_not_affect_pos_w():
     Xform local transform, causing data.pos_w to include the 20m offset
     and breaking height-scan observations during training.
     """
-    import isaaclab.sim as sim_utils
-    from isaaclab.sensors.ray_caster import RayCaster, RayCasterCfg, patterns
-    from isaaclab.terrains.trimesh.utils import make_plane
-    from isaaclab.terrains.utils import create_prim_from_mesh
-
     sim_utils.create_new_stage()
 
     # ground plane at z=0
@@ -289,7 +290,12 @@ def test_raycaster_offset_does_not_affect_pos_w():
     dt = 0.01
     sim = sim_utils.SimulationContext(sim_utils.SimulationCfg(dt=dt))
 
-    sensor = RayCaster(cfg)
+    with cloner.ReplicateSession(
+        [cloner.CloneCfg(), AssetBaseCfg(prim_path="/World/ground"), AssetBaseCfg(prim_path="/World/Robot"), cfg],
+        1,
+        0.0,
+    ):
+        sensor = cfg.class_type(cfg)
     sim.reset()
     sensor.update(dt)
 

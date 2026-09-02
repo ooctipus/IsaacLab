@@ -25,8 +25,9 @@ Public API surface:
   returned by the actuator collection mapping.
 
 USD authoring lives on the schema side as
-:func:`~isaaclab.sim.schemas.define_actuator_properties`; each backend calls
-it through :meth:`ArticulationCfg._post_spawn`.
+:func:`~isaaclab.sim.schemas.define_actuator_properties`. The articulation
+authors these schemas on its clone-plan prototypes after spawning and before
+the replication session dispatches them to backends.
 """
 
 from .adapter import NewtonActuatorAdapter, read_group_parameter, write_group_parameter

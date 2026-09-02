@@ -28,7 +28,8 @@ import omni.replicator.core as rep
 from pxr import Gf, UsdGeom
 
 import isaaclab.sim as sim_utils
-from isaaclab.sensors.camera import TiledCamera, TiledCameraCfg
+from isaaclab import cloner
+from isaaclab.sensors.camera import TiledCameraCfg
 
 # Deprecation warnings from TiledCamera/TiledCameraCfg are expected in this file;
 # the deprecation mechanism itself is validated in test_tiled_camera.py.
@@ -76,19 +77,16 @@ def test_multi_tiled_camera_init(setup_camera):
     num_tiled_cameras = 3
     num_cameras_per_tiled_camera = 7
 
-    tiled_cameras = []
+    camera_cfgs = []
     for i in range(num_tiled_cameras):
-        for j in range(num_cameras_per_tiled_camera):
-            sim_utils.create_prim(f"/World/Origin_{i}_{j}", "Xform")
-
-        # Create camera
-        camera_cfg = copy.deepcopy(camera_cfg)
-        camera_cfg.prim_path = f"/World/Origin_{i}[^/]*/CameraSensor"
-        camera = TiledCamera(camera_cfg)
-        tiled_cameras.append(camera)
-
-        # Check simulation parameter is set correctly
-        assert sim.get_setting("/isaaclab/render/rtx_sensors")
+        cfg = copy.deepcopy(camera_cfg)
+        cfg.prim_path = f"{{ENV_REGEX_NS}}/CameraSensor_{i}"
+        camera_cfgs.append(cfg)
+    with cloner.ReplicateSession(
+        (cloner.CloneCfg(clone_template="/World/Origin_{}"), *camera_cfgs), num_cameras_per_tiled_camera, 1.0
+    ):
+        tiled_cameras = [cfg.class_type(cfg) for cfg in camera_cfgs]
+    assert sim.get_setting("/isaaclab/render/rtx_sensors")
 
     # Play sim
     sim.reset()
@@ -97,7 +95,7 @@ def test_multi_tiled_camera_init(setup_camera):
         # Check if camera is initialized
         assert camera.is_initialized
         # Check if camera prim is set correctly and that it is a camera prim
-        assert camera._sensor_prims[1].GetPath().pathString == f"/World/Origin_{i}_1/CameraSensor"
+        assert camera._sensor_prims[1].GetPath().pathString == f"/World/Origin_1/CameraSensor_{i}"
         assert isinstance(camera._sensor_prims[0], UsdGeom.Camera)
 
     for camera in tiled_cameras:
@@ -166,20 +164,17 @@ def test_all_annotators_multi_tiled_camera(setup_camera):
     num_tiled_cameras = 2
     num_cameras_per_tiled_camera = 9
 
-    tiled_cameras = []
+    camera_cfgs = []
     for i in range(num_tiled_cameras):
-        for j in range(num_cameras_per_tiled_camera):
-            sim_utils.create_prim(f"/World/Origin_{i}_{j}", "Xform")
-
-        # Create camera
-        camera_cfg = copy.deepcopy(camera_cfg)
-        camera_cfg.data_types = all_annotator_types
-        camera_cfg.prim_path = f"/World/Origin_{i}[^/]*/CameraSensor"
-        camera = TiledCamera(camera_cfg)
-        tiled_cameras.append(camera)
-
-        # Check simulation parameter is set correctly
-        assert sim.get_setting("/isaaclab/render/rtx_sensors")
+        cfg = copy.deepcopy(camera_cfg)
+        cfg.data_types = all_annotator_types
+        cfg.prim_path = f"{{ENV_REGEX_NS}}/CameraSensor_{i}"
+        camera_cfgs.append(cfg)
+    with cloner.ReplicateSession(
+        (cloner.CloneCfg(clone_template="/World/Origin_{}"), *camera_cfgs), num_cameras_per_tiled_camera, 1.0
+    ):
+        tiled_cameras = [cfg.class_type(cfg) for cfg in camera_cfgs]
+    assert sim.get_setting("/isaaclab/render/rtx_sensors")
 
     # Play sim
     sim.reset()
@@ -188,7 +183,7 @@ def test_all_annotators_multi_tiled_camera(setup_camera):
         # Check if camera is initialized
         assert camera.is_initialized
         # Check if camera prim is set correctly and that it is a camera prim
-        assert camera._sensor_prims[1].GetPath().pathString == f"/World/Origin_{i}_1/CameraSensor"
+        assert camera._sensor_prims[1].GetPath().pathString == f"/World/Origin_1/CameraSensor_{i}"
         assert isinstance(camera._sensor_prims[0], UsdGeom.Camera)
         assert sorted(camera.data.output.keys()) == sorted(all_annotator_types)
 
@@ -262,21 +257,18 @@ def test_different_resolution_multi_tiled_camera(setup_camera):
     num_tiled_cameras = 2
     num_cameras_per_tiled_camera = 6
 
-    tiled_cameras = []
     resolutions = [(16, 16), (23, 765)]
+    camera_cfgs = []
     for i in range(num_tiled_cameras):
-        for j in range(num_cameras_per_tiled_camera):
-            sim_utils.create_prim(f"/World/Origin_{i}_{j}", "Xform")
-
-        # Create camera
-        camera_cfg = copy.deepcopy(camera_cfg)
-        camera_cfg.prim_path = f"/World/Origin_{i}[^/]*/CameraSensor"
-        camera_cfg.height, camera_cfg.width = resolutions[i]
-        camera = TiledCamera(camera_cfg)
-        tiled_cameras.append(camera)
-
-        # Check simulation parameter is set correctly
-        assert sim.get_setting("/isaaclab/render/rtx_sensors")
+        cfg = copy.deepcopy(camera_cfg)
+        cfg.prim_path = f"{{ENV_REGEX_NS}}/CameraSensor_{i}"
+        cfg.height, cfg.width = resolutions[i]
+        camera_cfgs.append(cfg)
+    with cloner.ReplicateSession(
+        (cloner.CloneCfg(clone_template="/World/Origin_{}"), *camera_cfgs), num_cameras_per_tiled_camera, 1.0
+    ):
+        tiled_cameras = [cfg.class_type(cfg) for cfg in camera_cfgs]
+    assert sim.get_setting("/isaaclab/render/rtx_sensors")
 
     # Play sim
     sim.reset()
@@ -285,7 +277,7 @@ def test_different_resolution_multi_tiled_camera(setup_camera):
         # Check if camera is initialized
         assert camera.is_initialized
         # Check if camera prim is set correctly and that it is a camera prim
-        assert camera._sensor_prims[1].GetPath().pathString == f"/World/Origin_{i}_1/CameraSensor"
+        assert camera._sensor_prims[1].GetPath().pathString == f"/World/Origin_1/CameraSensor_{i}"
         assert isinstance(camera._sensor_prims[0], UsdGeom.Camera)
 
     for camera in tiled_cameras:
@@ -329,16 +321,15 @@ def test_frame_offset_multi_tiled_camera(setup_camera):
     num_tiled_cameras = 4
     num_cameras_per_tiled_camera = 4
 
-    tiled_cameras = []
+    camera_cfgs = []
     for i in range(num_tiled_cameras):
-        for j in range(num_cameras_per_tiled_camera):
-            sim_utils.create_prim(f"/World/Origin_{i}_{j}", "Xform")
-
-        # Create camera
-        camera_cfg = copy.deepcopy(camera_cfg)
-        camera_cfg.prim_path = f"/World/Origin_{i}[^/]*/CameraSensor"
-        camera = TiledCamera(camera_cfg)
-        tiled_cameras.append(camera)
+        cfg = copy.deepcopy(camera_cfg)
+        cfg.prim_path = f"{{ENV_REGEX_NS}}/CameraSensor_{i}"
+        camera_cfgs.append(cfg)
+    with cloner.ReplicateSession(
+        (cloner.CloneCfg(clone_template="/World/Origin_{}"), *camera_cfgs), num_cameras_per_tiled_camera, 1.0
+    ):
+        tiled_cameras = [cfg.class_type(cfg) for cfg in camera_cfgs]
 
     # modify scene to be less stochastic
     stage = sim_utils.get_current_stage()
@@ -397,17 +388,16 @@ def test_frame_different_poses_multi_tiled_camera(setup_camera):
     positions = [(0.0, 0.0, 4.0), (0.0, 0.0, 2.0), (0.0, 0.0, 3.0)]
     rotations = [(0.0, 1.0, 0.0, 0.0), (0.0, 1.0, 0.0, 0.0), (0.0, 1.0, 0.0, 0.0)]
 
-    tiled_cameras = []
+    camera_cfgs = []
     for i in range(num_tiled_cameras):
-        for j in range(num_cameras_per_tiled_camera):
-            sim_utils.create_prim(f"/World/Origin_{i}_{j}", "Xform")
-
-        # Create camera
-        camera_cfg = copy.deepcopy(camera_cfg)
-        camera_cfg.prim_path = f"/World/Origin_{i}[^/]*/CameraSensor"
-        camera_cfg.offset = TiledCameraCfg.OffsetCfg(pos=positions[i], rot=rotations[i], convention="ros")
-        camera = TiledCamera(camera_cfg)
-        tiled_cameras.append(camera)
+        cfg = copy.deepcopy(camera_cfg)
+        cfg.prim_path = f"{{ENV_REGEX_NS}}/CameraSensor_{i}"
+        cfg.offset = TiledCameraCfg.OffsetCfg(pos=positions[i], rot=rotations[i], convention="ros")
+        camera_cfgs.append(cfg)
+    with cloner.ReplicateSession(
+        (cloner.CloneCfg(clone_template="/World/Origin_{}"), *camera_cfgs), num_cameras_per_tiled_camera, 1.0
+    ):
+        tiled_cameras = [cfg.class_type(cfg) for cfg in camera_cfgs]
 
     # Play sim
     sim.reset()

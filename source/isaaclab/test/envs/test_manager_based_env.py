@@ -67,6 +67,8 @@ def test_initialization(device):
     sim_utils.create_new_stage()
     # create environment
     env = ManagerBasedEnv(cfg=make_empty_manager_based_env_cfg(device=device))
+    assert env.sim.get_clone_plan() is not None
+    assert env.sim._clone_plan_dispatched is True
     # check size of action manager terms
     assert env.action_manager.total_action_dim == 0
     assert len(env.action_manager.active_terms) == 0

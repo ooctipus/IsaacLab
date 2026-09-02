@@ -89,7 +89,6 @@ def main():
         scene = InteractiveScene(MySceneCfg(num_envs=args_cli.num_envs, env_spacing=5.0, lazy_sensor_update=False))
 
     # Check that parsing happened as expected
-    assert len(scene.env_prim_paths) == args_cli.num_envs, "Number of environments does not match."
     assert scene.terrain is not None, "Terrain not found."
     assert len(scene.articulations) == 2, "Number of robots does not match."
     assert len(scene.sensors) == 1, "Number of sensors does not match."

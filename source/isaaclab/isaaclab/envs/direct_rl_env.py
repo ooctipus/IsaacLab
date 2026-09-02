@@ -20,7 +20,6 @@ import numpy as np
 import torch
 
 from isaaclab.managers import EventManager
-from isaaclab.scene import InteractiveScene
 from isaaclab.sim import SimulationContext
 from isaaclab.sim.utils.stage import use_stage
 from isaaclab.utils.noise import NoiseModel
@@ -148,9 +147,12 @@ class DirectRLEnv(gym.Env):
         with Timer("[INFO]: Time taken for scene creation", "scene_creation", activity="Creating scene"):
             # set the stage context for scene creation steps which use the stage
             with use_stage(self.sim.stage):
-                self.scene = InteractiveScene(self.cfg.scene)
+                self.scene = self.cfg.scene.class_type(self.cfg.scene)
                 self._setup_scene()
-            self.sim.register_interactive_scene(self.scene)
+                if self.sim.get_clone_plan() is None or self.sim._clone_plan_dispatched is not True:
+                    raise RuntimeError(
+                        "Scene construction must complete one clone lifecycle in InteractiveScene or _setup_scene()."
+                    )
         print("[INFO]: Scene manager: ", self.scene)
 
         # create event manager
@@ -571,9 +573,11 @@ class DirectRLEnv(gym.Env):
         """
         scalars = {
             "episode": {
-                "mean_reward": lambda: float(getattr(self, "reward_buf", None).mean())
-                if getattr(self, "reward_buf", None) is not None
-                else 0.0,
+                "mean_reward": lambda: (
+                    float(getattr(self, "reward_buf", None).mean())
+                    if getattr(self, "reward_buf", None) is not None
+                    else 0.0
+                ),
                 "episode_length": lambda: float(self.episode_length_buf.float().mean()),
             }
         }
@@ -751,12 +755,10 @@ class DirectRLEnv(gym.Env):
     def _setup_scene(self):
         """Setup the scene for the environment.
 
-        This function is responsible for creating the scene objects and setting up the scene for the environment.
-        The scene creation can happen through :class:`isaaclab.scene.InteractiveSceneCfg` or through
-        directly creating the scene objects and registering them with the scene manager.
-
-        We leave the implementation of this function to the derived classes. If the environment does not require
-        any explicit scene setup, the function can be left empty.
+        A declarative :class:`isaaclab.scene.InteractiveSceneCfg` constructs and clones its entities, so this
+        method may remain empty. With a plain scene configuration, the implementation must publish a
+        :func:`isaaclab.cloner.clone_plan_from_env_0` before constructing scene entities and pass that plan to
+        :func:`isaaclab.cloner.replicate` afterward.
         """
         pass
 

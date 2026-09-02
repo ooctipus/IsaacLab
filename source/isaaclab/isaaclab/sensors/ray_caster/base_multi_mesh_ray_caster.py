@@ -17,7 +17,6 @@ from pxr import Usd, UsdPhysics
 
 import isaaclab.sim as sim_utils
 from isaaclab import cloner
-from isaaclab.sim.simulation_context import SimulationContext
 from isaaclab.utils.mesh import PRIMITIVE_MESH_TYPES, create_trimesh_from_geom_mesh, create_trimesh_from_geom_shape
 from isaaclab.utils.warp import ProxyArray, convert_to_warp_mesh
 from isaaclab.utils.warp import kernels as warp_kernels
@@ -116,7 +115,6 @@ class BaseMultiMeshRayCaster(BaseRayCaster):
                 target_cfg = cfg.RaycastTargetCfg(prim_expr=target, track_mesh_transforms=False)
             else:
                 target_cfg = target
-            target_cfg.prim_expr = cloner.expand_env_regex_ns(target_cfg.prim_expr)
             self._raycast_targets_cfg.append(target_cfg)
 
         self._data = MultiMeshRayCasterData()
@@ -148,8 +146,6 @@ class BaseMultiMeshRayCaster(BaseRayCaster):
 
     def _initialize_warp_meshes(self):
         """Initialize mesh buffers from the ClonePlan when env-scoped, else from the stage."""
-        sim = SimulationContext.instance()
-        plan = sim.get_clone_plan() if sim is not None else None
         target_records_by_expr = {}
         dummy_mesh_id: int | None = None
         self._mesh_views = []
@@ -157,7 +153,7 @@ class BaseMultiMeshRayCaster(BaseRayCaster):
         # Build one per-env mesh list for each configured raycast target.
         for target_cfg in self._raycast_targets_cfg:
             records_per_env, dummy_mesh_id, tracked_target_exprs = self._build_mesh_records(
-                target_cfg, plan, dummy_mesh_id
+                target_cfg, self._clone_plan, dummy_mesh_id
             )
             self._num_meshes_per_env[target_cfg.prim_expr] = max(len(records) for records in records_per_env)
             target_records_by_expr[target_cfg.prim_expr] = records_per_env
@@ -200,7 +196,7 @@ class BaseMultiMeshRayCaster(BaseRayCaster):
     def _build_mesh_records(
         self,
         target_cfg: MultiMeshRayCasterCfg.RaycastTargetCfg,
-        plan: ClonePlan | None,
+        plan: ClonePlan,
         dummy_mesh_id: int | None,
     ):
         """Build mesh records for the target configuration."""
@@ -209,7 +205,7 @@ class BaseMultiMeshRayCaster(BaseRayCaster):
         tracked_target_exprs: list[str] = [target_cfg.prim_expr]
         has_rigid_body_api = lambda p: p.HasAPI(UsdPhysics.RigidBodyAPI)  # noqa: E731
         # Prefer ClonePlan data for env-scoped targets; destination USD prims may not exist.
-        if plan is not None and target_cfg.track_mesh_transforms:
+        if target_cfg.track_mesh_transforms:
             plan_tracked_target_exprs: list[str] = []
             prim_expr = target_cfg.prim_expr
             for source_root, destination_template, source_path, env_ids in cloner.query.iter_sources(plan, prim_expr):
@@ -276,7 +272,7 @@ class BaseMultiMeshRayCaster(BaseRayCaster):
                     )
                 return records_per_env, dummy_mesh_id, plan_tracked_target_exprs
 
-        # Fall back to authored USD prims for global targets and scenes without ClonePlan data.
+        # Global targets are authored once and read directly from USD.
         target_prims = sim_utils.find_matching_prims(target_cfg.prim_expr)
         if not target_prims:
             raise RuntimeError(f"Failed to find a prim at path expression: {target_cfg.prim_expr}")

@@ -26,8 +26,10 @@ import omni.replicator.core as rep
 from pxr import Gf
 
 import isaaclab.sim as sim_utils
-from isaaclab.sensors.camera import Camera, CameraCfg
-from isaaclab.sensors.ray_caster import RayCasterCamera, RayCasterCameraCfg, patterns
+from isaaclab import cloner
+from isaaclab.assets import AssetBaseCfg
+from isaaclab.sensors.camera import CameraCfg
+from isaaclab.sensors.ray_caster import RayCasterCameraCfg, patterns
 from isaaclab.sim import PinholeCameraCfg
 from isaaclab.terrains.trimesh.utils import make_plane
 from isaaclab.terrains.utils import create_prim_from_mesh
@@ -66,6 +68,7 @@ def setup() -> tuple[sim_utils.SimulationContext, RayCasterCameraCfg, float]:
     )
     camera_cfg = RayCasterCameraCfg(
         prim_path="/World/Camera",
+        spawn=sim_utils.SensorFrameCfg(),
         mesh_prim_paths=["/World/defaultGroundPlane"],
         update_period=0,
         offset=RayCasterCameraCfg.OffsetCfg(pos=(0.0, 0.0, 0.0), rot=(0.0, 0.0, 0.0, 1.0), convention="world"),
@@ -77,8 +80,6 @@ def setup() -> tuple[sim_utils.SimulationContext, RayCasterCameraCfg, float]:
     )
     # Create a new stage
     sim_utils.create_new_stage()
-    # create xform because placement of camera directly under world is not supported
-    sim_utils.create_prim("/World/Camera", "Xform")
     # Simulation time-step
     dt = 0.01
     # Load kit helper
@@ -119,7 +120,8 @@ def test_camera_init(setup_sim):
     """Test camera initialization."""
     sim, camera_cfg, dt = setup_sim
     # Create camera
-    camera = RayCasterCamera(cfg=camera_cfg)
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg], 1, 0.0):
+        camera = camera_cfg.class_type(camera_cfg)
     # Play sim
     sim.reset()
     # Check if camera is initialized
@@ -156,7 +158,8 @@ def test_camera_resolution(setup_sim):
     """Test camera resolution is correctly set."""
     sim, camera_cfg, dt = setup_sim
     # Create camera
-    camera = RayCasterCamera(cfg=camera_cfg)
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg], 1, 0.0):
+        camera = camera_cfg.class_type(camera_cfg)
     # Play sim
     sim.reset()
     camera.update(dt)
@@ -174,13 +177,10 @@ def test_depth_clipping(setup_sim):
         This test is the same for all camera models to enforce the same clipping behavior.
     """
     sim, camera_cfg, dt = setup_sim
-    sim_utils.create_prim("/World/CameraZero", "Xform")
-    sim_utils.create_prim("/World/CameraNone", "Xform")
-    sim_utils.create_prim("/World/CameraMax", "Xform")
-
     # get camera cfgs
     camera_cfg_zero = RayCasterCameraCfg(
         prim_path="/World/CameraZero",
+        spawn=sim_utils.SensorFrameCfg(),
         mesh_prim_paths=["/World/defaultGroundPlane"],
         offset=RayCasterCameraCfg.OffsetCfg(pos=(2.5, 2.5, 6.0), rot=(0.0, 0.1305, 0.0, 0.9914449), convention="world"),
         pattern_cfg=patterns.PinholeCameraPatternCfg().from_intrinsic_matrix(
@@ -193,17 +193,16 @@ def test_depth_clipping(setup_sim):
         data_types=["distance_to_image_plane", "distance_to_camera"],
         depth_clipping_behavior="zero",
     )
-    camera_zero = RayCasterCamera(camera_cfg_zero)
-
     camera_cfg_none = copy.deepcopy(camera_cfg_zero)
     camera_cfg_none.prim_path = "/World/CameraNone"
     camera_cfg_none.depth_clipping_behavior = "none"
-    camera_none = RayCasterCamera(camera_cfg_none)
-
     camera_cfg_max = copy.deepcopy(camera_cfg_zero)
     camera_cfg_max.prim_path = "/World/CameraMax"
     camera_cfg_max.depth_clipping_behavior = "max"
-    camera_max = RayCasterCamera(camera_cfg_max)
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg_zero, camera_cfg_none, camera_cfg_max], 1, 0.0):
+        camera_zero = camera_cfg_zero.class_type(camera_cfg_zero)
+        camera_none = camera_cfg_none.class_type(camera_cfg_none)
+        camera_max = camera_cfg_max.class_type(camera_cfg_max)
 
     # Play sim
     sim.reset()
@@ -273,9 +272,7 @@ def test_camera_init_offset(setup_sim):
         rot=(QUAT_ROS[0], QUAT_ROS[1], QUAT_ROS[2], QUAT_ROS[3]),
         convention="ros",
     )
-    sim_utils.create_prim("/World/CameraOffsetRos", "Xform")
     cam_cfg_offset_ros.prim_path = "/World/CameraOffsetRos"
-    camera_ros = RayCasterCamera(cam_cfg_offset_ros)
     # -- OpenGL convention
     cam_cfg_offset_opengl = copy.deepcopy(camera_cfg)
     cam_cfg_offset_opengl.offset = RayCasterCameraCfg.OffsetCfg(
@@ -283,9 +280,7 @@ def test_camera_init_offset(setup_sim):
         rot=(QUAT_OPENGL[0], QUAT_OPENGL[1], QUAT_OPENGL[2], QUAT_OPENGL[3]),
         convention="opengl",
     )
-    sim_utils.create_prim("/World/CameraOffsetOpengl", "Xform")
     cam_cfg_offset_opengl.prim_path = "/World/CameraOffsetOpengl"
-    camera_opengl = RayCasterCamera(cam_cfg_offset_opengl)
     # -- World convention
     cam_cfg_offset_world = copy.deepcopy(camera_cfg)
     cam_cfg_offset_world.offset = RayCasterCameraCfg.OffsetCfg(
@@ -293,9 +288,13 @@ def test_camera_init_offset(setup_sim):
         rot=(QUAT_WORLD[0], QUAT_WORLD[1], QUAT_WORLD[2], QUAT_WORLD[3]),
         convention="world",
     )
-    sim_utils.create_prim("/World/CameraOffsetWorld", "Xform")
     cam_cfg_offset_world.prim_path = "/World/CameraOffsetWorld"
-    camera_world = RayCasterCamera(cam_cfg_offset_world)
+    with cloner.ReplicateSession(
+        [cloner.CloneCfg(), cam_cfg_offset_ros, cam_cfg_offset_opengl, cam_cfg_offset_world], 1, 0.0
+    ):
+        camera_ros = cam_cfg_offset_ros.class_type(cam_cfg_offset_ros)
+        camera_opengl = cam_cfg_offset_opengl.class_type(cam_cfg_offset_opengl)
+        camera_world = cam_cfg_offset_world.class_type(cam_cfg_offset_world)
 
     # play sim
     sim.reset()
@@ -322,17 +321,18 @@ def test_camera_init_intrinsic_matrix(setup_sim):
     """Test camera initialization from intrinsic matrix."""
     sim, camera_cfg, dt = setup_sim
     # get the first camera
-    camera_1 = RayCasterCamera(cfg=camera_cfg)
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg], 1, 0.0):
+        camera_1 = camera_cfg.class_type(camera_cfg)
     # get intrinsic matrix
     sim.reset()
     intrinsic_matrix = camera_1.data.intrinsic_matrices.torch[0].cpu().flatten().tolist()
     teardown(sim)
     # reinit the first camera
     sim, camera_cfg, dt = setup()
-    camera_1 = RayCasterCamera(cfg=camera_cfg)
     # initialize from intrinsic matrix
     intrinsic_camera_cfg = RayCasterCameraCfg(
-        prim_path="/World/Camera",
+        prim_path="/World/Camera_2",
+        spawn=sim_utils.SensorFrameCfg(),
         mesh_prim_paths=["/World/defaultGroundPlane"],
         update_period=0,
         offset=RayCasterCameraCfg.OffsetCfg(pos=(0.0, 0.0, 0.0), rot=(0.0, 0.0, 0.0, 1.0), convention="world"),
@@ -347,7 +347,9 @@ def test_camera_init_intrinsic_matrix(setup_sim):
             "distance_to_image_plane",
         ],
     )
-    camera_2 = RayCasterCamera(cfg=intrinsic_camera_cfg)
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg, intrinsic_camera_cfg], 1, 0.0):
+        camera_1 = camera_cfg.class_type(camera_cfg)
+        camera_2 = intrinsic_camera_cfg.class_type(intrinsic_camera_cfg)
 
     # play sim
     sim.reset()
@@ -377,14 +379,12 @@ def test_multi_camera_init(setup_sim):
     # -- camera 1
     cam_cfg_1 = copy.deepcopy(camera_cfg)
     cam_cfg_1.prim_path = "/World/Camera_1"
-    sim_utils.create_prim("/World/Camera_1", "Xform")
-    # Create camera
-    cam_1 = RayCasterCamera(cam_cfg_1)
     # -- camera 2
     cam_cfg_2 = copy.deepcopy(camera_cfg)
     cam_cfg_2.prim_path = "/World/Camera_2"
-    sim_utils.create_prim("/World/Camera_2", "Xform")
-    cam_2 = RayCasterCamera(cam_cfg_2)
+    with cloner.ReplicateSession([cloner.CloneCfg(), cam_cfg_1, cam_cfg_2], 1, 0.0):
+        cam_1 = cam_cfg_1.class_type(cam_cfg_1)
+        cam_2 = cam_cfg_2.class_type(cam_cfg_2)
 
     # check that the loaded meshes are equal
     assert cam_1.meshes == cam_2.meshes
@@ -412,7 +412,8 @@ def test_multi_camera_init(setup_sim):
 def test_camera_set_world_poses(setup_sim):
     """Test camera function to set specific world pose."""
     sim, camera_cfg, dt = setup_sim
-    camera = RayCasterCamera(camera_cfg)
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg], 1, 0.0):
+        camera = camera_cfg.class_type(camera_cfg)
     # play sim
     sim.reset()
 
@@ -431,7 +432,8 @@ def test_camera_set_world_poses(setup_sim):
 def test_camera_set_world_poses_from_view(setup_sim):
     """Test camera function to set specific world pose from view."""
     sim, camera_cfg, dt = setup_sim
-    camera = RayCasterCamera(camera_cfg)
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg], 1, 0.0):
+        camera = camera_cfg.class_type(camera_cfg)
     # play sim
     sim.reset()
 
@@ -454,7 +456,8 @@ def test_intrinsic_matrix(setup_sim):
     camera_cfg = copy.deepcopy(camera_cfg)
     camera_cfg.pattern_cfg.height = 240
     camera_cfg.pattern_cfg.width = 320
-    camera = RayCasterCamera(camera_cfg)
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg], 1, 0.0):
+        camera = camera_cfg.class_type(camera_cfg)
     # play sim
     sim.reset()
     # Desired properties (obtained from realsense camera at 320x240 resolution)
@@ -481,9 +484,9 @@ def test_output_equal_to_usdcamera(setup_sim):
         height=240,
         width=320,
     )
-    sim_utils.create_prim("/World/Camera_warp", "Xform")
     camera_cfg_warp = RayCasterCameraCfg(
         prim_path="/World/Camera",
+        spawn=sim_utils.SensorFrameCfg(),
         mesh_prim_paths=["/World/defaultGroundPlane"],
         update_period=0,
         offset=RayCasterCameraCfg.OffsetCfg(pos=(0.0, 0.0, 0.0), rot=(0.0, 0.0, 0.0, 1.0)),
@@ -491,8 +494,6 @@ def test_output_equal_to_usdcamera(setup_sim):
         pattern_cfg=camera_pattern_cfg,
         data_types=["distance_to_image_plane", "distance_to_camera", "normals"],
     )
-
-    camera_warp = RayCasterCamera(camera_cfg_warp)
 
     # create usd camera
     camera_cfg_usd = CameraCfg(
@@ -506,7 +507,9 @@ def test_output_equal_to_usdcamera(setup_sim):
         ),
         offset=CameraCfg.OffsetCfg(pos=(0.0, 0.0, 0.0), rot=(0.0, 0.0, 0.0, 1.0)),
     )
-    camera_usd = Camera(camera_cfg_usd)
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg_warp, camera_cfg_usd], 1, 0.0):
+        camera_warp = camera_cfg_warp.class_type(camera_cfg_warp)
+        camera_usd = camera_cfg_usd.class_type(camera_cfg_usd)
 
     # play sim
     sim.reset()
@@ -583,9 +586,9 @@ def test_output_equal_to_usdcamera_offset(setup_sim):
         height=240,
         width=320,
     )
-    sim_utils.create_prim("/World/Camera_warp", "Xform")
     camera_cfg_warp = RayCasterCameraCfg(
         prim_path="/World/Camera",
+        spawn=sim_utils.SensorFrameCfg(),
         mesh_prim_paths=["/World/defaultGroundPlane"],
         update_period=0,
         offset=RayCasterCameraCfg.OffsetCfg(pos=(2.5, 2.5, 4.0), rot=tuple(offset_rot), convention="ros"),
@@ -593,8 +596,6 @@ def test_output_equal_to_usdcamera_offset(setup_sim):
         pattern_cfg=camera_pattern_cfg,
         data_types=["distance_to_image_plane", "distance_to_camera", "normals"],
     )
-
-    camera_warp = RayCasterCamera(camera_cfg_warp)
 
     # create usd camera
     camera_cfg_usd = CameraCfg(
@@ -610,7 +611,9 @@ def test_output_equal_to_usdcamera_offset(setup_sim):
             pos=(2.5, 2.5, 4.0), rot=(offset_rot[0], offset_rot[1], offset_rot[2], offset_rot[3]), convention="ros"
         ),
     )
-    camera_usd = Camera(camera_cfg_usd)
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg_warp, camera_cfg_usd], 1, 0.0):
+        camera_warp = camera_cfg_warp.class_type(camera_cfg_warp)
+        camera_usd = camera_cfg_usd.class_type(camera_cfg_usd)
 
     # play sim
     sim.reset()
@@ -681,8 +684,6 @@ def test_output_equal_to_usdcamera_prim_offset(setup_sim):
         data_types=["distance_to_image_plane", "distance_to_camera", "normals"],
     )
 
-    camera_warp = RayCasterCamera(camera_cfg_warp)
-
     # create usd camera
     camera_cfg_usd = CameraCfg(
         height=240,
@@ -700,7 +701,19 @@ def test_output_equal_to_usdcamera_prim_offset(setup_sim):
     prim_usd.GetAttribute("xformOp:translate").Set(tuple(POSITION))
     prim_usd.GetAttribute("xformOp:orient").Set(gf_quatf)
 
-    camera_usd = Camera(camera_cfg_usd)
+    with cloner.ReplicateSession(
+        [
+            cloner.CloneCfg(),
+            AssetBaseCfg(prim_path="/World/Camera_warp"),
+            AssetBaseCfg(prim_path="/World/Camera_usd"),
+            camera_cfg_warp,
+            camera_cfg_usd,
+        ],
+        1,
+        0.0,
+    ):
+        camera_warp = camera_cfg_warp.class_type(camera_cfg_warp)
+        camera_usd = camera_cfg_usd.class_type(camera_cfg_usd)
 
     # play sim
     sim.reset()
@@ -755,10 +768,10 @@ def test_output_equal_to_usd_camera_intrinsics(setup_sim, focal_length):
     offset_rot = (0.3617, 0.8731, -0.3020, -0.1251)
     offset_pos = (2.5, 2.5, 4.0)
     intrinsics = [380.0831, 0.0, 480.0, 0.0, 380.0831, 270.0, 0.0, 0.0, 1.0]
-    sim_utils.create_prim("/World/Camera_warp", "Xform")
     # get camera cfgs
     camera_warp_cfg = RayCasterCameraCfg(
         prim_path="/World/Camera_warp",
+        spawn=sim_utils.SensorFrameCfg(),
         mesh_prim_paths=["/World/defaultGroundPlane"],
         offset=RayCasterCameraCfg.OffsetCfg(pos=offset_pos, rot=offset_rot, convention="ros"),
         debug_vis=False,
@@ -793,9 +806,9 @@ def test_output_equal_to_usd_camera_intrinsics(setup_sim, focal_length):
     camera_warp_cfg.pattern_cfg.vertical_aperture_offset = 0
     camera_usd_cfg.spawn.horizontal_aperture_offset = 0
     camera_usd_cfg.spawn.vertical_aperture_offset = 0
-    # init cameras
-    camera_warp = RayCasterCamera(camera_warp_cfg)
-    camera_usd = Camera(camera_usd_cfg)
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_warp_cfg, camera_usd_cfg], 1, 0.0):
+        camera_warp = camera_warp_cfg.class_type(camera_warp_cfg)
+        camera_usd = camera_usd_cfg.class_type(camera_usd_cfg)
 
     # play sim
     sim.reset()
@@ -893,6 +906,7 @@ def test_output_equal_to_usd_camera_when_intrinsics_set(setup_sim, focal_length_
     )
     camera_cfg_warp = RayCasterCameraCfg(
         prim_path="/World/Camera",
+        spawn=sim_utils.SensorFrameCfg(),
         mesh_prim_paths=["/World/defaultGroundPlane"],
         update_period=0,
         offset=RayCasterCameraCfg.OffsetCfg(pos=(0.0, 0.0, 0.0), rot=(0.0, 0.0, 0.0, 1.0)),
@@ -900,8 +914,6 @@ def test_output_equal_to_usd_camera_when_intrinsics_set(setup_sim, focal_length_
         pattern_cfg=camera_pattern_cfg,
         data_types=["distance_to_camera"],
     )
-
-    camera_warp = RayCasterCamera(camera_cfg_warp)
 
     # create usd camera
     camera_cfg_usd = CameraCfg(
@@ -914,7 +926,9 @@ def test_output_equal_to_usd_camera_when_intrinsics_set(setup_sim, focal_length_
             focal_length=focal_length, focus_distance=400.0, horizontal_aperture=aperture, clipping_range=(1e-4, 1.0e5)
         ),
     )
-    camera_usd = Camera(camera_cfg_usd)
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg_warp, camera_cfg_usd], 1, 0.0):
+        camera_warp = camera_cfg_warp.class_type(camera_cfg_warp)
+        camera_usd = camera_cfg_usd.class_type(camera_cfg_usd)
 
     # play sim
     sim.reset()
@@ -993,7 +1007,8 @@ def test_sensor_print(setup_sim):
     """Test sensor print is working correctly."""
     sim, camera_cfg, dt = setup_sim
     # Create sensor
-    sensor = RayCasterCamera(cfg=camera_cfg)
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg], 1, 0.0):
+        sensor = camera_cfg.class_type(camera_cfg)
     # Play sim
     sim.reset()
     # print info
@@ -1013,6 +1028,7 @@ def test_depth_clipping_d2ip_and_d2c_are_independent(setup_sim):
 
     base_cfg = RayCasterCameraCfg(
         prim_path="/World/Camera",
+        spawn=sim_utils.SensorFrameCfg(),
         mesh_prim_paths=["/World/defaultGroundPlane"],
         offset=RayCasterCameraCfg.OffsetCfg(pos=(2.5, 2.5, 6.0), rot=(0.0, 0.1305, 0.0, 0.9914449), convention="world"),
         pattern_cfg=patterns.PinholeCameraPatternCfg.from_intrinsic_matrix(
@@ -1028,24 +1044,22 @@ def test_depth_clipping_d2ip_and_d2c_are_independent(setup_sim):
     )
 
     # Camera requesting both data types simultaneously
-    sim_utils.create_prim("/World/CameraJoint", "Xform")
     cfg_joint = copy.deepcopy(base_cfg)
     cfg_joint.prim_path = "/World/CameraJoint"
-    cam_joint = RayCasterCamera(cfg_joint)
 
     # Camera requesting only d2ip
-    sim_utils.create_prim("/World/CameraD2IP", "Xform")
     cfg_d2ip = copy.deepcopy(base_cfg)
     cfg_d2ip.prim_path = "/World/CameraD2IP"
     cfg_d2ip.data_types = ["distance_to_image_plane"]
-    cam_d2ip = RayCasterCamera(cfg_d2ip)
 
     # Camera requesting only d2c
-    sim_utils.create_prim("/World/CameraD2C", "Xform")
     cfg_d2c = copy.deepcopy(base_cfg)
     cfg_d2c.prim_path = "/World/CameraD2C"
     cfg_d2c.data_types = ["distance_to_camera"]
-    cam_d2c = RayCasterCamera(cfg_d2c)
+    with cloner.ReplicateSession([cloner.CloneCfg(), cfg_joint, cfg_d2ip, cfg_d2c], 1, 0.0):
+        cam_joint = cfg_joint.class_type(cfg_joint)
+        cam_d2ip = cfg_d2ip.class_type(cfg_d2ip)
+        cam_d2c = cfg_d2c.class_type(cfg_d2c)
 
     sim.reset()
 
@@ -1071,7 +1085,8 @@ def test_depth_clipping_d2ip_and_d2c_are_independent(setup_sim):
 def test_frame_counter_increments_per_update(setup_sim):
     """frame counter must increment by exactly 1 per update() call and reset to 0 on reset()."""
     sim, camera_cfg, dt = setup_sim
-    camera = RayCasterCamera(cfg=camera_cfg)
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg], 1, 0.0):
+        camera = camera_cfg.class_type(camera_cfg)
     sim.reset()
 
     assert torch.all(camera.frame == 0), "Frame must start at 0"
@@ -1107,7 +1122,8 @@ def test_set_intrinsic_matrices_updates_output(setup_sim):
     camera_cfg = copy.deepcopy(camera_cfg)
     camera_cfg.offset = RayCasterCameraCfg.OffsetCfg(pos=(0.0, 0.0, 5.0), rot=(0.0, 0.0, 0.0, 1.0), convention="world")
     camera_cfg.data_types = ["distance_to_camera"]
-    camera = RayCasterCamera(cfg=camera_cfg)
+    with cloner.ReplicateSession([cloner.CloneCfg(), camera_cfg], 1, 0.0):
+        camera = camera_cfg.class_type(camera_cfg)
     sim.reset()
 
     # Capture output with default focal length (24 mm → 20.955 mm aperture)
