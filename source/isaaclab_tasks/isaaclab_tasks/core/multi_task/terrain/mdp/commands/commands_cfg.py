@@ -60,6 +60,23 @@ _CURRENT_VEL_VISUALIZER_CFG.markers["arrow"].scale = (0.5, 0.5, 0.5)
 
 
 @configclass
+class PhysicalSuccessGateCfg:
+    """Optional physical checks applied while accumulating successful hold time."""
+
+    effort_multiplier: float = 0.8
+    """Maximum normalized joint effort, divided by the number of feet."""
+
+    min_foot_weight_fraction: float = 0.8
+    """Minimum fraction of robot weight supported by the feet."""
+
+    joint_wrench_sensor_name: str = "joint_wrench"
+    """Scene name of the joint-wrench sensor."""
+
+    contact_sensor_name: str = "contact_forces"
+    """Scene name of the contact sensor."""
+
+
+@configclass
 class TaskTableCfg(StateCommandCfg.TaskTableCfg):
     """Task-table builder configuration for the locomotion command."""
 
@@ -136,6 +153,9 @@ class BaseStatePayloadCfg(StateCommandCfg.PayloadCfg):
     normalize_command_obs: bool = False
     """Whether to divide command channels by the per-task success threshold."""
 
+    physical_success_gate: PhysicalSuccessGateCfg | None = None
+    """Optional effort and foot-support checks for successful hold accumulation."""
+
     goal_visualizer_cfg: VisualizationMarkersCfg = _GOAL_VISUALIZER_CFG
     """Debug marker for the goal state (pos/pose/vel)."""
 
@@ -167,6 +187,9 @@ class BaseFootStatePayloadCfg(StateCommandCfg.PayloadCfg):
 
     normalize_command_obs: bool = False
     """Whether to divide command channels by the per-task success threshold."""
+
+    physical_success_gate: PhysicalSuccessGateCfg | None = None
+    """Optional effort and foot-support checks for successful hold accumulation."""
 
     goal_visualizer_cfg: VisualizationMarkersCfg = _GOAL_VISUALIZER_CFG
     """Debug marker for the goal state (pos/pose/vel/foot)."""

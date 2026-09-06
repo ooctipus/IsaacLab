@@ -65,6 +65,69 @@ class CommandPayloadBase:
         self.cmd_ids = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
         self._success_per_cmd = torch.zeros(self.table.kind.shape[0], device=self.device)
 
+    def _init_physical_success_gate(self, cfg: StateCommandCfg, env: ManagerBasedEnv) -> None:
+        """Bind sensors and constants for the optional physical-success checks."""
+        gate_cfg = cfg.payload.physical_success_gate
+        self._physical_success_gate_cfg = gate_cfg
+        if gate_cfg is None:
+            return
+        if self.table.foot_body_ids is None or len(self.table.foot_body_ids) == 0:
+            raise ValueError("Physical success checks require task-table foot_body_ids.")
+
+        self._foot_ids = list(self.table.foot_body_ids)
+        self._wrench_sensor = env.scene[gate_cfg.joint_wrench_sensor_name]
+        self._contact_sensor = env.scene[gate_cfg.contact_sensor_name]
+
+        robot_body_names = list(self.robot.body_names)
+        sensor_body_names = list(self._contact_sensor.body_names or [])
+        contact_foot_channels: list[int] = []
+        for foot_id in self._foot_ids:
+            body_name = robot_body_names[foot_id]
+            try:
+                contact_foot_channels.append(sensor_body_names.index(body_name))
+            except ValueError as err:
+                raise RuntimeError(
+                    f"Contact sensor {gate_cfg.contact_sensor_name!r} does not cover foot body {body_name!r}."
+                ) from err
+
+        self._contact_foot_channels = torch.tensor(contact_foot_channels, device=self.device, dtype=torch.long)
+        self._gravity_magnitude = torch.linalg.vector_norm(
+            torch.tensor(env.cfg.sim.gravity, device=self.device, dtype=torch.float32)
+        )
+        if self._gravity_magnitude <= 0.0:
+            raise ValueError("Physical success checks require non-zero gravity.")
+        self._weight: torch.Tensor | None = None
+        self._reference_length: torch.Tensor | None = None
+
+    def _hold_success(self, error: torch.Tensor, cmd_ids: torch.Tensor) -> torch.Tensor:
+        """Return kinematic success, optionally intersected with physical checks."""
+        success = self.success(error, cmd_ids)
+        if self._physical_success_gate_cfg is None:
+            return success
+
+        if self._weight is None:
+            self._weight = self.robot.data.body_mass.torch.sum(dim=-1) * self._gravity_magnitude
+        if self._reference_length is None:
+            body_pos_w = wp.to_torch(self.robot.data.body_link_pos_w)
+            base_z = body_pos_w[:, 0, 2]
+            feet_z = body_pos_w[:, self._foot_ids, 2].mean(dim=-1)
+            self._reference_length = (base_z - feet_z).abs().mean().clamp_min(1.0e-6)
+
+        wrench_torque = self._wrench_sensor.data.torque
+        if wrench_torque is None:
+            raise RuntimeError("Joint-wrench sensor data is unavailable during success evaluation.")
+        joint_axis_torque_max = wrench_torque.torch[..., 0].abs().amax(dim=-1)
+        specific_effort_max = joint_axis_torque_max / (self._weight * self._reference_length)
+        effort_threshold = self._physical_success_gate_cfg.effort_multiplier / len(self._foot_ids)
+        natural = specific_effort_max < effort_threshold
+
+        net_forces_w = self._contact_sensor.data.net_forces_w
+        if net_forces_w is None:
+            raise RuntimeError("Contact sensor data is unavailable during success evaluation.")
+        foot_fz = net_forces_w.torch[:, self._contact_foot_channels, 2].clamp_min(0.0).sum(dim=-1)
+        feet_bear_weight = foot_fz / self._weight >= self._physical_success_gate_cfg.min_foot_weight_fraction
+        return success & natural & feet_bear_weight
+
     def _store_task_selection(self, env_ids: torch.Tensor, task_rows: torch.Tensor) -> None:
         """Record the per-env command-type id (CSR bucket) and active-channel mask."""
         self.cmd_ids[env_ids] = torch.bucketize(task_rows, self.table.offsets[1:-1], right=True)
@@ -215,6 +278,7 @@ class CommandPayloadBaseState(CommandPayloadBase):
             col += width
         self.obs_inv_unit_scales = obs_inv_scales
         self._alloc_lifecycle()
+        self._init_physical_success_gate(cfg, env)
 
     def resample(
         self,
@@ -296,7 +360,7 @@ class CommandPayloadBaseState(CommandPayloadBase):
         error[:, 2] = delta[:, 6:9].norm(dim=-1)
         error[:, 3] = delta[:, 9:12].norm(dim=-1)
 
-        current[:, self.time_idx] += step_dt * self.success(error, cmd_ids)
+        current[:, self.time_idx] += step_dt * self._hold_success(error, cmd_ids)
         torch.sub(target[:, self.time_idx], current[:, self.time_idx], out=delta[:, self.time_idx])
 
     def current_state_env(self, env_origins: torch.Tensor) -> torch.Tensor:
@@ -396,6 +460,7 @@ class CommandPayloadBaseFootState(CommandPayloadBase):
             (env.num_envs, int(model.body_count)), dtype=wp.spatial_vectorf, device=device
         )
         self._alloc_lifecycle()
+        self._init_physical_success_gate(cfg, env)
 
     def resample(
         self,
@@ -531,7 +596,7 @@ class CommandPayloadBaseFootState(CommandPayloadBase):
         foot_err = self._foot_delta_b.norm(dim=-1).amax(dim=1)
         error[:, 4] = torch.where(self.foot_success_mask, foot_err, torch.zeros_like(foot_err))
 
-        current[:, self.time_idx] += step_dt * self.success(error, cmd_ids)
+        current[:, self.time_idx] += step_dt * self._hold_success(error, cmd_ids)
         torch.sub(target[:, self.time_idx], current[:, self.time_idx], out=delta[:, self.time_idx])
 
     def current_state_env(self, env_origins: torch.Tensor) -> torch.Tensor:
