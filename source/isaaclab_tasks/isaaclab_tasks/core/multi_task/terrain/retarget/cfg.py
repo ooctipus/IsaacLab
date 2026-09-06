@@ -8,14 +8,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import MISSING, field
+from dataclasses import field
 
-from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils.configclass import configclass
-
-from ...kinematics.ik_objectives.cfg import IKObjectiveBaseCfg
-from ...kinematics.newton_kinematics_cfg import NewtonKinematicsCfg
-from .criteria_cfg import CriterionBaseCfg
 
 
 @configclass
@@ -312,110 +307,4 @@ class SamplerCfg(SamplerBaseCfg):
     without requiring the foot to land exactly on a grid point. Bump
     to 0.25-0.30 for sparse / rough terrain (CONTOUR, EXTREME_STAIR at
     high difficulty).
-    """
-
-
-@configclass
-class RetargetPipelineCfg:
-    """Full retarget pipeline configuration.
-
-    Nests the scene asset, kinematics, sampler, and foot specification for
-    :class:`RetargetPipeline`.
-    """
-
-    class_type: type | str = "{DIR}.pipeline:RetargetPipeline"
-    """Pipeline implementation class."""
-
-    asset_cfg: SceneEntityCfg | None = None
-    """Scene articulation whose USD and defaults bind the kinematics model.
-
-    ``None`` means :attr:`kin` is already fully resolved.
-    """
-
-    kin: NewtonKinematicsCfg = MISSING  # type: ignore[assignment]
-    """Kinematics model configuration."""
-
-    sampler: SamplerBaseCfg = MISSING  # type: ignore[assignment]
-    """Sampler configuration (with ``class_type`` set)."""
-
-    foot_body_names: list[str] | str = MISSING  # type: ignore[assignment]
-    """Body names of the feet, either exact names or a regex matched against Newton body names."""
-
-    lateral_hip_joint_pattern: str | None = None
-    """Optional regex matching lateral hip joint names.
-
-    Consumed by lateral-hip angle validation criteria. ``None`` disables
-    the check, appropriate for robots that have no lateral hip joints or
-    where over-splay is not a concern.
-    """
-
-    joint_regularize_targets: dict[str, float] = field(default_factory=dict)
-    """Optional joint-name regex -> target-angle mapping for IK regularization.
-
-    Consumed by :class:`IKObjectiveJointRegularizeCfg` when its own
-    :attr:`joint_targets` is empty -- a robot preset can set this once
-    at the pipeline level and every regularize objective inherits it.
-    Empty dict disables the regularizer.
-    """
-
-    ik_iterations: int = 200
-    """Maximum number of IK solver iterations."""
-
-    ik_convergence_threshold: float = 0.01
-    """Stop IK early when mean cost change falls below this threshold."""
-
-    ik_chunk_size: int = 0
-    """Maximum IK problems solved in parallel per kernel launch.
-
-    The Levenberg-Marquardt solver allocates ``(N, n_residuals, n_dofs)``
-    Jacobian + auxiliary buffers, which dominates GPU memory at high
-    ``n_desired``. Splitting the workload into chunks lets memory peak
-    at ``chunk_size`` instead of ``N`` -- per-row IK is independent so
-    the result is identical.
-
-    ``0`` (default) auto-derives ``chunk_size`` at run time from
-    ``torch.cuda.mem_get_info`` (uses ~80% of free GPU memory) and the
-    objective list's residual count. Set to a positive integer to pin
-    the chunk size manually -- useful when the pipeline shares the GPU
-    with other workloads whose footprint is hard to predict.
-    """
-
-    base_pos_weight: float = 0.05
-    """Weight of the base-position IK objective [unitless].
-
-    Keeps the IK near the sampler's plane-fit base position. Small by
-    default so the foot-contact targets (weight 1.0) dominate -- the
-    base is a soft anchor, not a hard target.
-    """
-
-    base_rot_weight: float = 0.5
-    """Weight of the base-orientation IK objective [unitless].
-
-    Pulls the base quaternion toward the sampler's plane-fit target.
-    For nc<4 stances (raised legs) the default 0.5 can be overpowered
-    by the stability-margin objective at weight 1.0, producing poses
-    that tilt the base to project the COM onto a 2-foot segment.
-    Raise to 2.0-5.0 when running sub-4-contact IK to hold the base
-    upright; leave at 0.5 for full-contact quadruped stances where the
-    plane-fit already agrees with stability.
-    """
-
-    extra_objectives: list[IKObjectiveBaseCfg] = field(default_factory=list)
-    """IK objectives appended to the standard pipeline set.
-
-    Each entry declares the objective class and its static parameters;
-    runtime state (``kin``, ``foot_body_ids``, ``wp_mesh.id``,
-    ``sampler``) is injected by :meth:`IKObjectiveBaseCfg.build`.
-    Empty list runs the pipeline with only the standard objectives
-    (foot-position contact, base pose, joint limits).
-    """
-
-    criteria: list[CriterionBaseCfg] = field(default_factory=list)
-    """Acceptance criteria applied in list order to post-IK candidates.
-
-    Each entry declares the criterion class, its :attr:`CriterionBaseCfg.name`
-    (which keys the rejection summary), and its static parameters;
-    runtime state (``kin``, ``foot_body_ids``, ``_solver_costs``) is
-    injected by :meth:`CriterionBaseCfg.build`. Empty list keeps every
-    geometry-valid IK solve.
     """

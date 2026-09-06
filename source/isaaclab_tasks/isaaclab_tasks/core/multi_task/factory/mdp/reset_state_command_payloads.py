@@ -10,12 +10,13 @@ from typing import TYPE_CHECKING
 import torch
 import warp as wp
 
+from isaaclab.assets import Articulation, RigidObject
 from isaaclab.utils.warp.proxy_array import ProxyArray
 
+from ...mdp.commands.state_command.reset_state_writer import ResetStateWriter
 from ...utils.symmetry import Symmetry
 
 if TYPE_CHECKING:
-    from isaaclab.assets import Articulation, RigidObject
     from isaaclab.envs import ManagerBasedRLEnv
 
     from ...mdp.commands.state_command.state_command_cfg import StateCommandCfg
@@ -47,7 +48,6 @@ def _command_update_kernel(
     orientation_error: wp.array(dtype=wp.float32),
     command: wp.array2d(dtype=wp.float32),
     error: wp.array2d(dtype=wp.float32),
-    position_distance: wp.array(dtype=wp.float32),
 ):
     """Frame the symmetry-reduced alignment error as the robot-base-frame command.
 
@@ -76,16 +76,15 @@ def _command_update_kernel(
     dist = wp.length(delta)
     error[i, 0] = orientation_error[i]
     error[i, 1] = dist
-    position_distance[i] = dist
 
 
 class FactoryAssemblyPayload:
     """Assembly progress and success semantics for the factory reset-state command.
 
     Owns the per-env goal pose, the symmetry-reduced alignment error, the
-    threshold/hold-timer success state, and the held-asset debug marker. The
-    command shell selects the table row, writes the spawn state, and routes the
-    origin offset; this payload realizes the goal and the success contract.
+    threshold/hold-timer success state, and the held-asset debug marker. It
+    interprets selected table rows, resolves their coordinate frame, and writes
+    both spawn and target state; the command shell sees only opaque row ids.
     """
 
     error_names = ("orientation", "position")
@@ -96,14 +95,19 @@ class FactoryAssemblyPayload:
         payload_cfg = cfg.payload
         self._env = env
         self._device = env.device
+        self._states_relative = cfg.states_relative
         self.table = table
-        self.reset_assets = sorted(
-            (set(env.scene._articulations) | set(env.scene._rigid_objects)) & set(payload_cfg.reset_assets)
-        )
+        self.reset_assets = tuple(cfg.reset_assets)
+        if table.states.layout.names != self.reset_assets:
+            raise ValueError(
+                "Factory table layout must exactly match StateCommandCfg.reset_assets: "
+                f"{table.states.layout.names} != {self.reset_assets}."
+            )
+        self._reset_state_writer = ResetStateWriter(env, table.states, self.reset_assets, cfg.states_relative)
         self.held_asset: Articulation | RigidObject = env.scene[payload_cfg.held_asset_cfg.name]
         self.fixed_asset: Articulation | RigidObject = env.scene[payload_cfg.fixed_asset_cfg.name]
         self.robot: Articulation = env.scene[payload_cfg.robot_cfg.name]
-        self._held_asset_root_offset = self._root_state_offset("held_asset")
+        self._held_asset_index = table.states.layout.entity_index(payload_cfg.held_asset_cfg.name)
 
         # symmetry reducer: one asset type for the single-held-asset factory.
         # The single-cyclic fast path ignores type_id; the zero buffer keeps the
@@ -113,8 +117,6 @@ class FactoryAssemblyPayload:
 
         # success / hold-timer state (owned here -- the command reads it back via
         # get_task_done / get_task_reward / command_std)
-        self.orientation_aligned = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
-        self.position_reached = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
         self.is_success = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
         self.duration_required = torch.zeros(env.num_envs, device=env.device)
         self.duration_held = torch.zeros(env.num_envs, device=env.device)
@@ -142,28 +144,9 @@ class FactoryAssemblyPayload:
         self.target_pos = ProxyArray(wp.zeros(env.num_envs, dtype=wp.vec3, device=dev))
         self.target_quat = ProxyArray(target_quat)
         self.orientation_error = ProxyArray(wp.zeros(env.num_envs, dtype=wp.float32, device=dev))
-        self.position_distance = ProxyArray(wp.zeros(env.num_envs, dtype=wp.float32, device=dev))
         self._nearest_quat = ProxyArray(wp.zeros(env.num_envs, dtype=wp.quatf, device=dev))
 
         self._viz_cfg = payload_cfg.held_asset_visualizer_cfg
-
-    def _root_state_offset(self, asset_name: str) -> int:
-        """Return the root-state offset for an asset in rows returned by ``get_reset_state``."""
-        offset = 0
-        reset_asset_set = set(self.reset_assets)
-        for name, articulation in self._env.scene._articulations.items():
-            if name not in reset_asset_set:
-                continue
-            if name == asset_name:
-                return offset
-            offset += 13 + 2 * articulation.num_joints
-        for name in self._env.scene._rigid_objects:
-            if name not in reset_asset_set:
-                continue
-            if name == asset_name:
-                return offset
-            offset += 13
-        raise ValueError(f"Asset '{asset_name}' is not part of reset_assets: {self.reset_assets}.")
 
     def command_std(self) -> torch.Tensor:
         """Per-env success thresholds ``[N, 2]``: orientation [rad], position [m]."""
@@ -177,18 +160,34 @@ class FactoryAssemblyPayload:
         """Sparse success reward: 1 when :meth:`get_task_done`, else 0."""
         return self.is_success.float()
 
-    def resample(
+    def sample_rows(self, count: int) -> torch.Tensor:
+        """Sample task rows through the factory table's policy."""
+        return self.table.sample_rows(count)
+
+    def bind(self, env_ids: torch.Tensor, task_rows: torch.Tensor) -> None:
+        """Bind selected assembly rows and write their simulator reset state."""
+        spawn_rows, target_rows = self.table.gather(task_rows)
+        target_origin = self._env.scene.env_origins[env_ids] if self._states_relative else None
+        self._bind_target(env_ids, target_rows, target_origin)
+        self._reset_state_writer.write(env_ids, spawn_rows)
+
+    def bind_target(self, env_ids: torch.Tensor, task_rows: torch.Tensor) -> None:
+        """Bind selected assembly targets and write their target simulator state."""
+        _, target_rows = self.table.gather(task_rows)
+        target_origin = self._env.scene.env_origins[env_ids] if self._states_relative else None
+        self._bind_target(env_ids, target_rows, target_origin)
+        self._reset_state_writer.write(env_ids, target_rows)
+
+    def _bind_target(
         self,
         env_ids: torch.Tensor,
-        task_rows: torch.Tensor,
-        target_states: torch.Tensor,
+        target_rows: torch.Tensor,
         target_origin: torch.Tensor | None,
     ) -> None:
         """Sample the command variant + hold time and set the goal held-asset pose.
 
-        ``target_states`` are the paired target slot's reset-state rows; the
-        held-asset pose is sliced out and lifted to world by ``target_origin``
-        (the env origin when the table stores env-local states).
+        The held-asset pose is read by entity index and lifted to world by
+        target_origin when the table stores environment-local states.
         """
         if self.randomize_command_indices:
             self.command_indices[env_ids] = torch.randint(
@@ -202,11 +201,11 @@ class FactoryAssemblyPayload:
         self.duration_required[env_ids] += ranges[:, 0]
         self.duration_held[env_ids] = 0.0
 
-        off = self._held_asset_root_offset
-        target_pos_w = target_states[:, off : off + 3]
+        target_pose = self.table.states.root_pose[target_rows, self._held_asset_index]
+        target_pos_w = target_pose[:, :3]
         if target_origin is not None:
             target_pos_w = target_pos_w + target_origin
-        self.set_target(env_ids, target_pos_w, target_states[:, off + 3 : off + 7])
+        self.set_target(env_ids, target_pos_w, target_pose[:, 3:7])
 
     def set_target(self, env_ids: torch.Tensor, pos_w: torch.Tensor, quat_w: torch.Tensor) -> None:
         """Scatter the goal held-asset world pose into ``env_ids`` (the sampled target slot)."""
@@ -231,7 +230,8 @@ class FactoryAssemblyPayload:
         as a quaternion (xyzw). Success error is the symmetry-reduced orientation
         angle [rad] and the position distance [m]. The hold timer advances by
         ``step_dt`` while all active error groups are within threshold;
-        :attr:`is_success` latches once it passes the per-env required duration.
+        :attr:`is_success` becomes true once it passes the per-env required duration
+        and clears whenever the pose leaves the active thresholds.
 
         ``wp.from_torch`` is a zero-copy reinterpret, so no host work happens here.
         """
@@ -257,22 +257,14 @@ class FactoryAssemblyPayload:
                 self.orientation_error.warp,
                 wp.from_torch(command_out),
                 wp.from_torch(error_out),
-                self.position_distance.warp,
             ],
             device=str(self._device),
         )
         # threshold + hold-timer success (masked-off error groups always pass)
         active_success = (error_out < self.command_thresholds) | ~self.cmd_mask
         instant_success = torch.all(active_success, dim=1)
-        self.orientation_aligned[:] = error_out[:, 0] < self.command_thresholds[:, 0]
-        self.position_reached[:] = error_out[:, 1] < self.command_thresholds[:, 1]
         self.duration_held[:] = torch.where(instant_success, self.duration_held + step_dt, 0.0)
         self.is_success[:] = instant_success & (self.duration_held >= self.duration_required)
-        self._env.extras["successes"] = self.is_success
-
-    def log_metrics(self, env: ManagerBasedRLEnv, success_rates: torch.Tensor) -> None:
-        """Log the overall curriculum success rate (the per-tag breakdown is the tag-matrix image)."""
-        env.extras.setdefault("log", {})["Metrics/MonitorSuccessRate"] = success_rates.mean().item()
 
     def set_debug_vis(self, debug_vis: bool) -> None:
         """Create (lazily) and toggle the held-asset target-frame marker."""

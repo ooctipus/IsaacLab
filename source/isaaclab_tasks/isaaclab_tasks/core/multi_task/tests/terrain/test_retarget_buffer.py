@@ -49,26 +49,20 @@ def test_reset_clears_runtime_state_without_reallocating():
     ptr_before = buf._data.data_ptr()
     buf._geom_valid[:3] = True
     buf._ik_valid[:2] = True
-    buf._selected[:2] = torch.tensor([7, 9], dtype=torch.int32)
     buf._is_contact[:4] = False
-    buf.num_selected = 2
     buf.num_written = 10
     buf.num_geometry_valid = 3
     buf.num_ik_valid = 2
-    buf.num_final_valid = 1
 
     buf.reset()
 
     assert buf._data.data_ptr() == ptr_before
     assert not buf._geom_valid.any()
     assert not buf._ik_valid.any()
-    assert not buf._selected.any()
     assert bool(buf._is_contact.all())
-    assert buf.num_selected == 0
     assert buf.num_written == 0
     assert buf.num_geometry_valid == 0
     assert buf.num_ik_valid == 0
-    assert buf.num_final_valid == 0
 
 
 def test_memory_bound_scales_with_capacity_not_written_count():

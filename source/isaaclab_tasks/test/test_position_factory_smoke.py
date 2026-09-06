@@ -109,20 +109,20 @@ def test_factory_newton_collision_properties_use_solver_common_schema() -> None:
     assert collision_props.mesh_collision_property.mesh_approximation_name == "convexHull"
 
 
-def test_factory_difficulty_callback_targets_reset_state_success_rates() -> None:
-    """Factory difficulty curriculum should bind the command-owned success rates."""
+def test_factory_success_rate_callback_targets_reset_sampler() -> None:
+    """Factory difficulty curriculum should bind curriculum-owned success rates."""
     spec = gym.spec("Isaac-Factory-v0")
     module_path, cls_name = spec.kwargs["env_cfg_entry_point"].split(":")
     cfg_cls = getattr(importlib.import_module(module_path), cls_name)
     cfg = cfg_cls()
     callback = cfg.curriculum.difficulty_scheduler.params["success_rate_callback"]
 
-    expected = "env.command_manager.get_term('reset_state').success_rates"
+    expected = "env.curriculum_manager.get_term('reset_sampler').success_rates"
     assert callback == expected
 
     rates = torch.tensor([0.5, 1.0])
-    reset_state = SimpleNamespace(success_rates=rates)
-    eval_env = SimpleNamespace(command_manager=SimpleNamespace(get_term=lambda _name: reset_state))
+    reset_sampler = SimpleNamespace(success_rates=rates)
+    eval_env = SimpleNamespace(curriculum_manager=SimpleNamespace(get_term=lambda _name: reset_sampler))
     assert eval(callback, {}, {"env": eval_env}) is rates  # noqa: S307
 
 
@@ -403,3 +403,106 @@ def test_relocated_module_imports(module_path: str) -> None:
     sibling).
     """
     importlib.import_module(module_path)
+
+
+def test_position_uses_global_terrain_like_old_position_task() -> None:
+    """Position scene should use one global terrain, not one ground prim per env."""
+    from isaaclab_tasks.core.multi_task.position_env_cfg import LocomotionPositionCommandEnvCfg
+
+    cfg = LocomotionPositionCommandEnvCfg()
+
+    assert cfg.scene.terrain.prim_path == "/World/ground"
+    assert cfg.scene.terrain.use_terrain_origins is True
+    assert cfg.scene.height_scanner.mesh_prim_paths == ["/World/ground"]
+    assert cfg.scene.env_spacing == 0.0
+    assert cfg.commands.goal_point.states_relative is False
+
+
+def test_position_joint_reaction_uses_magnitude_force_mode() -> None:
+    """Position joint-reaction termination should match the old full-force magnitude gate."""
+    from isaaclab_tasks.core.multi_task.terrain.mdp_presets.termination_presets import PositionTerminationsCfg
+
+    cfg = PositionTerminationsCfg()
+
+    assert cfg.joint_reaction.params["force_mode"] == "magnitude"
+
+
+def test_position_anymal_c_base_contact_matches_old_task(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Anymal-C base-contact termination should monitor only the base body."""
+    from isaaclab_tasks.utils.hydra import resolve_task_config
+
+    monkeypatch.setattr(sys, "argv", ["pytest", "presets=anymal_c"])
+
+    env_cfg, _ = resolve_task_config("Isaac-Position-v0", "rsl_rl_cfg_entry_point")
+
+    assert env_cfg.terminations.base_contact.params["sensor_cfg"].body_names == "base"
+
+
+@pytest.mark.parametrize(
+    ("preset_name", "command_name"),
+    [
+        ("terrain_pose", "terrain_pose_cmd"),
+        ("terrain_pos", "terrain_position_cmd"),
+    ],
+)
+def test_position_terrain_command_duration_matches_old_task(
+    monkeypatch: pytest.MonkeyPatch,
+    preset_name: str,
+    command_name: str,
+) -> None:
+    """Terrain command hold duration should match the old position task."""
+    from isaaclab_tasks.utils.hydra import resolve_task_config
+
+    monkeypatch.setattr(sys, "argv", ["pytest", f"presets={preset_name}"])
+
+    env_cfg, _ = resolve_task_config("Isaac-Position-v0", "rsl_rl_cfg_entry_point")
+
+    assert env_cfg.commands.goal_point.commands[command_name].duration == (0.05, 1.0)
+
+
+def test_position_beta_value_shift_sampler_includes_value_shift_strategy() -> None:
+    """Position beta_value_shift should combine Beta sampling with value-shift scoring."""
+    from isaaclab_tasks.core.multi_task.curriculum import ValueShiftSamplingStrategyCfg
+    from isaaclab_tasks.core.multi_task.terrain.mdp_presets.curriculum_presets import PositionCurriculumSamplerCfg
+    from isaaclab_tasks.utils.hydra import resolve_presets
+
+    cfg = PositionCurriculumSamplerCfg()
+    resolve_presets(cfg, selected=("beta_value_shift",))
+
+    sampling = cfg.terrain_levels.params["sampling"]
+    value_shift = [s for s in sampling.strategies if isinstance(s, ValueShiftSamplingStrategyCfg)]
+
+    assert len(value_shift) == 1
+    assert value_shift[0].obs_cache_bind == "materialize_state_command_observations(env, 'goal_point')"
+
+
+def test_factory_beta_value_shift_sampler_includes_value_shift_strategy() -> None:
+    """Factory beta_value_shift should combine Beta and critic-drift scoring."""
+    from isaaclab_tasks.core.multi_task.curriculum import ValueShiftSamplingStrategyCfg
+    from isaaclab_tasks.core.multi_task.factory.reset_env_cfg import FACTORY_RESET_SAMPLER_PRESETS
+
+    sampling = FACTORY_RESET_SAMPLER_PRESETS.beta_value_shift
+    value_shift = [s for s in sampling.strategies if isinstance(s, ValueShiftSamplingStrategyCfg)]
+
+    assert len(value_shift) == 1
+    assert value_shift[0].obs_cache_bind == "materialize_state_command_observations(env, 'reset_state')"
+
+
+def test_position_success_gate_payload_is_optional(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Position command success gates stay disabled unless a payload preset enables them."""
+    from isaaclab_tasks.core.multi_task.terrain.mdp.commands.commands_cfg import PhysicalSuccessGateCfg
+    from isaaclab_tasks.utils.hydra import resolve_task_config
+
+    monkeypatch.setattr(sys, "argv", ["pytest", "presets=anymal_c,terrain_pose"])
+
+    env_cfg, _ = resolve_task_config("Isaac-Position-v0", "rsl_rl_cfg_entry_point")
+    payload = env_cfg.commands.goal_point.payload
+
+    assert payload.physical_success_gate is None
+    gate = PhysicalSuccessGateCfg()
+    assert gate.effort_multiplier == 0.8
+    assert gate.min_foot_weight_fraction == 0.8
+    assert gate.body_lin_speed_thresh == 0.30
+    assert gate.body_ang_speed_thresh == 0.30
+    assert gate.joint_wrench_sensor_name == "joint_wrench"
+    assert gate.contact_sensor_name == "contact_forces"

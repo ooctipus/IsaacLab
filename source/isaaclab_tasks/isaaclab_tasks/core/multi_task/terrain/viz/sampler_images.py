@@ -122,7 +122,7 @@ def spawn_goal_scatter_image(env, goal_term, sampler, success_rates: torch.Tenso
     from .terrain_background import render_terrain_background
 
     table = goal_term.table
-    n_patches = int(table.spawn_states.shape[0])
+    n_patches = table.states.row_count
     endpoints = (table.spawn_index, table.target_index)
     device = success_rates.device
 
@@ -142,7 +142,7 @@ def spawn_goal_scatter_image(env, goal_term, sampler, success_rates: torch.Tenso
     if "dashboard" not in state:
         bg_image, bg_extent = render_terrain_background(env.scene.terrain, device=env.device)
         state["dashboard"] = ScatterDashboard2D(
-            positions=table.spawn_states[:, :2].detach().cpu().numpy(),
+            positions=table.states.root_pose[:, 0, :2].detach().cpu().numpy(),
             background_image=bg_image,
             background_extent=bg_extent,
         )

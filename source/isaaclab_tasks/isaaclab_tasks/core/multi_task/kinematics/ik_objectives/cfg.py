@@ -5,12 +5,10 @@
 
 """Configuration dataclasses for custom Newton IK objectives.
 
-Each :class:`IKObjectiveBaseCfg` subclass declares the static parameters
-of an IK objective and sets :attr:`class_type` to the objective
-implementation. The pipeline instantiates objectives via
-``cfg.class_type(cfg, pipeline, wp_mesh)``; the objective's ``__init__``
-pulls any runtime state it needs (kinematics, foot indices, sampler
-state) from ``pipeline``.
+Each :class:`IKObjectiveBaseCfg` subclass declares one numerical term and
+sets :attr:`class_type` to a builder. Builders receive only the objective
+configuration and an explicit :class:`IKObjectiveBuildContext`; objectives
+never capture a domain pipeline.
 """
 
 from __future__ import annotations
@@ -24,9 +22,9 @@ from isaaclab.utils.configclass import configclass
 class IKObjectiveBaseCfg:
     """Base configuration for a retarget IK objective.
 
-    Subclasses set :attr:`class_type` to the objective implementation
-    (resolvable ``"{DIR}.module:ClassName"`` string). Called as
-    ``class_type(cfg, pipeline, wp_mesh)``.
+    Subclasses set :attr:`class_type` to an objective builder resolvable from
+    a ``"{DIR}.module:symbol"`` string. Builders are called as
+    ``class_type(cfg, context)``.
     """
 
     class_type: type | str = MISSING  # type: ignore[assignment]
@@ -34,15 +32,85 @@ class IKObjectiveBaseCfg:
 
 
 @configclass
-class IKObjectiveTerrainCollisionCfg(IKObjectiveBaseCfg):
-    """Config for :class:`IKObjectiveTerrainCollision`.
+class IKConstraintBaseCfg:
+    """Base configuration for a hard retarget IK constraint."""
 
-    The objective probes robot bodies against the terrain mesh and
-    penalizes penetration. Foot bodies are excluded from probing since
-    they are expected to contact the terrain.
+    class_type: type | str = MISSING  # type: ignore[assignment]
+    """Constraint builder called as ``class_type(cfg, context)``."""
+
+
+@configclass
+class BodyPointsCfg:
+    """Body origins on the articulation represented by one kinematic model."""
+
+    asset: str = MISSING  # type: ignore[assignment]
+    bodies: list[str] | tuple[str, ...] | str = MISSING  # type: ignore[assignment]
+
+
+@configclass
+class EntityPositionCfg:
+    """Root position of the articulation represented by one kinematic model."""
+
+    asset: str = MISSING  # type: ignore[assignment]
+
+
+@configclass
+class EntityRotationCfg:
+    """Root rotation of the articulation represented by one kinematic model."""
+
+    asset: str = MISSING  # type: ignore[assignment]
+
+
+@configclass
+class IKObjectivePositionCfg(IKObjectiveBaseCfg):
+    """Body-position objective over a generated target field."""
+
+    class_type: type | str = "{DIR}.standard:build_position_objective"
+    name: str = MISSING  # type: ignore[assignment]
+    current: BodyPointsCfg | EntityPositionCfg = MISSING  # type: ignore[assignment]
+    target_bind: str = MISSING  # type: ignore[assignment]
+    weight: float = 1.0
+
+
+@configclass
+class IKObjectiveRotationCfg(IKObjectiveBaseCfg):
+    """Root-rotation objective over generated base rotations."""
+
+    class_type: type | str = "{DIR}.standard:build_rotation_objective"
+    name: str = "base_rotation"
+    current: EntityRotationCfg = MISSING  # type: ignore[assignment]
+    target_bind: str = MISSING  # type: ignore[assignment]
+    weight: float = 1.0
+
+
+@configclass
+class IKObjectiveJointLimitCfg(IKObjectiveBaseCfg):
+    """Newton joint-limit objective."""
+
+    class_type: type | str = "{DIR}.standard:build_joint_limit_objective"
+    name: str = "joint_limit"
+    weight: float = 10.0
+
+
+@configclass
+class IKObjectiveJointPinCfg(IKObjectiveBaseCfg):
+    """Config for per-problem joint-coordinate targets."""
+
+    class_type: type | str = "{DIR}.joint_pin:build_joint_pin_objective"
+
+    weight: float = 10.0
+    """Residual weight [unitless]."""
+
+
+@configclass
+class IKObjectiveMeshCollisionCfg(IKObjectiveBaseCfg):
+    """Config for collision probes against one generated obstacle mesh.
+
+    Probes attached to active contact bodies are gated by the solve context;
+    all other probes remain active.
     """
 
-    class_type: type | str = "{DIR}.terrain_collision:IKObjectiveTerrainCollision"
+    class_type: type | str = "{DIR}.mesh_collision:build_mesh_collision_objective"
 
     weight: float = 3.0
     """Residual weight [unitless]."""
@@ -53,17 +121,63 @@ class IKObjectiveTerrainCollisionCfg(IKObjectiveBaseCfg):
     n_samples: int = 4
     """Surface probe points per body."""
 
+    max_distance: float = 2.0
+    """Mesh query radius [m]."""
+
+    one_sided_up_axis: tuple[float, float, float] | None = (0.0, 0.0, 1.0)
+    """Optional world up axis for one-sided surface penetration."""
+
+
+@configclass
+class IKObjectiveMeshNonpenetrationCfg(IKObjectiveBaseCfg):
+    """Ungated one-sided nonpenetration hinge over robot collision probes."""
+
+    class_type: type | str = "{DIR}.mesh_collision:build_mesh_nonpenetration_objective"
+
+    tolerance_m: float = 0.002
+    """Penetration residual normalization scale [m]."""
+
+    maximum_penetration_m: float = 0.0
+    """Depth [m] below which the hinge is inactive."""
+
+    n_samples: int = 4
+    """Surface probe points per body."""
+
+    max_distance: float = 2.0
+    """Mesh query radius [m]."""
+
+    one_sided_up_axis: tuple[float, float, float] | None = (0.0, 0.0, 1.0)
+    """Optional world up axis for one-sided surface penetration."""
+
+
+@configclass
+class IKConstraintMeshClearanceCfg(IKConstraintBaseCfg):
+    """Hard signed clearance for robot probes against one obstacle mesh."""
+
+    class_type: type | str = "{DIR}.mesh_collision:build_mesh_clearance_constraint"
+
+    n_samples: int = 4
+    """Surface probe points per body."""
+
+    max_distance: float = 2.0
+    """Mesh query radius [m]."""
+
+    minimum_clearance_m: float = 0.0
+    """Minimum signed probe-to-surface clearance [m]; negative values permit bounded penetration."""
+
+    one_sided_up_axis: tuple[float, float, float] | None = (0.0, 0.0, 1.0)
+    """Optional world up axis for one-sided surface clearance."""
+
 
 @configclass
 class IKObjectiveStabilityMarginCfg(IKObjectiveBaseCfg):
     """Config for :class:`IKObjectiveStabilityMargin`.
 
-    Reads the CCW foot ordering from :attr:`RetargetPipeline.sampler`
-    so the stability residual's signed-area computation matches the
-    sampler's polygon layout.
+    Foot identities and per-candidate contact masks come from the explicit
+    objective-build context.
     """
 
-    class_type: type | str = "{DIR}.stability_margin:IKObjectiveStabilityMargin"
+    class_type: type | str = "{DIR}.standard:build_stability_margin_objective"
 
     weight: float = 1.0
     """Residual weight [unitless]."""
@@ -89,7 +203,7 @@ class IKObjectiveGravityTorqueCfg(IKObjectiveBaseCfg):
     without biasing the stance legs away from their contact solutions.
     """
 
-    class_type: type | str = "{DIR}.gravity_torque:IKObjectiveGravityTorque"
+    class_type: type | str = "{DIR}.standard:build_gravity_torque_objective"
 
     weight: float = 0.02
     """Residual weight [unitless] applied uniformly across revolute joints."""
@@ -113,10 +227,10 @@ class IKObjectiveJointDefaultCfg(IKObjectiveBaseCfg):
     Use a small weight (typical ``0.02``--``0.1``) so the foot-contact,
     base-pose, and stability objectives still dominate the solve and the
     objective only nudges the IK toward the robot's nominal pose where
-    the contact constraints leave slack.
+    the higher-priority objectives leave slack.
     """
 
-    class_type: type | str = "{DIR}.joint_default:IKObjectiveJointDefault"
+    class_type: type | str = "{DIR}.standard:build_joint_default_objective"
 
     weight: float = 0.05
     """Uniform residual weight [unitless] applied to every (non-root) DOF."""
@@ -137,11 +251,8 @@ class IKObjectiveJointRegularizeCfg(IKObjectiveBaseCfg):
     robot are silently skipped -- useful for multi-robot presets where
     each robot uses a different joint-naming convention.
 
-    An empty :attr:`joint_targets` falls back to
-    :attr:`RetargetPipelineCfg.joint_regularize_targets` (typically
-    resolved per robot preset). If both are empty the objective raises
-    at build time -- omit it from ``extra_objectives`` to disable
-    regularization entirely.
+    An empty :attr:`joint_targets` is invalid. Robot presets must resolve the
+    desired mapping at the composition root; there is no pipeline fallback.
 
     Example::
 
@@ -155,10 +266,10 @@ class IKObjectiveJointRegularizeCfg(IKObjectiveBaseCfg):
         )
     """
 
-    class_type: type | str = "{DIR}.joint_regularize:IKObjectiveJointRegularize"
+    class_type: type | str = "{DIR}.standard:build_joint_regularize_objective"
 
     joint_targets: dict[str, float] = field(default_factory=dict)
-    """Mapping of joint-name regex -> target angle [rad]. Empty dict falls back to the pipeline cfg."""
+    """Mapping of joint-name regex to target angle [rad]."""
 
     weight: float = 1.0
     """Uniform residual weight [unitless] applied to every matched DOF."""

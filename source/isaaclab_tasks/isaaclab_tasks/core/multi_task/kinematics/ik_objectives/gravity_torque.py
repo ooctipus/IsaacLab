@@ -17,55 +17,38 @@ import warp as wp
 from ._kernels import jac_fill_row
 
 if TYPE_CHECKING:
-    from isaaclab_tasks.core.multi_task.terrain.retarget.pipeline import RetargetPipeline
-
+    from ..newton_kinematics import NewtonKinematics
     from .cfg import IKObjectiveGravityTorqueCfg
+    from .context import IKObjectiveBuildContext
 
 
-def _build_subtree_info(model: newton.Model) -> dict:
-    """Extract revolute-joint subtree structure from a Newton Model."""
-    jt = model.joint_type.numpy()
-    jp = model.joint_parent.numpy()
-    jc = model.joint_child.numpy()
-    ja = model.joint_axis.numpy()
-    bm = model.body_mass.numpy()
-    n_joints = model.joint_count
-    n_bodies = model.body_count
-
-    children: dict[int, list[int]] = {i: [] for i in range(-1, n_bodies)}
-    for j in range(n_joints):
-        children[int(jp[j])].append(int(jc[j]))
-
-    def _get_subtree(root_body: int) -> list[int]:
-        result, queue = [root_body], [root_body]
-        while queue:
-            b = queue.pop(0)
-            for ch in children[b]:
-                result.append(ch)
-                queue.append(ch)
-        return result
-
-    rev_parent_bodies, rev_axes, all_downstream = [], [], []
-    for j in range(n_joints):
-        if int(jt[j]) != 1:
-            continue
-        rev_parent_bodies.append(int(jp[j]))
-        rev_axes.append(ja[j].tolist() if j < len(ja) else [1, 0, 0])
-        all_downstream.append(_get_subtree(int(jc[j])))
-
-    flat, offsets, masses = [], [0], []
-    for ds in all_downstream:
-        flat.extend(ds)
-        offsets.append(len(flat))
-        masses.append(float(sum(bm[b] for b in ds)))
-
+def _build_subtree_info(topology: NewtonKinematics.Topology) -> dict:
+    """Derive revolute-joint objective rows from canonical subtree facts."""
+    revolute_joints = np.flatnonzero(topology.joint_type == int(newton.JointType.REVOLUTE)).astype(np.int32)
+    parent_bodies: list[int] = []
+    axes_local: list[np.ndarray] = []
+    downstream_bodies: list[int] = []
+    downstream_offsets = [0]
+    for joint in revolute_joints:
+        parent = int(topology.joint_parent[joint])
+        begin = int(topology.joint_qd_start[joint])
+        end = int(topology.joint_qd_start[joint + 1])
+        if parent < 0 or end - begin != 1:
+            raise ValueError("Gravity torque requires non-root one-DOF revolute joints.")
+        subtree_begin = int(topology.joint_subtree_offsets[joint])
+        subtree_end = int(topology.joint_subtree_offsets[joint + 1])
+        parent_bodies.append(parent)
+        axes_local.append(topology.joint_axis[begin])
+        downstream_bodies.extend(int(body) for body in topology.joint_subtree_bodies[subtree_begin:subtree_end])
+        downstream_offsets.append(len(downstream_bodies))
     return {
-        "n_rev": len(rev_parent_bodies),
-        "parent_bodies": np.array(rev_parent_bodies, dtype=np.int32),
-        "axes_local": np.array(rev_axes, dtype=np.float32),
-        "downstream_bodies": np.array(flat, dtype=np.int32),
-        "downstream_offsets": np.array(offsets, dtype=np.int32),
-        "subtree_mass": np.array(masses, dtype=np.float32),
+        "joint_indices": revolute_joints,
+        "n_rev": len(revolute_joints),
+        "parent_bodies": np.asarray(parent_bodies, dtype=np.int32),
+        "axes_local": np.asarray(axes_local, dtype=np.float32).reshape(-1, 3),
+        "downstream_bodies": np.asarray(downstream_bodies, dtype=np.int32),
+        "downstream_offsets": np.asarray(downstream_offsets, dtype=np.int32),
+        "subtree_mass": topology.joint_subtree_mass[revolute_joints],
     }
 
 
@@ -89,112 +72,40 @@ def _compute_subtree_com(
     subtree_com_out[row, jidx] = com * subtree_inv_mass[jidx]
 
 
-def _build_jac_relations(model: newton.Model, parent_bodies_obj: np.ndarray) -> dict:
-    """Precompute per ``(objective_joint j_obj, global dof d)`` relation tables
-    for the analytic Jacobian.
+def _build_jac_relations(
+    topology: NewtonKinematics.Topology,
+    revolute_joints: np.ndarray,
+) -> dict:
+    """Derive gravity Jacobian relation tables from canonical topology."""
+    subtree_sets = []
+    for joint in range(topology.joint_count):
+        begin = int(topology.joint_subtree_offsets[joint])
+        end = int(topology.joint_subtree_offsets[joint + 1])
+        subtree_sets.append(set(int(body) for body in topology.joint_subtree_bodies[begin:end]))
 
-    Each entry classifies how dof ``d`` affects revolute joint ``j_obj``'s
-    residual:
+    objective_index = np.full(topology.joint_count, -1, dtype=np.int32)
+    objective_index[revolute_joints] = np.arange(len(revolute_joints), dtype=np.int32)
+    code = np.zeros((len(revolute_joints), topology.dof_count), dtype=np.uint8)
+    ratio = np.zeros((len(revolute_joints), topology.dof_count), dtype=np.float32)
+    com_index = np.zeros((len(revolute_joints), topology.dof_count), dtype=np.int32)
 
-    * ``code = 0``: unrelated — Jacobian entry is zero.
-    * ``code = 1``: ``d`` is upstream of ``j_obj`` — entire subtree of ``j_obj``
-      moves rigidly under unit motion of ``d``. ``dr/dq_d = ω_d × r``,
-      ``da/dq_d = ω_d × a``.
-    * ``code = 2``: ``d``'s joint sits inside subtree of ``j_obj`` (or
-      ``d`` is ``j_obj``'s own dof). Only bodies downstream of ``d`` move,
-      so ``dp_j/dq_d = 0``, ``da/dq_d = 0``, and
-      ``dc_j/dq_d = ratio * (v_d + ω_d × c_d_sub)`` where
-      ``ratio = m_subtree(d) / m_subtree(j_obj)`` and ``c_d_sub`` is
-      ``d``'s subtree COM (looked up via ``c_idx``).
-
-    Tables are returned as numpy arrays of shape ``(n_rev, n_dofs)`` so the
-    kernel can index them directly.
-    """
-    jt = model.joint_type.numpy()
-    jp = model.joint_parent.numpy()
-    jc = model.joint_child.numpy()
-    bm = model.body_mass.numpy()
-    qd_start = model.joint_qd_start.numpy()
-    n_joints = model.joint_count
-    n_bodies = model.body_count
-    n_dofs = model.joint_dof_count
-    n_rev = len(parent_bodies_obj)
-
-    # Map dof -> global joint.
-    dof_to_joint = np.zeros(n_dofs, dtype=np.int32)
-    for jg in range(n_joints):
-        dof_end = qd_start[jg + 1] if jg + 1 < len(qd_start) else n_dofs
-        for dq in range(int(qd_start[jg]), int(dof_end)):
-            dof_to_joint[dq] = jg
-
-    # Map global revolute joint -> objective joint index (preserving the
-    # iteration order ``_build_subtree_info`` used to enumerate them).
-    obj_of_global: dict[int, int] = {}
-    obj_idx = 0
-    for jg in range(n_joints):
-        if int(jt[jg]) == 1:
-            obj_of_global[jg] = obj_idx
-            obj_idx += 1
-
-    # Per-global-joint subtree (set of bodies downstream of joint's child)
-    # and total mass — needed for both the body-membership check and the
-    # case-2 ratio.
-    children: dict[int, list[int]] = {b: [] for b in range(-1, n_bodies)}
-    for jg in range(n_joints):
-        children[int(jp[jg])].append(int(jc[jg]))
-
-    def _subtree_bodies(child_body: int) -> set[int]:
-        if child_body < 0:
-            return set()
-        out, q = {child_body}, [child_body]
-        while q:
-            x = q.pop()
-            for ch in children[x]:
-                out.add(ch)
-                q.append(ch)
-        return out
-
-    subtree_set: dict[int, set[int]] = {}
-    subtree_mass: dict[int, float] = {}
-    for jg in range(n_joints):
-        sset = _subtree_bodies(int(jc[jg]))
-        subtree_set[jg] = sset
-        subtree_mass[jg] = float(sum(bm[b] for b in sset))
-
-    # Identify each j_obj's global joint index.
-    g_of_obj: list[int] = []
-    for jg in range(n_joints):
-        if int(jt[jg]) == 1:
-            g_of_obj.append(jg)
-    assert len(g_of_obj) == n_rev, "_build_jac_relations: revolute count mismatch"
-
-    code = np.zeros((n_rev, n_dofs), dtype=np.uint8)
-    ratio = np.zeros((n_rev, n_dofs), dtype=np.float32)
-    c_idx = np.zeros((n_rev, n_dofs), dtype=np.int32)
-
-    for j_obj in range(n_rev):
-        g_j = g_of_obj[j_obj]
-        j_subtree = subtree_set[g_j]
-        m_j = subtree_mass[g_j]
-        j_parent_body = int(parent_bodies_obj[j_obj])
-        for d in range(n_dofs):
-            d_joint = int(dof_to_joint[d])
-            d_child = int(jc[d_joint])
-            if d_child in j_subtree:
-                # Case 2: d's joint is in j_obj's subtree (or == j_obj itself).
-                if d_joint not in obj_of_global:
-                    # d's joint is non-revolute (fixed/free) inside subtree —
-                    # rare in practice; treat as 0 to be safe.
+    for row, joint in enumerate(revolute_joints):
+        subtree = subtree_sets[int(joint)]
+        subtree_mass = float(topology.joint_subtree_mass[joint])
+        parent_body = int(topology.joint_parent[joint])
+        for dof, dof_joint_value in enumerate(topology.dof_joint):
+            dof_joint = int(dof_joint_value)
+            if int(topology.joint_child[dof_joint]) in subtree:
+                downstream_row = int(objective_index[dof_joint])
+                if downstream_row < 0:
                     continue
-                code[j_obj, d] = 2
-                c_idx[j_obj, d] = obj_of_global[d_joint]
-                ratio[j_obj, d] = subtree_mass[d_joint] / m_j if m_j > 0 else 0.0
-            elif j_parent_body in subtree_set.get(d_joint, set()):
-                # Case 1: d is upstream of j_obj (j_obj's parent body is
-                # downstream of d's joint).
-                code[j_obj, d] = 1
-                # c_idx and ratio unused for case 1; leave as 0/0.
-    return {"code": code, "ratio": ratio, "c_idx": c_idx}
+                code[row, dof] = 2
+                com_index[row, dof] = downstream_row
+                if subtree_mass > 0.0:
+                    ratio[row, dof] = topology.joint_subtree_mass[dof_joint] / subtree_mass
+            elif parent_body in subtree_sets[dof_joint]:
+                code[row, dof] = 1
+    return {"code": code, "ratio": ratio, "c_idx": com_index}
 
 
 @wp.kernel
@@ -349,28 +260,26 @@ class IKObjectiveGravityTorque(ik.IKObjective):
 
     Args:
         cfg: :class:`~.cfg.IKObjectiveGravityTorqueCfg` with ``weight``.
-        pipeline: Live :class:`RetargetPipeline` — read for
-            ``kin.model`` (kinematic tree, body masses, gravity).
-        wp_mesh: Unused (kept for uniform construction signature).
+        context: Explicit shared kinematics.
     """
 
-    def __init__(self, cfg: IKObjectiveGravityTorqueCfg, pipeline: RetargetPipeline, wp_mesh: object = None) -> None:
+    def __init__(self, cfg: IKObjectiveGravityTorqueCfg, context: IKObjectiveBuildContext) -> None:
         super().__init__()
         self.weight = cfg.weight
-        model = pipeline.kin.model
-        info = _build_subtree_info(model)
+        topology = context.kinematics.topology
+        info = _build_subtree_info(topology)
         self.n_rev = info["n_rev"]
         self._parent_bodies_np = info["parent_bodies"]
         self._axes_local_np = info["axes_local"]
         self._downstream_bodies_np = info["downstream_bodies"]
         self._downstream_offsets_np = info["downstream_offsets"]
         self._subtree_mass_np = info["subtree_mass"]
-        self._subtree_inv_mass_np = (1.0 / (self._subtree_mass_np + 1e-10)).astype(np.float32)
-        self._gravity_np = model.gravity.numpy()[0].astype(np.float32)
-        self._body_com_np = model.body_com.numpy()
-        self._body_mass_np = model.body_mass.numpy()
+        self._subtree_inv_mass_np = topology.joint_subtree_inverse_mass[info["joint_indices"]]
+        self._gravity_np = topology.gravity
+        self._body_com_np = topology.body_com
+        self._body_mass_np = topology.body_mass
         # Per-(j_obj, dof) relation tables for the analytic Jacobian.
-        rel = _build_jac_relations(model, self._parent_bodies_np)
+        rel = _build_jac_relations(topology, info["joint_indices"])
         self._jac_code_np = rel["code"]
         self._jac_ratio_np = rel["ratio"]
         self._jac_c_idx_np = rel["c_idx"]
@@ -409,6 +318,37 @@ class IKObjectiveGravityTorque(ik.IKObjective):
                 for b in range(self.n_batch):
                     e[b, self.residual_offset + r] = 1.0
                 self._e_arrays.append(wp.array(e.flatten(), dtype=wp.float32, device=d))
+
+    def estimate_memory(
+        self,
+        model: newton.Model,
+        jacobian_mode: ik.IKJacobianType,
+        n_problems: int,
+        n_batch: int,
+        total_residuals: int,
+    ) -> int:
+        """Estimate immutable mechanics and per-batch subtree workspaces [byte]."""
+        del model, n_problems
+        fixed_bytes = sum(
+            values.nbytes
+            for values in (
+                self._parent_bodies_np,
+                self._axes_local_np,
+                self._downstream_bodies_np,
+                self._downstream_offsets_np,
+                self._subtree_mass_np,
+                self._subtree_inv_mass_np,
+                self._body_com_np,
+                self._body_mass_np,
+                self._jac_code_np,
+                self._jac_ratio_np,
+                self._jac_c_idx_np,
+            )
+        )
+        workspace_bytes = n_batch * self.n_rev * wp.types.type_size_in_bytes(wp.vec3)
+        if jacobian_mode == ik.IKJacobianType.AUTODIFF:
+            workspace_bytes += self.n_rev * n_batch * total_residuals * wp.types.type_size_in_bytes(wp.float32)
+        return int(fixed_bytes + workspace_bytes)
 
     def compute_residuals(self, body_q, joint_q, model, residuals, start_idx, problem_idx) -> None:
         n = body_q.shape[0]

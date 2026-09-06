@@ -3,22 +3,15 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Acceptance criteria for the offline factory IK pipeline.
-
-Model-internal signed-distance queries that replace the legacy
-``CollisionAnalyzer`` + ``RigidObjectHasher`` (no USD-prim gathering, no hasher,
-no per-env collider packing):
+"""Simulator-free signed-distance criteria for Factory task tables.
 
 * :func:`collision_min_sd` -- probes on FK bodies vs a STATIC world mesh
-  (gripper vs bolt / table).
+  (gripper vs fixed asset or table).
 * :func:`posed_collision_min_sd` -- probes on FK bodies vs a PER-PROBLEM-POSED
   mesh (gripper vs the held asset, whose pose is sampler data, not FK).
-* :func:`points_min_sd` -- world points vs a static mesh (held-asset surface
-  probes vs bolt / table; the held asset is not a model body).
+* :func:`points_min_sd` -- world points vs a static mesh.
 * :func:`self_collision_min_sd` -- robot link-vs-link with a kinematic-adjacency
   filter.
-
-Fingertip reachability is a two-line torch reduction owned by the pipeline.
 """
 
 from __future__ import annotations
@@ -27,6 +20,56 @@ import torch
 import warp as wp
 
 import isaaclab.utils.math as math_utils
+
+
+@wp.kernel
+def _measure_grasp_targets(
+    body_q: wp.array2d(dtype=wp.transformf),
+    pad_bodies: wp.array1d(dtype=wp.int32),
+    pad_offsets: wp.array1d(dtype=wp.vec3),
+    target_plus: wp.array1d(dtype=wp.vec3),
+    target_minus: wp.array1d(dtype=wp.vec3),
+    ee_body: int,
+    target_error_m: wp.array1d(dtype=wp.float32),
+    ee_approach: wp.array1d(dtype=wp.vec3),
+):
+    candidate = wp.tid()
+    plus = wp.transform_point(body_q[candidate, pad_bodies[0]], pad_offsets[0])
+    minus = wp.transform_point(body_q[candidate, pad_bodies[1]], pad_offsets[1])
+    plus_error = wp.length(plus - target_plus[candidate])
+    minus_error = wp.length(minus - target_minus[candidate])
+    target_error_m[candidate] = wp.max(plus_error, minus_error)
+    ee_rotation = wp.transform_get_rotation(body_q[candidate, ee_body])
+    ee_approach[candidate] = wp.quat_rotate(ee_rotation, wp.vec3(0.0, 0.0, 1.0))
+
+
+def measure_grasp_targets(
+    body_q: torch.Tensor,
+    pad_bodies: wp.array,
+    pad_offsets: wp.array,
+    target_plus: torch.Tensor,
+    target_minus: torch.Tensor,
+    ee_body: int,
+    target_error_m: torch.Tensor,
+    ee_approach: torch.Tensor,
+    device: str,
+) -> None:
+    """Measure fingertip target error [m] and end-effector approach without temporaries."""
+    count = body_q.shape[0]
+    wp.launch(
+        _measure_grasp_targets,
+        dim=count,
+        inputs=(
+            wp.from_torch(body_q, dtype=wp.transformf),
+            pad_bodies,
+            pad_offsets,
+            wp.from_torch(target_plus, dtype=wp.vec3),
+            wp.from_torch(target_minus, dtype=wp.vec3),
+            ee_body,
+        ),
+        outputs=(wp.from_torch(target_error_m), wp.from_torch(ee_approach, dtype=wp.vec3)),
+        device=device,
+    )
 
 
 def posed_points(points: torch.Tensor, pose: torch.Tensor) -> torch.Tensor:
@@ -86,6 +129,7 @@ def collision_min_sd(
         dim=[n, probes.shape[0]],
         inputs=[body_q_wp, probe_body, probes, wp.uint64(mesh_id), max_dist],
         outputs=[out],
+        device=device,
     )
     return wp.to_torch(out)
 
@@ -139,6 +183,7 @@ def posed_collision_min_sd(
         dim=[n, probes.shape[0]],
         inputs=[body_q_wp, probe_body, probes, wp.uint64(mesh_id), pose_wp, max_dist],
         outputs=[out],
+        device=device,
     )
     return wp.to_torch(out)
 
@@ -175,8 +220,91 @@ def points_min_sd(points: torch.Tensor, mesh_id: int, max_dist: float, device: s
         dim=[n, points.shape[1]],
         inputs=[pts_wp, wp.uint64(mesh_id), max_dist],
         outputs=[out],
+        device=device,
     )
     return wp.to_torch(out)
+
+
+@wp.kernel
+def _posed_points_vs_mesh_sdf(
+    points: wp.array1d(dtype=wp.vec3),
+    point_pose: wp.array1d(dtype=wp.transformf),
+    mesh_id: wp.uint64,
+    max_dist: float,
+    out_min_sd: wp.array1d(dtype=wp.float32),
+):
+    candidate, point = wp.tid()
+    world_point = wp.transform_point(point_pose[candidate], points[point])
+    query = wp.mesh_query_point(mesh_id, world_point, max_dist)
+    if query.result:
+        closest = wp.mesh_eval_position(mesh_id, query.face, query.u, query.v)
+        distance = query.sign * wp.length(world_point - closest)
+        wp.atomic_min(out_min_sd, candidate, distance)
+
+
+def posed_points_min_sd(
+    points: torch.Tensor,
+    point_pose: torch.Tensor,
+    mesh_id: int,
+    max_dist: float,
+    device: str,
+) -> torch.Tensor:
+    """Return posed canonical-point distance to one static mesh [m], shape [candidate_count]."""
+    count = point_pose.shape[0]
+    points_wp = wp.from_torch(points, dtype=wp.vec3)
+    point_pose_wp = wp.from_torch(point_pose, dtype=wp.transformf)
+    output = wp.full(count, 1.0e6, dtype=wp.float32, device=device)
+    wp.launch(
+        _posed_points_vs_mesh_sdf,
+        dim=(count, points.shape[0]),
+        inputs=(points_wp, point_pose_wp, wp.uint64(mesh_id), max_dist),
+        outputs=(output,),
+        device=device,
+    )
+    return wp.to_torch(output)
+
+
+@wp.kernel
+def _posed_points_vs_posed_mesh_sdf(
+    points: wp.array1d(dtype=wp.vec3),
+    point_pose: wp.array1d(dtype=wp.transformf),
+    mesh_id: wp.uint64,
+    obstacle_pose: wp.array1d(dtype=wp.transformf),
+    max_dist: float,
+    out_min_sd: wp.array1d(dtype=wp.float32),
+):
+    candidate, point = wp.tid()
+    world_point = wp.transform_point(point_pose[candidate], points[point])
+    local_point = wp.transform_point(wp.transform_inverse(obstacle_pose[candidate]), world_point)
+    query = wp.mesh_query_point(mesh_id, local_point, max_dist)
+    if query.result:
+        closest = wp.mesh_eval_position(mesh_id, query.face, query.u, query.v)
+        distance = query.sign * wp.length(local_point - closest)
+        wp.atomic_min(out_min_sd, candidate, distance)
+
+
+def posed_points_vs_posed_mesh_min_sd(
+    points: torch.Tensor,
+    point_pose: torch.Tensor,
+    mesh_id: int,
+    obstacle_pose: torch.Tensor,
+    max_dist: float,
+    device: str,
+) -> torch.Tensor:
+    """Return posed canonical-point distance to per-candidate posed meshes [m]."""
+    count = point_pose.shape[0]
+    points_wp = wp.from_torch(points, dtype=wp.vec3)
+    point_pose_wp = wp.from_torch(point_pose, dtype=wp.transformf)
+    obstacle_pose_wp = wp.from_torch(obstacle_pose, dtype=wp.transformf)
+    output = wp.full(count, 1.0e6, dtype=wp.float32, device=device)
+    wp.launch(
+        _posed_points_vs_posed_mesh_sdf,
+        dim=(count, points.shape[0]),
+        inputs=(points_wp, point_pose_wp, wp.uint64(mesh_id), obstacle_pose_wp, max_dist),
+        outputs=(output,),
+        device=device,
+    )
+    return wp.to_torch(output)
 
 
 @wp.kernel
@@ -233,8 +361,57 @@ def points_vs_body_meshes_min_sd(
         dim=[n, points.shape[1], target_body.shape[0]],
         inputs=[pts_wp, body_q_wp, target_body, target_mesh, target_tf, max_dist],
         outputs=[out],
+        device=device,
     )
     return wp.to_torch(out)
+
+
+@wp.kernel
+def _posed_points_vs_body_meshes_sdf(
+    points: wp.array1d(dtype=wp.vec3),
+    point_pose: wp.array1d(dtype=wp.transformf),
+    body_q: wp.array2d(dtype=wp.transformf),
+    target_body: wp.array1d(dtype=wp.int32),
+    target_mesh: wp.array1d(dtype=wp.uint64),
+    target_tf: wp.array1d(dtype=wp.transformf),
+    max_dist: float,
+    out_min_sd: wp.array1d(dtype=wp.float32),
+):
+    candidate, point, target = wp.tid()
+    world_point = wp.transform_point(point_pose[candidate], points[point])
+    target_world = wp.transform_multiply(body_q[candidate, target_body[target]], target_tf[target])
+    local_point = wp.transform_point(wp.transform_inverse(target_world), world_point)
+    query = wp.mesh_query_point(target_mesh[target], local_point, max_dist)
+    if query.result:
+        closest = wp.mesh_eval_position(target_mesh[target], query.face, query.u, query.v)
+        distance = query.sign * wp.length(local_point - closest)
+        wp.atomic_min(out_min_sd, candidate, distance)
+
+
+def posed_points_vs_body_meshes_min_sd(
+    points: torch.Tensor,
+    point_pose: torch.Tensor,
+    body_q: torch.Tensor,
+    target_body: wp.array,
+    target_mesh: wp.array,
+    target_tf: wp.array,
+    max_dist: float,
+    device: str,
+) -> torch.Tensor:
+    """Return posed canonical-point distance to FK-posed body meshes [m]."""
+    count = point_pose.shape[0]
+    points_wp = wp.from_torch(points, dtype=wp.vec3)
+    point_pose_wp = wp.from_torch(point_pose, dtype=wp.transformf)
+    body_q_wp = wp.from_torch(body_q, dtype=wp.transformf)
+    output = wp.full(count, 1.0e6, dtype=wp.float32, device=device)
+    wp.launch(
+        _posed_points_vs_body_meshes_sdf,
+        dim=(count, points.shape[0], target_body.shape[0]),
+        inputs=(points_wp, point_pose_wp, body_q_wp, target_body, target_mesh, target_tf, max_dist),
+        outputs=(output,),
+        device=device,
+    )
+    return wp.to_torch(output)
 
 
 @wp.kernel
@@ -295,6 +472,7 @@ def edges_vs_posed_mesh_hit(
         dim=[n, edge_p0.shape[0]],
         inputs=[body_q_wp, edge_body, edge_p0, edge_p1, wp.uint64(mesh_id), pose_wp],
         outputs=[out],
+        device=device,
     )
     return wp.to_torch(out).bool()
 
@@ -361,6 +539,7 @@ def posed_edges_vs_body_meshes_hit(
         dim=[n, edge_p0.shape[0], target_body.shape[0]],
         inputs=[edge_p0, edge_p1, pose_wp, body_q_wp, target_body, target_mesh, target_tf],
         outputs=[out],
+        device=device,
     )
     return wp.to_torch(out).bool()
 
@@ -433,5 +612,6 @@ def self_collision_min_sd(
         dim=[n, probes.shape[0], target_body.shape[0]],
         inputs=[body_q_wp, probe_body, probes, target_body, target_mesh, target_tf, adjacency, n_bodies, max_dist],
         outputs=[out],
+        device=device,
     )
     return wp.to_torch(out)

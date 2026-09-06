@@ -9,6 +9,7 @@ __all__ = [
     "ChainedResetTerms",
     "FrontierSamplingStrategy",
     "FrontierSamplingStrategyCfg",
+    "ObservationCache",
     "Sampler",
     "SamplerCfg",
     "SamplingStrategy",
@@ -31,6 +32,7 @@ __all__ = [
 ]
 
 from .event_combinators import ChainedResetTerms, TermChoice, reset_accumulator
+from .observation_cache import ObservationCache
 from .reset_state import get_reset_state, set_reset_state, temporary_seed
 from .sampling import (
     BetaSamplingStrategy,

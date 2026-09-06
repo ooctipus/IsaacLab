@@ -40,6 +40,7 @@ from .sampling_strategies_cfg import (
 if TYPE_CHECKING:
     from ..state_layout import StateLayout
     from .sampler_cfg import SamplerCfg
+    from .sampling_strategies import ValueShiftSamplingStrategy
 
 
 def _task_features(layout: StateLayout) -> torch.Tensor:
@@ -105,6 +106,14 @@ class Sampler:
     def names(self) -> list[str]:
         """Names of the active strategies, in declaration order."""
         return self._names
+
+    @property
+    def value_shift(self) -> ValueShiftSamplingStrategy:
+        """Return the configured value-shift strategy."""
+        strategy = getattr(self._impl, "value_shift_strategy", None)
+        if strategy is None:
+            raise RuntimeError("The selected sampler has no value-shift strategy.")
+        return strategy
 
     def scores(self) -> torch.Tensor:
         """Return contiguous per-strategy score rows shaped ``[num_strategies, num_items]``."""

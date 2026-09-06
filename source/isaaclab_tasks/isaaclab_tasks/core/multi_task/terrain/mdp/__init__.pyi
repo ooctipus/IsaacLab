@@ -6,6 +6,11 @@
 __all__ = [
     "StateCommandCfg",
     "TaskTableCfg",
+    "PositionTerrainStanceGenerateCfg",
+    "PositionIKSolveCfg",
+    "PositionFpsSelectionCfg",
+    "PositionTerrainStanceFamilyCfg",
+    "PositionSameCellPairingCfg",
     "BaseStatePayloadCfg",
     "BaseFootStatePayloadCfg",
     "Commands",
@@ -31,6 +36,7 @@ __all__ = [
     "mechanical_power",
     "command_success",
     "exploration_reward",
+    "reward_compose",
     "contact_penalty",
     "success_terminate",
     "abnormal_robot_state",
@@ -38,19 +44,9 @@ __all__ = [
     "DefaultJointPositionStaticActionCfg",
     "DefaultJointPositionStaticAction",
     "record_trajectory_video",
-    "NewtonKinematics",
-    "IKObjectiveJointDefault",
-    "IKObjectiveGravityTorque",
-    "IKObjectiveTerrainContact",
-    "IKObjectiveStabilityMargin",
-    "IKObjectiveTerrainCollision",
-    "RetargetBuffer",
-    "RetargetPipeline",
-    "RetargetPipelineCfg",
-    "SamplerBaseCfg",
-    "SamplerBase",
-    "CriterionFn",
     "vision_obs",
+    "root_pose_in_env_frame",
+    "bound_height_scan",
     "gravity_b",
 ]
 
@@ -61,7 +57,12 @@ from .commands import (
     CommandPayloadBaseState,
     Commands,
     PoseCommands,
+    PositionFpsSelectionCfg,
+    PositionIKSolveCfg,
     PositionCommands,
+    PositionSameCellPairingCfg,
+    PositionTerrainStanceFamilyCfg,
+    PositionTerrainStanceGenerateCfg,
     StateCommandCfg,
     TaskTableCfg,
     TerrainCommands,
@@ -74,10 +75,12 @@ from isaaclab_tasks.core.multi_task.mdp.observations import (
     command_progress,
     command_reach,
     command_track,
+    root_pose_in_env_frame,
     time_left,
     vision_obs,
 )
 from .observations import (
+    bound_height_scan,
     target_pos_env,
     achieved_pos_env,
     command_current_state,
@@ -85,7 +88,7 @@ from .observations import (
     gravity_b,
 )
 from isaaclab_tasks.core.multi_task.mdp.rewards import command_task_reward, contact_penalty, mechanical_power
-from .rewards import command_success, exploration_reward
+from .rewards import command_success, exploration_reward, reward_compose
 from isaaclab_tasks.core.multi_task.mdp.terminations import (
     abnormal_robot_state,
     illegal_contact_ratio,
@@ -99,20 +102,4 @@ from .terminations import (
 )
 from .actions import DefaultJointPositionStaticActionCfg, DefaultJointPositionStaticAction
 from .events import record_trajectory_video
-from ...kinematics import (
-    NewtonKinematics,
-    IKObjectiveGravityTorque,
-    IKObjectiveJointDefault,
-    IKObjectiveStabilityMargin,
-    IKObjectiveTerrainCollision,
-    IKObjectiveTerrainContact,
-)
-from ..retarget import (
-    RetargetBuffer,
-    RetargetPipeline,
-    RetargetPipelineCfg,
-    SamplerBaseCfg,
-    SamplerBase,
-    CriterionFn,
-)
 from isaaclab.envs.mdp import *

@@ -13,11 +13,10 @@ from isaaclab.managers import SceneEntityCfg
 from isaaclab.markers import FRAME_MARKER_CFG, VisualizationMarkersCfg
 from isaaclab.utils.configclass import configclass
 
-from isaaclab_tasks.utils import PresetCfg
-
+from ...kinematics import NewtonKinematicsBuildCfg
 from ...mdp.commands.state_command.state_command_cfg import StateCommandCfg
 from ...utils.symmetry import AssetSymmetryCfg
-from ..retarget.cfg import FactoryIKPipelineCfg
+from ..retarget.cfg import FactoryFamilyCfg, FactoryGeometryCfg
 
 if TYPE_CHECKING:
     # type-only: the warp-heavy payload class parameterizes its ``class_type`` for
@@ -46,16 +45,20 @@ class FactoryResetStateTableCfg(StateCommandCfg.TaskTableCfg):
 
     class_type: Callable | str = "{DIR}.reset_state_task_table:build_factory_reset_state_task_table"
     """Builder that fills the :class:`~.reset_state_task_table.FactoryResetStateTaskTable`
-    (resolvable string; the command calls ``class_type(cfg, env)``)."""
+    from command configuration, resolved scene configuration, and a device."""
 
-    pipeline_cfg: FactoryIKPipelineCfg = MISSING
-    """Offline Newton-IK pipeline filling the table (see
-    :class:`~..retarget.FactoryIKPipeline`). Tags are pipeline data; rows pass
-    the settle gate below before being stored."""
+    kinematics: NewtonKinematicsBuildCfg = NewtonKinematicsBuildCfg()
+    """Shared Newton parse choices for the scene-declared robot articulation."""
 
-    rows_per_board: int | PresetCfg = 8
+    geometry: FactoryGeometryCfg = MISSING
+    """Shared robot, board, held-object, and obstacle geometry."""
+
+    families: tuple[FactoryFamilyCfg, ...] = MISSING
+    """Placement families with exact fractions, candidate budgets, and visible stages."""
+
+    rows_per_board: int = 8
     """Average reset-state rows kept PER board configuration; the total table size
-    is derived as ``rows_per_board x pipeline_cfg.board.num_boards`` (the
+    is derived as ``rows_per_board x geometry.board.num_boards`` (the
     locomotion ``pool_spacing`` idea: declare density, the size emerges from the
     world library)."""
 
@@ -65,37 +68,19 @@ class FactoryResetStateTableCfg(StateCommandCfg.TaskTableCfg):
     are existing states, so this must be <= :attr:`rows_per_board`). Every spawn
     in a board is paired with its board's full goal set."""
 
+    allowed_tag_pairs: list[tuple[str, str]] | None = None
+    """Optional restriction on which task slots survive, by the placement-tag
+    *names* of each ``(spawn, target)`` pair. ``None`` (default) keeps every spawn
+    x target pair, so training is unchanged. When set, only slots whose
+    ``(spawn_tag_name, target_tag_name)`` is in the list survive -- e.g.
+    ``[("near_seated", "in_air"), ("in_air", "near_seated")]`` evaluates only the
+    seated<->in-air transitions. Tag names are the placement sampler's: the
+    assembly bands (``near_seated``, ``mid_insertion``, ``above_tip``) plus
+    ``on_table`` and ``in_air``. Unknown names or a set that matches zero slots
+    raise at table build."""
+
     state_table_fps_features: Callable | None = None
     """Feature extractor for state-table compaction and sampler layout."""
-
-    settle_steps: int = 0
-    """Physics settle steps before harvesting. Default ``0`` stores rows geometrically: a
-    settle filter cannot be reproduced by the no-sim retarget/preview path, so it would make
-    the stored table diverge from -- and not be validatable by -- that path. The geometric
-    criteria (reachability, collision, aperture) are the acceptance test, and ``nut_bounds``
-    below is the only other filter (geometric, reproducible offline). Set ``> 0`` to opt into
-    a physics settle, accepting it is not offline-validatable."""
-
-    settle_max_drift: float = 0.005
-    """Reject a settled row whose held-asset position drifted more than this [m]."""
-
-    finger_squeeze: float = 0.001
-    """Grasped rows close the fingers this much past contact [m] so the position
-    drive holds the asset with real clamp force during settle and after reset."""
-
-    nut_bounds: dict[str, tuple[float, float]] | None = None
-    """Optional per-axis ``(min, max)`` env-local bounds on the held-asset (nut)
-    root position. Rows whose nut spawns outside are rejected at build so they
-    cannot trigger the ``oob`` termination on the first step (a dead-on-arrival
-    state that pollutes curriculum success). Keep in sync with the task's
-    :func:`~...mdp.terminations.out_of_bound` ``in_bound_range``. ``None`` disables
-    the filter (no change to the stored table)."""
-
-    stash_viz_geometry: bool = False
-    """Precompute the success-grid silhouettes at table build (see
-    :mod:`~..viz.geometry`) and stash them on the table for the curriculum image
-    logger. Off by default so the stored table is unchanged; turn on alongside the
-    :func:`~..viz.sampler_images.log_factory_board_grid` ``sampler_visual_logger``."""
 
 
 @configclass
@@ -103,9 +88,6 @@ class FactoryAssemblyPayloadCfg(StateCommandCfg.PayloadCfg):
     """Configuration for :class:`FactoryAssemblyPayload`."""
 
     class_type: type[FactoryAssemblyPayload] | str = "{DIR}.reset_state_command_payloads:FactoryAssemblyPayload"
-
-    reset_assets: list[str] = MISSING
-    """Scene asset names included in each stored reset-state row."""
 
     held_asset_cfg: SceneEntityCfg = MISSING
     """Held asset used for assembly progress computation."""

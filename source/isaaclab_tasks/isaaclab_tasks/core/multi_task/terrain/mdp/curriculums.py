@@ -14,11 +14,16 @@ if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
 
-def skip_reward_term(env: ManagerBasedRLEnv, env_ids: Sequence[int], reward_term: str):
+def skip_reward_term(
+    env: ManagerBasedRLEnv,
+    env_ids: Sequence[int],
+    reward_term: str,
+    curriculum_term: str = "terrain_levels",
+):
     term_cfg = env.reward_manager.get_term_cfg(reward_term)
     if term_cfg.weight == 0.0:
         return
-    success_rate = env.command_manager.get_term("goal_point").success_rates.mean()
+    success_rate = env.curriculum_manager.get_term(curriculum_term).success_rates.mean()
     if (success_rate > 0.2 and env.common_step_counter > 100) or env.common_step_counter > 20000:
         # Set weight to zero so manager skips computing it
         term_cfg.weight = 0.0
@@ -31,9 +36,14 @@ def skip_reward_term(env: ManagerBasedRLEnv, env_ids: Sequence[int], reward_term
             term_cfg.func = lambda env, **kwargs: torch.zeros(env.num_envs, device=env.device)
 
 
-def stricten_success_term(env: ManagerBasedRLEnv, env_ids: Sequence[int], term: str):
+def stricten_success_term(
+    env: ManagerBasedRLEnv,
+    env_ids: Sequence[int],
+    term: str,
+    curriculum_term: str = "terrain_levels",
+):
     term_cfg = env.termination_manager.get_term_cfg(term)
-    success_rate = env.command_manager.get_term("goal_point").success_rates.mean()
+    success_rate = env.curriculum_manager.get_term(curriculum_term).success_rates.mean()
     if success_rate > 0.1 and env.common_step_counter > 100:
         term_cfg.params["thresh"][2] = 0.5
         term_cfg.params["thresh"][3] = 0.5

@@ -19,7 +19,6 @@ from isaaclab_tasks.utils import preset
 
 import isaaclab_assets.robots.anymal as anymal
 
-from ...retarget.criteria import BaseZError, FootPositionError, JointMargin
 from .robot_presets import (
     AsyncFootPairsCfg,
     BaseBodyNameCfg,
@@ -27,19 +26,16 @@ from .robot_presets import (
     FootBodyNamesCfg,
     HeightScannerPrimPathCfg,
     NonFootContactBodyNamesCfg,
-    RetargetJointRegularizeTargetsCfg,
     RetargetLateralHipJointPatternCfg,
     RobotArticulationCfg,
     SyncFootPairsCfg,
     ViewerOriginTrackPathCfg,
 )
 
-# Pre-exported TorchScript ANYdrive checkpoint for the Newton LSTM actuator controller.
-# Newton's neural-actuator parser loads a TorchScript (or dict) checkpoint and selects the
-# controller from the ``model_type`` in its embedded metadata; the official Nucleus checkpoint
-# carries no such metadata, so this bundled copy is the official network re-saved with
-# ``{"model_type": "lstm"}``. The PhysX path keeps the official checkpoint via its Lab-side
-# ActuatorNetLSTM. Kept local to avoid a remote fetch on the cluster.
+# TorchScript ANYdrive LSTM checkpoint used by Newton-native actuator authoring.
+# This Newton revision loads neural actuators through the PyTorch checkpoint
+# loader; the authoring step adds metadata that matches Isaac Lab's LSTM input
+# convention.
 ANYDRIVE_3_LSTM_JIT_PATH = str(Path(__file__).parent / "assets" / "anydrive_3_lstm.pt")
 
 _ANYMAL_C_CFG: ArticulationCfg = anymal.ANYMAL_C_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
@@ -104,14 +100,3 @@ ANYMAL_C_LATERAL_HIP_PATTERN = ".*HAA"
 """Regex matching ANYmal-C lateral hip joint names."""
 
 RetargetLateralHipJointPatternCfg.anymal_c = ANYMAL_C_LATERAL_HIP_PATTERN
-# Pull lateral hips toward 0 (base near support-polygon centroid) and knees
-# toward their init-pose flexion (front knees tuck forward, hind knees back).
-# Hip flexion/extension is left free so IK can adjust stride.
-RetargetJointRegularizeTargetsCfg.anymal_c = {
-    ANYMAL_C_LATERAL_HIP_PATTERN: 0.0,
-    ".*F_KFE": -0.8,
-    ".*H_KFE": 0.8,
-}
-
-# Re-export generic criteria used by existing terrain tuning scripts.
-__all__ += ["FootPositionError", "JointMargin", "BaseZError"]

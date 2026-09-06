@@ -16,15 +16,16 @@ import warp as wp
 
 
 @wp.kernel
-def _scatter_contacts(
+def _scatter_contact_column(
     src: wp.array(dtype=wp.vec3),
-    dst: wp.array(dtype=wp.vec3),
-    n_candidates: int,
     n_contacts: int,
+    contact_index: int,
+    src_offset: int,
+    dst: wp.array(dtype=wp.vec3),
 ):
-    """Deinterleave: src[cand*nc + foot] -> dst[foot*N + cand]."""
+    """Copy one contact column directly into its objective target."""
     i = wp.tid()
-    dst[i] = src[(i % n_candidates) * n_contacts + i // n_candidates]
+    dst[i] = src[(src_offset + i) * n_contacts + contact_index]
 
 
 class RetargetBuffer:
@@ -34,8 +35,7 @@ class RetargetBuffer:
     (each field is a contiguous block).  Named properties return
     zero-copy torch / warp views into those blocks.
 
-    Bool masks and int selection indices are separate small tensors
-    (different dtype).
+    Bool masks are separate small tensors because they use a different dtype.
 
     The buffer is allocated once at ``max_candidates`` capacity and
     reused across runs via :meth:`reset`. ``max_candidates`` here is the
@@ -82,21 +82,18 @@ class RetargetBuffer:
         torch_dev = torch.device(device)
         self._data = torch.zeros(total, dtype=torch.float32, device=torch_dev)
 
-        # Masks and selection (non-float)
+        # Masks (non-float)
         self._geom_valid = torch.zeros(n, dtype=torch.bool, device=torch_dev)
         self._ik_valid = torch.zeros(n, dtype=torch.bool, device=torch_dev)
-        self._selected = torch.zeros(n, dtype=torch.int32, device=torch_dev)
         # Per-slot contact flag (flat, matching contact_targets_t layout).
         # Default ``True`` is the hard-contact fallback; the sampler
         # overwrites it per slot to mark air targets.
         self._is_contact = torch.ones(n * nc, dtype=torch.bool, device=torch_dev)
 
         # Bookkeeping
-        self.num_selected: int = 0
         self.num_written: int = 0
         self.num_geometry_valid: int = 0
         self.num_ik_valid: int = 0
-        self.num_final_valid: int = 0
 
     # -- Torch views (zero-copy, contiguous) --
 
@@ -193,10 +190,6 @@ class RetargetBuffer:
     def ik_valid(self) -> wp.array:
         return wp.from_torch(self._ik_valid)
 
-    @property
-    def selected(self) -> wp.array:
-        return wp.from_torch(self._selected)
-
     def scatter_contact_targets(
         self,
         objectives: list,
@@ -219,45 +212,25 @@ class RetargetBuffer:
                 chunked IK without copying the unchunked source first.
         """
         nc = self.num_contacts
-        ct = self.contact_targets
-        if src_offset != 0:
-            ct = ct[src_offset * nc : (src_offset + n_active) * nc]
-        flat_dst = wp.zeros(nc * n_active, dtype=wp.vec3, device=self.device)
-        wp.launch(
-            _scatter_contacts,
-            dim=nc * n_active,
-            inputs=[ct, flat_dst, n_active, nc],
-            device=self.device,
-        )
         for f_idx, obj in enumerate(objectives):
-            wp.copy(obj.target_positions, flat_dst, src_offset=f_idx * n_active, count=n_active)
+            wp.launch(
+                _scatter_contact_column,
+                dim=n_active,
+                inputs=[self.contact_targets, nc, f_idx, src_offset],
+                outputs=[obj.target_positions],
+                device=self.device,
+            )
 
     def reset(self) -> None:
         """Zero masks and counters for a new pipeline run."""
         self._geom_valid.zero_()
         self._ik_valid.zero_()
-        self._selected.zero_()
         # Default every slot to hard-contact; the sampler overwrites per
         # slot to mark air targets.
         self._is_contact.fill_(True)
-        self.num_selected = 0
         self.num_written = 0
         self.num_geometry_valid = 0
         self.num_ik_valid = 0
-        self.num_final_valid = 0
-
-    def set_selected(self, indices: torch.Tensor) -> None:
-        """Write the selected-slot list and ``num_selected`` in one call.
-
-        ``indices`` are stored at ``self._selected[:n]`` cast to ``int32``
-        (the buffer's storage dtype) and ``self.num_selected`` is set to
-        ``n = indices.shape[0]``. Used by FPS-thinning helpers so they
-        don't have to reach into the private ``_selected`` field.
-        """
-        n = int(indices.shape[0])
-        if n > 0:
-            self._selected[:n] = indices.to(torch.int32)
-        self.num_selected = n
 
     @property
     def memory_bytes(self) -> int:
@@ -266,6 +239,5 @@ class RetargetBuffer:
             self._data.nelement() * 4
             + self._geom_valid.nelement()
             + self._ik_valid.nelement()
-            + self._selected.nelement() * 4
             + self._is_contact.nelement()
         )

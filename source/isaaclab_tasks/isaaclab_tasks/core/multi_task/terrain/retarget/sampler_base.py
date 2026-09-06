@@ -3,24 +3,20 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Sampler contract for the retarget pipeline.
+"""Sampler contract for Position terrain-stance generation.
 
 Hosts the :class:`SamplerBase` abstract interface, the
 :class:`SamplerOutput` return dataclass, and the
-:class:`SamplerSizing` / :func:`compute_sampler_sizing` helpers used by
-the pipeline to size the shared :class:`RetargetBuffer` before each
-sampler call.
-
-Keeping these in a dedicated module lets sampler implementations depend
-on the interface without importing the pipeline orchestrator (and with
-it the Newton IK stack). The pipeline re-exports all four names so
-existing call sites keep working.
+:class:`SamplerSizing` / :func:`compute_sampler_sizing` helpers used by the
+task-table builder to size :class:`RetargetBuffer` before each sampler call.
 """
 
 from __future__ import annotations
 
 import dataclasses
+import re
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 
 import numpy as np
 import torch
@@ -31,11 +27,27 @@ from .buffer import RetargetBuffer
 from .cfg import SamplerBaseCfg
 
 
+def resolve_contact_body_names(contact_body_names: Sequence[str] | str, body_names: Sequence[str]) -> list[str]:
+    """Resolve exact or regex contact-body names in model order."""
+    if isinstance(contact_body_names, str):
+        pattern = re.compile(contact_body_names)
+        resolved = [name for name in body_names if pattern.fullmatch(name)]
+        if not resolved:
+            raise ValueError(
+                f"Contact body regex {contact_body_names!r} matched no bodies; available={list(body_names)}."
+            )
+        return resolved
+    missing = [name for name in contact_body_names if name not in body_names]
+    if missing:
+        raise ValueError(f"Contact bodies are missing from the model: missing={missing}, available={list(body_names)}.")
+    return list(contact_body_names)
+
+
 @dataclasses.dataclass(frozen=True)
 class SamplerSizing:
     """Back-derived stage sizes for a :class:`SamplerBase` implementation.
 
-    Returned by :meth:`SamplerBase.sizing` so the pipeline can size the
+    Returned by :meth:`SamplerBase.sizing` so the task-table builder can size the
     shared :class:`RetargetBuffer` before calling the sampler.
     """
 
@@ -89,15 +101,11 @@ class SamplerOutput:
             means every slot is a hard contact. Stability / collision /
             foot-error criteria consume this mask when non-``None``
             to ignore air-targeted slots.
-        diagnostics: Opaque per-call metrics for offline analysis and
-            regression testing. Contents are sampler-specific and may
-            include tensors, arrays, scalars, or further dicts.
     """
 
     num_written: int
     reject_stats: dict[str, int]
     is_contact: torch.Tensor | None = None
-    diagnostics: dict[str, object] = dataclasses.field(default_factory=dict)
 
 
 def compute_sampler_sizing(
@@ -112,7 +120,7 @@ def compute_sampler_sizing(
 ) -> SamplerSizing:
     """Back-derive sampler stage sizes from the target final placement count.
 
-    Walks the pipeline backwards, applying an oversample multiplier at
+    Walks the sampling stages backwards, applying an oversample multiplier at
     every downsampling stage and an expected yield rate at every filter
     stage. Produces a :class:`SamplerSizing` that scales with ``n_final``
     rather than hitting any fixed cap.
@@ -174,7 +182,7 @@ def compute_sampler_sizing(
 
 
 class SamplerBase(ABC):
-    """Abstract base for pipeline sampling strategies.
+    """Abstract base for terrain-stance sampling strategies.
 
     Constructed from a cfg, a :class:`NewtonKinematics` instance, and
     the foot body indices.  Subclasses derive any robot geometry they
@@ -182,30 +190,19 @@ class SamplerBase(ABC):
     as explicit constructor arguments.
     """
 
-    def __init__(self, cfg: SamplerBaseCfg, kin: NewtonKinematics, foot_body_ids: list[int]):
+    def __init__(
+        self, cfg: SamplerBaseCfg, kin: NewtonKinematics, foot_body_ids: list[int], generator: torch.Generator
+    ):
         self.cfg = cfg
         self.kin = kin
         self.foot_body_ids = foot_body_ids
-        self.sub_timings: dict[str, float] = {}
-        """Per-subphase wall-time breakdown from the last :meth:`__call__`.
-
-        Keys are sub-phase names (dots indicate nesting); values are seconds.
-        The pipeline merges this into its own timings table under the
-        ``sampler.`` prefix.
-        """
-        self.init_info: str | None = None
-        """One-line summary of any one-time init work (e.g. reachability FK).
-
-        Surfaced in :attr:`RetargetPipeline.rejection_summary`. Sampler
-        subclasses may set this during ``__init__`` to report what was
-        precomputed.
-        """
+        self.generator = generator
 
     @abstractmethod
     def sizing(self, n_desired: int) -> SamplerSizing:
         """Back-derive stage sizes from a target final-robot count.
 
-        The pipeline calls this before each :meth:`run` to size the shared
+        The task-table builder calls this before :meth:`__call__` to size the shared
         :class:`RetargetBuffer` — the sampler guarantees it will write at
         most :attr:`SamplerSizing.ik_capacity` rows into the buffer (the
         post-FPS workload).
@@ -219,6 +216,8 @@ class SamplerBase(ABC):
         origin: np.ndarray,
         buffer: RetargetBuffer,
         n_desired: int,
+        *,
+        seed: int,
     ) -> SamplerOutput:
         """Sample keypoints on geometry and write results to *buffer*.
 

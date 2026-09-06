@@ -23,7 +23,9 @@ Organization:
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import patch
 
+import newton
 import pytest
 import torch
 import warp as wp
@@ -37,8 +39,16 @@ from isaaclab_tasks.core.multi_task.curriculum import (
     SuccessMonitor,
     SuccessMonitorCfg,
 )
+from isaaclab_tasks.core.multi_task.mdp.commands.state_command import (
+    ResetStateBank,
+    ResetStateLayout,
+    TaskTableKinematicView,
+    TaskTableSequenceIndex,
+    TaskTableView,
+)
 from isaaclab_tasks.core.multi_task.mdp.commands.state_command.state_command import StateCommand
 from isaaclab_tasks.core.multi_task.mdp.curriculums import success_rate_sampler
+from isaaclab_tasks.core.multi_task.terrain.mdp.commands.commands_cfg import PhysicalSuccessGateCfg
 from isaaclab_tasks.core.multi_task.terrain.mdp.commands.state_command_payloads import (
     CommandPayloadBaseFootState,
     CommandPayloadBaseState,
@@ -122,11 +132,10 @@ def _sample_by_target_rate(
 
 DEVICE = "cuda:0" if torch.cuda.is_available() else "cpu"
 CURRICULUM_BINDS = {
-    "success_rates_bind": "env.command_manager.get_term('goal_point').success_rates",
     "sample_indices_bind": "env.command_manager.get_term('goal_point').cmd_indices",
     "success_bind": "env.termination_manager.get_term('success')",
     "layout": StateLayoutCfg(
-        coords_bind="env.command_manager.get_term('goal_point').table.spawn_states[:, :2]",
+        coords_bind="env.command_manager.get_term('goal_point').table.states.root_pose[:, 0, :2]",
         spawn_index_bind="env.command_manager.get_term('goal_point').table.spawn_index",
         target_index_bind="env.command_manager.get_term('goal_point').table.target_index",
         task_partition_bind="env.command_manager.get_term('goal_point').table.task_partition",
@@ -144,6 +153,21 @@ def _init_warp():
 # ---------------------------------------------------------------------------
 
 
+class _FakeTargetKinematics:
+    """Minimal retained mechanics for target-foot FK in command tests."""
+
+    def __init__(self, num_joints: int, num_bodies: int = 5) -> None:
+        self.model = SimpleNamespace(
+            joint_coord_count=7 + num_joints,
+            joint_dof_count=6 + num_joints,
+            body_count=num_bodies,
+        )
+
+    def eval_fk_batched(self, joint_q, joint_qd, body_q, body_qd) -> None:
+        del joint_q, joint_qd, body_qd
+        wp.to_torch(body_q).zero_()
+
+
 def _make_task_table(
     num_states: int = 8,
     num_joints: int = 12,
@@ -153,19 +177,29 @@ def _make_task_table(
 ) -> RelativeStateTaskTable:
     """Build a synthetic TaskTable with two command kinds (pos + pose).
 
-    ``spawn_states`` contain random, finite reset states
-    (root_state + joint positions + joint velocities).
+    ``states`` contains random, finite canonical reset-state columns.
     ``params`` carry known position offsets so we can check target computation.
     ``task_mask`` differs between pos (first 3 cols) and pose (first 6 cols)
     so the mask handling is exercised.
     """
     gen = torch.Generator(device=device).manual_seed(0)
 
-    # spawn_states: [num_states, 13 + 2 * num_joints]  (root_state, joint_pos, joint_vel)
-    spawn_states = torch.zeros(num_states, 13 + 2 * num_joints, device=device)
-    spawn_states[:, :3] = torch.randn(num_states, 3, generator=gen, device=device)
-    spawn_states[:, 6] = 1.0  # identity quat (xyzw = 0,0,0,1)
-    spawn_states[:, 13 : 13 + num_joints] = torch.randn(num_states, num_joints, generator=gen, device=device) * 0.1
+    root_pose = torch.zeros(num_states, 1, 7, device=device)
+    root_pose[:, 0, :3] = torch.randn(num_states, 3, generator=gen, device=device)
+    root_pose[:, 0, 6] = 1.0
+    joint_names = tuple(f"joint_{index}" for index in range(num_joints))
+    states = ResetStateBank(
+        layout=ResetStateLayout(
+            names=("robot",),
+            kinds=("articulation",),
+            joint_names=(joint_names,),
+            joint_offsets=(0, num_joints),
+        ),
+        root_pose=root_pose,
+        root_velocity=torch.zeros(num_states, 1, 6, device=device),
+        joint_position=torch.randn(num_states, num_joints, generator=gen, device=device) * 0.1,
+        joint_velocity=torch.zeros(num_states, num_joints, device=device),
+    )
 
     num_tasks = pos_tasks + pose_tasks
     spawn_index = torch.randint(0, num_states, (num_tasks,), generator=gen, device=device)
@@ -186,6 +220,22 @@ def _make_task_table(
     offsets = torch.tensor([0, pos_tasks, num_tasks], device=device, dtype=torch.long)
     task_partition = torch.bucketize(torch.arange(num_tasks, device=device), offsets[1:-1], right=True)
     kind = torch.tensor([0, 1], device=device, dtype=torch.long)  # 0=pos, 1=pose
+    sequence_offsets = torch.arange(num_tasks + 1, dtype=torch.int64, device=device).mul_(2)
+    sequence_state_indices = torch.stack((spawn_index, target_index), dim=-1).reshape(-1).contiguous()
+    view = TaskTableView(
+        sequences=TaskTableSequenceIndex(offsets=sequence_offsets, state_indices=sequence_state_indices),
+        state_bank=states,
+        kinematic_view=TaskTableKinematicView(
+            model_builder_state=newton.ModelBuilder(),
+            joint_q_default=torch.zeros(7 + num_joints, device=device),
+            root_entity_names=("robot",),
+            root_state_indices=torch.zeros(1, dtype=torch.int64, device=device),
+            root_q_indices=torch.arange(7, dtype=torch.int64, device=device).view(1, 7),
+            joint_coordinate_names=tuple(("robot", name) for name in joint_names),
+            joint_state_indices=torch.arange(num_joints, dtype=torch.int64, device=device),
+            joint_q_indices=torch.arange(7, 7 + num_joints, dtype=torch.int64, device=device),
+        ),
+    )
 
     return RelativeStateTaskTable(
         num_tasks=num_tasks,
@@ -198,7 +248,11 @@ def _make_task_table(
         offsets=offsets,
         task_partition=task_partition,
         kind=kind,
-        spawn_states=spawn_states,
+        states=states,
+        view=view,
+        kinematics=_FakeTargetKinematics(num_joints),
+        contact_body_names=("foot_0", "foot_1", "foot_2", "foot_3"),
+        contact_body_ids=(1, 2, 3, 4),
     )
 
 
@@ -211,6 +265,7 @@ class _MockRobot:
 
     def __init__(self, num_envs: int, num_joints: int, device: str):
         self.num_joints = num_joints
+        self.joint_names = [f"joint_{index}" for index in range(num_joints)]
         self.device = device
         # Back root state with warp arrays so wp.to_torch works from _update_command.
         self._root_state_w = torch.zeros(num_envs, 13, device=device)
@@ -221,13 +276,23 @@ class _MockRobot:
         self._joint_vel = torch.zeros(num_envs, num_joints, device=device)
         self.body_names = ["base", "foot_0", "foot_1", "foot_2", "foot_3"]
         self._body_link_pos_w = torch.zeros(num_envs, len(self.body_names), 3, device=device)
-        self._body_link_pos_w[:, 0, 2] = 0.5
+        self._body_pos_w = self._body_link_pos_w.clone()
+        self._body_pos_w[:, 0, 2] = 1.0
+        self._body_lin_vel_w = torch.zeros(num_envs, len(self.body_names), 3, device=device)
+        self._body_ang_vel_w = torch.zeros_like(self._body_lin_vel_w)
+        self._body_mass = torch.ones(num_envs, len(self.body_names), device=device)
         self.data = SimpleNamespace(
+            body_names=self.body_names,
             root_state_w=wp.from_torch(self._root_state_w),
             root_quat_w=wp.from_torch(self._root_quat_w),
             joint_pos=wp.from_torch(self._joint_pos),
             joint_vel=wp.from_torch(self._joint_vel),
             body_link_pos_w=wp.from_torch(self._body_link_pos_w),
+            body_pos_w=wp.from_torch(self._body_pos_w),
+            body_lin_vel_w=wp.from_torch(self._body_lin_vel_w),
+            body_ang_vel_w=wp.from_torch(self._body_ang_vel_w),
+            body_mass=wp.from_torch(self._body_mass),
+            GRAVITY_VEC_W=SimpleNamespace(torch=torch.tensor([0.0, 0.0, -9.81], device=device)),
         )
         self.calls: list[tuple[str, torch.Tensor, torch.Tensor]] = []
 
@@ -251,27 +316,40 @@ class _MockRobot:
         self._joint_vel[env_ids] = velocity
         self.calls.append(("joint_state", env_ids.clone(), torch.cat([position, velocity], dim=-1).clone()))
 
-    def write_root_pose_to_sim_index(self, root_pose: torch.Tensor, env_ids: torch.Tensor):
+    def write_root_pose_to_sim_index(
+        self, *, root_pose: torch.Tensor, env_ids: torch.Tensor, skip_forward: bool = False
+    ) -> None:
+        del skip_forward
         self._root_state_w[env_ids, :7] = root_pose
-        self.calls.append(("pose", env_ids.clone(), root_pose.clone()))
 
-    def write_root_velocity_to_sim_index(self, root_velocity: torch.Tensor, env_ids: torch.Tensor):
+    def write_root_velocity_to_sim_index(
+        self, *, root_velocity: torch.Tensor, env_ids: torch.Tensor, skip_forward: bool = False
+    ) -> None:
+        del skip_forward
         self._root_state_w[env_ids, 7:13] = root_velocity
-        self.calls.append(("vel", env_ids.clone(), root_velocity.clone()))
+        self._root_quat_w[env_ids] = self._root_state_w[env_ids, 3:7]
+        self.calls.append(("root_state", env_ids.clone(), self._root_state_w[env_ids].clone()))
 
-    def write_joint_position_to_sim_index(self, position: torch.Tensor, env_ids: torch.Tensor):
+    def write_joint_position_to_sim_index(
+        self, *, position: torch.Tensor, env_ids: torch.Tensor, skip_forward: bool = False
+    ) -> None:
+        del skip_forward
         self._joint_pos[env_ids] = position
-        self.calls.append(("jpos", env_ids.clone(), position.clone()))
 
-    def write_joint_velocity_to_sim_index(self, velocity: torch.Tensor, env_ids: torch.Tensor):
-        self.calls.append(("jvel", env_ids.clone(), velocity.clone()))
+    def write_joint_velocity_to_sim_index(
+        self, *, velocity: torch.Tensor, env_ids: torch.Tensor, skip_forward: bool = False
+    ) -> None:
+        del skip_forward
+        self._joint_vel[env_ids] = velocity
+        joint_state = torch.cat((self._joint_pos[env_ids], self._joint_vel[env_ids]), dim=-1)
+        self.calls.append(("joint_state", env_ids.clone(), joint_state.clone()))
 
 
 class _MockScene(SimpleNamespace):
     def __getitem__(self, name: str):
         if name in self._articulations:
             return self._articulations[name]
-        return self._sensors[name]
+        return self.sensors[name]
 
 
 def _make_env(num_envs: int, device: str, step_dt: float = 0.02):
@@ -295,6 +373,8 @@ def _make_command_term(
     num_joints: int = 12,
     payload_class: type = CommandPayloadBaseFootState,
     device: str = DEVICE,
+    states_relative: bool = False,
+    physical_success_gate=None,
 ) -> StateCommand:
     """Construct a StateCommand without invoking its __init__.
 
@@ -311,8 +391,10 @@ def _make_command_term(
         commands=cmd_names,
         resampling_time_range=(1.0, 1.0),
         randomize_command_indices=True,
+        states_relative=states_relative,
         debug_vis=False,
-        task_table=SimpleNamespace(pipeline_cfg=SimpleNamespace(asset_cfg=SimpleNamespace(name="robot"))),
+        reset_assets=("robot",),
+        task_table=SimpleNamespace(),
         payload=SimpleNamespace(
             class_type=payload_class,
             pos_std=0.5,
@@ -321,13 +403,24 @@ def _make_command_term(
             ang_vel_std=0.5,
             foot_pos_std=0.1,
             normalize_command_obs=False,
+            physical_success_gate=physical_success_gate,
         ),
     )
     term.robot = _MockRobot(env.num_envs, num_joints, device)
+    joint_wrench = SimpleNamespace(
+        data=SimpleNamespace(torque=wp.from_torch(torch.zeros(env.num_envs, num_joints, 3, device=device)))
+    )
+    supported_weight = 5.0 * 9.81 / 4.0
+    contact_forces = torch.zeros(env.num_envs, len(term.robot.body_names), 3, device=device)
+    contact_forces[:, 1:, 2] = supported_weight
+    contact_sensor = SimpleNamespace(
+        body_names=term.robot.body_names,
+        data=SimpleNamespace(net_forces_w=wp.from_torch(contact_forces)),
+    )
     env.scene = _MockScene(
         _articulations={"robot": term.robot},
         _rigid_objects={},
-        _sensors={},
+        sensors={"joint_wrench": joint_wrench, "contact_forces": contact_sensor},
         env_origins=torch.zeros(env.num_envs, 3, device=device),
         _default_env_origins=torch.zeros(env.num_envs, 3, device=device),
         env_ns="/World/envs",
@@ -336,35 +429,19 @@ def _make_command_term(
     )
     term._reset_assets = ["robot"]
     term.table = table
-    term.success_rates = torch.zeros(table.num_tasks, device=device, dtype=torch.float32)
 
-    foot_body_ids = [1, 2, 3, 4]
-    newton_foot_body_ids = foot_body_ids
-    isaac_to_newton_joint_order = torch.arange(num_joints, device=device, dtype=torch.long)
+    from isaaclab_tasks.core.multi_task.mdp.commands.state_command import reset_state_writer
 
-    class _FakeTargetFk:
-        model = SimpleNamespace(
-            joint_coord_count=7 + num_joints,
-            joint_dof_count=num_joints,
-            body_count=len(foot_body_ids) + 1,
-        )
-
-        def eval_fk_batched(self, joint_q, joint_qd, body_q, body_qd):
-            wp.to_torch(body_q).zero_()
-
-    table.target_fk_kin = _FakeTargetFk()
-    table.newton_foot_body_ids = newton_foot_body_ids
-    table.isaac_to_newton_joint_order = isaac_to_newton_joint_order
-    table.foot_body_ids = foot_body_ids
-    term._payload = payload_class(term.cfg, env, table)
+    with patch.object(reset_state_writer, "_runtime_asset_types", return_value=(_MockRobot, object)):
+        term._payload = payload_class(term.cfg, env, table)
 
     # cmd_buf / cmd_mask / cmd_ids are now owned + allocated by the payload
-    term.states_relative = False
     term.cmd_indices = torch.zeros(env.num_envs, dtype=torch.long, device=device)
     term.randomize_command_indices = True
     term._command = torch.zeros(env.num_envs, term._payload.command_dim, device=device)
     term._err = torch.empty(env.num_envs, term._payload.error_dim, device=device)
-    term.metrics = {name: torch.zeros(env.num_envs, device=device) for name in term._payload.error_names}
+    term._update_step = env.common_step_counter
+    term.metrics = {name: term._err[:, group_idx] for group_idx, name in enumerate(term._payload.error_names)}
     term.metrics["instant_success"] = torch.zeros(env.num_envs, device=device)
     term._debug_vis_handle = None  # CommandTerm.__del__ expects this attribute
     return term
@@ -667,9 +744,9 @@ class TestCommandTerm:
 
     def test_resample_command_populates_target_and_teleports(self):
         """After ``_resample_command``:
-        * target pos = spawn_states[target_idx, :3] + params[task_idx, :3]
+        * target pos = states.root_pose[target_idx, 0, :3] + params[task_idx, :3]
         * hold column = params[task_idx, 12]
-        * robot received root pose and COM velocity writes from spawn_states[spawn_idx, :13]
+        * robot received the canonical spawn root pose and velocity
         * cmd_mask equals table.task_mask at task_idx
         """
         torch.manual_seed(123)
@@ -684,12 +761,12 @@ class TestCommandTerm:
         target_state_idx = table.target_index[task_idx]
         spawn_state_idx = table.spawn_index[task_idx]
 
-        expected_target_pos = table.spawn_states[target_state_idx, :3] + table.params[task_idx, :3]
+        expected_target_pos = table.states.root_pose[target_state_idx, 0, :3] + table.params[task_idx, :3]
         torch.testing.assert_close(term._payload.cmd_buf[env_ids, 0, :3], expected_target_pos)
         torch.testing.assert_close(term._payload.cmd_buf[env_ids, 0, 3:12], table.params[task_idx, 3:12])
         torch.testing.assert_close(
             term._payload.cmd_buf[env_ids, 0, 12 : 12 + term._payload.num_joints],
-            table.spawn_states[target_state_idx, 13 : 13 + term._payload.num_joints],
+            table.states.joint_position[target_state_idx],
         )
         torch.testing.assert_close(
             term._payload.cmd_buf[env_ids, 0, term._payload.time_idx], table.params[task_idx, 12]
@@ -702,15 +779,14 @@ class TestCommandTerm:
         assert (term._payload.cmd_mask[env_ids] == table.task_mask[task_idx]).all()
 
         # Robot was teleported to the spawn reset state associated with each task.
-        root_pose_calls = [c for c in term.robot.calls if c[0] == "root_pose"]
-        root_velocity_calls = [c for c in term.robot.calls if c[0] == "root_velocity"]
-        assert len(root_pose_calls) == len(root_velocity_calls) == 1
-        _, call_env_ids, root_pose = root_pose_calls[0]
-        _, velocity_env_ids, root_velocity = root_velocity_calls[0]
+        root_calls = [c for c in term.robot.calls if c[0] == "root_state"]
+        assert len(root_calls) == 1
+        _, call_env_ids, root_state = root_calls[0]
         torch.testing.assert_close(call_env_ids, env_ids)
-        torch.testing.assert_close(velocity_env_ids, env_ids)
-        torch.testing.assert_close(root_pose, table.spawn_states[spawn_state_idx, :7])
-        torch.testing.assert_close(root_velocity, table.spawn_states[spawn_state_idx, 7:13])
+        expected_root_state = torch.cat(
+            (table.states.root_pose[spawn_state_idx, 0], table.states.root_velocity[spawn_state_idx, 0]), dim=-1
+        )
+        torch.testing.assert_close(root_state, expected_root_state)
 
     def test_spawn_states_are_not_shifted_by_env_origins(self):
         """Task-table states are already valid world terrain poses."""
@@ -726,21 +802,19 @@ class TestCommandTerm:
         task_idx = term.cmd_indices[env_ids]
         spawn_state_idx = table.spawn_index[task_idx]
 
-        root_pose_calls = [c for c in term.robot.calls if c[0] == "root_pose"]
-        _, _, root_pose = root_pose_calls[-1]
-        torch.testing.assert_close(root_pose[:, :3], table.spawn_states[spawn_state_idx, :3])
+        root_calls = [c for c in term.robot.calls if c[0] == "root_state"]
+        _, _, root_state = root_calls[-1]
+        torch.testing.assert_close(root_state[:, :3], table.states.root_pose[spawn_state_idx, 0, :3])
 
     def test_replicated_terrain_spawn_states_are_shifted_by_env_origins(self):
         """Replicated terrain task-table states are placed into each env world slot."""
         table = _make_task_table()
         env = _make_env(num_envs=2, device=DEVICE)
-        term = _make_command_term(env, table)
+        term = _make_command_term(env, table, states_relative=True)
         origins = torch.tensor([[10.0, 20.0, 0.0], [-5.0, 2.0, 0.0]], device=DEVICE)
         env.scene.env_origins[:] = origins
         # replicated terrain: the env declares its stored states as env-local, so
         # the command lifts spawn/target by env_origins (no terrain sniffing)
-        term.states_relative = True
-
         env_ids = torch.arange(env.num_envs, device=DEVICE)
         term.cmd_indices[env_ids] = torch.tensor([0, 1], device=DEVICE)
         term._resample_command(env_ids)
@@ -748,9 +822,9 @@ class TestCommandTerm:
         task_idx = term.cmd_indices[env_ids]
         spawn_state_idx = table.spawn_index[task_idx]
 
-        root_pose_calls = [c for c in term.robot.calls if c[0] == "root_pose"]
-        _, _, root_pose = root_pose_calls[-1]
-        torch.testing.assert_close(root_pose[:, :3], table.spawn_states[spawn_state_idx, :3] + origins)
+        root_calls = [c for c in term.robot.calls if c[0] == "root_state"]
+        _, _, root_state = root_calls[-1]
+        torch.testing.assert_close(root_state[:, :3], table.states.root_pose[spawn_state_idx, 0, :3] + origins)
 
     def test_terrain_task_target_uses_valid_target_state(self):
         """Terrain commands should target the sampled IK-valid state, not random pose params."""
@@ -761,12 +835,14 @@ class TestCommandTerm:
         task_id = torch.tensor([0], dtype=torch.long, device=DEVICE)
         target_state_id = int(table.target_index[0].item())
         yaw = torch.tensor(1.0, device=DEVICE)
-        table.spawn_states[target_state_id : target_state_id + 1, :3] = torch.tensor([[1.0, 2.0, 3.0]], device=DEVICE)
-        table.spawn_states[target_state_id : target_state_id + 1, 3:7] = torch.tensor(
+        table.states.root_pose[target_state_id : target_state_id + 1, 0, :3] = torch.tensor(
+            [[1.0, 2.0, 3.0]], device=DEVICE
+        )
+        table.states.root_pose[target_state_id : target_state_id + 1, 0, 3:7] = torch.tensor(
             [[0.0, 0.0, torch.sin(yaw * 0.5), torch.cos(yaw * 0.5)]], device=DEVICE
         )
-        table.spawn_states[target_state_id : target_state_id + 1, 13 : 13 + term._payload.num_joints] = 0.25
-        target_state = table.spawn_states[target_state_id]
+        table.states.joint_position[target_state_id : target_state_id + 1] = 0.25
+        target_pose = table.states.root_pose[target_state_id, 0]
 
         table.payload_flags[task_id, 0] = True
         table.task_mask[task_id, :6] = True
@@ -778,11 +854,11 @@ class TestCommandTerm:
         term.randomize_command_indices = False
         term._resample_command(torch.tensor([0], device=DEVICE, dtype=torch.long))
 
-        torch.testing.assert_close(term._payload.cmd_buf[0, 0, :3], target_state[:3])
+        torch.testing.assert_close(term._payload.cmd_buf[0, 0, :3], target_pose[:3])
         torch.testing.assert_close(term._payload.cmd_buf[0, 0, 3:6], torch.tensor([0.0, 0.0, 1.0], device=DEVICE))
         torch.testing.assert_close(
             term._payload.cmd_buf[0, 0, 12 : 12 + term._payload.num_joints],
-            target_state[13 : 13 + term._payload.num_joints],
+            table.states.joint_position[target_state_id],
         )
         assert term._payload.cmd_buf[0, 0, term._payload.time_idx].item() == pytest.approx(0.75)
         assert bool(term._payload.foot_success_mask[0])
@@ -795,8 +871,10 @@ class TestCommandTerm:
 
         task_id = torch.tensor([0], dtype=torch.long, device=DEVICE)
         target_state_id = int(table.target_index[0].item())
-        table.spawn_states[target_state_id : target_state_id + 1, :3] = torch.tensor([[1.0, 2.0, 3.0]], device=DEVICE)
-        table.spawn_states[target_state_id : target_state_id + 1, 3:7] = torch.tensor(
+        table.states.root_pose[target_state_id : target_state_id + 1, 0, :3] = torch.tensor(
+            [[1.0, 2.0, 3.0]], device=DEVICE
+        )
+        table.states.root_pose[target_state_id : target_state_id + 1, 0, 3:7] = torch.tensor(
             [[0.0, 0.0, 0.0, 1.0]], device=DEVICE
         )
         table.payload_flags[task_id, 0] = True
@@ -807,7 +885,7 @@ class TestCommandTerm:
         term.randomize_command_indices = False
         term._resample_command(torch.tensor([0], device=DEVICE, dtype=torch.long))
 
-        torch.testing.assert_close(term._payload.cmd_buf[0, 0, :3], table.spawn_states[target_state_id, :3])
+        torch.testing.assert_close(term._payload.cmd_buf[0, 0, :3], table.states.root_pose[target_state_id, 0, :3])
         assert term.command.shape == (env.num_envs, 12)
         assert not hasattr(term._payload, "target_foot_pos_w")
         assert not hasattr(term._payload, "foot_success_mask")
@@ -847,6 +925,7 @@ class TestCommandTerm:
 
         num_ticks = 5
         for _ in range(num_ticks):
+            env.common_step_counter += 1
             term._update_command()
 
         # env 0 accumulated num_ticks * step_dt successes.
@@ -872,6 +951,27 @@ class TestCommandTerm:
         term._update_command()
         assert term._payload.cmd_buf[0, 2, time_idx].item() == pytest.approx(env.step_dt)
 
+    def test_hold_time_requires_every_body_to_be_settled(self):
+        """Hold progress should pause while any body exceeds a settled-speed ceiling."""
+        table = _make_task_table()
+        env = _make_env(num_envs=3, device=DEVICE, step_dt=0.1)
+        term = _make_command_term(env, table, physical_success_gate=PhysicalSuccessGateCfg())
+
+        term.cmd_indices.zero_()
+        term._payload.cmd_mask[:] = table.task_mask[0]
+        term._payload.cmd_buf[:, 0].zero_()
+        term._payload.cmd_buf[:, 0, term._payload.time_idx] = 1.0
+        term.robot._body_lin_vel_w[1, 2, 0] = 0.31
+        term.robot._body_ang_vel_w[2, 3, 1] = 0.31
+
+        env.common_step_counter += 1
+        term._update_command()
+
+        torch.testing.assert_close(
+            term._payload.cmd_buf[:, 2, term._payload.time_idx],
+            torch.tensor([0.1, 0.0, 0.0], device=DEVICE),
+        )
+
     def test_command_observation_exposes_target_feet_not_joint_delta(self):
         """Policy command is root delta plus target foot positions in base frame."""
         table = _make_task_table()
@@ -894,6 +994,7 @@ class TestCommandTerm:
         term._payload.target_foot_pos_w.copy_(target_feet)
         term._payload.foot_success_mask[:] = torch.tensor([True, False], device=DEVICE)
 
+        env.common_step_counter += 1
         term._update_command()
 
         num_feet = term._payload.num_feet
@@ -922,6 +1023,15 @@ class TestCommandTerm:
         term._payload.current_foot_pos_w.copy_(torch.arange(24, device=DEVICE, dtype=torch.float32).view(2, 4, 3))
         term._payload.target_foot_pos_w.copy_(term._payload.current_foot_pos_w + 50.0)
 
+        update_steps: list[float] = []
+
+        def track_update(step_dt: float, command: torch.Tensor, error: torch.Tensor) -> None:
+            del command, error
+            update_steps.append(step_dt)
+
+        term._payload.update = track_update
+        env.common_step_counter += 1
+
         origins = env.scene.terrain.env_origins
         current_expected = torch.cat(
             [
@@ -947,6 +1057,7 @@ class TestCommandTerm:
         # target/achieved position observations.
         torch.testing.assert_close(target_pos_env(env), target_root[:, :3] - origins)
         torch.testing.assert_close(achieved_pos_env(env), current_root[:, :3] - origins)
+        assert update_steps == [env.step_dt]
 
     def test_get_task_done_triggers_when_delta_nonpositive(self):
         """``get_task_done`` is true exactly when the hold delta has drained to 0."""
@@ -977,6 +1088,7 @@ class TestCommandTerm:
         term._payload.target_foot_pos_w[0, 0] = torch.tensor([0.03, 0.04, 0.0], device=DEVICE)
         term._payload.target_foot_pos_w[0, 1] = torch.tensor([0.0, 0.0, 0.2], device=DEVICE)
 
+        env.common_step_counter += 1
         term._update_command()
         torch.testing.assert_close(
             term._err[0],
@@ -1044,20 +1156,16 @@ def _call_curriculum(curriculum, env, env_ids, **kwargs):
 class TestCurriculum:
     """The curriculum drives cmd_indices and the command term populates cmd_buf/targets."""
 
-    def test_binds_success_rate_as_alias(self):
-        """The term's ``success_rates`` must be the *same tensor* as the monitor's rate.
-
-        This is the zero-copy contract: reward functions can read
-        ``goal_term.success_rates`` and see updates without an explicit copy.
-        """
+    def test_curriculum_owns_success_rate_storage(self):
+        """The monitor and sampler share curriculum-owned rate storage."""
         table = _make_task_table()
         env = _make_env(num_envs=8, device=DEVICE)
         term = _make_command_term(env, table)
         term.randomize_command_indices = False
         curriculum = _bootstrap_curriculum(env, term)
 
-        assert term.success_rates is not None
-        assert term.success_rates.data_ptr() == curriculum.success_monitor.success_rate.data_ptr()
+        assert "success_rates" not in term.__dict__
+        assert curriculum.success_rates.data_ptr() == curriculum.success_monitor.success_rate.data_ptr()
 
     def test_curriculum_writes_command_owned_indices(self):
         """Curriculum writes command-owned task rows without replacing the tensor."""
@@ -1083,6 +1191,19 @@ class TestCurriculum:
         ids = term._payload.cmd_ids.long()
         assert ((term.cmd_indices >= offsets[ids]) & (term.cmd_indices < offsets[ids + 1])).all()
 
+    def test_initial_reset_samples_without_recording_outcome(self):
+        """The wrapper's first reset has no completed episode to ingest."""
+        table = _make_task_table(pos_tasks=5, pose_tasks=5)
+        env = _make_env(num_envs=4, device=DEVICE)
+        term = _make_command_term(env, table)
+        env.termination_manager = _FakeTerminationManager(torch.ones(env.num_envs, dtype=torch.bool, device=DEVICE))
+        term.randomize_command_indices = False
+        curriculum = _bootstrap_curriculum(env, term, history_len=8)
+
+        _call_curriculum(curriculum, env, torch.arange(env.num_envs, device=DEVICE))
+
+        assert not curriculum.success_monitor.success_size.any()
+
     def test_success_update_uses_cmd_indices_before_overwrite(self):
         """Ordering invariant: monitor sees the *previous* cmd_indices, not the new ones.
 
@@ -1101,12 +1222,13 @@ class TestCurriculum:
 
         term.randomize_command_indices = False
         curriculum = _bootstrap_curriculum(env, term, history_len=50)
+        env_ids = torch.arange(env.num_envs, device=DEVICE)
+        _call_curriculum(curriculum, env, env_ids)
 
         # Seed the "previous" indices: env i -> task 2*i so we can read them back
         prev_indices = torch.tensor([0, 2, 4, 6], dtype=torch.long, device=DEVICE)
         term.cmd_indices[:] = prev_indices
 
-        env_ids = torch.arange(env.num_envs, device=DEVICE)
         _call_curriculum(curriculum, env, env_ids)
 
         # Monitor should have counted exactly one event per prev_index[i].
@@ -1134,6 +1256,7 @@ class TestCurriculum:
         curriculum = _bootstrap_curriculum(env, term, history_len=8)
         env_ids = torch.arange(env.num_envs, device=DEVICE)
 
+        _call_curriculum(curriculum, env, env_ids)
         # Pin each env to a fixed task so we get repeatable monitor updates.
         pinned = torch.tensor([0, 1, 2, 3], dtype=torch.long, device=DEVICE)
         for _ in range(8):
@@ -1146,5 +1269,68 @@ class TestCurriculum:
         assert float(curriculum.success_monitor.success_rate[1].item()) == pytest.approx(0.0)
         assert float(curriculum.success_monitor.success_rate[2].item()) == pytest.approx(0.0)
         assert float(curriculum.success_monitor.success_rate[3].item()) == pytest.approx(0.0)
-        # The alias on term sees the same numbers (zero-copy contract).
-        torch.testing.assert_close(term.success_rates, curriculum.success_monitor.success_rate)
+        torch.testing.assert_close(curriculum.success_rates, curriculum.success_monitor.success_rate)
+
+
+def test_position_selected_rows_match_frozen_lifecycle_oracle():
+    """Position binding preserves reset, target, command, error, timer, and success tensors."""
+    table = _make_task_table(num_states=2, pos_tasks=1, pose_tasks=1, device=DEVICE)
+    table.spawn_index.copy_(torch.tensor([0, 1], device=DEVICE))
+    table.target_index.copy_(torch.tensor([0, 1], device=DEVICE))
+    table.states.root_pose.zero_()
+    table.states.root_pose[:, 0, 6] = 1.0
+    table.states.root_velocity.zero_()
+    table.states.joint_position[:] = torch.tensor([[0.1] * 12, [-0.2] * 12], device=DEVICE)
+    table.states.joint_velocity.zero_()
+    table.params.zero_()
+    table.params[:, 12] = 0.1
+
+    env = _make_env(num_envs=2, device=DEVICE, step_dt=0.1)
+    term = _make_command_term(env, table, payload_class=CommandPayloadBaseState)
+    env_ids = torch.tensor([0, 1], device=DEVICE)
+    term.randomize_command_indices = False
+    term.cmd_indices.copy_(torch.tensor([0, 1], device=DEVICE))
+
+    term._resample_command(env_ids)
+
+    expected_target = torch.zeros(2, term._payload.state_dim, device=DEVICE)
+    expected_target[:, 12 : 12 + 12] = table.states.joint_position
+    expected_target[:, term._payload.time_idx] = 0.1
+    torch.testing.assert_close(term._payload.target_state, expected_target)
+    torch.testing.assert_close(term.command, torch.zeros_like(term.command))
+    torch.testing.assert_close(term.error, torch.zeros_like(term.error))
+    torch.testing.assert_close(term.command_std, torch.full_like(term.command_std, 0.5))
+    torch.testing.assert_close(
+        term._payload.cmd_buf[:, 2, term._payload.time_idx],
+        torch.zeros(2, device=DEVICE),
+    )
+    torch.testing.assert_close(
+        term._payload.cmd_buf[:, 1, term._payload.time_idx],
+        torch.full((2,), 0.1, device=DEVICE),
+    )
+    torch.testing.assert_close(term.get_task_done(), torch.tensor([False, False], device=DEVICE))
+
+    root_calls = [call for call in term.robot.calls if call[0] == "root_state"]
+    assert len(root_calls) == 1
+    torch.testing.assert_close(root_calls[0][1], env_ids)
+    expected_root_state = torch.cat((table.states.root_pose[:, 0], table.states.root_velocity[:, 0]), dim=-1)
+    torch.testing.assert_close(root_calls[0][2], expected_root_state)
+    joint_calls = [call for call in term.robot.calls if call[0] == "joint_state"]
+    assert len(joint_calls) == 1
+    torch.testing.assert_close(joint_calls[0][1], env_ids)
+    expected_joint_state = torch.cat((table.states.joint_position, table.states.joint_velocity), dim=-1)
+    torch.testing.assert_close(joint_calls[0][2], expected_joint_state)
+
+    env.common_step_counter += 1
+    term._update_command()
+
+    torch.testing.assert_close(
+        term._payload.cmd_buf[:, 2, term._payload.time_idx],
+        torch.full((2,), 0.1, device=DEVICE),
+    )
+    torch.testing.assert_close(
+        term._payload.cmd_buf[:, 1, term._payload.time_idx],
+        torch.zeros(2, device=DEVICE),
+    )
+    torch.testing.assert_close(term.get_task_done(), torch.tensor([True, True], device=DEVICE))
+    torch.testing.assert_close(term.get_task_reward(), torch.ones(2, device=DEVICE))

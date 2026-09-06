@@ -20,7 +20,7 @@ def extract_features(states: torch.Tensor, extractor: Callable | None) -> torch.
 
     The single source of truth for the ``(states_slab) -> features`` API
     that both the locomotion one-shot
-    :func:`~isaaclab_tasks.core.multi_task.terrain.retarget.apply_final_fps`
+    the Position family's selection stage
     and the curriculum streaming
     :class:`~isaaclab_tasks.core.multi_task.curriculum.StateBuffer.compact`
     consume.

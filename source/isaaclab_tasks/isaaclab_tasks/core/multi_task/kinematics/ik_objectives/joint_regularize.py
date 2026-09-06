@@ -15,9 +15,8 @@ import numpy as np
 import warp as wp
 
 if TYPE_CHECKING:
-    from isaaclab_tasks.core.multi_task.terrain.retarget.pipeline import RetargetPipeline
-
     from .cfg import IKObjectiveJointRegularizeCfg
+    from .context import IKObjectiveBuildContext
 
 
 @wp.kernel
@@ -63,37 +62,30 @@ class IKObjectiveJointRegularize(ik.IKObjective):
     Args:
         cfg: :class:`~.cfg.IKObjectiveJointRegularizeCfg` with
             ``joint_targets`` (regex → target-angle map) and ``weight``.
-            Falls back to ``pipeline.cfg.joint_regularize_targets`` if
-            ``cfg.joint_targets`` is empty.
-        pipeline: Live :class:`RetargetPipeline` — read for
-            ``kin.find_joint_dof_indices`` and the fallback regex map.
-        wp_mesh: Unused (kept for uniform construction signature).
+        context: Explicit kinematics used for joint-name resolution.
     """
 
     def __init__(
         self,
         cfg: IKObjectiveJointRegularizeCfg,
-        pipeline: RetargetPipeline,
-        wp_mesh: object = None,
+        context: IKObjectiveBuildContext,
     ) -> None:
         super().__init__()
-        targets_map = cfg.joint_targets if cfg.joint_targets else pipeline.cfg.joint_regularize_targets
+        targets_map = cfg.joint_targets
         if not targets_map:
-            raise ValueError(
-                "IKObjectiveJointRegularize requires at least one entry in "
-                "cfg.joint_targets or pipeline.cfg.joint_regularize_targets."
-            )
-        dof_to_target: dict[int, float] = {}
+            raise ValueError("IKObjectiveJointRegularize requires at least one entry in cfg.joint_targets.")
+        coordinate_targets: dict[int, tuple[int, float]] = {}
         for pattern, target in targets_map.items():
-            for idx in pipeline.kin.find_joint_dof_indices(pattern):
-                dof_to_target[idx] = float(target)
-        if not dof_to_target:
+            coordinates, velocities, _ = context.kinematics.find_joint_scalar_coordinates(pattern)
+            for coordinate, velocity in zip(coordinates, velocities, strict=True):
+                coordinate_targets[coordinate] = (velocity, float(target))
+        if not coordinate_targets:
             raise ValueError(
-                f"IKObjectiveJointRegularize: none of the patterns {list(targets_map)} matched any revolute joint."
+                f"IKObjectiveJointRegularize: none of the patterns {list(targets_map)} matched a scalar joint."
             )
-        indices = sorted(dof_to_target.keys())
-        self._dof_rev_indices = indices
-        self._dof_targets = [dof_to_target[i] for i in indices]
+        self._coordinate_indices = sorted(coordinate_targets)
+        self._velocity_indices = [coordinate_targets[index][0] for index in self._coordinate_indices]
+        self._dof_targets = [coordinate_targets[index][1] for index in self._coordinate_indices]
         self.weight = float(cfg.weight)
         self.coord_indices: wp.array | None = None
         self.dof_indices: wp.array | None = None
@@ -101,11 +93,8 @@ class IKObjectiveJointRegularize(ik.IKObjective):
 
     def init_buffers(self, model: newton.Model, jacobian_mode: ik.IKJacobianType) -> None:
         self._require_batch_layout()
-        # ``joint_q`` has the free-root 7 coords first; ``joint_qd`` has 6 DOFs
-        # first. Revolute indices supplied by ``find_joint_dof_indices`` are
-        # relative to ``joint_q[7:]``, so coord = i + 7 and DOF = i + 6.
-        coord_np = np.asarray([i + 7 for i in self._dof_rev_indices], dtype=np.int32)
-        dof_np = np.asarray([i + 6 for i in self._dof_rev_indices], dtype=np.int32)
+        coord_np = np.asarray(self._coordinate_indices, dtype=np.int32)
+        dof_np = np.asarray(self._velocity_indices, dtype=np.int32)
         targets_np = np.asarray(self._dof_targets, dtype=np.float32)
         self.coord_indices = wp.array(coord_np, dtype=wp.int32, device=self.device)
         self.dof_indices = wp.array(dof_np, dtype=wp.int32, device=self.device)
@@ -115,7 +104,7 @@ class IKObjectiveJointRegularize(ik.IKObjective):
         return True
 
     def residual_dim(self) -> int:
-        return len(self._dof_rev_indices)
+        return len(self._coordinate_indices)
 
     def compute_residuals(self, body_q, joint_q, model, residuals, start_idx, problem_idx) -> None:
         wp.launch(

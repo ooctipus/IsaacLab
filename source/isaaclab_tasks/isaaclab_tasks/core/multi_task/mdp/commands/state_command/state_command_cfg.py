@@ -24,6 +24,8 @@ from typing import Any
 from isaaclab.managers import CommandTermCfg
 from isaaclab.utils.configclass import configclass
 
+from .task_table_view import TaskTableView
+
 
 @configclass
 class StateCommandCfg(CommandTermCfg):
@@ -36,22 +38,105 @@ class StateCommandCfg(CommandTermCfg):
 
     @configclass
     class TaskTableCfg:
-        """Base task-table builder cfg; subclass per domain."""
+        """Base immutable task-table builder configuration."""
+
+        @configclass
+        class GenerateTermCfg:
+            """One declaration-order candidate or target generation term."""
+
+            class_type: Callable | str = MISSING
+
+        @configclass
+        class ObjectiveCfg:
+            """One numerical term in a family's flat solve tuple."""
+
+            class_type: Callable | str = MISSING
+
+        @configclass
+        class SolveCfg:
+            """One optional solve over a flat declared objective tuple."""
+
+            class_type: Callable | str = MISSING
+            objectives: tuple[StateCommandCfg.TaskTableCfg.ObjectiveCfg, ...] = ()
+            convergence_tolerance: float | None = 1.0e-6
+            convergence_check_interval: int = 1
+
+        @configclass
+        class CriterionCfg:
+            """One ordered post-generation acceptance criterion.
+
+            The callable receives ``(cfg, candidates, active_rows)`` and returns
+            one boolean for each active original candidate row. Criteria run in
+            declaration order, so later terms inspect only earlier survivors.
+            """
+
+            class_type: Callable | str = MISSING
+
+        @configclass
+        class SelectionCfg:
+            """One accepted-candidate thinning or ordering policy."""
+
+            class_type: Callable | str = MISSING
+
+        @configclass
+        class FamilyCfg:
+            """Visible generate, optional-solve, accept, and optional-select stages."""
+
+            name: str = MISSING
+            generate: tuple[StateCommandCfg.TaskTableCfg.GenerateTermCfg, ...] = ()
+            solve: StateCommandCfg.TaskTableCfg.SolveCfg | None = None
+            criteria: tuple[StateCommandCfg.TaskTableCfg.CriterionCfg, ...] = ()
+            selection: StateCommandCfg.TaskTableCfg.SelectionCfg | None = MISSING
 
         class_type: Callable | str = MISSING
-        """Builder (or resolvable string) invoked as ``class_type(cfg, env)``;
-        must yield a table exposing ``num_tasks`` and ``gather(task_rows)``."""
+        """Pure builder invoked with the command cfg, resolved scene cfg, and device.
+
+        The result exposes ``num_tasks``; its remaining typed data is consumed
+        only by the matching payload, which owns ``sample_rows(count)``.
+        """
+
+        def build(self, command_cfg: StateCommandCfg, scene_cfg: object, device: str) -> Any:
+            """Build one immutable table without reading a live environment."""
+            return self.class_type(command_cfg, scene_cfg, device)
+
+        def build_inspection_view(
+            self,
+            command_cfg: StateCommandCfg,
+            scene_cfg: object,
+            device: str,
+            *,
+            sequence_limit: int,
+        ) -> TaskTableView:
+            """Build the simulator-free view consumed by the shared inspector.
+
+            Runtime tables expose their retained states by default. Domain tables
+            may override this method when inspection intentionally retains more
+            construction evidence than the runtime table.
+            """
+            del sequence_limit
+            return self.build(command_cfg, scene_cfg, device).view
+
+        seed: int = 0
+        """Independent seed used by every stochastic table-construction stage."""
+
+        families: tuple[StateCommandCfg.TaskTableCfg.FamilyCfg, ...] = ()
+        """Visible generate, solve, accept, and select policies in declaration order."""
 
     @configclass
     class PayloadCfg:
         """Base payload worker cfg; subclass per domain."""
 
         class_type: type | str = MISSING
-        """Payload worker class (or resolvable string) invoked as
-        ``class_type(cfg, env, table)``; must implement the payload protocol the
-        command delegates to."""
+        """Payload class invoked as class_type(cfg, env, table).
+
+        The payload binds selected rows, owns reset writes and domain frames,
+        and updates the command and error tensors.
+        """
 
     class_type: type | str = "{DIR}.state_command:StateCommand"
+
+    reset_assets: tuple[str, ...] = MISSING
+    """Ordered scene assets represented by every physical task-table state."""
 
     task_table: TaskTableCfg = MISSING
     """Task-table builder cfg (a :class:`TaskTableCfg` subclass)."""
@@ -67,11 +152,8 @@ class StateCommandCfg(CommandTermCfg):
     selector is driven entirely by an external curriculum binding."""
 
     states_relative: bool = False
-    """Whether stored table states are expressed in each env's local frame.
+    """Whether the domain payload interprets stored positions as env-local.
 
-    When ``True`` the command writes spawn states with
-    :func:`~...curriculum.set_reset_state` ``is_relative=True`` (per-asset
-    ``env_origins`` added) and lifts the payload target by ``env_origins``. When
-    ``False`` the states are already world-frame (e.g. a single shared terrain)
-    and no origin offset is applied. This replaces runtime terrain-replication
-    sniffing: the deploying scene declares its frame explicitly."""
+    The matching payload owns origin resolution for reset and target data;
+    StateCommand does not interpret this field.
+    """

@@ -21,8 +21,14 @@ import numpy as np
 import pytest
 import torch
 
-from isaaclab_tasks.core.multi_task.factory.assembly_profile import SymmetryOrbit
-from isaaclab_tasks.core.multi_task.factory.assembly_profile_cfg import SymmetryOrbitCfg
+from isaaclab_tasks.core.multi_task.factory.assembly_profile import AssemblyProfile, SymmetryOrbit
+from isaaclab_tasks.core.multi_task.factory.assembly_profile_cfg import (
+    AssemblyProfileCfg,
+    EndPointsSegmentCfg,
+    SymmetryOrbitCfg,
+    UniformPoseNoiseCfg,
+)
+from isaaclab_tasks.core.multi_task.geom import Offset
 from isaaclab_tasks.core.multi_task.utils.symmetry.asset_symmetry import (
     KIND_CYCLIC,
     KIND_GENERAL,
@@ -159,18 +165,76 @@ def test_invalid_symmetry_entries_rejected(cfg: AssetSymmetryCfg, match: str):
 
 
 def test_symmetry_orbit_continuous_is_z_only_and_unit():
-    _, q = SymmetryOrbit(SymmetryOrbitCfg(symmetry=AssetSymmetryCfg(elements=[AxisSymmetryCfg(order=0)])))(4096, "cpu")
+    generator = torch.Generator(device="cpu").manual_seed(0)
+    _, q = SymmetryOrbit(SymmetryOrbitCfg(symmetry=AssetSymmetryCfg(elements=[AxisSymmetryCfg(order=0)])))(
+        4096, "cpu", generator
+    )
     assert torch.allclose(q[:, :2], torch.zeros_like(q[:, :2]), atol=1e-6)  # x,y == 0 (z-axis only)
     assert torch.allclose(q.norm(dim=-1), torch.ones(q.shape[0]), atol=1e-5)
 
 
 @pytest.mark.parametrize("order,members", [(4, 4), (2, 2), (1, 1)])
 def test_symmetry_orbit_discrete_member_count(order: int, members: int):
+    generator = torch.Generator(device="cpu").manual_seed(0)
     _, q = SymmetryOrbit(SymmetryOrbitCfg(symmetry=AssetSymmetryCfg(elements=[AxisSymmetryCfg(order=order)])))(
-        4096, "cpu"
+        4096, "cpu", generator
     )
     uniq = torch.unique((q * 1e4).round() / 1e4, dim=0)
     assert uniq.shape[0] == members
+
+
+def _stochastic_assembly_profile() -> AssemblyProfile:
+    return AssemblyProfile(
+        AssemblyProfileCfg(
+            segments=[
+                EndPointsSegmentCfg(
+                    start_sampler=UniformPoseNoiseCfg(
+                        x=(-0.2, 0.2),
+                        y=(-0.1, 0.1),
+                        yaw=(-0.5, 0.5),
+                    ),
+                    start_pose=Offset(pos=(0.0, 0.0, 0.0)),
+                    end_pose=Offset(pos=(0.0, 0.0, 0.3)),
+                )
+            ]
+        )
+    )
+
+
+def test_assembly_profile_same_seed_produces_equal_samples() -> None:
+    profile = _stochastic_assembly_profile()
+    generator_a = torch.Generator(device="cpu").manual_seed(17)
+    generator_b = torch.Generator(device="cpu").manual_seed(17)
+
+    position_a, rotation_a = profile.sample((0.0, 1.0), 128, "cpu", generator=generator_a)
+    position_b, rotation_b = profile.sample((0.0, 1.0), 128, "cpu", generator=generator_b)
+
+    torch.testing.assert_close(position_a, position_b)
+    torch.testing.assert_close(rotation_a, rotation_b)
+
+
+def test_assembly_profile_different_seed_produces_different_samples() -> None:
+    profile = _stochastic_assembly_profile()
+
+    position_a, rotation_a = profile.sample(
+        (0.0, 1.0), 128, "cpu", generator=torch.Generator(device="cpu").manual_seed(17)
+    )
+    position_b, rotation_b = profile.sample(
+        (0.0, 1.0), 128, "cpu", generator=torch.Generator(device="cpu").manual_seed(18)
+    )
+
+    assert not torch.equal(position_a, position_b)
+    assert not torch.equal(rotation_a, rotation_b)
+
+
+def test_assembly_profile_does_not_consume_global_torch_rng() -> None:
+    profile = _stochastic_assembly_profile()
+    torch.manual_seed(91)
+    state_before = torch.random.get_rng_state().clone()
+
+    profile.sample((0.0, 1.0), 128, "cpu", generator=torch.Generator(device="cpu").manual_seed(17))
+
+    torch.testing.assert_close(torch.random.get_rng_state(), state_before)
 
 
 # ---------------------------------------------------------------------------

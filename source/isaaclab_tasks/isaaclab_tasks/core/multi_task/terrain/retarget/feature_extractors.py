@@ -5,13 +5,10 @@
 
 """Feature extractors for the final FPS spatial-thinning step.
 
-The retarget pipeline's final stage runs a grid-bucket downsampler over
-*features* of the surviving IK-solved candidates to keep the chosen subset
-spatially diverse. By default those features are just the root xyz, so the
-sampler thins by Cartesian position only — but real "diversity" often means
-more than position. Two states at the same xyz with different orientations,
-or different joint configurations, are different *poses* the policy has to
-learn.
+The Position family's selection stage runs a grid-bucket downsampler over
+*features* of accepted IK-solved candidates. By default those features are
+the root xyz; additional orientation or joint coordinates can make the
+retained task rows diverse in pose as well as position.
 
 This module exposes pluggable feature extractors that map a state slab
 ``[N_valid, joint_coord_count]`` to a feature tensor ``[N_valid, D]``.
@@ -39,16 +36,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 import torch
 
 from isaaclab.utils.math import axis_angle_from_quat
-
-from ...utils.grid_downsample import extract_features, grid_bucket_downsample
-
-if TYPE_CHECKING:
-    from .buffer import RetargetBuffer
 
 FeatureExtractor = Callable[[torch.Tensor], torch.Tensor]
 """Either a raw callable ``(states: [N_valid, joint_coord_count]) -> [N_valid, D]``
@@ -120,91 +111,6 @@ def bbox_target_count(features: torch.Tensor, spacing: float) -> int:
         extra_vol = 1.0
         d_eff = 2
     return max(1, int(xy_area * extra_vol / float(spacing) ** d_eff))
-
-
-def apply_final_fps(
-    buffer: RetargetBuffer,
-    n_desired: int,
-    *,
-    extractor: FeatureExtractor | None = None,
-    spacing: float | None = None,
-) -> None:
-    """Run the terminal FPS spatial-thinning pass on a post-criteria buffer.
-
-    Conceptually equivalent to:
-
-    .. code-block:: python
-
-        slab = buffer.joint_q_result_t[buffer._selected[:n_candidates]]
-        sb = StateBuffer.from_states(slab, target_size=n_select, fps_features=extractor)
-        keep = sb.compact()
-        buffer.set_selected(buffer._selected[:n_candidates][keep])
-
-    -- it's the in-place RetargetBuffer-flavoured entry point of the
-    same operation. The xyz-default fast-path additionally skips the
-    full-slab gather (``[N, state_dim]`` -> ``[N, 3]``) since the
-    extractor only reads xyz; this saves ~88 MB of transient memory at
-    ``N=1M``. For custom extractors the path delegates to
-    :meth:`StateBuffer.from_states` so the dispatch lives in one place.
-
-    Expects ``buffer._selected[:buffer.num_selected]`` to hold every
-    post-criteria candidate (the shape :meth:`RetargetPipeline.run`
-    returns, which always emits the un-thinned set). The function
-    rewrites ``buffer._selected`` + ``buffer.num_selected`` in place
-    to reflect the survivor subset.
-
-    Args:
-        buffer: Buffer with ``_selected[:num_selected]`` already
-            populated with post-criteria candidates.
-        n_desired: Fallback target count when :paramref:`spacing` is
-            ``None``. Clamped to ``num_selected`` from above.
-        extractor: Feature extractor; ``None`` -> xyz fast-path.
-        spacing: When set, target count is derived from the feature-
-            space bounding box via :func:`bbox_target_count`.
-    """
-    # Local import to avoid a curriculum -> terrain.retarget cycle at
-    # module import time; the dependency is one-way at call time only.
-    from ...curriculum import StateBuffer  # noqa: PLC0415
-
-    n_candidates = int(buffer.num_selected)
-    if n_candidates == 0:
-        return
-
-    candidates_idx = buffer._selected[:n_candidates].long()
-
-    if extractor is None:
-        # xyz fast-path: skip the full-slab gather entirely. Equivalent
-        # to ``StateBuffer.from_states`` over the gathered xyz columns
-        # only, but inlined so we don't materialise the unused state
-        # columns.
-        features = buffer.joint_q_result_t[candidates_idx, 0:3]
-        if spacing is not None:
-            n_select = min(bbox_target_count(features, spacing), n_candidates)
-        else:
-            n_select = min(int(n_desired), n_candidates)
-        if n_select <= 0:
-            buffer.num_selected = 0
-            return
-        local_idx = grid_bucket_downsample(features, n_select)
-        buffer.set_selected(candidates_idx[local_idx])
-        return
-
-    # Custom-extractor path: delegate to StateBuffer.from_states so the
-    # ``(states, extractor) -> features`` dispatch + thin lives in one
-    # place. The slab gather is unavoidable here since custom
-    # extractors may read quat / joint columns.
-    slab = buffer.joint_q_result_t[candidates_idx]
-    if spacing is not None:
-        n_select = min(bbox_target_count(extract_features(slab, extractor), spacing), n_candidates)
-    else:
-        n_select = min(int(n_desired), n_candidates)
-    if n_select <= 0:
-        buffer.num_selected = 0
-        return
-
-    sb = StateBuffer.from_states(slab, target_size=n_select, fps_features=extractor)
-    local_idx = sb.compact()
-    buffer.set_selected(candidates_idx[local_idx])
 
 
 @dataclass

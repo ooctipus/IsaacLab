@@ -121,9 +121,8 @@ class ValueShiftSamplingStrategyCfg:
     .. code-block:: text
 
         score = |V_new(s) - V_prev(s)|     # per-state critic value shift,
-                                           # populated by an external
-                                           # ValueShiftPPO-like algorithm each
-                                           # update
+                                           # populated by the ValueShift PPO
+                                           # augmentation each update
     """
 
     class_type: type[ValueShiftSamplingStrategy] | str = "{DIR}.sampling_strategies:ValueShiftSamplingStrategy"
@@ -138,17 +137,9 @@ class ValueShiftSamplingStrategyCfg:
     command state instead.
     """
 
-    state_buffer_bind: str = MISSING
-    """Expression resolving to the ``[num_states, ...]`` state pool tensor (count + device)."""
-    cmd_indices_bind: str = MISSING
-    """Expression resolving to ``[num_envs]`` long tensor of per-env command indices."""
-    resample_command_fn_bind: str = MISSING
-    """Expression resolving to ``(env_ids: LongTensor) -> None``.
-
-    Writes the env's pose / state for the cached command index.
-    """
-    get_critic_obs_fn_bind: str = MISSING
-    """Expression resolving to ``() -> dict[str, Tensor]``; returns one batch of critic-group observations."""
+    obs_cache_bind: str = MISSING
+    """Expression resolving to an explicit immutable [num_states, ...]
+    observation cache supplied by the caller."""
 
 
 SamplingStrategyCfg = (

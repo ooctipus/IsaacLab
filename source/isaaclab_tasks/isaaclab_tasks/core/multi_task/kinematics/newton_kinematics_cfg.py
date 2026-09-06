@@ -17,6 +17,14 @@ from isaaclab.utils.configclass import configclass
 
 
 @configclass
+class NewtonKinematicsBuildCfg:
+    """Parse choices applied when scene-owned articulation data is resolved."""
+
+    collapse_fixed_joints: bool = False
+    """Merge fixed joints for a simpler kinematic tree."""
+
+
+@configclass
 class NewtonKinematicsCfg:
     """Configuration for building a :class:`NewtonKinematics` model.
 
@@ -26,6 +34,9 @@ class NewtonKinematicsCfg:
 
     usd_path: str = MISSING  # type: ignore[assignment]
     """Local path or remote URL to the robot USD file."""
+
+    mjcf_path: str | None = None
+    """Path to the robot MJCF file, or ``None`` when :attr:`usd_path` is used."""
 
     device: str = "cuda:0"
     """Warp device string."""
