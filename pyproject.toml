@@ -53,7 +53,7 @@ dependencies = [
     "pyglet>=2.1.6,<3",
     "transformers==4.57.6",
     "einops",
-    "warp-lang==1.16.0",
+    "warp-lang==1.17.0",
     "matplotlib>=3.10.3",
     # pillow: floor, not exact — an exact pin below Isaac Sim's prebundled version forces a
     # downgrade that deletes the prebundled copy other extensions symlink into (nvbugs 6410989).
@@ -216,7 +216,7 @@ torchaudio = "2.11.0"
 ovphysx = "0.5.11"
 ovrtx = "0.4.1.364340"
 ovstage = "0.1.1.355824"
-warp = "1.16.0"
+warp = "1.17.0"
 
 [tool.ruff]
 line-length = 120
@@ -398,8 +398,8 @@ override-dependencies = [
     "numpy>=2",
     "mujoco~=3.11.0",
     "mujoco-warp~=3.11.0",
-    # Pin the translated floating-base analytic IK fix until newton-physics/newton#4088 is released.
-    "newton[sim] @ git+https://github.com/ooctipus/newton.git@5469a441c191a0132b32ad18a36f254353eb72d0",
+    # Pin the continuous IK API (IKSolver.solve/estimate_memory) until it lands in newton-physics/newton.
+    "newton[sim] @ git+https://github.com/ooctipus/newton.git@389bfff03b404989a996cc27bcfceb88616e86f0",
     # Force the Newton-matched schemas over isaacsim's ==0.2.0 pin.
     "newton-usd-schemas>=0.4.1",
     "torch==2.11.0",
