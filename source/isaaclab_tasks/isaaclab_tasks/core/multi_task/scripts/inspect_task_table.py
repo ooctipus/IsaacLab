@@ -10,7 +10,10 @@ Usage::
     SCRIPT=source/isaaclab_tasks/isaaclab_tasks/core/multi_task/scripts/inspect_task_table.py
     uv run python $SCRIPT --task Isaac-Position-v0 --command goal_point presets=anymal_c,newton_mjwarp
     uv run python $SCRIPT --task Isaac-Position-v0 --command goal_point --visualizer newton_gl presets=anymal_c
-    uv run python $SCRIPT --task Isaac-Position-v0 --command goal_point --sequences 64 presets=anymal_c
+
+Static tables show every reset state once; timed tables loop every sequence. Table
+density is owned by the task configuration, for example
+``env.commands.goal_point.task_table.pool_spacing`` for Position.
 """
 
 from __future__ import annotations
@@ -24,7 +27,6 @@ import sys
 import time
 from collections.abc import Iterator, Sequence
 
-_SEQUENCE_LIMIT = 16
 _STATIC_REFRESH_SECONDS = 0.05
 _TASK_FAMILY_LOGGER = "isaaclab_tasks.core.multi_task.mdp.commands.state_command.task_family"
 _VISER_INSTALL_GUIDANCE = "Install Viser with: ./isaaclab.sh -i 'visualizer[viser]'"
@@ -77,21 +79,19 @@ def _timeline_events(
         yield event_time, tuple(updates)
 
 
-def _spread_sequence_indices(sequence_count: int, requested: int, device):
-    """Pick up to ``requested`` sequences evenly spaced over the table.
+def _static_state_rows(view):
+    """Return every reset-state row a static table references, each exactly once.
 
-    Domain tables often order sequences by region (Position groups pairs per
-    terrain cell), so the first rows would all show one region. Even spacing
-    represents every region in proportion while staying deterministic.
+    Static tables pair states into spawn/target tuples, so drawing sequences would
+    repeat the same state many times; the state bank is the complete picture.
     """
     import torch  # noqa: PLC0415
 
-    if sequence_count <= 0:
+    if view.sequences.sequence_count <= 0:
         raise ValueError("The task table contains no sequences.")
-    if requested <= 0:
-        raise ValueError("The number of inspected sequences must be positive.")
-    count = min(requested, sequence_count)
-    return torch.linspace(0.0, float(sequence_count - 1), count, device=device).round().to(torch.int64)
+    if view.sequences.state_indices is None:
+        return torch.arange(view.sequences.frame_count, dtype=torch.int64, device=view.sequences.offsets.device)
+    return torch.unique(view.sequences.state_indices)
 
 
 def _repeat_kinematic_model(view, world_count: int):
@@ -181,6 +181,9 @@ def _log_evidence(viewer, view, state_rows, world_offsets, sequence_quality, *, 
     if quality.scope == "global":
         values = quality.values[:1]
     elif quality.scope == "sequence":
+        if sequence_quality is None:
+            # Static tables draw states, not sequences, so sequence quality has no world to attach to.
+            return
         values = sequence_quality
     else:
         values = quality.values[state_rows]
@@ -192,28 +195,14 @@ def _log_evidence(viewer, view, state_rows, world_offsets, sequence_quality, *, 
                 viewer.log_scalar(f"quality/{name}/world_{world_index}", values[world_index, column])
 
 
-def _inspect_static(view, viewer_type: type, selected) -> None:
-    """Show the two declared frames of each selected static sequence.
-
-    Args:
-        view: Task-table view to display.
-        viewer_type: Newton viewer class to instantiate.
-        selected: Sequence indices to display, shape [sequence_count], int64.
-    """
+def _inspect_static(view, viewer_type: type) -> None:
+    """Show every reset state of a static table once at its table-owned placement."""
     import newton  # noqa: PLC0415
     import torch  # noqa: PLC0415
 
-    sequence_count = int(selected.numel())
-    counts = view.sequences.offsets[selected + 1] - view.sequences.offsets[selected]
-    if not bool(torch.all(counts == 2)):
-        raise ValueError("Static task-table sequences must contain exactly two frames.")
-    sequence_indices = selected.repeat_interleave(2)
-    frame_indices = torch.tensor((0, 1), dtype=torch.int64, device=sequence_indices.device).repeat(sequence_count)
-    state_rows = view.sequences.state_rows(sequence_indices, frame_indices)
-    sequence_quality = (
-        view.quality.values[sequence_indices] if view.quality is not None and view.quality.scope == "sequence" else None
-    )
-    model, state, joint_q, joint_q_warp, joint_qd_zero = _repeat_kinematic_model(view, 2 * sequence_count)
+    state_rows = _static_state_rows(view)
+    sequence_quality = None
+    model, state, joint_q, joint_q_warp, joint_qd_zero = _repeat_kinematic_model(view, int(state_rows.numel()))
     viewer = viewer_type()
     try:
         viewer.set_model(model)
@@ -241,29 +230,22 @@ def _inspect_static(view, viewer_type: type, selected) -> None:
         viewer.close()
 
 
-def _inspect_timed(view, viewer_type: type, selected) -> None:
-    """Loop exact stored frames on their table-declared physical clocks.
-
-    Args:
-        view: Task-table view to display.
-        viewer_type: Newton viewer class to instantiate.
-        selected: Sequence indices to display, shape [sequence_count], int64.
-    """
+def _inspect_timed(view, viewer_type: type) -> None:
+    """Loop every sequence's exact stored frames on their table-declared physical clocks."""
     import newton  # noqa: PLC0415
     import torch  # noqa: PLC0415
 
-    sequence_count = int(selected.numel())
-    starts = view.sequences.offsets[selected]
-    ends = view.sequences.offsets[selected + 1]
-    frame_counts = tuple(int(value) for value in (ends - starts).detach().cpu())
-    frame_dt = tuple(float(value) for value in view.sequences.frame_dt[selected].detach().cpu())
-    sequence_starts = tuple(int(value) for value in starts.detach().cpu())
+    sequence_count = view.sequences.sequence_count
+    if sequence_count <= 0:
+        raise ValueError("The task table contains no sequences.")
+    offsets = view.sequences.offsets.detach().cpu()
+    frame_counts = tuple(int(value) for value in offsets[1:] - offsets[:-1])
+    frame_dt = tuple(float(value) for value in view.sequences.frame_dt.detach().cpu())
+    sequence_starts = tuple(int(value) for value in offsets[:-1])
     device = view.sequences.offsets.device
-    flat_indices = starts.clone()
+    flat_indices = view.sequences.offsets[:-1].clone()
     state_rows = torch.empty(sequence_count, dtype=torch.int64, device=device)
-    sequence_quality = (
-        view.quality.values[selected] if view.quality is not None and view.quality.scope == "sequence" else None
-    )
+    sequence_quality = view.quality.values if view.quality is not None and view.quality.scope == "sequence" else None
     model, state, joint_q, joint_q_warp, joint_qd_zero = _repeat_kinematic_model(view, sequence_count)
     viewer = viewer_type()
     try:
@@ -315,12 +297,6 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--task", required=True, help="Registered task whose production task table is inspected.")
     parser.add_argument("--command", required=True, help="State command that owns the production task table.")
     parser.add_argument(
-        "--sequences",
-        type=int,
-        default=_SEQUENCE_LIMIT,
-        help="Number of sequences to display, spread evenly across the table.",
-    )
-    parser.add_argument(
         "--visualizer",
         choices=tuple(_VISUALIZERS),
         default="viser",
@@ -355,9 +331,7 @@ def main(argv: list[str] | None = None) -> None:
     family_logger.propagate = False
     started = time.perf_counter()
     try:
-        view = command_cfg.task_table.build_inspection_view(
-            command_cfg, env_cfg.scene, env_cfg.sim.device, sequence_limit=args.sequences
-        )
+        view = command_cfg.task_table.build_inspection_view(command_cfg, env_cfg.scene, env_cfg.sim.device)
     finally:
         family_logger.removeHandler(handler)
         handler.close()
@@ -369,12 +343,10 @@ def main(argv: list[str] | None = None) -> None:
         f"Task table built: seconds={build_seconds:.3f} states={view.state_bank.row_count} "
         f"sequences={view.sequences.sequence_count} frames={view.sequences.frame_count}"
     )
-    selected = _spread_sequence_indices(view.sequences.sequence_count, args.sequences, view.sequences.offsets.device)
-    print(f"Inspecting {selected.numel()} of {view.sequences.sequence_count} sequences spread evenly across the table.")
     if view.sequences.is_timed:
-        _inspect_timed(view, viewer_type, selected)
+        _inspect_timed(view, viewer_type)
     else:
-        _inspect_static(view, viewer_type, selected)
+        _inspect_static(view, viewer_type)
 
 
 if __name__ == "__main__":

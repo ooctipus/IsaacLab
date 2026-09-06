@@ -99,21 +99,13 @@ class StateCommandCfg(CommandTermCfg):
             """Build one immutable table without reading a live environment."""
             return self.class_type(command_cfg, scene_cfg, device)
 
-        def build_inspection_view(
-            self,
-            command_cfg: StateCommandCfg,
-            scene_cfg: object,
-            device: str,
-            *,
-            sequence_limit: int,
-        ) -> TaskTableView:
+        def build_inspection_view(self, command_cfg: StateCommandCfg, scene_cfg: object, device: str) -> TaskTableView:
             """Build the simulator-free view consumed by the shared inspector.
 
             Runtime tables expose their retained states by default. Domain tables
             may override this method when inspection intentionally retains more
             construction evidence than the runtime table.
             """
-            del sequence_limit
             return self.build(command_cfg, scene_cfg, device).view
 
         seed: int = 0

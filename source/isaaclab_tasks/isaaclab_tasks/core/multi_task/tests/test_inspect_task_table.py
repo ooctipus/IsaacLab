@@ -117,24 +117,33 @@ def test_cli_declares_only_task_command_and_visualizer() -> None:
         and isinstance(call.args[0], ast.Constant)
     }
 
-    assert flags == {"--task", "--command", "--sequences", "--visualizer"}
+    assert flags == {"--task", "--command", "--visualizer"}
 
 
-def test_selected_sequences_are_spread_evenly_across_the_table() -> None:
-    """Region-ordered tables show every region instead of the first rows only."""
+def test_static_tables_show_every_referenced_state_once() -> None:
+    """Static pairs repeat states, so the complete picture is each reset-state row exactly once."""
     inspector = _load_inspector()
+    indexed = SimpleNamespace(
+        sequences=SimpleNamespace(
+            sequence_count=3,
+            frame_count=6,
+            offsets=torch.tensor((0, 2, 4, 6)),
+            state_indices=torch.tensor((4, 1, 1, 9, 4, 0)),
+        )
+    )
+    contiguous = SimpleNamespace(
+        sequences=SimpleNamespace(sequence_count=2, frame_count=4, offsets=torch.tensor((0, 2, 4)), state_indices=None)
+    )
+    empty = SimpleNamespace(sequences=SimpleNamespace(sequence_count=0, frame_count=0, offsets=torch.zeros(1)))
 
-    assert inspector._spread_sequence_indices(100, 4, "cpu").tolist() == [0, 33, 66, 99]
-    assert inspector._spread_sequence_indices(3, 16, "cpu").tolist() == [0, 1, 2]
-    assert inspector._spread_sequence_indices(1, 16, "cpu").tolist() == [0]
+    assert inspector._static_state_rows(indexed).tolist() == [0, 1, 4, 9]
+    assert inspector._static_state_rows(contiguous).tolist() == [0, 1, 2, 3]
     with pytest.raises(ValueError, match="no sequences"):
-        inspector._spread_sequence_indices(0, 16, "cpu")
-    with pytest.raises(ValueError, match="positive"):
-        inspector._spread_sequence_indices(5, 0, "cpu")
+        inspector._static_state_rows(empty)
 
 
-def test_base_task_table_inspection_does_not_slice_position_or_factory_views() -> None:
-    """The shared display limit is advisory unless a domain owns early construction selection."""
+def test_base_task_table_inspection_exposes_the_runtime_view() -> None:
+    """Base inspection builds the runtime table once and exposes its complete view."""
     from isaaclab_tasks.core.multi_task.mdp.commands.state_command import StateCommandCfg
 
     view = object()
@@ -148,7 +157,7 @@ def test_base_task_table_inspection_does_not_slice_position_or_factory_views() -
     command_cfg = SimpleNamespace(task_table=table_cfg)
     scene_cfg = object()
 
-    assert table_cfg.build_inspection_view(command_cfg, scene_cfg, "cuda:2", sequence_limit=1) is view
+    assert table_cfg.build_inspection_view(command_cfg, scene_cfg, "cuda:2") is view
     assert calls == [(command_cfg, scene_cfg, "cuda:2")]
 
 
@@ -170,9 +179,9 @@ def test_main_uses_hydra_device_and_table_timing(
     table = SimpleNamespace(view=view)
 
     class FakeTableCfg:
-        def build_inspection_view(self, command_cfg, scene_cfg, device, *, sequence_limit):
+        def build_inspection_view(self, command_cfg, scene_cfg, device):
             logger_enabled.append(logging.getLogger(inspector._TASK_FAMILY_LOGGER).level == logging.INFO)
-            calls.append(("build_inspection_view", command_cfg, scene_cfg, device, sequence_limit))
+            calls.append(("build_inspection_view", command_cfg, scene_cfg, device))
             return table.view
 
     command_cfg = SimpleNamespace(task_table=FakeTableCfg())
@@ -197,12 +206,12 @@ def test_main_uses_hydra_device_and_table_timing(
     monkeypatch.setattr(
         inspector,
         "_inspect_static",
-        lambda selected_view, viewer, selected: calls.append(("static", selected_view, viewer, selected.tolist())),
+        lambda selected_view, viewer: calls.append(("static", selected_view, viewer)),
     )
     monkeypatch.setattr(
         inspector,
         "_inspect_timed",
-        lambda selected_view, viewer, selected: calls.append(("timed", selected_view, viewer, selected.tolist())),
+        lambda selected_view, viewer: calls.append(("timed", selected_view, viewer)),
     )
 
     inspector.main(
@@ -219,26 +228,24 @@ def test_main_uses_hydra_device_and_table_timing(
 
     expected_viewer = viewer_module.ViewerViser if visualizer == "viser" else viewer_module.ViewerGL
     assert calls[0] == ("resolve", "Isaac-Motion-Imitation-v0", "", ("sim.device=cuda:3",))
-    assert calls[1] == ("build_inspection_view", command_cfg, scene_cfg, "cuda:3", 16)
-    assert calls[2] == (expected, view, expected_viewer, torch.linspace(0, 19, 16).round().long().tolist())
+    assert calls[1] == ("build_inspection_view", command_cfg, scene_cfg, "cuda:3")
+    assert calls[2] == (expected, view, expected_viewer)
     assert logger_enabled == [True]
     output = capsys.readouterr().out
     assert "Task table built: seconds=" in output
     assert "states=12 sequences=20 frames=40" in output
 
 
-def test_static_view_uses_declared_spacing_and_two_frames_per_sequence(monkeypatch) -> None:
-    """Static inspection repeats exact endpoint states and applies table-owned layout."""
+def test_static_view_draws_each_referenced_state_once_with_table_spacing(monkeypatch) -> None:
+    """Static inspection repeats every referenced state exactly once and applies table-owned layout."""
     inspector = _load_inspector()
     captured = {}
 
     class Sequences:
+        sequence_count = 2
+        frame_count = 4
         offsets = torch.tensor((0, 2, 4), dtype=torch.int64)
-
-        @staticmethod
-        def state_rows(sequence_indices, frame_indices):
-            captured["sequence"] = sequence_indices
-            return 10 * sequence_indices + frame_indices
+        state_indices = torch.tensor((11, 0, 0, 10), dtype=torch.int64)
 
     class Kinematics:
         world_spacing = (0.0, 0.0, 0.0)
@@ -249,7 +256,7 @@ def test_static_view_uses_declared_spacing_and_two_frames_per_sequence(monkeypat
 
     class Viewer:
         def __init__(self):
-            self.world_offsets = SimpleNamespace(numpy=lambda: np.zeros((4, 3), dtype=np.float32))
+            self.world_offsets = SimpleNamespace(numpy=lambda: np.zeros((3, 3), dtype=np.float32))
             self.spacing = None
             self.closed = False
 
@@ -285,19 +292,20 @@ def test_static_view_uses_declared_spacing_and_two_frames_per_sequence(monkeypat
     )
 
     def fake_repeat(_view, count):
-        return count, None, torch.empty(4, 1), None, None
+        captured["worlds"] = count
+        return count, None, torch.empty(count, 1), None, None
 
     import newton
 
     monkeypatch.setattr(inspector, "_repeat_kinematic_model", fake_repeat)
     monkeypatch.setattr(newton, "eval_fk", lambda *_args: None)
 
-    inspector._inspect_static(view, lambda: viewer, torch.tensor((0, 1)))
+    inspector._inspect_static(view, lambda: viewer)
 
     assert viewer.spacing == (0.0, 0.0, 0.0)
     assert viewer.closed
-    assert captured["sequence"].tolist() == [0, 0, 1, 1]
-    assert captured["rows"].tolist() == [0, 1, 10, 11]
+    assert captured["worlds"] == 3
+    assert captured["rows"].tolist() == [0, 10, 11]
 
 
 def test_exact_timeline_holds_other_sequences_between_integer_frames() -> None:
@@ -351,6 +359,7 @@ def test_timed_view_streams_mixed_clocks_into_preallocated_state_rows(monkeypatc
     frame_times = []
 
     class Sequences:
+        sequence_count = 2
         offsets = torch.tensor((0, 3, 7), dtype=torch.int64)
         state_indices = torch.tensor((10, 11, 12, 20, 21, 22, 23), dtype=torch.int64)
         frame_dt = torch.tensor((0.5, 0.25), dtype=torch.float32)
@@ -414,7 +423,7 @@ def test_timed_view_streams_mixed_clocks_into_preallocated_state_rows(monkeypatc
     monkeypatch.setattr(inspector.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(newton, "eval_fk", lambda *_args: None)
 
-    inspector._inspect_timed(view, lambda: viewer, torch.tensor((0, 1)))
+    inspector._inspect_timed(view, lambda: viewer)
 
     assert viewer.closed
     assert frame_times == [0.0, 0.25, 0.5, 0.75, 1.0]
