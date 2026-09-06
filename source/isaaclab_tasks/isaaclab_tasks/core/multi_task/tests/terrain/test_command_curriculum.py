@@ -948,6 +948,7 @@ class TestCommandTerm:
 
         term.robot._root_state_w[:, 7:13] = 100.0
 
+        env.common_step_counter += 1
         term._update_command()
         assert term._payload.cmd_buf[0, 2, time_idx].item() == pytest.approx(env.step_dt)
 

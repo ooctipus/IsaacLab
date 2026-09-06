@@ -19,10 +19,8 @@ def extract_features(states: torch.Tensor, extractor: Callable | None) -> torch.
     """Run :paramref:`extractor` against ``states`` with the standard dispatch.
 
     The single source of truth for the ``(states_slab) -> features`` API
-    that both the locomotion one-shot
-    the Position family's selection stage
-    and the curriculum streaming
-    :class:`~isaaclab_tasks.core.multi_task.curriculum.StateBuffer.compact`
+    that both the Position family's selection stage and the curriculum
+    streaming :class:`~isaaclab_tasks.core.multi_task.curriculum.StateBuffer.compact`
     consume.
 
     ``None`` falls back to xyz (first 3 columns); objects with a

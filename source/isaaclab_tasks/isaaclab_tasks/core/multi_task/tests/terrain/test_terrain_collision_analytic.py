@@ -246,6 +246,10 @@ class TestTerrainCollisionAnalytic:
     """Validate the analytic Jacobian against FD and autodiff."""
 
     @pytest.mark.skipif(not wp.is_device_available("cuda:0"), reason="GPU required")
+    @pytest.mark.skipif(
+        not wp.config.enable_backward,
+        reason="Repository test config disables Warp backward passes; the FD comparison covers this case.",
+    )
     @pytest.mark.parametrize(
         "regime,base_z",
         [("far_above", 2.0), ("near_surface", 0.54), ("penetrating", 0.0)],

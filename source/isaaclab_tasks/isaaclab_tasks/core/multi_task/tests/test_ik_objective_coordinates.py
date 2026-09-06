@@ -88,7 +88,8 @@ def test_joint_default_memory_estimate_counts_each_persistent_scalar_once() -> N
     assert estimate == 2 * (4 + 4 + 4)
 
 
-def test_joint_pin_memory_estimate_scales_only_its_target_workspace() -> None:
+def test_joint_pin_memory_estimate_excludes_caller_owned_targets() -> None:
+    """Constructor-supplied target arrays stay caller-owned; only the pinned index tables count."""
     objective = IKObjectiveJointPin(
         coordinate_indices=np.asarray((7, 8), dtype=np.int32),
         dof_indices=np.asarray((7, 8), dtype=np.int32),
@@ -111,8 +112,8 @@ def test_joint_pin_memory_estimate_scales_only_its_target_workspace() -> None:
         total_residuals=2,
     )
 
-    assert estimate == 2 * (4 + 4) + 17 * 2 * 4
-    assert next_estimate - estimate == 2 * 4
+    assert estimate == 2 * (4 + 4)
+    assert next_estimate == estimate
 
 
 def test_gravity_torque_memory_estimate_matches_owned_array_layout() -> None:

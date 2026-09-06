@@ -238,11 +238,11 @@ class NewtonKinematics:
         Returns:
             Kinematics containing the articulation's parsed model and default state.
         """
-        from isaaclab_newton.sim import NewtonMjcfFileCfg
-
         spawn = getattr(articulation_cfg, "spawn", None)
         usd_path = getattr(spawn, "usd_path", None)
-        mjcf_path = spawn.asset_path if isinstance(spawn, NewtonMjcfFileCfg) else None
+        # Newton MJCF spawners expose ``asset_path``; detecting them by attribute keeps the
+        # kinematics importable when the isaaclab_newton MJCF spawner is unavailable.
+        mjcf_path = getattr(spawn, "asset_path", None) if type(spawn).__name__ == "NewtonMjcfFileCfg" else None
         init_state = getattr(articulation_cfg, "init_state", None)
         usd_path = usd_path if isinstance(usd_path, str) and usd_path else None
         mjcf_path = mjcf_path if isinstance(mjcf_path, str) and mjcf_path else None
@@ -320,7 +320,9 @@ class NewtonKinematics:
                 elif actuator_cfg.effort_limit is not None and effort_cfg != actuator_cfg.effort_limit:
                     raise ValueError("Implicit actuator effort_limit and effort_limit_sim must agree.")
             elif effort_cfg is None:
-                effort_cfg = ActuatorBase._DEFAULT_MAX_EFFORT_SIM
+                # Explicit actuators clamp effort in the actuator model; the simulated joint keeps a
+                # practically unbounded limit unless the actuator base publishes its own default.
+                effort_cfg = getattr(ActuatorBase, "_DEFAULT_MAX_EFFORT_SIM", 1.0e9)
             resolved_effort = self._resolve_scene_actuator_parameter(effort_cfg, group_names)
             if resolved_effort is not None:
                 effort_limit[model_indices] = resolved_effort
