@@ -117,7 +117,20 @@ def test_cli_declares_only_task_command_and_visualizer() -> None:
         and isinstance(call.args[0], ast.Constant)
     }
 
-    assert flags == {"--task", "--command", "--visualizer"}
+    assert flags == {"--task", "--command", "--sequences", "--visualizer"}
+
+
+def test_selected_sequences_are_spread_evenly_across_the_table() -> None:
+    """Region-ordered tables show every region instead of the first rows only."""
+    inspector = _load_inspector()
+
+    assert inspector._spread_sequence_indices(100, 4, "cpu").tolist() == [0, 33, 66, 99]
+    assert inspector._spread_sequence_indices(3, 16, "cpu").tolist() == [0, 1, 2]
+    assert inspector._spread_sequence_indices(1, 16, "cpu").tolist() == [0]
+    with pytest.raises(ValueError, match="no sequences"):
+        inspector._spread_sequence_indices(0, 16, "cpu")
+    with pytest.raises(ValueError, match="positive"):
+        inspector._spread_sequence_indices(5, 0, "cpu")
 
 
 def test_base_task_table_inspection_does_not_slice_position_or_factory_views() -> None:
@@ -149,7 +162,9 @@ def test_main_uses_hydra_device_and_table_timing(
     calls = []
     logger_enabled = []
     view = SimpleNamespace(
-        sequences=SimpleNamespace(sequence_count=20, frame_count=40, is_timed=timed),
+        sequences=SimpleNamespace(
+            sequence_count=20, frame_count=40, is_timed=timed, offsets=torch.zeros(21, dtype=torch.int64)
+        ),
         state_bank=SimpleNamespace(row_count=12),
     )
     table = SimpleNamespace(view=view)
@@ -182,12 +197,12 @@ def test_main_uses_hydra_device_and_table_timing(
     monkeypatch.setattr(
         inspector,
         "_inspect_static",
-        lambda selected_view, viewer, count: calls.append(("static", selected_view, viewer, count)),
+        lambda selected_view, viewer, selected: calls.append(("static", selected_view, viewer, selected.tolist())),
     )
     monkeypatch.setattr(
         inspector,
         "_inspect_timed",
-        lambda selected_view, viewer, count: calls.append(("timed", selected_view, viewer, count)),
+        lambda selected_view, viewer, selected: calls.append(("timed", selected_view, viewer, selected.tolist())),
     )
 
     inspector.main(
@@ -205,7 +220,7 @@ def test_main_uses_hydra_device_and_table_timing(
     expected_viewer = viewer_module.ViewerViser if visualizer == "viser" else viewer_module.ViewerGL
     assert calls[0] == ("resolve", "Isaac-Motion-Imitation-v0", "", ("sim.device=cuda:3",))
     assert calls[1] == ("build_inspection_view", command_cfg, scene_cfg, "cuda:3", 16)
-    assert calls[2] == (expected, view, expected_viewer, 16)
+    assert calls[2] == (expected, view, expected_viewer, torch.linspace(0, 19, 16).round().long().tolist())
     assert logger_enabled == [True]
     output = capsys.readouterr().out
     assert "Task table built: seconds=" in output
@@ -277,7 +292,7 @@ def test_static_view_uses_declared_spacing_and_two_frames_per_sequence(monkeypat
     monkeypatch.setattr(inspector, "_repeat_kinematic_model", fake_repeat)
     monkeypatch.setattr(newton, "eval_fk", lambda *_args: None)
 
-    inspector._inspect_static(view, lambda: viewer, 2)
+    inspector._inspect_static(view, lambda: viewer, torch.tensor((0, 1)))
 
     assert viewer.spacing == (0.0, 0.0, 0.0)
     assert viewer.closed
@@ -399,7 +414,7 @@ def test_timed_view_streams_mixed_clocks_into_preallocated_state_rows(monkeypatc
     monkeypatch.setattr(inspector.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(newton, "eval_fk", lambda *_args: None)
 
-    inspector._inspect_timed(view, lambda: viewer, 2)
+    inspector._inspect_timed(view, lambda: viewer, torch.tensor((0, 1)))
 
     assert viewer.closed
     assert frame_times == [0.0, 0.25, 0.5, 0.75, 1.0]
