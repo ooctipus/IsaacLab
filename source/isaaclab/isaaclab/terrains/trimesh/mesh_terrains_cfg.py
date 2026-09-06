@@ -69,6 +69,7 @@ class MeshRandomGridTerrainCfg(SubTerrainBaseCfg):
     """Configuration for a random grid mesh terrain."""
 
     function: str = "{DIR}.mesh_terrains:random_grid_terrain"
+    function_rng: str = "{DIR}.mesh_terrains:random_grid_terrain"
 
     grid_width: float = MISSING
     """The width of the grid cells (in m)."""
@@ -200,6 +201,7 @@ class MeshRepeatedObjectsTerrainCfg(SubTerrainBaseCfg):
         """The height (along z) of the object (in m)."""
 
     function: str = "{DIR}.mesh_terrains:repeated_objects_terrain"
+    function_rng: str = "{DIR}.mesh_terrains:repeated_objects_terrain"
 
     object_type: Literal["cylinder", "box", "cone"] | callable = MISSING
     """The type of object to generate.

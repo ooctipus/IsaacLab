@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import io
 import os
-import random
 import subprocess
 from typing import TYPE_CHECKING
 
@@ -29,10 +28,23 @@ if TYPE_CHECKING:
     from . import mesh_terrains_cfg
 
 
+def _box_transformed(extents, transform: np.ndarray) -> trimesh.Trimesh:
+    """Create a box and apply a transform without stochastic mesh processing."""
+    mesh = trimesh.creation.box(extents)
+    mesh.vertices = trimesh.transform_points(mesh.vertices, transform)
+    return mesh
+
+
+def _cylinder_transformed(radius: float, height: float, *, sections: int, transform: np.ndarray) -> trimesh.Trimesh:
+    """Create a cylinder and apply a transform without stochastic mesh processing."""
+    mesh = trimesh.creation.cylinder(radius, height, sections=sections)
+    mesh.vertices = trimesh.transform_points(mesh.vertices, transform)
+    return mesh
+
+
 def obj_terrain(
     difficulty: float, cfg: mesh_terrains_cfg.MeshObjTerrainCfg
 ) -> tuple[list[trimesh.Trimesh], np.ndarray, np.ndarray] | tuple[list[trimesh.Trimesh], np.ndarray]:
-    mesh: trimesh.Trimesh = trimesh.load(cfg.obj_path)  # type: ignore
     mesh: trimesh.Trimesh = trimesh.load(cfg.obj_path)  # type: ignore
     xy_scale = cfg.size / (mesh.bounds[1] - mesh.bounds[0])[:2]
     # set the height scale to the average between length and width scale to preserve as much original shap as possible
@@ -112,13 +124,10 @@ def load_mesh(terrain_mesh_path: str) -> trimesh.Trimesh:
         if response.status_code == 200:
             mesh = trimesh.load(io.BytesIO(response.content), file_type="obj")
             return mesh  # type: ignore
-            return mesh  # type: ignore
         else:
             raise Exception(f"Failed to load mesh from {terrain_mesh_path}")
     else:
         # Load from local path
-        return trimesh.load(terrain_mesh_path)  # type: ignore
-
         return trimesh.load(terrain_mesh_path)  # type: ignore
 
 
@@ -138,7 +147,7 @@ def load_numpy(spawnfile_path: str) -> np.ndarray:
 
 
 def stones_everywhere_terrain(
-    difficulty: float, cfg: mesh_terrains_cfg.MeshStonesEverywhereTerrainCfg
+    difficulty: float, cfg: mesh_terrains_cfg.MeshStonesEverywhereTerrainCfg, *, rng: np.random.Generator
 ) -> tuple[list[trimesh.Trimesh], np.ndarray]:
     # check to ensure square terrain
     assert cfg.size[0] == cfg.size[1], "The terrain should be square"
@@ -157,7 +166,7 @@ def stones_everywhere_terrain(
 
     # constants
     terrain_height = -cfg.holes_depth
-    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    device = torch.device("cpu")
 
     # generate the border
     border_width = cfg.size[0] - num_stones_axis * (gap_width + stone_width)
@@ -170,7 +179,7 @@ def stones_everywhere_terrain(
     # create a template grid of the terrain height
     grid_dim = [stone_width, stone_width, terrain_height]
     grid_position = [0.5 * (stone_width + gap_width), 0.5 * (stone_width + gap_width), -terrain_height / 2]
-    template_box = trimesh.creation.box(grid_dim, trimesh.transformations.translation_matrix(grid_position))
+    template_box = _box_transformed(grid_dim, trimesh.transformations.translation_matrix(grid_position))
     # extract vertices and faces
     template_vertices = template_box.vertices  # (8, 3)
     template_faces = template_box.faces
@@ -188,14 +197,14 @@ def stones_everywhere_terrain(
     offsets = (
         (stone_width + gap_width) * xx_yy
         + border_width / 2
-        + (2 * torch.rand(*xx_yy.shape, device=xx_yy.device) - 1) * s_max
+        + torch.as_tensor(rng.uniform(-s_max, s_max, size=tuple(xx_yy.shape)), device=device)
     )
     vertices[:, :, :2] += offsets.unsqueeze(1)
 
     # add noise on height
     num_boxes = len(vertices)
     h_noise = torch.zeros((num_boxes, 3), device=device)
-    h_noise[:, 2].uniform_(-h_max, h_max)
+    h_noise[:, 2].copy_(torch.as_tensor(rng.uniform(-h_max, h_max, size=num_boxes), device=device))
     # reshape noise to match the vertices (num_boxes, 4, 3)
     # only top vertices are affected
     vertices_noise = torch.zeros((num_boxes, 4, 3), device=device)
@@ -218,7 +227,7 @@ def stones_everywhere_terrain(
     # add a platform in the center of the terrain that is accessible from all sides
     dim = (cfg.platform_width, cfg.platform_width, terrain_height + h_max)
     pos = (0.5 * cfg.size[0], 0.5 * cfg.size[1], -terrain_height / 2 + h_max / 2)
-    box_platform = trimesh.creation.box(dim, trimesh.transformations.translation_matrix(pos))
+    box_platform = _box_transformed(dim, trimesh.transformations.translation_matrix(pos))
     meshes_list.append(box_platform)
 
     # specify the origin of the terrain
@@ -228,7 +237,7 @@ def stones_everywhere_terrain(
 
 
 def balance_beams_terrain(
-    difficulty: float, cfg: mesh_terrains_cfg.MeshBalanceBeamsTerrainCfg
+    difficulty: float, cfg: mesh_terrains_cfg.MeshBalanceBeamsTerrainCfg, *, rng: np.random.Generator
 ) -> tuple[list[trimesh.Trimesh], np.ndarray]:
     # check to ensure square terrain
     assert cfg.size[0] == cfg.size[1], "The terrain should be square"
@@ -241,7 +250,7 @@ def balance_beams_terrain(
     num_stones = int(((cfg.size[0] - 0.25 - cfg.platform_width) / 2 - 1) / stone_width)
 
     terrain_height = 1
-    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    device = torch.device("cpu")
 
     border_width = (cfg.size[1] - cfg.platform_width) / 2 - 1 - num_stones * stone_width
     if border_width > 0:
@@ -253,7 +262,7 @@ def balance_beams_terrain(
 
     grid_dim = [stone_width, stone_width, terrain_height]
     grid_position = [0.5 * stone_width, 0.5 * stone_width, -0.5 * terrain_height]
-    template_box = trimesh.creation.box(grid_dim, trimesh.transformations.translation_matrix(grid_position))
+    template_box = _box_transformed(grid_dim, trimesh.transformations.translation_matrix(grid_position))
     # extract vertices and faces
     template_vertices = template_box.vertices  # (8, 3)
     template_faces = template_box.faces
@@ -267,7 +276,7 @@ def balance_beams_terrain(
 
     num_boxes = len(vertices)
     h_noise = torch.zeros((num_boxes, 3), device=device)
-    h_noise[:, 2].uniform_(-h_offset, h_offset)
+    h_noise[:, 2].copy_(torch.as_tensor(rng.uniform(-h_offset, h_offset, size=num_boxes), device=device))
     # reshape noise to match the vertices (num_boxes, 4, 3)
     # only top vertices are affected
     vertices_noise = torch.zeros((num_boxes, 4, 3), device=device)
@@ -286,20 +295,20 @@ def balance_beams_terrain(
     # convert to trimesh
     grid_mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
     # randomly rotate beams around the terrain center to vary the approach direction
-    rotation_angle = random.choice([0.0, np.pi / 2.0, np.pi, 3.0 * np.pi / 2.0])
+    rotation_angle = rng.choice([0.0, np.pi / 2.0, np.pi, 3.0 * np.pi / 2.0])
     if rotation_angle:
         rotation_transform = trimesh.transformations.rotation_matrix(
             rotation_angle,
             [0.0, 0.0, 1.0],
             [0.5 * cfg.size[0], 0.5 * cfg.size[1], 0.0],
         )
-        grid_mesh.apply_transform(rotation_transform)
+        grid_mesh.vertices = trimesh.transform_points(grid_mesh.vertices, rotation_transform)
     meshes_list.append(grid_mesh)
 
     # add a platform in the center of the terrain that is accessible from all sides
     dim = (cfg.platform_width, cfg.platform_width, terrain_height)
     pos = (0.5 * cfg.size[0], 0.5 * cfg.size[1], -terrain_height / 2)
-    box_platform = trimesh.creation.box(dim, trimesh.transformations.translation_matrix(pos))
+    box_platform = _box_transformed(dim, trimesh.transformations.translation_matrix(pos))
     meshes_list.append(box_platform)
 
     # specify the origin of the terrain
@@ -309,7 +318,7 @@ def balance_beams_terrain(
 
 
 def stepping_beams_terrain(
-    difficulty: float, cfg: mesh_terrains_cfg.MeshSteppingBeamsTerrainCfg
+    difficulty: float, cfg: mesh_terrains_cfg.MeshSteppingBeamsTerrainCfg, *, rng: np.random.Generator
 ) -> tuple[list[trimesh.Trimesh], np.ndarray]:
     stone_width = cfg.w_stone[0] - difficulty * (cfg.w_stone[0] - cfg.w_stone[1])
     h_offset = cfg.h_offset[0] + difficulty * (cfg.h_offset[1] - cfg.h_offset[0])
@@ -340,26 +349,26 @@ def stepping_beams_terrain(
         transform = np.eye(4)
         grid_dim = [
             stone_width,
-            low_stone_l + random.uniform(0, high_stone_l - low_stone_l),
-            terrain_height + random.uniform(-h_offset, h_offset),
+            low_stone_l + rng.uniform(0, high_stone_l - low_stone_l),
+            terrain_height + rng.uniform(-h_offset, h_offset),
         ]
         center = [
             cfg.size[0] / 2
             + cfg.platform_width / 2
             + (i + 1) * gap_width
             + (i + 0.5) * stone_width
-            + random.uniform(-0.25, 0.25) * gap_width,
-            cfg.size[1] / 2 + random.uniform(-0.1, 0.1) * grid_dim[1],
+            + rng.uniform(-0.25, 0.25) * gap_width,
+            cfg.size[1] / 2 + rng.uniform(-0.1, 0.1) * grid_dim[1],
             -terrain_height / 2,
         ]
         transform[0:3, -1] = np.asarray(center)
         # create rotation matrix
-        transform[0:3, 0:3] = R.from_euler("z", random.uniform(-yaw, yaw), degrees=True).as_matrix()
-        meshes_list.append(trimesh.creation.box(grid_dim, transform))
+        transform[0:3, 0:3] = R.from_euler("z", rng.uniform(-yaw, yaw), degrees=True).as_matrix()
+        meshes_list.append(_box_transformed(grid_dim, transform))
     # add a platform in the center of the terrain that is accessible from all sides
     dim = (cfg.platform_width, cfg.platform_width, terrain_height)
     pos = (0.5 * cfg.size[0], 0.5 * cfg.size[1], -terrain_height / 2)
-    box_platform = trimesh.creation.box(dim, trimesh.transformations.translation_matrix(pos))
+    box_platform = _box_transformed(dim, trimesh.transformations.translation_matrix(pos))
     meshes_list.append(box_platform)
 
     # specify the origin of the terrain
@@ -385,13 +394,13 @@ def box_terrain(
         # generate the box at the origin
         box_dim = (box_width, box_length, box_height + terrain_height)
         pos = (cfg.size[0] / 2, cfg.size[1] / 2, -terrain_height / 2 + box_height / 2)
-        box = trimesh.creation.box(box_dim, trimesh.transformations.translation_matrix(pos))
+        box = _box_transformed(box_dim, trimesh.transformations.translation_matrix(pos))
         meshes_list.append(box)
         # generate the neighboring boxes
         box_dim = (box_width, box_length, box_height + terrain_height)
         offset_x = box_width / 2 + box_width / 2 + gap_width
         pos = (cfg.size[0] / 2 + offset_x, cfg.size[1] / 2, -terrain_height / 2 + box_height / 2)
-        box = trimesh.creation.box(box_dim, trimesh.transformations.translation_matrix(pos))
+        box = _box_transformed(box_dim, trimesh.transformations.translation_matrix(pos))
         meshes_list.append(box)
         middle_height = box_height
     elif cfg.box_gap_range is None:
@@ -401,14 +410,14 @@ def box_terrain(
             box_dim = (box_width, box_length, box_height + terrain_height)
             offset_x = box_width
             pos = (cfg.size[0] / 2 + offset_x, cfg.size[1] / 2, -terrain_height / 2 + box_height / 2)
-            box = trimesh.creation.box(box_dim, trimesh.transformations.translation_matrix(pos))
+            box = _box_transformed(box_dim, trimesh.transformations.translation_matrix(pos))
             meshes_list.append(box)
             middle_height = 0.0
         elif cfg.up_or_down == "down":
             # for climbing down
             box_dim = (box_width, box_length, box_height + terrain_height)
             pos = (cfg.size[0] / 2, cfg.size[1] / 2, -terrain_height / 2 + box_height / 2)
-            box = trimesh.creation.box(box_dim, trimesh.transformations.translation_matrix(pos))
+            box = _box_transformed(box_dim, trimesh.transformations.translation_matrix(pos))
             meshes_list.append(box)
             middle_height = box_height
         else:
@@ -419,7 +428,7 @@ def box_terrain(
     # generate the ground
     pos = (cfg.size[0] / 2, cfg.size[1] / 2, -terrain_height / 2)
     dim = (cfg.size[0], cfg.size[1], terrain_height)
-    ground = trimesh.creation.box(dim, trimesh.transformations.translation_matrix(pos))
+    ground = _box_transformed(dim, trimesh.transformations.translation_matrix(pos))
     meshes_list.append(ground)
 
     # specify the origin of the terrain
@@ -429,7 +438,7 @@ def box_terrain(
 
 
 def passage_terrain(
-    difficulty: float, cfg: mesh_terrains_cfg.MeshPassageTerrainCfg
+    difficulty: float, cfg: mesh_terrains_cfg.MeshPassageTerrainCfg, *, rng: np.random.Generator
 ) -> tuple[list[trimesh.Trimesh], np.ndarray]:
     if isinstance(cfg.passage_width, tuple):
         width = cfg.passage_width[1] - difficulty * (cfg.passage_width[1] - cfg.passage_width[0])
@@ -454,28 +463,28 @@ def passage_terrain(
     terrain_height = 1.0
     offset_x = 1.0
     # four legs of the passage
-    dim = (0.05 + np.random.uniform(0.0, 0.1), 0.05 + np.random.uniform(0.0, 0.1), terrain_height + height)
+    dim = (0.05 + rng.uniform(0.0, 0.1), 0.05 + rng.uniform(0.0, 0.1), terrain_height + height)
     pos1 = (offset_x + cfg.size[0] / 2 - length / 2, cfg.size[1] / 2 - width / 2, -terrain_height / 2 + height / 2)
-    box1 = trimesh.creation.box(dim, trimesh.transformations.translation_matrix(pos1))
+    box1 = _box_transformed(dim, trimesh.transformations.translation_matrix(pos1))
     meshes_list.append(box1)
     pos2 = (offset_x + cfg.size[0] / 2 - length / 2, cfg.size[1] / 2 + width / 2, -terrain_height / 2 + height / 2)
-    box2 = trimesh.creation.box(dim, trimesh.transformations.translation_matrix(pos2))
+    box2 = _box_transformed(dim, trimesh.transformations.translation_matrix(pos2))
     meshes_list.append(box2)
     pos3 = (offset_x + cfg.size[0] / 2 + length / 2, cfg.size[1] / 2 - width / 2, -terrain_height / 2 + height / 2)
-    box3 = trimesh.creation.box(dim, trimesh.transformations.translation_matrix(pos3))
+    box3 = _box_transformed(dim, trimesh.transformations.translation_matrix(pos3))
     meshes_list.append(box3)
     pos4 = (offset_x + cfg.size[0] / 2 + length / 2, cfg.size[1] / 2 + width / 2, -terrain_height / 2 + height / 2)
-    box4 = trimesh.creation.box(dim, trimesh.transformations.translation_matrix(pos4))
+    box4 = _box_transformed(dim, trimesh.transformations.translation_matrix(pos4))
     meshes_list.append(box4)
     # top of the passage
-    dim = (length + dim[0], width + dim[1], 0.05 + np.random.uniform(0, 0.1))
+    dim = (length + dim[0], width + dim[1], 0.05 + rng.uniform(0, 0.1))
     pos = (offset_x + cfg.size[0] / 2, cfg.size[1] / 2, dim[2] / 2 + height)
-    top = trimesh.creation.box(dim, trimesh.transformations.translation_matrix(pos))
+    top = _box_transformed(dim, trimesh.transformations.translation_matrix(pos))
     meshes_list.append(top)
     # ground
     pos = (cfg.size[0] / 2, cfg.size[1] / 2, -terrain_height / 2)
     dim = (cfg.size[0], cfg.size[1], terrain_height)
-    ground = trimesh.creation.box(dim, trimesh.transformations.translation_matrix(pos))
+    ground = _box_transformed(dim, trimesh.transformations.translation_matrix(pos))
     meshes_list.append(ground)
 
     # specify the origin of the terrain
@@ -485,7 +494,7 @@ def passage_terrain(
 
 
 def structured_terrain(
-    difficulty: float, cfg: mesh_terrains_cfg.MeshStructuredTerrainCfg
+    difficulty: float, cfg: mesh_terrains_cfg.MeshStructuredTerrainCfg, *, rng: np.random.Generator
 ) -> tuple[list[trimesh.Trimesh], np.ndarray]:
     mesh_list = []
     terrain = cfg.terrain_type
@@ -494,46 +503,46 @@ def structured_terrain(
         origin = np.array([cfg.size[0] / 2, cfg.size[1] / 2, 0.0])
         for i in range(12):
             if i < 8:
-                length = random.uniform(0.2, 2.0)
-                width = random.uniform(0.2, 2.0)
-                height = random.uniform(0.08, 0.25)
+                length = rng.uniform(0.2, 2.0)
+                width = rng.uniform(0.2, 2.0)
+                height = rng.uniform(0.08, 0.25)
             else:
-                length = random.uniform(0.2, 1.0)
-                width = random.uniform(0.2, 1.0)
+                length = rng.uniform(0.2, 1.0)
+                width = rng.uniform(0.2, 1.0)
                 height = 3.0
             center = (
-                cfg.size[0] / 2 + random.uniform(1, cfg.size[0] / 2) * (-1) ** (random.randint(1, 2)),
-                cfg.size[1] / 2 + random.uniform(1, cfg.size[0] / 2) * (-1) ** (random.randint(1, 2)),
+                cfg.size[0] / 2 + rng.uniform(1, cfg.size[0] / 2) * (-1) ** (rng.integers(1, 3)),
+                cfg.size[1] / 2 + rng.uniform(1, cfg.size[0] / 2) * (-1) ** (rng.integers(1, 3)),
                 height / 2,
             )
             transform = np.eye(4)
             transform[0:3, -1] = np.asarray(center)
             # create the box
             dims = (length, width, height)
-            mesh = trimesh.creation.box(dims, transform=transform)
+            mesh = _box_transformed(dims, transform=transform)
             mesh_list.append(mesh)
         # add walls
-        if random.uniform(0, 1) > 0.1:
+        if rng.uniform(0, 1) > 0.1:
             center_pts = [(0, 0, 0), (cfg.size[0], 0, 0), (0, cfg.size[1], 0), (cfg.size[0], cfg.size[1], 0)]
             for i, center in enumerate(center_pts):
-                if random.uniform(0, 1) > 0.5:
+                if rng.uniform(0, 1) > 0.5:
                     continue
-                length = cfg.size[0] * random.uniform(0.2, 0.4)
-                width = cfg.size[1] * random.uniform(0.2, 0.4)
+                length = cfg.size[0] * rng.uniform(0.2, 0.4)
+                width = cfg.size[1] * rng.uniform(0.2, 0.4)
                 height = 6.0
                 transform = np.eye(4)
                 c = (center[0] + (-1) ** i * length / 2, center[1] + (-1) ** (i // 2) * width / 2, center[2])
                 transform[0:3, -1] = np.asarray(c)
                 # create the box
                 dims = (length, width, height)
-                mesh = trimesh.creation.box(dims, transform=transform)
+                mesh = _box_transformed(dims, transform=transform)
                 mesh_list.append(mesh)
         # add plane
         ground_plane = make_plane(cfg.size, height=0.0, center_zero=False)
         mesh_list.append(ground_plane)
 
     elif terrain == "stairs":
-        step_width = random.uniform(0.2, 0.5)
+        step_width = rng.uniform(0.2, 0.5)
         _mesh_list, origin = pyramid_stairs_terrain(
             difficulty,
             MeshPyramidStairsTerrainCfg(
@@ -546,23 +555,23 @@ def structured_terrain(
         )
         mesh_list += _mesh_list
         # add walls
-        if random.uniform(0, 1) > 0.05:
+        if rng.uniform(0, 1) > 0.05:
             center_pts = [(0, 0, 0), (cfg.size[0], 0, 0), (0, cfg.size[1], 0), (cfg.size[0], cfg.size[1], 0)]
             for i, center in enumerate(center_pts):
-                if random.uniform(0, 1) > 0.75:
+                if rng.uniform(0, 1) > 0.75:
                     continue
-                length = cfg.size[0] * random.uniform(0.3, 0.4)
-                width = cfg.size[1] * random.uniform(0.3, 0.4)
+                length = cfg.size[0] * rng.uniform(0.3, 0.4)
+                width = cfg.size[1] * rng.uniform(0.3, 0.4)
                 height = 6.0
                 transform = np.eye(4)
                 c = (center[0] + (-1) ** i * length / 2, center[1] + (-1) ** (i // 2) * width / 2, center[2])
                 transform[0:3, -1] = np.asarray(c)
                 # create the box
                 dims = (length, width, height)
-                mesh = trimesh.creation.box(dims, transform=transform)
+                mesh = _box_transformed(dims, transform=transform)
                 mesh_list.append(mesh)
     elif terrain == "inverted_stairs":
-        step_width = random.uniform(0.2, 0.5)
+        step_width = rng.uniform(0.2, 0.5)
         # inverted prymaid
         _mesh_list, origin = inverted_pyramid_stairs_terrain(
             difficulty,
@@ -576,37 +585,37 @@ def structured_terrain(
         )
         mesh_list += _mesh_list
         # add walls
-        if random.uniform(0, 1) > 0.05:
+        if rng.uniform(0, 1) > 0.05:
             center_pts = [(0, 0, 0), (cfg.size[0], 0, 0), (0, cfg.size[1], 0), (cfg.size[0], cfg.size[1], 0)]
             for i, center in enumerate(center_pts):
-                if random.uniform(0, 1) > 0.75:
+                if rng.uniform(0, 1) > 0.75:
                     continue
-                length = cfg.size[0] * random.uniform(0.3, 0.4)
-                width = cfg.size[1] * random.uniform(0.3, 0.4)
+                length = cfg.size[0] * rng.uniform(0.3, 0.4)
+                width = cfg.size[1] * rng.uniform(0.3, 0.4)
                 height = 6.0
                 transform = np.eye(4)
                 c = (center[0] + (-1) ** i * length / 2, center[1] + (-1) ** (i // 2) * width / 2, center[2])
                 transform[0:3, -1] = np.asarray(c)
                 # create the box
                 dims = (length, width, height)
-                mesh = trimesh.creation.box(dims, transform=transform)
+                mesh = _box_transformed(dims, transform=transform)
                 mesh_list.append(mesh)
     elif terrain == "walls":
         origin = np.array([cfg.size[0] / 2, cfg.size[1] / 2, 0.0])
         # add walls
         center_pts = [(0, 0, 0), (cfg.size[0], 0, 0), (0, cfg.size[1], 0), (cfg.size[0], cfg.size[1], 0)]
         for i, center in enumerate(center_pts):
-            if random.uniform(0, 1) > 0.75:
+            if rng.uniform(0, 1) > 0.75:
                 continue
-            length = cfg.size[0] * random.uniform(0.3, 0.4)
-            width = cfg.size[1] * random.uniform(0.3, 0.4)
+            length = cfg.size[0] * rng.uniform(0.3, 0.4)
+            width = cfg.size[1] * rng.uniform(0.3, 0.4)
             height = 6.0
             transform = np.eye(4)
             c = (center[0] + (-1) ** i * length / 2, center[1] + (-1) ** (i // 2) * width / 2, center[2])
             transform[0:3, -1] = np.asarray(c)
             # create the box
             dims = (length, width, height)
-            mesh = trimesh.creation.box(dims, transform=transform)
+            mesh = _box_transformed(dims, transform=transform)
             mesh_list.append(mesh)
         # add plane
         ground_plane = make_plane(cfg.size, height=0.0, center_zero=False)
@@ -618,7 +627,7 @@ def structured_terrain(
 
 
 def maze_terrain(
-    difficulty: float, cfg: mesh_terrains_cfg.MeshMazeTerrainCfg
+    difficulty: float, cfg: mesh_terrains_cfg.MeshMazeTerrainCfg, *, rng: np.random.Generator
 ) -> tuple[list[trimesh.Trimesh], np.ndarray]:
     """Generate a maze terrain on a 2D grid.
 
@@ -679,7 +688,7 @@ def maze_terrain(
             neighbors.append((c, r + 1, "h", c, r))  # remove h_wall at (c, r)
 
         if neighbors:
-            nc, nr, wtype, wc, wr = random.choice(neighbors)
+            nc, nr, wtype, wc, wr = neighbors[int(rng.integers(len(neighbors)))]
             if wtype == "h":
                 h_walls.discard((wc, wr))
             else:
@@ -692,7 +701,7 @@ def maze_terrain(
     # optionally remove extra walls to open up the maze
     if cfg.open_ratio > 0:
         all_remaining = [(wc, wr, "h") for wc, wr in h_walls] + [(wc, wr, "v") for wc, wr in v_walls]
-        random.shuffle(all_remaining)
+        rng.shuffle(all_remaining)
         to_remove = int(len(all_remaining) * cfg.open_ratio)
         for wc, wr, wtype in all_remaining[:to_remove]:
             if wtype == "h":
@@ -710,8 +719,8 @@ def maze_terrain(
             x = c * cell_w
             y = r * cell_h
             if grid_noise > 0 and 0 < c < cols and 0 < r < rows:
-                x += random.uniform(-grid_noise, grid_noise) * cell_w
-                y += random.uniform(-grid_noise, grid_noise) * cell_h
+                x += rng.uniform(-grid_noise, grid_noise) * cell_w
+                y += rng.uniform(-grid_noise, grid_noise) * cell_h
             nodes[c][r] = np.array([x, y])
 
     # build wall segments as (p0, p1) pairs
@@ -773,14 +782,16 @@ def maze_terrain(
 # ======================================================================
 
 
-def _generate_stone(radius: float, height_scale: float, roughness: float) -> trimesh.Trimesh:
+def _generate_stone(
+    radius: float, height_scale: float, roughness: float, *, rng: np.random.Generator
+) -> trimesh.Trimesh:
     """Generate a natural-looking stone mesh with varied shapes.
 
     Randomly produces round boulders, elongated slabs, angular blocks,
     and occasionally tilted/standing stones.
     """
     # choose base shape: round (icosphere) or angular (box-ish)
-    angular = random.random() < 0.3
+    angular = rng.random() < 0.3
     if angular:
         stone = trimesh.creation.box(extents=[2.0, 2.0, 2.0])
         # chamfer edges by subdividing and projecting partially toward sphere
@@ -788,28 +799,28 @@ def _generate_stone(radius: float, height_scale: float, roughness: float) -> tri
         verts = stone.vertices.copy()
         norms_v = np.linalg.norm(verts, axis=1, keepdims=True)
         sphere_verts = verts / np.maximum(norms_v, 1e-12)
-        blend = random.uniform(0.15, 0.5)
+        blend = rng.uniform(0.15, 0.5)
         verts = verts * (1 - blend) + sphere_verts * blend * norms_v.max()
     else:
         stone = trimesh.creation.icosphere(subdivisions=2, radius=1.0)
         verts = stone.vertices.copy()
 
     # random axis scaling — wider range for more variety
-    sx = random.uniform(0.4, 1.6)
-    sy = random.uniform(0.4, 1.6)
+    sx = rng.uniform(0.4, 1.6)
+    sy = rng.uniform(0.4, 1.6)
     # occasionally tall/standing stones vs flat/squat
-    if random.random() < 0.2:
-        sz = height_scale * random.uniform(1.2, 2.5)
+    if rng.random() < 0.2:
+        sz = height_scale * rng.uniform(1.2, 2.5)
     else:
-        sz = height_scale * random.uniform(0.3, 1.0)
+        sz = height_scale * rng.uniform(0.3, 1.0)
     verts[:, 0] *= sx
     verts[:, 1] *= sy
     verts[:, 2] *= sz
 
     # random 3D rotation (yaw + optional pitch/roll tilt)
-    yaw = random.uniform(0, 2 * np.pi)
-    pitch = random.uniform(-0.4, 0.4) if random.random() < 0.4 else 0.0
-    roll = random.uniform(-0.4, 0.4) if random.random() < 0.4 else 0.0
+    yaw = rng.uniform(0, 2 * np.pi)
+    pitch = rng.uniform(-0.4, 0.4) if rng.random() < 0.4 else 0.0
+    roll = rng.uniform(-0.4, 0.4) if rng.random() < 0.4 else 0.0
     rot = tf.Rotation.from_euler("zyx", [yaw, pitch, roll]).as_matrix()
     verts = verts @ rot.T
 
@@ -818,13 +829,13 @@ def _generate_stone(radius: float, height_scale: float, roughness: float) -> tri
     unit = verts / np.maximum(norms_v, 1e-12)
     angles = np.arctan2(verts[:, 1], verts[:, 0])
     for _ in range(3):
-        freq = random.uniform(1.5, 3.5)
-        phase = random.uniform(0, 2 * np.pi)
-        amp = random.uniform(0.05, roughness * 0.7)
+        freq = rng.uniform(1.5, 3.5)
+        phase = rng.uniform(0, 2 * np.pi)
+        amp = rng.uniform(0.05, roughness * 0.7)
         verts += unit * (amp * np.cos(freq * angles + phase))[:, None]
 
     # fine surface noise
-    fine_noise = np.random.uniform(-roughness * 0.3, roughness * 0.3, size=len(verts))
+    fine_noise = rng.uniform(-roughness * 0.3, roughness * 0.3, size=len(verts))
     unit = verts / np.maximum(np.linalg.norm(verts, axis=1, keepdims=True), 1e-12)
     verts += unit * fine_noise[:, None]
 
@@ -843,7 +854,7 @@ def _generate_stone(radius: float, height_scale: float, roughness: float) -> tri
 
 def _perlin_2d(shape: tuple[int, int], scale: float, octaves: int, seed: int) -> np.ndarray:
     """Generate a 2D fractal noise field using value noise with smoothstep interpolation."""
-    rng = np.random.RandomState(seed)
+    rng = np.random.default_rng(seed)
     rows, cols = shape
     result = np.zeros(shape, dtype=np.float64)
 
@@ -889,7 +900,7 @@ def _perlin_2d(shape: tuple[int, int], scale: float, octaves: int, seed: int) ->
 
 
 def contour_terrain(
-    difficulty: float, cfg: mesh_terrains_cfg.MeshContourTerrainCfg
+    difficulty: float, cfg: mesh_terrains_cfg.MeshContourTerrainCfg, *, rng: np.random.Generator
 ) -> tuple[list[trimesh.Trimesh], np.ndarray]:
     """Generate stepped contour terrain from a noise heightfield.
 
@@ -907,7 +918,7 @@ def contour_terrain(
 
     num_levels = int(_resolve_range(cfg.num_levels, difficulty))
     level_h = _resolve_range(cfg.level_height, difficulty)
-    seed = cfg.noise_seed if cfg.noise_seed is not None else random.randint(0, 2**31)
+    seed = cfg.noise_seed if cfg.noise_seed is not None else int(rng.integers(0, 2**31 + 1))
     smoothing = cfg.smoothing
 
     res = 100
@@ -968,8 +979,8 @@ def contour_terrain(
         s_min, s_max = stones_cfg.size_range
 
         for _ in range(n_stones):
-            sx = random.uniform(0, cfg.size[0])
-            sy = random.uniform(0, cfg.size[1])
+            sx = rng.uniform(0, cfg.size[0])
+            sy = rng.uniform(0, cfg.size[1])
             # find which terrace level this point sits on
             gi = min(int(sx / cfg.size[0] * res), res - 1)
             gj = min(int(sy / cfg.size[1] * res), res - 1)
@@ -980,8 +991,8 @@ def contour_terrain(
                     stone_level += 1
             sz = stone_level * level_h
 
-            radius = random.uniform(s_min, s_max)
-            stone = _generate_stone(radius, stones_cfg.height_scale, stones_cfg.roughness)
+            radius = rng.uniform(s_min, s_max)
+            stone = _generate_stone(radius, stones_cfg.height_scale, stones_cfg.roughness, rng=rng)
             stone_bottom = stone.vertices[:, 2].min()
             stone.apply_translation([sx, sy, sz - stone_bottom])
             meshes.append(stone)
@@ -1009,6 +1020,8 @@ def _sample_yaw_angles(
     distribution: str,
     bar_width: float,
     platform_radius: float,
+    *,
+    rng: np.random.Generator,
 ) -> list[float]:
     """Return a sorted list of yaw angles for the beams."""
     if distribution == "uniform":
@@ -1020,7 +1033,7 @@ def _sample_yaw_angles(
 
         for i in range(num_bars):
             for _ in range(1000):
-                candidate = random.uniform(0, 2 * np.pi)
+                candidate = rng.uniform(0, 2 * np.pi)
                 if all(min(abs(candidate - a), 2 * np.pi - abs(candidate - a)) >= min_sep for a in angles):
                     angles.append(candidate)
                     break
@@ -1064,6 +1077,8 @@ def _generate_passway(
     bar_height: float,
     beam_style_cfg,
     difficulty: float,
+    *,
+    rng: np.random.Generator,
     start_inset: float = 0.0,
     curvature: float = 0.0,
 ) -> list[trimesh.Trimesh]:
@@ -1094,7 +1109,7 @@ def _generate_passway(
     mid_xy = (start_xy + end_xy) / 2
     if curvature > 0:
         perp = np.array([-delta[1], delta[0]]) / straight_length
-        lateral = random.uniform(-curvature, curvature) * straight_length
+        lateral = rng.uniform(-curvature, curvature) * straight_length
         ctrl_xy = mid_xy + perp * lateral
     else:
         ctrl_xy = mid_xy
@@ -1113,7 +1128,7 @@ def _generate_passway(
         beam_rot = rot @ tf.Rotation.from_euler("y", pitch).as_matrix()
         transform[0:3, 0:3] = beam_rot
         transform[:3, -1] = [mid_xy[0], mid_xy[1], mid_z]
-        meshes.append(trimesh.creation.box([straight_length, bar_width, bar_height], transform.copy()))
+        meshes.append(_box_transformed([straight_length, bar_width, bar_height], transform.copy()))
     else:
         if not is_box:
             box_length = bar_width
@@ -1165,30 +1180,30 @@ def _generate_passway(
             seg_rot_base = tf.Rotation.from_euler("z", seg_yaw).as_matrix()
 
             for j in range(n_across):
-                dx = random.uniform(-pos_var[0], pos_var[0]) if pos_var[0] > 0 else 0.0
-                dy = random.uniform(-pos_var[1], pos_var[1]) if pos_var[1] > 0 else 0.0
-                dz = random.uniform(-pos_var[2], pos_var[2]) if pos_var[2] > 0 else 0.0
+                dx = rng.uniform(-pos_var[0], pos_var[0]) if pos_var[0] > 0 else 0.0
+                dy = rng.uniform(-pos_var[1], pos_var[1]) if pos_var[1] > 0 else 0.0
+                dz = rng.uniform(-pos_var[2], pos_var[2]) if pos_var[2] > 0 else 0.0
                 x_stagger = (stride * 0.5) * (j % 2) if n_across > 1 else 0.0
 
                 local_offset = seg_rot_base @ np.array([x_stagger + dx, y_start_off + j * stride + dy, 0.0])
                 world = np.array([center_xy[0] + local_offset[0], center_xy[1] + local_offset[1], seg_z + dz])
 
                 seg_rot = (
-                    seg_rot_base @ tf.Rotation.from_euler("z", random.uniform(-yaw_var, yaw_var)).as_matrix()
+                    seg_rot_base @ tf.Rotation.from_euler("z", rng.uniform(-yaw_var, yaw_var)).as_matrix()
                     if yaw_var > 0
                     else seg_rot_base
                 )
                 transform[0:3, 0:3] = seg_rot
                 transform[:3, -1] = world
                 box_w = box_length if is_box else bar_width
-                meshes.append(trimesh.creation.box([box_length, box_w, bar_height], transform.copy()))
+                meshes.append(_box_transformed([box_length, box_w, bar_height], transform.copy()))
             cursor += stride
 
     return meshes
 
 
 def beam_terrain(
-    difficulty: float, cfg: mesh_terrains_cfg.MeshRadiatingBeamTerrainCfg
+    difficulty: float, cfg: mesh_terrains_cfg.MeshRadiatingBeamTerrainCfg, *, rng: np.random.Generator
 ) -> tuple[list[trimesh.Trimesh], np.ndarray]:
     """Generate a terrain with beams radiating from a central platform to an outer border.
 
@@ -1206,7 +1221,7 @@ def beam_terrain(
     platform_elevation = _resolve_range(cfg.platform_height, difficulty) if cfg.platform_height is not None else 0.0
     noise = getattr(cfg, "platform_height_noise", 0.0)
     if noise > 0:
-        platform_elevation += random.uniform(-noise, noise)
+        platform_elevation += rng.uniform(-noise, noise)
 
     platform_radius = cfg.platform_width * 0.5
     terrain_center = np.array([0.5 * cfg.size[0], 0.5 * cfg.size[1]])
@@ -1222,9 +1237,9 @@ def beam_terrain(
     plat_total_h = plat_top - plat_bottom
     plat_center_z = (plat_top + plat_bottom) / 2
     plat_tf = trimesh.transformations.translation_matrix((*terrain_center, plat_center_z))
-    meshes.append(trimesh.creation.cylinder(platform_radius, plat_total_h, sections=6, transform=plat_tf))
+    meshes.append(_cylinder_transformed(platform_radius, plat_total_h, sections=6, transform=plat_tf))
 
-    yaw_angles = _sample_yaw_angles(num_bars, cfg.beam_distribution, bar_width, max(platform_radius, 0.1))
+    yaw_angles = _sample_yaw_angles(num_bars, cfg.beam_distribution, bar_width, max(platform_radius, 0.1), rng=rng)
 
     border_cfg = getattr(cfg, "border", None)
     if border_cfg is not None and hasattr(border_cfg, "inner_size"):
@@ -1240,7 +1255,7 @@ def beam_terrain(
         start_xy = terrain_center + direction * platform_radius * 0.85
         end_xy = terrain_center + direction * beam_length
         meshes += _generate_passway(
-            start_xy, end_xy, z_inner, z_outer, bar_width, bar_height, beam_style_cfg, difficulty
+            start_xy, end_xy, z_inner, z_outer, bar_width, bar_height, beam_style_cfg, difficulty, rng=rng
         )
 
     # -- border geometry --
@@ -1254,7 +1269,7 @@ def beam_terrain(
                 end_dist = _beam_reach(yaw, border_half[0], border_half[1]) + border_cfg.radius
                 end_xy = terrain_center + np.array([np.cos(yaw), np.sin(yaw)]) * end_dist
                 p_tf = trimesh.transformations.translation_matrix((*end_xy, border_center_z))
-                meshes.append(trimesh.creation.cylinder(border_cfg.radius, bar_height, sections=6, transform=p_tf))
+                meshes.append(_cylinder_transformed(border_cfg.radius, bar_height, sections=6, transform=p_tf))
 
     if getattr(cfg, "ground_plane", True):
         ground_z = min(plat_bottom, border_top - bar_height)
@@ -1274,6 +1289,8 @@ def _sample_island_positions(
     size: tuple[float, float],
     bounding_radius: float,
     margin: float,
+    *,
+    rng: np.random.Generator,
 ) -> np.ndarray:
     """Rejection-sample *num* non-overlapping 2D positions within *size*."""
     pad = bounding_radius + margin
@@ -1283,8 +1300,8 @@ def _sample_island_positions(
     for _ in range(num * 2000):
         pt = np.array(
             [
-                random.uniform(pad, size[0] - pad),
-                random.uniform(pad, size[1] - pad),
+                rng.uniform(pad, size[0] - pad),
+                rng.uniform(pad, size[1] - pad),
             ]
         )
         if all(np.linalg.norm(pt - p) >= min_dist for p in positions):
@@ -1384,7 +1401,7 @@ def _prune_edges_through_islands(
 
 
 def floating_island_terrain(
-    difficulty: float, cfg: mesh_terrains_cfg.MeshFloatingIslandTerrainCfg
+    difficulty: float, cfg: mesh_terrains_cfg.MeshFloatingIslandTerrainCfg, *, rng: np.random.Generator
 ) -> tuple[list[trimesh.Trimesh], np.ndarray]:
     """Generate a terrain of floating islands connected by passways.
 
@@ -1412,10 +1429,10 @@ def floating_island_terrain(
         island_width_val = _resolve_range(island_cfg.width, difficulty)
         bounding_r = np.sqrt(island_length**2 + island_width_val**2) / 2
 
-    positions = _sample_island_positions(num_islands, cfg.size, bounding_r, cfg.island_margin)
+    positions = _sample_island_positions(num_islands, cfg.size, bounding_r, cfg.island_margin, rng=rng)
     actual_n = len(positions)
 
-    z_offsets = np.array([random.uniform(-height_var, height_var) if height_var > 0 else 0.0 for _ in range(actual_n)])
+    z_offsets = np.array([rng.uniform(-height_var, height_var) if height_var > 0 else 0.0 for _ in range(actual_n)])
 
     # -- generate island meshes --
     meshes: list[trimesh.Trimesh] = []
@@ -1425,14 +1442,14 @@ def floating_island_terrain(
         center_z = z_offsets[idx] - island_height / 2
         if is_cylinder:
             island_tf = trimesh.transformations.translation_matrix((*positions[idx], center_z))
-            meshes.append(trimesh.creation.cylinder(island_radius, island_height, sections=8, transform=island_tf))
+            meshes.append(_cylinder_transformed(island_radius, island_height, sections=8, transform=island_tf))
         else:
-            yaw = random.uniform(0, 2 * np.pi)
+            yaw = rng.uniform(0, 2 * np.pi)
             rot = tf.Rotation.from_euler("z", yaw).as_matrix()
             xf = np.eye(4)
             xf[0:3, 0:3] = rot
             xf[:3, -1] = [positions[idx][0], positions[idx][1], center_z]
-            meshes.append(trimesh.creation.box([island_length, island_width_val, island_height], xf.copy()))
+            meshes.append(_box_transformed([island_length, island_width_val, island_height], xf.copy()))
 
     # -- build and prune graph --
     edges = _build_graph(positions, cfg.graph)
@@ -1464,6 +1481,7 @@ def floating_island_terrain(
             passway_height,
             passway_style,
             difficulty,
+            rng=rng,
             curvature=passway_curvature,
         )
 

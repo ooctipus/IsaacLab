@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import MISSING
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from isaaclab.utils.configclass import configclass
 
@@ -66,11 +66,30 @@ class SubTerrainBaseCfg:
     extend from :math:`(0, 0)` to :math:`(size[0], size[1])`.
     """
 
-    function: Callable[[float, SubTerrainBaseCfg], tuple[list[trimesh.Trimesh], np.ndarray]] = MISSING
+    class FunctionRng(Protocol):
+        """Callable contract for stochastic terrain generation."""
+
+        def __call__(
+            self,
+            difficulty: float,
+            cfg: SubTerrainBaseCfg,
+            *,
+            rng: np.random.Generator,
+        ) -> tuple[list[trimesh.Trimesh], np.ndarray]: ...
+
+    function: Callable[[float, SubTerrainBaseCfg], tuple[list[trimesh.Trimesh], np.ndarray]] | None = MISSING
     """Function to generate the terrain.
 
     This function must take as input the terrain difficulty and the configuration parameters and
     return a tuple with a list of ``trimesh`` mesh objects and the terrain origin.
+    """
+
+    function_rng: FunctionRng | None = None
+    """Explicit-RNG terrain function, if stochastic.
+
+    The function receives the terrain difficulty, configuration, and a keyword-only
+    ``rng`` argument containing the generator owned by :class:`TerrainGenerator`.
+    When configured, this function takes precedence over :attr:`function`.
     """
 
     proportion: float = 1.0

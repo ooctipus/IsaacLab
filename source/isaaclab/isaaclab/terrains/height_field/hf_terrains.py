@@ -19,7 +19,9 @@ if TYPE_CHECKING:
 
 
 @height_field_to_mesh
-def random_uniform_terrain(difficulty: float, cfg: hf_terrains_cfg.HfRandomUniformTerrainCfg) -> np.ndarray:
+def random_uniform_terrain(
+    difficulty: float, cfg: hf_terrains_cfg.HfRandomUniformTerrainCfg, *, rng: np.random.Generator | None = None
+) -> np.ndarray:
     """Generate a terrain with height sampled uniformly from a specified range.
 
     .. image:: ../../_static/terrains/height_field/random_uniform_terrain.jpg
@@ -32,6 +34,7 @@ def random_uniform_terrain(difficulty: float, cfg: hf_terrains_cfg.HfRandomUnifo
     Args:
         difficulty: The difficulty of the terrain. This is a value between 0 and 1.
         cfg: The configuration for the terrain.
+        rng: Random generator. When omitted, the legacy global NumPy generator is used.
 
     Returns:
         The height field of the terrain as a 2D numpy array with discretized heights.
@@ -63,10 +66,11 @@ def random_uniform_terrain(difficulty: float, cfg: hf_terrains_cfg.HfRandomUnifo
     height_max = int(cfg.noise_range[1] / cfg.vertical_scale)
     height_step = int(cfg.noise_step / cfg.vertical_scale)
 
+    generator = np.random if rng is None else rng
     # create range of heights possible
     height_range = np.arange(height_min, height_max + height_step, height_step)
     # sample heights randomly from the range along a grid
-    height_field_downsampled = np.random.choice(height_range, size=(width_downsampled, length_downsampled))
+    height_field_downsampled = generator.choice(height_range, size=(width_downsampled, length_downsampled))
     # create interpolation function for the sampled heights
     x = np.linspace(0, cfg.size[0] * cfg.horizontal_scale, width_downsampled)
     y = np.linspace(0, cfg.size[1] * cfg.horizontal_scale, length_downsampled)
@@ -211,7 +215,9 @@ def pyramid_stairs_terrain(difficulty: float, cfg: hf_terrains_cfg.HfPyramidStai
 
 
 @height_field_to_mesh
-def discrete_obstacles_terrain(difficulty: float, cfg: hf_terrains_cfg.HfDiscreteObstaclesTerrainCfg) -> np.ndarray:
+def discrete_obstacles_terrain(
+    difficulty: float, cfg: hf_terrains_cfg.HfDiscreteObstaclesTerrainCfg, *, rng: np.random.Generator | None = None
+) -> np.ndarray:
     """Generate a terrain with randomly generated obstacles as pillars with positive and negative heights.
 
     The terrain is a flat platform at the center of the terrain with randomly generated obstacles as pillars
@@ -226,6 +232,7 @@ def discrete_obstacles_terrain(difficulty: float, cfg: hf_terrains_cfg.HfDiscret
     Args:
         difficulty: The difficulty of the terrain. This is a value between 0 and 1.
         cfg: The configuration for the terrain.
+        rng: Random generator. When omitted, the legacy global NumPy generator is used.
 
     Returns:
         The height field of the terrain as a 2D numpy array with discretized heights.
@@ -233,6 +240,7 @@ def discrete_obstacles_terrain(difficulty: float, cfg: hf_terrains_cfg.HfDiscret
         along the x and y axis, respectively.
     """
     # resolve terrain configuration
+    generator = np.random if rng is None else rng
     obs_height = cfg.obstacle_height_range[0] + difficulty * (
         cfg.obstacle_height_range[1] - cfg.obstacle_height_range[0]
     )
@@ -262,16 +270,16 @@ def discrete_obstacles_terrain(difficulty: float, cfg: hf_terrains_cfg.HfDiscret
     for _ in range(cfg.num_obstacles):
         # sample size
         if cfg.obstacle_height_mode == "choice":
-            height = np.random.choice([-obs_height, -obs_height // 2, obs_height // 2, obs_height])
+            height = generator.choice([-obs_height, -obs_height // 2, obs_height // 2, obs_height])
         elif cfg.obstacle_height_mode == "fixed":
             height = obs_height
         else:
             raise ValueError(f"Unknown obstacle height mode '{cfg.obstacle_height_mode}'. Must be 'choice' or 'fixed'.")
-        width = int(np.random.choice(obs_width_range))
-        length = int(np.random.choice(obs_length_range))
+        width = int(generator.choice(obs_width_range))
+        length = int(generator.choice(obs_length_range))
         # sample position
-        x_start = int(np.random.choice(obs_x_range))
-        y_start = int(np.random.choice(obs_y_range))
+        x_start = int(generator.choice(obs_x_range))
+        y_start = int(generator.choice(obs_y_range))
         # clip start position to the terrain
         if x_start + width > width_pixels:
             x_start = width_pixels - width
@@ -351,7 +359,9 @@ def wave_terrain(difficulty: float, cfg: hf_terrains_cfg.HfWaveTerrainCfg) -> np
 
 
 @height_field_to_mesh
-def stepping_stones_terrain(difficulty: float, cfg: hf_terrains_cfg.HfSteppingStonesTerrainCfg) -> np.ndarray:
+def stepping_stones_terrain(
+    difficulty: float, cfg: hf_terrains_cfg.HfSteppingStonesTerrainCfg, *, rng: np.random.Generator | None = None
+) -> np.ndarray:
     """Generate a terrain with a stepping stones pattern.
 
     The terrain is a stepping stones pattern which trims to a flat platform at the center of the terrain.
@@ -363,6 +373,7 @@ def stepping_stones_terrain(difficulty: float, cfg: hf_terrains_cfg.HfSteppingSt
     Args:
         difficulty: The difficulty of the terrain. This is a value between 0 and 1.
         cfg: The configuration for the terrain.
+        rng: Random generator. When omitted, the legacy global NumPy generator is used.
 
     Returns:
         The height field of the terrain as a 2D numpy array with discretized heights.
@@ -370,6 +381,8 @@ def stepping_stones_terrain(difficulty: float, cfg: hf_terrains_cfg.HfSteppingSt
         along the x and y axis, respectively.
     """
     # resolve terrain configuration
+    generator = np.random if rng is None else rng
+    random_integer = np.random.randint if rng is None else rng.integers
     stone_width = cfg.stone_width_range[1] - difficulty * (cfg.stone_width_range[1] - cfg.stone_width_range[0])
     stone_distance = cfg.stone_distance_range[0] + difficulty * (
         cfg.stone_distance_range[1] - cfg.stone_distance_range[0]
@@ -400,14 +413,14 @@ def stepping_stones_terrain(difficulty: float, cfg: hf_terrains_cfg.HfSteppingSt
             # ensure that stone stops along y-axis
             stop_y = min(length_pixels, start_y + stone_width)
             # randomly sample x-position
-            start_x = np.random.randint(0, stone_width)
+            start_x = random_integer(0, stone_width)
             stop_x = max(0, start_x - stone_distance)
             # fill first stone
-            hf_raw[0:stop_x, start_y:stop_y] = np.random.choice(stone_height_range)
+            hf_raw[0:stop_x, start_y:stop_y] = generator.choice(stone_height_range)
             # fill row with stones
             while start_x < width_pixels:
                 stop_x = min(width_pixels, start_x + stone_width)
-                hf_raw[start_x:stop_x, start_y:stop_y] = np.random.choice(stone_height_range)
+                hf_raw[start_x:stop_x, start_y:stop_y] = generator.choice(stone_height_range)
                 start_x += stone_width + stone_distance
             # update y-position
             start_y += stone_width + stone_distance
@@ -416,14 +429,14 @@ def stepping_stones_terrain(difficulty: float, cfg: hf_terrains_cfg.HfSteppingSt
             # ensure that stone stops along x-axis
             stop_x = min(width_pixels, start_x + stone_width)
             # randomly sample y-position
-            start_y = np.random.randint(0, stone_width)
+            start_y = random_integer(0, stone_width)
             stop_y = max(0, start_y - stone_distance)
             # fill first stone
-            hf_raw[start_x:stop_x, 0:stop_y] = np.random.choice(stone_height_range)
+            hf_raw[start_x:stop_x, 0:stop_y] = generator.choice(stone_height_range)
             # fill column with stones
             while start_y < length_pixels:
                 stop_y = min(length_pixels, start_y + stone_width)
-                hf_raw[start_x:stop_x, start_y:stop_y] = np.random.choice(stone_height_range)
+                hf_raw[start_x:stop_x, start_y:stop_y] = generator.choice(stone_height_range)
                 start_y += stone_width + stone_distance
             # update x-position
             start_x += stone_width + stone_distance

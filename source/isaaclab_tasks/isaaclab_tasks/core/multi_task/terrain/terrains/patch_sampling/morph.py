@@ -14,8 +14,6 @@ path for large, dense terrains.
 from __future__ import annotations
 
 import math
-import time
-from contextlib import contextmanager
 
 import numpy as np
 import torch
@@ -24,34 +22,6 @@ import warp as wp
 from ....utils.grid_downsample import grid_bucket_downsample
 from . import cfg as patch_cfg
 from .kernels import morph_validity_kernel, rasterize_grid_kernel
-
-MORPH_TIMINGS: dict[str, float] = {}
-"""Cumulative wall-time per sub-phase of :func:`find_flat_patches_morphological`.
-
-Populated only while :func:`_morph_time` is active. Cleared at the start of
-each call to :func:`find_flat_patches_morphological`. Callers can read this
-dict after invocation to report a breakdown (see RetargetPipeline).
-"""
-
-
-@contextmanager
-def _morph_time(name: str, device):
-    """Record wall time for a morphological-sampling sub-phase with CUDA sync.
-
-    ``device`` may be a :class:`torch.device` or a device-string such as
-    ``"cuda:0"`` (what :func:`warp.device_to_torch` returns on Warp meshes).
-    """
-    dev_str = device.type if isinstance(device, torch.device) else str(device)
-    is_cuda = dev_str.startswith("cuda")
-    if is_cuda:
-        torch.cuda.synchronize()
-    t0 = time.perf_counter()
-    try:
-        yield
-    finally:
-        if is_cuda:
-            torch.cuda.synchronize()
-        MORPH_TIMINGS[name] = MORPH_TIMINGS.get(name, 0.0) + (time.perf_counter() - t0)
 
 
 def _resolve_footprint(cfg):
@@ -134,7 +104,7 @@ def _build_rotated_rect_masks(
 
     masks = []
     for yaw in yaw_angles:
-        c, s = float(yaw.cos()), float(yaw.sin())
+        c, s = yaw.cos(), yaw.sin()
         lx = wx * c + wy * s  # local x (forward)
         ly = -wx * s + wy * c  # local y (lateral)
         masks.append((lx.abs() <= hl) & (ly.abs() <= hw))
@@ -249,6 +219,8 @@ def find_flat_patches_morphological(
     wp_mesh: wp.Mesh,
     origin: np.ndarray | torch.Tensor | tuple[float, float, float],
     cfg: patch_cfg.MorphologicalPatchSamplingCfg,
+    *,
+    generator: torch.Generator,
 ) -> torch.Tensor:
     """Find flat patches using deterministic morphological heightmap filtering.
 
@@ -266,74 +238,70 @@ def find_flat_patches_morphological(
         wp_mesh: The warp mesh to find patches on.
         origin: Sub-terrain origin in the mesh frame.
         cfg: Morphological sampling configuration.
+        generator: Table-owned Torch random generator.
 
     Returns:
         Tensor of shape ``(num_patches, 7)`` — ``[x, y, z, qx, qy, qz, qw]``
         in the mesh frame with origin subtracted (quaternion is absolute).
     """
-    MORPH_TIMINGS.clear()
     device = wp.device_to_torch(wp_mesh.device)
     footprint = _resolve_footprint(cfg.footprint)
 
-    with _morph_time("setup", device):
-        if isinstance(origin, np.ndarray):
-            origin_t = torch.from_numpy(origin).float().to(device)
-        elif isinstance(origin, torch.Tensor):
-            origin_t = origin.float().to(device)
-        else:
-            origin_t = torch.tensor(origin, dtype=torch.float32, device=device)
+    if isinstance(origin, np.ndarray):
+        origin_t = torch.from_numpy(origin).float().to(device)
+    elif isinstance(origin, torch.Tensor):
+        origin_t = origin.float().to(device)
+    else:
+        origin_t = torch.tensor(origin, dtype=torch.float32, device=device)
 
-        # Compute mesh XY bounds on GPU once, then pull four scalars -- avoids
-        # the per-invocation ``wp_mesh.points.numpy()`` transfer of the whole
-        # vertex buffer.
-        verts_xy = wp.to_torch(wp_mesh.points)[:, :2]
-        bounds_min = verts_xy.amin(dim=0)
-        bounds_max = verts_xy.amax(dim=0)
-        mesh_xmin = float(bounds_min[0])
-        mesh_xmax = float(bounds_max[0])
-        mesh_ymin = float(bounds_min[1])
-        mesh_ymax = float(bounds_max[1])
+    # Compute mesh XY bounds on GPU once, then pull four scalars -- avoids
+    # the per-invocation ``wp_mesh.points.numpy()`` transfer of the whole
+    # vertex buffer.
+    verts_xy = wp.to_torch(wp_mesh.points)[:, :2]
+    bounds_min = verts_xy.amin(dim=0)
+    bounds_max = verts_xy.amax(dim=0)
+    mesh_xmin = float(bounds_min[0])
+    mesh_xmax = float(bounds_max[0])
+    mesh_ymin = float(bounds_min[1])
+    mesh_ymax = float(bounds_max[1])
 
-        ox, oy, oz = origin_t[0].item(), origin_t[1].item(), origin_t[2].item()
-        x_range = (max(cfg.x_range[0] + ox, mesh_xmin), min(cfg.x_range[1] + ox, mesh_xmax))
-        y_range = (max(cfg.y_range[0] + oy, mesh_ymin), min(cfg.y_range[1] + oy, mesh_ymax))
-        z_range = (cfg.z_range[0] + oz, cfg.z_range[1] + oz)
+    ox, oy, oz = origin_t[0].item(), origin_t[1].item(), origin_t[2].item()
+    x_range = (max(cfg.x_range[0] + ox, mesh_xmin), min(cfg.x_range[1] + ox, mesh_xmax))
+    y_range = (max(cfg.y_range[0] + oy, mesh_ymin), min(cfg.y_range[1] + oy, mesh_ymax))
+    z_range = (cfg.z_range[0] + oz, cfg.z_range[1] + oz)
+    scale = cfg.horizontal_scale
 
-        scale = cfg.horizontal_scale
-
-    with _morph_time("rasterize", device):
-        heightmap, hm_x0, hm_y0 = _rasterize_mesh(wp_mesh, x_range, y_range, scale, device)
-        H, W = heightmap.shape
+    heightmap, hm_x0, hm_y0 = _rasterize_mesh(wp_mesh, x_range, y_range, scale, device)
+    H, W = heightmap.shape
 
     is_rect = isinstance(footprint, patch_cfg.RectFootprintCfg)
 
-    with _morph_time("validity", device):
-        if is_rect:
-            # test 8 discrete yaw angles in [0, pi) — rectangle has 180-deg symmetry
-            num_yaw = 8
-            yaw_angles = torch.linspace(0, math.pi, num_yaw + 1, device=device)[:num_yaw]
-            rotated_masks = _build_rotated_rect_masks(footprint, scale, yaw_angles, device)
+    if is_rect:
+        # test 8 discrete yaw angles in [0, pi) — rectangle has 180-deg symmetry
+        num_yaw = 8
+        yaw_angles = torch.linspace(0, math.pi, num_yaw + 1, device=device)[:num_yaw]
+        rotated_masks = _build_rotated_rect_masks(footprint, scale, yaw_angles, device)
 
-            best_range = torch.full((H, W), float("inf"), device=device)
-            best_yaw_idx = torch.zeros((H, W), dtype=torch.long, device=device)
-            combined_valid = torch.zeros((H, W), dtype=torch.bool, device=device)
+        best_range = torch.full((H, W), float("inf"), device=device)
+        best_yaw_idx = torch.zeros((H, W), dtype=torch.long, device=device)
+        combined_valid = torch.zeros((H, W), dtype=torch.bool, device=device)
 
-            for yi, mask in enumerate(rotated_masks):
-                valid_yi, h_range = _morphological_validity(heightmap, mask, cfg.max_height_diff, z_range)
-                improved = valid_yi & (h_range < best_range)
-                best_range[improved] = h_range[improved]
-                best_yaw_idx[improved] = yi
-                combined_valid |= valid_yi
+        for yi, mask in enumerate(rotated_masks):
+            valid_yi, h_range = _morphological_validity(heightmap, mask, cfg.max_height_diff, z_range)
+            improved = valid_yi & (h_range < best_range)
+            best_range[improved] = h_range[improved]
+            best_yaw_idx[improved] = yi
+            combined_valid |= valid_yi
 
-            valid = combined_valid
-            yaw_map = yaw_angles[best_yaw_idx]
-        else:
-            footprint_mask = _build_footprint_mask(footprint, scale, device)
-            valid, _ = _morphological_validity(heightmap, footprint_mask, cfg.max_height_diff, z_range)
-            yaw_map = torch.zeros((H, W), device=device)
+        valid = combined_valid
+        yaw_map = yaw_angles[best_yaw_idx]
+    else:
+        footprint_mask = _build_footprint_mask(footprint, scale, device)
+        valid, _ = _morphological_validity(heightmap, footprint_mask, cfg.max_height_diff, z_range)
+        yaw_map = torch.zeros((H, W), device=device)
 
-        valid_coords = valid.nonzero(as_tuple=False)  # [K, 2]
-        num_valid = valid_coords.shape[0]
+    valid_coords = valid.nonzero(as_tuple=False)  # [K, 2]
+    num_valid = valid_coords.shape[0]
 
     if num_valid < cfg.num_patches:
         total_cells = H * W
@@ -349,26 +317,23 @@ def find_flat_patches_morphological(
             f"\n\tHint: lower horizontal_scale or relax max_height_diff to grow num_valid."
         )
 
-    with _morph_time("candidates", device):
-        n_candidates = min(int(cfg.num_patches * cfg.oversample_ratio), num_valid)
-        perm = torch.randperm(num_valid, device=device)[:n_candidates]
-        candidates_rc = valid_coords[perm]
+    n_candidates = min(int(cfg.num_patches * cfg.oversample_ratio), num_valid)
+    perm = torch.randperm(num_valid, device=device, generator=generator)[:n_candidates]
+    candidates_rc = valid_coords[perm]
 
-        cand_x = hm_x0 + (candidates_rc[:, 0].float() + 0.5) * scale
-        cand_y = hm_y0 + (candidates_rc[:, 1].float() + 0.5) * scale
-        cand_z = heightmap[candidates_rc[:, 0], candidates_rc[:, 1]]
-        cand_yaw = yaw_map[candidates_rc[:, 0], candidates_rc[:, 1]]
-        cand_quat = _yaw_to_quat_xyzw(cand_yaw)
-        cand_pos = torch.stack([cand_x, cand_y, cand_z], dim=-1)
+    cand_x = hm_x0 + (candidates_rc[:, 0].float() + 0.5) * scale
+    cand_y = hm_y0 + (candidates_rc[:, 1].float() + 0.5) * scale
+    cand_z = heightmap[candidates_rc[:, 0], candidates_rc[:, 1]]
+    cand_yaw = yaw_map[candidates_rc[:, 0], candidates_rc[:, 1]]
+    cand_quat = _yaw_to_quat_xyzw(cand_yaw)
+    cand_pos = torch.stack([cand_x, cand_y, cand_z], dim=-1)
 
-    with _morph_time("fps", device):
-        if cfg.oversample_ratio > 1.0 and n_candidates > cfg.num_patches:
-            sel_idx = grid_bucket_downsample(cand_pos[:, :2], cfg.num_patches)
-            pos = cand_pos[sel_idx]
-            quat = cand_quat[sel_idx]
-        else:
-            pos = cand_pos[: cfg.num_patches]
-            quat = cand_quat[: cfg.num_patches]
+    if cfg.oversample_ratio > 1.0 and n_candidates > cfg.num_patches:
+        sel_idx = grid_bucket_downsample(cand_pos[:, :2], cfg.num_patches, generator=generator)
+        pos = cand_pos[sel_idx]
+        quat = cand_quat[sel_idx]
+    else:
+        pos = cand_pos[: cfg.num_patches]
+        quat = cand_quat[: cfg.num_patches]
 
-        result = torch.cat([pos - origin_t, quat], dim=-1)
-    return result
+    return torch.cat([pos - origin_t, quat], dim=-1)

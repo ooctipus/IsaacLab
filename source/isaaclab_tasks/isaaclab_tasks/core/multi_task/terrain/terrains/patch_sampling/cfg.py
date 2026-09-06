@@ -10,7 +10,6 @@ from dataclasses import MISSING
 
 from isaaclab.utils.configclass import configclass
 
-from . import morph as morph_funcs
 from . import rejection as rejection_funcs
 
 
@@ -148,7 +147,7 @@ class RectFootprintCfg:
 
 
 @configclass
-class MorphologicalPatchSamplingCfg(PatchSamplingCfg):
+class MorphologicalPatchSamplingCfg:
     """Deterministic patch sampling via morphological heightmap filtering.
 
     Rasterizes the mesh to a 2D heightmap, computes a validity mask using
@@ -156,10 +155,8 @@ class MorphologicalPatchSamplingCfg(PatchSamplingCfg):
     valid region with optional farthest-point refinement.
     """
 
-    func: Callable = morph_funcs.find_flat_patches_morphological
-
-    patch_radius: float | list[float] = 0.0
-    """Unused by this sampler (kept for base-class compatibility)."""
+    num_patches: int = MISSING
+    """Number of patches to sample."""
 
     footprint: CircleFootprintCfg | RectFootprintCfg = MISSING
     """Robot footprint shape used to evaluate local flatness."""

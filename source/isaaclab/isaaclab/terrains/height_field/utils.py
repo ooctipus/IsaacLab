@@ -34,7 +34,7 @@ def height_field_to_mesh(func: Callable) -> Callable:
     """
 
     @functools.wraps(func)
-    def wrapper(difficulty: float, cfg: HfTerrainBaseCfg):
+    def wrapper(difficulty: float, cfg: HfTerrainBaseCfg, *, rng: np.random.Generator | None = None):
         # check valid border width
         if cfg.border_width > 0 and cfg.border_width < cfg.horizontal_scale:
             raise ValueError(
@@ -53,7 +53,7 @@ def height_field_to_mesh(func: Callable) -> Callable:
         terrain_size = copy.deepcopy(cfg.size)
         cfg.size = tuple(sub_terrain_size)
         # generate the height field
-        z_gen = func(difficulty, cfg)
+        z_gen = func(difficulty, cfg) if rng is None else func(difficulty, cfg, rng=rng)
         # handle the border for the terrain
         heights[border_pixels:-border_pixels, border_pixels:-border_pixels] = z_gen
         # set terrain size back to config
