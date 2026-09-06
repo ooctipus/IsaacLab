@@ -23,6 +23,11 @@ The guide owns shared contribution rules. Update them there instead of copying t
 - Follow the existing style and abstractions in the affected package.
 - Use the uv-managed environment for routine commands and `uv run python` for Python scripts.
 - Run the guide's formatting and lint checks before committing.
+- Add physics backends at the same level in an existing `PresetCfg` composition root. Do not subclass an existing
+  `PhysicsCfg` or `EventCfg` to add a backend-specific preset; apply essential variant-specific solver tuning directly
+  to the inherited backend entry in `__post_init__`.
+- Do not expose a backend preset for a task whose required physics features that backend cannot simulate. Reject the
+  unsupported combination during preset selection instead of silently skipping required physics behavior at runtime.
 - Do not define Warp kernels in `python -c`; write a temporary Python file instead so Warp can inspect the source.
 - Do not add debug output to production Warp kernels. Use temporary standalone reproductions and remove debug output before committing.
 

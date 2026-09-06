@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 from isaaclab_newton.physics import (
+    FeatherPGSSolverCfg,
     MJWarpSolverCfg,
     NewtonCfg,
     NewtonCollisionPipelineCfg,
@@ -74,6 +75,7 @@ class KeyboardAssetCfg(PresetCfg):
         spawn=MultiAssetSpawnerCfg(assets_cfg=list(TYPING_KEYBOARD_POOL.spawners_single), random_choice=False),
     )
     newton_steel = newton_mjwarp  # Both solvers consume the Newton-compatible keyboard assets.
+    feather_pgs = newton_mjwarp
     isaacsim_physx = default
     physx = default
     default = newton_mjwarp
@@ -327,6 +329,20 @@ class PhysicsCfg(PresetCfg):
         # Default 4096 environments, 170 contacts each.
         collision_cfg=NewtonCollisionPipelineCfg(rigid_contact_max=170 * 4096),
         default_shape_cfg=NewtonShapeCfg(gap=0.002),
+        num_substeps=2,
+    )
+    feather_pgs = NewtonCfg(
+        solver_cfg=FeatherPGSSolverCfg(
+            pgs_mode="matrix_free",
+            update_mass_matrix_interval=2,
+            enable_joint_limits=True,
+            joint_limit_activation_gap=0.1,
+            dense_max_constraints=192,
+            mf_max_constraints=64,
+            serial_kernel_block_dim=64,
+        ),
+        collision_cfg=NewtonCollisionPipelineCfg(),
+        default_shape_cfg=NewtonShapeCfg(),
         num_substeps=2,
     )
     physx = PhysxAutoCfg(isaacsim_physx=isaacsim_physx)

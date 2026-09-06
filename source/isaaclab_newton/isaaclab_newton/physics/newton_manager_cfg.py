@@ -193,7 +193,8 @@ class NewtonCfg(PhysicsCfg):
     - :class:`XPBDSolverCfg` (always),
     - :class:`VBDSolverCfg` (always),
     - :class:`SteelSolverCfg` (always),
-    - :class:`FeatherstoneSolverCfg` (always).
+    - :class:`FeatherstoneSolverCfg` (always),
+    - :class:`FeatherPGSSolverCfg` (always).
 
     :class:`~isaaclab_newton.physics.MPMSolverCfg` does not use this pipeline;
     implicit MPM treats rigid geometry as colliders internally.

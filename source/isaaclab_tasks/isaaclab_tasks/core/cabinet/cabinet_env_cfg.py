@@ -7,7 +7,7 @@
 
 from dataclasses import MISSING
 
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg, SteelSolverCfg
+from isaaclab_newton.physics import FeatherPGSSolverCfg, MJWarpSolverCfg, NewtonCfg, SteelSolverCfg
 from isaaclab_ov.physics import OvPhysxCfg
 from isaaclab_physx.physics import PhysxCfg
 
@@ -113,11 +113,24 @@ class CabinetPhysicsCfg(PresetCfg):
             enable_joint_limits=True, articulation_constraint_max=256, free_body_constraint_max=32
         )
     )
+    feather_pgs: NewtonCfg = NewtonCfg(
+        solver_cfg=FeatherPGSSolverCfg(
+            pgs_mode="matrix_free",
+            enable_joint_limits=True,
+            dense_max_constraints=256,
+            mf_max_constraints=32,
+            hinv_jt_kernel="par_row",
+            serial_kernel_block_dim=64,
+        ),
+        num_substeps=1,
+    )
     default: NewtonCfg = newton_mjwarp
 
 
 CABINET_SIM_CFG = SimulationCfg(
-    dt=preset(default=1 / 600, isaacsim_physx=1 / 60, ovphysx=1 / 60, physx=1 / 60, newton_steel=1 / 60),
+    dt=preset(
+        default=1 / 600, isaacsim_physx=1 / 60, ovphysx=1 / 60, physx=1 / 60, newton_steel=1 / 60, feather_pgs=1 / 60
+    ),
     render_interval=1,
     visualizer_cfgs=VisualizerCfg(eye=(-2.0, 2.0, 2.0), lookat=(0.8, 0.0, 0.5)),
     physics=CabinetPhysicsCfg(),
@@ -138,6 +151,7 @@ class CabinetDecimationCfg(PresetCfg):
     physx: int = isaacsim_physx
     newton_mjwarp: int = 10
     newton_steel: int = 1
+    feather_pgs: int = newton_steel
     default: int = newton_mjwarp
 
 

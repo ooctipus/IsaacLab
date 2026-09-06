@@ -5,7 +5,7 @@
 
 """Configurations shared by the direct and manager-based Humanoid environments."""
 
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg, SteelSolverCfg
+from isaaclab_newton.physics import FeatherPGSSolverCfg, MJWarpSolverCfg, NewtonCfg, SteelSolverCfg
 from isaaclab_ov.physics import OvPhysxCfg
 from isaaclab_physx.physics import PhysxCfg
 
@@ -79,6 +79,15 @@ class HumanoidPhysicsCfg(PresetCfg):
             enable_joint_limits=True,
             articulation_constraint_max=128,
             free_body_constraint_max=512,
+        ),
+        num_substeps=2,
+    )
+    feather_pgs: NewtonCfg = NewtonCfg(
+        solver_cfg=FeatherPGSSolverCfg(
+            update_mass_matrix_interval=2,
+            enable_joint_limits=True,
+            dense_max_constraints=64,
+            mf_max_constraints=512,
         ),
         num_substeps=2,
     )

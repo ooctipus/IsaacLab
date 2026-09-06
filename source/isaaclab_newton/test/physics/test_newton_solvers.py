@@ -18,6 +18,7 @@ import pytest
 import warp as wp
 from isaaclab_newton.cloner import newton_physics_replicate
 from isaaclab_newton.physics import (
+    FeatherPGSSolverCfg,
     FeatherstoneSolverCfg,
     KaminoDVICfg,
     KaminoDVISolverCfg,
@@ -78,6 +79,11 @@ def test_solver_kwargs_include_configured_options_and_newton_deterministic_mode(
         (KaminoPADMMSolverCfg(), "kamino:max_solver_iterations", ("mujoco:condim", "mpm:young_modulus")),
         (MPMSolverCfg(), "mpm:young_modulus", ("mujoco:condim", "kamino:max_solver_iterations")),
         (SteelSolverCfg(), "steel:min_torsional_patch_radius", ("mujoco:condim", "kamino:max_solver_iterations")),
+        (
+            FeatherPGSSolverCfg(),
+            "rigid_body_max_linear_velocity",
+            ("mujoco:condim", "kamino:max_solver_iterations", "mpm:young_modulus"),
+        ),
     ],
 )
 def test_solver_registers_only_its_builder_attributes(solver_cfg, active, inactive):

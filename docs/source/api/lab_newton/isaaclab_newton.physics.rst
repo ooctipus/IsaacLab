@@ -23,6 +23,7 @@
     XPBDSolver
     FeatherstoneSolver
     SteelSolver
+    FeatherPGSSolver
     KaminoSolver
     MPMSolver
     NewtonSolverCfg
@@ -31,6 +32,7 @@
     XPBDSolverCfg
     FeatherstoneSolverCfg
     SteelSolverCfg
+    FeatherPGSSolverCfg
     KaminoCollisionDetectorCfg
     KaminoConstraintsCfg
     KaminoDVICfg
@@ -86,6 +88,10 @@ Solvers
   :show-inheritance:
 
 .. autoclass:: SteelSolver
+  :show-inheritance:
+
+.. autoclass:: FeatherPGSSolver
+  :members:
   :show-inheritance:
 
 .. autoclass:: KaminoSolver
@@ -152,6 +158,11 @@ Physics Configuration
   :exclude-members: __init__
 
 .. autoclass:: SteelSolverCfg
+  :members:
+  :show-inheritance:
+  :exclude-members: __init__
+
+.. autoclass:: FeatherPGSSolverCfg
   :members:
   :show-inheritance:
   :exclude-members: __init__
