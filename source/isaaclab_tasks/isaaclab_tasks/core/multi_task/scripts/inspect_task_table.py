@@ -3,12 +3,20 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Inspect a production task table with Newton FK and Viser, without simulation."""
+"""Inspect a production task table with Newton FK and a Newton viewer, without simulation.
+
+Usage::
+
+    SCRIPT=source/isaaclab_tasks/isaaclab_tasks/core/multi_task/scripts/inspect_task_table.py
+    uv run python $SCRIPT --task Isaac-Position-v0 --command goal_point presets=anymal_c,newton_mjwarp
+    uv run python $SCRIPT --task Isaac-Position-v0 --command goal_point --visualizer newton_gl presets=anymal_c
+"""
 
 from __future__ import annotations
 
 import argparse
 import heapq
+import importlib
 import logging
 import math
 import sys
@@ -16,8 +24,28 @@ import time
 from collections.abc import Iterator, Sequence
 
 _SEQUENCE_LIMIT = 16
+_STATIC_REFRESH_SECONDS = 0.05
 _TASK_FAMILY_LOGGER = "isaaclab_tasks.core.multi_task.mdp.commands.state_command.task_family"
 _VISER_INSTALL_GUIDANCE = "Install Viser with: ./isaaclab.sh -i 'visualizer[viser]'"
+_VISUALIZERS: dict[str, tuple[str, str | None, str | None]] = {
+    "viser": ("ViewerViser", "viser", _VISER_INSTALL_GUIDANCE),
+    "newton_gl": ("ViewerGL", None, None),
+}
+"""Selectable viewer backends: Newton viewer class, optional dependency module, and install guidance."""
+
+
+def _resolve_viewer_type(name: str) -> type:
+    """Return the Newton viewer class for one ``--visualizer`` selection."""
+    class_name, optional_module, guidance = _VISUALIZERS[name]
+    if optional_module is not None:
+        try:
+            importlib.import_module(optional_module)
+        except ModuleNotFoundError as error:
+            if error.name != optional_module:
+                raise
+            raise SystemExit(guidance) from error
+    viewer_module = importlib.import_module("newton.viewer")
+    return getattr(viewer_module, class_name)
 
 
 def _timeline_events(
@@ -78,21 +106,34 @@ def _repeat_kinematic_model(view, world_count: int):
     )
 
 
-def _log_evidence(viewer, view, state_rows, world_offsets, sequence_quality, *, log_constant_quality=True) -> None:
-    """Log table-owned geometry and quality without reconstructing domain facts."""
+def _vec3_array(points):
+    """Return a Warp ``vec3`` view of float32 ``[count, 3]`` Torch positions, as Newton viewers expect."""
     import warp as wp  # noqa: PLC0415
 
+    return wp.from_torch(points.reshape(-1, 3).contiguous(), dtype=wp.vec3)
+
+
+def _color_array(color: tuple[float, float, float], count: int, device):
+    """Return one shared RGB color per primitive; windowed viewers require per-primitive arrays."""
+    import warp as wp  # noqa: PLC0415
+
+    return wp.full(count, wp.vec3(*color), dtype=wp.vec3, device=wp.device_from_torch(device))
+
+
+def _log_evidence(viewer, view, state_rows, world_offsets, sequence_quality, *, log_constant_quality=True) -> None:
+    """Log table-owned geometry and quality without reconstructing domain facts."""
     for item in view.points:
         points = item.points.expand(state_rows.numel(), -1, -1) if item.scope == "global" else item.points[state_rows]
         valid = None
         if item.valid is not None:
             valid = item.valid.expand(state_rows.numel(), -1) if item.scope == "global" else item.valid[state_rows]
         points = points + world_offsets[:, None]
+        points = points.reshape(-1, 3) if valid is None else points[valid]
         viewer.log_points(
             f"evidence/{item.name}",
-            wp.from_torch((points.reshape(-1, 3) if valid is None else points[valid]).contiguous()),
+            _vec3_array(points),
             radii=item.radius,
-            colors=item.color,
+            colors=_color_array(item.color, points.shape[0], points.device),
         )
 
     for item in view.lines:
@@ -108,9 +149,9 @@ def _log_evidence(viewer, view, state_rows, world_offsets, sequence_quality, *, 
         endpoints = endpoints.reshape(-1, 2, 3) if valid is None else endpoints[valid]
         viewer.log_lines(
             f"evidence/{item.name}",
-            wp.from_torch(endpoints[:, 0].contiguous()),
-            wp.from_torch(endpoints[:, 1].contiguous()),
-            colors=item.color,
+            _vec3_array(endpoints[:, 0]),
+            _vec3_array(endpoints[:, 1]),
+            colors=_color_array(item.color, endpoints.shape[0], endpoints.device),
             width=item.width,
         )
 
@@ -157,12 +198,20 @@ def _inspect_static(view, viewer_type: type, sequence_count: int) -> None:
         world_offsets = torch.as_tensor(viewer.world_offsets.numpy(), dtype=torch.float32, device=joint_q.device)
         view.kinematic_view.joint_q_into(view.state_bank, state_rows, joint_q)
         newton.eval_fk(model, joint_q_warp, joint_qd_zero, state)
-        viewer.begin_frame(0.0)
-        viewer.log_state(state)
-        _log_evidence(viewer, view, state_rows, world_offsets, sequence_quality)
-        viewer.end_frame()
-        while viewer.is_running():
-            time.sleep(0.05)
+        # Windowed viewers only process input while frames are submitted, so the
+        # fixed scene is re-submitted at a low rate until the viewer closes.
+        frame_time = 0.0
+        first_frame = True
+        while True:
+            viewer.begin_frame(frame_time)
+            viewer.log_state(state)
+            _log_evidence(viewer, view, state_rows, world_offsets, sequence_quality, log_constant_quality=first_frame)
+            viewer.end_frame()
+            first_frame = False
+            if not viewer.is_running():
+                break
+            time.sleep(_STATIC_REFRESH_SECONDS)
+            frame_time += _STATIC_REFRESH_SECONDS
     except KeyboardInterrupt:
         pass
     finally:
@@ -234,15 +283,14 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--task", required=True, help="Registered task whose production task table is inspected.")
     parser.add_argument("--command", required=True, help="State command that owns the production task table.")
+    parser.add_argument(
+        "--visualizer",
+        choices=tuple(_VISUALIZERS),
+        default="viser",
+        help="Newton viewer backend used to display the table.",
+    )
     args, hydra_args = setup_preset_cli(parser, argv)
-
-    try:
-        import viser  # noqa: F401, PLC0415
-    except ModuleNotFoundError as error:
-        if error.name != "viser":
-            raise
-        raise SystemExit(_VISER_INSTALL_GUIDANCE) from error
-    from newton.viewer import ViewerViser  # noqa: PLC0415
+    viewer_type = _resolve_viewer_type(args.visualizer)
 
     import isaaclab_tasks  # noqa: F401, PLC0415
     from isaaclab_tasks.utils.hydra import resolve_task_config  # noqa: PLC0415
@@ -288,9 +336,9 @@ def main(argv: list[str] | None = None) -> None:
     if sequence_count == 0:
         raise ValueError("The task table contains no sequences.")
     if view.sequences.is_timed:
-        _inspect_timed(view, ViewerViser, sequence_count)
+        _inspect_timed(view, viewer_type, sequence_count)
     else:
-        _inspect_static(view, ViewerViser, sequence_count)
+        _inspect_static(view, viewer_type, sequence_count)
 
 
 if __name__ == "__main__":
