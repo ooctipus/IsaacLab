@@ -41,6 +41,17 @@ class IKExecutionStatistics:
     memory_budget_bytes: int | None
     peak_additional_workspace_bytes: int
 
+    def stage_details(self) -> dict[str, object]:
+        """Return the compact facts worth attaching to a task-family solve stage report."""
+        return {
+            "ik_problems": self.problem_count,
+            "ik_batches": self.batch_count,
+            "batch_capacity": self.batch_capacity,
+            "iterations": f"{self.iterations_min}/{self.iterations_max}/{self.iterations_total}",
+            "converged_batches": f"{self.converged_batches}/{self.batch_count}",
+            "bytes_per_problem": self.bytes_per_problem,
+        }
+
 
 @dataclass(frozen=True, slots=True)
 class IKMemoryPlan:

@@ -42,7 +42,7 @@ from ....mdp.commands.state_command import (
     TaskTableSequenceIndex,
     TaskTableView,
 )
-from ....mdp.commands.state_command.task_family import execute_task_family, make_task_table_rng
+from ....mdp.commands.state_command.task_family import execute_task_family, make_task_table_rng, record_stage_details
 from ....utils.grid_downsample import extract_features, grid_bucket_downsample
 from ...retarget.buffer import RetargetBuffer
 from ...retarget.sampler_base import resolve_contact_body_names
@@ -232,6 +232,11 @@ def generate_position_terrain_stance(cfg, initial: PositionTerrainStanceInput, r
     if output.is_contact is not None and output.num_written > 0:
         count = output.num_written * buffer.num_contacts
         buffer.is_contact_t[:count].copy_(output.is_contact.reshape(-1)[:count])
+    record_stage_details(
+        ik_capacity=sizing.ik_capacity,
+        sampled=output.num_written,
+        **{f"sampler_reject_{name}": count for name, count in output.reject_stats.items()},
+    )
     return PositionTerrainStanceCandidates(
         buffer=buffer,
         kinematics=kinematics,
@@ -436,6 +441,7 @@ def solve_position_terrain_stance(cfg, candidates: PositionTerrainStanceCandidat
         convergence_tolerance=cfg.convergence_tolerance,
         convergence_check_interval=cfg.convergence_check_interval,
     )
+    record_stage_details(**candidates.solve_statistics.stage_details())
     del representative_contact_mask, representative_contact_confidence
 
     batch_size = candidates.solve_statistics.batch_capacity

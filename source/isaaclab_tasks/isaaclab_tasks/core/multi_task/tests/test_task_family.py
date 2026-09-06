@@ -282,23 +282,87 @@ def test_task_family_inherited_root_info_skips_all_diagnostic_work(monkeypatch, 
     def fail(*_args, **_kwargs):
         pytest.fail("Module-NOTSET family execution entered diagnostic work.")
 
-    monkeypatch.setattr(task_family, "_log_family_summary", fail)
+    monkeypatch.setattr(task_family, "_log_family_report", fail)
     execute_task_family(_family([]), _Candidates(torch.zeros(4)), 2, make_task_table_rng(17, "cpu"))
 
 
-def test_task_family_info_log_reports_named_counts(caplog) -> None:
-    """Explicit INFO inspection reports one concise named family breakdown."""
+def test_task_family_info_log_reports_stage_breakdown(caplog) -> None:
+    """Explicit INFO inspection logs the family totals followed by one line per stage."""
     caplog.set_level(logging.INFO, logger=task_family.__name__)
     execution = execute_task_family(_family([]), _Candidates(torch.zeros(4)), 2, make_task_table_rng(17, "cpu"))
     assert execution.accepted_mask is not None
-    positive_failures = int((~execution.criterion_masks[0]).sum())
-    below_failures = int((~execution.criterion_masks[1]).sum())
     accepted = int(execution.accepted_mask.sum())
 
-    assert caplog.messages[-1] == (
-        f"Task family fixture: generated=4 accepted={accepted} selected={execution.selected_indices.numel()} "
-        f"failures=[positive={positive_failures}, below={below_failures}]"
+    lines = caplog.messages[-1].splitlines()
+    assert lines[0].startswith(
+        f"Task family fixture: generated=4 accepted={accepted} selected={execution.selected_indices.numel()} seconds="
     )
+    assert [line.split()[0] for line in lines[1:]] == [
+        "generate",
+        "generate",
+        "solve",
+        "criterion",
+        "criterion",
+        "selection",
+    ]
+    assert caplog.messages[-1] == execution.report.format()
+
+
+def test_task_family_report_tracks_row_flow_timing_and_stage_details() -> None:
+    """Every stage records rows in and out, a wall time, and domain-recorded details."""
+    table_cfg = StateCommandCfg.TaskTableCfg
+
+    def generate(_cfg, values, _rng):
+        task_family.record_stage_details(sampled=6)
+        return _Candidates(torch.arange(6, dtype=torch.float32))
+
+    def solve(_cfg, values):
+        task_family.record_stage_details(ik_batches=2)
+        return values
+
+    def keep_even(_cfg, values, rows):
+        return values.values[rows] % 2 == 0
+
+    def keep_positive(_cfg, values, rows):
+        return values.values[rows] > 0
+
+    def select(_cfg, _values, accepted, target_count, _rng):
+        return accepted.nonzero(as_tuple=False).squeeze(-1)[:target_count]
+
+    family = table_cfg.FamilyCfg(
+        name="flow",
+        generate=(table_cfg.GenerateTermCfg(class_type=generate),),
+        solve=table_cfg.SolveCfg(class_type=solve),
+        criteria=(
+            table_cfg.CriterionCfg(class_type=keep_even),
+            table_cfg.CriterionCfg(class_type=keep_positive),
+        ),
+        selection=table_cfg.SelectionCfg(class_type=select),
+    )
+    execution = execute_task_family(family, None, 1, make_task_table_rng(3, "cpu"))
+    report = execution.report
+
+    assert (report.name, report.generated, report.accepted, report.selected) == ("flow", 6, 2, 1)
+    flow = [(stage.kind, stage.name, stage.rows_in, stage.rows_out) for stage in report.stages]
+    assert flow == [
+        ("generate", "generate", 0, 6),
+        ("solve", "solve", 6, 6),
+        ("criterion", "keep_even", 6, 3),
+        ("criterion", "keep_positive", 3, 2),
+        ("selection", "select", 2, 1),
+    ]
+    assert report.stages[0].details == {"sampled": 6}
+    assert report.stages[1].details == {"ik_batches": 2}
+    assert report.stages[2].details == {"rejected": 3}
+    assert report.stages[3].details == {"rejected": 1}
+    assert all(stage.seconds >= 0.0 for stage in report.stages)
+    assert report.seconds == pytest.approx(sum(stage.seconds for stage in report.stages))
+    assert len(report.format().splitlines()) == 6
+
+
+def test_record_stage_details_outside_a_stage_is_ignored() -> None:
+    """Stage functions stay usable on their own without a running family."""
+    task_family.record_stage_details(sampled=1)
 
 
 def test_task_family_schema_has_no_rejected_relation_or_objective_set_layers() -> None:

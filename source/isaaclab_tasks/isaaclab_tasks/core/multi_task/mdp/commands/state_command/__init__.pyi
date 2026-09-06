@@ -10,6 +10,8 @@ __all__ = [
     "StateCommand",
     "StateCommandCfg",
     "TaskFamilyExecution",
+    "TaskFamilyReport",
+    "TaskFamilyStageReport",
     "TaskTableKinematicView",
     "TaskTableLineEvidence",
     "TaskTablePointEvidence",
@@ -19,13 +21,22 @@ __all__ = [
     "TaskTableView",
     "execute_task_family",
     "make_task_table_rng",
+    "record_stage_details",
 ]
 
 from .reset_state_bank import ResetStateBank, ResetStateLayout
 from .reset_state_writer import ResetStateWriter
 from .state_command import StateCommand
 from .state_command_cfg import StateCommandCfg
-from .task_family import TaskFamilyExecution, TaskTableRng, execute_task_family, make_task_table_rng
+from .task_family import (
+    TaskFamilyExecution,
+    TaskFamilyReport,
+    TaskFamilyStageReport,
+    TaskTableRng,
+    execute_task_family,
+    make_task_table_rng,
+    record_stage_details,
+)
 from .task_table_view import (
     TaskTableKinematicView,
     TaskTableLineEvidence,

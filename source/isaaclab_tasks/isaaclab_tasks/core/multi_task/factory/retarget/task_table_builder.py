@@ -34,7 +34,7 @@ from ...kinematics.ik_objectives.context import (
     IKObjectiveBuildContext,
     IKPositionObjectiveBuildContext,
 )
-from ...mdp.commands.state_command.task_family import TaskTableRng, execute_task_family
+from ...mdp.commands.state_command.task_family import TaskTableRng, execute_task_family, record_stage_details
 from ...utils.grid_downsample import grid_bucket_downsample
 from .criteria import (
     edges_vs_posed_mesh_hit,
@@ -996,6 +996,8 @@ def factory_solve_ik(cfg, candidates: FactoryFamilyCandidates) -> FactoryFamilyC
     candidates = _factory_solve_family(candidates, cfg)
     if candidates.joint_q.shape[0] != count:
         raise RuntimeError("Factory solve must preserve candidate count; criteria own acceptance.")
+    if candidates.solve_statistics is not None:
+        record_stage_details(**candidates.solve_statistics.stage_details())
     return candidates
 
 
