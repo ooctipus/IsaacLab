@@ -12,6 +12,7 @@ import ctypes
 import gc
 import inspect
 import logging
+import os
 import re
 from abc import abstractmethod
 from collections.abc import Callable, Iterable, Sequence
@@ -2071,8 +2072,21 @@ class NewtonManager(PhysicsManager):
         if cls._collision_cfg is not None:
             pipeline_args = cls._collision_cfg.to_pipeline_args()
         pipeline_args["deterministic"] = cls._deterministic_mode != wp.DeterministicMode.NOT_GUARANTEED
+        # Experiment (FeatherPGS profiling): route box-box pairs through Newton's analytic SAT collider
+        # instead of GJK/MPR. Opt-in via environment so the default pipeline is unchanged.
+        if os.environ.get("NEWTON_COLLISION_BOX_SAT") == "1":
+            pipeline_args["box_box_sat"] = True
+        # Experiment (FeatherPGS warm start): contact identity across steps for the solver's warm start.
+        _cm = os.environ.get("NEWTON_CONTACT_MATCHING")
+        if _cm:
+            pipeline_args["contact_matching"] = _cm
         if cls._collision_pipeline is None:
             NewtonManager._collision_pipeline = CollisionPipeline(cls._model, **pipeline_args)
+            # Experiment (FeatherPGS profiling): scale the grid-stride thread count of the narrow-phase kernels.
+            _npx = int(os.environ.get("NEWTON_NARROW_PHASE_THREADS_X", "1"))
+            _np = getattr(NewtonManager._collision_pipeline, "narrow_phase", None)
+            if _npx > 1 and _np is not None and hasattr(_np, "total_num_threads"):
+                _np.total_num_threads = int(_np.total_num_threads) * _npx
         if cls._contacts is None:
             NewtonManager._contacts = cls._collision_pipeline.contacts()
             # Grow the collision-pipeline contact buffer to the solver's max when the
@@ -2592,7 +2606,12 @@ class NewtonManager(PhysicsManager):
                 else:
                     NewtonManager._state_0, NewtonManager._state_1 = cls._state_1, cls._state_0
                 cls._state_0.clear_forces()
-                if collide_mid_loop and (i + 1) % collide_every == 0 and i + 1 < cls._num_substeps:
+                mid_collide = collide_mid_loop and (i + 1) % collide_every == 0 and i + 1 < cls._num_substeps
+                publish = getattr(cls._solver, "publish_kinematics", None)
+                if publish is not None and (mid_collide or i == cls._num_substeps - 1):
+                    # Solvers with lazy kinematics publish body state only where it is read.
+                    publish(cls._state_0)
+                if mid_collide:
                     cls._collision_pipeline.collide(cls._state_0, contacts)
 
     @classmethod

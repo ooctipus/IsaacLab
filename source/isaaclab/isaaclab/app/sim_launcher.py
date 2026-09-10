@@ -22,7 +22,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
-from isaaclab_newton.physics import NewtonCfg, VBDSolverCfg
+from isaaclab_newton.physics import FeatherPGSSolverCfg, NewtonCfg, VBDSolverCfg
 from isaaclab_ov.physics import OvPhysxCfg
 from isaaclab_ov.renderers import OVRTXRendererCfg
 from isaaclab_physx.physics import PhysxCfg
@@ -57,7 +57,7 @@ def make_physics_cfg(physics_cfg_str: str) -> PhysicsCfg:
 
     Args:
         physics_cfg_str: Backend selector: ``"physx"``, ``"isaacsim_physx"``,
-            ``"newton_mjwarp"``, ``"newton_vbd"``, or ``"ovphysx"``. The
+            ``"newton_mjwarp"``, ``"newton_vbd"``, ``"feather_pgs"``, or ``"ovphysx"``. The
             ``"physx"`` selector is automatic: it resolves to Isaac Sim PhysX
             when Kit is required, and to OvPhysX otherwise.
 
@@ -75,11 +75,13 @@ def make_physics_cfg(physics_cfg_str: str) -> PhysicsCfg:
         return NewtonCfg()
     if physics_cfg_str == "newton_vbd":
         return NewtonCfg(solver_cfg=VBDSolverCfg())
+    if physics_cfg_str == "feather_pgs":
+        return NewtonCfg(solver_cfg=FeatherPGSSolverCfg())
     if physics_cfg_str == "ovphysx":
         return OvPhysxCfg()
     raise ValueError(
         f"Invalid physics config: {physics_cfg_str!r} "
-        "(expected 'physx', 'isaacsim_physx', 'newton_mjwarp', 'newton_vbd', or 'ovphysx')."
+        "(expected 'physx', 'isaacsim_physx', 'newton_mjwarp', 'newton_vbd', 'feather_pgs', or 'ovphysx')."
     )
 
 

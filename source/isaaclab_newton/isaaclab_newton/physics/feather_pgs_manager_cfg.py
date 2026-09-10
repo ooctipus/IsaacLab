@@ -90,6 +90,54 @@ class FeatherPGSSolverCfg(NewtonSolverCfg):
     fuse_joint_velocity_limits: bool = True
     """Whether to fuse joint velocity-limit rows into the matrix-free constraint solve."""
 
+    mf_gs_incremental_rows: int = 0
+    """Row budget of the incremental-residual matrix-free Gauss-Seidel kernel.
+
+    Worlds with only dense articulated rows and at most this many rows solve through a
+    shared-memory response block instead of re-evaluating the row velocity per visit.
+    Set to ``0`` to disable the kernel and use the legacy per-row path everywhere.
+    """
+
+    mf_gs_parallel_rows: int = 0
+    """Row budget of the scaled parallel projection sweep (0 disables it).
+
+    Worlds with only dense articulated rows and at most this many rows are solved with all rows updated in
+    parallel (per-row step scaling, Nesterov momentum) instead of the row-serial kernels. Takes precedence over
+    :attr:`mf_gs_incremental_rows`.
+
+    This experimental projection does not preserve the legacy solver's converged velocities. Keep this
+    setting at ``0`` when legacy solver semantics are required; matching contact statistics is insufficient.
+    """
+
+    mf_gs_parallel_sweeps: int = 24
+    """Maximum parallel sweeps per launch; the kernel exits early once no impulse changes."""
+
+    mf_gs_parallel_nesterov: bool = True
+    """Whether the parallel sweep uses Nesterov momentum."""
+
+    mf_gs_response_block_rows: int = 0
+    """Row budget of the experimental response-block matrix-free Gauss-Seidel sweep.
+
+    Worlds whose dense plus matrix-free row count is at most this many rows are swept from a
+    per-world response block built once per launch (lane-per-world for small worlds,
+    warp-per-world above :attr:`mf_gs_response_block_lane_rows`). Larger worlds keep the
+    legacy sweep. Only ``64`` or ``0`` (disabled) are supported. Off by default: measured
+    neutral on flat quadruped locomotion and slower on dexterous manipulation at 16k worlds.
+    """
+
+    mf_gs_response_block_lane_rows: int = 16
+    """Row bound of the lane-per-world class of the response-block sweep (at most 24)."""
+
+    grouped_dynamics: bool = False
+    """Experimental: level-synchronous forward kinematics and inverse dynamics with a lane group per
+    articulation instead of one serial thread per articulation (same math and accumulation order)."""
+
+    lazy_kinematics: bool = False
+    """Skip the per-substep kinematics publish when the fused world-dynamics kernel is active.
+
+    Body poses and CoM velocities are then published only before collision detection and sensor updates.
+    """
+
     pgs_iterations: int = 8
     """Number of Gauss-Seidel iterations per simulation step."""
 

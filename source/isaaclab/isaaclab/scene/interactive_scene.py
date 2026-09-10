@@ -840,6 +840,19 @@ class InteractiveScene:
                 asset_cfg.num_envs = self.cfg.num_envs
                 asset_cfg.env_spacing = self.cfg.env_spacing
                 self._terrain = asset_cfg.class_type(asset_cfg)
+            elif isinstance(asset_cfg, AssetBaseCfg) and asset_cfg.class_type is None:
+                # A spawn-only subclass deliberately opts out of its runtime view. Preserve
+                # subclass schema hooks (notably Newton actuator authoring) before cloning.
+                if asset_cfg.spawn is not None:
+                    asset_cfg.spawn.func(
+                        asset_cfg.spawn.spawn_path,
+                        asset_cfg.spawn,
+                        translation=asset_cfg.init_state.pos,
+                        orientation=asset_cfg.init_state.rot,
+                    )
+                    asset_cfg._post_spawn(self.stage)
+                    cloner.queue_replication(asset_cfg)
+                self._extras[asset_name] = asset_cfg
             elif isinstance(asset_cfg, ArticulationCfg):
                 self._articulations[asset_name] = asset_cfg.class_type(asset_cfg)
             elif isinstance(asset_cfg, CableObjectCfg):
