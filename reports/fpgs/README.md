@@ -3,6 +3,10 @@
 Start here. This report supersedes the numerical claims in the archived handoff below.
 This is an experimental development snapshot, not a claim of production readiness or physics parity.
 
+The follow-on [structural optimization study](STRUCTURAL_STUDY_20260910.md) contains fresh RTX PRO 6000 / GB300
+budgets and the gates for further work. Its 2–4× target is an investigation, not an achieved speedup; the historical
+handoff and validated source pins below remain intact.
+
 ## Checkouts and pins
 
 Both repositories use branch `zhengyuz/fpgs-handoff-20260910`:
