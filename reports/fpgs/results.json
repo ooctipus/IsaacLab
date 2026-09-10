@@ -1,0 +1,189 @@
+{
+  "date": "2026-09-10",
+  "num_envs": 16384,
+  "physical_gpu": 1,
+  "gpu": "NVIDIA GeForce RTX 5090",
+  "seed": 0,
+  "warmup_steps": 200,
+  "timed_steps": 40,
+  "repeats": 1,
+  "profile_steps": 3,
+  "results": [
+    {
+      "name": "anymald",
+      "task": "Isaac-Velocity-Flat-AnymalD",
+      "fpgs_graph_us_per_env_step": 8899.314666666665,
+      "mjwarp_graph_us_per_env_step": 34951.56966666667,
+      "graph_speedup": 3.9274450871572744,
+      "fpgs_change_percent": -1.0124646398192882,
+      "fpgs_fps": 1135737.6833511556,
+      "mjwarp_fps": 392122.97298344824,
+      "full_step_fps_speedup": 2.8963813946169785,
+      "fpgs_finite": [
+        true,
+        true
+      ],
+      "mjwarp_finite": [
+        true,
+        true
+      ],
+      "fpgs_solver_attr": [
+        "grouped_dynamics=True",
+        "mf_gs_parallel_rows=48",
+        "mf_gs_parallel_matrix_free=True",
+        "lazy_kinematics=True"
+      ]
+    },
+    {
+      "name": "allegro",
+      "task": "Isaac-Reorient-Cube-Allegro",
+      "fpgs_graph_us_per_env_step": 17497.078333333335,
+      "mjwarp_graph_us_per_env_step": 59563.954999999994,
+      "graph_speedup": 3.4042229145494476,
+      "fpgs_change_percent": -0.6107589304310435,
+      "fpgs_fps": 743986.5698529491,
+      "mjwarp_fps": 253296.8951840793,
+      "full_step_fps_speedup": 2.937211564761855,
+      "fpgs_finite": [
+        true,
+        true
+      ],
+      "mjwarp_finite": [
+        true,
+        true
+      ],
+      "fpgs_solver_attr": [
+        "grouped_dynamics=True",
+        "mf_gs_parallel_rows=128",
+        "mf_gs_parallel_matrix_free=True",
+        "lazy_kinematics=True"
+      ]
+    },
+    {
+      "name": "kuka",
+      "task": "Isaac-Lift-KukaAllegro",
+      "fpgs_graph_us_per_env_step": 17167.320666666667,
+      "mjwarp_graph_us_per_env_step": 69423.65000000001,
+      "graph_speedup": 4.043942054091066,
+      "fpgs_change_percent": -2.644266249281668,
+      "fpgs_fps": 595406.5783470442,
+      "mjwarp_fps": 202628.66742008523,
+      "full_step_fps_speedup": 2.938412347709224,
+      "fpgs_finite": [
+        true,
+        true
+      ],
+      "mjwarp_finite": [
+        true,
+        true
+      ],
+      "fpgs_solver_attr": []
+    },
+    {
+      "name": "franka",
+      "task": "Isaac-Lift-Franka",
+      "fpgs_graph_us_per_env_step": 5762.784333333333,
+      "mjwarp_graph_us_per_env_step": 21119.56466666667,
+      "graph_speedup": 3.6648195464310573,
+      "fpgs_change_percent": -1.5548133975651246,
+      "fpgs_fps": 1164986.0450347827,
+      "mjwarp_fps": 543181.2788689706,
+      "full_step_fps_speedup": 2.1447463127973663,
+      "fpgs_finite": [
+        true,
+        true
+      ],
+      "mjwarp_finite": [
+        true,
+        true
+      ],
+      "fpgs_solver_attr": []
+    },
+    {
+      "name": "g1",
+      "task": "Isaac-Velocity-Rough-G1",
+      "fpgs_graph_us_per_env_step": 39014.977333333336,
+      "mjwarp_graph_us_per_env_step": 50002.362,
+      "graph_speedup": 1.2816196603882002,
+      "fpgs_change_percent": 0.21493588278154174,
+      "fpgs_fps": 353646.5043086362,
+      "mjwarp_fps": 284556.9558393789,
+      "full_step_fps_speedup": 1.2427969060375232,
+      "fpgs_finite": [
+        true,
+        true
+      ],
+      "mjwarp_finite": [
+        true,
+        true
+      ],
+      "fpgs_solver_attr": [
+        "grouped_dynamics=True"
+      ]
+    },
+    {
+      "name": "cartpole",
+      "task": "Isaac-Cartpole",
+      "fpgs_graph_us_per_env_step": 248.77700000000002,
+      "mjwarp_graph_us_per_env_step": 541.8536666666666,
+      "graph_speedup": 2.17806978405024,
+      "fpgs_change_percent": 0.27287384119307756,
+      "fpgs_fps": 5673353.012685838,
+      "mjwarp_fps": 5208467.281855974,
+      "full_step_fps_speedup": 1.0892557648291894,
+      "fpgs_finite": [
+        true,
+        true
+      ],
+      "mjwarp_finite": [
+        true,
+        true
+      ],
+      "fpgs_solver_attr": []
+    },
+    {
+      "name": "ant",
+      "task": "Isaac-Ant",
+      "fpgs_graph_us_per_env_step": 2037.3426666666667,
+      "mjwarp_graph_us_per_env_step": 2253.555,
+      "graph_speedup": 1.1061246774393048,
+      "fpgs_change_percent": -1.6536654437793619,
+      "fpgs_fps": 1282132.2059023888,
+      "mjwarp_fps": 2804478.963761402,
+      "full_step_fps_speedup": 0.45717305156134147,
+      "fpgs_finite": [
+        true,
+        true
+      ],
+      "mjwarp_finite": [
+        true,
+        true
+      ],
+      "fpgs_solver_attr": []
+    },
+    {
+      "name": "humanoid",
+      "task": "Isaac-Humanoid",
+      "fpgs_graph_us_per_env_step": 7855.41,
+      "mjwarp_graph_us_per_env_step": 8513.317333333332,
+      "graph_speedup": 1.0837521317580283,
+      "fpgs_change_percent": -0.8205393666986471,
+      "fpgs_fps": 1368298.3046081914,
+      "mjwarp_fps": 1310292.7659518793,
+      "full_step_fps_speedup": 1.0442691436323188,
+      "fpgs_finite": [
+        true,
+        true
+      ],
+      "mjwarp_finite": [
+        true,
+        true
+      ],
+      "fpgs_solver_attr": []
+    }
+  ],
+  "franka_mjwarp_recheck_us": [
+    22575.226666666666,
+    21585.61566666667
+  ]
+}

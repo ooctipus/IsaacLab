@@ -1,0 +1,23 @@
+{
+  "dense_max_constraints": 192,
+  "mf_max_constraints": 64,
+  "max_world_dofs": 22,
+  "friction_mode": "current",
+  "has_drive_rows": false,
+  "has_dense_velocity_limit_rows": true,
+  "fuse_vel_limits": false,
+  "device_arch": 120,
+  "world_count": 16384,
+  "block_dim": 32,
+  "iterations": 12,
+  "omega": 1.0,
+  "row_phase": 0,
+  "friction_start_iteration": 0,
+  "iteration_offset": 0,
+  "freeze_drive_rows": 0,
+  "defer_dense_response": 0,
+  "regularize": 0,
+  "use_general_world_queue": 0,
+  "general_block_count": 16384,
+  "skip_local_internal_worlds": false
+}

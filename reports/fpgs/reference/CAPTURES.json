@@ -1,0 +1,75 @@
+{
+  "source_capture_root": "/tmp/claude-1776732611/-home-zhengyuz-Projects-IsaacLab-wt-fpgs-official-lab/d296ed8d-0793-444d-97b6-f9b956deef4d/scratchpad/cap",
+  "checked_date": "2026-09-10",
+  "capture_sequences": [
+    {
+      "directory": "anymald_seq",
+      "steps": [
+        1608,
+        1609,
+        1610,
+        1611,
+        1612,
+        1613
+      ],
+      "phase": 0,
+      "npz_bytes_per_step": 1235889580,
+      "json_bytes_per_step": 566
+    },
+    {
+      "directory": "allegro_seq",
+      "steps": [
+        1608,
+        1609,
+        1610,
+        1611,
+        1612,
+        1613
+      ],
+      "phase": 0,
+      "npz_bytes_per_step": 1624715166,
+      "json_bytes_per_step": 566
+    }
+  ],
+  "input_sequence_total_bytes": 17163635268,
+  "hashed_first_snapshots": [
+    {
+      "path": "anymald_seq/mfgs_step1608_phase0.npz",
+      "bytes": 1235889580,
+      "sha256": "f60c40185f23a36242688fc40d74c233d56a9e01a0c93703657447af29275d6b",
+      "role": "input"
+    },
+    {
+      "path": "anymald_seq/mfgs_step1608_phase0.json",
+      "bytes": 566,
+      "sha256": "23d819ac50ddfc80cceef3153c89d2be3c5b1d786516d9e2e36114548adab408",
+      "role": "metadata",
+      "bundled_as": "anymald_step1608.json"
+    },
+    {
+      "path": "anymald_seq/mfgs_step1608_phase0_truth.npz",
+      "bytes": 42600406,
+      "sha256": "a190737c3329753fd26af561e898b4d80cc8a631a90ab63d01b46f3dda2a8bba",
+      "role": "stored_reference"
+    },
+    {
+      "path": "allegro_seq/mfgs_step1608_phase0.npz",
+      "bytes": 1624715166,
+      "sha256": "460db1630476121f98503056dc8aa969d666363528f8f752074aba5443b6b3dc",
+      "role": "input"
+    },
+    {
+      "path": "allegro_seq/mfgs_step1608_phase0.json",
+      "bytes": 566,
+      "sha256": "d5b77d0303a363c14b387355d62e60cccd20158354aed2bd2732cd8b1351a61d",
+      "role": "metadata",
+      "bundled_as": "allegro_step1608.json"
+    },
+    {
+      "path": "allegro_seq/mfgs_step1608_phase0_truth.npz",
+      "bytes": 43648982,
+      "sha256": "ee0816df0dd7e4b27f5a799c28f2e3fe2d7a3279bd0f8ea59a075ca0ae31de22",
+      "role": "stored_reference"
+    }
+  ]
+}

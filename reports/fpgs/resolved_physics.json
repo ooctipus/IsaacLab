@@ -1,0 +1,3440 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-09-10T21:44:34.153789+00:00",
+  "method": "parse_env_cfg only; no environment creation, simulation, or GPU execution; full physics.to_dict after historical recipe overrides",
+  "nonfinite_number_encoding": "inf, -inf and nan are strings",
+  "source_checkouts": {
+    "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-official-lab": {
+      "head": "53dd865aa37978c0a5e8cdce6d9f45e656fec29d",
+      "dirty": true
+    },
+    "/home/zhengyuz/Projects/newton.wt/fpgs-northstar": {
+      "head": "5631a64a373d1c73b4157ad4124eaf34914480a2",
+      "dirty": true
+    }
+  },
+  "source_sha256": {
+    "/home/zhengyuz/Projects/newton.wt/fpgs-northstar/newton/_src/solvers/feather_pgs/solver_feather_pgs.py": "44398de6200e47fcd7e26b2d9ff5d54a03fcef1c86673c650b9fd7aec7294ae2",
+    "/home/zhengyuz/Projects/newton.wt/fpgs-northstar/newton/_src/solvers/feather_pgs/kernels.py": "e74c0ba418a6823bcae94825abe1def84da3685c80c2ff35f3d7b5d4bbe91c55",
+    "/home/zhengyuz/Projects/newton.wt/fpgs-northstar/newton/_src/geometry/narrow_phase.py": "04f59c1631624375635d271d3766c7005eb14bb87eb7273251c795aee57bc52f",
+    "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-official-lab/source/isaaclab_newton/isaaclab_newton/physics/feather_pgs_manager_cfg.py": "6262d3917a1f691b752b5913e185796cf9e6c86d730538e962baf34d7255b8a6",
+    "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-official-lab/source/isaaclab_newton/isaaclab_newton/physics/newton_manager.py": "80e6d17c7c6b055d2caa66d3004a49c89030701686c69548940f810c71218c24"
+  },
+  "common_environment": {
+    "CUDA_VISIBLE_DEVICES": "1",
+    "PYTHONPATH": "/home/zhengyuz/Projects/newton.wt/fpgs-northstar",
+    "FEATHER_PGS_GROUP_LANES": "16",
+    "FEATHER_PGS_ROWS_MASKED": "1",
+    "NEWTON_NARROW_PHASE_THREADS_X": "4"
+  },
+  "excluded_environment_flags": [
+    "FEATHER_PGS_SKIP_J_CLEAR",
+    "FEATHER_PGS_SHADOW_LEAN",
+    "FEATHER_PGS_WR_STOP",
+    "FEATHER_PGS_WR_WARM"
+  ],
+  "comparison_limitations": [
+    "Historical JSON records only a subset of physics settings. A match verifies the recorded fields, not undocumented historical scalar values or full physics equivalence.",
+    "The AnymalD 8990-us recipe is anymald_shf, which differs from the older AnymalD entry in profile_artifacts_20260910/remeasure.sh.",
+    "AnymalD and Allegro retain scalar pgs_iterations of 8 and 12, but eligible worlds use up to 24 parallel projection sweeps, Nesterov momentum and a different friction projection metric; section 5.1 of HANDOFF_fpgs_20260911.md documents distinct converged velocities.",
+    "grouped_dynamics changes FK/inverse-dynamics scheduling; alone it does not enable the parallel contact solver.",
+    "collision_cfg=null selects the default Newton collision pipeline for FeatherPGS; it does not disable collisions.",
+    "common_environment represents the sweep process environment; FeatherPGS-specific flags have no effect on the MJWarp solver."
+  ],
+  "rows": [
+    {
+      "task": "Isaac-Velocity-Flat-AnymalD",
+      "physics_preset": "feather_pgs",
+      "task_config_source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-official-lab/source/isaaclab_tasks/isaaclab_tasks/core/velocity/config/anymal_d/flat_env_cfg.py",
+      "num_envs": 16384,
+      "seed": 0,
+      "device": "cuda:0",
+      "sim_dt": 0.005,
+      "env_decimation": 4,
+      "environment_dt": 0.02,
+      "solver_substep_dt": 0.0025,
+      "common_environment_ref": "common_environment",
+      "additional_environment": {
+        "FEATHER_PGS_INK": "1",
+        "FEATHER_PGS_MF_EXACT_ROWSUM": "1",
+        "FEATHER_PGS_WORLD_ROWS": "1"
+      },
+      "solver_attribute_overrides": {
+        "grouped_dynamics": true,
+        "mf_gs_parallel_rows": 48,
+        "mf_gs_parallel_matrix_free": true,
+        "lazy_kinematics": true
+      },
+      "physics_attribute_overrides": {},
+      "physics_config": {
+        "class_type": "isaaclab_newton.physics.feather_pgs_manager:NewtonFeatherPGSManager",
+        "deterministic": false,
+        "num_substeps": 2,
+        "collision_decimation": 0,
+        "debug_mode": false,
+        "use_cuda_graph": true,
+        "deterministic_mode": "not_guaranteed",
+        "solver_cfg": {
+          "class_type": "isaaclab_newton.physics.feather_pgs_manager:NewtonFeatherPGSManager",
+          "solver_type": "feather_pgs",
+          "angular_damping": 0.05,
+          "update_mass_matrix_interval": 2,
+          "friction_smoothing": 1,
+          "contact_friction_gap_threshold": 0.02,
+          "contact_friction_position_iterations": -1,
+          "contact_friction_shared_anchor": false,
+          "contact_friction_anchor_limit": 2,
+          "contact_friction_scale": 1,
+          "contact_shared_anchor": false,
+          "enable_contact_friction": true,
+          "enable_joint_limits": true,
+          "joint_limit_activation_gap": 0.2,
+          "enable_joint_velocity_limits": false,
+          "velocity_limit_activation_fraction": 0.7,
+          "fuse_joint_velocity_limits": true,
+          "mf_gs_incremental_rows": 0,
+          "mf_gs_parallel_rows": 48,
+          "mf_gs_parallel_sweeps": 24,
+          "mf_gs_parallel_nesterov": true,
+          "mf_gs_response_block_rows": 0,
+          "mf_gs_response_block_lane_rows": 16,
+          "grouped_dynamics": true,
+          "lazy_kinematics": true,
+          "pgs_iterations": 8,
+          "pgs_inner_substeps": 1,
+          "pgs_velocity_iterations": 0,
+          "pgs_beta": 0.05,
+          "pgs_cfm": 0.000001,
+          "dense_contact_compliance": 0,
+          "speculative_dense_contact_compliance": 0,
+          "pgs_omega": 1,
+          "pgs_velocity_omega": null,
+          "pgs_velocity_drive_mode": "freeze",
+          "dense_max_constraints": 192,
+          "pgs_warmstart": false,
+          "mf_warmstart": false,
+          "mf_warmstart_decay": 1,
+          "pgs_mode": "matrix_free",
+          "articulated_contact_response": "immediate",
+          "propagation_same_articulation_rows": false,
+          "propagation_cached_response": true,
+          "propagation_cached_response_max_bodies": 8,
+          "pgs_schedule": "interleaved",
+          "friction_mode": "current",
+          "mf_max_constraints": 32,
+          "cholesky_kernel": "auto",
+          "trisolve_kernel": "auto",
+          "hinv_jt_kernel": "auto",
+          "delassus_kernel": "auto",
+          "pgs_kernel": "tiled_row",
+          "delassus_chunk_size": null,
+          "pgs_chunk_size": null,
+          "small_dof_threshold": 12,
+          "use_parallel_streams": true,
+          "double_buffer": true,
+          "nvtx": false,
+          "pgs_debug": false,
+          "drive_mode": "augmented",
+          "effort_limit_mode": "actuator",
+          "serial_kernel_block_dim": 32,
+          "tile_threads": 128,
+          "row_watermark": false,
+          "restitution_velocity_threshold": 0.5,
+          "mf_gs_parallel_matrix_free": true
+        },
+        "soft_contact_cfg": null,
+        "collision_cfg": {
+          "broad_phase": "explicit",
+          "reduce_contacts": true,
+          "rigid_contact_max": null,
+          "max_triangle_pairs": 12000000,
+          "soft_contact_max": null,
+          "soft_contact_margin": 0.01,
+          "enable_rigid_soft_full_surface_contact": false,
+          "requires_grad": null,
+          "sdf_hydroelastic_config": null
+        },
+        "default_shape_cfg": {
+          "margin": 0.01,
+          "gap": 0.01,
+          "ke": 160000,
+          "kd": 1100,
+          "mu": 1
+        },
+        "load_visual_shapes": null,
+        "bvh_constructor_geometry": "cubql",
+        "bvh_constructor_scene": "sah",
+        "bvh_constructor_gaussian": "cubql"
+      },
+      "iteration_semantics": {
+        "configured_pgs_iterations": 8,
+        "configured_velocity_iterations": 0,
+        "eligible_worlds_algorithm": "scaled parallel projection with Nesterov momentum and per-contact friction-pair projection",
+        "eligible_worlds_max_sweeps": 24,
+        "relative_impulse_change_tolerance": 0.0001,
+        "tolerance_source": "/home/zhengyuz/Projects/newton.wt/fpgs-northstar/newton/_src/solvers/feather_pgs/solver_feather_pgs.py:897",
+        "ineligible_worlds": "retained legacy path using configured pgs_iterations",
+        "same_iteration_algorithm_as_legacy": false
+      },
+      "historical_comparison": {
+        "source": "/tmp/claude-1776732611/-home-zhengyuz-Projects-IsaacLab-wt-fpgs-official-lab/d296ed8d-0793-444d-97b6-f9b956deef4d/scratchpad/insitu/anymald_shf.json",
+        "available": true,
+        "all_recorded_fields_match": true,
+        "checks": {
+          "num_envs": {
+            "current": 16384,
+            "historical": 16384,
+            "match": true
+          },
+          "sim_dt": {
+            "current": 0.005,
+            "historical": 0.005,
+            "match": true
+          },
+          "env_decimation": {
+            "current": 4,
+            "historical": 4,
+            "match": true
+          },
+          "num_substeps": {
+            "current": 2,
+            "historical": 2,
+            "match": true
+          },
+          "solver_dt": {
+            "current": 0.0025,
+            "historical": 0.0025,
+            "match": true
+          },
+          "cuda_graph": {
+            "current": true,
+            "historical": true,
+            "match": true
+          },
+          "pgs_mode": {
+            "current": "matrix_free",
+            "historical": "matrix_free",
+            "match": true
+          },
+          "pgs_iterations": {
+            "current": 8,
+            "historical": 8,
+            "match": true
+          },
+          "dense_max_constraints": {
+            "current": 192,
+            "historical": 192,
+            "match": true
+          },
+          "mf_max_constraints": {
+            "current": 32,
+            "historical": 32,
+            "match": true
+          }
+        },
+        "historical_solver_attr": [
+          "grouped_dynamics=True",
+          "mf_gs_parallel_rows=48",
+          "mf_gs_parallel_matrix_free=True",
+          "lazy_kinematics=True"
+        ],
+        "historical_physics_attr": [],
+        "not_recorded_in_historical_model": [
+          "joint_limit_activation_gap",
+          "pgs_velocity_iterations",
+          "pgs_beta",
+          "pgs_cfm",
+          "collision_decimation",
+          "full_collision_cfg",
+          "full_solver_cfg"
+        ]
+      },
+      "previous_legacy_comparison": {
+        "source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-results-20260906/profile_artifacts_20260909_fixed/fpgs_velocity_flat_anymald.json",
+        "available": true,
+        "all_recorded_fields_match": true,
+        "checks": {
+          "num_envs": {
+            "current": 16384,
+            "historical": 16384,
+            "match": true
+          },
+          "sim_dt": {
+            "current": 0.005,
+            "historical": 0.005,
+            "match": true
+          },
+          "env_decimation": {
+            "current": 4,
+            "historical": 4,
+            "match": true
+          },
+          "num_substeps": {
+            "current": 2,
+            "historical": 2,
+            "match": true
+          },
+          "solver_dt": {
+            "current": 0.0025,
+            "historical": 0.0025,
+            "match": true
+          },
+          "cuda_graph": {
+            "current": true,
+            "historical": true,
+            "match": true
+          },
+          "pgs_mode": {
+            "current": "matrix_free",
+            "historical": "matrix_free",
+            "match": true
+          },
+          "pgs_iterations": {
+            "current": 8,
+            "historical": 8,
+            "match": true
+          },
+          "dense_max_constraints": {
+            "current": 192,
+            "historical": 192,
+            "match": true
+          },
+          "mf_max_constraints": {
+            "current": 32,
+            "historical": 32,
+            "match": true
+          }
+        },
+        "historical_solver_attr": [],
+        "historical_physics_attr": [],
+        "not_recorded_in_historical_model": [
+          "joint_limit_activation_gap",
+          "pgs_velocity_iterations",
+          "pgs_beta",
+          "pgs_cfm",
+          "collision_decimation",
+          "full_collision_cfg",
+          "full_solver_cfg"
+        ]
+      }
+    },
+    {
+      "task": "Isaac-Velocity-Flat-AnymalD",
+      "physics_preset": "newton_mjwarp",
+      "task_config_source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-official-lab/source/isaaclab_tasks/isaaclab_tasks/core/velocity/config/anymal_d/flat_env_cfg.py",
+      "num_envs": 16384,
+      "seed": 0,
+      "device": "cuda:0",
+      "sim_dt": 0.005,
+      "env_decimation": 4,
+      "environment_dt": 0.02,
+      "solver_substep_dt": 0.0025,
+      "common_environment_ref": "common_environment",
+      "additional_environment": {},
+      "solver_attribute_overrides": {},
+      "physics_attribute_overrides": {},
+      "physics_config": {
+        "class_type": "isaaclab_newton.physics.mjwarp_manager:NewtonMJWarpManager",
+        "deterministic": false,
+        "num_substeps": 2,
+        "collision_decimation": 0,
+        "debug_mode": false,
+        "use_cuda_graph": true,
+        "deterministic_mode": "not_guaranteed",
+        "solver_cfg": {
+          "class_type": "isaaclab_newton.physics.mjwarp_manager:NewtonMJWarpManager",
+          "solver_type": "mujoco_warp",
+          "njmax": 60,
+          "nconmax": 25,
+          "iterations": 100,
+          "ls_iterations": 50,
+          "solver": "newton",
+          "integrator": "implicitfast",
+          "use_mujoco_cpu": false,
+          "disable_contacts": false,
+          "disable_sensors": false,
+          "default_actuator_gear": null,
+          "actuator_gears": null,
+          "update_data_interval": 1,
+          "save_to_mjcf": null,
+          "impratio": 100,
+          "cone": "elliptic",
+          "ccd_iterations": 35,
+          "ls_parallel": false,
+          "use_mujoco_contacts": false,
+          "tolerance": 0.000001
+        },
+        "soft_contact_cfg": null,
+        "collision_cfg": {
+          "broad_phase": "explicit",
+          "reduce_contacts": true,
+          "rigid_contact_max": null,
+          "max_triangle_pairs": 12000000,
+          "soft_contact_max": null,
+          "soft_contact_margin": 0.01,
+          "enable_rigid_soft_full_surface_contact": false,
+          "requires_grad": null,
+          "sdf_hydroelastic_config": null
+        },
+        "default_shape_cfg": {
+          "margin": 0.01,
+          "gap": 0.01,
+          "ke": 160000,
+          "kd": 1100,
+          "mu": 1
+        },
+        "load_visual_shapes": null,
+        "bvh_constructor_geometry": "cubql",
+        "bvh_constructor_scene": "sah",
+        "bvh_constructor_gaussian": "cubql"
+      },
+      "iteration_semantics": {
+        "configured_solver_iterations": 100,
+        "configured_line_search_iterations": 50,
+        "configured_solver_tolerance": 0.000001
+      },
+      "historical_comparison": {
+        "source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-results-20260906/profile_artifacts_20260910/mjwarp_velocity_flat_anymald.json",
+        "available": true,
+        "all_recorded_fields_match": true,
+        "checks": {
+          "num_envs": {
+            "current": 16384,
+            "historical": 16384,
+            "match": true
+          },
+          "sim_dt": {
+            "current": 0.005,
+            "historical": 0.005,
+            "match": true
+          },
+          "env_decimation": {
+            "current": 4,
+            "historical": 4,
+            "match": true
+          },
+          "num_substeps": {
+            "current": 2,
+            "historical": 2,
+            "match": true
+          },
+          "solver_dt": {
+            "current": 0.0025,
+            "historical": 0.0025,
+            "match": true
+          },
+          "cuda_graph": {
+            "current": true,
+            "historical": true,
+            "match": true
+          }
+        },
+        "historical_solver_attr": [],
+        "historical_physics_attr": [],
+        "not_recorded_in_historical_model": [
+          "joint_limit_activation_gap",
+          "pgs_velocity_iterations",
+          "pgs_beta",
+          "pgs_cfm",
+          "collision_decimation",
+          "full_collision_cfg",
+          "full_solver_cfg"
+        ]
+      },
+      "previous_legacy_comparison": {
+        "source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-results-20260906/profile_artifacts_20260909_fixed/mjwarp_velocity_flat_anymald.json",
+        "available": true,
+        "all_recorded_fields_match": true,
+        "checks": {
+          "num_envs": {
+            "current": 16384,
+            "historical": 16384,
+            "match": true
+          },
+          "sim_dt": {
+            "current": 0.005,
+            "historical": 0.005,
+            "match": true
+          },
+          "env_decimation": {
+            "current": 4,
+            "historical": 4,
+            "match": true
+          },
+          "num_substeps": {
+            "current": 2,
+            "historical": 2,
+            "match": true
+          },
+          "solver_dt": {
+            "current": 0.0025,
+            "historical": 0.0025,
+            "match": true
+          },
+          "cuda_graph": {
+            "current": true,
+            "historical": true,
+            "match": true
+          }
+        },
+        "historical_solver_attr": [],
+        "historical_physics_attr": [],
+        "not_recorded_in_historical_model": [
+          "joint_limit_activation_gap",
+          "pgs_velocity_iterations",
+          "pgs_beta",
+          "pgs_cfm",
+          "collision_decimation",
+          "full_collision_cfg",
+          "full_solver_cfg"
+        ]
+      }
+    },
+    {
+      "task": "Isaac-Reorient-Cube-Allegro",
+      "physics_preset": "feather_pgs",
+      "task_config_source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-official-lab/source/isaaclab_tasks/isaaclab_tasks/core/reorient/config/allegro_hand/allegro_hand_manager_env_cfg.py",
+      "num_envs": 16384,
+      "seed": 0,
+      "device": "cuda:0",
+      "sim_dt": 0.008333333333333333,
+      "env_decimation": 4,
+      "environment_dt": 0.03333333333333333,
+      "solver_substep_dt": 0.004166666666666667,
+      "common_environment_ref": "common_environment",
+      "additional_environment": {
+        "FEATHER_PGS_INK": "1",
+        "FEATHER_PGS_TIER_BLOCKS": "16384"
+      },
+      "solver_attribute_overrides": {
+        "grouped_dynamics": true,
+        "mf_gs_parallel_rows": 128,
+        "mf_gs_parallel_matrix_free": true,
+        "lazy_kinematics": true
+      },
+      "physics_attribute_overrides": {},
+      "physics_config": {
+        "class_type": "isaaclab_newton.physics.feather_pgs_manager:NewtonFeatherPGSManager",
+        "deterministic": false,
+        "num_substeps": 2,
+        "collision_decimation": 0,
+        "debug_mode": false,
+        "use_cuda_graph": true,
+        "deterministic_mode": "not_guaranteed",
+        "solver_cfg": {
+          "class_type": "isaaclab_newton.physics.feather_pgs_manager:NewtonFeatherPGSManager",
+          "solver_type": "feather_pgs",
+          "angular_damping": 0.05,
+          "update_mass_matrix_interval": 2,
+          "friction_smoothing": 1,
+          "contact_friction_gap_threshold": "inf",
+          "contact_friction_position_iterations": -1,
+          "contact_friction_shared_anchor": false,
+          "contact_friction_anchor_limit": 0,
+          "contact_friction_scale": 1,
+          "contact_shared_anchor": false,
+          "enable_contact_friction": true,
+          "enable_joint_limits": true,
+          "joint_limit_activation_gap": 0.2,
+          "enable_joint_velocity_limits": true,
+          "velocity_limit_activation_fraction": 0.7,
+          "fuse_joint_velocity_limits": true,
+          "mf_gs_incremental_rows": 0,
+          "mf_gs_parallel_rows": 128,
+          "mf_gs_parallel_sweeps": 24,
+          "mf_gs_parallel_nesterov": true,
+          "mf_gs_response_block_rows": 0,
+          "mf_gs_response_block_lane_rows": 16,
+          "grouped_dynamics": true,
+          "lazy_kinematics": true,
+          "pgs_iterations": 12,
+          "pgs_inner_substeps": 1,
+          "pgs_velocity_iterations": 0,
+          "pgs_beta": 0.05,
+          "pgs_cfm": 0.000001,
+          "dense_contact_compliance": 0,
+          "speculative_dense_contact_compliance": 0,
+          "pgs_omega": 1,
+          "pgs_velocity_omega": null,
+          "pgs_velocity_drive_mode": "freeze",
+          "dense_max_constraints": 192,
+          "pgs_warmstart": false,
+          "mf_warmstart": false,
+          "mf_warmstart_decay": 1,
+          "pgs_mode": "matrix_free",
+          "articulated_contact_response": "immediate",
+          "propagation_same_articulation_rows": false,
+          "propagation_cached_response": true,
+          "propagation_cached_response_max_bodies": 8,
+          "pgs_schedule": "interleaved",
+          "friction_mode": "current",
+          "mf_max_constraints": 64,
+          "cholesky_kernel": "auto",
+          "trisolve_kernel": "auto",
+          "hinv_jt_kernel": "auto",
+          "delassus_kernel": "auto",
+          "pgs_kernel": "tiled_row",
+          "delassus_chunk_size": null,
+          "pgs_chunk_size": null,
+          "small_dof_threshold": 12,
+          "use_parallel_streams": true,
+          "double_buffer": true,
+          "nvtx": false,
+          "pgs_debug": false,
+          "drive_mode": "augmented",
+          "effort_limit_mode": "actuator",
+          "serial_kernel_block_dim": 256,
+          "tile_threads": 64,
+          "row_watermark": false,
+          "restitution_velocity_threshold": 0.5,
+          "mf_gs_parallel_matrix_free": true
+        },
+        "soft_contact_cfg": null,
+        "collision_cfg": null,
+        "default_shape_cfg": {
+          "margin": 0,
+          "gap": 0.01,
+          "ke": 2500,
+          "kd": 100,
+          "mu": 1
+        },
+        "load_visual_shapes": null,
+        "bvh_constructor_geometry": "cubql",
+        "bvh_constructor_scene": "sah",
+        "bvh_constructor_gaussian": "cubql"
+      },
+      "iteration_semantics": {
+        "configured_pgs_iterations": 12,
+        "configured_velocity_iterations": 0,
+        "eligible_worlds_algorithm": "scaled parallel projection with Nesterov momentum and per-contact friction-pair projection",
+        "eligible_worlds_max_sweeps": 24,
+        "relative_impulse_change_tolerance": 0.0001,
+        "tolerance_source": "/home/zhengyuz/Projects/newton.wt/fpgs-northstar/newton/_src/solvers/feather_pgs/solver_feather_pgs.py:897",
+        "ineligible_worlds": "retained legacy path using configured pgs_iterations",
+        "same_iteration_algorithm_as_legacy": false
+      },
+      "historical_comparison": {
+        "source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-results-20260906/profile_artifacts_20260910/fpgsbest_reorient_cube_allegro.json",
+        "available": true,
+        "all_recorded_fields_match": true,
+        "checks": {
+          "num_envs": {
+            "current": 16384,
+            "historical": 16384,
+            "match": true
+          },
+          "sim_dt": {
+            "current": 0.008333333333333333,
+            "historical": 0.008333333333333333,
+            "match": true
+          },
+          "env_decimation": {
+            "current": 4,
+            "historical": 4,
+            "match": true
+          },
+          "num_substeps": {
+            "current": 2,
+            "historical": 2,
+            "match": true
+          },
+          "solver_dt": {
+            "current": 0.004166666666666667,
+            "historical": 0.004166666666666667,
+            "match": true
+          },
+          "cuda_graph": {
+            "current": true,
+            "historical": true,
+            "match": true
+          },
+          "pgs_mode": {
+            "current": "matrix_free",
+            "historical": "matrix_free",
+            "match": true
+          },
+          "pgs_iterations": {
+            "current": 12,
+            "historical": 12,
+            "match": true
+          },
+          "dense_max_constraints": {
+            "current": 192,
+            "historical": 192,
+            "match": true
+          },
+          "mf_max_constraints": {
+            "current": 64,
+            "historical": 64,
+            "match": true
+          }
+        },
+        "historical_solver_attr": [
+          "grouped_dynamics=True",
+          "mf_gs_parallel_rows=128",
+          "mf_gs_parallel_matrix_free=True",
+          "lazy_kinematics=True"
+        ],
+        "historical_physics_attr": [],
+        "not_recorded_in_historical_model": [
+          "joint_limit_activation_gap",
+          "pgs_velocity_iterations",
+          "pgs_beta",
+          "pgs_cfm",
+          "collision_decimation",
+          "full_collision_cfg",
+          "full_solver_cfg"
+        ]
+      },
+      "previous_legacy_comparison": {
+        "source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-results-20260906/profile_artifacts_20260909_fixed/fpgs_reorient_cube_allegro.json",
+        "available": true,
+        "all_recorded_fields_match": true,
+        "checks": {
+          "num_envs": {
+            "current": 16384,
+            "historical": 16384,
+            "match": true
+          },
+          "sim_dt": {
+            "current": 0.008333333333333333,
+            "historical": 0.008333333333333333,
+            "match": true
+          },
+          "env_decimation": {
+            "current": 4,
+            "historical": 4,
+            "match": true
+          },
+          "num_substeps": {
+            "current": 2,
+            "historical": 2,
+            "match": true
+          },
+          "solver_dt": {
+            "current": 0.004166666666666667,
+            "historical": 0.004166666666666667,
+            "match": true
+          },
+          "cuda_graph": {
+            "current": true,
+            "historical": true,
+            "match": true
+          },
+          "pgs_mode": {
+            "current": "matrix_free",
+            "historical": "matrix_free",
+            "match": true
+          },
+          "pgs_iterations": {
+            "current": 12,
+            "historical": 12,
+            "match": true
+          },
+          "dense_max_constraints": {
+            "current": 192,
+            "historical": 192,
+            "match": true
+          },
+          "mf_max_constraints": {
+            "current": 64,
+            "historical": 64,
+            "match": true
+          }
+        },
+        "historical_solver_attr": [],
+        "historical_physics_attr": [],
+        "not_recorded_in_historical_model": [
+          "joint_limit_activation_gap",
+          "pgs_velocity_iterations",
+          "pgs_beta",
+          "pgs_cfm",
+          "collision_decimation",
+          "full_collision_cfg",
+          "full_solver_cfg"
+        ]
+      }
+    },
+    {
+      "task": "Isaac-Reorient-Cube-Allegro",
+      "physics_preset": "newton_mjwarp",
+      "task_config_source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-official-lab/source/isaaclab_tasks/isaaclab_tasks/core/reorient/config/allegro_hand/allegro_hand_manager_env_cfg.py",
+      "num_envs": 16384,
+      "seed": 0,
+      "device": "cuda:0",
+      "sim_dt": 0.008333333333333333,
+      "env_decimation": 4,
+      "environment_dt": 0.03333333333333333,
+      "solver_substep_dt": 0.004166666666666667,
+      "common_environment_ref": "common_environment",
+      "additional_environment": {},
+      "solver_attribute_overrides": {},
+      "physics_attribute_overrides": {},
+      "physics_config": {
+        "class_type": "isaaclab_newton.physics.mjwarp_manager:NewtonMJWarpManager",
+        "deterministic": false,
+        "num_substeps": 2,
+        "collision_decimation": 0,
+        "debug_mode": false,
+        "use_cuda_graph": true,
+        "deterministic_mode": "not_guaranteed",
+        "solver_cfg": {
+          "class_type": "isaaclab_newton.physics.mjwarp_manager:NewtonMJWarpManager",
+          "solver_type": "mujoco_warp",
+          "njmax": 80,
+          "nconmax": 70,
+          "iterations": 100,
+          "ls_iterations": 50,
+          "solver": "newton",
+          "integrator": "implicitfast",
+          "use_mujoco_cpu": false,
+          "disable_contacts": false,
+          "disable_sensors": false,
+          "default_actuator_gear": null,
+          "actuator_gears": null,
+          "update_data_interval": 2,
+          "save_to_mjcf": null,
+          "impratio": 10,
+          "cone": "elliptic",
+          "ccd_iterations": 35,
+          "ls_parallel": false,
+          "use_mujoco_contacts": true,
+          "tolerance": 0.000001
+        },
+        "soft_contact_cfg": null,
+        "collision_cfg": null,
+        "default_shape_cfg": {
+          "margin": 0,
+          "gap": 0.01,
+          "ke": 2500,
+          "kd": 100,
+          "mu": 1
+        },
+        "load_visual_shapes": null,
+        "bvh_constructor_geometry": "cubql",
+        "bvh_constructor_scene": "sah",
+        "bvh_constructor_gaussian": "cubql"
+      },
+      "iteration_semantics": {
+        "configured_solver_iterations": 100,
+        "configured_line_search_iterations": 50,
+        "configured_solver_tolerance": 0.000001
+      },
+      "historical_comparison": {
+        "source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-results-20260906/profile_artifacts_20260910/mjwarp_reorient_cube_allegro.json",
+        "available": true,
+        "all_recorded_fields_match": true,
+        "checks": {
+          "num_envs": {
+            "current": 16384,
+            "historical": 16384,
+            "match": true
+          },
+          "sim_dt": {
+            "current": 0.008333333333333333,
+            "historical": 0.008333333333333333,
+            "match": true
+          },
+          "env_decimation": {
+            "current": 4,
+            "historical": 4,
+            "match": true
+          },
+          "num_substeps": {
+            "current": 2,
+            "historical": 2,
+            "match": true
+          },
+          "solver_dt": {
+            "current": 0.004166666666666667,
+            "historical": 0.004166666666666667,
+            "match": true
+          },
+          "cuda_graph": {
+            "current": true,
+            "historical": true,
+            "match": true
+          }
+        },
+        "historical_solver_attr": [],
+        "historical_physics_attr": [],
+        "not_recorded_in_historical_model": [
+          "joint_limit_activation_gap",
+          "pgs_velocity_iterations",
+          "pgs_beta",
+          "pgs_cfm",
+          "collision_decimation",
+          "full_collision_cfg",
+          "full_solver_cfg"
+        ]
+      },
+      "previous_legacy_comparison": {
+        "source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-results-20260906/profile_artifacts_20260909_fixed/mjwarp_reorient_cube_allegro.json",
+        "available": true,
+        "all_recorded_fields_match": true,
+        "checks": {
+          "num_envs": {
+            "current": 16384,
+            "historical": 16384,
+            "match": true
+          },
+          "sim_dt": {
+            "current": 0.008333333333333333,
+            "historical": 0.008333333333333333,
+            "match": true
+          },
+          "env_decimation": {
+            "current": 4,
+            "historical": 4,
+            "match": true
+          },
+          "num_substeps": {
+            "current": 2,
+            "historical": 2,
+            "match": true
+          },
+          "solver_dt": {
+            "current": 0.004166666666666667,
+            "historical": 0.004166666666666667,
+            "match": true
+          },
+          "cuda_graph": {
+            "current": true,
+            "historical": true,
+            "match": true
+          }
+        },
+        "historical_solver_attr": [],
+        "historical_physics_attr": [],
+        "not_recorded_in_historical_model": [
+          "joint_limit_activation_gap",
+          "pgs_velocity_iterations",
+          "pgs_beta",
+          "pgs_cfm",
+          "collision_decimation",
+          "full_collision_cfg",
+          "full_solver_cfg"
+        ]
+      }
+    },
+    {
+      "task": "Isaac-Lift-KukaAllegro",
+      "physics_preset": "feather_pgs",
+      "task_config_source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-official-lab/source/isaaclab_tasks/isaaclab_tasks/core/lift/config/kuka_allegro/kuka_allegro_env_cfg.py",
+      "num_envs": 16384,
+      "seed": 0,
+      "device": "cuda:0",
+      "sim_dt": 0.008333333333333333,
+      "env_decimation": 4,
+      "environment_dt": 0.03333333333333333,
+      "solver_substep_dt": 0.004166666666666667,
+      "common_environment_ref": "common_environment",
+      "additional_environment": {},
+      "solver_attribute_overrides": {},
+      "physics_attribute_overrides": {},
+      "physics_config": {
+        "class_type": "isaaclab_newton.physics.feather_pgs_manager:NewtonFeatherPGSManager",
+        "deterministic": false,
+        "num_substeps": 2,
+        "collision_decimation": 0,
+        "debug_mode": false,
+        "use_cuda_graph": true,
+        "deterministic_mode": "not_guaranteed",
+        "solver_cfg": {
+          "class_type": "isaaclab_newton.physics.feather_pgs_manager:NewtonFeatherPGSManager",
+          "solver_type": "feather_pgs",
+          "angular_damping": 0.05,
+          "update_mass_matrix_interval": 2,
+          "friction_smoothing": 1,
+          "contact_friction_gap_threshold": "inf",
+          "contact_friction_position_iterations": -1,
+          "contact_friction_shared_anchor": false,
+          "contact_friction_anchor_limit": 0,
+          "contact_friction_scale": 1,
+          "contact_shared_anchor": false,
+          "enable_contact_friction": true,
+          "enable_joint_limits": true,
+          "joint_limit_activation_gap": 0.1,
+          "enable_joint_velocity_limits": false,
+          "velocity_limit_activation_fraction": 0.7,
+          "fuse_joint_velocity_limits": true,
+          "mf_gs_incremental_rows": 0,
+          "mf_gs_parallel_rows": 0,
+          "mf_gs_parallel_sweeps": 24,
+          "mf_gs_parallel_nesterov": true,
+          "mf_gs_response_block_rows": 0,
+          "mf_gs_response_block_lane_rows": 16,
+          "grouped_dynamics": false,
+          "lazy_kinematics": false,
+          "pgs_iterations": 8,
+          "pgs_inner_substeps": 1,
+          "pgs_velocity_iterations": 0,
+          "pgs_beta": 0.05,
+          "pgs_cfm": 0.000001,
+          "dense_contact_compliance": 0,
+          "speculative_dense_contact_compliance": 0,
+          "pgs_omega": 1,
+          "pgs_velocity_omega": null,
+          "pgs_velocity_drive_mode": "freeze",
+          "dense_max_constraints": 192,
+          "pgs_warmstart": false,
+          "mf_warmstart": false,
+          "mf_warmstart_decay": 1,
+          "pgs_mode": "matrix_free",
+          "articulated_contact_response": "immediate",
+          "propagation_same_articulation_rows": false,
+          "propagation_cached_response": true,
+          "propagation_cached_response_max_bodies": 8,
+          "pgs_schedule": "interleaved",
+          "friction_mode": "current",
+          "mf_max_constraints": 64,
+          "cholesky_kernel": "auto",
+          "trisolve_kernel": "auto",
+          "hinv_jt_kernel": "auto",
+          "delassus_kernel": "auto",
+          "pgs_kernel": "tiled_row",
+          "delassus_chunk_size": null,
+          "pgs_chunk_size": null,
+          "small_dof_threshold": 12,
+          "use_parallel_streams": true,
+          "double_buffer": true,
+          "nvtx": false,
+          "pgs_debug": false,
+          "drive_mode": "augmented",
+          "effort_limit_mode": "actuator",
+          "serial_kernel_block_dim": 64,
+          "tile_threads": 64,
+          "row_watermark": false,
+          "restitution_velocity_threshold": 0.5
+        },
+        "soft_contact_cfg": null,
+        "collision_cfg": {
+          "broad_phase": "explicit",
+          "reduce_contacts": true,
+          "rigid_contact_max": 4000000,
+          "max_triangle_pairs": 1000000,
+          "soft_contact_max": null,
+          "soft_contact_margin": 0.01,
+          "enable_rigid_soft_full_surface_contact": false,
+          "requires_grad": null,
+          "sdf_hydroelastic_config": null
+        },
+        "default_shape_cfg": {
+          "margin": 0,
+          "gap": 0.01,
+          "ke": 2500,
+          "kd": 100,
+          "mu": 1
+        },
+        "load_visual_shapes": null,
+        "bvh_constructor_geometry": "cubql",
+        "bvh_constructor_scene": "sah",
+        "bvh_constructor_gaussian": "cubql"
+      },
+      "iteration_semantics": {
+        "configured_pgs_iterations": 8,
+        "configured_velocity_iterations": 0,
+        "same_iteration_algorithm_as_legacy": true,
+        "grouped_dynamics_only": false
+      },
+      "historical_comparison": {
+        "source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-results-20260906/profile_artifacts_20260910/fpgsbest_lift_kukaallegro.json",
+        "available": true,
+        "all_recorded_fields_match": true,
+        "checks": {
+          "num_envs": {
+            "current": 16384,
+            "historical": 16384,
+            "match": true
+          },
+          "sim_dt": {
+            "current": 0.008333333333333333,
+            "historical": 0.008333333333333333,
+            "match": true
+          },
+          "env_decimation": {
+            "current": 4,
+            "historical": 4,
+            "match": true
+          },
+          "num_substeps": {
+            "current": 2,
+            "historical": 2,
+            "match": true
+          },
+          "solver_dt": {
+            "current": 0.004166666666666667,
+            "historical": 0.004166666666666667,
+            "match": true
+          },
+          "cuda_graph": {
+            "current": true,
+            "historical": true,
+            "match": true
+          },
+          "pgs_mode": {
+            "current": "matrix_free",
+            "historical": "matrix_free",
+            "match": true
+          },
+          "pgs_iterations": {
+            "current": 8,
+            "historical": 8,
+            "match": true
+          },
+          "dense_max_constraints": {
+            "current": 192,
+            "historical": 192,
+            "match": true
+          },
+          "mf_max_constraints": {
+            "current": 64,
+            "historical": 64,
+            "match": true
+          }
+        },
+        "historical_solver_attr": [],
+        "historical_physics_attr": [],
+        "not_recorded_in_historical_model": [
+          "joint_limit_activation_gap",
+          "pgs_velocity_iterations",
+          "pgs_beta",
+          "pgs_cfm",
+          "collision_decimation",
+          "full_collision_cfg",
+          "full_solver_cfg"
+        ]
+      },
+      "previous_legacy_comparison": {
+        "source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-results-20260906/profile_artifacts_20260909_fixed/fpgs_lift_kukaallegro.json",
+        "available": true,
+        "all_recorded_fields_match": true,
+        "checks": {
+          "num_envs": {
+            "current": 16384,
+            "historical": 16384,
+            "match": true
+          },
+          "sim_dt": {
+            "current": 0.008333333333333333,
+            "historical": 0.008333333333333333,
+            "match": true
+          },
+          "env_decimation": {
+            "current": 4,
+            "historical": 4,
+            "match": true
+          },
+          "num_substeps": {
+            "current": 2,
+            "historical": 2,
+            "match": true
+          },
+          "solver_dt": {
+            "current": 0.004166666666666667,
+            "historical": 0.004166666666666667,
+            "match": true
+          },
+          "cuda_graph": {
+            "current": true,
+            "historical": true,
+            "match": true
+          },
+          "pgs_mode": {
+            "current": "matrix_free",
+            "historical": "matrix_free",
+            "match": true
+          },
+          "pgs_iterations": {
+            "current": 8,
+            "historical": 8,
+            "match": true
+          },
+          "dense_max_constraints": {
+            "current": 192,
+            "historical": 192,
+            "match": true
+          },
+          "mf_max_constraints": {
+            "current": 64,
+            "historical": 64,
+            "match": true
+          }
+        },
+        "historical_solver_attr": [],
+        "historical_physics_attr": [],
+        "not_recorded_in_historical_model": [
+          "joint_limit_activation_gap",
+          "pgs_velocity_iterations",
+          "pgs_beta",
+          "pgs_cfm",
+          "collision_decimation",
+          "full_collision_cfg",
+          "full_solver_cfg"
+        ]
+      }
+    },
+    {
+      "task": "Isaac-Lift-KukaAllegro",
+      "physics_preset": "newton_mjwarp",
+      "task_config_source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-official-lab/source/isaaclab_tasks/isaaclab_tasks/core/lift/config/kuka_allegro/kuka_allegro_env_cfg.py",
+      "num_envs": 16384,
+      "seed": 0,
+      "device": "cuda:0",
+      "sim_dt": 0.008333333333333333,
+      "env_decimation": 4,
+      "environment_dt": 0.03333333333333333,
+      "solver_substep_dt": 0.004166666666666667,
+      "common_environment_ref": "common_environment",
+      "additional_environment": {},
+      "solver_attribute_overrides": {},
+      "physics_attribute_overrides": {},
+      "physics_config": {
+        "class_type": "isaaclab_newton.physics.mjwarp_manager:NewtonMJWarpManager",
+        "deterministic": false,
+        "num_substeps": 2,
+        "collision_decimation": 0,
+        "debug_mode": false,
+        "use_cuda_graph": true,
+        "deterministic_mode": "not_guaranteed",
+        "solver_cfg": {
+          "class_type": "isaaclab_newton.physics.mjwarp_manager:NewtonMJWarpManager",
+          "solver_type": "mujoco_warp",
+          "njmax": 300,
+          "nconmax": 200,
+          "iterations": 100,
+          "ls_iterations": 15,
+          "solver": "newton",
+          "integrator": "implicitfast",
+          "use_mujoco_cpu": false,
+          "disable_contacts": false,
+          "disable_sensors": false,
+          "default_actuator_gear": null,
+          "actuator_gears": null,
+          "update_data_interval": 2,
+          "save_to_mjcf": null,
+          "impratio": 1,
+          "cone": "pyramidal",
+          "ccd_iterations": 35,
+          "ls_parallel": false,
+          "use_mujoco_contacts": false,
+          "tolerance": 0.000001
+        },
+        "soft_contact_cfg": null,
+        "collision_cfg": {
+          "broad_phase": "explicit",
+          "reduce_contacts": true,
+          "rigid_contact_max": 4000000,
+          "max_triangle_pairs": 1000000,
+          "soft_contact_max": null,
+          "soft_contact_margin": 0.01,
+          "enable_rigid_soft_full_surface_contact": false,
+          "requires_grad": null,
+          "sdf_hydroelastic_config": null
+        },
+        "default_shape_cfg": {
+          "margin": 0,
+          "gap": 0.01,
+          "ke": 2500,
+          "kd": 100,
+          "mu": 1
+        },
+        "load_visual_shapes": null,
+        "bvh_constructor_geometry": "cubql",
+        "bvh_constructor_scene": "sah",
+        "bvh_constructor_gaussian": "cubql"
+      },
+      "iteration_semantics": {
+        "configured_solver_iterations": 100,
+        "configured_line_search_iterations": 15,
+        "configured_solver_tolerance": 0.000001
+      },
+      "historical_comparison": {
+        "source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-results-20260906/profile_artifacts_20260910/mjwarp_lift_kukaallegro.json",
+        "available": true,
+        "all_recorded_fields_match": true,
+        "checks": {
+          "num_envs": {
+            "current": 16384,
+            "historical": 16384,
+            "match": true
+          },
+          "sim_dt": {
+            "current": 0.008333333333333333,
+            "historical": 0.008333333333333333,
+            "match": true
+          },
+          "env_decimation": {
+            "current": 4,
+            "historical": 4,
+            "match": true
+          },
+          "num_substeps": {
+            "current": 2,
+            "historical": 2,
+            "match": true
+          },
+          "solver_dt": {
+            "current": 0.004166666666666667,
+            "historical": 0.004166666666666667,
+            "match": true
+          },
+          "cuda_graph": {
+            "current": true,
+            "historical": true,
+            "match": true
+          }
+        },
+        "historical_solver_attr": [],
+        "historical_physics_attr": [],
+        "not_recorded_in_historical_model": [
+          "joint_limit_activation_gap",
+          "pgs_velocity_iterations",
+          "pgs_beta",
+          "pgs_cfm",
+          "collision_decimation",
+          "full_collision_cfg",
+          "full_solver_cfg"
+        ]
+      },
+      "previous_legacy_comparison": {
+        "source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-results-20260906/profile_artifacts_20260909_fixed/mjwarp_lift_kukaallegro.json",
+        "available": true,
+        "all_recorded_fields_match": true,
+        "checks": {
+          "num_envs": {
+            "current": 16384,
+            "historical": 16384,
+            "match": true
+          },
+          "sim_dt": {
+            "current": 0.008333333333333333,
+            "historical": 0.008333333333333333,
+            "match": true
+          },
+          "env_decimation": {
+            "current": 4,
+            "historical": 4,
+            "match": true
+          },
+          "num_substeps": {
+            "current": 2,
+            "historical": 2,
+            "match": true
+          },
+          "solver_dt": {
+            "current": 0.004166666666666667,
+            "historical": 0.004166666666666667,
+            "match": true
+          },
+          "cuda_graph": {
+            "current": true,
+            "historical": true,
+            "match": true
+          }
+        },
+        "historical_solver_attr": [],
+        "historical_physics_attr": [],
+        "not_recorded_in_historical_model": [
+          "joint_limit_activation_gap",
+          "pgs_velocity_iterations",
+          "pgs_beta",
+          "pgs_cfm",
+          "collision_decimation",
+          "full_collision_cfg",
+          "full_solver_cfg"
+        ]
+      }
+    },
+    {
+      "task": "Isaac-Lift-Franka",
+      "physics_preset": "feather_pgs",
+      "task_config_source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-official-lab/source/isaaclab_tasks/isaaclab_tasks/core/lift/config/franka/franka_env_cfg.py",
+      "num_envs": 16384,
+      "seed": 0,
+      "device": "cuda:0",
+      "sim_dt": 0.008333333333333333,
+      "env_decimation": 4,
+      "environment_dt": 0.03333333333333333,
+      "solver_substep_dt": 0.004166666666666667,
+      "common_environment_ref": "common_environment",
+      "additional_environment": {},
+      "solver_attribute_overrides": {},
+      "physics_attribute_overrides": {},
+      "physics_config": {
+        "class_type": "isaaclab_newton.physics.feather_pgs_manager:NewtonFeatherPGSManager",
+        "deterministic": false,
+        "num_substeps": 2,
+        "collision_decimation": 0,
+        "debug_mode": false,
+        "use_cuda_graph": true,
+        "deterministic_mode": "not_guaranteed",
+        "solver_cfg": {
+          "class_type": "isaaclab_newton.physics.feather_pgs_manager:NewtonFeatherPGSManager",
+          "solver_type": "feather_pgs",
+          "angular_damping": 0.05,
+          "update_mass_matrix_interval": 2,
+          "friction_smoothing": 1,
+          "contact_friction_gap_threshold": "inf",
+          "contact_friction_position_iterations": -1,
+          "contact_friction_shared_anchor": false,
+          "contact_friction_anchor_limit": 0,
+          "contact_friction_scale": 1,
+          "contact_shared_anchor": false,
+          "enable_contact_friction": true,
+          "enable_joint_limits": true,
+          "joint_limit_activation_gap": 0.1,
+          "enable_joint_velocity_limits": false,
+          "velocity_limit_activation_fraction": 0.7,
+          "fuse_joint_velocity_limits": true,
+          "mf_gs_incremental_rows": 0,
+          "mf_gs_parallel_rows": 0,
+          "mf_gs_parallel_sweeps": 24,
+          "mf_gs_parallel_nesterov": true,
+          "mf_gs_response_block_rows": 0,
+          "mf_gs_response_block_lane_rows": 16,
+          "grouped_dynamics": false,
+          "lazy_kinematics": false,
+          "pgs_iterations": 8,
+          "pgs_inner_substeps": 1,
+          "pgs_velocity_iterations": 0,
+          "pgs_beta": 0.05,
+          "pgs_cfm": 0.000001,
+          "dense_contact_compliance": 0,
+          "speculative_dense_contact_compliance": 0,
+          "pgs_omega": 1,
+          "pgs_velocity_omega": null,
+          "pgs_velocity_drive_mode": "freeze",
+          "dense_max_constraints": 192,
+          "pgs_warmstart": false,
+          "mf_warmstart": false,
+          "mf_warmstart_decay": 1,
+          "pgs_mode": "matrix_free",
+          "articulated_contact_response": "immediate",
+          "propagation_same_articulation_rows": false,
+          "propagation_cached_response": true,
+          "propagation_cached_response_max_bodies": 8,
+          "pgs_schedule": "interleaved",
+          "friction_mode": "current",
+          "mf_max_constraints": 64,
+          "cholesky_kernel": "auto",
+          "trisolve_kernel": "auto",
+          "hinv_jt_kernel": "auto",
+          "delassus_kernel": "auto",
+          "pgs_kernel": "tiled_row",
+          "delassus_chunk_size": null,
+          "pgs_chunk_size": null,
+          "small_dof_threshold": 12,
+          "use_parallel_streams": true,
+          "double_buffer": true,
+          "nvtx": false,
+          "pgs_debug": false,
+          "drive_mode": "augmented",
+          "effort_limit_mode": "actuator",
+          "serial_kernel_block_dim": 64,
+          "tile_threads": 64,
+          "row_watermark": false,
+          "restitution_velocity_threshold": 0.5
+        },
+        "soft_contact_cfg": null,
+        "collision_cfg": {
+          "broad_phase": "explicit",
+          "reduce_contacts": true,
+          "rigid_contact_max": 4000000,
+          "max_triangle_pairs": 1000000,
+          "soft_contact_max": null,
+          "soft_contact_margin": 0.01,
+          "enable_rigid_soft_full_surface_contact": false,
+          "requires_grad": null,
+          "sdf_hydroelastic_config": null
+        },
+        "default_shape_cfg": {
+          "margin": 0,
+          "gap": 0.01,
+          "ke": 2500,
+          "kd": 100,
+          "mu": 1
+        },
+        "load_visual_shapes": null,
+        "bvh_constructor_geometry": "cubql",
+        "bvh_constructor_scene": "sah",
+        "bvh_constructor_gaussian": "cubql"
+      },
+      "iteration_semantics": {
+        "configured_pgs_iterations": 8,
+        "configured_velocity_iterations": 0,
+        "same_iteration_algorithm_as_legacy": true,
+        "grouped_dynamics_only": false
+      },
+      "historical_comparison": {
+        "source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-results-20260906/profile_artifacts_20260910/fpgsbest_lift_franka.json",
+        "available": true,
+        "all_recorded_fields_match": true,
+        "checks": {
+          "num_envs": {
+            "current": 16384,
+            "historical": 16384,
+            "match": true
+          },
+          "sim_dt": {
+            "current": 0.008333333333333333,
+            "historical": 0.008333333333333333,
+            "match": true
+          },
+          "env_decimation": {
+            "current": 4,
+            "historical": 4,
+            "match": true
+          },
+          "num_substeps": {
+            "current": 2,
+            "historical": 2,
+            "match": true
+          },
+          "solver_dt": {
+            "current": 0.004166666666666667,
+            "historical": 0.004166666666666667,
+            "match": true
+          },
+          "cuda_graph": {
+            "current": true,
+            "historical": true,
+            "match": true
+          },
+          "pgs_mode": {
+            "current": "matrix_free",
+            "historical": "matrix_free",
+            "match": true
+          },
+          "pgs_iterations": {
+            "current": 8,
+            "historical": 8,
+            "match": true
+          },
+          "dense_max_constraints": {
+            "current": 192,
+            "historical": 192,
+            "match": true
+          },
+          "mf_max_constraints": {
+            "current": 64,
+            "historical": 64,
+            "match": true
+          }
+        },
+        "historical_solver_attr": [],
+        "historical_physics_attr": [],
+        "not_recorded_in_historical_model": [
+          "joint_limit_activation_gap",
+          "pgs_velocity_iterations",
+          "pgs_beta",
+          "pgs_cfm",
+          "collision_decimation",
+          "full_collision_cfg",
+          "full_solver_cfg"
+        ]
+      },
+      "previous_legacy_comparison": {
+        "source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-results-20260906/profile_artifacts_20260909_fixed/fpgs_lift_franka.json",
+        "available": true,
+        "all_recorded_fields_match": true,
+        "checks": {
+          "num_envs": {
+            "current": 16384,
+            "historical": 16384,
+            "match": true
+          },
+          "sim_dt": {
+            "current": 0.008333333333333333,
+            "historical": 0.008333333333333333,
+            "match": true
+          },
+          "env_decimation": {
+            "current": 4,
+            "historical": 4,
+            "match": true
+          },
+          "num_substeps": {
+            "current": 2,
+            "historical": 2,
+            "match": true
+          },
+          "solver_dt": {
+            "current": 0.004166666666666667,
+            "historical": 0.004166666666666667,
+            "match": true
+          },
+          "cuda_graph": {
+            "current": true,
+            "historical": true,
+            "match": true
+          },
+          "pgs_mode": {
+            "current": "matrix_free",
+            "historical": "matrix_free",
+            "match": true
+          },
+          "pgs_iterations": {
+            "current": 8,
+            "historical": 8,
+            "match": true
+          },
+          "dense_max_constraints": {
+            "current": 192,
+            "historical": 192,
+            "match": true
+          },
+          "mf_max_constraints": {
+            "current": 64,
+            "historical": 64,
+            "match": true
+          }
+        },
+        "historical_solver_attr": [],
+        "historical_physics_attr": [],
+        "not_recorded_in_historical_model": [
+          "joint_limit_activation_gap",
+          "pgs_velocity_iterations",
+          "pgs_beta",
+          "pgs_cfm",
+          "collision_decimation",
+          "full_collision_cfg",
+          "full_solver_cfg"
+        ]
+      }
+    },
+    {
+      "task": "Isaac-Lift-Franka",
+      "physics_preset": "newton_mjwarp",
+      "task_config_source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-official-lab/source/isaaclab_tasks/isaaclab_tasks/core/lift/config/franka/franka_env_cfg.py",
+      "num_envs": 16384,
+      "seed": 0,
+      "device": "cuda:0",
+      "sim_dt": 0.008333333333333333,
+      "env_decimation": 4,
+      "environment_dt": 0.03333333333333333,
+      "solver_substep_dt": 0.004166666666666667,
+      "common_environment_ref": "common_environment",
+      "additional_environment": {},
+      "solver_attribute_overrides": {},
+      "physics_attribute_overrides": {},
+      "physics_config": {
+        "class_type": "isaaclab_newton.physics.mjwarp_manager:NewtonMJWarpManager",
+        "deterministic": false,
+        "num_substeps": 2,
+        "collision_decimation": 0,
+        "debug_mode": false,
+        "use_cuda_graph": true,
+        "deterministic_mode": "not_guaranteed",
+        "solver_cfg": {
+          "class_type": "isaaclab_newton.physics.mjwarp_manager:NewtonMJWarpManager",
+          "solver_type": "mujoco_warp",
+          "njmax": 300,
+          "nconmax": 200,
+          "iterations": 100,
+          "ls_iterations": 15,
+          "solver": "newton",
+          "integrator": "implicitfast",
+          "use_mujoco_cpu": false,
+          "disable_contacts": false,
+          "disable_sensors": false,
+          "default_actuator_gear": null,
+          "actuator_gears": null,
+          "update_data_interval": 2,
+          "save_to_mjcf": null,
+          "impratio": 1,
+          "cone": "pyramidal",
+          "ccd_iterations": 35,
+          "ls_parallel": false,
+          "use_mujoco_contacts": false,
+          "tolerance": 0.000001
+        },
+        "soft_contact_cfg": null,
+        "collision_cfg": {
+          "broad_phase": "explicit",
+          "reduce_contacts": true,
+          "rigid_contact_max": 4000000,
+          "max_triangle_pairs": 1000000,
+          "soft_contact_max": null,
+          "soft_contact_margin": 0.01,
+          "enable_rigid_soft_full_surface_contact": false,
+          "requires_grad": null,
+          "sdf_hydroelastic_config": null
+        },
+        "default_shape_cfg": {
+          "margin": 0,
+          "gap": 0.01,
+          "ke": 2500,
+          "kd": 100,
+          "mu": 1
+        },
+        "load_visual_shapes": null,
+        "bvh_constructor_geometry": "cubql",
+        "bvh_constructor_scene": "sah",
+        "bvh_constructor_gaussian": "cubql"
+      },
+      "iteration_semantics": {
+        "configured_solver_iterations": 100,
+        "configured_line_search_iterations": 15,
+        "configured_solver_tolerance": 0.000001
+      },
+      "historical_comparison": {
+        "source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-results-20260906/profile_artifacts_20260910/mjwarp_lift_franka.json",
+        "available": true,
+        "all_recorded_fields_match": true,
+        "checks": {
+          "num_envs": {
+            "current": 16384,
+            "historical": 16384,
+            "match": true
+          },
+          "sim_dt": {
+            "current": 0.008333333333333333,
+            "historical": 0.008333333333333333,
+            "match": true
+          },
+          "env_decimation": {
+            "current": 4,
+            "historical": 4,
+            "match": true
+          },
+          "num_substeps": {
+            "current": 2,
+            "historical": 2,
+            "match": true
+          },
+          "solver_dt": {
+            "current": 0.004166666666666667,
+            "historical": 0.004166666666666667,
+            "match": true
+          },
+          "cuda_graph": {
+            "current": true,
+            "historical": true,
+            "match": true
+          }
+        },
+        "historical_solver_attr": [],
+        "historical_physics_attr": [],
+        "not_recorded_in_historical_model": [
+          "joint_limit_activation_gap",
+          "pgs_velocity_iterations",
+          "pgs_beta",
+          "pgs_cfm",
+          "collision_decimation",
+          "full_collision_cfg",
+          "full_solver_cfg"
+        ]
+      },
+      "previous_legacy_comparison": {
+        "source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-results-20260906/profile_artifacts_20260909_fixed/mjwarp_lift_franka.json",
+        "available": true,
+        "all_recorded_fields_match": true,
+        "checks": {
+          "num_envs": {
+            "current": 16384,
+            "historical": 16384,
+            "match": true
+          },
+          "sim_dt": {
+            "current": 0.008333333333333333,
+            "historical": 0.008333333333333333,
+            "match": true
+          },
+          "env_decimation": {
+            "current": 4,
+            "historical": 4,
+            "match": true
+          },
+          "num_substeps": {
+            "current": 2,
+            "historical": 2,
+            "match": true
+          },
+          "solver_dt": {
+            "current": 0.004166666666666667,
+            "historical": 0.004166666666666667,
+            "match": true
+          },
+          "cuda_graph": {
+            "current": true,
+            "historical": true,
+            "match": true
+          }
+        },
+        "historical_solver_attr": [],
+        "historical_physics_attr": [],
+        "not_recorded_in_historical_model": [
+          "joint_limit_activation_gap",
+          "pgs_velocity_iterations",
+          "pgs_beta",
+          "pgs_cfm",
+          "collision_decimation",
+          "full_collision_cfg",
+          "full_solver_cfg"
+        ]
+      }
+    },
+    {
+      "task": "Isaac-Velocity-Rough-G1",
+      "physics_preset": "feather_pgs",
+      "task_config_source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-official-lab/source/isaaclab_tasks/isaaclab_tasks/core/velocity/config/g1/rough_env_cfg.py",
+      "num_envs": 16384,
+      "seed": 0,
+      "device": "cuda:0",
+      "sim_dt": 0.005,
+      "env_decimation": 4,
+      "environment_dt": 0.02,
+      "solver_substep_dt": 0.0025,
+      "common_environment_ref": "common_environment",
+      "additional_environment": {},
+      "solver_attribute_overrides": {
+        "grouped_dynamics": true
+      },
+      "physics_attribute_overrides": {},
+      "physics_config": {
+        "class_type": "isaaclab_newton.physics.feather_pgs_manager:NewtonFeatherPGSManager",
+        "deterministic": false,
+        "num_substeps": 2,
+        "collision_decimation": 0,
+        "debug_mode": false,
+        "use_cuda_graph": true,
+        "deterministic_mode": "not_guaranteed",
+        "solver_cfg": {
+          "class_type": "isaaclab_newton.physics.feather_pgs_manager:NewtonFeatherPGSManager",
+          "solver_type": "feather_pgs",
+          "angular_damping": 0.05,
+          "update_mass_matrix_interval": 2,
+          "friction_smoothing": 1,
+          "contact_friction_gap_threshold": 0.02,
+          "contact_friction_position_iterations": -1,
+          "contact_friction_shared_anchor": false,
+          "contact_friction_anchor_limit": 2,
+          "contact_friction_scale": 1,
+          "contact_shared_anchor": false,
+          "enable_contact_friction": true,
+          "enable_joint_limits": true,
+          "joint_limit_activation_gap": 0.2,
+          "enable_joint_velocity_limits": false,
+          "velocity_limit_activation_fraction": 0.7,
+          "fuse_joint_velocity_limits": true,
+          "mf_gs_incremental_rows": 0,
+          "mf_gs_parallel_rows": 0,
+          "mf_gs_parallel_sweeps": 24,
+          "mf_gs_parallel_nesterov": true,
+          "mf_gs_response_block_rows": 0,
+          "mf_gs_response_block_lane_rows": 16,
+          "grouped_dynamics": true,
+          "lazy_kinematics": false,
+          "pgs_iterations": 8,
+          "pgs_inner_substeps": 1,
+          "pgs_velocity_iterations": 0,
+          "pgs_beta": 0.05,
+          "pgs_cfm": 0.000001,
+          "dense_contact_compliance": 0,
+          "speculative_dense_contact_compliance": 0,
+          "pgs_omega": 1,
+          "pgs_velocity_omega": null,
+          "pgs_velocity_drive_mode": "freeze",
+          "dense_max_constraints": 192,
+          "pgs_warmstart": false,
+          "mf_warmstart": false,
+          "mf_warmstart_decay": 1,
+          "pgs_mode": "matrix_free",
+          "articulated_contact_response": "immediate",
+          "propagation_same_articulation_rows": false,
+          "propagation_cached_response": true,
+          "propagation_cached_response_max_bodies": 8,
+          "pgs_schedule": "interleaved",
+          "friction_mode": "current",
+          "mf_max_constraints": 32,
+          "cholesky_kernel": "auto",
+          "trisolve_kernel": "auto",
+          "hinv_jt_kernel": "auto",
+          "delassus_kernel": "auto",
+          "pgs_kernel": "tiled_row",
+          "delassus_chunk_size": null,
+          "pgs_chunk_size": null,
+          "small_dof_threshold": 12,
+          "use_parallel_streams": true,
+          "double_buffer": true,
+          "nvtx": false,
+          "pgs_debug": false,
+          "drive_mode": "augmented",
+          "effort_limit_mode": "actuator",
+          "serial_kernel_block_dim": 32,
+          "tile_threads": 128,
+          "row_watermark": false,
+          "restitution_velocity_threshold": 0.5
+        },
+        "soft_contact_cfg": null,
+        "collision_cfg": {
+          "broad_phase": "explicit",
+          "reduce_contacts": true,
+          "rigid_contact_max": null,
+          "max_triangle_pairs": 12000000,
+          "soft_contact_max": null,
+          "soft_contact_margin": 0.01,
+          "enable_rigid_soft_full_surface_contact": false,
+          "requires_grad": null,
+          "sdf_hydroelastic_config": null
+        },
+        "default_shape_cfg": {
+          "margin": 0.01,
+          "gap": 0.01,
+          "ke": 160000,
+          "kd": 1100,
+          "mu": 1
+        },
+        "load_visual_shapes": null,
+        "bvh_constructor_geometry": "cubql",
+        "bvh_constructor_scene": "sah",
+        "bvh_constructor_gaussian": "cubql"
+      },
+      "iteration_semantics": {
+        "configured_pgs_iterations": 8,
+        "configured_velocity_iterations": 0,
+        "same_iteration_algorithm_as_legacy": true,
+        "grouped_dynamics_only": true
+      },
+      "historical_comparison": {
+        "source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-results-20260906/profile_artifacts_20260910/fpgsbest_velocity_rough_g1.json",
+        "available": true,
+        "all_recorded_fields_match": true,
+        "checks": {
+          "num_envs": {
+            "current": 16384,
+            "historical": 16384,
+            "match": true
+          },
+          "sim_dt": {
+            "current": 0.005,
+            "historical": 0.005,
+            "match": true
+          },
+          "env_decimation": {
+            "current": 4,
+            "historical": 4,
+            "match": true
+          },
+          "num_substeps": {
+            "current": 2,
+            "historical": 2,
+            "match": true
+          },
+          "solver_dt": {
+            "current": 0.0025,
+            "historical": 0.0025,
+            "match": true
+          },
+          "cuda_graph": {
+            "current": true,
+            "historical": true,
+            "match": true
+          },
+          "pgs_mode": {
+            "current": "matrix_free",
+            "historical": "matrix_free",
+            "match": true
+          },
+          "pgs_iterations": {
+            "current": 8,
+            "historical": 8,
+            "match": true
+          },
+          "dense_max_constraints": {
+            "current": 192,
+            "historical": 192,
+            "match": true
+          },
+          "mf_max_constraints": {
+            "current": 32,
+            "historical": 32,
+            "match": true
+          }
+        },
+        "historical_solver_attr": [
+          "grouped_dynamics=True"
+        ],
+        "historical_physics_attr": [],
+        "not_recorded_in_historical_model": [
+          "joint_limit_activation_gap",
+          "pgs_velocity_iterations",
+          "pgs_beta",
+          "pgs_cfm",
+          "collision_decimation",
+          "full_collision_cfg",
+          "full_solver_cfg"
+        ]
+      },
+      "previous_legacy_comparison": {
+        "source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-results-20260906/profile_artifacts_20260909_fixed/fpgs_velocity_rough_g1.json",
+        "available": true,
+        "all_recorded_fields_match": true,
+        "checks": {
+          "num_envs": {
+            "current": 16384,
+            "historical": 16384,
+            "match": true
+          },
+          "sim_dt": {
+            "current": 0.005,
+            "historical": 0.005,
+            "match": true
+          },
+          "env_decimation": {
+            "current": 4,
+            "historical": 4,
+            "match": true
+          },
+          "num_substeps": {
+            "current": 2,
+            "historical": 2,
+            "match": true
+          },
+          "solver_dt": {
+            "current": 0.0025,
+            "historical": 0.0025,
+            "match": true
+          },
+          "cuda_graph": {
+            "current": true,
+            "historical": true,
+            "match": true
+          },
+          "pgs_mode": {
+            "current": "matrix_free",
+            "historical": "matrix_free",
+            "match": true
+          },
+          "pgs_iterations": {
+            "current": 8,
+            "historical": 8,
+            "match": true
+          },
+          "dense_max_constraints": {
+            "current": 192,
+            "historical": 192,
+            "match": true
+          },
+          "mf_max_constraints": {
+            "current": 32,
+            "historical": 32,
+            "match": true
+          }
+        },
+        "historical_solver_attr": [],
+        "historical_physics_attr": [],
+        "not_recorded_in_historical_model": [
+          "joint_limit_activation_gap",
+          "pgs_velocity_iterations",
+          "pgs_beta",
+          "pgs_cfm",
+          "collision_decimation",
+          "full_collision_cfg",
+          "full_solver_cfg"
+        ]
+      }
+    },
+    {
+      "task": "Isaac-Velocity-Rough-G1",
+      "physics_preset": "newton_mjwarp",
+      "task_config_source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-official-lab/source/isaaclab_tasks/isaaclab_tasks/core/velocity/config/g1/rough_env_cfg.py",
+      "num_envs": 16384,
+      "seed": 0,
+      "device": "cuda:0",
+      "sim_dt": 0.005,
+      "env_decimation": 4,
+      "environment_dt": 0.02,
+      "solver_substep_dt": 0.0025,
+      "common_environment_ref": "common_environment",
+      "additional_environment": {},
+      "solver_attribute_overrides": {},
+      "physics_attribute_overrides": {},
+      "physics_config": {
+        "class_type": "isaaclab_newton.physics.mjwarp_manager:NewtonMJWarpManager",
+        "deterministic": false,
+        "num_substeps": 2,
+        "collision_decimation": 0,
+        "debug_mode": false,
+        "use_cuda_graph": true,
+        "deterministic_mode": "not_guaranteed",
+        "solver_cfg": {
+          "class_type": "isaaclab_newton.physics.mjwarp_manager:NewtonMJWarpManager",
+          "solver_type": "mujoco_warp",
+          "njmax": 300,
+          "nconmax": 300,
+          "iterations": 100,
+          "ls_iterations": 50,
+          "solver": "newton",
+          "integrator": "implicitfast",
+          "use_mujoco_cpu": false,
+          "disable_contacts": false,
+          "disable_sensors": false,
+          "default_actuator_gear": null,
+          "actuator_gears": null,
+          "update_data_interval": 1,
+          "save_to_mjcf": null,
+          "impratio": 1,
+          "cone": "pyramidal",
+          "ccd_iterations": 35,
+          "ls_parallel": false,
+          "use_mujoco_contacts": false,
+          "tolerance": 0.000001
+        },
+        "soft_contact_cfg": null,
+        "collision_cfg": {
+          "broad_phase": "explicit",
+          "reduce_contacts": true,
+          "rigid_contact_max": null,
+          "max_triangle_pairs": 12000000,
+          "soft_contact_max": null,
+          "soft_contact_margin": 0.01,
+          "enable_rigid_soft_full_surface_contact": false,
+          "requires_grad": null,
+          "sdf_hydroelastic_config": null
+        },
+        "default_shape_cfg": {
+          "margin": 0.01,
+          "gap": 0.01,
+          "ke": 160000,
+          "kd": 1100,
+          "mu": 1
+        },
+        "load_visual_shapes": null,
+        "bvh_constructor_geometry": "cubql",
+        "bvh_constructor_scene": "sah",
+        "bvh_constructor_gaussian": "cubql"
+      },
+      "iteration_semantics": {
+        "configured_solver_iterations": 100,
+        "configured_line_search_iterations": 50,
+        "configured_solver_tolerance": 0.000001
+      },
+      "historical_comparison": {
+        "source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-results-20260906/profile_artifacts_20260910/mjwarp_velocity_rough_g1.json",
+        "available": true,
+        "all_recorded_fields_match": true,
+        "checks": {
+          "num_envs": {
+            "current": 16384,
+            "historical": 16384,
+            "match": true
+          },
+          "sim_dt": {
+            "current": 0.005,
+            "historical": 0.005,
+            "match": true
+          },
+          "env_decimation": {
+            "current": 4,
+            "historical": 4,
+            "match": true
+          },
+          "num_substeps": {
+            "current": 2,
+            "historical": 2,
+            "match": true
+          },
+          "solver_dt": {
+            "current": 0.0025,
+            "historical": 0.0025,
+            "match": true
+          },
+          "cuda_graph": {
+            "current": true,
+            "historical": true,
+            "match": true
+          }
+        },
+        "historical_solver_attr": [],
+        "historical_physics_attr": [],
+        "not_recorded_in_historical_model": [
+          "joint_limit_activation_gap",
+          "pgs_velocity_iterations",
+          "pgs_beta",
+          "pgs_cfm",
+          "collision_decimation",
+          "full_collision_cfg",
+          "full_solver_cfg"
+        ]
+      },
+      "previous_legacy_comparison": {
+        "source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-results-20260906/profile_artifacts_20260909_fixed/mjwarp_velocity_rough_g1.json",
+        "available": true,
+        "all_recorded_fields_match": true,
+        "checks": {
+          "num_envs": {
+            "current": 16384,
+            "historical": 16384,
+            "match": true
+          },
+          "sim_dt": {
+            "current": 0.005,
+            "historical": 0.005,
+            "match": true
+          },
+          "env_decimation": {
+            "current": 4,
+            "historical": 4,
+            "match": true
+          },
+          "num_substeps": {
+            "current": 2,
+            "historical": 2,
+            "match": true
+          },
+          "solver_dt": {
+            "current": 0.0025,
+            "historical": 0.0025,
+            "match": true
+          },
+          "cuda_graph": {
+            "current": true,
+            "historical": true,
+            "match": true
+          }
+        },
+        "historical_solver_attr": [],
+        "historical_physics_attr": [],
+        "not_recorded_in_historical_model": [
+          "joint_limit_activation_gap",
+          "pgs_velocity_iterations",
+          "pgs_beta",
+          "pgs_cfm",
+          "collision_decimation",
+          "full_collision_cfg",
+          "full_solver_cfg"
+        ]
+      }
+    },
+    {
+      "task": "Isaac-Cartpole",
+      "physics_preset": "feather_pgs",
+      "task_config_source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-official-lab/source/isaaclab_tasks/isaaclab_tasks/core/cartpole/cartpole_manager_env_cfg.py",
+      "num_envs": 16384,
+      "seed": 0,
+      "device": "cuda:0",
+      "sim_dt": 0.008333333333333333,
+      "env_decimation": 2,
+      "environment_dt": 0.016666666666666666,
+      "solver_substep_dt": 0.008333333333333333,
+      "common_environment_ref": "common_environment",
+      "additional_environment": {},
+      "solver_attribute_overrides": {},
+      "physics_attribute_overrides": {},
+      "physics_config": {
+        "class_type": "isaaclab_newton.physics.feather_pgs_manager:NewtonFeatherPGSManager",
+        "deterministic": false,
+        "num_substeps": 1,
+        "collision_decimation": 0,
+        "debug_mode": false,
+        "use_cuda_graph": true,
+        "deterministic_mode": "not_guaranteed",
+        "solver_cfg": {
+          "class_type": "isaaclab_newton.physics.feather_pgs_manager:NewtonFeatherPGSManager",
+          "solver_type": "feather_pgs",
+          "angular_damping": 0.05,
+          "update_mass_matrix_interval": 1,
+          "friction_smoothing": 1,
+          "contact_friction_gap_threshold": "inf",
+          "contact_friction_position_iterations": -1,
+          "contact_friction_shared_anchor": false,
+          "contact_friction_anchor_limit": 0,
+          "contact_friction_scale": 1,
+          "contact_shared_anchor": false,
+          "enable_contact_friction": true,
+          "enable_joint_limits": true,
+          "joint_limit_activation_gap": 0.2,
+          "enable_joint_velocity_limits": false,
+          "velocity_limit_activation_fraction": 0.7,
+          "fuse_joint_velocity_limits": true,
+          "mf_gs_incremental_rows": 0,
+          "mf_gs_parallel_rows": 0,
+          "mf_gs_parallel_sweeps": 24,
+          "mf_gs_parallel_nesterov": true,
+          "mf_gs_response_block_rows": 0,
+          "mf_gs_response_block_lane_rows": 16,
+          "grouped_dynamics": false,
+          "lazy_kinematics": false,
+          "pgs_iterations": 4,
+          "pgs_inner_substeps": 1,
+          "pgs_velocity_iterations": 0,
+          "pgs_beta": 0.05,
+          "pgs_cfm": 0.000001,
+          "dense_contact_compliance": 0,
+          "speculative_dense_contact_compliance": 0,
+          "pgs_omega": 1,
+          "pgs_velocity_omega": null,
+          "pgs_velocity_drive_mode": "freeze",
+          "dense_max_constraints": 8,
+          "pgs_warmstart": false,
+          "mf_warmstart": false,
+          "mf_warmstart_decay": 1,
+          "pgs_mode": "split",
+          "articulated_contact_response": "immediate",
+          "propagation_same_articulation_rows": false,
+          "propagation_cached_response": true,
+          "propagation_cached_response_max_bodies": 8,
+          "pgs_schedule": "interleaved",
+          "friction_mode": "current",
+          "mf_max_constraints": 64,
+          "cholesky_kernel": "auto",
+          "trisolve_kernel": "auto",
+          "hinv_jt_kernel": "auto",
+          "delassus_kernel": "auto",
+          "pgs_kernel": "loop",
+          "delassus_chunk_size": null,
+          "pgs_chunk_size": null,
+          "small_dof_threshold": 12,
+          "use_parallel_streams": true,
+          "double_buffer": true,
+          "nvtx": false,
+          "pgs_debug": false,
+          "drive_mode": "augmented",
+          "effort_limit_mode": "actuator",
+          "serial_kernel_block_dim": 256,
+          "tile_threads": 64,
+          "row_watermark": false,
+          "restitution_velocity_threshold": 0.5
+        },
+        "soft_contact_cfg": null,
+        "collision_cfg": null,
+        "default_shape_cfg": {
+          "margin": 0,
+          "gap": 0.01,
+          "ke": 2500,
+          "kd": 100,
+          "mu": 1
+        },
+        "load_visual_shapes": null,
+        "bvh_constructor_geometry": "cubql",
+        "bvh_constructor_scene": "sah",
+        "bvh_constructor_gaussian": "cubql"
+      },
+      "iteration_semantics": {
+        "configured_pgs_iterations": 4,
+        "configured_velocity_iterations": 0,
+        "same_iteration_algorithm_as_legacy": true,
+        "grouped_dynamics_only": false
+      },
+      "historical_comparison": {
+        "source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-results-20260906/profile_artifacts_20260910/fpgsbest_cartpole.json",
+        "available": true,
+        "all_recorded_fields_match": true,
+        "checks": {
+          "num_envs": {
+            "current": 16384,
+            "historical": 16384,
+            "match": true
+          },
+          "sim_dt": {
+            "current": 0.008333333333333333,
+            "historical": 0.008333333333333333,
+            "match": true
+          },
+          "env_decimation": {
+            "current": 2,
+            "historical": 2,
+            "match": true
+          },
+          "num_substeps": {
+            "current": 1,
+            "historical": 1,
+            "match": true
+          },
+          "solver_dt": {
+            "current": 0.008333333333333333,
+            "historical": 0.008333333333333333,
+            "match": true
+          },
+          "cuda_graph": {
+            "current": true,
+            "historical": true,
+            "match": true
+          },
+          "pgs_mode": {
+            "current": "split",
+            "historical": "split",
+            "match": true
+          },
+          "pgs_iterations": {
+            "current": 4,
+            "historical": 4,
+            "match": true
+          },
+          "dense_max_constraints": {
+            "current": 8,
+            "historical": 8,
+            "match": true
+          },
+          "mf_max_constraints": {
+            "current": 64,
+            "historical": 64,
+            "match": true
+          }
+        },
+        "historical_solver_attr": [],
+        "historical_physics_attr": [],
+        "not_recorded_in_historical_model": [
+          "joint_limit_activation_gap",
+          "pgs_velocity_iterations",
+          "pgs_beta",
+          "pgs_cfm",
+          "collision_decimation",
+          "full_collision_cfg",
+          "full_solver_cfg"
+        ]
+      },
+      "previous_legacy_comparison": {
+        "source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-results-20260906/profile_artifacts_20260909_fixed/fpgs_cartpole.json",
+        "available": true,
+        "all_recorded_fields_match": true,
+        "checks": {
+          "num_envs": {
+            "current": 16384,
+            "historical": 16384,
+            "match": true
+          },
+          "sim_dt": {
+            "current": 0.008333333333333333,
+            "historical": 0.008333333333333333,
+            "match": true
+          },
+          "env_decimation": {
+            "current": 2,
+            "historical": 2,
+            "match": true
+          },
+          "num_substeps": {
+            "current": 1,
+            "historical": 1,
+            "match": true
+          },
+          "solver_dt": {
+            "current": 0.008333333333333333,
+            "historical": 0.008333333333333333,
+            "match": true
+          },
+          "cuda_graph": {
+            "current": true,
+            "historical": true,
+            "match": true
+          },
+          "pgs_mode": {
+            "current": "split",
+            "historical": "split",
+            "match": true
+          },
+          "pgs_iterations": {
+            "current": 4,
+            "historical": 4,
+            "match": true
+          },
+          "dense_max_constraints": {
+            "current": 8,
+            "historical": 8,
+            "match": true
+          },
+          "mf_max_constraints": {
+            "current": 64,
+            "historical": 64,
+            "match": true
+          }
+        },
+        "historical_solver_attr": [],
+        "historical_physics_attr": [],
+        "not_recorded_in_historical_model": [
+          "joint_limit_activation_gap",
+          "pgs_velocity_iterations",
+          "pgs_beta",
+          "pgs_cfm",
+          "collision_decimation",
+          "full_collision_cfg",
+          "full_solver_cfg"
+        ]
+      }
+    },
+    {
+      "task": "Isaac-Cartpole",
+      "physics_preset": "newton_mjwarp",
+      "task_config_source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-official-lab/source/isaaclab_tasks/isaaclab_tasks/core/cartpole/cartpole_manager_env_cfg.py",
+      "num_envs": 16384,
+      "seed": 0,
+      "device": "cuda:0",
+      "sim_dt": 0.008333333333333333,
+      "env_decimation": 2,
+      "environment_dt": 0.016666666666666666,
+      "solver_substep_dt": 0.008333333333333333,
+      "common_environment_ref": "common_environment",
+      "additional_environment": {},
+      "solver_attribute_overrides": {},
+      "physics_attribute_overrides": {},
+      "physics_config": {
+        "class_type": "isaaclab_newton.physics.mjwarp_manager:NewtonMJWarpManager",
+        "deterministic": false,
+        "num_substeps": 1,
+        "collision_decimation": 0,
+        "debug_mode": false,
+        "use_cuda_graph": true,
+        "deterministic_mode": "not_guaranteed",
+        "solver_cfg": {
+          "class_type": "isaaclab_newton.physics.mjwarp_manager:NewtonMJWarpManager",
+          "solver_type": "mujoco_warp",
+          "njmax": 5,
+          "nconmax": 3,
+          "iterations": 100,
+          "ls_iterations": 50,
+          "solver": "newton",
+          "integrator": "implicitfast",
+          "use_mujoco_cpu": false,
+          "disable_contacts": false,
+          "disable_sensors": false,
+          "default_actuator_gear": null,
+          "actuator_gears": null,
+          "update_data_interval": 1,
+          "save_to_mjcf": null,
+          "impratio": 1,
+          "cone": "pyramidal",
+          "ccd_iterations": 35,
+          "ls_parallel": false,
+          "use_mujoco_contacts": true,
+          "tolerance": 0.000001
+        },
+        "soft_contact_cfg": null,
+        "collision_cfg": null,
+        "default_shape_cfg": {
+          "margin": 0,
+          "gap": 0.01,
+          "ke": 2500,
+          "kd": 100,
+          "mu": 1
+        },
+        "load_visual_shapes": null,
+        "bvh_constructor_geometry": "cubql",
+        "bvh_constructor_scene": "sah",
+        "bvh_constructor_gaussian": "cubql"
+      },
+      "iteration_semantics": {
+        "configured_solver_iterations": 100,
+        "configured_line_search_iterations": 50,
+        "configured_solver_tolerance": 0.000001
+      },
+      "historical_comparison": {
+        "source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-results-20260906/profile_artifacts_20260910/mjwarp_cartpole.json",
+        "available": true,
+        "all_recorded_fields_match": true,
+        "checks": {
+          "num_envs": {
+            "current": 16384,
+            "historical": 16384,
+            "match": true
+          },
+          "sim_dt": {
+            "current": 0.008333333333333333,
+            "historical": 0.008333333333333333,
+            "match": true
+          },
+          "env_decimation": {
+            "current": 2,
+            "historical": 2,
+            "match": true
+          },
+          "num_substeps": {
+            "current": 1,
+            "historical": 1,
+            "match": true
+          },
+          "solver_dt": {
+            "current": 0.008333333333333333,
+            "historical": 0.008333333333333333,
+            "match": true
+          },
+          "cuda_graph": {
+            "current": true,
+            "historical": true,
+            "match": true
+          }
+        },
+        "historical_solver_attr": [],
+        "historical_physics_attr": [],
+        "not_recorded_in_historical_model": [
+          "joint_limit_activation_gap",
+          "pgs_velocity_iterations",
+          "pgs_beta",
+          "pgs_cfm",
+          "collision_decimation",
+          "full_collision_cfg",
+          "full_solver_cfg"
+        ]
+      },
+      "previous_legacy_comparison": {
+        "source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-results-20260906/profile_artifacts_20260909_fixed/mjwarp_cartpole.json",
+        "available": true,
+        "all_recorded_fields_match": true,
+        "checks": {
+          "num_envs": {
+            "current": 16384,
+            "historical": 16384,
+            "match": true
+          },
+          "sim_dt": {
+            "current": 0.008333333333333333,
+            "historical": 0.008333333333333333,
+            "match": true
+          },
+          "env_decimation": {
+            "current": 2,
+            "historical": 2,
+            "match": true
+          },
+          "num_substeps": {
+            "current": 1,
+            "historical": 1,
+            "match": true
+          },
+          "solver_dt": {
+            "current": 0.008333333333333333,
+            "historical": 0.008333333333333333,
+            "match": true
+          },
+          "cuda_graph": {
+            "current": true,
+            "historical": true,
+            "match": true
+          }
+        },
+        "historical_solver_attr": [],
+        "historical_physics_attr": [],
+        "not_recorded_in_historical_model": [
+          "joint_limit_activation_gap",
+          "pgs_velocity_iterations",
+          "pgs_beta",
+          "pgs_cfm",
+          "collision_decimation",
+          "full_collision_cfg",
+          "full_solver_cfg"
+        ]
+      }
+    },
+    {
+      "task": "Isaac-Ant",
+      "physics_preset": "feather_pgs",
+      "task_config_source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-official-lab/source/isaaclab_tasks/isaaclab_tasks/core/locomotion/ant/ant_manager_env_cfg.py",
+      "num_envs": 16384,
+      "seed": 0,
+      "device": "cuda:0",
+      "sim_dt": 0.008333333333333333,
+      "env_decimation": 2,
+      "environment_dt": 0.016666666666666666,
+      "solver_substep_dt": 0.008333333333333333,
+      "common_environment_ref": "common_environment",
+      "additional_environment": {},
+      "solver_attribute_overrides": {},
+      "physics_attribute_overrides": {},
+      "physics_config": {
+        "class_type": "isaaclab_newton.physics.feather_pgs_manager:NewtonFeatherPGSManager",
+        "deterministic": false,
+        "num_substeps": 1,
+        "collision_decimation": 0,
+        "debug_mode": false,
+        "use_cuda_graph": true,
+        "deterministic_mode": "not_guaranteed",
+        "solver_cfg": {
+          "class_type": "isaaclab_newton.physics.feather_pgs_manager:NewtonFeatherPGSManager",
+          "solver_type": "feather_pgs",
+          "angular_damping": 0.05,
+          "update_mass_matrix_interval": 1,
+          "friction_smoothing": 1,
+          "contact_friction_gap_threshold": "inf",
+          "contact_friction_position_iterations": -1,
+          "contact_friction_shared_anchor": false,
+          "contact_friction_anchor_limit": 0,
+          "contact_friction_scale": 1,
+          "contact_shared_anchor": false,
+          "enable_contact_friction": true,
+          "enable_joint_limits": true,
+          "joint_limit_activation_gap": 0.2,
+          "enable_joint_velocity_limits": false,
+          "velocity_limit_activation_fraction": 0.7,
+          "fuse_joint_velocity_limits": true,
+          "mf_gs_incremental_rows": 0,
+          "mf_gs_parallel_rows": 0,
+          "mf_gs_parallel_sweeps": 24,
+          "mf_gs_parallel_nesterov": true,
+          "mf_gs_response_block_rows": 0,
+          "mf_gs_response_block_lane_rows": 16,
+          "grouped_dynamics": false,
+          "lazy_kinematics": false,
+          "pgs_iterations": 8,
+          "pgs_inner_substeps": 1,
+          "pgs_velocity_iterations": 0,
+          "pgs_beta": 0.05,
+          "pgs_cfm": 0.000001,
+          "dense_contact_compliance": 0,
+          "speculative_dense_contact_compliance": 0,
+          "pgs_omega": 1,
+          "pgs_velocity_omega": null,
+          "pgs_velocity_drive_mode": "freeze",
+          "dense_max_constraints": 64,
+          "pgs_warmstart": false,
+          "mf_warmstart": false,
+          "mf_warmstart_decay": 1,
+          "pgs_mode": "split",
+          "articulated_contact_response": "immediate",
+          "propagation_same_articulation_rows": false,
+          "propagation_cached_response": true,
+          "propagation_cached_response_max_bodies": 8,
+          "pgs_schedule": "interleaved",
+          "friction_mode": "current",
+          "mf_max_constraints": 512,
+          "cholesky_kernel": "auto",
+          "trisolve_kernel": "auto",
+          "hinv_jt_kernel": "auto",
+          "delassus_kernel": "auto",
+          "pgs_kernel": "tiled_row",
+          "delassus_chunk_size": null,
+          "pgs_chunk_size": null,
+          "small_dof_threshold": 12,
+          "use_parallel_streams": true,
+          "double_buffer": true,
+          "nvtx": false,
+          "pgs_debug": false,
+          "drive_mode": "augmented",
+          "effort_limit_mode": "actuator",
+          "serial_kernel_block_dim": 256,
+          "tile_threads": 64,
+          "row_watermark": false,
+          "restitution_velocity_threshold": 0.5
+        },
+        "soft_contact_cfg": null,
+        "collision_cfg": null,
+        "default_shape_cfg": {
+          "margin": 0,
+          "gap": 0.01,
+          "ke": 2500,
+          "kd": 100,
+          "mu": 1
+        },
+        "load_visual_shapes": null,
+        "bvh_constructor_geometry": "cubql",
+        "bvh_constructor_scene": "sah",
+        "bvh_constructor_gaussian": "cubql"
+      },
+      "iteration_semantics": {
+        "configured_pgs_iterations": 8,
+        "configured_velocity_iterations": 0,
+        "same_iteration_algorithm_as_legacy": true,
+        "grouped_dynamics_only": false
+      },
+      "historical_comparison": {
+        "source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-results-20260906/profile_artifacts_20260910/fpgsbest_ant.json",
+        "available": true,
+        "all_recorded_fields_match": true,
+        "checks": {
+          "num_envs": {
+            "current": 16384,
+            "historical": 16384,
+            "match": true
+          },
+          "sim_dt": {
+            "current": 0.008333333333333333,
+            "historical": 0.008333333333333333,
+            "match": true
+          },
+          "env_decimation": {
+            "current": 2,
+            "historical": 2,
+            "match": true
+          },
+          "num_substeps": {
+            "current": 1,
+            "historical": 1,
+            "match": true
+          },
+          "solver_dt": {
+            "current": 0.008333333333333333,
+            "historical": 0.008333333333333333,
+            "match": true
+          },
+          "cuda_graph": {
+            "current": true,
+            "historical": true,
+            "match": true
+          },
+          "pgs_mode": {
+            "current": "split",
+            "historical": "split",
+            "match": true
+          },
+          "pgs_iterations": {
+            "current": 8,
+            "historical": 8,
+            "match": true
+          },
+          "dense_max_constraints": {
+            "current": 64,
+            "historical": 64,
+            "match": true
+          },
+          "mf_max_constraints": {
+            "current": 512,
+            "historical": 512,
+            "match": true
+          }
+        },
+        "historical_solver_attr": [],
+        "historical_physics_attr": [],
+        "not_recorded_in_historical_model": [
+          "joint_limit_activation_gap",
+          "pgs_velocity_iterations",
+          "pgs_beta",
+          "pgs_cfm",
+          "collision_decimation",
+          "full_collision_cfg",
+          "full_solver_cfg"
+        ]
+      },
+      "previous_legacy_comparison": {
+        "source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-results-20260906/profile_artifacts_20260909_fixed/fpgs_ant.json",
+        "available": true,
+        "all_recorded_fields_match": true,
+        "checks": {
+          "num_envs": {
+            "current": 16384,
+            "historical": 16384,
+            "match": true
+          },
+          "sim_dt": {
+            "current": 0.008333333333333333,
+            "historical": 0.008333333333333333,
+            "match": true
+          },
+          "env_decimation": {
+            "current": 2,
+            "historical": 2,
+            "match": true
+          },
+          "num_substeps": {
+            "current": 1,
+            "historical": 1,
+            "match": true
+          },
+          "solver_dt": {
+            "current": 0.008333333333333333,
+            "historical": 0.008333333333333333,
+            "match": true
+          },
+          "cuda_graph": {
+            "current": true,
+            "historical": true,
+            "match": true
+          },
+          "pgs_mode": {
+            "current": "split",
+            "historical": "split",
+            "match": true
+          },
+          "pgs_iterations": {
+            "current": 8,
+            "historical": 8,
+            "match": true
+          },
+          "dense_max_constraints": {
+            "current": 64,
+            "historical": 64,
+            "match": true
+          },
+          "mf_max_constraints": {
+            "current": 512,
+            "historical": 512,
+            "match": true
+          }
+        },
+        "historical_solver_attr": [],
+        "historical_physics_attr": [],
+        "not_recorded_in_historical_model": [
+          "joint_limit_activation_gap",
+          "pgs_velocity_iterations",
+          "pgs_beta",
+          "pgs_cfm",
+          "collision_decimation",
+          "full_collision_cfg",
+          "full_solver_cfg"
+        ]
+      }
+    },
+    {
+      "task": "Isaac-Ant",
+      "physics_preset": "newton_mjwarp",
+      "task_config_source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-official-lab/source/isaaclab_tasks/isaaclab_tasks/core/locomotion/ant/ant_manager_env_cfg.py",
+      "num_envs": 16384,
+      "seed": 0,
+      "device": "cuda:0",
+      "sim_dt": 0.008333333333333333,
+      "env_decimation": 2,
+      "environment_dt": 0.016666666666666666,
+      "solver_substep_dt": 0.008333333333333333,
+      "common_environment_ref": "common_environment",
+      "additional_environment": {},
+      "solver_attribute_overrides": {},
+      "physics_attribute_overrides": {},
+      "physics_config": {
+        "class_type": "isaaclab_newton.physics.mjwarp_manager:NewtonMJWarpManager",
+        "deterministic": false,
+        "num_substeps": 1,
+        "collision_decimation": 0,
+        "debug_mode": false,
+        "use_cuda_graph": true,
+        "deterministic_mode": "not_guaranteed",
+        "solver_cfg": {
+          "class_type": "isaaclab_newton.physics.mjwarp_manager:NewtonMJWarpManager",
+          "solver_type": "mujoco_warp",
+          "njmax": 45,
+          "nconmax": 25,
+          "iterations": 100,
+          "ls_iterations": 50,
+          "solver": "newton",
+          "integrator": "implicitfast",
+          "use_mujoco_cpu": false,
+          "disable_contacts": false,
+          "disable_sensors": false,
+          "default_actuator_gear": null,
+          "actuator_gears": null,
+          "update_data_interval": 1,
+          "save_to_mjcf": null,
+          "impratio": 1,
+          "cone": "pyramidal",
+          "ccd_iterations": 35,
+          "ls_parallel": false,
+          "use_mujoco_contacts": true,
+          "tolerance": 0.000001
+        },
+        "soft_contact_cfg": null,
+        "collision_cfg": null,
+        "default_shape_cfg": {
+          "margin": 0,
+          "gap": 0.01,
+          "ke": 2500,
+          "kd": 100,
+          "mu": 1
+        },
+        "load_visual_shapes": null,
+        "bvh_constructor_geometry": "cubql",
+        "bvh_constructor_scene": "sah",
+        "bvh_constructor_gaussian": "cubql"
+      },
+      "iteration_semantics": {
+        "configured_solver_iterations": 100,
+        "configured_line_search_iterations": 50,
+        "configured_solver_tolerance": 0.000001
+      },
+      "historical_comparison": {
+        "source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-results-20260906/profile_artifacts_20260910/mjwarp_ant.json",
+        "available": true,
+        "all_recorded_fields_match": true,
+        "checks": {
+          "num_envs": {
+            "current": 16384,
+            "historical": 16384,
+            "match": true
+          },
+          "sim_dt": {
+            "current": 0.008333333333333333,
+            "historical": 0.008333333333333333,
+            "match": true
+          },
+          "env_decimation": {
+            "current": 2,
+            "historical": 2,
+            "match": true
+          },
+          "num_substeps": {
+            "current": 1,
+            "historical": 1,
+            "match": true
+          },
+          "solver_dt": {
+            "current": 0.008333333333333333,
+            "historical": 0.008333333333333333,
+            "match": true
+          },
+          "cuda_graph": {
+            "current": true,
+            "historical": true,
+            "match": true
+          }
+        },
+        "historical_solver_attr": [],
+        "historical_physics_attr": [],
+        "not_recorded_in_historical_model": [
+          "joint_limit_activation_gap",
+          "pgs_velocity_iterations",
+          "pgs_beta",
+          "pgs_cfm",
+          "collision_decimation",
+          "full_collision_cfg",
+          "full_solver_cfg"
+        ]
+      },
+      "previous_legacy_comparison": {
+        "source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-results-20260906/profile_artifacts_20260909_fixed/mjwarp_ant.json",
+        "available": true,
+        "all_recorded_fields_match": true,
+        "checks": {
+          "num_envs": {
+            "current": 16384,
+            "historical": 16384,
+            "match": true
+          },
+          "sim_dt": {
+            "current": 0.008333333333333333,
+            "historical": 0.008333333333333333,
+            "match": true
+          },
+          "env_decimation": {
+            "current": 2,
+            "historical": 2,
+            "match": true
+          },
+          "num_substeps": {
+            "current": 1,
+            "historical": 1,
+            "match": true
+          },
+          "solver_dt": {
+            "current": 0.008333333333333333,
+            "historical": 0.008333333333333333,
+            "match": true
+          },
+          "cuda_graph": {
+            "current": true,
+            "historical": true,
+            "match": true
+          }
+        },
+        "historical_solver_attr": [],
+        "historical_physics_attr": [],
+        "not_recorded_in_historical_model": [
+          "joint_limit_activation_gap",
+          "pgs_velocity_iterations",
+          "pgs_beta",
+          "pgs_cfm",
+          "collision_decimation",
+          "full_collision_cfg",
+          "full_solver_cfg"
+        ]
+      }
+    },
+    {
+      "task": "Isaac-Humanoid",
+      "physics_preset": "feather_pgs",
+      "task_config_source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-official-lab/source/isaaclab_tasks/isaaclab_tasks/core/locomotion/humanoid/humanoid_manager_env_cfg.py",
+      "num_envs": 16384,
+      "seed": 0,
+      "device": "cuda:0",
+      "sim_dt": 0.008333333333333333,
+      "env_decimation": 2,
+      "environment_dt": 0.016666666666666666,
+      "solver_substep_dt": 0.004166666666666667,
+      "common_environment_ref": "common_environment",
+      "additional_environment": {},
+      "solver_attribute_overrides": {},
+      "physics_attribute_overrides": {},
+      "physics_config": {
+        "class_type": "isaaclab_newton.physics.feather_pgs_manager:NewtonFeatherPGSManager",
+        "deterministic": false,
+        "num_substeps": 2,
+        "collision_decimation": 0,
+        "debug_mode": false,
+        "use_cuda_graph": true,
+        "deterministic_mode": "not_guaranteed",
+        "solver_cfg": {
+          "class_type": "isaaclab_newton.physics.feather_pgs_manager:NewtonFeatherPGSManager",
+          "solver_type": "feather_pgs",
+          "angular_damping": 0.05,
+          "update_mass_matrix_interval": 2,
+          "friction_smoothing": 1,
+          "contact_friction_gap_threshold": "inf",
+          "contact_friction_position_iterations": -1,
+          "contact_friction_shared_anchor": false,
+          "contact_friction_anchor_limit": 0,
+          "contact_friction_scale": 1,
+          "contact_shared_anchor": false,
+          "enable_contact_friction": true,
+          "enable_joint_limits": true,
+          "joint_limit_activation_gap": 0.2,
+          "enable_joint_velocity_limits": false,
+          "velocity_limit_activation_fraction": 0.7,
+          "fuse_joint_velocity_limits": true,
+          "mf_gs_incremental_rows": 0,
+          "mf_gs_parallel_rows": 0,
+          "mf_gs_parallel_sweeps": 24,
+          "mf_gs_parallel_nesterov": true,
+          "mf_gs_response_block_rows": 0,
+          "mf_gs_response_block_lane_rows": 16,
+          "grouped_dynamics": false,
+          "lazy_kinematics": false,
+          "pgs_iterations": 8,
+          "pgs_inner_substeps": 1,
+          "pgs_velocity_iterations": 0,
+          "pgs_beta": 0.05,
+          "pgs_cfm": 0.000001,
+          "dense_contact_compliance": 0,
+          "speculative_dense_contact_compliance": 0,
+          "pgs_omega": 1,
+          "pgs_velocity_omega": null,
+          "pgs_velocity_drive_mode": "freeze",
+          "dense_max_constraints": 64,
+          "pgs_warmstart": false,
+          "mf_warmstart": false,
+          "mf_warmstart_decay": 1,
+          "pgs_mode": "split",
+          "articulated_contact_response": "immediate",
+          "propagation_same_articulation_rows": false,
+          "propagation_cached_response": true,
+          "propagation_cached_response_max_bodies": 8,
+          "pgs_schedule": "interleaved",
+          "friction_mode": "current",
+          "mf_max_constraints": 512,
+          "cholesky_kernel": "auto",
+          "trisolve_kernel": "auto",
+          "hinv_jt_kernel": "auto",
+          "delassus_kernel": "auto",
+          "pgs_kernel": "tiled_row",
+          "delassus_chunk_size": null,
+          "pgs_chunk_size": null,
+          "small_dof_threshold": 12,
+          "use_parallel_streams": true,
+          "double_buffer": true,
+          "nvtx": false,
+          "pgs_debug": false,
+          "drive_mode": "augmented",
+          "effort_limit_mode": "actuator",
+          "serial_kernel_block_dim": 256,
+          "tile_threads": 64,
+          "row_watermark": false,
+          "restitution_velocity_threshold": 0.5
+        },
+        "soft_contact_cfg": null,
+        "collision_cfg": null,
+        "default_shape_cfg": {
+          "margin": 0,
+          "gap": 0.01,
+          "ke": 2500,
+          "kd": 100,
+          "mu": 1
+        },
+        "load_visual_shapes": null,
+        "bvh_constructor_geometry": "cubql",
+        "bvh_constructor_scene": "sah",
+        "bvh_constructor_gaussian": "cubql"
+      },
+      "iteration_semantics": {
+        "configured_pgs_iterations": 8,
+        "configured_velocity_iterations": 0,
+        "same_iteration_algorithm_as_legacy": true,
+        "grouped_dynamics_only": false
+      },
+      "historical_comparison": {
+        "source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-results-20260906/profile_artifacts_20260910/fpgsbest_humanoid.json",
+        "available": true,
+        "all_recorded_fields_match": true,
+        "checks": {
+          "num_envs": {
+            "current": 16384,
+            "historical": 16384,
+            "match": true
+          },
+          "sim_dt": {
+            "current": 0.008333333333333333,
+            "historical": 0.008333333333333333,
+            "match": true
+          },
+          "env_decimation": {
+            "current": 2,
+            "historical": 2,
+            "match": true
+          },
+          "num_substeps": {
+            "current": 2,
+            "historical": 2,
+            "match": true
+          },
+          "solver_dt": {
+            "current": 0.004166666666666667,
+            "historical": 0.004166666666666667,
+            "match": true
+          },
+          "cuda_graph": {
+            "current": true,
+            "historical": true,
+            "match": true
+          },
+          "pgs_mode": {
+            "current": "split",
+            "historical": "split",
+            "match": true
+          },
+          "pgs_iterations": {
+            "current": 8,
+            "historical": 8,
+            "match": true
+          },
+          "dense_max_constraints": {
+            "current": 64,
+            "historical": 64,
+            "match": true
+          },
+          "mf_max_constraints": {
+            "current": 512,
+            "historical": 512,
+            "match": true
+          }
+        },
+        "historical_solver_attr": [],
+        "historical_physics_attr": [],
+        "not_recorded_in_historical_model": [
+          "joint_limit_activation_gap",
+          "pgs_velocity_iterations",
+          "pgs_beta",
+          "pgs_cfm",
+          "collision_decimation",
+          "full_collision_cfg",
+          "full_solver_cfg"
+        ]
+      },
+      "previous_legacy_comparison": {
+        "source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-results-20260906/profile_artifacts_20260909_fixed/fpgs_humanoid.json",
+        "available": true,
+        "all_recorded_fields_match": true,
+        "checks": {
+          "num_envs": {
+            "current": 16384,
+            "historical": 16384,
+            "match": true
+          },
+          "sim_dt": {
+            "current": 0.008333333333333333,
+            "historical": 0.008333333333333333,
+            "match": true
+          },
+          "env_decimation": {
+            "current": 2,
+            "historical": 2,
+            "match": true
+          },
+          "num_substeps": {
+            "current": 2,
+            "historical": 2,
+            "match": true
+          },
+          "solver_dt": {
+            "current": 0.004166666666666667,
+            "historical": 0.004166666666666667,
+            "match": true
+          },
+          "cuda_graph": {
+            "current": true,
+            "historical": true,
+            "match": true
+          },
+          "pgs_mode": {
+            "current": "split",
+            "historical": "split",
+            "match": true
+          },
+          "pgs_iterations": {
+            "current": 8,
+            "historical": 8,
+            "match": true
+          },
+          "dense_max_constraints": {
+            "current": 64,
+            "historical": 64,
+            "match": true
+          },
+          "mf_max_constraints": {
+            "current": 512,
+            "historical": 512,
+            "match": true
+          }
+        },
+        "historical_solver_attr": [],
+        "historical_physics_attr": [],
+        "not_recorded_in_historical_model": [
+          "joint_limit_activation_gap",
+          "pgs_velocity_iterations",
+          "pgs_beta",
+          "pgs_cfm",
+          "collision_decimation",
+          "full_collision_cfg",
+          "full_solver_cfg"
+        ]
+      }
+    },
+    {
+      "task": "Isaac-Humanoid",
+      "physics_preset": "newton_mjwarp",
+      "task_config_source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-official-lab/source/isaaclab_tasks/isaaclab_tasks/core/locomotion/humanoid/humanoid_manager_env_cfg.py",
+      "num_envs": 16384,
+      "seed": 0,
+      "device": "cuda:0",
+      "sim_dt": 0.008333333333333333,
+      "env_decimation": 2,
+      "environment_dt": 0.016666666666666666,
+      "solver_substep_dt": 0.004166666666666667,
+      "common_environment_ref": "common_environment",
+      "additional_environment": {},
+      "solver_attribute_overrides": {},
+      "physics_attribute_overrides": {},
+      "physics_config": {
+        "class_type": "isaaclab_newton.physics.mjwarp_manager:NewtonMJWarpManager",
+        "deterministic": false,
+        "num_substeps": 2,
+        "collision_decimation": 0,
+        "debug_mode": false,
+        "use_cuda_graph": true,
+        "deterministic_mode": "not_guaranteed",
+        "solver_cfg": {
+          "class_type": "isaaclab_newton.physics.mjwarp_manager:NewtonMJWarpManager",
+          "solver_type": "mujoco_warp",
+          "njmax": 80,
+          "nconmax": 25,
+          "iterations": 100,
+          "ls_iterations": 50,
+          "solver": "newton",
+          "integrator": "implicitfast",
+          "use_mujoco_cpu": false,
+          "disable_contacts": false,
+          "disable_sensors": false,
+          "default_actuator_gear": null,
+          "actuator_gears": null,
+          "update_data_interval": 2,
+          "save_to_mjcf": null,
+          "impratio": 1,
+          "cone": "pyramidal",
+          "ccd_iterations": 35,
+          "ls_parallel": false,
+          "use_mujoco_contacts": true,
+          "tolerance": 0.000001
+        },
+        "soft_contact_cfg": null,
+        "collision_cfg": null,
+        "default_shape_cfg": {
+          "margin": 0,
+          "gap": 0.01,
+          "ke": 2500,
+          "kd": 100,
+          "mu": 1
+        },
+        "load_visual_shapes": null,
+        "bvh_constructor_geometry": "cubql",
+        "bvh_constructor_scene": "sah",
+        "bvh_constructor_gaussian": "cubql"
+      },
+      "iteration_semantics": {
+        "configured_solver_iterations": 100,
+        "configured_line_search_iterations": 50,
+        "configured_solver_tolerance": 0.000001
+      },
+      "historical_comparison": {
+        "source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-results-20260906/profile_artifacts_20260910/mjwarp_humanoid.json",
+        "available": true,
+        "all_recorded_fields_match": true,
+        "checks": {
+          "num_envs": {
+            "current": 16384,
+            "historical": 16384,
+            "match": true
+          },
+          "sim_dt": {
+            "current": 0.008333333333333333,
+            "historical": 0.008333333333333333,
+            "match": true
+          },
+          "env_decimation": {
+            "current": 2,
+            "historical": 2,
+            "match": true
+          },
+          "num_substeps": {
+            "current": 2,
+            "historical": 2,
+            "match": true
+          },
+          "solver_dt": {
+            "current": 0.004166666666666667,
+            "historical": 0.004166666666666667,
+            "match": true
+          },
+          "cuda_graph": {
+            "current": true,
+            "historical": true,
+            "match": true
+          }
+        },
+        "historical_solver_attr": [],
+        "historical_physics_attr": [],
+        "not_recorded_in_historical_model": [
+          "joint_limit_activation_gap",
+          "pgs_velocity_iterations",
+          "pgs_beta",
+          "pgs_cfm",
+          "collision_decimation",
+          "full_collision_cfg",
+          "full_solver_cfg"
+        ]
+      },
+      "previous_legacy_comparison": {
+        "source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-results-20260906/profile_artifacts_20260909_fixed/mjwarp_humanoid.json",
+        "available": true,
+        "all_recorded_fields_match": true,
+        "checks": {
+          "num_envs": {
+            "current": 16384,
+            "historical": 16384,
+            "match": true
+          },
+          "sim_dt": {
+            "current": 0.008333333333333333,
+            "historical": 0.008333333333333333,
+            "match": true
+          },
+          "env_decimation": {
+            "current": 2,
+            "historical": 2,
+            "match": true
+          },
+          "num_substeps": {
+            "current": 2,
+            "historical": 2,
+            "match": true
+          },
+          "solver_dt": {
+            "current": 0.004166666666666667,
+            "historical": 0.004166666666666667,
+            "match": true
+          },
+          "cuda_graph": {
+            "current": true,
+            "historical": true,
+            "match": true
+          }
+        },
+        "historical_solver_attr": [],
+        "historical_physics_attr": [],
+        "not_recorded_in_historical_model": [
+          "joint_limit_activation_gap",
+          "pgs_velocity_iterations",
+          "pgs_beta",
+          "pgs_cfm",
+          "collision_decimation",
+          "full_collision_cfg",
+          "full_solver_cfg"
+        ]
+      }
+    }
+  ],
+  "verification_command_source": "/home/zhengyuz/Projects/IsaacLab.wt/fpgs-results-20260906/verify_20260910_0dciAR/verify.sh"
+}

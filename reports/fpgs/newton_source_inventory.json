@@ -1,0 +1,107 @@
+{
+  "comparison": "Measured northstar snapshot versus isolated handoff after mechanical lint fixes",
+  "files": [
+    {
+      "file": "newton/_src/geometry/narrow_phase.py",
+      "measured_sha256": "04f59c1631624375635d271d3766c7005eb14bb87eb7273251c795aee57bc52f",
+      "handoff_sha256": "a613a011f248b1e3eff28b9d1b0b2cc3a5f3cbd238ea71a5e0df12161056c641",
+      "syntax_tree_identical": true,
+      "changed_function_asts": []
+    },
+    {
+      "file": "newton/_src/solvers/feather_pgs/fused_dynamics.py",
+      "measured_sha256": "b2bb4601095b2e5502c711dd46b0856f489e1b95e5172cf2b29861f47698795c",
+      "handoff_sha256": "d656cc7ae4aabdc1abfc5046a2493881794c781efd9746e3bcc493fae827a8f9",
+      "syntax_tree_identical": false,
+      "changed_function_asts": [
+        "get_fused_dynamics_kernel"
+      ]
+    },
+    {
+      "file": "newton/_src/solvers/feather_pgs/grouped_dynamics.py",
+      "measured_sha256": "16b0f693b1eaa7ce4d7c932c14128e1f721724a36849e75d372bf19d0dd9430d",
+      "handoff_sha256": "d77bfbc3164aef11178550fe4227b84439e0dbe8c7e33f7404f72825b6aa0232",
+      "syntax_tree_identical": false,
+      "changed_function_asts": [
+        "__init__",
+        "_build_templates"
+      ]
+    },
+    {
+      "file": "newton/_src/solvers/feather_pgs/kernels.py",
+      "measured_sha256": "e74c0ba418a6823bcae94825abe1def84da3685c80c2ff35f3d7b5d4bbe91c55",
+      "handoff_sha256": "69d4499e97aef847411162ef490945a46d64f5ecf3e646aa66e50e45761b3a45",
+      "syntax_tree_identical": true,
+      "changed_function_asts": []
+    },
+    {
+      "file": "newton/_src/solvers/feather_pgs/response_block_sweep.py",
+      "measured_sha256": "ae30e97ee56e4e6341f31b15c6277da8b4f49985edbdfb9bab15e0e21d5e7f92",
+      "handoff_sha256": "202cff3e66cce08807f4412f6558a2ba44bc6b8235a775e38e7167844c55a324",
+      "syntax_tree_identical": false,
+      "changed_function_asts": [
+        "_lane_row_code"
+      ]
+    },
+    {
+      "file": "newton/_src/solvers/feather_pgs/row_build.py",
+      "measured_sha256": "218b21af7faddaa709890bbd77d776d2b5dcdb3f08407fec0061b93e28e3f8d7",
+      "handoff_sha256": "98b6d745842d9075301d0c273819664d717be8237028a837f81f7abaca2d2544",
+      "syntax_tree_identical": true,
+      "changed_function_asts": []
+    },
+    {
+      "file": "newton/_src/solvers/feather_pgs/row_build_native.py",
+      "measured_sha256": "e31360a9a058e07896d05e67675a33382be664bb7511c84b39dd94a8110bcc18",
+      "handoff_sha256": "056f06ba5210f950cd6747f02b5d69949c89e147c7f7ac8ea2e004a659425ed3",
+      "syntax_tree_identical": true,
+      "changed_function_asts": []
+    },
+    {
+      "file": "newton/_src/solvers/feather_pgs/row_build_rows.py",
+      "measured_sha256": "e9cfce7c10660270928e09b04e5048ce2d74d093723cafc0f0deb138ae268704",
+      "handoff_sha256": "d0c85cbda94c94ec99958baaf52157883c56f202748216f3e92274a764590e9b",
+      "syntax_tree_identical": true,
+      "changed_function_asts": []
+    },
+    {
+      "file": "newton/_src/solvers/feather_pgs/solver_feather_pgs.py",
+      "measured_sha256": "44398de6200e47fcd7e26b2d9ff5d54a03fcef1c86673c650b9fd7aec7294ae2",
+      "handoff_sha256": "295c5d954023c0edec1aa9d3745af3bef0c50d6b67cb4f60060afad8d986578d",
+      "syntax_tree_identical": false,
+      "changed_function_asts": [
+        "_build_response_block_sweep",
+        "_debug_maxdiff_sv",
+        "_debug_maxdiff_tf",
+        "_debug_maxdiff_v3",
+        "_debug_spin",
+        "_get_pgs_solve_parallel_kernel",
+        "_init_tiled_kernels",
+        "_k1_size_single_template",
+        "_launch_fused_contact_rows",
+        "_launch_fused_k1",
+        "_launch_matrix_free_gs_solve",
+        "_launch_response_block_sweep",
+        "_launch_rigid_tau",
+        "_report_grouped_check",
+        "_stage1_crba",
+        "_stage4_build_rows",
+        "_stage4_hinv_jt_tiled",
+        "_stage7_update_kinematics",
+        "_warm_table_inputs",
+        "_world_rows_inputs",
+        "launch_row_phase"
+      ]
+    }
+  ],
+  "semantic_change_notes": [
+    "No equation, solver flag default, row admission, or dispatch condition intentionally changed.",
+    "Internal imports moved to module scope; previously lazy experimental modules are now imported when FeatherPGS is imported.",
+    "Removed an unused debug-only wp.clone(body_I_c) allocation; this affects debug allocation overhead only.",
+    "Removed unused native-code template strings that were never interpolated into the parallel kernel.",
+    "Renamed native-code locals to dof_count or drive_impulse to satisfy typo checks; generated source names change, formulas do not.",
+    "Explicit strict=False preserves the existing truncating zip behavior.",
+    "Ruff applied equivalent dict literals, iterable unpacking, diagnostic float-format syntax; Warp annotation syntax converted to brackets.",
+    "Five of nine changed Python files have exactly identical ASTs; remaining differences are listed per function."
+  ]
+}
