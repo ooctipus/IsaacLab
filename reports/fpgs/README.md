@@ -3,6 +3,17 @@
 Start here. This report supersedes the numerical claims in the archived handoff below.
 This is an experimental development snapshot, not a claim of production readiness or physics parity.
 
+## Architecture follow-on — current work
+
+The [architecture follow-on report](ARCHITECTURE_UPDATE_20260911.md) records the
+latest paired RTX PRO 6000 / GB300 measurements, SO101 keyboard addition,
+published Newton checkpoint `d60528895`, assembled-source validation, and
+unresolved required-test and grasp-validation gates.
+Its current-backend numbers supersede earlier comparisons below. The original
+handoff and first optimization report remain preserved. This worktree has no
+Isaac Lab runtime or harness source changes and still pins the published
+starting Newton commit until the next pin is explicitly validated.
+
 ## Follow-on optimization — 2026-09-11
 
 Both forks now have branch `ooctipus/fpgs-opt-20260910`:
