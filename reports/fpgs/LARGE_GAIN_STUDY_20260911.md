@@ -328,6 +328,21 @@ dense factors versus current MF free-body inertia, complete physical laws and
 the same iteration allowance. Moving a grid boundary alone is not the proposed
 2× algorithm.
 
+The final isolated publication prototype passes on both GPUs. It adds an
+explicit current-solve-tagged zero branch before any row/mapping read, with
+literal a7 fallback arithmetic and spatial packing. Five synthetic cases
+cover nonzero → zero → nonzero, a stale tag with valid fallback rows, and an
+empty active prefix. The zero case poisons its row/mapping storage; all active
+linear/spatial outputs are refreshed, inactive tails remain untouched, and
+the same captured graphs pass two replays after device-epoch changes. Actual
+outputs are saved before comparison. This validates the tested publication
+consumer only—not mask truth, contact-generation ownership, stale-tag fallback
+row rebuilding, integrated sensors, physical quality or performance.
+Native SHA256:
+`58c3e10c51f16cdc504765fc4ab8401e555ed280ea7e83541ac75c10fd27fcf5`;
+paired report SHA256:
+`cea20112464558cd528aa4c0427d53ff88c135761baab6b4d86767d45ad6f083`.
+
 ### Runtime lifecycle
 
 Original Lab startup/reset notifications occur after initial solver capture.
