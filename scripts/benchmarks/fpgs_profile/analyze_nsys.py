@@ -6,8 +6,10 @@
 """Analyze an nsys SQLite export produced by run_profiled.py.
 
 Reports, per env step: wall time, GPU busy time (union of all device work),
-physics-graph span, idle gaps inside the graph, per-phase GPU/host time, and a
-per-kernel table (calls, time, launch shape, registers) with stage classification.
+physics-graph spans plus per-phase GPU/host time and node work budgets where
+available. Direct graph mode reports auxiliary sensor graphs separately;
+node mode rejects captures containing auxiliary graphs to keep physics budgets
+unambiguous.
 """
 
 from __future__ import annotations
@@ -115,7 +117,11 @@ def validate_graph_correlations(connection: sqlite3.Connection) -> dict:
     counts = {}
     scopes = set()
     seen = set()
-    for table in ("CUPTI_ACTIVITY_KIND_KERNEL", "CUPTI_ACTIVITY_KIND_MEMSET", "CUPTI_ACTIVITY_KIND_MEMCPY"):
+    for table in (
+        "CUPTI_ACTIVITY_KIND_KERNEL",
+        "CUPTI_ACTIVITY_KIND_MEMSET",
+        "CUPTI_ACTIVITY_KIND_MEMCPY",
+    ):
         if not connection.execute("select 1 from sqlite_master where type='table' and name=?", (table,)).fetchone():
             continue
         marker = graph_marker(connection, table)
@@ -136,7 +142,42 @@ def validate_graph_correlations(connection: sqlite3.Connection) -> dict:
         raise ValueError("This per-environment-step analyzer requires one CUDA process/device scope")
     if seen != set(launches):
         raise ValueError("Host graph launches and identified device graph operations are incomplete")
-    return {"method": "graphId or graphNodeId with successful process-scoped host correlation", "counts": counts}
+    validate_node_graph_scopes(connection)
+    return {
+        "method": "graphId or graphNodeId with successful process-scoped host correlation",
+        "counts": counts,
+        "graph_scope": "physics",
+    }
+
+
+def validate_node_graph_scopes(connection: sqlite3.Connection) -> None:
+    """Refuse auxiliary or mislabeled graphs in node-mode physics budgets."""
+    ranges = list(
+        connection.execute(
+            "select n.start,n.end,n.globalTid,coalesce(n.text,s.value) from NVTX_EVENTS n "
+            "left join StringIds s on n.textId=s.id "
+            "where n.end is not null and n.eventType in (59,60,70)"
+        )
+    )
+    for start, end, tid in connection.execute(
+        "select r.start,r.end,r.globalTid from CUPTI_ACTIVITY_KIND_RUNTIME r "
+        "join StringIds s on s.id=r.nameId where s.value like 'cudaGraphLaunch%'"
+    ):
+        parents = [
+            row
+            for row in ranges
+            if row[2] == tid and row[0] <= start <= end <= row[1] and row[3] in ("physics_graph", "auxiliary_graph")
+        ]
+        if len(parents) != 1 or parents[0][3] != "physics_graph":
+            raise ValueError("Node mode requires uniquely labeled physics graphs; use graph mode for auxiliary graphs")
+        graph_range = parents[0]
+        simulation = [
+            row
+            for row in ranges
+            if row[2] == tid and row[3] == "sim.step" and row[0] <= graph_range[0] <= graph_range[1] <= row[1]
+        ]
+        if len(simulation) != 1:
+            raise ValueError("Node-mode physics graph is not uniquely inside sim.step; use graph mode for mixed graphs")
 
 
 def analyze_graph_trace(sqlite_path: Path, metadata_path: Path) -> dict:
@@ -168,18 +209,8 @@ def analyze_graph_trace(sqlite_path: Path, metadata_path: Path) -> dict:
     graphs = [dict(row) for row in connection.execute(f"select * from {table} order by start")]
     if not graphs:
         raise ValueError("No direct whole-graph records")
-    identities = {
-        (
-            row["globalPid"],
-            row["deviceId"],
-            row["contextId"],
-            row["graphId"],
-            row["graphExecId"],
-        )
-        for row in graphs
-    }
-    if len(identities) != 1:
-        raise ValueError(f"Only a single fixed physics graph is supported: {identities}")
+    if len({(row["globalPid"], row["deviceId"], row["contextId"]) for row in graphs}) != 1:
+        raise ValueError("Direct graph records must have one CUDA process/device/context scope")
     launches = [
         dict(row)
         for row in connection.execute("select * from CUPTI_ACTIVITY_KIND_RUNTIME order by start")
@@ -195,13 +226,18 @@ def analyze_graph_trace(sqlite_path: Path, metadata_path: Path) -> dict:
     ranges = []
     for row in connection.execute("select * from NVTX_EVENTS where end is not null and eventType in (59,60,70)"):
         label = row["text"] if row["text"] is not None else strings.get(row["textId"], "")
-        if label == "physics_graph" or label.startswith("env_step:"):
+        if label in (
+            "physics_graph",
+            "auxiliary_graph",
+            "sim.step",
+        ) or label.startswith("env_step:"):
             ranges.append((row["start"], row["end"], row["globalTid"], label))
     steps = sorted(row for row in ranges if row[3].startswith("env_step:"))
-    physics_ranges = [row for row in ranges if row[3] == "physics_graph"]
+    graph_ranges = [row for row in ranges if row[3] in ("physics_graph", "auxiliary_graph")]
+    simulation_ranges = [row for row in ranges if row[3] == "sim.step"]
     meta = json.loads(metadata_path.read_text())
-    if len(steps) != meta["profile_steps"] or len(physics_ranges) != len(graphs):
-        raise ValueError("Profiler-window step/physics_graph ranges are incomplete")
+    if len(steps) != meta["profile_steps"] or len(graph_ranges) != len(graphs):
+        raise ValueError("Profiler-window step/physics/auxiliary graph ranges are incomplete")
     if not meta["cuda_graph"] or not all(meta[key].get("state_finite") is True for key in ("model", "model_after")):
         raise ValueError("Expected finite graph-enabled simulation")
     if [row[3] for row in steps] != [f"env_step:{i}" for i in range(len(steps))]:
@@ -209,18 +245,20 @@ def analyze_graph_trace(sqlite_path: Path, metadata_path: Path) -> dict:
     if any(a[1] > b[0] for a, b in zip(steps, steps[1:])):
         raise ValueError("Environment step host ranges overlap")
     if any(a["end"] > b["start"] for a, b in zip(graphs, graphs[1:])):
-        raise ValueError("Direct physics graph executions overlap")
-    per_step = {step[3]: [] for step in steps}
+        raise ValueError("Direct graph executions overlap")
+    by_scope = {scope: {step[3]: [] for step in steps} for scope in ("physics_graph", "auxiliary_graph")}
+    identities = {scope: set() for scope in by_scope}
     seen = set()
+    seen_ranges = set()
     for graph in graphs:
         key = graph["globalPid"], graph["correlationId"]
         launch = keyed.get(key)
         if launch is None or key in seen or graph["start"] < launch["start"] or graph["end"] <= graph["start"]:
             raise ValueError("Direct graph cannot be uniquely matched to a successful preceding host launch")
         seen.add(key)
-        containing_physics = [
+        containing_graph = [
             row
-            for row in physics_ranges
+            for row in graph_ranges
             if row[2] == launch["globalTid"] and row[0] <= launch["start"] <= launch["end"] <= row[1]
         ]
         containing_steps = [
@@ -228,12 +266,49 @@ def analyze_graph_trace(sqlite_path: Path, metadata_path: Path) -> dict:
             for row in steps
             if row[2] == launch["globalTid"] and row[0] <= launch["start"] <= launch["end"] <= row[1]
         ]
-        if len(containing_physics) != 1 or len(containing_steps) != 1:
-            raise ValueError("Graph launch is not uniquely inside physics_graph and env_step host ranges")
-        per_step[containing_steps[0][3]].append({**graph, "duration_us": (graph["end"] - graph["start"]) / 1000.0})
-    expected = meta["host_calls_per_step"]["physics_graph"]
-    if any(len(values) != expected for values in per_step.values()):
-        raise ValueError("Per-step graph launch count differs from unprofiled instrumentation")
+        if len(containing_graph) != 1 or len(containing_steps) != 1:
+            raise ValueError("Graph launch is not uniquely inside physics/auxiliary and env_step host ranges")
+        graph_range = containing_graph[0]
+        if graph_range in seen_ranges:
+            raise ValueError("Multiple graph launches share one physics/auxiliary instrumentation range")
+        seen_ranges.add(graph_range)
+        scope = graph_range[3]
+        if scope == "physics_graph":
+            enclosing_simulation = [
+                row
+                for row in simulation_ranges
+                if row[2] == graph_range[2] and row[0] <= graph_range[0] <= graph_range[1] <= row[1]
+            ]
+            if len(enclosing_simulation) != 1:
+                raise ValueError(
+                    "Physics graph range is not uniquely inside sim.step; auxiliary graph may be mislabeled"
+                )
+        identities[scope].add(
+            tuple(
+                graph[name]
+                for name in (
+                    "globalPid",
+                    "deviceId",
+                    "contextId",
+                    "graphId",
+                    "graphExecId",
+                )
+            )
+        )
+        by_scope[scope][containing_steps[0][3]].append(
+            {**graph, "duration_us": (graph["end"] - graph["start"]) / 1000.0}
+        )
+    if len(identities["physics_graph"]) != 1:
+        raise ValueError(f"Only a single fixed physics graph is supported: {identities['physics_graph']}")
+    if identities["physics_graph"] & identities["auxiliary_graph"]:
+        raise ValueError("A graph identity cannot be labeled both physics and auxiliary")
+    expected = {}
+    for scope, scoped_steps in by_scope.items():
+        expected[scope] = meta["host_calls_per_step"].get(scope, 0)
+        if any(len(values) != expected[scope] for values in scoped_steps.values()):
+            raise ValueError(f"Per-step {scope} launch count differs from unprofiled instrumentation")
+    per_step = by_scope["physics_graph"]
+    auxiliary_per_step = by_scope["auxiliary_graph"]
     for work_table in (
         "CUPTI_ACTIVITY_KIND_KERNEL",
         "CUPTI_ACTIVITY_KIND_MEMCPY",
@@ -250,28 +325,38 @@ def analyze_graph_trace(sqlite_path: Path, metadata_path: Path) -> dict:
         ):
             raise ValueError("Node activity is present despite requested whole-graph-only capture")
     values = [sum(row["duration_us"] for row in per_step[label]) for label in per_step]
+    auxiliary_values = [sum(row["duration_us"] for row in rows) for rows in auxiliary_per_step.values()]
     connection.close()
     return {
         "analysis_mode": "graph",
         "summary": {
             "timing_mode": "graph",
+            "graph_scope": "physics",
             "steps": len(steps),
             "graph_span_us_per_step": statistics.fmean(values),
-            "graph_launches_per_step": expected,
+            "graph_launches_per_step": expected["physics_graph"],
+            "auxiliary_graph_span_us_per_step": statistics.fmean(auxiliary_values),
+            "auxiliary_graph_launches_per_step": expected["auxiliary_graph"],
             "wall_us_per_step": statistics.fmean((row[1] - row[0]) / 1000.0 for row in steps),
         },
-        "graph_membership_audit": {"method": "direct graph records with process-scoped host correlations"},
+        "graph_membership_audit": {
+            "method": "direct graph records with process-scoped host correlations and physics/auxiliary NVTX ownership",
+            "physics_launches": sum(len(rows) for rows in per_step.values()),
+            "auxiliary_launches": sum(len(rows) for rows in auxiliary_per_step.values()),
+        },
         "directory": str(directory),
         "validated": True,
         "method": (
             "Direct CUPTI_ACTIVITY_KIND_GRAPH_TRACE start/end matched by process+correlation "
-            "to successful host launches and NVTX ranges"
+            "to successful host launches and physics/auxiliary NVTX ranges; physics must be inside sim.step"
         ),
         "task": meta["task"],
         "num_envs": meta["num_envs"],
         "schema": {table: schema[table]},
-        "graph_identity": list(next(iter(identities))),
-        "graphs_per_env_step": expected,
+        "graph_identity": list(next(iter(identities["physics_graph"]))),
+        "auxiliary_graph_identities": [list(identity) for identity in sorted(identities["auxiliary_graph"])],
+        "graphs_per_env_step": expected["physics_graph"],
+        "auxiliary_graphs_per_env_step": expected["auxiliary_graph"],
         "mean_whole_graph_us_per_env_step": statistics.fmean(values),
         "median_whole_graph_us_per_env_step": statistics.median(values),
         "per_step_whole_graph_us": values,
@@ -282,14 +367,23 @@ def analyze_graph_trace(sqlite_path: Path, metadata_path: Path) -> dict:
                 "graph_launches": [
                     {"corr": graph["correlationId"], "span_us": graph["duration_us"]} for graph in per_step[row[3]]
                 ],
+                "auxiliary_graph_launches": [
+                    {"corr": graph["correlationId"], "span_us": graph["duration_us"]}
+                    for graph in auxiliary_per_step[row[3]]
+                ],
             }
             for row in steps
         ],
         "direct_graphs_by_step": per_step,
+        "auxiliary_direct_graphs_by_step": auxiliary_per_step,
         "kernels": [],
         "stages": {},
         "phases": [],
-        "unavailable_metrics": ["per-node durations", "graph busy/idle", "stage budgets"],
+        "unavailable_metrics": [
+            "per-node durations",
+            "graph busy/idle",
+            "stage budgets",
+        ],
     }
 
 
@@ -460,6 +554,7 @@ def main() -> None:  # noqa: C901
 
     summary = {
         "timing_mode": "node",
+        "graph_scope": "physics",
         "steps": nsteps,
         "wall_us_per_step": avg("wall_us"),
         "gpu_busy_us_per_step": avg("gpu_busy_us"),

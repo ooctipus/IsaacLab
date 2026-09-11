@@ -94,14 +94,16 @@ def _instrument(env):
         real_launch = wp.capture_launch
 
         def timed_launch(graph, *a, **k):
+            # Sensors can launch separate graphs from observation updates.
+            label = "physics_graph" if graph is NewtonManager._graph else "auxiliary_graph"
             if _NVTX:
-                torch.cuda.nvtx.range_push("physics_graph")
+                torch.cuda.nvtx.range_push(label)
             t0 = time.perf_counter()
             try:
                 return real_launch(graph, *a, **k)
             finally:
-                HOST["physics_graph"] += time.perf_counter() - t0
-                COUNTS["physics_graph"] += 1
+                HOST[label] += time.perf_counter() - t0
+                COUNTS[label] += 1
                 if _NVTX:
                     torch.cuda.nvtx.range_pop()
 
