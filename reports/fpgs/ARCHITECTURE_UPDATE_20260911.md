@@ -218,7 +218,27 @@ and unchanged source guards. OFF reports 99,554→108,342 contacts on RTX and
 107,706→113,908 and 107,826→118,142, respectively. Both ON runs reach raw
 high-water 615 and dropped-row high-water 423 against capacity 192. Instrumented
 and uninstrumented trajectories are not certified identical, and these values
-are not performance samples. Fresh three-round backend timing is underway.
+are not performance samples.
+
+Fresh three-round backend measurements on the fixed Newton source
+`a7eb7d15589a3c6032288a488463eb8e028d88e6` now complete on both devices. Both
+backends use that same source, with the unchanged task recipes, 4,096 worlds,
+seed zero, 200 warmup steps, 40 synchronized steps and 40 profiled steps.
+Backend order alternates FPGS/MJ, MJ/FPGS, FPGS/MJ. Independent raw SQLite
+analysis validates all twelve captures and all 1,920 physics roots.
+
+| Device | Fixed FPGS physics ms | MJWarp physics ms | Raw recipe ratio |
+|---|---:|---:|---:|
+| RTX PRO 6000 | 11.721648 | 77.530848 | 6.61433× |
+| GB300 | 11.591432 | 31.433487 | 2.71179× |
+
+These replace, rather than rehabilitate, the invalid historical timing above.
+They are still **not accuracy-matched ratios**: the separate fixed-source
+diagnostic reports the dropped rows above, and each MJWarp log contains
+985,175–985,801 line-search-limit warnings plus one version warning. Installed
+MuJoCo/mujoco-warp are 3.12.0 whereas this Newton source declares `~=3.11.0`.
+All before/after states are finite, but finite states do not establish equivalent
+convergence or physical quality. No RL/training-throughput claim follows.
 
 Fresh fixed-source default and cached full discovery each run 261 tests per GPU,
 with zero skips and the same two failures/four errors as the earlier architecture
@@ -364,8 +384,11 @@ enable `FEATHER_PGS_REGISTER_WHITENING=1` on both for AnymalD; enable
 `NEWTON_NARROW_PHASE_PAIR_SHAPE_PREP=1` on both for Franka. Run these task groups
 separately so flags do not leak across recipes. Allegro and Cartpole receive
 no additional flags. Do not use the published pre-fix SO101 timings as a
-performance claim or run them as a trusted workload. The SO101 alias remains
-available, but the sparse-J safety fix and fresh validation are required first.
+performance claim or run them as a trusted workload. For the fixed SO101 recipe,
+select Newton `a7eb7d15589a3c6032288a488463eb8e028d88e6` for **both** backends,
+use 4,096 worlds and the `keyboard-so101` alias, and retain the row-drop and
+line-search/version-warning caveats above. Do not substitute the old source pair
+or treat this recipe as an accuracy-matched comparison.
 
 The assembled checkpoint has 32 focused GPU tests per device, full default and
 cached 261-test discovery with the six unchanged inherited outcomes, and 48
