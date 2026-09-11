@@ -3,7 +3,17 @@
 Start here. This report supersedes the numerical claims in the archived handoff below.
 This is an experimental development snapshot, not a claim of production readiness or physics parity.
 
-## Architecture follow-on — current work
+## Ten-hour large-gain study
+
+The [large-gain architecture study](LARGE_GAIN_STUDY_20260911.md) records the
+10:37–20:37 UTC continuation, closed structural prototypes, complete paired
+certificate costs and numerical proof limits. No additional 2–4× whole-physics
+gain is established. The [evidence launcher](reproduce_large_gain_20260911.py)
+checks the retained local source archive and replays selected paired gates.
+Runtime code, the original benchmark harness and the Newton dependency pin
+remain unchanged.
+
+## Earlier architecture follow-on
 
 The [architecture follow-on report](ARCHITECTURE_UPDATE_20260911.md) records the
 latest paired RTX PRO 6000 / GB300 measurements, SO101 keyboard addition,
