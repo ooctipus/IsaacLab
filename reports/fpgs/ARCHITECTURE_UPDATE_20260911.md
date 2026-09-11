@@ -359,8 +359,92 @@ position iterations, zero additional velocity iterations and their original
 substeps; the parallel 24-sweep default is not substituted. Disabling the
 incremental response-block path distinguishes the first no-Delassus experiment
 from a nominally matrix-free mode that still constructs a small response block.
-These comparisons are being prepared; no performance or quality outcome is
-claimed yet.
+These three modes now have completed paired 512-world and 16K-world feasibility
+captures on the same safe Newton `a7eb7d155` source. Each size/task has only one
+round in split, matrix-free, grouped-matrix-free order, with the normal
+200/40/40 sampling windows. Independent raw SQLite audits cover all 24 captures
+and 1,920 physics roots; requested recipes, observable runtime budgets and
+source guards pass. This is a screen, not a balanced-repeat acceptance study.
+
+| 16K task/device | Split physics ms | Matrix-free ms | Matrix-free + grouped ms |
+|---|---:|---:|---:|
+| Ant / RTX PRO 6000 | 1.4526 | 1.7059 | 1.6377 |
+| Ant / GB300 | 1.4547 | 1.8637 | 1.8219 |
+| Humanoid / RTX PRO 6000 | 6.1452 | 6.0254 | 6.6380 |
+| Humanoid / GB300 | 5.7885 | 6.2895 | 5.9023 |
+
+No mode earns a substantial large-batch win. Humanoid's grouped mode had looked
+1.344×/1.309× faster on RTX/GB300 at 512 worlds, but that did not persist at 16K.
+Ant matrix-free variants regress on both devices. Dense execution is therefore
+not universally inferior to the existing matrix-free implementation. These
+root-only graph traces do not contain individual captured-kernel timings, so
+the regression cannot yet be causally attributed to sweep versus response work.
+Independent trajectories also have different contact counts; finite state and
+bounded accepted-row counts do not prove common input, convergence, or no drops.
+None of these new recipes is adopted as a validated optimization.
+
+The next bounded structural experiment uses the existing row-parallel
+matrix-free path with a maximum of eight sweeps, not its 24-sweep default.
+It enables the existing Nesterov acceleration and relative early exit at `1e-4`,
+with parallel row capacity 64, matrix-free action enabled, and grouped dynamics
+off. All other timestep/substep/iteration-cap settings remain fixed. This is a
+changed iteration algorithm, not eight ordered GS sweeps with different bits.
+Its one-round 16K Humanoid physics timings are 6.1434→4.6706 ms on RTX and
+5.7793→4.6857 ms on GB300, approximately 1.315×/1.233×. The 512-world ratios
+are approximately 1.659×/1.618×. These are feasibility timings, not adopted gains.
+
+A separate actual-launch collector reconstructs a common admitted-row operator
+from J/Y, bias, initial velocity and impulses, then compares observed results
+against independent float64 eight-sweep and high-iteration references. Both
+32-row and 64-row parallel kernels are actually observed with an eight-sweep
+compiled maximum. Snapshot-based velocity reconstruction is accurate to about
+`3e-7` relative infinity norm. Nevertheless, on the same sampled input problems,
+parallel8's p90 relative GS fixed-point defect is 2.85–3.81 versus 0.061–0.105
+for CPU serial GS8; sampled maxima are 4.14–6.30 versus 0.133–0.230. Samples
+deliberately include difficult worlds as well as a deterministic spread.
+GS fixed-point defect is an algorithm-dependent diagnostic, not a universal
+physical acceptance test: simultaneous tangent-pair projection and sequential
+coordinate/sibling projection need not have identical fixed points. Physical
+normal/limit feasibility, complementarity, friction-cone excess and tangential
+maximum-dissipation gaps are therefore recorded separately. Complementarity and
+negative-velocity medians worsen, although some extreme residual components
+favor the parallel output. This does not establish uniform dominance of either
+method, but the available evidence does not establish preserved quality either.
+The parallel recipe is **not accepted** on the strength of speed alone or
+rejected solely because it differs from a GS fixed point.
+
+Serial MF8 separately agrees with the CPU GS8 law at about `1e-6` relative
+impulse error on the Humanoid fixtures, yet its own residual tails remain large.
+Some high-iteration references do not converge within 1,024 sweeps; these worlds
+are retained and explicitly marked unconverged, not used as certified solutions.
+The diagnostic does not validate row admission, unconstrained grouped dynamics,
+whole trajectories, or policy quality. An initial diagnostic-only assertion on
+an unused deferred-response mask was corrected in a separate collector; the
+failed original run and its actual input/output fixtures remain preserved.
+
+The follow-up preconditioning experiment (`FEATHER_PGS_MF_EXACT_ROWSUM=1`) uses an exact absolute row-sum bound
+for the parallel update instead of its conservative factorized bound, still at
+eight maximum sweeps. Actual `_ex1_` tier dispatch is observed. An all-world
+same-input comparison (503–504 nonempty worlds per checkpoint, both GPUs and
+two checkpoints each) avoids selecting only difficult reference worlds. Its
+normal/limit complementarity p90 is 0.591–0.653 versus 0.469–0.611 for CPU GS8;
+negative-velocity residual p90 is 0.514–0.542 versus 0.343–0.457; tangential
+dissipation-gap p90 is 0.177–0.233 versus 0.135–0.174. These are the diagnostic's
+raw solver-law residual measures, not a common dimensionless quality score.
+The one-round 16K physics timing is 6.1397→4.7695 ms on RTX and
+5.7931→4.7712 ms on GB300, approximately 1.287×/1.214×. The 512-world ratios
+are 1.623×/1.549×. Typical residuals worsen, while several p99/max feasibility and complementarity
+tails improve. Cone excess is approximately floating-point roundoff. This is a
+speed/quality tradeoff, not a certified equivalent-quality replacement.
+
+Three to four high-iteration references per checkpoint remain unconverged and
+are retained. Some RTX contacts have path `-1`; inactive/filter versus capacity
+rejection has not been classified, so full contact admission is not claimed.
+The experimental recipe remains unpromoted. Better coupled-contact
+preconditioning or block updates are a more defensible next target than simply
+raising the iteration count, enforcing GS bit patterns, or adopting whichever
+mode times fastest. Larger whole-step gains also require attacking dynamics,
+mass-factor and response ownership, not just the contact sweep in isolation.
 
 ## Reproduction and evidence retention
 
@@ -394,3 +478,15 @@ The assembled checkpoint has 32 focused GPU tests per device, full default and
 cached 261-test discovery with the six unchanged inherited outcomes, and 48
 independently audited whole-comparison captures. Large captures and negative
 prototype evidence remain local; they are not bundled into the repositories.
+
+The final local evidence supplement is
+`/home/octi/Projects/fpgs-evidence-20260911-HDmHti/supplement-20260911-final`.
+It includes the fixed SO101 captures, later full suites, all mode/parallel
+feasibility captures, raw audits, actual numerical fixtures, private reproduction
+controllers and the parked shared-torque source. `SOURCE_MAP.tsv` preserves
+original paths; `VERIFICATION.json` and `SHA256SUMS` cover copied bytes. It is
+separate from the earlier archives and does not overwrite their manifests.
+Private controllers record actual commands and exact runtime/source identities;
+their paths are workspace-specific. Prepared but unexecuted repeat controllers
+are labeled separately from completed experiments. No new algorithm recipe
+in this final study changes the validated parent dependency pin.
