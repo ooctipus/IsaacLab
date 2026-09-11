@@ -35,6 +35,8 @@ Notes:
 - `run_profiled.py` wraps the env.step phases and the Newton graph launch in NVTX ranges and brackets the traced
   steps with `cudaProfilerStart/Stop`; nsys and ncu attach with `--capture-range=cudaProfilerApi` /
   `--profile-from-start off`. Timed repeats run before the traced window so FPS is unaffected by tracing.
+  Only the Newton step graph is labeled `physics_graph`; other Warp graphs, including G1's observation/sensor
+  graph, are labeled `auxiliary_graph` and excluded from the physics-graph timing.
 - `analyze_nsys.py` attributes device work to phases through the launch API correlation id, so graph kernels are
   attributed to `physics_graph` and eager torch kernels to the manager phase that launched them. `--sequence`
   prints the ordered kernel chain of one env step with the gap before each kernel.
@@ -80,6 +82,15 @@ because the default hardware tracing backend can ignore graph mode
 with an unsupported newer driver. Graph mode fails closed if direct graph records are absent. Keep the trace mode
 identical within a comparison; node instrumentation can change timings. Structural stage analysis requires node
 captures, while graph captures measure the complete graph without attributing its interior to individual stages.
+Auxiliary graph time is recorded separately in graph mode. Node-mode structural analysis currently requires
+physics-only graph launches and rejects mixed physics/auxiliary captures; use graph mode for the G1 recipe.
+Archived G1 captures that labeled every Warp launch as physics must not be interpreted as pure physics timings.
+
+Run the portable timing/instrumentation tests without a GPU:
+
+```bash
+uv run --no-sync python -m unittest discover -s scripts/benchmarks/fpgs_profile -p 'test_*.py'
+```
 
 For an explicitly hardware-specific experiment, repeated `--gpu-env GPU:NAME=VALUE` options override recipe flags
 on that selected GPU only. Names must start with `FEATHER_PGS_` or `NEWTON_NARROW_PHASE_`; the overrides apply to

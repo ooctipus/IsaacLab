@@ -202,6 +202,9 @@ def _read_result(run: dict) -> dict:
     graph_us = float(analysis["summary"]["graph_span_us_per_step"])
     if not math.isfinite(graph_us) or graph_us <= 0:
         raise RuntimeError(f"Invalid graph timing in {directory}")
+    auxiliary_us = float(analysis["summary"].get("auxiliary_graph_span_us_per_step", 0.0))
+    if not math.isfinite(auxiliary_us) or auxiliary_us < 0:
+        raise RuntimeError(f"Invalid auxiliary graph timing in {directory}")
     wall_us = 1000.0 * float(capture["ms_per_step_sync"])
     if not math.isfinite(wall_us) or wall_us <= 0:
         raise RuntimeError(f"Invalid unprofiled wall timing in {directory}")
@@ -210,6 +213,7 @@ def _read_result(run: dict) -> dict:
         raise RuntimeError(f"Nonfinite simulation state in {directory}")
     return {
         "graph_span_us_per_step": graph_us,
+        "auxiliary_graph_us_per_step": auxiliary_us,
         "timing_mode": expected_mode,
         "wall_us_per_step": wall_us,
         "state_finite": True,
@@ -230,6 +234,7 @@ def _summaries(runs: list[dict]) -> list[dict]:
     for (gpu, task, revision), results in groups.items():
         times = [result["graph_span_us_per_step"] for result in results]
         wall_times = [result["wall_us_per_step"] for result in results]
+        auxiliary_times = [result["auxiliary_graph_us_per_step"] for result in results]
         median = statistics.median(times)
         rows.append(
             {
@@ -247,6 +252,8 @@ def _summaries(runs: list[dict]) -> list[dict]:
                 "wall_median_us": statistics.median(wall_times),
                 "wall_min_us": min(wall_times),
                 "wall_max_us": max(wall_times),
+                "auxiliary_graph_us_per_step": auxiliary_times,
+                "auxiliary_graph_median_us": statistics.median(auxiliary_times),
                 "state_finite": all(result["state_finite"] for result in results),
                 "contacts_before": [result["contacts_before"] for result in results],
                 "contacts_after": [result["contacts_after"] for result in results],
