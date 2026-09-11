@@ -13,10 +13,14 @@ forks' `ooctipus/fpgs-opt-20260910` branch. They retain the original handoff
 commits `2129e5628596f9908cc307482a01700f45b555d7` and
 `31cf87f4694f873a027e41e2ca5e9ad441234456`, respectively.
 
-The measured Newton checkpoint is published as
+The measured optimization checkpoint is published as
 [`d60528895e154950e0fcf165c953528ce7d1edee`](https://github.com/ooctipus/newton/commit/d60528895e154950e0fcf165c953528ce7d1edee)
 on `ooctipus/fpgs-architecture-20260911`, from the `ooctipus` fork. Its committed
-tree exactly matches the tested assembled tree. This report's separate Isaac
+tree exactly matches the tested assembled tree. The branch subsequently advances
+to the Newton-only sparse-J memory-safety fix
+[`a7eb7d15589a3c6032288a488463eb8e028d88e6`](https://github.com/ooctipus/newton/commit/a7eb7d15589a3c6032288a488463eb8e028d88e6).
+The assembled-source table below remains a measurement of the earlier checkpoint;
+it is not silently reassigned to a newer source identity. This report's separate Isaac
 Lab branch has the same name and still pins starting Newton `a2ca01b14`:
 the required inherited-test and P25 sustained-grasp gates are not cleared.
 An experimental source checkout is not a validated parent dependency pin.
@@ -41,6 +45,17 @@ synchronized environment wall time are separate. These are not training FPS.
 No iteration count, stopping rule, timestep, collision cadence or physics
 parameter is tuned to improve a ratio. Backend recipes are different and are
 not certified to have equal convergence, contacts or trajectories.
+
+At 08:13 UTC the user clarified that internal solver choices, including
+matrix-free execution, may change while timestep, substeps and iteration budgets
+remain fixed. The earlier byte-exact implementation studies retain their original
+contract. New formulation comparisons are a separate track and require contact,
+residual and stability assessment; fixed iteration counts alone do not prove
+equal solution quality. Dense execution remains a measured baseline, not a
+constraint on the search.
+The follow-up clarification also permits non-bit-identical implementations
+without changing solver formulation: correct numerical convergence and physical
+behavior, rather than exact floating-point bits, are the acceptance criteria.
 
 ## Validated candidate measurements
 
@@ -180,14 +195,37 @@ All twelve 4K captures passed independent timing/source
 audits: 1,920 unique physics roots, four roots/eight solver substeps per step,
 and no auxiliary roots in these captures.
 
-A three-line Newton-only candidate skips the dense-J clear for the sparse-owned
+A three-line Newton-only fix skips the dense-J clear for the sparse-owned
 placeholder, using the same ownership predicate as allocation. Other dense
 groups, mass-matrix maintenance, events and buffer swaps remain unchanged.
 The existing sparse-versus-dense joint-limit regression has been extended with
-a pre-dispatch shape assertion: it safely fails on the published checkpoint
+a pre-dispatch shape assertion: it safely fails on the pre-fix `d60528895` checkpoint
 before any invalid write, and passes on both GPUs with the fix, including
-three-step trajectory and maintenance checks. This is not yet a clean real
-SO101 sanitizer result or a new benchmark; those validations are in progress.
+three-step trajectory and maintenance checks. Both ping-pong buffers are checked
+after their owning maintenance stream; dense groups still clear normally.
+
+The fixed real SO101 32-world sanitizer gate now passes on both GPUs, separately
+with telemetry off and on: all four children exit zero and report zero memory
+errors, with finite before/after states and unchanged source/runtime guards.
+This is a short gate (four warmup steps, one synchronized and one profiled step),
+not a full training rollout or a new performance measurement. Both instrumented
+runs record a 361-row raw high-water against capacity 192, dropped-row high-water
+171 and overflow excess 169; safety does not imply that all constraints fit.
+The subsequent fixed-source 4K OFF/ON diagnostics also complete with all four
+children successful, finite states, consistent instrumented high-water counters
+and unchanged source guards. OFF reports 99,554→108,342 contacts on RTX and
+102,622→115,205 on GB300 at the two boundaries; ON reports
+107,706→113,908 and 107,826→118,142, respectively. Both ON runs reach raw
+high-water 615 and dropped-row high-water 423 against capacity 192. Instrumented
+and uninstrumented trajectories are not certified identical, and these values
+are not performance samples. Fresh three-round backend timing is underway.
+
+Fresh fixed-source default and cached full discovery each run 261 tests per GPU,
+with zero skips and the same two failures/four errors as the earlier architecture
+checkpoint. All 261 ordered test identities and complete failure/error tracebacks
+match after replacing only the recorded checkout root. The targeted safe
+regression and real sanitizer pass do not turn these inherited failures into a
+passing full suite or clear the parent dependency-pin/grasp gates.
 
 A separate read-only MJWarp diagnostic finds mean Newton iteration counts of
 1.224/1.228 before/after on RTX and 1.226/1.234 on GB300, with maximum counts
@@ -255,10 +293,54 @@ argument. Its eight 16K real boundaries passed the original→mirror→retired-o
 bridge, including all retained typed/raw owners and an unchanged poisoned
 retired buffer. It remains slower: original/resident approximately 0.840/0.717
 on Ant RTX/GB300 and 0.565/0.496 on Humanoid, with all 800 alternating timing
-samples and final exact checks retained. This mapping is also rejected. Sharing
-the factor with later stages and an independent shared-wrench torque owner
-remain unproven experiments. Component timings do not recreate original stream
-overlap and cannot establish whole-physics gains.
+samples and final exact checks retained. This mapping is also rejected.
+
+Returning the six-component inertia-action product instead of a 36-component
+native matrix reduces compile-time register counts but does not rescue the
+composite-factor mapping. Its eight 16K real boundaries and 800 timing samples
+retain exactness gates, yet Ant costs about 94–95 us instead of 84 us on RTX
+and 124 us instead of 94–95 us on GB300. Humanoid costs about 420 us instead of
+233–234 us on RTX and 310 us instead of 209 us on GB300. It is rejected.
+
+A broader shared-factor/predictor/response prototype passes full-owner exact
+gates at 512 and 16K worlds. Scoping phase temporaries reduces static resource
+use but its complete component sequence is slower at every measured boundary:
+Ant is 217→315 us RTX and 238→359 us GB300; Humanoid is approximately
+590→738 us RTX and 534→876 us GB300 (medians across two checkpoints).
+All 800 timing values and 608 independently compared raw-owner byte pairs are
+retained. This mapping is rejected, not integrated.
+
+### Shared-wrench torque candidate
+
+The independent torque owner preserves each parent's descending child-addition
+order while sharing completed child wrenches within a 32-thread articulation
+block. It retains full body-force and joint-torque outputs, including zero/add
+semantics. At 16K worlds, two live checkpoints per task/device plus nonzero
+zero/add seeded cases pass full-owner eager and repeated captured exact gates.
+
+| Torque component only | RTX original / candidate us | Ratio | GB300 original / candidate us | Ratio |
+|---|---:|---:|---:|---:|
+| Ant, checkpoint range | 48.24–48.51 / 34.784 | 1.39× | 39.10–39.22 / 39.02–39.39 | approximately 1.00× |
+| Humanoid, checkpoint range | 116.704 / 76.27–76.30 | 1.53× | 116.35–117.22 / 87.01–87.46 | 1.33–1.35× |
+
+These are 800 alternating component timing samples with final exact checks,
+not whole-physics gains. A default-off `FEATHER_PGS_SHARED_TORQUE=1` integration
+has been prepared and CPU-reviewed, but its integrated GPU/whole-step validation
+is parked to prioritize the newly authorized larger algorithmic search.
+Its initial admission is complete homogeneous CUDA 9/16-joint articulations
+with immutable topology; unsupported layouts, gradients and output aliases
+retain the original route. No benefit is claimed for other environments.
+Component timings do not recreate original stream overlap and cannot establish
+whole-physics gains.
+
+The newly authorized formulation track starts with Ant/Humanoid split versus
+true matrix-free GS, then matrix-free plus grouped dynamics. All retain eight
+position iterations, zero additional velocity iterations and their original
+substeps; the parallel 24-sweep default is not substituted. Disabling the
+incremental response-block path distinguishes the first no-Delassus experiment
+from a nominally matrix-free mode that still constructs a small response block.
+These comparisons are being prepared; no performance or quality outcome is
+claimed yet.
 
 ## Reproduction and evidence retention
 
