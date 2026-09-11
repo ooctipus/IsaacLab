@@ -133,7 +133,7 @@ the 8.76× figure is not evidence of a clean near-10× solver advantage.
 RTX Ant synchronized wall medians were 12.507 ms FPGS versus 11.060 ms MJWarp,
 despite faster FPGS physics; no training-throughput gain follows from that row.
 
-### SO101 keyboard: 4,096 worlds, workload mismatch
+### SO101 keyboard: original timings invalidated by memory corruption
 
 The Newton benchmark alias `keyboard-so101` selects the unchanged
 `IsaacContrib-Keyboard-SO101` robot typing task, not keyboard teleoperation.
@@ -145,13 +145,22 @@ use published Newton `a2ca01b14`, with the same three-round sampling protocol.
 | RTX PRO 6000 | 9.921614 | 77.623700 | 7.82× |
 | GB300 | 9.761955 | 31.422919 | 3.22× |
 
-**This is not a comparable-contact-workload solver benchmark.** Both metadata
+**Do not use these historical ratios as valid solver-performance results.**
+A subsequent real 32-world SO101 run under Compute Sanitizer, with telemetry
+disabled, reports 544 invalid global writes on RTX and 608 on GB300. Both
+processes exit with the configured sanitizer failure code. The first reported
+errors are in `clear_grouped_jacobian_active_rows`: sparse diagonal response
+allocates a one-float dense-J placeholder, but double-buffer maintenance clears
+it using the full group/row/DOF dimensions. A finite-state or timing-source audit
+does not detect or excuse this memory corruption.
+
+This is also not a comparable-contact-workload solver benchmark. Both metadata
 snapshots in all six FPGS captures show zero contacts and broad-phase pairs;
 MJWarp uses Newton collision here and reports approximately 99,000/101,000
 contacts before/after. MJWarp also emits approximately 985,000 line-search
 warnings per full run. These snapshots do not reveal the complete timed
-contact history. The cause is under investigation; finite states do not
-establish equal task behavior or solver quality.
+contact history. The confirmed invalid write may explain the abnormal workload,
+but it does not yet establish that every historical symptom has that one cause.
 
 A preceding 32-world, 20-warmup smoke had about 546 FPGS contacts and reached
 the clamped 192-row capacity. Raw reservation counts alone cannot establish
@@ -160,7 +169,8 @@ Separate rollback-aware telemetry diagnostics completed on both devices, but
 their high-water fields are internally inconsistent: raw/clamped maxima are
 zero while the recorded overflow excess reaches 423. The instrumented rollout
 also has substantially more contact/row work than the uninstrumented captures.
-The cause is not yet isolated. Separately, the unchanged telemetry kernels
+The sparse-J maintenance bug is now independently established; fixed-workload
+telemetry still needs remeasurement. Separately, the unchanged telemetry kernels
 passed all 24 fresh-buffer integer/raw-output cases per device, including
 eager and repeated captured execution; the isolated kernels do not reproduce
 the live inconsistency. These diagnostics cannot establish admission
@@ -169,6 +179,15 @@ be interpreted as absence of overflow. No 16K SO101 capture has been completed.
 All twelve 4K captures passed independent timing/source
 audits: 1,920 unique physics roots, four roots/eight solver substeps per step,
 and no auxiliary roots in these captures.
+
+A three-line Newton-only candidate skips the dense-J clear for the sparse-owned
+placeholder, using the same ownership predicate as allocation. Other dense
+groups, mass-matrix maintenance, events and buffer swaps remain unchanged.
+The existing sparse-versus-dense joint-limit regression has been extended with
+a pre-dispatch shape assertion: it safely fails on the published checkpoint
+before any invalid write, and passes on both GPUs with the fix, including
+three-step trajectory and maintenance checks. This is not yet a clean real
+SO101 sanitizer result or a new benchmark; those validations are in progress.
 
 A separate read-only MJWarp diagnostic finds mean Newton iteration counts of
 1.224/1.228 before/after on RTX and 1.226/1.234 on GB300, with maximum counts
@@ -262,8 +281,9 @@ Enable dense row budgets and row registers on both GPUs for Ant/Humanoid;
 enable `FEATHER_PGS_REGISTER_WHITENING=1` on both for AnymalD; enable
 `NEWTON_NARROW_PHASE_PAIR_SHAPE_PREP=1` on both for Franka. Run these task groups
 separately so flags do not leak across recipes. Allegro and Cartpole receive
-no additional flags. For SO101 explicitly select `--task keyboard-so101
---num-envs 4096` and no additional flags, retaining the workload caveat above.
+no additional flags. Do not use the published pre-fix SO101 timings as a
+performance claim or run them as a trusted workload. The SO101 alias remains
+available, but the sparse-J safety fix and fresh validation are required first.
 
 The assembled checkpoint has 32 focused GPU tests per device, full default and
 cached 261-test discovery with the six unchanged inherited outcomes, and 48
