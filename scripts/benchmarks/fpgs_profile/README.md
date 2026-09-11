@@ -16,6 +16,8 @@ GPU=1 bash scripts/benchmarks/fpgs_profile/nsys_run.sh lift_fpgs feather_pgs Isa
 GPU=1 bash scripts/benchmarks/fpgs_profile/nsys_run.sh lift_mjwarp newton_mjwarp Isaac-Lift-Franka
 # A/B a solver field without editing presets:
 GPU=1 bash scripts/benchmarks/fpgs_profile/nsys_run.sh ant_mf feather_pgs Isaac-Ant --solver-attr pgs_mode=matrix_free
+# Direct whole-graph timing without per-node instrumentation:
+GPU=1 FPGS_NSYS_TRACE_MODE=graph bash scripts/benchmarks/fpgs_profile/nsys_run.sh ant_graph feather_pgs Isaac-Ant
 
 # 3. Nsight Compute: registers, occupancy, waves, L1/L2 hit rates, DRAM/L2 bytes, stall reasons per kernel
 GPU=0 bash scripts/benchmarks/fpgs_profile/ncu_run.sh lift_fpgs feather_pgs Isaac-Lift-Franka cuda_kernel_forward 560
@@ -54,28 +56,52 @@ uv run --no-sync python scripts/benchmarks/fpgs_profile/compare_gpus.py \
 
 Each task/revision runs concurrently on the selected GPUs, with both processes finishing before the next batch.
 Rounds alternate revision order. Defaults match the handoff: AnymalD and Allegro, 16,384 environments, seed 0,
-200 warmup steps, one 40-step timing batch, and three profiled steps. Use repeated `--task anymald` / `--task allegro`
-to select tasks, or override the counts with `--num-envs`, `--warmup-steps`, `--steps`, and `--profile-steps`.
+200 warmup steps, one 40-step timing batch, and three profiled steps. Repeated `--task` options select any of
+`anymald`, `allegro`, `g1`, `kuka`, `franka`, `cartpole`, `ant`, and `humanoid`, each with its exact handoff recipe.
+Only AnymalD/Allegro enable in-kernel rows and parallel projection; the other tasks retain their original solver
+settings. A single `--newton` option performs a baseline-only survey. Override counts with `--num-envs`,
+`--warmup-steps`, `--steps`, and `--profile-steps`.
 
 The runner requires idle compute devices (desktop graphics is allowed), clears inherited experimental flags,
 and selects each Newton checkout through `PYTHONPATH`. Child processes use `UV_NO_SYNC=1`. Keep the checkouts
 unchanged while runs are active. A fresh output directory contains the exact source pins and dirty-source hashes,
 GPU UUIDs/names/driver, commands and recipes in `manifest.json`, plus per-GPU medians, ranges, finite-state checks,
-and contact counts in `summary.json`. Hardware results remain separate. `--output-dir` must name a new directory;
+and contact counts in `summary.json`. Unprofiled synchronized wall-step times are retained separately from graph
+times; neither measures RL training throughput. Hardware results remain separate. `--output-dir` must name a new directory;
 the default creates one under `outputs/fpgs_profile/`. Failed runs report their log path and exit nonzero.
 Custom output directories inside a source checkout must be git-ignored to keep source hashes stable.
+Missing CUDA graph launch correlations invalidate a capture: the runner fails instead of merging unrelated
+launches into an inflated graph span. Retain the failed capture for diagnosis and use a verified timing method.
+
+Comparisons default to `--trace-mode graph`: direct whole-graph GPU records, validated against successful launches
+and the matching physics/environment-step ranges. Use `--trace-mode node` for a kernel/memory-node breakdown.
+Both use [software CUDA tracing (`cuda-sw`)](https://docs.nvidia.com/nsight-systems/UserGuide/#cuda-trace-methods)
+because the default hardware tracing backend can ignore graph mode
+with an unsupported newer driver. Graph mode fails closed if direct graph records are absent. Keep the trace mode
+identical within a comparison; node instrumentation can change timings. Structural stage analysis requires node
+captures, while graph captures measure the complete graph without attributing its interior to individual stages.
+
+For an explicitly hardware-specific experiment, repeated `--gpu-env GPU:NAME=VALUE` options override recipe flags
+on that selected GPU only. Names must start with `FEATHER_PGS_` or `NEWTON_NARROW_PHASE_`; the overrides apply to
+every revision and are recorded in each run's manifest. This supports testing a storage-layout opt-in on RTX
+while keeping GB300 on its original path. It does not imply that arbitrary experimental flags preserve physics.
 
 Analyze the saved captures without using a GPU:
 
 ```bash
 uv run --no-sync python scripts/benchmarks/fpgs_profile/analyze_structure.py \
-    outputs/fpgs_profile/compare_gpus_EXAMPLE --output outputs/fpgs_profile/structure.json
+    outputs/fpgs_profile/compare_gpus_NODE_EXAMPLE --output outputs/fpgs_profile/structure.json
 ```
 
 This independently verifies graph spans and busy unions against SQLite, separates fused preparation/response from
 external stages, and reports kernel-duration distributions and optimistic scope-level speedup ceilings. Summed
 stage durations can overlap, so these ceilings are estimates, not guaranteed critical-path savings. The output path
 must be new. See the [structural study](../../../reports/fpgs/STRUCTURAL_STUDY_20260910.md) for interpretation.
+
+For archived captures whose analysis predates graph-memory accounting, regenerate each analysis to a separate
+directory with `analyze_nsys.py ORIGINAL/capture.sqlite --json NEW/capture_analysis.json`. Do not overwrite the
+original reports. Arrange replacements as `ROOT/<comparison-name>/<run-name>/capture_analysis.json`, then pass
+`--analysis-root ROOT` to `analyze_structure.py`; it still audits against the original SQLite and run metadata.
 
 ## Check sweep parity on live task inputs
 

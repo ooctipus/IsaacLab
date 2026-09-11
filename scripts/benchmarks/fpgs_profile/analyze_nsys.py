@@ -91,6 +91,208 @@ def union_len(intervals: list[tuple[int, int]]) -> int:
     return total + (ce - cs)
 
 
+def graph_marker(connection: sqlite3.Connection, table: str) -> str:
+    """Identify graph activity without assuming memory tables expose graphId."""
+    columns = {row[1] for row in connection.execute(f"pragma table_info({table})")}
+    markers = [name for name in ("graphId", "graphNodeId") if name in columns]
+    if not markers:
+        raise ValueError(f"Cannot establish graph membership for {table}: no graphId or graphNodeId")
+    return "(" + " or ".join(f"coalesce({name},0)>0" for name in markers) + ")"
+
+
+def validate_graph_correlations(connection: sqlite3.Connection) -> dict:
+    """Require every identified graph operation to have a successful host launch."""
+    launches = {}
+    for corr, tid, name, result in connection.execute(
+        "select r.correlationId,r.globalTid,s.value,r.returnValue "
+        "from CUPTI_ACTIVITY_KIND_RUNTIME r join StringIds s on s.id=r.nameId "
+        "where s.value like 'cudaGraphLaunch%'"
+    ):
+        key = (tid & 0xFFFFFFFFFF000000, corr)
+        if not corr or result != 0 or key in launches:
+            raise ValueError("CUDA graph host launch correlation is missing, duplicated, or unsuccessful")
+        launches[key] = name
+    counts = {}
+    scopes = set()
+    seen = set()
+    for table in ("CUPTI_ACTIVITY_KIND_KERNEL", "CUPTI_ACTIVITY_KIND_MEMSET", "CUPTI_ACTIVITY_KIND_MEMCPY"):
+        if not connection.execute("select 1 from sqlite_master where type='table' and name=?", (table,)).fetchone():
+            continue
+        marker = graph_marker(connection, table)
+        count = 0
+        for pid, device, corr in connection.execute(
+            f"select globalPid,deviceId,correlationId from {table} where {marker}"
+        ):
+            if not corr or (pid, corr) not in launches:
+                raise ValueError(
+                    f"Missing or unproven CUDA graph launch correlation in {table}; "
+                    "use a validated whole-graph capture, not occurrence-order reconstruction"
+                )
+            scopes.add((pid, device))
+            seen.add((pid, corr))
+            count += 1
+        counts[table] = count
+    if len(scopes) > 1:
+        raise ValueError("This per-environment-step analyzer requires one CUDA process/device scope")
+    if seen != set(launches):
+        raise ValueError("Host graph launches and identified device graph operations are incomplete")
+    return {"method": "graphId or graphNodeId with successful process-scoped host correlation", "counts": counts}
+
+
+def analyze_graph_trace(sqlite_path: Path, metadata_path: Path) -> dict:
+    """Validate direct graph intervals against host launches and profiler ranges."""
+    directory = sqlite_path.parent
+    connection = sqlite3.connect(f"file:{sqlite_path.resolve()}?mode=ro", uri=True)
+    connection.row_factory = sqlite3.Row
+    schema = {
+        row[0]: [column[1] for column in connection.execute(f'pragma table_info("{row[0]}")')]
+        for row in connection.execute("select name from sqlite_master where type='table'")
+    }
+    table = "CUPTI_ACTIVITY_KIND_GRAPH_TRACE"
+    if table not in schema:
+        raise ValueError(f"No direct whole-graph table in {directory}; present tables: {sorted(schema)}")
+    required = {
+        "start",
+        "end",
+        "deviceId",
+        "contextId",
+        "streamId",
+        "correlationId",
+        "globalPid",
+        "graphId",
+        "graphExecId",
+    }
+    if not required <= set(schema[table]):
+        raise ValueError(f"Unsupported direct graph schema: {schema[table]}")
+    strings = dict(connection.execute("select id,value from StringIds"))
+    graphs = [dict(row) for row in connection.execute(f"select * from {table} order by start")]
+    if not graphs:
+        raise ValueError("No direct whole-graph records")
+    identities = {
+        (
+            row["globalPid"],
+            row["deviceId"],
+            row["contextId"],
+            row["graphId"],
+            row["graphExecId"],
+        )
+        for row in graphs
+    }
+    if len(identities) != 1:
+        raise ValueError(f"Only a single fixed physics graph is supported: {identities}")
+    launches = [
+        dict(row)
+        for row in connection.execute("select * from CUPTI_ACTIVITY_KIND_RUNTIME order by start")
+        if strings.get(row["nameId"], "").startswith("cudaGraphLaunch")
+    ]
+    if len(launches) != len(graphs) or any(row["returnValue"] != 0 for row in launches):
+        raise ValueError("Successful host GraphLaunch count does not match direct graph count")
+    if any(not row["correlationId"] for row in graphs + launches):
+        raise ValueError("Missing direct graph/runtime correlation; do not infer membership from occurrence order")
+    keyed = {(row["globalTid"] & 0xFFFFFFFFFF000000, row["correlationId"]): row for row in launches}
+    if len(keyed) != len(launches):
+        raise ValueError("Runtime graph correlations are not unique within process")
+    ranges = []
+    for row in connection.execute("select * from NVTX_EVENTS where end is not null and eventType in (59,60,70)"):
+        label = row["text"] if row["text"] is not None else strings.get(row["textId"], "")
+        if label == "physics_graph" or label.startswith("env_step:"):
+            ranges.append((row["start"], row["end"], row["globalTid"], label))
+    steps = sorted(row for row in ranges if row[3].startswith("env_step:"))
+    physics_ranges = [row for row in ranges if row[3] == "physics_graph"]
+    meta = json.loads(metadata_path.read_text())
+    if len(steps) != meta["profile_steps"] or len(physics_ranges) != len(graphs):
+        raise ValueError("Profiler-window step/physics_graph ranges are incomplete")
+    if not meta["cuda_graph"] or not all(meta[key].get("state_finite") is True for key in ("model", "model_after")):
+        raise ValueError("Expected finite graph-enabled simulation")
+    if [row[3] for row in steps] != [f"env_step:{i}" for i in range(len(steps))]:
+        raise ValueError("Profiler window step labels differ from expected sequence")
+    if any(a[1] > b[0] for a, b in zip(steps, steps[1:])):
+        raise ValueError("Environment step host ranges overlap")
+    if any(a["end"] > b["start"] for a, b in zip(graphs, graphs[1:])):
+        raise ValueError("Direct physics graph executions overlap")
+    per_step = {step[3]: [] for step in steps}
+    seen = set()
+    for graph in graphs:
+        key = graph["globalPid"], graph["correlationId"]
+        launch = keyed.get(key)
+        if launch is None or key in seen or graph["start"] < launch["start"] or graph["end"] <= graph["start"]:
+            raise ValueError("Direct graph cannot be uniquely matched to a successful preceding host launch")
+        seen.add(key)
+        containing_physics = [
+            row
+            for row in physics_ranges
+            if row[2] == launch["globalTid"] and row[0] <= launch["start"] <= launch["end"] <= row[1]
+        ]
+        containing_steps = [
+            row
+            for row in steps
+            if row[2] == launch["globalTid"] and row[0] <= launch["start"] <= launch["end"] <= row[1]
+        ]
+        if len(containing_physics) != 1 or len(containing_steps) != 1:
+            raise ValueError("Graph launch is not uniquely inside physics_graph and env_step host ranges")
+        per_step[containing_steps[0][3]].append({**graph, "duration_us": (graph["end"] - graph["start"]) / 1000.0})
+    expected = meta["host_calls_per_step"]["physics_graph"]
+    if any(len(values) != expected for values in per_step.values()):
+        raise ValueError("Per-step graph launch count differs from unprofiled instrumentation")
+    for work_table in (
+        "CUPTI_ACTIVITY_KIND_KERNEL",
+        "CUPTI_ACTIVITY_KIND_MEMCPY",
+        "CUPTI_ACTIVITY_KIND_MEMSET",
+    ):
+        if work_table not in schema:
+            continue
+        markers = [name for name in ("graphId", "graphNodeId") if name in schema[work_table]]
+        if (
+            markers
+            and connection.execute(
+                f"select count(*) from {work_table} where " + " or ".join(f"{name}>0" for name in markers)
+            ).fetchone()[0]
+        ):
+            raise ValueError("Node activity is present despite requested whole-graph-only capture")
+    values = [sum(row["duration_us"] for row in per_step[label]) for label in per_step]
+    connection.close()
+    return {
+        "analysis_mode": "graph",
+        "summary": {
+            "timing_mode": "graph",
+            "steps": len(steps),
+            "graph_span_us_per_step": statistics.fmean(values),
+            "graph_launches_per_step": expected,
+            "wall_us_per_step": statistics.fmean((row[1] - row[0]) / 1000.0 for row in steps),
+        },
+        "graph_membership_audit": {"method": "direct graph records with process-scoped host correlations"},
+        "directory": str(directory),
+        "validated": True,
+        "method": (
+            "Direct CUPTI_ACTIVITY_KIND_GRAPH_TRACE start/end matched by process+correlation "
+            "to successful host launches and NVTX ranges"
+        ),
+        "task": meta["task"],
+        "num_envs": meta["num_envs"],
+        "schema": {table: schema[table]},
+        "graph_identity": list(next(iter(identities))),
+        "graphs_per_env_step": expected,
+        "mean_whole_graph_us_per_env_step": statistics.fmean(values),
+        "median_whole_graph_us_per_env_step": statistics.median(values),
+        "per_step_whole_graph_us": values,
+        "per_step": [
+            {
+                "label": row[3],
+                "wall_us": (row[1] - row[0]) / 1000.0,
+                "graph_launches": [
+                    {"corr": graph["correlationId"], "span_us": graph["duration_us"]} for graph in per_step[row[3]]
+                ],
+            }
+            for row in steps
+        ],
+        "direct_graphs_by_step": per_step,
+        "kernels": [],
+        "stages": {},
+        "phases": [],
+        "unavailable_metrics": ["per-node durations", "graph busy/idle", "stage budgets"],
+    }
+
+
 def main() -> None:  # noqa: C901
     p = argparse.ArgumentParser()
     p.add_argument("sqlite", type=Path)
@@ -98,8 +300,28 @@ def main() -> None:  # noqa: C901
     p.add_argument("--top", type=int, default=60)
     p.add_argument("--sequence", action="store_true", help="Print the ordered kernel sequence of one physics graph.")
     p.add_argument("--sequence-step", type=int, default=0)
+    p.add_argument(
+        "--require-graph-trace",
+        action="store_true",
+        help="Require direct whole-graph records; never fall back to nodes.",
+    )
+    p.add_argument(
+        "--run-metadata", type=Path, help="run_profiled.py JSON (defaults to the SQLite basename with .json)."
+    )
     args = p.parse_args()
-    c = sqlite3.connect(str(args.sqlite))
+    c = sqlite3.connect(f"file:{args.sqlite.resolve()}?mode=ro", uri=True)
+    has_graph_trace = c.execute(
+        "select 1 from sqlite_master where type='table' and name='CUPTI_ACTIVITY_KIND_GRAPH_TRACE'"
+    ).fetchone()
+    if args.require_graph_trace or has_graph_trace:
+        c.close()
+        result = analyze_graph_trace(args.sqlite, args.run_metadata or args.sqlite.with_suffix(".json"))
+        if args.json:
+            with args.json.open("x") as output:
+                output.write(json.dumps(result, indent=1) + "\n")
+        print(json.dumps(result["summary"], indent=2))
+        return
+    membership_audit = validate_graph_correlations(c)
     strings = {i: v for i, v in c.execute("select id, value from StringIds")}
 
     # NVTX ranges (push/pop) with resolved text.
@@ -118,7 +340,10 @@ def main() -> None:  # noqa: C901
     for start, end, corr, tid, nameId in c.execute(
         "select start, end, correlationId, globalTid, nameId from CUPTI_ACTIVITY_KIND_RUNTIME"
     ):
-        api[corr] = (start, end, tid, strings.get(nameId, "?"))
+        if corr:
+            if corr in api and api[corr][2] & 0xFFFFFFFFFF000000 != tid & 0xFFFFFFFFFF000000:
+                raise ValueError("Runtime correlations from multiple processes would collide")
+            api[corr] = (start, end, tid, strings.get(nameId, "?"))
 
     def innermost_phase(t: int, tid: int) -> str:
         best = None
@@ -131,7 +356,8 @@ def main() -> None:  # noqa: C901
     # Device work: kernels + memset + memcpy.
     work = []  # (start, end, kind, name, attrs, corr, graphId, streamId)
     for row in c.execute(
-        "select start, end, shortName, demangledName, correlationId, graphId, streamId, gridX, gridY, gridZ, "
+        "select start, end, shortName, demangledName, correlationId, "
+        f"{graph_marker(c, 'CUPTI_ACTIVITY_KIND_KERNEL')}, streamId, gridX, gridY, gridZ, "
         "blockX, blockY, blockZ, registersPerThread, staticSharedMemory, dynamicSharedMemory, localMemoryPerThread "
         "from CUPTI_ACTIVITY_KIND_KERNEL"
     ):
@@ -139,19 +365,13 @@ def main() -> None:  # noqa: C901
         name = strings.get(sn) or strings.get(dn) or "?"
         work.append((start, end, "kernel", name, row[7:], corr, gid or 0, sid))
 
-    def cols(t):
-        return {r[1] for r in c.execute(f"pragma table_info({t})")}
-
-    def gcol(t):
-        return "graphId" if "graphId" in cols(t) else "0"
-
     for start, end, corr, gid, sid, nbytes in c.execute(
-        f"select start, end, correlationId, {gcol('CUPTI_ACTIVITY_KIND_MEMSET')}, streamId, bytes "
+        f"select start, end, correlationId, {graph_marker(c, 'CUPTI_ACTIVITY_KIND_MEMSET')}, streamId, bytes "
         "from CUPTI_ACTIVITY_KIND_MEMSET"
     ):
         work.append((start, end, "memset", f"memset[{nbytes}B]", None, corr, gid or 0, sid))
     for start, end, corr, gid, sid, nbytes, kind in c.execute(
-        f"select start, end, correlationId, {gcol('CUPTI_ACTIVITY_KIND_MEMCPY')}, streamId, bytes, copyKind "
+        f"select start, end, correlationId, {graph_marker(c, 'CUPTI_ACTIVITY_KIND_MEMCPY')}, streamId, bytes, copyKind "
         "from CUPTI_ACTIVITY_KIND_MEMCPY"
     ):
         work.append((start, end, "memcpy", f"memcpy[kind{kind},{nbytes}B]", None, corr, gid or 0, sid))
@@ -195,6 +415,10 @@ def main() -> None:  # noqa: C901
                     "summed_us": summed / 1e3,
                     "idle_us": (ge - gs - busy) / 1e3,
                     "nodes": len(ws),
+                    "kernel_nodes": sum(w[2] == "kernel" for w in ws),
+                    "memory_nodes": sum(w[2] != "kernel" for w in ws),
+                    "kernel_summed_us": sum(w[1] - w[0] for w in ws if w[2] == "kernel") / 1e3,
+                    "memory_summed_us": sum(w[1] - w[0] for w in ws if w[2] != "kernel") / 1e3,
                     "corr": corr,
                 }
             )
@@ -217,6 +441,7 @@ def main() -> None:  # noqa: C901
             k["max"] = max(k["max"], d)
             k["attrs"] = w[4]
             k["graph"] = int(w[6] > 0)
+            k["kind"] = w[2]
         per_step.append(
             {
                 "label": lbl,
@@ -234,14 +459,19 @@ def main() -> None:  # noqa: C901
         return statistics.fmean(vals) if vals else 0.0
 
     summary = {
+        "timing_mode": "node",
         "steps": nsteps,
         "wall_us_per_step": avg("wall_us"),
         "gpu_busy_us_per_step": avg("gpu_busy_us"),
         "graph_span_us_per_step": avg(None, "span_us"),
         "graph_busy_us_per_step": avg(None, "busy_us"),
-        "graph_summed_kernel_us_per_step": avg(None, "summed_us"),
+        "graph_summed_kernel_us_per_step": avg(None, "kernel_summed_us"),
+        "graph_summed_device_us_per_step": avg(None, "summed_us"),
+        "graph_summed_memory_us_per_step": avg(None, "memory_summed_us"),
         "graph_idle_us_per_step": avg(None, "idle_us"),
         "graph_nodes_per_step": avg(None, "nodes"),
+        "graph_kernel_nodes_per_step": avg(None, "kernel_nodes"),
+        "graph_memory_nodes_per_step": avg(None, "memory_nodes"),
         "graph_launches_per_step": statistics.fmean(len(s["graph_launches"]) for s in per_step),
         "non_graph_kernels_per_step": avg("non_graph_kernels"),
     }
@@ -272,6 +502,7 @@ def main() -> None:  # noqa: C901
                 "kernel": short(name),
                 "stage": st,
                 "graph": ingraph,
+                "kind": k["kind"],
                 "calls_per_step": k["n"] / nsteps,
                 "us_per_step": us,
                 "avg_us": k["sum"] / k["n"] / 1e3,
@@ -291,7 +522,8 @@ def main() -> None:  # noqa: C901
     print("=" * 100)
     print(f"Per env step (mean of {nsteps}):")
     for k, v in summary.items():
-        print(f"  {k:36s} {v:12.1f}")
+        rendered = f"{v:12.1f}" if isinstance(v, (float, int)) else str(v)
+        print(f"  {k:36s} {rendered}")
     print("\nPhase attribution (per env step, us):")
     print(f"  {'phase':28s} {'gpu_us':>10s} {'host_us':>10s} {'calls':>7s}")
     for r in phase_rows:
@@ -327,6 +559,8 @@ def main() -> None:  # noqa: C901
             json.dumps(
                 {
                     "summary": summary,
+                    "analysis_mode": "node",
+                    "graph_membership_audit": membership_audit,
                     "phases": phase_rows,
                     "kernels": krows,
                     "stages": {f"{st}|{'graph' if ing else 'eager'}": v for (st, ing), v in stage_agg.items()},
