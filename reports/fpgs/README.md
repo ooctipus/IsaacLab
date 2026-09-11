@@ -1,23 +1,48 @@
-# FPGS verification and cross-machine handoff — 2026-09-10
+# FPGS handoff and follow-on optimization
 
 Start here. This report supersedes the numerical claims in the archived handoff below.
 This is an experimental development snapshot, not a claim of production readiness or physics parity.
 
-The follow-on [structural optimization study](STRUCTURAL_STUDY_20260910.md) contains fresh RTX PRO 6000 / GB300
-budgets and the gates for further work. Its 2–4× target is an investigation, not an achieved speedup; the historical
-handoff and validated source pins below remain intact.
+## Follow-on optimization — 2026-09-11
 
-## Checkouts and pins
+Both forks now have branch `ooctipus/fpgs-opt-20260910`:
 
-Both repositories use branch `zhengyuz/fpgs-handoff-20260910`:
+- [Isaac Lab](https://github.com/ooctipus/IsaacLab/tree/ooctipus/fpgs-opt-20260910)
+- [Newton](https://github.com/ooctipus/newton/tree/ooctipus/fpgs-opt-20260910), exact pin
+  `a2ca01b14a540c50248765641419eef2672bf8a5` in the current `pyproject.toml` and `uv.lock`.
+
+The [structural optimization study](STRUCTURAL_STUDY_20260910.md) contains the plan, accepted and rejected
+experiments, validation, and fresh RTX PRO 6000 / GB300 results. RTX whole-physics improvements over the handoff
+are **1.36× Ant and 1.20× Humanoid**; their GB300 improvements are **1.17× and 1.14×**. The approximately 2.04×
+Ant dense-solver stage gain is not a 2× whole-physics gain. The additional 2–4× target remains unmet.
+The study also retains the short-window GB300 Franka slowdown and the unchanged inherited test failure.
+
+The original handoff, design guide, and agent notes remain in this branch and its ancestry. Large captures stay
+local. Use the [paired-GPU harness](../../scripts/benchmarks/fpgs_profile/README.md) to reproduce the new comparisons;
+it runs both devices concurrently and records their results separately. Dense row budgets are default-off:
+enable `FEATHER_PGS_DENSE_ROW_BUDGETS=1` for the measured 16K Ant recipes and RTX Humanoid, not GB300 Humanoid.
+This is an experimental snapshot, not a long-horizon grasp or policy-quality validation.
+
+```bash
+git clone --branch ooctipus/fpgs-opt-20260910 https://github.com/ooctipus/IsaacLab.git IsaacLab-fpgs-opt
+cd IsaacLab-fpgs-opt
+unset PYTHONPATH
+uv sync --locked
+uv run --no-sync python -c 'import newton; print(newton.__file__)'
+```
+
+The remainder of this page records the **original** handoff and its RTX 5090 measurements, not the new hardware.
+
+## Original checkouts and pins
+
+The original repositories use branch `zhengyuz/fpgs-handoff-20260910`:
 
 - Isaac Lab: https://github.com/ooctipus/IsaacLab/tree/zhengyuz/fpgs-handoff-20260910
 - Newton: https://github.com/ooctipus/newton/tree/zhengyuz/fpgs-handoff-20260910
 
-The Isaac Lab commit containing this report is the Isaac Lab pin (`git rev-parse HEAD`).
-The exact Newton commit is `31cf87f4694f873a027e41e2ca5e9ad441234456`, pinned in the
-root `pyproject.toml` override and `uv.lock`.
-The branch retains the existing dependency pins, plus the experimental source changes.
+The original Isaac Lab pin is `2129e5628596f9908cc307482a01700f45b555d7`.
+Its exact Newton commit was `31cf87f4694f873a027e41e2ca5e9ad441234456`, pinned in that snapshot's
+root `pyproject.toml` override and `uv.lock`. Those historical commits remain intact.
 Original worktrees and branches were left untouched.
 
 ```bash
@@ -35,8 +60,12 @@ Keep that checkout at the pinned commit until you intentionally start new experi
 
 ## Fresh measurements
 
+These are the original verification measurements. The old profiler labeled all Warp graph launches as physics;
+the follow-on study found a separate G1 observation/sensor graph. Re-audit G1's historical scope before comparing
+it with the corrected physics-only timing. This does not change the separately verified five-task follow-on results.
+
 RTX 5090, physical GPU 1 (170 SMs), driver 580.173.02; 16,384 environments.
-These are **physics CUDA-graph microseconds per environment step**, not FPS,
+Except for G1's unaudited mixed graph scope, these are **physics CUDA-graph microseconds per environment step**, not FPS,
 not microseconds per solver substep, and not training throughput. Lower is better.
 The speedup is MJWarp graph time divided by FPGS graph time.
 
@@ -46,7 +75,7 @@ The speedup is MJWarp graph time divided by FPGS graph time.
 | Allegro | 17,605 | 17,497 | 59,564 | 3.40× |
 | Kuka / Allegro | 17,634 | 17,167 | 69,424 | 4.04× |
 | Franka | 5,854 | 5,763 | 21,120 | 3.66× |
-| G1 | 38,931 | 39,015 | 50,002 | 1.28× |
+| G1 (historical mixed/unaudited scope) | 38,931 | 39,015 | 50,002 | 1.28× |
 | Cartpole | 248 | 249 | 542 | 2.18× |
 | Ant | 2,072 | 2,037 | 2,254 | 1.11× |
 | Humanoid | 7,920 | 7,855 | 8,513 | 1.08× |
@@ -67,10 +96,15 @@ Full-step FPS is a separate metric, retained in [results.json](results.json).
 For example, AnymalD's full-step ratio was 2.90×, while Ant's was 0.46× despite
 its 1.11× physics-graph ratio. No RL training speedup was measured.
 
-## Reproduce
+## Reproduce the original handoff
 
-Install Nsight Systems separately (the verification used 2026.1.1).
-With an otherwise idle GPU, from the Isaac Lab root:
+The command and tracing contract below apply to the original `2129e5628` checkout above, not this follow-on
+branch. Use the [paired-GPU harness](../../scripts/benchmarks/fpgs_profile/README.md) and graph mode for current
+comparisons, including G1's separately reported sensor graph. The corrected analyzer intentionally rejects
+G1's mixed node-mode capture instead of calling sensor time physics time.
+
+Install Nsight Systems separately (the original verification used 2026.1.1).
+With an otherwise idle GPU, from the original Isaac Lab root:
 
 ```bash
 GPU=1 bash scripts/benchmarks/fpgs_profile/reproduce.sh
@@ -173,8 +207,8 @@ Only compact numeric results and resolved configuration metadata are published.
 Nsight SQLite/report files, huge warning logs, credentials, caches, and training
 outputs are deliberately excluded.
 
-Known analyzer limitation: graph memcpy/memset nodes keyed only by `graphNodeId`
-are not fully represented in the current busy-time/node-count breakdown.
+Historical analyzer limitation: graph memcpy/memset nodes keyed only by `graphNodeId`
+were not fully represented in the archived busy-time/node-count breakdown. The follow-on analyzer corrects this.
 Independent SQL checks including those nodes left AnymalD/Franka graph spans
 unchanged. Use the graph-span metric for this comparison, not an inferred breakdown
 of exact occupancy from those auxiliary fields.
