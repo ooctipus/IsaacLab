@@ -31,15 +31,35 @@ HARNESS = Path(__file__).resolve().parent
 RECIPES = {
     "anymald": (
         "Isaac-Velocity-Flat-AnymalD",
-        48,
-        {"FEATHER_PGS_MF_EXACT_ROWSUM": "1", "FEATHER_PGS_WORLD_ROWS": "1"},
+        (
+            "grouped_dynamics=True",
+            "mf_gs_parallel_rows=48",
+            "mf_gs_parallel_matrix_free=True",
+            "lazy_kinematics=True",
+        ),
+        {"FEATHER_PGS_INK": "1", "FEATHER_PGS_MF_EXACT_ROWSUM": "1", "FEATHER_PGS_WORLD_ROWS": "1"},
     ),
-    "allegro": ("Isaac-Reorient-Cube-Allegro", 128, {"FEATHER_PGS_TIER_BLOCKS": "16384"}),
+    "allegro": (
+        "Isaac-Reorient-Cube-Allegro",
+        (
+            "grouped_dynamics=True",
+            "mf_gs_parallel_rows=128",
+            "mf_gs_parallel_matrix_free=True",
+            "lazy_kinematics=True",
+        ),
+        {"FEATHER_PGS_INK": "1", "FEATHER_PGS_TIER_BLOCKS": "16384"},
+    ),
+    "g1": ("Isaac-Velocity-Rough-G1", ("grouped_dynamics=True",), {}),
+    "kuka": ("Isaac-Lift-KukaAllegro", (), {}),
+    "franka": ("Isaac-Lift-Franka", (), {}),
+    "cartpole": ("Isaac-Cartpole", (), {}),
+    "ant": ("Isaac-Ant", (), {}),
+    "humanoid": ("Isaac-Humanoid", (), {}),
 }
+DEFAULT_TASKS = ("anymald", "allegro")
 COMMON_ENVIRONMENT = {
     "FEATHER_PGS_GROUP_LANES": "16",
     "FEATHER_PGS_ROWS_MASKED": "1",
-    "FEATHER_PGS_INK": "1",
     "NEWTON_NARROW_PHASE_THREADS_X": "4",
     "UV_NO_SYNC": "1",
     "PYTHONUNBUFFERED": "1",
@@ -171,14 +191,27 @@ def _read_result(run: dict) -> dict:
     directory = Path(run["output_dir"])
     analysis = json.loads((directory / "capture_analysis.json").read_text())
     capture = json.loads((directory / "capture.json").read_text())
+    expected_mode = run["environment"]["FPGS_NSYS_TRACE_MODE"]
+    if analysis["summary"].get("timing_mode") != expected_mode:
+        raise RuntimeError(f"Expected {expected_mode} timing in {directory}; capture used a different trace mode")
+    if not analysis["per_step"] or any(not step["graph_launches"] for step in analysis["per_step"]):
+        raise RuntimeError(f"Missing physics graph launches in {directory}")
+    for step in analysis["per_step"]:
+        if any(not graph["corr"] for graph in step["graph_launches"]):
+            raise RuntimeError(f"Missing CUDA graph launch correlations in {directory}; repeat this capture")
     graph_us = float(analysis["summary"]["graph_span_us_per_step"])
     if not math.isfinite(graph_us) or graph_us <= 0:
         raise RuntimeError(f"Invalid graph timing in {directory}")
+    wall_us = 1000.0 * float(capture["ms_per_step_sync"])
+    if not math.isfinite(wall_us) or wall_us <= 0:
+        raise RuntimeError(f"Invalid unprofiled wall timing in {directory}")
     before, after = capture["model"], capture["model_after"]
     if not before["state_finite"] or not after["state_finite"]:
         raise RuntimeError(f"Nonfinite simulation state in {directory}")
     return {
         "graph_span_us_per_step": graph_us,
+        "timing_mode": expected_mode,
+        "wall_us_per_step": wall_us,
         "state_finite": True,
         "contacts_before": before["contacts_active"],
         "contacts_after": after["contacts_active"],
@@ -196,18 +229,24 @@ def _summaries(runs: list[dict]) -> list[dict]:
     rows = []
     for (gpu, task, revision), results in groups.items():
         times = [result["graph_span_us_per_step"] for result in results]
+        wall_times = [result["wall_us_per_step"] for result in results]
         median = statistics.median(times)
         rows.append(
             {
                 "gpu_index": gpu,
                 "task": task,
                 "newton": revision,
+                "timing_mode": results[0]["timing_mode"],
                 "repeats": len(times),
                 "graph_span_us_per_step": times,
                 "median_us": median,
                 "min_us": min(times),
                 "max_us": max(times),
                 "spread_percent": 100.0 * (max(times) - min(times)) / median,
+                "wall_us_per_step": wall_times,
+                "wall_median_us": statistics.median(wall_times),
+                "wall_min_us": min(wall_times),
+                "wall_max_us": max(wall_times),
                 "state_finite": all(result["state_finite"] for result in results),
                 "contacts_before": [result["contacts_before"] for result in results],
                 "contacts_after": [result["contacts_after"] for result in results],
@@ -220,6 +259,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--newton", action="append", required=True, metavar="LABEL=CHECKOUT")
     parser.add_argument("--gpus", type=int, nargs="+", default=[0, 1])
+    parser.add_argument(
+        "--gpu-env",
+        action="append",
+        default=[],
+        metavar="GPU:NAME=VALUE",
+        help="Explicit per-GPU FEATHER_PGS_ or NEWTON_NARROW_PHASE_ flag; applies to every revision.",
+    )
     parser.add_argument("--task", choices=RECIPES, action="append")
     parser.add_argument("--repeats", type=int, default=3, help="A/B rounds; reverse revision order every other round.")
     parser.add_argument("--num-envs", type=int, default=16384)
@@ -227,12 +273,35 @@ def main() -> int:
     parser.add_argument("--warmup-steps", type=int, default=200)
     parser.add_argument("--steps", type=int, default=40)
     parser.add_argument("--profile-steps", type=int, default=3)
+    parser.add_argument(
+        "--trace-mode",
+        choices=("graph", "node"),
+        default="graph",
+        help="Direct whole-graph timings (default), or kernel/memory-node breakdown for structural analysis.",
+    )
     parser.add_argument("--output-dir", type=Path, help="New directory; must not already exist.")
     args = parser.parse_args()
     if any(getattr(args, name) <= 0 for name in ("repeats", "num_envs", "steps", "profile_steps")):
         parser.error("repeats, num-envs, steps, and profile-steps must be positive")
     if args.warmup_steps < 0 or any(gpu < 0 for gpu in args.gpus) or len(set(args.gpus)) != len(args.gpus):
         parser.error("warmup-steps must be nonnegative and GPU indices must be distinct and nonnegative")
+    gpu_environment = {gpu: {} for gpu in args.gpus}
+    for entry in args.gpu_env:
+        gpu, separator, setting = entry.partition(":")
+        name, equals, value = setting.partition("=")
+        if (
+            not separator
+            or not gpu.isdecimal()
+            or int(gpu) not in gpu_environment
+            or not equals
+            or not re.fullmatch(r"(?:FEATHER_PGS_|NEWTON_NARROW_PHASE_)[A-Z0-9_]+", name)
+        ):
+            parser.error(
+                f"Expected selected GPU:FEATHER_PGS_NAME=VALUE or GPU:NEWTON_NARROW_PHASE_NAME=VALUE: {entry!r}"
+            )
+        if name in gpu_environment[int(gpu)]:
+            parser.error(f"Duplicate per-GPU flag: {entry!r}")
+        gpu_environment[int(gpu)][name] = value
     revisions = {}
     for entry in args.newton:
         label, separator, checkout = entry.partition("=")
@@ -242,7 +311,7 @@ def main() -> int:
         if not (path / "newton" / "__init__.py").is_file():
             parser.error(f"Missing newton/__init__.py in {path}")
         revisions[label] = _source(path)
-    tasks = list(dict.fromkeys(args.task or RECIPES))
+    tasks = list(dict.fromkeys(args.task or DEFAULT_TASKS))
     for executable in ("uv", "nsys", "nvidia-smi"):
         if shutil.which(executable) is None:
             raise RuntimeError(f"Required executable is missing: {executable}")
@@ -279,7 +348,7 @@ def main() -> int:
         for repeat in range(args.repeats):
             labels = list(revisions) if repeat % 2 == 0 else list(reversed(revisions))
             for task in tasks:
-                task_name, rows, recipe_env = RECIPES[task]
+                task_name, attributes, recipe_env = RECIPES[task]
                 for label in labels:
                     _require_idle(gpus)
                     if (
@@ -294,6 +363,7 @@ def main() -> int:
                         env = {
                             **COMMON_ENVIRONMENT,
                             **recipe_env,
+                            **gpu_environment[gpu["index"]],
                             "GPU": gpu["uuid"],
                             "CUDA_VISIBLE_DEVICES": gpu["uuid"],
                             "CUDA_DEVICE_ORDER": "PCI_BUS_ID",
@@ -301,6 +371,7 @@ def main() -> int:
                             "OUT_DIR": str(directory),
                             "STEPS": str(args.steps),
                             "PROFILE_STEPS": str(args.profile_steps),
+                            "FPGS_NSYS_TRACE_MODE": args.trace_mode,
                         }
                         command = [
                             "bash",
@@ -315,12 +386,7 @@ def main() -> int:
                             "--warmup-steps",
                             str(args.warmup_steps),
                         ]
-                        for attribute in (
-                            "grouped_dynamics=True",
-                            f"mf_gs_parallel_rows={rows}",
-                            "mf_gs_parallel_matrix_free=True",
-                            "lazy_kinematics=True",
-                        ):
+                        for attribute in attributes:
                             command.extend(["--solver-attr", attribute])
                         batch.append(
                             {
@@ -360,7 +426,8 @@ def main() -> int:
         print(
             f"GPU {row['gpu_index']} {row['task']} {row['newton']}: {row['median_us']:.1f} us/step "
             f"(range {row['min_us']:.1f}–{row['max_us']:.1f}, spread {row['spread_percent']:.2f}%, "
-            f"finite={row['state_finite']}, contacts={row['contacts_after']})"
+            f"finite={row['state_finite']}, contacts={row['contacts_after']}); "
+            f"unprofiled wall median {row['wall_median_us']:.1f} us/step"
         )
     return 0
 

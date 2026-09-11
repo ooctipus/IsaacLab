@@ -20,10 +20,14 @@ from pathlib import Path
 def category(kernel: dict) -> str:
     """Separate fused work from external stages without double-counting it."""
     name, stage = kernel["kernel"], kernel["stage"]
+    if kernel.get("kind") in ("memcpy", "memset"):
+        return "graph_memory_operations"
     if name.startswith("pgs_solve_parallel_"):
         return "parallel_projection_including_fused_rows_response"
-    if name.startswith("pgs_solve_mf_gs_"):
+    if name.startswith("pgs_solve_mf_gs_") and "_skipinc" in name:
         return "fallback_gauss_seidel"
+    if name.startswith(("pgs_solve_", "pgs_iter_")):
+        return "other_constraint_projection"
     if stage == "collide":
         return "collision"
     if name.startswith("fused_dynamics_"):
@@ -62,24 +66,61 @@ def short(name: str) -> str:
 
 def sqlite_audit(directory: Path, analysis: dict) -> dict:
     """Verify graph spans and busy unions directly against read-only SQLite."""
+    if analysis.get("analysis_mode") == "graph":
+        raise ValueError(
+            "Whole-graph traces do not expose node busy time or stage budgets; use a correlated node capture"
+        )
+    if "graph_membership_audit" not in analysis:
+        raise ValueError(f"Stale graph-memory classification in {directory}; regenerate analysis to a new output")
+    if any(not graph["corr"] for step in analysis["per_step"] for graph in step["graph_launches"]):
+        raise ValueError(f"Missing CUDA graph launch correlations in {directory}; repeat this capture")
     connection = sqlite3.connect(f"file:{directory / 'capture.sqlite'}?mode=ro", uri=True)
     ids = {row[0]: row[1] for row in connection.execute("select id, value from StringIds")}
     correlations = {graph["corr"] for step in analysis["per_step"] for graph in step["graph_launches"]}
+    host_launches = {
+        (tid & 0xFFFFFFFFFF000000, corr)
+        for corr, tid, result in connection.execute(
+            "select r.correlationId,r.globalTid,r.returnValue from CUPTI_ACTIVITY_KIND_RUNTIME r "
+            "join StringIds s on s.id=r.nameId where s.value like 'cudaGraphLaunch%'"
+        )
+        if corr and result == 0
+    }
     kernels = collections.defaultdict(list)
     graph_intervals = collections.defaultdict(list)
-    for start, end, name_id, corr, graph in connection.execute(
-        "select start,end,shortName,correlationId,graphId from CUPTI_ACTIVITY_KIND_KERNEL"
+    observed_launches = set()
+    for start, end, name_id, corr, graph, node, pid in connection.execute(
+        "select start,end,shortName,correlationId,graphId,graphNodeId,globalPid from CUPTI_ACTIVITY_KIND_KERNEL"
     ):
-        if graph and corr in correlations:
+        if graph or node:
+            if not corr or corr not in correlations or (pid, corr) not in host_launches:
+                raise ValueError(f"Unproven graph kernel correlation in {directory}")
+            observed_launches.add((pid, corr))
             kernels[short(ids[name_id])].append((end - start) / 1000.0)
             graph_intervals[corr].append((start, end))
+    memory_counts = {}
+    memory_sum_ns = 0
     for table in ("CUPTI_ACTIVITY_KIND_MEMSET", "CUPTI_ACTIVITY_KIND_MEMCPY"):
         columns = {row[1] for row in connection.execute(f"pragma table_info({table})")}
-        if "graphId" not in columns:
+        if not columns:
             continue
-        for start, end, corr, graph in connection.execute(f"select start,end,correlationId,graphId from {table}"):
-            if graph and corr in correlations:
+        if not {"graphId", "graphNodeId"} & columns:
+            raise ValueError(f"Cannot classify graph memory operations in {table}")
+        graph_column = "graphId" if "graphId" in columns else "0"
+        node_column = "graphNodeId" if "graphNodeId" in columns else "0"
+        count = 0
+        for start, end, corr, graph, node, pid in connection.execute(
+            f"select start,end,correlationId,{graph_column},{node_column},globalPid from {table}"
+        ):
+            if graph or node:
+                if not corr or corr not in correlations or (pid, corr) not in host_launches:
+                    raise ValueError(f"Unproven graph memory correlation in {directory}/{table}")
+                observed_launches.add((pid, corr))
                 graph_intervals[corr].append((start, end))
+                memory_sum_ns += end - start
+                count += 1
+        memory_counts[table] = count
+    if observed_launches != host_launches:
+        raise ValueError(f"Incomplete graph-launch coverage in {directory}")
     graph_span_ns, graph_busy_ns = 0, 0
     gaps = []
     for intervals in graph_intervals.values():
@@ -112,6 +153,8 @@ def sqlite_audit(directory: Path, analysis: dict) -> dict:
     return {
         "recomputed_span_us_per_step": graph_span_ns / 1000 / steps,
         "recomputed_busy_us_per_step": graph_busy_ns / 1000 / steps,
+        "graph_memory_operation_counts": memory_counts,
+        "graph_memory_summed_us_per_step": memory_sum_ns / 1000 / steps,
         "gaps_per_step": len(gaps) / steps,
         "median_gap_us": statistics.median(gaps) if gaps else 0,
         "max_gap_us": max(gaps, default=0),
@@ -119,10 +162,11 @@ def sqlite_audit(directory: Path, analysis: dict) -> dict:
     }
 
 
-def summarize_run(manifest_run: dict, study_directory: Path) -> dict:
+def summarize_run(manifest_run: dict, study_directory: Path, analysis_root: Path | None = None) -> dict:
     """Build one internally consistent work budget from a saved capture."""
     directory = study_directory / Path(manifest_run["output_dir"]).name
-    analysis = json.loads((directory / "capture_analysis.json").read_text())
+    analysis_directory = analysis_root / study_directory.name / directory.name if analysis_root else directory
+    analysis = json.loads((analysis_directory / "capture_analysis.json").read_text())
     meta = json.loads((directory / "capture.json").read_text())
     substeps = meta["decimation"] * meta["model"]["num_substeps"]
     if substeps <= 0:
@@ -150,6 +194,7 @@ def summarize_run(manifest_run: dict, study_directory: Path) -> dict:
         )
     return {
         "directory": str(directory),
+        "analysis_directory": str(analysis_directory),
         "round": manifest_run["round"],
         "task": manifest_run["task"],
         "gpu": manifest_run["gpu_index"],
@@ -170,11 +215,13 @@ def amdahl(run: dict) -> dict:
     """Estimate optimistic ceilings; summed work can include overlap."""
     stages = run["stages_us_per_substep"]
     span = run["summary_per_env_step"]["graph_span_us_per_step"] / run["substeps_per_env_step"]
-    parallel = stages["parallel_projection_including_fused_rows_response"]
+    parallel = stages.get("parallel_projection_including_fused_rows_response", 0)
+    collision = stages.get("collision", 0)
     constraint = parallel + sum(
         stages.get(key, 0)
         for key in (
             "fallback_gauss_seidel",
+            "other_constraint_projection",
             "external_constraint_rows_setup",
             "remaining_constraint_response",
         )
@@ -193,9 +240,9 @@ def amdahl(run: dict) -> dict:
     groups = {
         "parallel_only": parallel,
         "all_constraint_work": constraint,
-        "collision_only": stages["collision"],
-        "collision_and_parallel": stages["collision"] + parallel,
-        "all_constraint_and_collision": constraint + stages["collision"],
+        "collision_only": collision,
+        "collision_and_parallel": collision + parallel,
+        "all_constraint_and_collision": constraint + collision,
         "all_constraint_and_dynamics": constraint + dynamics,
     }
     return {
@@ -215,13 +262,18 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("directories", type=Path, nargs="+")
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--analysis-root",
+        type=Path,
+        help="Read corrected analyses from ROOT/<comparison-name>/<run-name>; original captures stay read-only.",
+    )
     args = parser.parse_args()
     if args.output.exists():
         parser.error(f"Output already exists: {args.output}")
     studies = []
     for directory in args.directories:
         manifest = json.loads((directory / "manifest.json").read_text())
-        runs = [summarize_run(run, directory) for run in manifest["runs"] if "result" in run]
+        runs = [summarize_run(run, directory, args.analysis_root) for run in manifest["runs"] if "result" in run]
         grouped = collections.defaultdict(list)
         for run in runs:
             grouped[(run["task"], run["gpu"], run["revision"])].append(run)
