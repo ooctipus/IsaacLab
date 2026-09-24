@@ -1970,29 +1970,60 @@ def test_fixed_tendon_position_target_reaches_only_given_envs(sim, num_articulat
         assert commanded[joint_ids].sum() > untouched[joint_ids].sum()
 
 
-@pytest.mark.parametrize("num_articulations", [1])
+@pytest.mark.parametrize("num_articulations", [2])
 @pytest.mark.parametrize("device", ["cuda:0"])
 @pytest.mark.parametrize("articulation_type", ["shadow_hand"])
 def test_fixed_tendon_properties_reach_solver(sim, num_articulations, device, articulation_type):
-    """Written fixed tendon stiffness, damping, and position limits reach the MuJoCo solver.
+    """Write tendon properties and force gains to Newton without changing unselected tendons.
 
     Covers both the index and the mask setters and writers.
     """
-    articulation, _ = generate_articulation(generate_articulation_cfg(articulation_type=articulation_type), 1, device)
+    articulation, _ = generate_articulation(
+        generate_articulation_cfg(articulation_type=articulation_type), num_articulations, device
+    )
     sim.reset()
-    shape = (1, articulation.num_fixed_tendons)
+    shape = (num_articulations, articulation.num_fixed_tendons)
     limits = torch.tensor([-0.1, 0.2], device=device).expand(*shape, 2)
+    stiffness = torch.arange(np.prod(shape), dtype=torch.float32, device=device).reshape(shape) + 12.0
 
-    articulation.set_fixed_tendon_stiffness_mask(stiffness=torch.full(shape, 12.0, device=device))
+    articulation.set_fixed_tendon_stiffness_mask(stiffness=stiffness)
     articulation.set_fixed_tendon_damping_index(damping=torch.full(shape, 3.0, device=device))
     articulation.set_fixed_tendon_position_limit_index(limit=limits)
     articulation.write_fixed_tendon_properties_to_sim_mask()
     sim.step()
 
     solver_model = SimulationManager._solver.mjw_model
-    np.testing.assert_allclose(solver_model.tendon_stiffness.numpy(), 12.0)
+    np.testing.assert_allclose(solver_model.tendon_stiffness.numpy(), stiffness.cpu().numpy())
     np.testing.assert_allclose(solver_model.tendon_damping.numpy(), 3.0)
-    np.testing.assert_allclose(solver_model.tendon_range.numpy().reshape(-1, 2), [[-0.1, 0.2]] * shape[1], rtol=1e-6)
+    np.testing.assert_allclose(solver_model.tendon_range.numpy(), limits.cpu().numpy(), rtol=1e-6)
+    torch.testing.assert_close(articulation.data.fixed_tendon_pos_limits.torch, limits)
+
+    native_solref = solver_model.tendon_solref_lim.numpy().copy()
+    native_stiffness = articulation.data.fixed_tendon_limit_stiffness.torch.clone()
+    articulation.set_fixed_tendon_limit_stiffness_index(limit_stiffness=100.0, env_ids=[1], fixed_tendon_ids=[1])
+    torch.testing.assert_close(articulation.data.fixed_tendon_limit_stiffness.torch, native_stiffness)
+    articulation.write_fixed_tendon_properties_to_sim_index(env_ids=[1], fixed_tendon_ids=[1])
+    sim.step()
+    assert articulation.data.fixed_tendon_limit_stiffness.torch[1, 1] == 100.0
+    np.testing.assert_allclose(solver_model.tendon_stiffness.numpy(), stiffness.cpu().numpy())
+
+    env_mask = torch.tensor([True, False], device=device)
+    tendon_mask = torch.arange(shape[1], device=device) == 0
+    articulation.set_fixed_tendon_limit_stiffness_mask(
+        limit_stiffness=wp.full(shape, 200.0, device=device), env_mask=env_mask, fixed_tendon_mask=tendon_mask
+    )
+    articulation.write_fixed_tendon_properties_to_sim_mask(env_mask=env_mask, fixed_tendon_mask=tendon_mask)
+    sim.step()
+    assert articulation.data.fixed_tendon_limit_stiffness.torch[0, 0] == 200.0
+    selected = np.zeros(shape, dtype=bool)
+    selected[0, 0] = selected[1, 1] = True
+    np.testing.assert_allclose(solver_model.tendon_solref_lim.numpy()[~selected], native_solref[~selected])
+    assert np.all(solver_model.tendon_solref_lim.numpy()[selected] > 0.0)
+
+    articulation.set_fixed_tendon_limit_stiffness_index(limit_stiffness=0.0, env_ids=[0], fixed_tendon_ids=[0])
+    articulation.write_fixed_tendon_properties_to_sim_index(env_ids=[0], fixed_tendon_ids=[0])
+    sim.step()
+    assert np.isinf(solver_model.tendon_range.numpy()[0, 0]).all()
     torch.testing.assert_close(articulation.data.fixed_tendon_pos_limits.torch, limits)
 
 

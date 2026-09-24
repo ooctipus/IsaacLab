@@ -44,10 +44,6 @@ _LAZY_CAPTURE_REASON = (
 
 # Shared tendon properties that Isaac Lab's Newton backend does not implement.
 _UNSUPPORTED_FIXED_TENDON_PROPERTIES = {
-    "limit_stiffness": (
-        "the tendon path has no force-gain conversion for MuJoCo solreflimit/solimplimit; "
-        "Newton already provides such a conversion for joint limits"
-    ),
     "rest_length": (
         "Isaac Lab does not expose MuJoCo springlength through this property, and Newton's SolverMuJoCo "
         "does not propagate springlength changes in its runtime tendon update"
@@ -561,8 +557,8 @@ class ArticulationData(BaseArticulationData):
     def fixed_tendon_damping(self) -> ProxyArray:
         """Fixed tendon damping provided to the simulation.
 
-        MuJoCo uses this for passive tendon damping. Its limit response uses separate ``solreflimit``
-        parameters; PhysX's tendon damping parameter also affects its limit response.
+        Used for passive damping and, after setting :attr:`fixed_tendon_limit_stiffness`,
+        Newton's limit damping. Imported MuJoCo limit parameters are otherwise preserved.
 
         Shape is (num_instances, num_fixed_tendons), dtype = wp.float32. In torch this resolves to
         (num_instances, num_fixed_tendons).
@@ -573,14 +569,14 @@ class ArticulationData(BaseArticulationData):
     def fixed_tendon_limit_stiffness(self) -> ProxyArray:
         """Fixed tendon limit stiffness provided to the simulation.
 
-        Not implemented in this backend. MuJoCo's ``solreflimit`` supports stiffness/damping, but
-        force gains require an inverse-inertia and impedance conversion. Newton already applies
-        this conversion to joint limits; the tendon path does not yet implement it.
+        Newton converts force stiffness [N/m or N m/rad] using tendon inverse inertia and impedance.
+        Zero disables the limit. Before an explicit write, this reports the equivalent force
+        stiffness of the imported MuJoCo parameters. MuJoCo's transient response can differ from PhysX.
 
         Shape is (num_instances, num_fixed_tendons), dtype = wp.float32. In torch this resolves to
         (num_instances, num_fixed_tendons).
         """
-        raise _unsupported_fixed_tendon_property("limit_stiffness")
+        return self._fixed_tendon_limit_stiffness_ta
 
     @property
     def fixed_tendon_rest_length(self) -> ProxyArray:
@@ -1732,6 +1728,15 @@ class ArticulationData(BaseArticulationData):
                 "mujoco.tendon_range",
                 SimulationManager.get_model(),
             )[:, 0]
+            self._sim_bind_fixed_tendon_limit_stiffness = self._root_view.get_attribute(
+                "mujoco.tendon_limit_ke", SimulationManager.get_model()
+            )[:, 0]
+            self._sim_bind_fixed_tendon_limit_damping = self._root_view.get_attribute(
+                "mujoco.tendon_limit_kd", SimulationManager.get_model()
+            )[:, 0]
+            self._sim_bind_fixed_tendon_limit_gains_enabled = self._root_view.get_attribute(
+                "mujoco.tendon_limit_gains_enabled", SimulationManager.get_model()
+            )[:, 0]
         else:
             self._sim_bind_fixed_tendon_stiffness = wp.zeros(
                 (self._num_instances, 0), dtype=wp.float32, device=self.device
@@ -1741,6 +1746,15 @@ class ArticulationData(BaseArticulationData):
             )
             self._sim_bind_fixed_tendon_pos_limits = wp.zeros(
                 (self._num_instances, 0), dtype=wp.vec2f, device=self.device
+            )
+            self._sim_bind_fixed_tendon_limit_stiffness = wp.zeros(
+                (self._num_instances, 0), dtype=wp.float32, device=self.device
+            )
+            self._sim_bind_fixed_tendon_limit_damping = wp.zeros(
+                (self._num_instances, 0), dtype=wp.float32, device=self.device
+            )
+            self._sim_bind_fixed_tendon_limit_gains_enabled = wp.zeros(
+                (self._num_instances, 0), dtype=wp.bool, device=self.device
             )
 
         # Re-pin ProxyArray wrappers to the newly created sim bindings.
@@ -1841,6 +1855,8 @@ class ArticulationData(BaseArticulationData):
         self._fixed_tendon_position_target = wp.zeros(
             (self._num_instances, self._num_fixed_tendons), dtype=wp.float32, device=self.device
         )
+        self._fixed_tendon_limit_stiffness = wp.clone(self._sim_bind_fixed_tendon_limit_stiffness)
+        self._fixed_tendon_limit_gains_enabled = wp.clone(self._sim_bind_fixed_tendon_limit_gains_enabled)
 
         # Initialize the lazy buffers.
         # -- link frame w.r.t. world frame
@@ -2459,6 +2475,7 @@ class ArticulationData(BaseArticulationData):
             self._fixed_tendon_stiffness_ta = ProxyArray(self._sim_bind_fixed_tendon_stiffness)
             self._fixed_tendon_damping_ta = ProxyArray(self._sim_bind_fixed_tendon_damping)
             self._fixed_tendon_pos_limits_ta = ProxyArray(self._sim_bind_fixed_tendon_pos_limits)
+            self._fixed_tendon_limit_stiffness_ta = ProxyArray(self._sim_bind_fixed_tendon_limit_stiffness)
 
             # Category 2: TimestampedBuffer properties
             self._root_link_vel_w_ta = ProxyArray(self._root_link_vel_w.data)

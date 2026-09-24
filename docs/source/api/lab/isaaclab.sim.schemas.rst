@@ -286,12 +286,11 @@ Newton's MuJoCo solver also supports tendons;
 
 Position limits specify a range of the accumulated tendon coordinate on both backends. Their force response
 uses different parameters: PhysX uses force stiffness and shares tendon damping with the limit, while
-MuJoCo uses separate ``solreflimit`` and ``solimplimit`` parameters. Newton already
-`converts force gains for joint limits
-<https://github.com/newton-physics/newton/blob/v1.6.0/newton/_src/solvers/mujoco/kernels.py#L2622-L2732>`_
-using inverse inertia and impedance. The corresponding tendon conversion is not implemented, so Isaac Lab's
-shared tendon limit-stiffness API still raises :class:`NotImplementedError`. This is an implementation gap;
-MuJoCo supports stiffness/damping through its
+Newton converts tendon force gains to MuJoCo's ``solreflimit`` using inverse inertia and impedance.
+Setting fixed tendon limit stiffness selects this conversion and uses the shared tendon damping for
+both passive and limit damping. Zero stiffness disables the limit; untouched tendons preserve their
+imported MuJoCo parameters. Static compliance can match across backends, while transient response
+depends on their different damping and constraint formulations. See MuJoCo's
 `solver parameters <https://mujoco.readthedocs.io/en/stable/modeling.html#reference>`_.
 
 Deformable Body

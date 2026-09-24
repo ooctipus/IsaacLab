@@ -2813,19 +2813,26 @@ class Articulation(BaseArticulation):
         fixed_tendon_ids: Sequence[int] | torch.Tensor | wp.array | None = None,
         env_ids: Sequence[int] | torch.Tensor | wp.array | None = None,
     ) -> None:
-        """Set fixed tendon limit stiffness (unimplemented in this backend).
+        """Stage fixed tendon force stiffness using indices.
 
-        See :attr:`ArticulationData.fixed_tendon_limit_stiffness` for the backend limitation.
+        Apply with :meth:`write_fixed_tendon_properties_to_sim_index`. Newton converts the force gains
+        using tendon inverse inertia and impedance. Zero disables the limit. Limits must already be
+        enabled in the model. The staged tendon damping also supplies the limit damping.
 
         Args:
-            limit_stiffness: Fixed tendon limit stiffness. Shape is (len(env_ids), len(fixed_tendon_ids)).
+            limit_stiffness: Force stiffness [N/m or N m/rad]. Shape is (len(env_ids), len(fixed_tendon_ids)),
+                or a scalar applied to all selected tendons.
             fixed_tendon_ids: The tendon indices to set the limit stiffness for. Defaults to None (all fixed tendons).
             env_ids: Environment indices. If None, then all indices are used.
 
-        Raises:
-            NotImplementedError: This shared property has no implementation in Isaac Lab's Newton backend.
         """
-        raise _unsupported_fixed_tendon_property("limit_stiffness")
+        env_ids = self._resolve_env_ids(env_ids)
+        fixed_tendon_ids = self._resolve_fixed_tendon_ids(fixed_tendon_ids)
+        self.assert_shape_and_dtype(limit_stiffness, (env_ids.shape[0], fixed_tendon_ids.shape[0]), wp.float32)
+        values = wp.to_torch(limit_stiffness) if isinstance(limit_stiffness, wp.array) else limit_stiffness
+        rows, cols = self._to_torch_ids(env_ids)[:, None], self._to_torch_ids(fixed_tendon_ids)
+        wp.to_torch(self.data._fixed_tendon_limit_stiffness)[rows, cols] = values
+        wp.to_torch(self.data._fixed_tendon_limit_gains_enabled)[rows, cols] = True
 
     def set_fixed_tendon_limit_stiffness_mask(
         self,
@@ -2834,20 +2841,25 @@ class Articulation(BaseArticulation):
         fixed_tendon_mask: wp.array | None = None,
         env_mask: wp.array | None = None,
     ) -> None:
-        """Set fixed tendon limit stiffness (unimplemented in this backend).
+        """Stage fixed tendon force stiffness using masks.
 
-        See :attr:`ArticulationData.fixed_tendon_limit_stiffness` for the backend limitation.
+        Apply with :meth:`write_fixed_tendon_properties_to_sim_mask`.
 
         Args:
-            limit_stiffness: Fixed tendon limit stiffness. Shape is (num_instances, num_fixed_tendons).
+            limit_stiffness: Force stiffness [N/m or N m/rad]. Shape is (num_instances, num_fixed_tendons),
+                or a scalar applied to all selected tendons.
             fixed_tendon_mask: Fixed tendon mask. If None, then all fixed tendons are used.
                 Shape is (num_fixed_tendons,).
             env_mask: Environment mask. If None, then all the instances are updated. Shape is (num_instances,).
 
-        Raises:
-            NotImplementedError: This shared property has no implementation in Isaac Lab's Newton backend.
         """
-        raise _unsupported_fixed_tendon_property("limit_stiffness")
+        env_ids = self._resolve_env_mask(env_mask)
+        fixed_tendon_ids = self._resolve_fixed_tendon_mask(fixed_tendon_mask)
+        self.set_fixed_tendon_limit_stiffness_index(
+            limit_stiffness=self._select_full_data(limit_stiffness, env_ids, fixed_tendon_ids),
+            fixed_tendon_ids=fixed_tendon_ids,
+            env_ids=env_ids,
+        )
 
     def set_fixed_tendon_position_limit_index(
         self,
@@ -3082,7 +3094,8 @@ class Articulation(BaseArticulation):
     ) -> None:
         """Write fixed tendon properties into the simulation using indices.
 
-        Writes the stiffness, damping, and position limits set with the ``set_fixed_tendon_*`` methods.
+        Writes the stiffness, damping, limit stiffness, and position limits set with the
+        ``set_fixed_tendon_*`` methods. Newton owns conversion of the limit gains to MuJoCo parameters.
 
         .. tip::
             Both the index and mask methods have dedicated optimized implementations. Performance is similar for both.
@@ -3095,21 +3108,16 @@ class Articulation(BaseArticulation):
         """
         env_ids = self._resolve_env_ids(env_ids)
         fixed_tendon_ids = self._resolve_fixed_tendon_ids(fixed_tendon_ids)
+        rows, cols = self._to_torch_ids(env_ids)[:, None], self._to_torch_ids(fixed_tendon_ids)
         for staged, sim_bind in (
             (self.data._fixed_tendon_stiffness, self.data._sim_bind_fixed_tendon_stiffness),
             (self.data._fixed_tendon_damping, self.data._sim_bind_fixed_tendon_damping),
+            (self.data._fixed_tendon_limit_stiffness, self.data._sim_bind_fixed_tendon_limit_stiffness),
+            (self.data._fixed_tendon_damping, self.data._sim_bind_fixed_tendon_limit_damping),
+            (self.data._fixed_tendon_limit_gains_enabled, self.data._sim_bind_fixed_tendon_limit_gains_enabled),
+            (self.data._fixed_tendon_pos_limits, self.data._sim_bind_fixed_tendon_pos_limits),
         ):
-            wp.launch(
-                shared_kernels.write_2d_data_to_buffer_with_indices_kernel(env_ids, fixed_tendon_ids),
-                dim=(env_ids.shape[0], fixed_tendon_ids.shape[0]),
-                inputs=[staged, env_ids, fixed_tendon_ids],
-                outputs=[sim_bind],
-                device=self.device,
-            )
-        rows, cols = self._to_torch_ids(env_ids)[:, None], self._to_torch_ids(fixed_tendon_ids)
-        wp.to_torch(self.data._sim_bind_fixed_tendon_pos_limits)[rows, cols] = wp.to_torch(
-            self.data._fixed_tendon_pos_limits
-        )[rows, cols]
+            wp.to_torch(sim_bind)[rows, cols] = wp.to_torch(staged)[rows, cols]
         # the solver keeps its own copy of the tendon properties and only re-reads them when notified
         SimulationManager.add_model_change(ModelFlags.TENDON_PROPERTIES)
 
