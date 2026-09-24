@@ -2832,7 +2832,7 @@ class Articulation(BaseArticulation):
         values = wp.to_torch(limit_stiffness) if isinstance(limit_stiffness, wp.array) else limit_stiffness
         rows, cols = self._to_torch_ids(env_ids)[:, None], self._to_torch_ids(fixed_tendon_ids)
         wp.to_torch(self.data._fixed_tendon_limit_stiffness)[rows, cols] = values
-        wp.to_torch(self.data._fixed_tendon_limit_gains_enabled)[rows, cols] = True
+        wp.to_torch(self.data._fixed_tendon_limit_solref_mode)[rows, cols] = 0  # Newton force-space mode
 
     def set_fixed_tendon_limit_stiffness_mask(
         self,
@@ -3114,7 +3114,7 @@ class Articulation(BaseArticulation):
             (self.data._fixed_tendon_damping, self.data._sim_bind_fixed_tendon_damping),
             (self.data._fixed_tendon_limit_stiffness, self.data._sim_bind_fixed_tendon_limit_stiffness),
             (self.data._fixed_tendon_damping, self.data._sim_bind_fixed_tendon_limit_damping),
-            (self.data._fixed_tendon_limit_gains_enabled, self.data._sim_bind_fixed_tendon_limit_gains_enabled),
+            (self.data._fixed_tendon_limit_solref_mode, self.data._sim_bind_fixed_tendon_limit_solref_mode),
             (self.data._fixed_tendon_pos_limits, self.data._sim_bind_fixed_tendon_pos_limits),
         ):
             wp.to_torch(sim_bind)[rows, cols] = wp.to_torch(staged)[rows, cols]

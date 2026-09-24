@@ -1734,8 +1734,8 @@ class ArticulationData(BaseArticulationData):
             self._sim_bind_fixed_tendon_limit_damping = self._root_view.get_attribute(
                 "mujoco.tendon_limit_kd", SimulationManager.get_model()
             )[:, 0]
-            self._sim_bind_fixed_tendon_limit_gains_enabled = self._root_view.get_attribute(
-                "mujoco.tendon_limit_gains_enabled", SimulationManager.get_model()
+            self._sim_bind_fixed_tendon_limit_solref_mode = self._root_view.get_attribute(
+                "mujoco.tendon_solref_limit_mode", SimulationManager.get_model()
             )[:, 0]
         else:
             self._sim_bind_fixed_tendon_stiffness = wp.zeros(
@@ -1753,8 +1753,8 @@ class ArticulationData(BaseArticulationData):
             self._sim_bind_fixed_tendon_limit_damping = wp.zeros(
                 (self._num_instances, 0), dtype=wp.float32, device=self.device
             )
-            self._sim_bind_fixed_tendon_limit_gains_enabled = wp.zeros(
-                (self._num_instances, 0), dtype=wp.bool, device=self.device
+            self._sim_bind_fixed_tendon_limit_solref_mode = wp.zeros(
+                (self._num_instances, 0), dtype=wp.int32, device=self.device
             )
 
         # Re-pin ProxyArray wrappers to the newly created sim bindings.
@@ -1856,7 +1856,7 @@ class ArticulationData(BaseArticulationData):
             (self._num_instances, self._num_fixed_tendons), dtype=wp.float32, device=self.device
         )
         self._fixed_tendon_limit_stiffness = wp.clone(self._sim_bind_fixed_tendon_limit_stiffness)
-        self._fixed_tendon_limit_gains_enabled = wp.clone(self._sim_bind_fixed_tendon_limit_gains_enabled)
+        self._fixed_tendon_limit_solref_mode = wp.clone(self._sim_bind_fixed_tendon_limit_solref_mode)
 
         # Initialize the lazy buffers.
         # -- link frame w.r.t. world frame
