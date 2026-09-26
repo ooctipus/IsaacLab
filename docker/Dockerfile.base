@@ -230,6 +230,7 @@ for name, source in (("ground", GroundPlaneCfg().usd_path), ("so101", SO101_CFG.
     local_path = Path(retrieve_file_path(source, download_dir=str(root)))
     (root / name).symlink_to(local_path.parent, target_is_directory=True)
 PY
+RUN chmod -R a+rX /opt/isaaclab-assets
 
 
 # Pre-create every docker-compose named-volume mount point and hand it to the

@@ -59,3 +59,17 @@ def test_wandb_logger_is_installed():
     assert _in_image(
         'cd /workspace/isaaclab && uv run --no-sync python -c "import wandb; print(wandb.__version__)"'
     ).strip()
+
+
+def test_bundled_keyboard_assets_compose_without_remote_client():
+    """The runtime user can read the complete USD trees without contacting Omniverse."""
+    _in_image("""cd /workspace/isaaclab && uv run --no-sync python - <<'PY'
+from unittest.mock import patch
+from pxr import Usd
+from isaaclab.utils.assets import retrieve_file_path
+with patch("isaaclab.utils.assets._get_omni_client", side_effect=AssertionError("Unexpected asset client")):
+    for path in ("/opt/isaaclab-assets/ground/default_ground_plane.usda",
+                 "/opt/isaaclab-assets/so101/so101_new_calib.usda"):
+        stage = Usd.Stage.Open(retrieve_file_path(path))
+        assert stage and not stage.GetCompositionErrors(), path
+PY""")
