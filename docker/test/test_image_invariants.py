@@ -90,3 +90,10 @@ def test_kit_prebundle_loads_the_environments_torch():
         "assert Path(torch.__file__).resolve().is_relative_to(Path(os.environ['VIRTUAL_ENV']))\n"
         "PY"
     )
+
+
+def test_wandb_logger_is_installed():
+    """Training images support the W&B logger selected by cluster submissions."""
+    assert _in_image(
+        'cd /workspace/isaaclab && uv run --no-sync python -c "import wandb; print(wandb.__version__)"'
+    ).strip()
