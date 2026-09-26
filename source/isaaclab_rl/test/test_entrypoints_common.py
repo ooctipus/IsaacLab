@@ -167,6 +167,16 @@ def test_wrap_sensor_capture_returns_env_when_disabled(tmp_path: Path) -> None:
     assert wrap_sensor_capture(env, str(tmp_path), args_cli) is env
 
 
+def test_common_train_args_read_workflow_id_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cluster metadata supplies the workflow ID without changing script arguments."""
+    monkeypatch.setenv("ISAACLAB_WORKFLOW_ID", "isaac-lab-12345")
+    parser = argparse.ArgumentParser()
+    add_common_train_args(parser, agent_default=None, agent_help="", include_agent=False)
+
+    assert parser.parse_args([]).workflow_id == "isaac-lab-12345"
+    assert parser.parse_args(["--workflow_id", "manual-id"]).workflow_id == "manual-id"
+
+
 def test_enable_cameras_for_video_enables_cameras_for_sensor_capture() -> None:
     """Sensor capture requires camera rendering even when normal video capture is disabled."""
     args_cli = argparse.Namespace(video=False, capture_env_sensors=1, enable_cameras=False)

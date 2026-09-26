@@ -1,0 +1,53 @@
+# syntax=docker/dockerfile:1
+# Copyright (c) 2022-2025, The Isaac Lab Project Developers
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# Lightweight Dockerfile for source-only updates when dependencies are cached.
+
+ARG DEPS_BASE_IMAGE=isaac-lab-deps:latest
+FROM ${DEPS_BASE_IMAGE}
+
+ARG ISAACLAB_PATH_ARG
+ARG ISAACSIM_ROOT_PATH_ARG=/isaac-sim
+ARG RUN_PIP_INSTALL=0
+# Build the environment from ``uv.lock`` exactly like a local ``uv sync``. The
+# args select which extras to install; do NOT add ``--extra isaacsim`` (Isaac Sim
+# is the binary base image, not a pip package). This overlay runs on top of either
+# the base or the kit-less dependency image, which carry different extras, so
+# ``buildnpush.py`` always passes the matching set; the default below only covers
+# a direct ``docker build`` of this file.
+ARG ISAACLAB_UV_SYNC_ARGS="--extra sb3 --extra skrl --extra rl-games --extra rsl-rl --extra viser --extra rerun --extra mimic --extra teleop --extra test --extra tetrahedralization --extra ov --no-install-package imageio-ffmpeg"
+
+ENV ISAACLAB_PATH=${ISAACLAB_PATH_ARG}
+
+# Keep source overlays to one filesystem-changing layer. BuildKit bind mounts
+# expose the current build context without creating separate COPY layers; the
+# RUN block owns deletion, copy, metadata repair, and optional dependency sync.
+# The base image owns the venv at UV_PROJECT_ENVIRONMENT, outside the source tree.
+USER root
+RUN --mount=type=bind,source=source,target=/tmp/isaaclab_overlay/source,readonly \
+    --mount=type=bind,source=scripts,target=/tmp/isaaclab_overlay/scripts,readonly \
+    --mount=type=bind,source=tools,target=/tmp/isaaclab_overlay/tools,readonly \
+    --mount=type=bind,source=pyproject.toml,target=/tmp/isaaclab_overlay/pyproject.toml,readonly \
+    --mount=type=bind,source=uv.lock,target=/tmp/isaaclab_overlay/uv.lock,readonly \
+    --mount=type=bind,source=isaaclab.sh,target=/tmp/isaaclab_overlay/isaaclab.sh,readonly \
+    --mount=type=cache,target=/root/.cache/uv,sharing=locked \
+    rm -rf "${ISAACLAB_PATH:?}/source" "${ISAACLAB_PATH:?}/scripts" "${ISAACLAB_PATH:?}/tools" && \
+    cp -a /tmp/isaaclab_overlay/source "${ISAACLAB_PATH}/source" && \
+    cp -a /tmp/isaaclab_overlay/scripts "${ISAACLAB_PATH}/scripts" && \
+    cp -a /tmp/isaaclab_overlay/tools "${ISAACLAB_PATH}/tools" && \
+    cp -a /tmp/isaaclab_overlay/pyproject.toml "${ISAACLAB_PATH}/pyproject.toml" && \
+    cp -a /tmp/isaaclab_overlay/uv.lock "${ISAACLAB_PATH}/uv.lock" && \
+    cp -a /tmp/isaaclab_overlay/isaaclab.sh "${ISAACLAB_PATH}/isaaclab.sh" && \
+    chown -R isaaclab:isaaclab \
+      "${ISAACLAB_PATH}/source" \
+      "${ISAACLAB_PATH}/scripts" \
+      "${ISAACLAB_PATH}/tools" \
+      "${ISAACLAB_PATH}/pyproject.toml" \
+      "${ISAACLAB_PATH}/uv.lock" \
+      "${ISAACLAB_PATH}/isaaclab.sh" && \
+    find "${ISAACLAB_PATH}/source" -type f -name "*.sh" -exec sed -i 's/\r$//' {} + && \
+    if [ "${RUN_PIP_INSTALL}" = "1" ]; then \
+      cd "${ISAACLAB_PATH}" && uv sync --frozen --inexact ${ISAACLAB_UV_SYNC_ARGS}; \
+    fi
+USER isaaclab

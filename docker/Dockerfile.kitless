@@ -72,6 +72,7 @@ COPY isaaclab.sh ./
 # would silently defeat the point of installing from it. ``--inexact`` keeps the seeded pip, which
 # is not a lock entry. ``uv sync`` reuses the venv only because UV_PYTHON pins the same interpreter
 # it was created with; otherwise it deletes and rebuilds it.
+ARG DEPS_CACHE_BUST=0
 RUN uv venv --seed "${VIRTUAL_ENV}" \
  && uv sync --frozen --inexact --extra all --extra importers --extra test \
  && chmod +x "${ISAACLAB_PATH}/isaaclab.sh" \
@@ -119,6 +120,7 @@ ENV UV_PROJECT_ENVIRONMENT=${VENV_PATH_ARG}
 ENV UV_PYTHON=/usr/bin/python3.12
 ENV UV_PYTHON_PREFERENCE=only-system
 ENV UV_NO_SYNC=1
+ENV ISAACLAB_UV_SYNC_ARGS="--extra all --extra importers --extra test"
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV NVIDIA_VISIBLE_DEVICES=all

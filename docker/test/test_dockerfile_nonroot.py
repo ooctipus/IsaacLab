@@ -43,6 +43,8 @@ DOCKERFILE_RUNTIME_USERS = {
     "Dockerfile.installci": "isaaclab",
     "Dockerfile.kitless": "isaaclab",
     "Dockerfile.ros2": "isaaclab",
+    "Dockerfile.source-only": "isaaclab",
+    "Dockerfile.manipulation-wandb-resume": None,
 }
 
 # Dockerfiles that are expected to *create* the non-root runtime user

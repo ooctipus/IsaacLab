@@ -138,6 +138,8 @@ def _run(args_cli: argparse.Namespace) -> None:
             print(f"Exact experiment name requested from command line: {run_name}")
             if agent_cfg.run_name:
                 run_name += f"_{agent_cfg.run_name}"
+            if args_cli.workflow_id:
+                run_name += f"_{args_cli.workflow_id}"
             log_dir = os.path.join(log_root_path, run_name)
             write_run_manifest(log_dir, library="rsl_rl", task=args_cli.task, metadata={"agent": args_cli.agent})
 
