@@ -63,6 +63,7 @@ POOL_TO_PLATFORM = {
 
 WORKFLOW_PRIORITIES = frozenset({"HIGH", "NORMAL", "LOW"})
 
+# Set kitless=1 for Newton-only jobs to avoid bootstrapping the binary Isaac Sim runtime.
 CLUSTER_DEFAULTS = {
     "image": "factory",
     "num_gpu": "1",
@@ -73,6 +74,7 @@ CLUSTER_DEFAULTS = {
     "platform": "dgx-h100",
     "dataset": "isaac-lab-ppo-model",
     "master_port": "29400",
+    "kitless": "0",
 }
 
 CLUSTER_KEY_ORDER = [
@@ -85,6 +87,7 @@ CLUSTER_KEY_ORDER = [
     "num_node",
     "storage",
     "master_port",
+    "kitless",
 ]
 
 BOOL_FLAGS = {"--video", "--enable_cameras"}
