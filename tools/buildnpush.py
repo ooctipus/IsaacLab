@@ -33,7 +33,7 @@ from pathlib import Path
 import tomllib
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_KITLESS_BASE_IMAGE = "nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04"
+DEFAULT_KITLESS_BASE_IMAGE = "ubuntu:24.04"
 FINAL_IMAGE_REPO = "nvcr.io/nvidian/octi-isaac-lab"
 BASE_IMAGE = "isaac-lab-base"
 MAX_LAYERS_FOR_DEPS_CACHE = 118
@@ -47,8 +47,11 @@ EXTRA_SYMLINKS = [Path("dep"), Path("dep/rsl_rl")]
 # Extras the images are synced with. These mirror the ``ISAACLAB_UV_SYNC_ARGS`` defaults in
 # the Dockerfiles and are only used to re-run ``uv sync --check`` against a built image;
 # ``test_uv_sync_extras_match_the_dockerfiles`` fails if the two drift apart.
-BASE_UV_SYNC_EXTRAS = "--extra all --extra ovrtx --extra ov"
-KITLESS_UV_SYNC_EXTRAS = "--extra all --extra ovrtx"
+BASE_UV_SYNC_EXTRAS = (
+    "--extra sb3 --extra skrl --extra rl-games --extra rsl-rl --extra viser --extra rerun --extra mimic"
+    " --extra teleop --extra test --extra tetrahedralization --extra ov --no-install-package imageio-ffmpeg"
+)
+KITLESS_UV_SYNC_EXTRAS = "--extra all --extra importers --extra test"
 # Emitted by ``uv sync --check`` when it did run and found the environment stale. Its absence on a
 # failure means the check itself broke (missing uv, unreadable lock) rather than the image drifting.
 UV_OUTDATED_MARKER = "The environment is outdated"
@@ -463,7 +466,7 @@ def build_full_deps(ctx: BuildContext, plan: BuildPlan, docker_env: dict[str, st
             "-f",
             "docker/Dockerfile.kitless",
             "--build-arg",
-            f"KITLESS_BASE_IMAGE_ARG={ctx.args.kitless_base_image}",
+            f"BASE_IMAGE_ARG={ctx.args.kitless_base_image}",
             "--build-arg",
             f"ISAACLAB_PATH_ARG={docker_env['DOCKER_ISAACLAB_PATH']}",
             "--build-arg",
@@ -588,7 +591,7 @@ def verify_synced_deps(ctx: BuildContext, docker_env: dict[str, str]) -> None:
     extras = uv_sync_extras(ctx)
     # ``--check`` only inspects the environment against the lock; ``--frozen`` keeps it from
     # re-locking (which would need the network) and ``--offline`` makes that failure explicit.
-    check_cmd = f"cd {isaaclab_path} && uv sync --check --frozen --offline {extras}"
+    check_cmd = f"cd {isaaclab_path} && uv sync --check --frozen --offline {extras} --inexact"
     proc = subprocess.run(
         ["docker", "run", "--rm", "--entrypoint", "bash", BASE_IMAGE, "-lc", check_cmd],
         cwd=REPO_ROOT,

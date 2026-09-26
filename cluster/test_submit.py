@@ -620,17 +620,14 @@ class TestWorkflowSpecArchitecture:
 
     def test_workflow_syncs_the_lock_before_launching_ranks(self):
         spec = self._spec()
-        sync = 'uv sync --locked --no-progress "${UV_SYNC_ARGS[@]}"'
+        sync = 'uv sync --locked --no-progress --inexact --no-install-local "${UV_SYNC_ARGS[@]}"'
         assert spec.count(sync) == 1
         assert spec.index(sync) < spec.index("{% if num_node > 1 %}")
 
-    def test_workflow_syncs_kitless_and_isaac_sim_extras(self):
+    def test_workflow_uses_the_image_dependency_selection(self):
         spec = self._spec()
-        assert spec.count("UV_SYNC_ARGS=(--inexact --no-install-local --extra all --extra ovrtx)") == 1
-        assert spec.count("UV_SYNC_ARGS+=(--extra ov)") == 1
-        assert spec.index("UV_SYNC_ARGS+=(--extra ov)") < spec.index(
-            'uv sync --locked --no-progress "${UV_SYNC_ARGS[@]}"'
-        )
+        assert 'read -r -a UV_SYNC_ARGS <<< "${ISAACLAB_UV_SYNC_ARGS:?' in spec
+        assert "--extra " not in spec
 
     def test_workflow_does_not_reinstall_image_local_packages(self):
         spec = self._spec()
