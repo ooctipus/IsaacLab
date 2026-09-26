@@ -77,16 +77,21 @@ class KeyboardVariants:
             spawn_keyboard("/Keyboard", cfg, stage=stage)
             builder = env.sim.physics_manager.create_builder(up_axis="Z")
             builder.begin_world()
-            builder.add_usd(stage, root_path="/Keyboard", hide_collision_shapes=True)
+            builder.add_usd(
+                stage,
+                root_path="/Keyboard",
+                hide_collision_shapes=True,
+                load_visual_shapes=env.cfg.sim.physics.load_visual_shapes,
+            )
             replace_newton_builder_shape_colors(builder, stage)
             builder.end_world()
             self._models.append(builder.finalize(env.device))
 
         def binding(labels, worlds):
-            rows = [
-                [i for i, (label, world) in enumerate(zip(labels, worlds)) if world == e and "/Keyboard/" in label]
-                for e in range(env.num_envs)
-            ]
+            rows = [[] for _ in range(env.num_envs)]
+            for i, (label, world) in enumerate(zip(labels, worlds)):
+                if 0 <= world < env.num_envs and "/Keyboard/" in label:
+                    rows[world].append(i)
             suffixes = [labels[i].split("/Keyboard/", 1)[1] for i in rows[0]]
             for row in rows:
                 if [labels[i].split("/Keyboard/", 1)[1] for i in row] != suffixes:
@@ -99,6 +104,7 @@ class KeyboardVariants:
         self.shape_ids = shape_ids
         self._properties = []
         self._sources = []
+        shape_types = model.shape_type.numpy()[shape_ids[0]]
         source_bodies, source_shapes = [], []
         for source in self._models:
             body_map = {label.split("/Keyboard/", 1)[1]: i for i, label in enumerate(source.body_label)}
@@ -107,7 +113,7 @@ class KeyboardVariants:
             source_shapes.append(np.array([shape_map[name] for name in shape_names]))
             self._sources.append([source.shape_source[i] for i in source_shapes[-1]])
             types, flags = source.shape_type.numpy(), source.shape_flags.numpy()
-            if not np.array_equal(types[source_shapes[-1]], model.shape_type.numpy()[shape_ids[0]]):
+            if not np.array_equal(types[source_shapes[-1]], shape_types):
                 raise ValueError("Keyboard variants must preserve each registered shape's geometry type.")
             if any(flags[i] & int(ShapeFlags.COLLIDE_SHAPES) and types[i] != GeoType.BOX for i in source_shapes[-1]):
                 raise ValueError("Registered keyboards currently require box collision geometry.")
@@ -182,9 +188,8 @@ class KeyboardVariants:
             [int(name.split("/")[1].split("_")[1]) for name in body_names], device=env.device
         )
         body_columns = {body: i for i, body in enumerate(body_ids[0])}
-        self._shape_body_column = torch.tensor(
-            [body_columns[int(model.shape_body.numpy()[i])] for i in shape_ids[0]], device=env.device
-        )
+        shape_bodies = model.shape_body.numpy()[shape_ids[0]]
+        self._shape_body_column = torch.tensor([body_columns[int(body)] for body in shape_bodies], device=env.device)
         self._shape_ids_t = torch.as_tensor(shape_ids, device=env.device)
 
     def apply(self, env_ids: torch.Tensor, variant_ids: torch.Tensor) -> None:

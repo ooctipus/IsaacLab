@@ -40,6 +40,13 @@ class MJWarpSolverCfg(NewtonSolverCfg):
     nconmax: int | None = None
     """Number of contact points per environment (world)."""
 
+    nccdmax: int | None = None
+    """GJK/EPA collision workspace capacity per world; defaults to the contact capacity.
+
+    Must be between zero and the resolved :attr:`nconmax`. Reducing this saves temporary
+    GPU memory without reducing contact storage. Monitor MJWarp overflow for the workload.
+    """
+
     iterations: int = 100
     """Number of solver iterations."""
 

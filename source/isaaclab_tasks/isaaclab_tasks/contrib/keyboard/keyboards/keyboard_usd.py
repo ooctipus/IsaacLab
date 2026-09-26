@@ -155,6 +155,10 @@ def _spawn_partitioned_articulations(
 
     parts_scope = f"{prim_path}/parts"
     UsdGeom.Scope.Define(stage, parts_scope)
+    # Partitioning must preserve the single articulation's keyboard-wide self-collision exclusion.
+    group = UsdPhysics.CollisionGroup.Define(stage, f"{prim_path}/collision_group")
+    group.GetCollidersCollectionAPI().CreateIncludesRel().SetTargets([Sdf.Path(parts_scope)])
+    group.CreateFilteredGroupsRel().SetTargets([group.GetPath()])
     keys_by_part = _partition_keys(resolved)
     for part_index, keys in enumerate(keys_by_part):
         part_name = f"part_{part_index:03d}"

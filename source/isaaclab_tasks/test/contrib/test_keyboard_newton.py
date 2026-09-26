@@ -288,6 +288,35 @@ def test_keyboard_generator_supports_every_multiple_of_six():
         assert not layout.warnings
 
 
+@pytest.mark.parametrize("partition_mode", ["single", "fixed_dof"])
+def test_keyboard_has_no_internal_contacts(partition_mode):
+    """Partition boundaries must not enable collisions between keys and their own case."""
+    from newton.solvers import SolverMuJoCo
+
+    from pxr import Usd, UsdGeom
+
+    from isaaclab_tasks.contrib.keyboard.keyboards.keyboard_pool import TYPING_KEYBOARD_VARIANTS
+    from isaaclab_tasks.contrib.keyboard.keyboards.keyboard_usd import spawn_keyboard
+
+    cfg = TYPING_KEYBOARD_VARIANTS[0].replace(partition_mode=partition_mode)
+    stage = Usd.Stage.CreateInMemory()
+    UsdGeom.SetStageUpAxis(stage, "Z")
+    spawn_keyboard("/Keyboard", cfg, stage=stage)
+    builder = newton.ModelBuilder(up_axis="Z")
+    SolverMuJoCo.register_custom_attributes(builder)
+    builder.add_usd(stage, root_path="/Keyboard", load_visual_shapes=False)
+    # An external probe overlaps the case; only keyboard-internal pairs should be excluded.
+    pose = wp.transform_multiply(builder.body_q[builder.shape_body[0]], builder.shape_transform[0])
+    probe = builder.add_link(xform=pose, mass=1.0, label="probe")
+    joint = builder.add_joint_free(probe)
+    builder.add_articulation([joint])
+    builder.add_shape_sphere(probe, radius=0.01, label="probe_collision")
+    solver = SolverMuJoCo(builder.finalize("cpu"), use_mujoco_cpu=True, use_mujoco_contacts=True)
+    assert solver.mj_data.ncon > 0
+    for contact in solver.mj_data.contact:
+        assert any("probe_collision" in solver.mj_model.geom(int(geom)).name for geom in contact.geom)
+
+
 @pytest.mark.parametrize("use_graph", [False, True])
 def test_keyboard_variant_reset_restores_geometry_inertia_and_sleep(use_graph):
     if not wp.is_cuda_available():

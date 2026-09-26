@@ -252,6 +252,7 @@ class PhysicsCfg(PresetCfg):
             integrator="implicitfast",
             njmax=600,
             nconmax=600,
+            nccdmax=128,
             impratio=1.0,
             cone="pyramidal",
             update_data_interval=2,

@@ -1171,7 +1171,8 @@ def test_fixed_root_pose_write_updates_solver(monkeypatch, asset_class, writer, 
     np.testing.assert_allclose(solver.mjw_data.mocap_pos.numpy()[0, 0], target.numpy()[0, :3])
 
 
-def test_forward_consumes_existing_reset_masks(monkeypatch):
+@pytest.mark.parametrize("advance", [False, True])
+def test_forward_consumes_existing_reset_masks(monkeypatch, advance):
     """Authored-state masks are consumed once, without rerunning clean FK or solver reset."""
     world_mask = wp.array([False, True], dtype=wp.bool, device="cpu")
     fk_mask = wp.array([True, False], dtype=wp.bool, device="cpu")
@@ -1199,8 +1200,32 @@ def test_forward_consumes_existing_reset_masks(monkeypatch):
         raising=False,
     )
 
-    NewtonManager.forward()
-    NewtonManager.forward()
+    if advance:
+        monkeypatch.setattr(PhysicsManager, "_sim", SimpleNamespace(is_playing=lambda: True))
+        monkeypatch.setattr(PhysicsManager, "_cfg", SimpleNamespace(use_cuda_graph=False))
+        monkeypatch.setattr(PhysicsManager, "_device", "cpu")
+        monkeypatch.setattr(PhysicsManager, "_sim_time", 0.0)
+        for name, value in {
+            "_model_changes": set(),
+            "_graph_capture_pending": False,
+            "_solver_dt": 0.01,
+            "_num_substeps": 1,
+            "_adapter": None,
+            "_post_actuator_callbacks": [],
+        }.items():
+            monkeypatch.setattr(NewtonManager, name, value)
+        monkeypatch.setattr(NewtonManager, "_is_all_graphable", classmethod(lambda cls: False))
+        for name in (
+            "_simulate_physics_only",
+            "_mark_transforms_changed",
+            "_mark_sensor_state_dirty",
+            "_check_solver_status",
+            "_log_solver_debug",
+        ):
+            monkeypatch.setattr(NewtonManager, name, classmethod(lambda cls: None))
+    reconcile = NewtonManager.step if advance else NewtonManager.forward
+    reconcile()
+    reconcile()
 
     assert observed == [([False, True], [True, False])]
     assert solver_resets == [[False, True]]
