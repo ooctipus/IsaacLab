@@ -110,11 +110,9 @@ workflow:
 
           echo "[INFO] Syncing Python environment from uv.lock..."
           cd /workspace/isaaclab
-          UV_SYNC_ARGS=(--inexact --no-install-local --extra all --extra ovrtx)
-          if [ -d /workspace/isaaclab/_isaac_sim/kit ] || [ -L /workspace/isaaclab/_isaac_sim ]; then
-            UV_SYNC_ARGS+=(--extra ov)
-          fi
-          uv sync --locked --no-progress "${UV_SYNC_ARGS[@]}"
+          # Use the package set selected by the image's Dockerfile.
+          read -r -a UV_SYNC_ARGS <<< "${ISAACLAB_UV_SYNC_ARGS:?Image must declare its dependency selection}"
+          uv sync --locked --no-progress --inexact --no-install-local "${UV_SYNC_ARGS[@]}"
 
           {% if num_node > 1 %}
           /workspace/isaaclab/isaaclab.sh -p -m torch.distributed.run \

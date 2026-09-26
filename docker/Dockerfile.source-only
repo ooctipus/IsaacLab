@@ -16,18 +16,14 @@ ARG RUN_PIP_INSTALL=0
 # the base or the kit-less dependency image, which carry different extras, so
 # ``buildnpush.py`` always passes the matching set; the default below only covers
 # a direct ``docker build`` of this file.
-ARG ISAACLAB_UV_SYNC_ARGS="--extra all --extra ovrtx --extra ov"
+ARG ISAACLAB_UV_SYNC_ARGS="--extra sb3 --extra skrl --extra rl-games --extra rsl-rl --extra viser --extra rerun --extra mimic --extra teleop --extra test --extra tetrahedralization --extra ov --no-install-package imageio-ffmpeg"
 
 ENV ISAACLAB_PATH=${ISAACLAB_PATH_ARG}
 
 # Keep source overlays to one filesystem-changing layer. BuildKit bind mounts
 # expose the current build context without creating separate COPY layers; the
-# RUN block owns deletion, copy, metadata repair, venv isolation, and optional -p
-# dependency sync. The ``sed`` on ``pyvenv.cfg`` forces the inherited venv to
-# ``include-system-site-packages = false`` so an overlay on an older base (built
-# before Dockerfile.base dropped ``--system-site-packages``) still ends up with a
-# single Python USD (the pip ``usd-core``) instead of also loading Isaac Sim's
-# bundled ``pxr`` -- the two-USD clash crashes with USD/Tf type re-registration.
+# RUN block owns deletion, copy, metadata repair, and optional dependency sync.
+# The base image owns the venv at UV_PROJECT_ENVIRONMENT, outside the source tree.
 USER root
 RUN --mount=type=bind,source=source,target=/tmp/isaaclab_overlay/source,readonly \
     --mount=type=bind,source=scripts,target=/tmp/isaaclab_overlay/scripts,readonly \
@@ -50,11 +46,8 @@ RUN --mount=type=bind,source=source,target=/tmp/isaaclab_overlay/source,readonly
       "${ISAACLAB_PATH}/pyproject.toml" \
       "${ISAACLAB_PATH}/uv.lock" \
       "${ISAACLAB_PATH}/isaaclab.sh" && \
-    ln -sfn ${ISAACSIM_ROOT_PATH_ARG} "${ISAACLAB_PATH}/_isaac_sim" && \
     find "${ISAACLAB_PATH}/source" -type f -name "*.sh" -exec sed -i 's/\r$//' {} + && \
-    (find ${ISAACSIM_ROOT_PATH_ARG}/extscache -path "*/pip_prebundle/typing_extensions.py" -delete 2>/dev/null || true) && \
-    sed -i 's/^include-system-site-packages *= *true/include-system-site-packages = false/' "${ISAACLAB_PATH}/.venv/pyvenv.cfg" && \
     if [ "${RUN_PIP_INSTALL}" = "1" ]; then \
-      cd "${ISAACLAB_PATH}" && uv sync ${ISAACLAB_UV_SYNC_ARGS}; \
+      cd "${ISAACLAB_PATH}" && uv sync --frozen --inexact ${ISAACLAB_UV_SYNC_ARGS}; \
     fi
 USER isaaclab

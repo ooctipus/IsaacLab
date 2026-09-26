@@ -368,14 +368,16 @@ class BuildnpushTest(unittest.TestCase):
         self.assertIn("uv sync --check --frozen --offline " + bp.KITLESS_UV_SYNC_EXTRAS, captured[0][-1])
 
     def test_base_uv_sync_extras_match_the_dockerfiles(self) -> None:
-        """The base and source-overlay defaults must install the same extras."""
-        for dockerfile in ("docker/Dockerfile.base", "docker/Dockerfile.source-only"):
-            with self.subTest(dockerfile=dockerfile):
-                text = (bp.REPO_ROOT / dockerfile).read_text()
-                match = re.search(r'^ARG ISAACLAB_UV_SYNC_ARGS="([^"]*)"', text, re.MULTILINE)
-                if match is None:
-                    self.fail(f"{dockerfile} does not define ISAACLAB_UV_SYNC_ARGS")
-                self.assertEqual(match.group(1), bp.BASE_UV_SYNC_EXTRAS)
+        """Build, overlay, verification, and launch use the image's dependency selection."""
+        base = (bp.REPO_ROOT / "docker/Dockerfile.base").read_text()
+        extras = re.search(r'^ARG IMAGE_EXTRAS="([^"]*)"', base, re.MULTILINE).group(1)
+        self.assertEqual(extras + " --no-install-package imageio-ffmpeg", bp.BASE_UV_SYNC_EXTRAS)
+        self.assertIn('ENV ISAACLAB_UV_SYNC_ARGS="${IMAGE_EXTRAS} --no-install-package imageio-ffmpeg"', base)
+        overlay = (bp.REPO_ROOT / "docker/Dockerfile.source-only").read_text()
+        self.assertIn(f'ARG ISAACLAB_UV_SYNC_ARGS="{bp.BASE_UV_SYNC_EXTRAS}"', overlay)
+        self.assertNotIn("${ISAACLAB_PATH}/.venv", overlay)
+        kitless = (bp.REPO_ROOT / "docker/Dockerfile.kitless").read_text()
+        self.assertIn(f'ENV ISAACLAB_UV_SYNC_ARGS="{bp.KITLESS_UV_SYNC_EXTRAS}"', kitless)
 
     def test_kitless_overlay_receives_kitless_sync_extras(self) -> None:
         ctx = _ctx(bp.BuildArgs(tag="factory", kitless=True))

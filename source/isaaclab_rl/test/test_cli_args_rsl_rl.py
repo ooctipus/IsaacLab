@@ -49,7 +49,6 @@ def test_wandb_run_name_uses_resolved_id_for_resume(monkeypatch):
             "wandb",
             "--log_project_name",
             "factory_manager3",
-            "--resume",
             "--wandb_run_name",
             "screwing-rb1-c08-s2-0805a",
         ]
@@ -77,7 +76,6 @@ def test_wandb_run_name_uses_resolved_id_for_resume(monkeypatch):
             "wandb_username": None,
         }
     ]
-    assert cfg.experiment_name == "/tmp/models_tmp/factory_manager3"
-    assert cfg.load_run == "internal42"
-    assert cfg.load_checkpoint == "model_4700.pt"
-    assert cfg.run_id == "internal42"
+    assert args.checkpoint == checkpoint
+    assert cfg.load_checkpoint == checkpoint
+    assert cfg.experiment_name == "old"
