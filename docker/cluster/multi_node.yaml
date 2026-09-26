@@ -116,8 +116,15 @@ workflow:
           fi
           uv sync --locked --no-progress "${UV_SYNC_ARGS[@]}"
 
+          # Kit bootstrap is only needed by tasks that use the Isaac Sim runtime.
+          {% if kitless == 1 %}
+          ISAACLAB_PYTHON=(uv run --no-sync python)
+          {% else %}
+          ISAACLAB_PYTHON=(/workspace/isaaclab/isaaclab.sh -p)
+          {% endif %}
+
           {% if num_node > 1 %}
-          /workspace/isaaclab/isaaclab.sh -p -m torch.distributed.run \
+          "${ISAACLAB_PYTHON[@]}" -m torch.distributed.run \
             --nnodes {{ num_node }} \
             --nproc_per_node {{ num_gpu }} \
             --node_rank {{ item }} \
@@ -127,7 +134,7 @@ workflow:
               --distributed \
               {{ args }}
           {% elif num_gpu > 1 %}
-          /workspace/isaaclab/isaaclab.sh -p -m torch.distributed.run \
+          "${ISAACLAB_PYTHON[@]}" -m torch.distributed.run \
             --nnodes 1 \
             --nproc_per_node {{ num_gpu }} \
             --master_addr 127.0.0.1 \
@@ -136,7 +143,7 @@ workflow:
               --distributed \
               {{ args }}
           {% else %}
-          /workspace/isaaclab/isaaclab.sh -p \
+          "${ISAACLAB_PYTHON[@]}" \
             /workspace/isaaclab/{{ script }} \
               {{ args }}
           {% endif %}
@@ -152,6 +159,7 @@ workflow:
 default-values:
   image: factory
   num_node: 1
+  kitless: 0
   num_gpu: 1
   master_port: 29400
   num_cpu: 16
