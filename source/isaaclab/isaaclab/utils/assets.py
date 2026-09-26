@@ -410,6 +410,8 @@ def check_file_path(path: str) -> Literal[0, 1, 2]:
     """
     if os.path.isfile(path):
         return 1
+    if os.path.isabs(path):
+        return 0
 
     # a locally cached copy that still matches the server answers this without a download
     if _usable_mirror(path):
