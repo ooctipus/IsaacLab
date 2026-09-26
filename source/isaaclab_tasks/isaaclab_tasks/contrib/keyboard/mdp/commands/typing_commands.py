@@ -9,15 +9,14 @@ from __future__ import annotations
 
 import inspect
 import math
-import re
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
-import numpy as np
 import torch
 import warp as wp
+from isaaclab_newton.physics import NewtonManager
+from newton import JointType
 
-from isaaclab.controllers.differential_ik import DifferentialIKController
 from isaaclab.managers import CommandTerm, ManagerTermBase
 from isaaclab.utils.math import (
     axis_angle_from_quat,
@@ -25,16 +24,14 @@ from isaaclab.utils.math import (
     quat_conjugate,
     quat_from_angle_axis,
     quat_mul,
-    skew_symmetric_matrix,
 )
 
-from isaaclab_tasks.core.lift.mdp.utils import get_reset_state, set_reset_state
 from isaaclab_tasks.utils.success_monitor import SuccessMonitor, SuccessMonitorCfg
 
+from ..reset import capture_reset_state, restore_reset_state, tip_jacobian
 from . import typing_vis
 
 if TYPE_CHECKING:
-    from isaaclab.assets import Articulation
     from isaaclab.envs import ManagerBasedRLEnv
 
     from .typing_commands_cfg import LetterTypingCommandCfg
@@ -43,7 +40,9 @@ if TYPE_CHECKING:
 @wp.kernel
 def _resample_reset_kernel(
     env_ids: wp.array(dtype=wp.int32),
-    typeable: wp.array(dtype=wp.int64),
+    typeable: wp.array2d(dtype=wp.int64),
+    typeable_count: wp.array(dtype=wp.int32),
+    backspace_active: wp.array(dtype=wp.bool),
     lo: wp.int32,
     hi: wp.int32,
     seed: wp.int32,
@@ -66,18 +65,32 @@ def _resample_reset_kernel(
     i = wp.tid()
     e = env_ids[i]
     rng = wp.rand_init(seed, e)
-    m = int(typeable.shape[0])
+    world = e % typeable.shape[0]
+    m = typeable_count[world]
     width = int(target.shape[1])
+    if m == 0:
+        for j in range(width):
+            target[e, j] = wp.int64(-1)
+            typed[e, j] = wp.int64(-1)
+        target_len[e] = wp.int64(0)
+        typed_len[e] = wp.int64(0)
+        prefix_len[e] = wp.int64(0)
+        distance[e] = 0.0
+        max_prefix[e] = wp.int64(0)
+        min_prefix[e] = wp.int64(0)
+        return
 
     n = wp.randi(rng, lo, hi + 1)  # target_len in [lo, hi]
     # typed_len over the FULL buffer width [0, width] (not [0, target_len]) so a start can OVERSHOOT the word
     # (extra keys past a fully-correct prefix -> "backspace N times to success"), not just diverge mid-word.
     t = wp.randi(rng, 0, width + 1)
+    if not backspace_active[world]:
+        t = 0  # Without backspace, pre-filled mistakes cannot be corrected.
 
     # target word: n random typeable keys, then -1 padding.
     for j in range(width):
         if j < n:
-            target[e, j] = typeable[wp.randi(rng, 0, m)]
+            target[e, j] = typeable[world, wp.randi(rng, 0, m)]
         else:
             target[e, j] = wp.int64(-1)
 
@@ -90,7 +103,7 @@ def _resample_reset_kernel(
             if j < n and wp.randf(rng) < match_prob:
                 typed[e, j] = target[e, j]
             else:
-                typed[e, j] = typeable[wp.randi(rng, 0, m)]
+                typed[e, j] = typeable[world, wp.randi(rng, 0, m)]
         else:
             typed[e, j] = wp.int64(-1)
 
@@ -100,9 +113,12 @@ def _resample_reset_kernel(
     if t == n and n > 0:
         last = n - 1
         r = wp.randi(rng, 0, m)
-        if typeable[r] == target[e, last]:
+        if typeable[world, r] == target[e, last]:
             r = (r + 1) % m
-        typed[e, last] = typeable[r]
+        typed[e, last] = typeable[world, r]
+        if m == 1:
+            typed[e, last] = wp.int64(-1)
+            t = t - 1
 
     # correct-prefix length = longest common prefix of typed and target (bounded loop avoids an
     # out-of-bounds read and does not rely on short-circuit evaluation).
@@ -139,7 +155,7 @@ class LetterTypingCommand(CommandTerm):
 
     def __init__(self, cfg: LetterTypingCommandCfg, env: ManagerBasedRLEnv):
         super().__init__(cfg, env)
-        self.keyboard: Articulation = env.scene[cfg.object_name]
+        self.key_joints, self.key_bodies = cfg.keys, cfg.key_bodies
         # Buffer/observation width. Decoupled from letter_length so the obs size (and a trained policy's
         # input layer) stays fixed when letter_length is varied for evaluation; defaults to letter_length[1].
         self.max_len = int(cfg.max_len) if cfg.max_len is not None else int(cfg.letter_length[1])
@@ -149,46 +165,15 @@ class LetterTypingCommand(CommandTerm):
                 " sampled word always fits the buffer."
             )
 
-        # Gather maps from the articulation's (num_instances, dof | num_bodies) data into per-env GLOBAL
-        # key-slot order (slot = part * dof + local), so reads are plain advanced indexing (no hidden
-        # copy): joint_pos[inst_idx, col_idx] and body_pos_w[inst_idx, body_col_idx]. Backend-agnostic
-        # (PhysX prim-path order vs Newton regular grid) and agnostic to single vs fixed_dof partitioning.
-        view = self.keyboard.root_view
-        dof = len(self.keyboard.joint_names)
-        local_of_col = []
-        for name in self.keyboard.joint_names:
-            match = re.search(r"key_([0-9]+)_joint", name)
-            assert match is not None, f"{name!r} is not a keyboard key joint"
-            local_of_col.append(int(match.group(1)))
-        body_col_of_local = {local: self.keyboard.body_names.index(f"key_{local:03d}") for local in local_of_col}
-
-        prim_paths = getattr(view, "prim_paths", None)
-        if prim_paths is not None:
-            num_instances = len(prim_paths)
-            env_part = []
-            for path in prim_paths:
-                env_match = re.search(r"/env_([0-9]+)", path)
-                part_match = re.search(r"/part_([0-9]+)", path)
-                assert env_match is not None, f"{path!r} is not inside a numbered environment"
-                env_part.append((int(env_match.group(1)), int(part_match.group(1)) if part_match else 0))
-        else:
-            num_instances = int(view.count)
-            per_world = max(num_instances // self.num_envs, 1)
-            env_part = [(inst // per_world, inst % per_world) for inst in range(num_instances)]
-
-        self.num_keys = (num_instances // self.num_envs) * dof
-        inst = np.zeros((self.num_envs, self.num_keys), dtype=np.int64)
-        joint_col = np.zeros((self.num_envs, self.num_keys), dtype=np.int64)
-        body_col = np.zeros((self.num_envs, self.num_keys), dtype=np.int64)
-        for instance, (env_id, part) in enumerate(env_part):
-            for col, local in enumerate(local_of_col):
-                slot = part * dof + local
-                inst[env_id, slot] = instance
-                joint_col[env_id, slot] = col
-                body_col[env_id, slot] = body_col_of_local[local]
-        self._inst_idx = torch.as_tensor(inst, device=self.device)
-        self._col_idx = torch.as_tensor(joint_col, device=self.device)
-        self._body_col_idx = torch.as_tensor(body_col, device=self.device)
+        self.num_keys = cfg.keys.counts[0]
+        self._robot_q_ids = cfg.robot_joints.dense_ids()
+        self._robot_qd_ids = cfg.robot_dofs.dense_ids()
+        model = NewtonManager.get_model()
+        lower = cfg.robot_dofs.dense(model.joint_limit_lower)
+        upper = cfg.robot_dofs.dense(model.joint_limit_upper)
+        center, half = (lower + upper) * 0.5, (upper - lower) * (0.5 * cfg.soft_joint_pos_limit_factor)
+        self._robot_limits = torch.stack((center - half, center + half), dim=-1)
+        self._default_robot_q = torch.zeros_like(lower)
 
         # key roles in global slot space, resolved once at the config layer (see so101_env_cfg)
         self._typeable = torch.tensor(cfg.typeable_slots, device=self.device)
@@ -232,19 +217,26 @@ class LetterTypingCommand(CommandTerm):
         # "distance" metric at reset; stays None (falls back to terminal) when the buffer is disabled.
         self._buf_avg_distance: float | None = None
 
-        # Reset-pose IK: a differential-IK controller (built once) snaps the arm so its jaw tip hovers
-        # above the first key on every reset. See :meth:`_solve_reset_pose`.
-        self._reset_ik: DifferentialIKController | None = None
+        # Reset-pose IK uses selected scalar joints and a compact fingertip Jacobian.
+        # See :meth:`_solve_reset_pose` for the position-first solve.
+        self._reset_ik = cfg.reset.ik
         if cfg.reset.ik is not None:
             ik_cfg = cfg.reset.ik
-            self.robot: Articulation = env.scene[cfg.asset_name]
-            self._ik_joint_ids, _ = self.robot.find_joints(list(ik_cfg.joint_names))
-            body_ids, _ = self.robot.find_bodies(ik_cfg.body_name)
-            self._ik_body_idx = body_ids[0]
-            # Jacobian rows/cols drop the (fixed) base, mirroring DifferentialInverseKinematicsAction.
-            self._ik_jacobi_body_idx = self._ik_body_idx - 1 if self.robot.is_fixed_base else self._ik_body_idx
-            self._ik_jacobi_joint_ids = [j + self.robot.num_base_dofs for j in self._ik_joint_ids]
-            offset_pos = ik_cfg.body_offset.pos if ik_cfg.body_offset is not None else (0.0, 0.0, 0.0)
+            self._ik_q_ids = ik_cfg.joints.dense_ids()
+            self._ik_qd_ids = ik_cfg.dofs.dense_ids()
+            if self._ik_q_ids.shape != self._ik_qd_ids.shape or any(n != 1 for n in ik_cfg.body.counts):
+                raise ValueError("Reset IK requires scalar joints and one end-effector body per world.")
+            types = model.joint_type.numpy()[ik_cfg.dofs.joint_ids.numpy()]
+            if any(kind not in (JointType.REVOLUTE, JointType.PRISMATIC) for kind in types):
+                raise ValueError("Reset IK supports scalar revolute and prismatic joints.")
+            self._ik_jacobian = wp.zeros(
+                (self.num_envs, 6, self._ik_q_ids.shape[1]), dtype=wp.float32, device=self.device
+            )
+            lower = ik_cfg.dofs.dense(model.joint_limit_lower)
+            upper = ik_cfg.dofs.dense(model.joint_limit_upper)
+            center, half = (lower + upper) * 0.5, (upper - lower) * (0.5 * cfg.soft_joint_pos_limit_factor)
+            self._ik_limits = torch.stack((center - half, center + half), dim=-1)
+            offset_pos = ik_cfg.tip_offset
             offset = torch.tensor(offset_pos, device=self.device)
             self._ik_offset = offset.expand(self.num_envs, 3)
             # finger axis = direction from the link origin to the tip (used to aim the approach pitch).
@@ -262,7 +254,6 @@ class LetterTypingCommand(CommandTerm):
             # poses land at varying convergence (a reach-difficulty gradient). Normalize to (min, max).
             it = cfg.reset.ik_iters
             self._ik_iters = (int(it), int(it)) if isinstance(it, int) else (int(it[0]), int(it[1]))
-            self._reset_ik = DifferentialIKController(ik_cfg.controller, num_envs=self.num_envs, device=self.device)
 
         # Success-conditioned reset curriculum (buffer built lazily on the first reset; see _build_buffer).
         # Needs reset-IK to synthesize the snapshot poses, so it stays off when reset.ik is unset.
@@ -284,9 +275,6 @@ class LetterTypingCommand(CommandTerm):
         if self._cur_enabled:
             cap = int(cur.buffer_size)
             self._cur_buffer_size = cap
-            self._cur_reset_assets = (
-                tuple(cur.reset_assets) if cur.reset_assets is not None else (cfg.asset_name, cfg.object_name)
-            )
             self._cur_normal_weight = max(float(cur.normal_weight), 0.0)
             self._cur_sample_eps = max(float(cur.sample_eps), 1e-12)  # strictly positive: guards multinomial
             # Coverage-sampling knobs for the lazy buffer build (see _sample_diverse_states / _build_buffer).
@@ -409,7 +397,7 @@ class LetterTypingCommand(CommandTerm):
             dim=m_candidates,
             inputs=[
                 wp.from_torch(env_ids, dtype=wp.int32),
-                wp.from_torch(self._typeable.contiguous(), dtype=wp.int64),
+                *self._sampling_keys(),
                 int(lo),
                 int(hi),
                 int(self._resample_seed),
@@ -539,13 +527,15 @@ class LetterTypingCommand(CommandTerm):
                 self.typed_len[:n] = typlen[start : start + n]
                 self.prefix_len[:n] = self._prefix_len()[:n]
                 self._solve_reset_pose(ids)
-                state = get_reset_state(self._env, ids, self._cur_reset_assets, is_relative=True)
+                state = capture_reset_state(
+                    self._env, ids, self.cfg.reset_roots, self.cfg.reset_coords, self.cfg.reset_dofs
+                )
                 if self._buf_state is None:
                     self._buf_state = torch.zeros((cap, state.shape[1]), dtype=state.dtype, device=self.device)
                 self._buf_state[start : start + n] = state
                 # tip -> target-key residual of the (variably converged) pose, for the closeness stats.
-                ee_pos = self.robot.data.body_pos_w.torch[:, self._ik_body_idx]
-                ee_quat = self.robot.data.body_quat_w.torch[:, self._ik_body_idx]
+                ee_pose = self.cfg.reset.ik.body.dense(NewtonManager.get_state().body_q)[:, 0]
+                ee_pos, ee_quat = ee_pose[:, :3], ee_pose[:, 3:]
                 tip = ee_pos + quat_apply(ee_quat, self._ik_offset)
                 reach = torch.linalg.norm(tip - (self.target_key_pos_w() + self._ik_hover), dim=-1)
                 self._buf_reach[start : start + n] = reach[:n]
@@ -632,7 +622,9 @@ class LetterTypingCommand(CommandTerm):
     def _restore_snapshot(self, env_ids: torch.Tensor, snap: torch.Tensor):
         """Restore the physical state + typing command of snapshots ``snap`` into ``env_ids``."""
         assert self._buf_state is not None  # allocated in _build_buffer, which always runs first
-        set_reset_state(self._env, self._buf_state[snap], env_ids, self._cur_reset_assets, is_relative=True)
+        restore_reset_state(
+            self._env, self._buf_state[snap], env_ids, self.cfg.reset_roots, self.cfg.reset_coords, self.cfg.reset_dofs
+        )
         self.target[env_ids] = self._buf_target[snap]
         self.typed[env_ids] = self._buf_typed[snap]
         self.target_len[env_ids] = self._buf_target_len[snap]
@@ -646,6 +638,23 @@ class LetterTypingCommand(CommandTerm):
         self.min_prefix[env_ids] = prefix
         self.new_high[env_ids] = False
         self.new_low[env_ids] = False
+        tokens = torch.cat((self.target[env_ids], self.typed[env_ids]), dim=1)
+        membership = self.key_joints.dense_active()[env_ids]
+        active = membership.gather(1, tokens.clamp(min=0))
+        needs_backspace = self.typed_len[env_ids] > prefix
+        invalid = env_ids[((tokens >= 0) & ~active).any(dim=1) | (needs_backspace & ~membership[:, self._backspace])]
+        if invalid.numel():
+            self._env_source[invalid] = -1
+            self._resample_normal(invalid)
+
+    def _sampling_keys(self):
+        """Pack eligible slots per world at reset; ordinary solver sleep is irrelevant."""
+        active = self.key_joints.dense_active()[:, self._typeable]
+        order = torch.argsort(active.to(torch.int32), dim=1, descending=True, stable=True)
+        keys = self._typeable.expand(self.num_envs, -1).gather(1, order).contiguous()
+        counts = active.sum(dim=1).to(torch.int32).contiguous()
+        backspace = self.key_joints.dense_active()[:, self._backspace].contiguous()
+        return wp.from_torch(keys, dtype=wp.int64), wp.from_torch(counts, dtype=wp.int32), wp.from_torch(backspace)
 
     def _resample_normal(self, env_ids: Sequence[int] | torch.Tensor):
         # Normal (random) reset path: draw the target word + a match_prob-typed start buffer, guard against an
@@ -663,7 +672,7 @@ class LetterTypingCommand(CommandTerm):
             dim=k,
             inputs=[
                 wp.from_torch(env_ids_t.to(torch.int32).contiguous(), dtype=wp.int32),
-                wp.from_torch(self._typeable.contiguous(), dtype=wp.int64),
+                *self._sampling_keys(),
                 int(lo),
                 int(hi),
                 int(self._resample_seed),
@@ -690,12 +699,13 @@ class LetterTypingCommand(CommandTerm):
         if self._press_level is None:
             # Convention (keyboard_schema.KEY_ACTUATION_FRACTION): rest at upper_limit (~0), bottom at
             # lower_limit (-travel); a key actuates once depressed past a fraction of its travel.
-            limits = self.keyboard.data.joint_pos_limits.torch[self._inst_idx, self._col_idx]  # (N, K, 2)
-            lower, upper = limits[..., 0], limits[..., 1]
+            model = NewtonManager.get_model()
+            lower = self.cfg.key_dofs.dense(model.joint_limit_lower)
+            upper = self.cfg.key_dofs.dense(model.joint_limit_upper)
             self._press_level = upper - self.cfg.actuation_fraction * (upper - lower)
 
-        pos = self.keyboard.data.joint_pos.torch[self._inst_idx, self._col_idx]  # (N, K)
-        pressed = pos < self._press_level
+        pos = self.key_joints.dense(NewtonManager.get_state().joint_q)
+        pressed = (pos < self._press_level) & self.key_joints.dense_active()
         # First control step after a reset: adopt the carried-over pressed keys as the baseline so a key
         # already held at reset is not counted as a fresh keystroke. Applied unconditionally via a masked
         # write, so there is no per-step ``.any()`` device->host sync.
@@ -844,10 +854,10 @@ class LetterTypingCommand(CommandTerm):
         moving-jaw tip. Position is the primary task (always driven to zero); the ``~40%`` of iterations
         after the base pan settles also drive the approach orientation from ``reset.ik_rpy_deg`` (see
         :meth:`_approach_target_quat`), but only within the null space of position so the tip never leaves
-        the key. Each iteration writes the joints and calls ``sim.forward()``; the lazy data layer
-        recomputes the tip pose and Jacobian from the written joints, so the loop converges with no
+        the key. Each iteration writes the joints and calls ``sim.forward()``; the task
+        recomputes the tip pose and selected Jacobian from the written joints, so the loop converges with no
         physics (dynamics) step. The solve runs over
-        all envs (the controller is sized to ``num_envs``) but only ``env_ids`` are written, leaving
+        all envs but only ``env_ids`` are written, leaving
         mid-episode envs untouched.
         """
         if self._reset_ik is None or len(env_ids) == 0:
@@ -858,6 +868,14 @@ class LetterTypingCommand(CommandTerm):
         # the read can race the kernel and see stale lengths, making needs_backspace False and snapping the
         # arm to the next key instead of the backspace key for a pre-filled wrong buffer.
         wp.synchronize()
+        eligible = (
+            (self.target_len > 0)
+            & self.cfg.robot_joints.dense_active().all(dim=1)
+            & self.cfg.reset.ik.body.dense_active()[:, 0]
+        )
+        env_ids = env_ids[eligible[env_ids]]
+        if len(env_ids) == 0:
+            return
         sim = self._env.sim
         # Apply the pre-solve reset (e.g. keyboard-pose randomization) to these envs BEFORE reading key
         # positions below, so the arm is posed to this reset's keyboard. Runs per build batch (so the buffer
@@ -875,16 +893,18 @@ class LetterTypingCommand(CommandTerm):
         # reset_joints_by_offset event it replaces) so the reset start-states carry the same joint diversity as
         # the no-IK case; zero velocity. On low IK-iteration snapshots the offset survives into the pose, while
         # fully-converged solves reach the same hover regardless of the seed. noise == 0 -> exact default.
-        default_q = self.robot.data.default_joint_pos.torch[env_ids]
+        default_q = self._default_robot_q[env_ids]
         noise = self.cfg.reset.ik_seed_joint_noise
         if noise > 0.0:
             seed_q = default_q + (torch.rand_like(default_q) * 2.0 - 1.0) * noise
-            limits = self.robot.data.soft_joint_pos_limits.torch[env_ids]
+            limits = self._robot_limits[env_ids]
             seed_q = torch.clamp(seed_q, limits[..., 0], limits[..., 1])
         else:
             seed_q = default_q
-        self.robot.write_joint_position_to_sim_index(position=seed_q, env_ids=env_ids)
-        self.robot.write_joint_velocity_to_sim_index(velocity=torch.zeros_like(default_q), env_ids=env_ids)
+        state = NewtonManager.get_state()
+        wp.to_torch(state.joint_q)[self._robot_q_ids[env_ids]] = seed_q
+        wp.to_torch(state.joint_qd)[self._robot_qd_ids[env_ids]] = 0.0
+        NewtonManager.invalidate_fk(env_ids=wp.from_torch(env_ids.to(torch.int32)))
         sim.forward()
         # world-frame hover target above each env's first key (all envs; only env_ids are written back).
         target_w = self.target_key_pos_w() + self._ik_hover
@@ -896,18 +916,16 @@ class LetterTypingCommand(CommandTerm):
         max_step = 0.2  # rad/iter cap so a near-singular DLS solve can't flip the arm on a hard key
         lambda_sq = 0.05**2  # damped-least-squares damping (squared), for the pseudo-inverses below
         eye_task = torch.eye(3, device=self.device)
-        eye_joint = torch.eye(len(self._ik_joint_ids), device=self.device)
+        eye_joint = torch.eye(self._ik_q_ids.shape[1], device=self.device)
         quat_des: torch.Tensor | None = None
         for i in range(hi):
-            ee_pos_w = self.robot.data.body_pos_w.torch[:, self._ik_body_idx]
-            ee_quat_w = self.robot.data.body_quat_w.torch[:, self._ik_body_idx]
+            ee_pose = self.cfg.reset.ik.body.dense(NewtonManager.get_state().body_q)[:, 0]
+            ee_pos_w, ee_quat_w = ee_pose[:, :3], ee_pose[:, 3:]
             # shift the parent-body pose/Jacobian to the jaw tip (world frame).
             lever_w = quat_apply(ee_quat_w, self._ik_offset)  # tip offset expressed in world
             tip_pos_w = ee_pos_w + lever_w
-            jac = self.robot.data.body_link_jacobian_w.torch[:, self._ik_jacobi_body_idx, :, self._ik_jacobi_joint_ids]
-            jac = jac.clone()
-            jac[:, 0:3, :] = jac[:, 0:3, :] + torch.bmm(-skew_symmetric_matrix(lever_w), jac[:, 3:, :])
-            q_arm = self.robot.data.joint_pos.torch[:, self._ik_joint_ids]
+            jac = tip_jacobian(self.cfg.reset.ik, self._ik_jacobian)
+            q_arm = self.cfg.reset.ik.joints.dense(NewtonManager.get_state().joint_q)
 
             # Task-priority damped least squares. The 5-DoF arm cannot reach an arbitrary key position AND
             # a downward pitch, so full-pose DLS trades away position (measured ~6 cm off). Instead make
@@ -932,13 +950,12 @@ class LetterTypingCommand(CommandTerm):
                 dq = dq + null_proj @ (rot_pinv @ e_rot.unsqueeze(-1))
 
             q_des = q_arm + torch.clamp(dq.squeeze(-1), -max_step, max_step)
-            limits = self.robot.data.soft_joint_pos_limits.torch[:, self._ik_joint_ids]
+            limits = self._ik_limits
             q_des = torch.clamp(q_des, limits[..., 0], limits[..., 1])
             # Freeze envs that have spent their sampled iteration budget (write back their current pose).
             q_des = torch.where((i < iters_env)[:, None], q_des, q_arm)
-            self.robot.write_joint_position_to_sim_index(
-                position=q_des[env_ids], joint_ids=self._ik_joint_ids, env_ids=env_ids
-            )
+            wp.to_torch(NewtonManager.get_state().joint_q)[self._ik_q_ids[env_ids]] = q_des[env_ids]
+            NewtonManager.invalidate_fk(env_ids=wp.from_torch(env_ids.to(torch.int32)))
             sim.forward()
 
     def _approach_target_quat(self, ee_quat_w: torch.Tensor) -> torch.Tensor:
@@ -980,7 +997,7 @@ class LetterTypingCommand(CommandTerm):
 
     def key_pos_w(self) -> torch.Tensor:
         """World positions of every key in global slot order, shape ``(num_envs, num_keys, 3)`` [m]."""
-        return self.keyboard.data.body_pos_w.torch[self._inst_idx, self._body_col_idx]
+        return self.key_bodies.dense(NewtonManager.get_state().body_q)[..., :3]
 
     def target_key_slot(self) -> torch.Tensor:
         """Global key slot the agent should press next, shape ``(num_envs,)``.
@@ -1001,7 +1018,7 @@ class LetterTypingCommand(CommandTerm):
         """World position of the next key to press, shape ``(num_envs, 3)`` [m] (see :meth:`target_key_slot`)."""
         env_idx = torch.arange(self.num_envs, device=self.device)
         slot = self.target_key_slot()
-        return self.keyboard.data.body_pos_w.torch[self._inst_idx[env_idx, slot], self._body_col_idx[env_idx, slot]]
+        return self.key_pos_w()[env_idx, slot]
 
     """
     Debug visualization: LED dot-matrix banner of the target and typed words plus a next-key halo.
@@ -1055,7 +1072,7 @@ class LetterTypingCommand(CommandTerm):
         )
 
     def _debug_vis_callback(self, event):
-        if not self.keyboard.is_initialized:
+        if not hasattr(self, "key_bodies"):
             return
         if not getattr(self, "_viz_ready", False):
             self._build_viz_resources()

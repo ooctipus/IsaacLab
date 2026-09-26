@@ -26,7 +26,7 @@ from . import agents
 
 gym.register(
     id="IsaacContrib-Keyboard-SO101",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    entry_point=f"{__name__}.so101_env:SO101KeyboardEnv",
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point": f"{__name__}.so101_env_cfg:SO101KeyboardEnvCfg",

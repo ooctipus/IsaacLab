@@ -11,30 +11,21 @@ from typing import TYPE_CHECKING
 
 import torch
 
-from isaaclab.managers import ManagerTermBase, SceneEntityCfg
+from isaaclab.managers import ManagerTermBase
 from isaaclab.utils.math import quat_apply
 
 if TYPE_CHECKING:
-    from isaaclab.assets import Articulation
     from isaaclab.envs import ManagerBasedRLEnv
 
     from .commands import LetterTypingCommand
 
 
-def mechanical_power(env: ManagerBasedRLEnv, robot_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
-    """Compute total absolute mechanical power across the robot joints [W].
+def mechanical_power(env: ManagerBasedRLEnv, joints, action_name: str = "action") -> torch.Tensor:
+    """Absolute implicit-PD telemetry power [W], sampled at the existing physics-step boundary."""
+    from isaaclab_newton.physics import NewtonManager
 
-    Non-finite values that can occur briefly during a reset are replaced with zero.
-
-    Args:
-        env: The environment instance.
-        robot_cfg: Scene entity for the robot articulation.
-
-    Returns:
-        Total absolute joint power [W], shape ``(num_envs,)``.
-    """
-    robot: Articulation = env.scene[robot_cfg.name]
-    power = torch.sum((robot.data.applied_torque.torch * robot.data.joint_vel.torch).abs(), dim=1)
+    action = env.action_manager.get_term(action_name)
+    power = (action.applied_effort * joints.dense(NewtonManager.get_state().joint_qd)).abs().sum(dim=1)
     return torch.where(torch.isfinite(power), power, torch.zeros_like(power))
 
 
@@ -78,73 +69,26 @@ def typing_success(env: ManagerBasedRLEnv, command_name: str) -> torch.Tensor:
         command_name: Name of the :class:`LetterTypingCommand` term to read completion from.
     """
     command: LetterTypingCommand = env.command_manager.get_term(command_name)  # type: ignore
-    return (command.distance == 0).float()
+    return ((command.distance == 0) & (command.target_len > 0)).float()
 
 
 class reach_key(ManagerTermBase):
-    r"""Reach reward toward the next target key using a tanh kernel on either jaw tip.
+    """Reward the closest selected jaw tip to the key, including a downward press offset [m]."""
 
-    Each gripper jaw has a tip at a fixed offset in its link frame. The reward uses the *closer* of
-    the two tips to the next target key, so reaching with either jaw counts:
-
-    .. math::
-
-        r = 1 - \tanh\!\left(\frac{\min(d_\text{moving}, d_\text{fixed})}{\text{std}}\right)
-
-    The value is ``1`` when a tip is on the (lowered) target and decays toward ``0`` with distance
-    (``std`` [m] sets the falloff scale), so it stays in ``(0, 1]``. The target is placed
-    ``press_depth`` [m] below the key (along world ``-Z``) so the optimum sits past the actuation point,
-    encouraging the policy to push down rather than just hover on the cap. Body indices, tip offsets, and
-    the press offset are resolved once at construction so each step only does the gather and kernel.
-
-    Args (from ``cfg.params``):
-        command_name: Name of the :class:`LetterTypingCommand` term providing the next target key.
-        moving_jaw_body: Body name of the moving jaw link.
-        moving_jaw_offset: Tip offset [m] in the moving jaw link frame.
-        fixed_jaw_body: Body name of the fixed jaw link.
-        fixed_jaw_offset: Tip offset [m] in the fixed jaw link frame.
-        std: Distance [m] falloff scale of the tanh kernel. Defaults to ``0.2``.
-        press_depth: Distance [m] to lower the reach target below the key along world ``-Z`` so reaching
-            it requires pressing the key down. Defaults to ``0.0`` (reach the key itself).
-        asset_cfg: Scene entity for the robot whose jaw links are read. Defaults to ``SceneEntityCfg("robot")``.
-    """
-
-    def __init__(self, cfg, env: ManagerBasedRLEnv):
+    def __init__(self, cfg, env):
         super().__init__(cfg, env)
-        asset_cfg: SceneEntityCfg = cfg.params.get("asset_cfg", SceneEntityCfg("robot"))
-        self.robot = env.scene[asset_cfg.name]
-        self.std: float = cfg.params.get("std", 0.2)  # type: ignore
-        # resolve body indices and broadcast tip offsets once (they never change at runtime).
-        self._moving = self.robot.body_names.index(cfg.params["moving_jaw_body"])
-        self._fixed = self.robot.body_names.index(cfg.params["fixed_jaw_body"])
-        self._off_moving = torch.tensor(cfg.params["moving_jaw_offset"], device=env.device).expand(env.num_envs, 3)
-        self._off_fixed = torch.tensor(cfg.params["fixed_jaw_offset"], device=env.device).expand(env.num_envs, 3)
-        # world -Z offset that lowers the reach target below the key to encourage pressing.
+        self._offsets = torch.tensor(cfg.params["tip_offsets"], device=env.device).unsqueeze(0)
         self._press_offset = torch.tensor((0.0, 0.0, cfg.params.get("press_depth", 0.0)), device=env.device)
 
     def __call__(
-        self,
-        env: ManagerBasedRLEnv,
-        command_name: str,
-        moving_jaw_body: str,
-        moving_jaw_offset: tuple[float, float, float],
-        fixed_jaw_body: str,
-        fixed_jaw_offset: tuple[float, float, float],
-        std: float = 0.2,
-        press_depth: float = 0.0,
-        asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
-    ) -> torch.Tensor:
-        command: LetterTypingCommand = env.command_manager.get_term(command_name)  # type: ignore
-        # aim slightly below the key (world -Z) so the tip is rewarded for pressing, not just touching.
-        target_pos_w = command.target_key_pos_w() - self._press_offset  # (N, 3)
+        self, env, bodies, tip_offsets, command_name: str = "typing", std: float = 0.2, press_depth: float = 0.0
+    ):
+        from isaaclab_newton.physics import NewtonManager
 
-        body_pos_w = self.robot.data.body_pos_w.torch
-        body_quat_w = self.robot.data.body_quat_w.torch
-        tip_moving = body_pos_w[:, self._moving] + quat_apply(body_quat_w[:, self._moving], self._off_moving)
-        tip_fixed = body_pos_w[:, self._fixed] + quat_apply(body_quat_w[:, self._fixed], self._off_fixed)
-
-        distance = torch.minimum(
-            torch.linalg.norm(tip_moving - target_pos_w, dim=-1),
-            torch.linalg.norm(tip_fixed - target_pos_w, dim=-1),
-        )
-        return 1.0 - torch.tanh(distance / self.std)
+        command = env.command_manager.get_term(command_name)
+        pose = bodies.dense(NewtonManager.get_state().body_q)
+        tips = pose[..., :3] + quat_apply(pose[..., 3:], self._offsets.expand(pose.shape[0], -1, -1))
+        target = command.target_key_pos_w() - self._press_offset
+        distance = torch.linalg.vector_norm(tips - target[:, None], dim=-1)
+        distance = torch.where(bodies.dense_active(), distance, float("inf")).min(dim=1).values
+        return 1.0 - torch.tanh(distance / std)

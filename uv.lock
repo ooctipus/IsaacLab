@@ -3204,7 +3204,7 @@ wheels = [
 [[package]]
 name = "mujoco-warp"
 version = "3.14.0"
-source = { git = "https://github.com/ooctipus/mujoco_warp.git?rev=ooctipus%2Fheterogeneous-envs#cc97eea203bb6d18f5795cd5922a65da1e1051ce" }
+source = { git = "https://github.com/ooctipus/mujoco_warp.git?rev=ooctipus%2Fheterogeneous-envs#4e7374ad18791248c102bcc0812ed5b5247608d7" }
 dependencies = [
     { name = "absl-py" },
     { name = "etils", extra = ["epath"] },
@@ -3289,7 +3289,7 @@ wheels = [
 [[package]]
 name = "newton"
 version = "1.7.0.dev0"
-source = { git = "https://github.com/ooctipus/newton.git?rev=ooctipus%2Fheterogeneous-envs#3b7c3c848b9ff012ab28273d09dc00523dcd961b" }
+source = { git = "https://github.com/ooctipus/newton.git?rev=ooctipus%2Fheterogeneous-envs#1f6c8388b568bd84104dc966892056dd2c2b951f" }
 dependencies = [
     { name = "warp-lang" },
 ]

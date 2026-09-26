@@ -1866,3 +1866,32 @@ def test_deterministic_mode_allows_those_sensors_without_a_guarantee(
     NewtonManager._validate_deterministic_solver_cfg(
         MJWarpSolverCfg(disable_sensors=True), wp.DeterministicMode.NOT_GUARANTEED
     )
+
+
+@pytest.mark.parametrize("selector", ["env_ids", "env_mask"])
+def test_invalidate_fk_selects_ragged_worlds_without_views(monkeypatch, selector):
+    """A raw-state write invalidates only the selected world's model articulations."""
+    from isaaclab.physics import PhysicsManager
+
+    model = SimpleNamespace(
+        world_count=2,
+        articulation_count=3,
+        articulation_world=wp.array([0, 1, 1], dtype=wp.int32, device="cpu"),
+    )
+    worlds = wp.zeros(3, dtype=wp.bool, device="cpu")
+    articulations = wp.zeros(3, dtype=wp.bool, device="cpu")
+    monkeypatch.setattr(NewtonManager, "backend", SimpleNamespace(model=model))
+    monkeypatch.setattr(NewtonManager, "_world_reset_mask", worlds)
+    monkeypatch.setattr(NewtonManager, "_fk_reset_mask", articulations)
+    monkeypatch.setattr(NewtonManager, "_reconciliation_pending", False)
+    monkeypatch.setattr(NewtonManager, "_mark_transforms_changed", classmethod(lambda cls: None))
+    monkeypatch.setattr(PhysicsManager, "_device", "cpu")
+    selection = (
+        wp.array([1], dtype=wp.int32, device="cpu")
+        if selector == "env_ids"
+        else wp.array([False, True], dtype=wp.bool, device="cpu")
+    )
+    NewtonManager.invalidate_fk(**{selector: selection})
+    np.testing.assert_array_equal(worlds.numpy(), [False, True, False])
+    np.testing.assert_array_equal(articulations.numpy(), [False, True, True])
+    assert NewtonManager._reconciliation_pending

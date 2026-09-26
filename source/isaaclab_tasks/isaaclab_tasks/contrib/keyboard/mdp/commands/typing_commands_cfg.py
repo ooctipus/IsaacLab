@@ -9,11 +9,12 @@ from __future__ import annotations
 
 from dataclasses import MISSING
 
-from isaaclab.envs.mdp.actions.actions_cfg import DifferentialInverseKinematicsActionCfg
 from isaaclab.managers import CommandTermCfg, EventTermCfg
 from isaaclab.utils import configclass
 
 from ...keyboards.keyboard_schema import KEY_ACTUATION_FRACTION
+from ...newton_selection import NewtonSelectorCfg
+from ..reset import KeyboardResetIKCfg
 from .typing_commands import LetterTypingCommand
 
 
@@ -40,13 +41,12 @@ class LetterTypingCommandCfg(CommandTermCfg):
         # --- Reset pose: differential-IK snap of the arm above the first key (SO101-specific; set in the env
         # cfg). Runs on EVERY reset whenever `ik` is set - independent of the replay curriculum below (which
         # `enabled` gates); the curriculum's snapshots are built by running this same snap once per candidate.
-        ik: DifferentialInverseKinematicsActionCfg | None = MISSING
+        ik: KeyboardResetIKCfg | None = MISSING
         """Differential-IK setup that snaps the arm so the moving-jaw tip hovers above the first key, angled
         for a downward press, on every reset (no sim stepping; see
         :meth:`~...typing_commands.LetterTypingCommand._solve_reset_pose`). SO101-specific, so it is set in the
         env cfg rather than defaulted here; set to ``None`` to leave the arm wherever the other reset events
-        place it. ``pose`` command type is required (the solve also drives the approach pitch); ``scale`` and
-        ``clip`` are unused."""
+        place it. The task computes the fingertip Jacobian for the selected scalar arm joints."""
 
         ik_rpy_deg: tuple[float, float, float] = MISSING
         """Approach orientation ``(roll, pitch, yaw)`` [deg] of the moving-jaw finger axis at reset.
@@ -61,7 +61,7 @@ class LetterTypingCommandCfg(CommandTermCfg):
         """Height [m] above the target key at which the jaw tip is placed on reset."""
 
         ik_iters: int | tuple[int, int] = MISSING
-        """Damped-least-squares iterations per reset solve (the lazy data layer refreshes FK and the Jacobian
+        """Damped-least-squares iterations per reset solve (the task refreshes FK and the selected fingertip Jacobian
         after each joint write, so no physics step is taken). The first ~60% of the iterations position the tip;
         the rest also drive the approach pitch.
 
@@ -156,10 +156,6 @@ class LetterTypingCommandCfg(CommandTermCfg):
         history_len: int = 20
         """Sliding-window length of the per-snapshot success monitor."""
 
-        reset_assets: tuple[str, ...] | None = None
-        """Scene entity names whose physical state (root + joints) is snapshotted and restored for the replay.
-        Defaults (``None``) to ``(asset_name, object_name)`` - i.e. the robot and the keyboard."""
-
         pre_solve_reset: EventTermCfg | None = None
         """Event term applied to the resetting envs right before the reset-IK solve (and once per build
         batch) - typically randomizing the keyboard root pose so the arm is posed to *this* reset's keyboard.
@@ -170,11 +166,16 @@ class LetterTypingCommandCfg(CommandTermCfg):
 
     class_type: type = LetterTypingCommand
 
-    asset_name: str = MISSING
-    """Robot asset name. Used by the reset-pose IK solve (see ``reset_above_key``)."""
-
-    object_name: str = MISSING
-    """Keyboard articulation asset name whose ``key_*_joint`` joints are read."""
+    keys: NewtonSelectorCfg = MISSING
+    key_dofs: NewtonSelectorCfg = MISSING
+    key_bodies: NewtonSelectorCfg = MISSING
+    robot_joints: NewtonSelectorCfg = MISSING
+    robot_dofs: NewtonSelectorCfg = MISSING
+    reset_roots: NewtonSelectorCfg = MISSING
+    reset_coords: NewtonSelectorCfg = MISSING
+    reset_dofs: NewtonSelectorCfg = MISSING
+    soft_joint_pos_limit_factor: float = 0.98
+    """Fraction of authored position-limit range used by the reset IK."""
 
     letter_length: tuple[int, int] = (1, 5)
     """``(min, max)`` target sequence length sampled per episode."""

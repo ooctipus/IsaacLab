@@ -187,6 +187,14 @@ def _scatter_world_reset_mask_from_ids(env_ids: wp.array(dtype=wp.int32), world_
     world_mask[env_ids[wp.tid()]] = True
 
 
+@wp.kernel(enable_backward=False)
+def _mark_world_articulations(articulation_world: wp.array[int], world_mask: wp.array[bool], fk_mask: wp.array[bool]):
+    articulation = wp.tid()
+    world = articulation_world[articulation]
+    if world >= 0 and world_mask[world]:
+        fk_mask[articulation] = True
+
+
 class NewtonBackend:
     """Own one finalized Newton model and its native state and control buffers."""
 
@@ -1133,6 +1141,23 @@ class NewtonManager(PhysicsManager):
         cls._model_changes.add(change)
 
     @classmethod
+    def notify_model_changed(cls, change: ModelFlags, *, world_mask: wp.array | None = None) -> None:
+        """Synchronize authored properties before a state read or reset.
+
+        Args:
+            change: Categories of model properties that were modified.
+            world_mask: Worlds to wake, including the trailing global-world entry.
+                Selective notification requires the MuJoCo solver. Property writes
+                themselves must already be restricted to the selected worlds.
+        """
+        if world_mask is None:
+            cls._solver.notify_model_changed(change)
+        elif isinstance(cls._solver, SolverMuJoCo):
+            cls._solver.notify_model_changed(change, world_mask=world_mask)
+        else:
+            raise NotImplementedError("Selective property notification requires SolverMuJoCo.")
+
+    @classmethod
     def invalidate_fk(
         cls,
         env_mask: wp.array | None = None,
@@ -1152,7 +1177,9 @@ class NewtonManager(PhysicsManager):
                 Used by ``_index`` write methods.
             articulation_ids: Mapping from ``(world, arti)`` to model articulation
                 index. Shape ``(world_count, count_per_world)``. Obtained from
-                ``ArticulationView.articulation_ids``.
+                ``ArticulationView.articulation_ids``. If omitted, all model
+                articulations in the selected worlds are invalidated, including
+                worlds with different articulation counts.
         """
         cls._mark_transforms_changed()
 
@@ -1174,6 +1201,15 @@ class NewtonManager(PhysicsManager):
                 dim=(env_ids.shape[0], articulation_ids.shape[1]),
                 inputs=[env_ids, articulation_ids],
                 outputs=[NewtonManager._world_reset_mask, NewtonManager._fk_reset_mask],
+                device=PhysicsManager._device,
+            )
+        elif env_mask is not None or env_ids is not None:
+            cls.invalidate_body_state(env_ids=env_ids, env_mask=env_mask)
+            wp.launch(
+                _mark_world_articulations,
+                dim=cls.backend.model.articulation_count,
+                inputs=[cls.backend.model.articulation_world, cls._world_reset_mask],
+                outputs=[cls._fk_reset_mask],
                 device=PhysicsManager._device,
             )
         else:
