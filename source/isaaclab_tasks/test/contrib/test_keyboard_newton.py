@@ -395,6 +395,14 @@ def test_keyboard_variant_reset_restores_geometry_inertia_and_sleep(use_graph):
                     assert command._buf_variant[snapshot] == bank.variant_ids[world]
             with pytest.raises(ValueError, match="outside"):
                 task.reset_keyboard([0], [len(bank.layouts)])
+            # Ordinary episode resets must choose a different registered keyboard for every reset world.
+            for _ in range(8):
+                previous = bank.variant_ids.clone()
+                env.reset()
+                assert torch.all(bank.variant_ids != previous)
+            previous = bank.variant_ids.clone()
+            task._reset_idx([0])
+            assert bank.variant_ids[0] != previous[0] and bank.variant_ids[1] == previous[1]
             wp.to_torch(task.selections.world_active)[0] = False
             task.reset_keyboard([0], [0])
             assert not command.key_joints.dense_active()[0].any()

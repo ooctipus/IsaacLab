@@ -192,7 +192,9 @@ Reset-time keyboard variants
 The default bank contains every multiple of six active keys from six to 108 and two different
 108-key styles. Variant 0 is the reference 108-key keyboard, variants 1 through 17 have 6 through
 102 keys, and variant 18 is another 108-key style. Observations retain their padded 108-slot layout.
-Every normal episode reset samples a registered variant independently per world. For explicit review:
+Every normal episode reset samples a different registered variant independently per world, excluding
+that world's previous variant when the bank has more than one entry. Explicit variant requests may
+reuse the current keyboard. For explicit review:
 
 .. code-block:: python
 

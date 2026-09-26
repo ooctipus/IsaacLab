@@ -73,11 +73,13 @@ class SO101KeyboardEnv(ManagerBasedRLEnv):
     def _reset_idx(self, env_ids, *, variant_ids=None):
         ids = torch.as_tensor(env_ids, dtype=torch.long, device=self.device)
         if self.keyboard_variants is not None:
-            variants = (
-                torch.randint(len(self.keyboard_variants.layouts), ids.shape, device=self.device)
-                if variant_ids is None
-                else torch.as_tensor(variant_ids, dtype=torch.long, device=self.device)
-            )
+            if variant_ids is None:
+                count = len(self.keyboard_variants.layouts)
+                # A nonzero cyclic offset excludes the previous variant; a one-entry bank stays at zero.
+                offsets = torch.randint(1, max(count, 2), ids.shape, device=self.device)
+                variants = (self.keyboard_variants.variant_ids[ids] + offsets) % count
+            else:
+                variants = torch.as_tensor(variant_ids, dtype=torch.long, device=self.device)
             self.keyboard_variants.apply(ids, variants)
         super()._reset_idx(ids)
 
