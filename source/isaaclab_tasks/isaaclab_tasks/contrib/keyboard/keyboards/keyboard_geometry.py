@@ -10,6 +10,7 @@ from __future__ import annotations
 import math
 import random
 from collections.abc import Sequence
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from .keyboard_layouts import sample_layout
@@ -28,6 +29,14 @@ def generate_keyboard(cfg: KeyboardSpawnerCfg) -> ResolvedKeyboard:
     layout = sample_layout(cfg.family, cfg.families, rng)
     family = layout.family
     unit_keys = tuple(layout.keys)
+    if cfg.key_count is not None:
+        if not 1 <= cfg.key_count <= len(unit_keys):
+            raise ValueError(f"key_count must be between 1 and {len(unit_keys)} for {family}.")
+        selected = list(unit_keys[: cfg.key_count])
+        backspace = next((key for key in unit_keys if key.label.lower() in ("backspace", "bksp")), None)
+        if backspace is not None and backspace not in selected:
+            selected[-1] = replace(selected[-1], name=backspace.name, label=backspace.label, group=backspace.group)
+        unit_keys = tuple(selected)
     style = sample_style(cfg.style, family, rng)
     deck_quat = _deck_quat(style)
     active_keys = _generate_keys(unit_keys, style, cfg)
@@ -276,9 +285,8 @@ def _apply_deck_quat(
     )
 
 
-# Fixed number of case-trim visual boxes authored per keyboard, regardless of base profile. Every
-# variant pads to this count so the per-env shape topology is identical (required by Newton's shared
-# ArticulationView). Must be >= the most any single profile emits.
+# Fixed case-trim slots keep registered variants compatible with the model's shape allocation.
+# Must be >= the most any single profile emits.
 _BASE_VISUAL_SLOTS = 6
 
 
@@ -390,9 +398,7 @@ def base_profile_visuals(keyboard: ResolvedKeyboard) -> tuple[BaseVisual, ...]:
         )
     elif profile != "slab":
         raise ValueError(f"Unsupported keyboard base_profile '{profile}'.")
-    # Pad to a fixed trim-box count so every variant authors identical shape topology. Newton's shared
-    # ArticulationView requires uniform per-world strides (visual shapes included), so a variant-
-    # dependent trim count breaks it. Padding boxes are tiny (effectively invisible) and visual-only.
+    # Preserve registered shape slots across profiles with tiny visual-only padding boxes.
     if len(visuals) > _BASE_VISUAL_SLOTS:
         raise ValueError(
             f"base_profile '{profile}' emits {len(visuals)} trim pieces (> _BASE_VISUAL_SLOTS="

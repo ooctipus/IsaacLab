@@ -130,12 +130,12 @@ Authoritative references
 Task-local selections: SO101 keyboard
 ------------------------------------
 
-``IsaacContrib-Keyboard-SO101`` authors its robot and 108-key keyboard with
+``IsaacContrib-Keyboard-SO101`` authors its robot and fixed-capacity keyboard with
 ``AssetBaseCfg`` and binds its own selectors in ``SO101KeyboardEnv.load_managers``.
 The source configuration stays declarative; bindings belong to one finalized model.
 Actions, MDP terms, reset snapshots, and selected fingertip Jacobians read Newton arrays
-without creating an ``ArticulationView``. The baseline keeps one keyboard articulation
-per world and uses MJWarp with Newton-generated contacts.
+without creating an ``ArticulationView``. Each world has 18 six-DOF keyboard articulations
+plus the robot. Native MJWarp contacts and sleeping exclude unused partitions from dynamics.
 
 For example, the task composes a joint observation and relative key-position observation as follows:
 
@@ -152,7 +152,7 @@ For example, the task composes a joint observation and relative key-position obs
    key_positions = ObservationTermCfg(
        func=mdp.key_positions_b,
        params={
-           "keys": NewtonSelectorCfg(BODY, path=".*/Keyboard/keys/key_.*", count_per_world=108),
+           "keys": NewtonSelectorCfg(BODY, path=".*/Keyboard/parts/part_.*/keys/key_.*", count_per_world=108),
            "root": NewtonSelectorCfg(BODY, path=".*/Robot/base", count_per_world=1),
        },
    )
@@ -170,9 +170,9 @@ are an explicit, uniform policy boundary and zero excluded slots. The selectors 
 not state: obtain the current state with ``NewtonManager.get_state()`` at each read boundary.
 
 Episode participation is independent of automatic physics sleeping. Naturally sleeping active
-keys remain valid observations and targets. The 108-key baseline starts with every key active;
-selector masking alone does not disable physics or hide geometry. Partition sleep and rendering
-visibility must be driven from the same membership source when adding smaller keyboards.
+keys remain valid observations and targets. ``KeyboardVariants`` applies the same episode membership
+to selectors, shape visibility, and explicit ``ALWAYS`` sleep policies. Re-enabled partitions return
+to ``ALLOWED``. ``keyboard_variants=()`` selects the all-active 108-key partitioned baseline.
 
 After raw joint writes, call ``NewtonManager.invalidate_fk(env_ids=...)`` with int32 world IDs,
 or pass an ``env_mask``. No articulation view mapping is required. This marks all articulations
@@ -185,3 +185,32 @@ The action term preserves the original relative target and implicit-PD effort te
 the power reward. The latter is an estimate, not the solver's ``mujoco:qfrc_actuator`` output.
 Reset snapshots store root poses relative to world origins followed by selected coordinates and
 velocities; their layout is task-local and is not an external checkpoint format.
+
+Reset-time keyboard variants
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The default bank contains every multiple of six active keys from six to 108 and two different
+108-key styles. Variant 0 is the reference 108-key keyboard, variants 1 through 17 have 6 through
+102 keys, and variant 18 is another 108-key style. Observations retain their padded 108-slot layout.
+Every normal episode reset samples a registered variant independently per world. For explicit review:
+
+.. code-block:: python
+
+   env.unwrapped.reset_keyboard([0, 1], [1, 6])  # six keys in world 0, 36 in world 1
+   env.unwrapped.reset_keyboard([0], [0])       # world 0 returns to the 108-key reference
+
+The bank compiles USD templates once during task initialization. At reset it installs pre-registered
+cap/label meshes, box collider dimensions and bounds, body mass, center of mass, inertia and inverse
+inertia, joint frames, drive properties and limits. It synchronizes the solver, clears key state and
+control, updates participation and sleep policies, then performs the task reset. Model array addresses
+remain stable for CUDA graph replay. Reset-time selection itself runs outside graph capture.
+
+Current registered variants require the same 18 six-slider topology and box collision shapes; this
+is not an arbitrary articulated mesh-collider replacement API. Visual meshes can change vertex counts.
+Viser consumes the scene-data rigid geometry revision and refreshes its model resources on the next
+render. The case belongs to the first fixed partition root so root randomization also moves its collider.
+
+Typing targets, backspace roles, glyph labels, and actuation thresholds follow each world's current
+variant. Curriculum snapshots are built per variant and sampled only for compatible worlds. Registration
+cost and Viser's geometry refresh occur outside physics stepping; benchmark reset-heavy training and
+rendering separately from steady-state solver throughput.

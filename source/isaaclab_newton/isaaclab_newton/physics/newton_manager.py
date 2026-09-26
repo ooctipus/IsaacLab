@@ -1156,6 +1156,15 @@ class NewtonManager(PhysicsManager):
             cls._solver.notify_model_changed(change, world_mask=world_mask)
         else:
             raise NotImplementedError("Selective property notification requires SolverMuJoCo.")
+        if change & ModelFlags.SHAPE_PROPERTIES:
+            cls._scene_data_backend.rigid_geometry_version += 1
+
+    @classmethod
+    def set_body_sleep_policy(cls, body_ids: wp.array, policy: SolverMuJoCo.SleepPolicy) -> None:
+        """Set the MuJoCo runtime sleep policy for trees containing selected Newton bodies."""
+        if not isinstance(cls._solver, SolverMuJoCo):
+            raise NotImplementedError("Runtime sleep policies require SolverMuJoCo.")
+        cls._solver.set_body_sleep_policy(body_ids, policy)
 
     @classmethod
     def invalidate_fk(

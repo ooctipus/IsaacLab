@@ -176,8 +176,12 @@ class LetterTypingCommand(CommandTerm):
         self._default_robot_q = torch.zeros_like(lower)
 
         # key roles in global slot space, resolved once at the config layer (see so101_env_cfg)
-        self._typeable = torch.tensor(cfg.typeable_slots, device=self.device)
-        self._backspace = cfg.backspace_slot
+        self._typeable = (
+            torch.arange(self.num_keys, device=self.device)
+            if env.keyboard_variants is not None
+            else torch.tensor(cfg.typeable_slots, device=self.device)
+        )
+        self._default_backspace = torch.full((self.num_envs,), cfg.backspace_slot, device=self.device, dtype=torch.long)
 
         # per-key press threshold (filled lazily once joint limits are available)
         self._press_level: torch.Tensor | None = None
@@ -305,11 +309,17 @@ class LetterTypingCommand(CommandTerm):
             self._buf_typed_len = torch.zeros(cap, dtype=torch.long, device=self.device)
             # Per-snapshot reach residual [m] (tip -> target key) at build time; reported in the build stats.
             self._buf_reach = torch.zeros(cap, dtype=torch.float32, device=self.device)
+            self._buf_variant = torch.zeros(cap, dtype=torch.long, device=self.device)
             # Snapshot id that seeded each env this episode (-1 == normal reset), for outcome attribution.
             self._env_source = torch.full((self.num_envs,), -1, dtype=torch.long, device=self.device)
 
     def __str__(self) -> str:
         return f"LetterTypingCommand(keys={self.num_keys}, max_len={self.max_len}, mode={self.cfg.command_mode})"
+
+    @property
+    def _backspace(self):
+        bank = self._env.keyboard_variants
+        return self._default_backspace if bank is None else bank.backspaces[bank.variant_ids]
 
     @property
     def command(self) -> torch.Tensor:
@@ -342,7 +352,7 @@ class LetterTypingCommand(CommandTerm):
         k = int(env_ids_t.numel())
         if k == 0:
             return
-        source = self._sample_sources(k)  # (k,): -1 normal reset, else snapshot index in [0, cap)
+        source = self._sample_sources(env_ids_t)  # -1 normal reset, else a compatible snapshot
         self._env_source[env_ids_t] = source
         normal_mask = source < 0
         normal_ids = env_ids_t[normal_mask]
@@ -352,7 +362,7 @@ class LetterTypingCommand(CommandTerm):
         if bool(buf_mask.any()):
             self._restore_snapshot(env_ids_t[buf_mask], source[buf_mask])
 
-    def _sample_sources(self, k: int) -> torch.Tensor:
+    def _sample_sources(self, env_ids: torch.Tensor) -> torch.Tensor:
         """Pick a reset source per env: ``-1`` for the normal reset, else a snapshot index in ``[0, cap)``.
 
         Each snapshot's weight is the Beta kernel at its success rate (peaked at the target). The normal path's
@@ -363,6 +373,12 @@ class LetterTypingCommand(CommandTerm):
         Therefore, ``p(normal) = normal_weight / (normal_weight + peak)``.
         """
         scores = self.success_monitor.target_weights()
+        bank = self._env.keyboard_variants
+        if bank is not None:
+            compatible = self._buf_variant[None, :] == bank.variant_ids[env_ids, None]
+            normal = (self._cur_normal_weight * compatible.sum(dim=1, keepdim=True)).clamp(min=self._cur_sample_eps)
+            weights = torch.cat((normal, scores.clamp(min=self._cur_sample_eps)[None, :] * compatible), dim=1)
+            return torch.multinomial(weights, 1).squeeze(1) - 1
         # Scale the normal weight by cap so it competes with the mean (not summed) snapshot score, making
         # p(normal) buffer-size-invariant while still handing sampling to the normal path as the buffer masters.
         normal_w = self._cur_normal_weight * self._cur_buffer_size
@@ -371,7 +387,7 @@ class LetterTypingCommand(CommandTerm):
         # "sum of probabilities <= 0"). That degenerate case arises when normal_weight == 0 and every snapshot
         # weight has reached its exploration floor; the clamp then falls back to roughly uniform replay.
         weights = weights.clamp(min=self._cur_sample_eps)
-        idx = torch.multinomial(weights, k, replacement=True)  # (k,) in [0, cap]
+        idx = torch.multinomial(weights, len(env_ids), replacement=True)  # (k,) in [0, cap]
         return idx - 1  # 0 -> -1 (normal); j -> snapshot j - 1
 
     def _oversample(self, m_candidates: int):
@@ -435,7 +451,7 @@ class LetterTypingCommand(CommandTerm):
         rows = torch.arange(m_candidates, device=self.device)
         nxt = torch.minimum(prefix, (target_len - 1).clamp(min=0))
         needs_bs = typed_len > prefix
-        next_key = torch.where(needs_bs, torch.full_like(prefix, self._backspace), target[rows, nxt]).clamp(min=0)
+        next_key = torch.where(needs_bs, self._backspace[rows % self.num_envs], target[rows, nxt]).clamp(min=0)
         # Backspace depth as a FRACTION of the word length, so "fully wrong" costs the same regardless of length
         # (len-1 unmatched=1 and len-3 unmatched=3 both map to 1.0). This removes the only structural length
         # bias in the feature; the natural word-diversity bias (~108**len distinct words) is kept via `target`.
@@ -500,46 +516,55 @@ class LetterTypingCommand(CommandTerm):
         return target[chosen], typed[chosen], target_len[chosen], typed_len[chosen]
 
     def _build_buffer(self):
-        """Build the snapshot buffer once, on the first reset.
-
-        Coverage-samples ``cap`` diverse ``(target, typed)`` states (see :meth:`_sample_diverse_states`), then
-        runs the reset-IK once per survivor (in ``num_envs``-sized batches) to snapshot its physical state.
-        The live env state is scrambled by the last IK batch, but the enclosing reset overwrites it.
-        """
+        """Build coverage-sampled reset snapshots separately for each registered variant."""
         from tqdm import tqdm
 
         cap = self._cur_buffer_size
-        tgt, typd, tlen, typlen = self._sample_diverse_states(cap)
-        self._buf_target[:] = tgt
-        self._buf_typed[:] = typd
-        self._buf_target_len[:] = tlen
-        self._buf_typed_len[:] = typlen
-
+        bank = self._env.keyboard_variants
         all_ids = torch.arange(self.num_envs, device=self.device)
+        original_variants = None if bank is None else bank.variant_ids.clone()
+        original_state = capture_reset_state(
+            self._env, all_ids, self.cfg.reset_roots, self.cfg.reset_coords, self.cfg.reset_dofs
+        )
+        count = 1 if bank is None else len(bank.layouts)
+        offset = 0
         with tqdm(total=cap, desc="[typing] building reset-curriculum buffer (IK)", unit="snap") as pbar:
-            for start in range(0, cap, self.num_envs):
-                n = min(self.num_envs, cap - start)
-                ids = all_ids[:n]
-                # Load this batch's cached command into the live state so the reset-IK aims at the right key.
-                self.target[:n] = tgt[start : start + n]
-                self.typed[:n] = typd[start : start + n]
-                self.target_len[:n] = tlen[start : start + n]
-                self.typed_len[:n] = typlen[start : start + n]
-                self.prefix_len[:n] = self._prefix_len()[:n]
-                self._solve_reset_pose(ids)
-                state = capture_reset_state(
-                    self._env, ids, self.cfg.reset_roots, self.cfg.reset_coords, self.cfg.reset_dofs
-                )
-                if self._buf_state is None:
-                    self._buf_state = torch.zeros((cap, state.shape[1]), dtype=state.dtype, device=self.device)
-                self._buf_state[start : start + n] = state
-                # tip -> target-key residual of the (variably converged) pose, for the closeness stats.
-                ee_pose = self.cfg.reset.ik.body.dense(NewtonManager.get_state().body_q)[:, 0]
-                ee_pos, ee_quat = ee_pose[:, :3], ee_pose[:, 3:]
-                tip = ee_pos + quat_apply(ee_quat, self._ik_offset)
-                reach = torch.linalg.norm(tip - (self.target_key_pos_w() + self._ik_hover), dim=-1)
-                self._buf_reach[start : start + n] = reach[:n]
-                pbar.update(n)
+            for variant in range(count):
+                size = cap // count + int(variant < cap % count)
+                if size == 0:
+                    continue
+                if bank is not None:
+                    bank.apply(all_ids, torch.full_like(all_ids, variant))
+                tgt, typd, tlen, typlen = self._sample_diverse_states(size)
+                self._buf_target[offset : offset + size] = tgt
+                self._buf_typed[offset : offset + size] = typd
+                self._buf_target_len[offset : offset + size] = tlen
+                self._buf_typed_len[offset : offset + size] = typlen
+                self._buf_variant[offset : offset + size] = variant
+                for start in range(0, size, self.num_envs):
+                    n = min(self.num_envs, size - start)
+                    ids = all_ids[:n]
+                    self.target[:n], self.typed[:n] = tgt[start : start + n], typd[start : start + n]
+                    self.target_len[:n], self.typed_len[:n] = tlen[start : start + n], typlen[start : start + n]
+                    self.prefix_len[:n] = self._prefix_len()[:n]
+                    self._solve_reset_pose(ids)
+                    state = capture_reset_state(
+                        self._env, ids, self.cfg.reset_roots, self.cfg.reset_coords, self.cfg.reset_dofs
+                    )
+                    if self._buf_state is None:
+                        self._buf_state = torch.zeros((cap, state.shape[1]), dtype=state.dtype, device=self.device)
+                    self._buf_state[offset + start : offset + start + n] = state
+                    ee_pose = self.cfg.reset.ik.body.dense(NewtonManager.get_state().body_q)[:, 0]
+                    tip = ee_pose[:, :3] + quat_apply(ee_pose[:, 3:], self._ik_offset)
+                    reach = torch.linalg.norm(tip - (self.target_key_pos_w() + self._ik_hover), dim=-1)
+                    self._buf_reach[offset + start : offset + start + n] = reach[:n]
+                    pbar.update(n)
+                offset += size
+        if bank is not None:
+            bank.apply(all_ids, original_variants)
+            restore_reset_state(
+                self._env, original_state, all_ids, self.cfg.reset_roots, self.cfg.reset_coords, self.cfg.reset_dofs
+            )
         self._buffer_built = True
         self._log_buffer_stats()
 
@@ -642,7 +667,8 @@ class LetterTypingCommand(CommandTerm):
         membership = self.key_joints.dense_active()[env_ids]
         active = membership.gather(1, tokens.clamp(min=0))
         needs_backspace = self.typed_len[env_ids] > prefix
-        invalid = env_ids[((tokens >= 0) & ~active).any(dim=1) | (needs_backspace & ~membership[:, self._backspace])]
+        backspace_active = membership.gather(1, self._backspace[env_ids, None]).squeeze(1)
+        invalid = env_ids[((tokens >= 0) & ~active).any(dim=1) | (needs_backspace & ~backspace_active)]
         if invalid.numel():
             self._env_source[invalid] = -1
             self._resample_normal(invalid)
@@ -650,10 +676,11 @@ class LetterTypingCommand(CommandTerm):
     def _sampling_keys(self):
         """Pack eligible slots per world at reset; ordinary solver sleep is irrelevant."""
         active = self.key_joints.dense_active()[:, self._typeable]
+        active = active & (self._typeable[None, :] != self._backspace[:, None])
         order = torch.argsort(active.to(torch.int32), dim=1, descending=True, stable=True)
         keys = self._typeable.expand(self.num_envs, -1).gather(1, order).contiguous()
         counts = active.sum(dim=1).to(torch.int32).contiguous()
-        backspace = self.key_joints.dense_active()[:, self._backspace].contiguous()
+        backspace = self.key_joints.dense_active().gather(1, self._backspace[:, None]).squeeze(1).contiguous()
         return wp.from_torch(keys, dtype=wp.int64), wp.from_torch(counts, dtype=wp.int32), wp.from_torch(backspace)
 
     def _resample_normal(self, env_ids: Sequence[int] | torch.Tensor):
@@ -696,7 +723,7 @@ class LetterTypingCommand(CommandTerm):
         self.new_low[env_ids_t] = False
 
     def _update_command(self):
-        if self._press_level is None:
+        if self._press_level is None or self._env.keyboard_variants is not None:
             # Convention (keyboard_schema.KEY_ACTUATION_FRACTION): rest at upper_limit (~0), bottom at
             # lower_limit (-travel); a key actuates once depressed past a fraction of its travel.
             model = NewtonManager.get_model()
@@ -724,7 +751,7 @@ class LetterTypingCommand(CommandTerm):
 
         # Backspace (edge-triggered): delete the last typed key for envs whose backspace key was newly
         # pressed. Advanced-index write over every env - a no-op where backspace was not pressed.
-        bs_mask = new_press[:, self._backspace]  # (N,)
+        bs_mask = new_press[rows, self._backspace]  # (N,)
         del_len = (self.typed_len - 1).clamp(min=0)  # (N,)
         at_del = self.typed[rows, del_len]  # (N,) current value at the delete position
         self.typed[rows, del_len] = torch.where(bs_mask, torch.full_like(at_del, -1), at_del)
@@ -735,7 +762,7 @@ class LetterTypingCommand(CommandTerm):
         # presses, so its write column is ``typed_len + rank``. A spare "trash" column (index max_len)
         # absorbs the non-press / overflow writes, so one masked ``scatter_`` places everything without any
         # variable-length index gather; ``scatter_`` collisions only happen on the trash column (all -1).
-        type_press = new_press & (cols != self._backspace)  # (N, K)
+        type_press = new_press & (cols != self._backspace[:, None])  # (N, K)
         rank = type_press.long().cumsum(dim=1) - 1  # (N, K)
         dest = self.typed_len[:, None] + rank  # (N, K)
         fits = type_press & (dest < self.max_len)  # (N, K)
@@ -1060,7 +1087,9 @@ class LetterTypingCommand(CommandTerm):
         self._viz_right = torch.tensor([0.0, 1.0, 0.0], device=device)
         self._viz_up = torch.tensor([0.0, 0.0, 1.0], device=device)
         self._glyph_lit, char_to_index = typing_vis.build_glyph_table(device)
-        self._slot_glyph = typing_vis.slot_glyph_indices(self.cfg.slot_labels, char_to_index, device)
+        bank = self._env.keyboard_variants
+        labels = (self.cfg.slot_labels,) if bank is None else bank.labels
+        self._slot_glyph = torch.stack([typing_vis.slot_glyph_indices(row, char_to_index, device) for row in labels])
         self._pixel_offset = typing_vis.pixel_offsets(self.cfg.viz_pixel_size, self._viz_right, self._viz_up)
         self._cell_offset = typing_vis.cell_offsets(
             self.max_len,
@@ -1095,12 +1124,18 @@ class LetterTypingCommand(CommandTerm):
 
         # Key world positions in global slot order -> banner anchor (key centroid) and per-key lookup.
         key_w = self.key_pos_w()[env_sel]  # (n, num_keys, 3)
-        anchor = key_w.mean(dim=1) + self._viz_up * self.cfg.viz_banner_height  # (n, 3)
+        active = self.key_bodies.dense_active()[env_sel]
+        anchor = (
+            key_w.sum(dim=1) / active.sum(dim=1, keepdim=True).clamp(min=1) + self._viz_up * self.cfg.viz_banner_height
+        )
 
         # Glyph index per letter cell (-1 marks an empty cell).
         empty = torch.full_like(target, -1)
-        target_glyph = torch.where(target >= 0, self._slot_glyph[target.clamp(min=0)], empty)
-        typed_glyph = torch.where(typed >= 0, self._slot_glyph[typed.clamp(min=0)], empty)
+        bank = self._env.keyboard_variants
+        variants = torch.zeros_like(env_sel) if bank is None else bank.variant_ids[env_sel]
+        glyphs = self._slot_glyph[variants]
+        target_glyph = torch.where(target >= 0, glyphs.gather(1, target.clamp(min=0)), empty)
+        typed_glyph = torch.where(typed >= 0, glyphs.gather(1, typed.clamp(min=0)), empty)
         rows_glyph = torch.stack([target_glyph, typed_glyph], dim=1)  # (n, 2, L)
 
         # Color (marker prototype) per letter cell.

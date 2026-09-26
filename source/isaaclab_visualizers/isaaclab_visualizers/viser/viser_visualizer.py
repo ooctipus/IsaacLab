@@ -439,6 +439,7 @@ class ViserVisualizer(BaseVisualizer):
             ],
         )
         self._setup_streaming_view(num_envs)
+        self._rigid_geometry_version = scene_data_provider.backend.rigid_geometry_version
         self._is_initialized = True
 
     def step(self, dt: float) -> None:
@@ -478,6 +479,15 @@ class ViserVisualizer(BaseVisualizer):
             # rendering is paused, matching Rerun's behaviour.
             self._push_streaming_frame()
             return
+
+        revision = self._scene_data_provider.backend.rigid_geometry_version
+        if revision != self._rigid_geometry_version:
+            self._viewer.set_model(self._model)
+            apply_viewer_visible_worlds(
+                self._viewer, env_ids=self._env_ids, max_visible_envs=self.cfg.max_visible_envs, num_envs=num_envs
+            )
+            self._viewer.set_world_offsets((0.0, 0.0, 0.0))
+            self._rigid_geometry_version = revision
 
         self._viewer.begin_frame(self._sim_time)
         try:
@@ -900,6 +910,10 @@ class ViserVisualizer(BaseVisualizer):
         get_clients = getattr(server, "get_clients", None) if server is not None else None
         if not callable(get_clients):
             return False
+
+        # Reconnecting clients must receive the configured framing too.
+        server.initial_camera.position, server.initial_camera.look_at = pose
+        server.initial_camera.fov = math.radians(self._focal_length_to_vertical_fov_degrees())
 
         try:
             clients = get_clients()

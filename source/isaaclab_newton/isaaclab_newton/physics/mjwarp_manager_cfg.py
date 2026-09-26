@@ -58,6 +58,9 @@ class MJWarpSolverCfg(NewtonSolverCfg):
     disable_contacts: bool = False
     """Whether to disable contact computation in MuJoCo."""
 
+    enable_sleeping: bool = False
+    """Enable tree sleeping, including explicitly disabled episode participants."""
+
     disable_sensors: bool = False
     """Whether to disable MuJoCo Warp's internal sensor computation.
 

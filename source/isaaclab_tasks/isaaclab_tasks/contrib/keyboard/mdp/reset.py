@@ -112,7 +112,7 @@ def reset_root_state_uniform(env, env_ids, roots, pose_range, velocity_range):
     poses = wp.to_torch(NewtonManager.get_model().body_q)[roots.dense_ids()[ids]].clone()
     poses[..., :3] += samples[:, None, :3]
     delta = quat_from_euler_xyz(samples[:, 3], samples[:, 4], samples[:, 5])
-    poses[..., 3:] = quat_mul(poses[..., 3:], delta[:, None, :])
+    poses[..., 3:] = quat_mul(poses[..., 3:], delta[:, None, :].expand_as(poses[..., 3:]))
     # Preserve RNG consumption of the old zero-velocity sample.
     sample_uniform(0.0, 0.0, (len(ids), 6), device=env.device)
     write_fixed_root_poses(env, roots, ids, poses)

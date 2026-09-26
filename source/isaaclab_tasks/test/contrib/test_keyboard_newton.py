@@ -118,6 +118,17 @@ def test_task_architecture_has_no_articulation_views():
                 assert node.attr not in {"root_view", "_root_view", "_inst_idx", "_body_col_idx"}, path
     assert not (directory / "newton_view.py").exists()
     assert not (directory / "selection_manager.py").exists()
+    assert not (directory / "articulation_adapter.py").exists()
+    # Configuration descriptors have one owner; do not recreate a second bank of generated metadata.
+    pool = ast.parse((directory / "keyboards" / "keyboard_pool.py").read_text())
+    assert not any(isinstance(node, ast.ClassDef) for node in ast.walk(pool))
+    assert not any(isinstance(node, ast.Name) and node.id == "TYPING_KEYBOARD_POOL" for node in ast.walk(pool))
+    tree = ast.parse((directory / "keyboard_variants.py").read_text())
+    reset = next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "apply")
+    for node in ast.walk(reset):
+        if isinstance(node, ast.Call):
+            name = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
+            assert name not in {"finalize", "add_usd", "ModelBuilder", "generate_keyboard", "spawn_keyboard"}
 
 
 @pytest.mark.parametrize("use_graph", [False, True])
@@ -136,6 +147,7 @@ def test_108_key_task_without_views_and_partial_reset(use_graph):
 
     cfg, _ = resolve_task_config("IsaacContrib-Keyboard-SO101", "", overrides=["physics=newton_mjwarp"])
     cfg.scene.num_envs = 2
+    cfg.keyboard_variants = ()
     cfg.seed = 42
     cfg.commands.typing.reset.buffer_size = 8
     cfg.sim.physics.use_cuda_graph = use_graph
@@ -261,3 +273,131 @@ def test_manager_serialization_keeps_declarative_selectors(selections):
     cfg = NewtonSelectorCfg(JOINT_COORD, ".*/free", count_per_world=7)
     term = ObservationTermCfg(func=joint_pos, params={"joints": selections.resolve(cfg)})
     assert class_to_dict(term)["params"]["joints"] == class_to_dict(cfg)
+
+
+def test_keyboard_generator_supports_every_multiple_of_six():
+    from isaaclab_tasks.contrib.keyboard.keyboards.keyboard_geometry import generate_keyboard
+    from isaaclab_tasks.contrib.keyboard.keyboards.keyboard_pool import TYPING_KEYBOARD_VARIANTS
+
+    layouts = [generate_keyboard(cfg) for cfg in TYPING_KEYBOARD_VARIANTS]
+    assert {layout.active_key_count for layout in layouts} == set(range(6, 109, 6))
+    for layout in layouts:
+        assert layout.slot_count == 108 and layout.partition_count == 18 and layout.partition_dof == 6
+        assert any(key.label.lower() in ("backspace", "bksp") for key in layout.active_keys)
+        assert all(sum(key.active for key in layout.keys[p : p + 6]) in (0, 6) for p in range(0, 108, 6))
+        assert not layout.warnings
+
+
+@pytest.mark.parametrize("use_graph", [False, True])
+def test_keyboard_variant_reset_restores_geometry_inertia_and_sleep(use_graph):
+    if not wp.is_cuda_available():
+        pytest.skip("MJWarp requires CUDA")
+    import gymnasium as gym
+    import mujoco
+    from isaaclab_newton.physics import NewtonManager
+
+    from isaaclab.app import launch_simulation
+
+    from isaaclab_tasks.utils import resolve_task_config
+
+    cfg, _ = resolve_task_config("IsaacContrib-Keyboard-SO101", "", overrides=["physics=newton_mjwarp"])
+    cfg.scene.num_envs = 2
+    cfg.seed = 42
+    cfg.sim.physics.use_cuda_graph = use_graph
+    cfg.sim.physics.load_visual_shapes = True
+    cfg.keyboard_variants = (cfg.keyboard_variants[0], cfg.keyboard_variants[1], cfg.keyboard_variants[-1])
+    cfg.commands.typing.reset.buffer_size = 9
+    with launch_simulation(cfg, {"headless": True}):
+        env = gym.make("IsaacContrib-Keyboard-SO101", cfg=cfg)
+        try:
+            task = env.unwrapped
+            env.reset()
+            task.reset_keyboard([0, 1], [0, 2])
+            bank = task.keyboard_variants
+            model, state = NewtonManager.get_model(), NewtonManager.get_state()
+            assert model.articulation_count == 2 * 19  # robot + 18 keyboard partitions
+            command = task.command_manager.get_term("typing")
+            bodies = bank.body_ids[0].cpu().numpy()
+            shapes = bank.shape_ids[0]
+            key_bodies = command.key_bodies.dense_ids()[0].cpu().numpy()
+            q_ids = command.key_joints.dense_ids()[0].cpu().numpy()
+            qd_ids = command.cfg.key_dofs.dense_ids()[0].cpu().numpy()
+            fields = ("body_mass", "body_com", "body_inertia", "body_inv_mass", "body_inv_inertia")
+            shape_fields = (
+                "shape_scale",
+                "shape_transform",
+                "shape_source_ptr",
+                "shape_collision_radius",
+                "shape_flags",
+            )
+            original = {name: getattr(model, name).numpy()[bodies].copy() for name in fields}
+            original.update({name: getattr(model, name).numpy()[shapes].copy() for name in shape_fields})
+            pointers = (state.joint_q.ptr, model.body_inertia.ptr, model.shape_source_ptr.ptr)
+            other_q = command.cfg.reset_coords.dense_ids()[1].cpu().numpy()
+            other_bodies = np.flatnonzero(model.body_world.numpy() == 1)
+            neighbor = {
+                name: getattr(state, name).numpy()[ids].copy()
+                for name, ids in (("joint_q", other_q), ("body_q", other_bodies))
+            }
+            # A previous variant's COM must never survive the reset, even when the new COM is zero.
+            wp.to_torch(model.body_com)[key_bodies[0]] = torch.tensor((0.1, -0.2, 0.3), device=task.device)
+            task.reset_keyboard([0], [1])
+            np.testing.assert_array_equal(state.joint_q.numpy()[other_q], neighbor["joint_q"])
+            np.testing.assert_array_equal(state.body_q.numpy()[other_bodies], neighbor["body_q"])
+            assert command.key_joints.dense_active().sum(dim=1).tolist() == [6, 108]
+            assert not np.array_equal(model.body_inertia.numpy()[bodies], original["body_inertia"])
+            assert not np.array_equal(model.shape_source_ptr.numpy()[shapes], original["shape_source_ptr"])
+            np.testing.assert_allclose(model.body_com.numpy()[key_bodies[0]], [0, 0, 0], atol=1e-12)
+            solver = NewtonManager._solver
+            body_map = solver.mjc_body_to_newton.numpy()[0]
+            mj_body = int(np.flatnonzero(body_map == key_bodies[0])[0])
+            rotation = np.empty(9)
+            mujoco.mju_quat2Mat(rotation, solver.mjw_model.body_iquat.numpy()[0, mj_body].astype(float))
+            rotation = rotation.reshape(3, 3)
+            tensor = rotation @ np.diag(solver.mjw_model.body_inertia.numpy()[0, mj_body]) @ rotation.T
+            np.testing.assert_allclose(tensor, model.body_inertia.numpy()[key_bodies[0]], atol=1e-10, rtol=1e-5)
+            np.testing.assert_allclose(
+                solver.mjw_model.body_mass.numpy()[0, mj_body], model.body_mass.numpy()[key_bodies[0]]
+            )
+            disabled_tree_ids = solver.mj_model.body_treeid[np.isin(body_map, key_bodies[6:])]
+            assert np.all(disabled_tree_ids >= 0)
+            np.testing.assert_array_equal(solver.mjw_model.tree_sleep_policy.numpy()[0, disabled_tree_ids], 6)
+            # Force on an excluded key cannot move it, including after graph replay.
+            wp.to_torch(NewtonManager.get_control().joint_f)[qd_ids[6:]] = 100.0
+            for _ in range(4):
+                obs, reward, *_ = env.step(torch.zeros_like(task.action_manager.action))
+                assert torch.isfinite(reward).all() and all(torch.isfinite(v).all() for v in obs.values())
+            np.testing.assert_array_equal(state.joint_q.numpy()[q_ids[6:]], 0)
+            np.testing.assert_array_equal(state.joint_qd.numpy()[qd_ids[6:]], 0)
+            assert torch.count_nonzero(obs["perception"].reshape(2, 108, 3)[0, 6:]) == 0
+            contacts = NewtonManager.get_contacts()
+            n = int(contacts.rigid_contact_count.numpy()[0])
+            disabled_shapes = set(shapes[model.shape_flags.numpy()[shapes] == 0])
+            assert not disabled_shapes.intersection(contacts.rigid_contact_shape0.numpy()[:n])
+            assert not disabled_shapes.intersection(contacts.rigid_contact_shape1.numpy()[:n])
+            for _ in range(2):
+                task.reset_keyboard([0], [0])
+                for name in fields:
+                    np.testing.assert_array_equal(getattr(model, name).numpy()[bodies], original[name])
+                for name in shape_fields:
+                    np.testing.assert_array_equal(getattr(model, name).numpy()[shapes], original[name])
+                assert command.key_joints.dense_active()[0].all()
+                assert np.all(solver.mjw_model.tree_sleep_policy.numpy()[0, disabled_tree_ids] != 6)
+                task.reset_keyboard([0], [1])
+            task.reset_keyboard([0], [2])  # Different meshes and inertia with the same 108-key capacity.
+            assert command.key_joints.dense_active()[0].sum() == 108
+            assert not np.array_equal(model.shape_source_ptr.numpy()[shapes], original["shape_source_ptr"])
+            assert not np.array_equal(model.body_inertia.numpy()[bodies], original["body_inertia"])
+            assert (state.joint_q.ptr, model.body_inertia.ptr, model.shape_source_ptr.ptr) == pointers
+            sources = command._sample_sources(torch.arange(2, device=task.device))
+            for world, snapshot in enumerate(sources.tolist()):
+                if snapshot >= 0:
+                    assert command._buf_variant[snapshot] == bank.variant_ids[world]
+            with pytest.raises(ValueError, match="outside"):
+                task.reset_keyboard([0], [len(bank.layouts)])
+            wp.to_torch(task.selections.world_active)[0] = False
+            task.reset_keyboard([0], [0])
+            assert not command.key_joints.dense_active()[0].any()
+            np.testing.assert_array_equal(model.shape_flags.numpy()[shapes], 0)
+        finally:
+            env.close()

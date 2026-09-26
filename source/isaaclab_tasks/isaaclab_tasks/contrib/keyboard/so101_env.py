@@ -14,6 +14,7 @@ from newton import JointTargetMode, JointType, ModelFlags
 
 from isaaclab.envs import ManagerBasedRLEnv
 
+from .keyboard_variants import KeyboardVariants
 from .newton_selection import NewtonSelections, NewtonSelectorCfg
 
 
@@ -64,4 +65,25 @@ class SO101KeyboardEnv(ManagerBasedRLEnv):
         NewtonManager.invalidate_fk()
         self.sim.forward()
         self._property_world_mask = wp.zeros(self.num_envs + 1, dtype=wp.bool, device=self.device)
+        self.keyboard_variants = (
+            KeyboardVariants(self, self.cfg.keyboard_variants) if self.cfg.keyboard_variants else None
+        )
         super().load_managers()
+
+    def _reset_idx(self, env_ids, *, variant_ids=None):
+        ids = torch.as_tensor(env_ids, dtype=torch.long, device=self.device)
+        if self.keyboard_variants is not None:
+            variants = (
+                torch.randint(len(self.keyboard_variants.layouts), ids.shape, device=self.device)
+                if variant_ids is None
+                else torch.as_tensor(variant_ids, dtype=torch.long, device=self.device)
+            )
+            self.keyboard_variants.apply(ids, variants)
+        super()._reset_idx(ids)
+
+    def reset_keyboard(self, env_ids, variant_ids) -> None:
+        """Reset selected episodes to registered keyboard variants, then reconcile forward kinematics."""
+        if self.keyboard_variants is None:
+            raise RuntimeError("This configuration has no registered keyboard variants.")
+        self._reset_idx(env_ids, variant_ids=variant_ids)
+        self.sim.forward()

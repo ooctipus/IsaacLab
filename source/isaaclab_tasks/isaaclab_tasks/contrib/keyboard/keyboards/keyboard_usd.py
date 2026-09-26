@@ -153,12 +153,8 @@ def _spawn_partitioned_articulations(
 ) -> None:
     Gf, Sdf, UsdGeom, UsdPhysics, _ = _usd_modules()
 
-    base_path = f"{prim_path}/base_link"
     parts_scope = f"{prim_path}/parts"
-    UsdGeom.Xform.Define(stage, base_path)
     UsdGeom.Scope.Define(stage, parts_scope)
-    _define_base_geometry(stage, base_path, resolved, cfg, collision=cfg.include_case_collision)
-
     keys_by_part = _partition_keys(resolved)
     for part_index, keys in enumerate(keys_by_part):
         part_name = f"part_{part_index:03d}"
@@ -182,9 +178,10 @@ def _spawn_partitioned_articulations(
         part_mass = max(float(resolved.style.base_mass) / max(resolved.partition_count, 1), 0.001)
         part_mass_api = UsdPhysics.MassAPI.Apply(part_base_prim)
         part_mass_api.CreateMassAttr(part_mass)
-        # Explicit tiny inertia: this base_link is the fixed articulation root (no collider), so its
-        # inertia is dynamically irrelevant; setting it avoids the engine's "invalid inertia" warning.
+        # Fixed roots do not move dynamically; explicit inertia avoids invalid-inertia warnings.
         part_mass_api.CreateDiagonalInertiaAttr(Gf.Vec3f(1.0e-6, 1.0e-6, 1.0e-6))
+        if part_index == 0:
+            _define_base_geometry(stage, part_base_path, resolved, cfg, collision=cfg.include_case_collision)
 
         fixed_joint = UsdPhysics.FixedJoint.Define(stage, f"{part_joints_scope}/base_fixed_joint")
         fixed_joint.CreateBody1Rel().SetTargets([Sdf.Path(part_base_path)])
@@ -242,10 +239,10 @@ def _define_base_geometry(
         resolved.style.plate_color,
         collision=False,
     )
-    for visual in base_profile_visuals(resolved):
+    for index, visual in enumerate(base_profile_visuals(resolved)):
         _define_box(
             stage,
-            f"{base_path}/{visual.name}",
+            f"{base_path}/trim_{index:02d}",
             visual.center,
             visual.size,
             visual.quat_xyzw,
@@ -275,12 +272,12 @@ def _author_key_articulation(
     link.CreateAttribute("keyboard:slot", Sdf.ValueTypeNames.Int).Set(key.slot)
     link.CreateAttribute("keyboard:partitionIndex", Sdf.ValueTypeNames.Int).Set(partition_index)
     link.CreateAttribute("keyboard:partitionLocalSlot", Sdf.ValueTypeNames.Int).Set(partition_local_slot)
-    if not key.active:
+    if not key.active and not cfg.uniform_key_shapes:
         UsdGeom.Imageable(link).MakeInvisible()
     UsdPhysics.RigidBodyAPI.Apply(link)
     UsdPhysics.MassAPI.Apply(link).CreateMassAttr(float(key.mass))
 
-    if key.active:
+    if key.active or cfg.uniform_key_shapes:
         if cfg.use_tapered_keycaps:
             _define_tapered_keycap(stage, f"{link_path}/visual", key.size, resolved.style.cap_top_scale, key.color)
         else:
@@ -433,9 +430,7 @@ def _define_label_mesh(stage, path: str, key: ResolvedKey, style: KeyboardStyle)
 
     vertices, faces = label_mesh_data(key, style)
     if not vertices or not faces:
-        # Author a tiny (effectively invisible) quad so every active key has exactly one label mesh.
-        # This keeps the per-key shape topology identical across variants/label modes, which Newton's
-        # shared ArticulationView requires (it rejects non-uniform per-world shape strides).
+        # Keep one registered label shape even when the selected style has no visible glyph.
         eps = 1.0e-5
         top_z = key.size[2] * 0.5
         vertices = [(-eps, -eps, top_z), (eps, -eps, top_z), (eps, eps, top_z), (-eps, eps, top_z)]

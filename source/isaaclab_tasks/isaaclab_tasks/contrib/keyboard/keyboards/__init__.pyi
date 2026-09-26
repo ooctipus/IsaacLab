@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-__all__ = ["KeyboardSpawnerCfg", "TYPING_KEYBOARD_POOL"]
+__all__ = ["KeyboardSpawnerCfg", "TYPING_KEYBOARD_VARIANTS"]
 
 from .keyboard_gen_cfg import KeyboardSpawnerCfg
-from .keyboard_pool import TYPING_KEYBOARD_POOL
+from .keyboard_pool import TYPING_KEYBOARD_VARIANTS
