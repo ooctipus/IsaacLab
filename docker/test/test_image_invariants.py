@@ -52,3 +52,10 @@ def test_no_prebundled_package_lost_its_entry_point():
     """
     broken = _in_image('find / -path "*pip_prebundle*" -xtype l -name "__init__.py" 2>/dev/null || true').strip()
     assert not broken, "prebundled packages lost their entry point:\n" + broken
+
+
+def test_wandb_logger_is_installed():
+    """Training images support the W&B logger selected by cluster submissions."""
+    assert _in_image(
+        'cd /workspace/isaaclab && uv run --no-sync python -c "import wandb; print(wandb.__version__)"'
+    ).strip()
