@@ -405,6 +405,7 @@ class TestBuildClusterStr:
             num_node="1",
             storage="512",
             master_port="29400",
+            kitless="0",
         )
         s = build_cluster_str(c)
         assert "num_gpu=8" in s
@@ -615,8 +616,19 @@ class TestWorkflowSpecArchitecture:
 
     def test_workflow_uses_the_managed_python_runtime(self):
         spec = self._spec()
-        assert spec.count("/workspace/isaaclab/isaaclab.sh -p") == 3
+        assert spec.count("/workspace/isaaclab/isaaclab.sh -p") == 1
+        assert spec.count('"${ISAACLAB_PYTHON[@]}"') == 3
         assert "/workspace/isaaclab/_isaac_sim/python.sh" not in spec
+
+    def test_kitless_launch_avoids_the_isaac_sim_bootstrap(self):
+        from jinja2 import Template
+
+        args = parse_args(["kitless=1"])
+        assert args.cluster["kitless"] == "1" and "kitless" not in args.fixed
+        text = self._spec().replace("{{host:master}}", "127.0.0.1")
+        rendered = Template(text).render(kitless=1, num_node=1, num_gpu=8, platform="dgx-h100")
+        assert "ISAACLAB_PYTHON=(uv run --no-sync python)" in rendered
+        assert "isaaclab.sh -p" not in rendered
 
     def test_workflow_syncs_the_lock_before_launching_ranks(self):
         spec = self._spec()
