@@ -74,7 +74,7 @@ COPY isaaclab.sh ./
 # it was created with; otherwise it deletes and rebuilds it.
 ARG DEPS_CACHE_BUST=0
 RUN uv venv --seed "${VIRTUAL_ENV}" \
- && uv sync --frozen --inexact --extra all --extra importers --extra test \
+ && uv sync --frozen --inexact --extra all --extra importers --extra test --extra wandb \
  && chmod +x "${ISAACLAB_PATH}/isaaclab.sh" \
  && chmod -R a+rwX "${VIRTUAL_ENV}"/lib/python3.*/site-packages/ovrtx \
  && python -c "import importlib.metadata as m; \
@@ -120,7 +120,7 @@ ENV UV_PROJECT_ENVIRONMENT=${VENV_PATH_ARG}
 ENV UV_PYTHON=/usr/bin/python3.12
 ENV UV_PYTHON_PREFERENCE=only-system
 ENV UV_NO_SYNC=1
-ENV ISAACLAB_UV_SYNC_ARGS="--extra all --extra importers --extra test"
+ENV ISAACLAB_UV_SYNC_ARGS="--extra all --extra importers --extra test --extra wandb"
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV NVIDIA_VISIBLE_DEVICES=all

@@ -133,7 +133,7 @@ COPY --parents ../source/*/pyproject.toml ${ISAACLAB_PATH}/
 
 # The image's package set. Kit ships in the base image, so the teleop stack comes without the
 # ``isaacsim`` wheel; ``teleop`` itself is left exactly as tuned.
-ARG IMAGE_EXTRAS="--extra sb3 --extra skrl --extra rl-games --extra rsl-rl --extra viser --extra rerun --extra mimic --extra teleop --extra test --extra tetrahedralization --extra ov"
+ARG IMAGE_EXTRAS="--extra sb3 --extra skrl --extra rl-games --extra rsl-rl --extra wandb --extra viser --extra rerun --extra mimic --extra teleop --extra test --extra tetrahedralization --extra ov"
 
 ENV ISAACLAB_UV_SYNC_ARGS="${IMAGE_EXTRAS} --no-install-package imageio-ffmpeg"
 ARG DEPS_CACHE_BUST=0
@@ -216,6 +216,21 @@ RUN chmod 755 \
 
 # copy the rest of the files
 COPY --chown=isaaclab:isaaclab ../ ${ISAACLAB_PATH}/
+
+# Localize the keyboard comparison assets before cluster ranks share the host's /dev/shm.
+# Jobs can select these paths without initializing omni.client at runtime.
+RUN uv run --project "${ISAACLAB_PATH}" --no-sync python - <<'PY'
+import shutil
+from pathlib import Path
+from isaaclab.sim import GroundPlaneCfg
+from isaaclab.utils.assets import retrieve_file_path
+from isaaclab_assets.robots.so101 import SO101_CFG
+root = Path("/opt/isaaclab-assets")
+root.mkdir()
+for name, source in (("ground.usda", GroundPlaneCfg().usd_path), ("so101.usda", SO101_CFG.spawn.usd_path)):
+    shutil.copyfile(retrieve_file_path(source, download_dir=str(root)), root / name)
+PY
+
 
 # Pre-create every docker-compose named-volume mount point and hand it to the
 # non-root runtime user. docker-compose.yaml is the single source of truth for
