@@ -29,7 +29,7 @@ gym.register(
     entry_point=f"{__name__}.so101_env:SO101KeyboardEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.so101_env_cfg:SO101KeyboardEnvCfg",
+        "env_cfg_entry_point": f"{__name__}.so101_env_cfg:SO101KeyboardEnvPresets",
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:SO101PPORunnerCfg",
     },
 )

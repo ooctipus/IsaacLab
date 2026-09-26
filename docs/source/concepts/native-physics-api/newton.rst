@@ -172,7 +172,11 @@ not state: obtain the current state with ``NewtonManager.get_state()`` at each r
 Episode participation is independent of automatic physics sleeping. Naturally sleeping active
 keys remain valid observations and targets. ``KeyboardVariants`` applies the same episode membership
 to selectors, shape visibility, and explicit ``ALWAYS`` sleep policies. Re-enabled partitions return
-to ``ALLOWED``. ``keyboard_variants=()`` selects the all-active 108-key partitioned baseline.
+to ``ALLOWED``. The SO101 task provides matched training configurations through
+``presets=heterogeneous`` (the default), ``presets=partitioned_108`` (18 six-key articulations),
+and ``presets=single_108`` (one 108-key articulation). Both baselines disable the variant bank
+and retain all 108 keys. The presets own the spawn topology and selector paths together; policy
+observations, robot actions, rewards, and physics settings are shared.
 
 After raw joint writes, call ``NewtonManager.invalidate_fk(env_ids=...)`` with int32 world IDs,
 or pass an ``env_mask``. No articulation view mapping is required. This marks all articulations

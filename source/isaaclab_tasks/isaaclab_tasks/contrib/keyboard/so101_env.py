@@ -71,7 +71,7 @@ class SO101KeyboardEnv(ManagerBasedRLEnv):
         super().load_managers()
 
     def _reset_idx(self, env_ids, *, variant_ids=None):
-        ids = torch.as_tensor(env_ids, dtype=torch.long, device=self.device)
+        ids = self.scene._ALL_INDICES[env_ids]
         if self.keyboard_variants is not None:
             if variant_ids is None:
                 count = len(self.keyboard_variants.layouts)

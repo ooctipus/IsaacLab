@@ -295,3 +295,35 @@ class SO101KeyboardEnvCfg(ManagerBasedRLEnvCfg):
         super().play_mode()
         self.num_envs = 36
         self.commands.typing.debug_vis = True
+
+
+@configclass
+class SO101KeyboardEnvPresets(PresetCfg):
+    """Matched training comparisons selected with ``presets=<mode>``."""
+
+    heterogeneous = SO101KeyboardEnvCfg()
+    partitioned_108 = SO101KeyboardEnvCfg(keyboard_variants=())
+    single_108 = SO101KeyboardEnvCfg(keyboard_variants=())
+    single_108.scene.keyboard.spawn.partition_mode = "single"
+
+    # The single articulation has the same 108 key slots but one keyboard root.
+    _key_q = KEY_Q.replace(path=".*/Keyboard/joints/key_.*_joint")
+    _key_qd = KEY_QD.replace(path=".*/Keyboard/joints/key_.*_joint")
+    _key_bodies = KEY_BODIES.replace(path=".*/Keyboard/keys/key_.*")
+    _root = KEYBOARD_ROOT.replace(path=".*/Keyboard/base_link", count_per_world=1)
+    single_108.commands.typing.keys = _key_q
+    single_108.commands.typing.key_dofs = _key_qd
+    single_108.commands.typing.key_bodies = _key_bodies
+    single_108.commands.typing.reset_roots = NewtonSelectorCfg(
+        BODY, path=(ROBOT_ROOT.path, _root.path), count_per_world=2
+    )
+    single_108.commands.typing.reset_coords = NewtonSelectorCfg(
+        JOINT_COORD, path=(ROBOT_Q.path, _key_q.path), count_per_world=114
+    )
+    single_108.commands.typing.reset_dofs = NewtonSelectorCfg(
+        JOINT_DOF, path=(ROBOT_QD.path, _key_qd.path), count_per_world=114
+    )
+    single_108.commands.typing.reset.pre_solve_reset.params["roots"] = _root
+    single_108.events.reset_keyboard.params["roots"] = _root
+    single_108.observations.perception.key_positions.params["keys"] = _key_bodies
+    default = heterogeneous

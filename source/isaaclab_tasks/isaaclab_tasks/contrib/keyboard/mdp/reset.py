@@ -105,7 +105,7 @@ def reset_root_state_uniform(env, env_ids, roots, pose_range, velocity_range):
     """Randomize fixed root poses [m, rad] with the original task's random-draw ordering."""
     if any(any(v != 0 for v in bounds) for bounds in velocity_range.values()):
         raise ValueError("The fixed keyboard root cannot have nonzero reset velocity.")
-    ids = torch.as_tensor(env_ids, dtype=torch.long, device=env.device)
+    ids = env.scene._ALL_INDICES[env_ids]
     axes = ("x", "y", "z", "roll", "pitch", "yaw")
     ranges = torch.tensor([pose_range.get(key, (0.0, 0.0)) for key in axes], device=env.device)
     samples = sample_uniform(ranges[:, 0], ranges[:, 1], (len(ids), 6), device=env.device)

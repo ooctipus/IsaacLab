@@ -132,7 +132,8 @@ def test_task_architecture_has_no_articulation_views():
 
 
 @pytest.mark.parametrize("use_graph", [False, True])
-def test_108_key_task_without_views_and_partial_reset(use_graph):
+@pytest.mark.parametrize("keyboard_mode, roots", [("partitioned_108", 19), ("single_108", 2)])
+def test_108_key_task_without_views_and_partial_reset(use_graph, keyboard_mode, roots):
     if not wp.is_cuda_available():
         pytest.skip("MJWarp requires CUDA")
     import gymnasium as gym
@@ -145,9 +146,11 @@ def test_108_key_task_without_views_and_partial_reset(use_graph):
     from isaaclab_tasks.contrib.keyboard.mdp.reset import capture_reset_state, restore_reset_state
     from isaaclab_tasks.utils import resolve_task_config
 
-    cfg, _ = resolve_task_config("IsaacContrib-Keyboard-SO101", "", overrides=["physics=newton_mjwarp"])
+    cfg, _ = resolve_task_config(
+        "IsaacContrib-Keyboard-SO101", "", overrides=["physics=newton_mjwarp", f"presets={keyboard_mode}"]
+    )
     cfg.scene.num_envs = 2
-    cfg.keyboard_variants = ()
+    assert cfg.keyboard_variants == ()
     cfg.seed = 42
     cfg.commands.typing.reset.buffer_size = 8
     cfg.sim.physics.use_cuda_graph = use_graph
@@ -166,6 +169,7 @@ def test_108_key_task_without_views_and_partial_reset(use_graph):
                 "perception": 324,
             }
             assert task.scene.articulations == {}
+            assert NewtonManager.get_model().articulation_count == 2 * roots
             assert isinstance(cfg.commands.typing.keys, NewtonSelectorCfg)  # caller config stays declarative
             for _ in range(4):
                 obs, reward, *_ = env.step(torch.full((2, 6), 0.05, device=task.device))
