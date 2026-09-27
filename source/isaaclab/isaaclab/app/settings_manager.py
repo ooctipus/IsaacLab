@@ -13,6 +13,7 @@ This allows Isaac Lab to run visualizers like Rerun and Newton without requiring
 the full Omniverse/SimulationApp stack.
 """
 
+import contextlib
 import sys
 from typing import Any
 
@@ -202,3 +203,39 @@ def initialize_carb_settings():
     """
     manager = get_settings_manager()
     manager.initialize_carb_settings()
+
+
+def sync_visualizer_cli_settings(launcher_args: dict) -> None:
+    """Write the visualizer CLI selection and ``--max_visible_envs`` to the settings.
+
+    Callers may set ``visualizer_explicit`` / ``visualizer_disable_all`` when those values
+    were resolved elsewhere. Otherwise ``disable_all`` is inferred from ``"none"`` in ``visualizer``.
+
+    Args:
+        launcher_args: Parsed launcher arguments.
+    """
+    visualizers = launcher_args.get("visualizer")
+
+    if "max_visible_envs" in launcher_args:
+        v = launcher_args["max_visible_envs"]
+        if v is not None and int(v) < 0:
+            raise ValueError(f"Invalid value for --max_visible_envs: {v}. Expected non-negative int.")
+
+    cli_explicit = bool(launcher_args.get("visualizer_explicit", False))
+    if "visualizer_disable_all" in launcher_args:
+        cli_disable_all = bool(launcher_args["visualizer_disable_all"])
+    else:
+        cli_disable_all = bool(cli_explicit) and visualizers is not None and "none" in visualizers
+
+    with contextlib.suppress(Exception):
+        visualizer_str = " ".join(visualizers) if visualizers else ""
+        settings = get_settings_manager()
+        settings.set_string("/isaaclab/visualizer/types", visualizer_str)
+        settings.set_bool("/isaaclab/visualizer/explicit", cli_explicit)
+        settings.set_bool("/isaaclab/visualizer/disable_all", cli_disable_all)
+
+        # Sentinel: ``-1`` means ``--max_visible_envs`` was not passed (see ``SimulationContext``).
+        if "max_visible_envs" in launcher_args:
+            settings.set_int("/isaaclab/visualizer/max_visible_envs", int(launcher_args["max_visible_envs"]))
+        else:
+            settings.set_int("/isaaclab/visualizer/max_visible_envs", -1)

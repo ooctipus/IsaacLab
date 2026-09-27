@@ -22,7 +22,7 @@ import argparse
 import time
 from typing import TYPE_CHECKING
 
-from isaaclab.app import AppLauncher
+from isaaclab.app import add_launcher_args, launch_simulation
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Benchmark loading different robots.")
@@ -43,8 +43,8 @@ parser.add_argument(
     help="Benchmark output formatter, defaults omniperf",
 )
 parser.add_argument("--output_path", type=str, default=".", help="Path to output benchmark results.")
-# append AppLauncher cli args
-AppLauncher.add_app_launcher_args(parser)
+# append simulation launcher cli args
+add_launcher_args(parser)
 # parse the arguments
 args_cli, _ = parser.parse_known_args()
 
@@ -60,7 +60,6 @@ import torch
 # runtime classes (``SimulationContext``, ``InteractiveScene``) eagerly import ``pxr`` and must therefore
 # be imported only after the simulation app has been launched (see :func:`main`).
 import isaaclab.sim as sim_utils
-from isaaclab.app import launch_simulation
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 from isaaclab.benchmark import BaseIsaacLabBenchmark, SingleMeasurement
 from isaaclab.physics import PhysicsCfg

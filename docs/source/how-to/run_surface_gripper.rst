@@ -25,7 +25,7 @@ directory.
 
    .. literalinclude:: ../../../scripts/tutorials/01_assets/run_surface_gripper.py
       :language: python
-      :emphasize-lines: 61-85, 124-125, 128-142, 147-150
+      :emphasize-lines: 57-81, 125-126, 129-143, 148-151
       :linenos:
 
 

@@ -13,10 +13,8 @@ the launcher inputs, then validate and launch.
 from __future__ import annotations
 
 import argparse
-import importlib.metadata
 import logging
 import os
-import sys
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -32,7 +30,9 @@ from ..physics.physics_manager_cfg import PhysicsCfg, PhysxAutoCfg, _resolve_phy
 from ..renderers.renderer_cfg import RendererCfg
 from ..sensors.camera.camera_cfg import CameraCfg
 from ..utils._device import set_cuda_device
+from ..utils.string import string_to_callable
 from .logging_utils import apply_python_logging_level, resolve_python_logging_level
+from .settings_manager import sync_visualizer_cli_settings
 
 logger = logging.getLogger(__name__)
 
@@ -44,12 +44,37 @@ _KITLESS_PHYSICS_CFGS = ("NewtonCfg", "OvPhysxCfg")
 def add_launcher_args(parser: argparse.ArgumentParser) -> None:
     """Add simulation-launcher CLI arguments (``--device``, ``--viz``, etc.) to *parser*.
 
-    Delegates to :meth:`AppLauncher.add_app_launcher_args` so that user scripts
-    do not need to import ``AppLauncher`` directly.
+    The arguments are defined by the Kit launcher, which consumes most of them.
     """
-    from . import AppLauncher
+    string_to_callable(PhysxCfg.launcher_type).add_app_launcher_args(parser)
 
-    AppLauncher.add_app_launcher_args(parser)
+
+def fuse_kit_args(argv: list[str]) -> list[str]:
+    """Fuse ``["--kit_args", "<option-like value>"]`` pairs into single ``--kit_args=<value>`` tokens.
+
+    Argparse rejects a value token that itself looks like an option (starts with ``-`` and contains
+    no space) with "expected one argument", and Kit arguments always start with ``--``. Fusing the
+    pair into the ``=``-attached form before parsing makes the documented space-separated form work
+    for a single Kit argument. All other forms pass through unchanged.
+
+    Args:
+        argv: Command-line tokens, excluding the program name.
+
+    Returns:
+        Tokens with any affected pair replaced by one fused token.
+    """
+    fused: list[str] = []
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        next_token = argv[index + 1] if index + 1 < len(argv) else None
+        if token == "--kit_args" and next_token is not None and next_token.startswith("-") and " " not in next_token:
+            fused.append(f"--kit_args={next_token}")
+            index += 2
+        else:
+            fused.append(token)
+            index += 1
+    return fused
 
 
 def make_physics_cfg(physics_cfg_str: str) -> PhysicsCfg:
@@ -154,7 +179,7 @@ def _get_visualizer_types(launcher_args: argparse.Namespace | dict | None) -> se
 
 
 def _get_livestream_mode(launcher_args: argparse.Namespace | dict | None) -> int:
-    """Return effective livestream mode using the same CLI-over-env precedence as AppLauncher."""
+    """Return effective livestream mode using the same CLI-over-env precedence as the Kit launcher."""
     livestream_arg = _get_arg(launcher_args, "livestream", -1)
     if livestream_arg is not None and int(livestream_arg) >= 0:
         return int(livestream_arg)
@@ -444,10 +469,10 @@ def _validate_runtime(scan: Scan, kit_sources: tuple[str, ...]) -> None:
 
 
 def _resolve_distributed_device(cfg, launcher_args: argparse.Namespace | dict | None) -> None:
-    """Set ``cfg.sim.device`` for distributed training, mirroring AppLauncher's fallback.
+    """Set ``cfg.sim.device`` for distributed training, mirroring the Kit launcher's fallback.
 
     When ``--distributed`` restricts each process to one GPU, ``local_rank`` may exceed
-    the visible device count. The Kit path later overwrites this with ``AppLauncher.device``;
+    the visible device count. A launcher that picks the device later overwrites this with its ``device``;
     the kitless path relies solely on this value.
     """
     if not _get_arg(launcher_args, "distributed", False):
@@ -481,7 +506,7 @@ def launch_simulation(
 
     Walks the config tree once (resolving ``--physics``, validating the
     physics/renderer/visualizer combination, and deciding whether Isaac Sim Kit is
-    needed), then launches ``AppLauncher`` for Kit-based backends (closed on exit) or
+    needed), then starts the launcher each required runtime's config names (closed on exit) or
     does nothing for kitless ones. Cameras are auto-enabled for Kit-renderer sensors.
 
     Yields the resolved physics config, so a script can pass a bare placeholder and
@@ -517,16 +542,11 @@ def launch_simulation(
 
     kit_sources = _get_kit_runtime_sources(config_scan, launcher_args)
     _validate_runtime(config_scan, kit_sources)
-    if config_scan.has_ovrtx:
-        # USD discovers schema plugins once, so load OVRTX only after rejecting incompatible Kit runtimes.
-        import ovrtx
-
-        ovrtx.register_schema_paths()
     needs_kit = bool(kit_sources)
     _set_arg(launcher_args, "visualizer_intent", config_scan.visualizer_intent)
 
-    # Kit-based backends apply the Python logging level inside AppLauncher; kitless backends
-    # never construct it, so honor --verbose / --info here to keep behavior consistent.
+    # The Kit launcher applies the Python logging level itself; without Kit, honor
+    # --verbose / --info here to keep behavior consistent.
     if not needs_kit:
         apply_python_logging_level(resolve_python_logging_level(launcher_args))
 
@@ -538,39 +558,30 @@ def launch_simulation(
             )
             _set_arg(launcher_args, "enable_cameras", True)
 
-    # Resolve distributed device early, before AppLauncher or physics init.
+    # Resolve distributed device early, before any launcher or physics init.
     _resolve_distributed_device(effective_cfg, launcher_args)
 
     visualizer_explicit_none = _get_arg(launcher_args, "visualizer") is None and _get_arg(
         launcher_args, "visualizer_explicit", False
     )
 
-    close_fn: Any = None
-    if needs_kit:
-        _ensure_isaac_sim_available()
-        from ..utils import has_kit
-
-        if not has_kit():
-            from . import AppLauncher
-
-            app_launcher = AppLauncher(launcher_args)
-            # AppLauncher may refine the device choice; propagate its final value,
-            # intentionally overwriting the value set by _resolve_distributed_device.
-            sim_cfg = getattr(effective_cfg, "sim", None)
-            if sim_cfg is not None and hasattr(app_launcher, "device"):
-                sim_cfg.device = app_launcher.device
-            close_fn = app_launcher.app.close
-    elif visualizer_types or visualizer_explicit_none:
-        # Kitless path: AppLauncher is skipped, so persist the visualizer selection in
-        # SettingsManager so SimulationContext._get_cli_visualizer_types() can find it.
-        from . import AppLauncher
-
+    # Each runtime the resolved config needs is started by the launcher its config names.
+    launcher_types = [PhysxCfg.launcher_type] if needs_kit else []
+    if config_scan.has_ovrtx:
+        # validated above: OVRTX never shares the process with Kit
+        launcher_types.append(OVRTXRendererCfg.launcher_type)
+    launchers = [string_to_callable(launcher_type)(launcher_args) for launcher_type in launcher_types]
+    for launcher in launchers:
+        # the runtime may refine the device choice made by _resolve_distributed_device
+        sim_cfg = getattr(effective_cfg, "sim", None)
+        if sim_cfg is not None and launcher.device is not None:
+            sim_cfg.device = launcher.device
+    if not needs_kit and (visualizer_types or visualizer_explicit_none):
+        # without Kit, persist the visualizer selection for SimulationContext._get_cli_visualizer_types()
         disable_all = visualizer_explicit_none or "none" in visualizer_types
         base = vars(launcher_args) if isinstance(launcher_args, argparse.Namespace) else launcher_args
         if base is not None:
-            AppLauncher.sync_visualizer_cli_settings_to_carb(
-                {**base, "visualizer_explicit": True, "visualizer_disable_all": disable_all}
-            )
+            sync_visualizer_cli_settings({**base, "visualizer_explicit": True, "visualizer_disable_all": disable_all})
 
     exit_code = 0
     try:
@@ -587,64 +598,5 @@ def launch_simulation(
         traceback.print_exc()
         raise
     finally:
-        if close_fn is not None:
-            if exit_code:
-                close_fn(exit_code=exit_code)
-            else:
-                close_fn()
-
-
-def _ensure_isaac_sim_available() -> None:
-    """Raise ``SystemExit`` with an actionable hint when Isaac Sim / Kit is missing."""
-    from . import AppLauncher  # noqa: PLC0415
-
-    if AppLauncher.is_available():
-        return
-
-    isaaclab_path = os.environ.get("ISAACLAB_PATH")
-    local_sim = os.path.join(isaaclab_path, "_isaac_sim") if isaaclab_path else None
-    extra_hint = ""
-    if local_sim and os.path.isdir(local_sim):
-        launcher, source = ("isaaclab.bat", f'call "{local_sim}\\setup_conda_env.bat"')
-        if sys.platform != "win32":
-            launcher, source = ("./isaaclab.sh", f'source "{local_sim}/setup_conda_env.sh"')
-        extra_hint = (
-            f"  Found a local Isaac Sim at {local_sim} but its environment is not active.\n"
-            f"  Either run via `{launcher} ...` (which sources the Isaac Sim env automatically),\n"
-            f"  or in your current shell run:\n"
-            f"    {source}\n"
-        )
-
-    try:
-        installed_version = importlib.metadata.version("isaacsim")
-    except importlib.metadata.PackageNotFoundError:
-        installed_version = None
-
-    if installed_version:
-        logger.error(
-            f"\n[ERROR] Isaac Sim {installed_version} is installed, but its full runtime is unavailable.\n"
-            "\n"
-            "  This environment requires Isaac Sim and Omniverse Kit.\n"
-            "    PhysX backend and Kit visualizer require Isaac Sim.\n"
-            "\n"
-            "  The current Python environment does not expose the SimulationApp API.\n"
-            f"{extra_hint}"
-            "  Install the full Isaac Sim runtime from the Isaac Lab directory by running:\n"
-            "    uv run isaaclab -i isaacsim\n"
-            "\n"
-            "  See https://isaac-sim.github.io/IsaacLab/main/source/setup/installation for details.\n"
-        )
-        raise SystemExit(1)
-
-    logger.error(
-        "\n[ERROR] Isaac Sim is not installed or not found on PYTHONPATH.\n"
-        "\n"
-        "  This environment requires Isaac Sim and Omniverse Kit.\n"
-        "    PhysX backend and Kit visualizer currently requires Isaac Sim.\n"
-        "\n"
-        f"{extra_hint}"
-        "  To fix this, ensure Isaac Sim is installed and available in the current environment.\n"
-        "\n"
-        "  See https://isaac-sim.github.io/IsaacLab/main/source/setup/installation for details.\n"
-    )
-    raise SystemExit(1)
+        for launcher in reversed(launchers):
+            launcher.close(exit_code)

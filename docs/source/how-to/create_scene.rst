@@ -42,7 +42,7 @@ This tutorial corresponds to the ``create_scene.py`` script within
 
    .. literalinclude:: ../../../scripts/tutorials/02_scene/create_scene.py
       :language: python
-      :emphasize-lines: 50-63, 68-70, 91-92, 99-100, 105-106, 116-118
+      :emphasize-lines: 50-63, 68-70, 97-98, 105-106, 111-112, 121-122, 128-130
       :linenos:
 
 
@@ -112,6 +112,15 @@ This will be used to clone the scene for each environment.
    :language: python
    :start-at: # Design scene
    :end-at: scene = InteractiveScene(scene_cfg)
+
+The configuration class ``CartpoleSceneCfg`` can be defined at the top of the script, but the
+:class:`scene.InteractiveScene` class works on the USD stage of the running simulator. It is therefore
+imported inside the ``with launch_simulation(...)`` block, once the simulator runtime has been launched.
+
+.. literalinclude:: ../../../scripts/tutorials/02_scene/create_scene.py
+   :language: python
+   :start-at: with launch_simulation(sim_cfg, args_cli):
+   :end-at: from isaaclab.scene import InteractiveScene
 
 Accessing scene elements
 ------------------------

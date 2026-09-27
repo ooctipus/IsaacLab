@@ -5,11 +5,11 @@
 
 """Launch Isaac Sim Simulator first."""
 
-from isaaclab.app import AppLauncher
-
 # launch omniverse app
 # note: need to enable cameras to be able to make replicator core available
-simulation_app = AppLauncher(headless=True, enable_cameras=True).app
+from isaaclab.test.utils import launch_test_simulation
+
+launch_test_simulation(enable_cameras=True)
 
 """Rest everything follows."""
 

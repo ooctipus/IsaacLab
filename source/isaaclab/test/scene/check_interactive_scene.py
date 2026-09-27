@@ -13,23 +13,19 @@ articulated robots and sensors.
 
 import argparse
 
-from isaaclab.app import AppLauncher
+from isaaclab.app import add_launcher_args, launch_simulation
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="This script demonstrates how to use the scene interface.")
 parser.add_argument("--num_envs", type=int, default=2, help="Number of environments to spawn.")
-AppLauncher.add_app_launcher_args(parser)
+add_launcher_args(parser)
 args_cli = parser.parse_args()
-
-# launch omniverse app
-app_launcher = AppLauncher(args_cli)
-simulation_app = app_launcher.app
 
 """Rest everything follows."""
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import AssetBaseCfg
-from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
+from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors.ray_caster import RayCasterCfg, patterns
 from isaaclab.sim import SimulationContext
 from isaaclab.terrains import TerrainImporterCfg
@@ -80,85 +76,88 @@ def main():
     """Main function."""
 
     # Load kit helper
-    sim = SimulationContext(sim_utils.SimulationCfg(dt=0.005))
-    # Set main camera
-    sim.set_camera_view(eye=[5, 5, 5], target=[0.0, 0.0, 0.0])
+    sim_cfg = sim_utils.SimulationCfg(dt=0.005, device=args_cli.device)
+    with launch_simulation(sim_cfg, args_cli):
+        # imported once Kit is running: it loads pxr, which must not be imported before Kit starts
+        from isaaclab.scene import InteractiveScene
 
-    # Spawn things into stage
-    with Timer("Setup scene"):
-        scene = InteractiveScene(MySceneCfg(num_envs=args_cli.num_envs, env_spacing=5.0, lazy_sensor_update=False))
+        sim = SimulationContext(sim_cfg)
+        # Set main camera
+        sim.set_camera_view(eye=[5, 5, 5], target=[0.0, 0.0, 0.0])
 
-    # Check that parsing happened as expected
-    assert len(scene.env_prim_paths) == args_cli.num_envs, "Number of environments does not match."
-    assert scene.terrain is not None, "Terrain not found."
-    assert len(scene.articulations) == 2, "Number of robots does not match."
-    assert len(scene.sensors) == 1, "Number of sensors does not match."
-    assert len(scene.extras) == 1, "Number of extras does not match."
+        # Spawn things into stage
+        with Timer("Setup scene"):
+            scene = InteractiveScene(MySceneCfg(num_envs=args_cli.num_envs, env_spacing=5.0, lazy_sensor_update=False))
 
-    # Play the simulator
-    with Timer("Time taken to play the simulator"):
-        sim.reset()
+        # Check that parsing happened as expected
+        assert len(scene.env_prim_paths) == args_cli.num_envs, "Number of environments does not match."
+        assert scene.terrain is not None, "Terrain not found."
+        assert len(scene.articulations) == 2, "Number of robots does not match."
+        assert len(scene.sensors) == 1, "Number of sensors does not match."
+        assert len(scene.extras) == 1, "Number of extras does not match."
 
-    # Now we are ready!
-    print("[INFO]: Setup complete...")
+        # Play the simulator
+        with Timer("Time taken to play the simulator"):
+            sim.reset()
 
-    # default joint targets
-    robot_1_actions = scene.articulations["robot_1"].data.default_joint_pos.torch.clone()
-    robot_2_actions = scene.articulations["robot_2"].data.default_joint_pos.torch.clone()
-    # Define simulation stepping
-    sim_dt = sim.get_physics_dt()
-    sim_time = 0.0
-    count = 0
-    # Simulate physics
-    while simulation_app.is_running():
-        # If simulation is stopped, then exit.
-        if sim.is_stopped():
-            break
-        # If simulation is paused, then skip.
-        if not sim.is_playing():
-            sim.step()
-            continue
-        # reset
-        if count % 50 == 0:
-            # reset counters
-            sim_time = 0.0
-            count = 0
-            # reset root state
-            root_state = scene.articulations["robot_1"].data.default_root_state.torch.clone()
-            root_state[:, :3] += scene.env_origins
-            joint_pos = scene.articulations["robot_1"].data.default_joint_pos.torch
-            joint_vel = scene.articulations["robot_1"].data.default_joint_vel.torch
-            # -- set root state
-            # -- robot 1
-            scene.articulations["robot_1"].write_root_pose_to_sim(root_state[:, :7])
-            scene.articulations["robot_1"].write_root_velocity_to_sim(root_state[:, 7:])
-            scene.articulations["robot_1"].write_joint_state_to_sim(joint_pos, joint_vel)
-            # -- robot 2
-            root_state[:, 1] += 1.0
-            scene.articulations["robot_2"].write_root_pose_to_sim(root_state[:, :7])
-            scene.articulations["robot_2"].write_root_velocity_to_sim(root_state[:, 7:])
-            scene.articulations["robot_2"].write_joint_state_to_sim(joint_pos, joint_vel)
-            # reset buffers
-            scene.reset()
-            print(">>>>>>>> Reset!")
-        # perform this loop at policy control freq (50 Hz)
-        for _ in range(4):
-            # set joint targets
-            scene.articulations["robot_1"].set_joint_position_target(robot_1_actions)
-            scene.articulations["robot_2"].set_joint_position_target(robot_2_actions)
-            # write data to sim
-            scene.write_data_to_sim()
-            # perform step
-            sim.step()
-            # read data from sim
-            scene.update(sim_dt)
-        # update sim-time
-        sim_time += sim_dt * 4
-        count += 1
+        # Now we are ready!
+        print("[INFO]: Setup complete...")
+
+        # default joint targets
+        robot_1_actions = scene.articulations["robot_1"].data.default_joint_pos.torch.clone()
+        robot_2_actions = scene.articulations["robot_2"].data.default_joint_pos.torch.clone()
+        # Define simulation stepping
+        sim_dt = sim.get_physics_dt()
+        sim_time = 0.0
+        count = 0
+        # Simulate physics
+        while sim.is_headless_or_exist_active_visualizer():
+            # If simulation is stopped, then exit.
+            if sim.is_stopped():
+                break
+            # If simulation is paused, then skip.
+            if not sim.is_playing():
+                sim.step()
+                continue
+            # reset
+            if count % 50 == 0:
+                # reset counters
+                sim_time = 0.0
+                count = 0
+                # reset root state
+                root_state = scene.articulations["robot_1"].data.default_root_state.torch.clone()
+                root_state[:, :3] += scene.env_origins
+                joint_pos = scene.articulations["robot_1"].data.default_joint_pos.torch
+                joint_vel = scene.articulations["robot_1"].data.default_joint_vel.torch
+                # -- set root state
+                # -- robot 1
+                scene.articulations["robot_1"].write_root_pose_to_sim(root_state[:, :7])
+                scene.articulations["robot_1"].write_root_velocity_to_sim(root_state[:, 7:])
+                scene.articulations["robot_1"].write_joint_state_to_sim(joint_pos, joint_vel)
+                # -- robot 2
+                root_state[:, 1] += 1.0
+                scene.articulations["robot_2"].write_root_pose_to_sim(root_state[:, :7])
+                scene.articulations["robot_2"].write_root_velocity_to_sim(root_state[:, 7:])
+                scene.articulations["robot_2"].write_joint_state_to_sim(joint_pos, joint_vel)
+                # reset buffers
+                scene.reset()
+                print(">>>>>>>> Reset!")
+            # perform this loop at policy control freq (50 Hz)
+            for _ in range(4):
+                # set joint targets
+                scene.articulations["robot_1"].set_joint_position_target(robot_1_actions)
+                scene.articulations["robot_2"].set_joint_position_target(robot_2_actions)
+                # write data to sim
+                scene.write_data_to_sim()
+                # perform step
+                sim.step()
+                # read data from sim
+                scene.update(sim_dt)
+            # update sim-time
+            sim_time += sim_dt * 4
+            count += 1
 
 
 if __name__ == "__main__":
     # run the main function
     main()
-    # close sim app
-    simulation_app.close()

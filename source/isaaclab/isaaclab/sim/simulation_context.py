@@ -520,7 +520,7 @@ class SimulationContext:
     def _apply_visualizer_cli_overrides(self, visualizer_cfgs: list[Any]) -> None:
         """Apply ``--max_visible_envs`` to every resolved visualizer cfg when set in settings.
 
-        AppLauncher stores ``/isaaclab/visualizer/max_visible_envs`` as ``-1`` when the flag was
+        the Kit launcher stores ``/isaaclab/visualizer/max_visible_envs`` as ``-1`` when the flag was
         omitted; any non-negative int overrides :attr:`VisualizerCfg.max_visible_envs` on each cfg.
         """
         raw = self.get_setting("/isaaclab/visualizer/max_visible_envs")

@@ -10,10 +10,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "isaaclab" / "test" / "sensors"))
 
-from isaaclab.app import AppLauncher
-
 # launch omniverse app
-simulation_app = AppLauncher(headless=True).app
+from isaaclab.test.utils import launch_test_simulation
+
+launch_test_simulation()
 
 """Rest everything follows."""
 

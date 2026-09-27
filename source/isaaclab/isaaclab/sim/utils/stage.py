@@ -586,7 +586,7 @@ def show_stage_in_viewport(usd_path: str) -> None:
     Opens the stage through the Kit USD context so it appears in the viewport (or the
     livestream client), then spins the Kit update loop until the window is closed or the
     loop is interrupted. Must only be called inside a running Kit process; use
-    :func:`~isaaclab.utils.version.has_kit` or :meth:`~isaaclab.app.AppLauncher.has_gui`
+    :func:`~isaaclab.utils.version.has_kit` or :meth:`~isaaclab_physx.app.KitLauncher.has_gui`
     to gate the call.
 
     Args:

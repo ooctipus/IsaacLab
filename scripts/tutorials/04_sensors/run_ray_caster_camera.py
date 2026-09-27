@@ -15,40 +15,43 @@ The camera sensor is based on using Warp kernels which do ray-casting against st
 
 """
 
-"""Launch Isaac Sim Simulator first."""
+"""Parse the command-line arguments first."""
 
 import argparse
 
-from isaaclab.app import AppLauncher
+from isaaclab.app import add_launcher_args, launch_simulation
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="This script demonstrates how to use the ray-cast camera sensor.")
 parser.add_argument("--num_envs", type=int, default=16, help="Number of environments to generate.")
 parser.add_argument("--save", action="store_true", default=False, help="Save the obtained data to disk.")
-# append AppLauncher cli args
-AppLauncher.add_app_launcher_args(parser)
+# append simulation launcher cli args
+add_launcher_args(parser)
 # parse the arguments
 args_cli = parser.parse_args()
-# launch omniverse app
-app_launcher = AppLauncher(args_cli)
-simulation_app = app_launcher.app
 
 """Rest everything follows."""
 
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 
 import isaaclab.sim as sim_utils
-from isaaclab.sensors.ray_caster import RayCasterCamera, RayCasterCameraCfg, patterns
+from isaaclab.sensors.ray_caster import RayCasterCameraCfg, patterns
 from isaaclab.utils import convert_dict_to_backend
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.math import project_points, unproject_depth
 
+if TYPE_CHECKING:
+    from isaaclab.sensors.ray_caster import RayCasterCamera
 
-def define_sensor() -> RayCasterCamera:
+
+def define_sensor() -> "RayCasterCamera":
     """Defines the ray-cast camera sensor to add to the scene."""
+    # classes that work on the USD stage are imported once the simulator runtime is running
+    from isaaclab.sensors.ray_caster import RayCasterCamera
+
     # Camera base frames
     # In contras to the USD camera, we associate the sensor to the prims at these locations.
     # This means that parent prim of the sensor is the prim at this location.
@@ -117,7 +120,7 @@ def run_simulator(sim: sim_utils.SimulationContext, scene_entities: dict):
     # camera.set_world_poses(position, orientation, indices=[0], convention="ros")
 
     # Simulate physics
-    while simulation_app.is_running():
+    while sim.is_headless_or_exist_active_visualizer():
         # Step simulation
         sim.step()
         # Update camera data
@@ -165,23 +168,24 @@ def run_simulator(sim: sim_utils.SimulationContext, scene_entities: dict):
 
 def main():
     """Main function."""
-    # Load kit helper
+    # Configure the simulation
     sim_cfg = sim_utils.SimulationCfg()
-    sim = sim_utils.SimulationContext(sim_cfg)
-    # Set main camera
-    sim.set_camera_view([2.5, 2.5, 3.5], [0.0, 0.0, 0.0])
-    # Design scene
-    scene_entities = design_scene()
-    # Play simulator
-    sim.reset()
-    # Now we are ready!
-    print("[INFO]: Setup complete...")
-    # Run simulator
-    run_simulator(sim=sim, scene_entities=scene_entities)
+    # Launch the simulator runtime that the configuration needs
+    with launch_simulation(sim_cfg, args_cli):
+        # Initialize the simulation context
+        sim = sim_utils.SimulationContext(sim_cfg)
+        # Set main camera
+        sim.set_camera_view([2.5, 2.5, 3.5], [0.0, 0.0, 0.0])
+        # Design scene
+        scene_entities = design_scene()
+        # Play simulator
+        sim.reset()
+        # Now we are ready!
+        print("[INFO]: Setup complete...")
+        # Run simulator
+        run_simulator(sim=sim, scene_entities=scene_entities)
 
 
 if __name__ == "__main__":
     # run the main function
     main()
-    # close sim app
-    simulation_app.close()

@@ -32,7 +32,7 @@ following changes to the config before passing it to the ``ManagerBasedRLEnv``.
    .. literalinclude:: ../../../scripts/tutorials/03_envs/policy_inference_in_usd.py
       :language: python
       :linenos:
-      :emphasize-lines: 53-60
+      :emphasize-lines: 52-59
 
 
 The script uses ``--device`` for both policy loading and simulation. It disables Fabric only

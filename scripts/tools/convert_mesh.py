@@ -37,12 +37,12 @@ optional arguments:
 
 """
 
-"""Launch Isaac Sim Simulator first."""
+"""Parse the command line first."""
 
 
 import argparse
 
-from isaaclab.app import AppLauncher
+from isaaclab.app import add_launcher_args, get_settings_manager, launch_simulation
 
 # Define collision approximation choices (must be defined before parser)
 _valid_collision_approx = [
@@ -79,21 +79,19 @@ parser.add_argument(
     default=None,
     help="The mass (in kg) to assign to the converted asset. If not provided, then no mass is added.",
 )
-# append AppLauncher cli args
-AppLauncher.add_app_launcher_args(parser)
+# append simulation launcher cli args
+add_launcher_args(parser)
 # parse the arguments
 args_cli = parser.parse_args()
-
-# launch omniverse app
-app_launcher = AppLauncher(args_cli)
-simulation_app = app_launcher.app
+# the mesh converter uses the Kit asset converter extension
+args_cli.require_kit = True
 
 """Rest everything follows."""
 
 import os
 
 import isaaclab.sim as sim_utils
-from isaaclab.sim.converters import MeshConverter, MeshConverterCfg
+from isaaclab.sim.converters import MeshConverterCfg
 from isaaclab.sim.schemas import schemas_cfg
 from isaaclab.utils.assets import check_file_path
 from isaaclab.utils.dict import print_dict
@@ -171,21 +169,23 @@ def main():
     print("-" * 80)
     print("-" * 80)
 
-    # Create Mesh converter and import the file
-    mesh_converter = MeshConverter(mesh_converter_cfg)
-    # print output
-    print("Mesh importer output:")
-    print(f"Generated USD file: {mesh_converter.usd_path}")
-    print("-" * 80)
-    print("-" * 80)
+    with launch_simulation(None, args_cli):
+        # the mesh converter imports Kit modules, so load it after Kit starts
+        from isaaclab.sim.converters import MeshConverter
 
-    # Show the converted asset if the launch resolved to a window or livestream
-    if AppLauncher.has_gui():
-        sim_utils.show_stage_in_viewport(mesh_converter.usd_path)
+        # Create Mesh converter and import the file
+        mesh_converter = MeshConverter(mesh_converter_cfg)
+        # print output
+        print("Mesh importer output:")
+        print(f"Generated USD file: {mesh_converter.usd_path}")
+        print("-" * 80)
+        print("-" * 80)
+
+        # Show the converted asset if the launch resolved to a window or livestream
+        if get_settings_manager().get("/isaaclab/has_gui"):
+            sim_utils.show_stage_in_viewport(mesh_converter.usd_path)
 
 
 if __name__ == "__main__":
     # run the main function
     main()
-    # close sim app
-    simulation_app.close()

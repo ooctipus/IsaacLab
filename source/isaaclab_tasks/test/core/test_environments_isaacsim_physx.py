@@ -5,10 +5,9 @@
 
 """Launch Isaac Sim Simulator first."""
 
-from isaaclab.app import AppLauncher
+from isaaclab.test.utils import launch_test_simulation
 
-app_launcher = AppLauncher(headless=True, enable_cameras=True, limit_cpu_threads=1)
-simulation_app = app_launcher.app
+launch_test_simulation(enable_cameras=True, limit_cpu_threads=1)
 
 
 """Rest everything follows."""

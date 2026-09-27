@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import argparse
 
-from isaacsim import SimulationApp
+from isaaclab.app import launch_simulation
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Pva Test Script")
@@ -28,11 +28,6 @@ parser.add_argument(
 )
 args_cli = parser.parse_args()
 
-# launch omniverse app
-config = {"headless": not args_cli.visualize}
-simulation_app = SimulationApp(config)
-
-
 """Rest everything follows."""
 
 import logging
@@ -40,7 +35,6 @@ import traceback
 
 import numpy as np
 import torch
-from isaaclab_physx.renderers.kit_viewport_utils import _set_kit_camera_view
 
 import isaaclab.sim as sim_utils
 import isaaclab.terrains as terrain_gen
@@ -49,7 +43,6 @@ from isaaclab.assets import RigidObject, RigidObjectCfg
 from isaaclab.sensors.pva import Pva, PvaCfg
 from isaaclab.sim import SimulationCfg, SimulationContext
 from isaaclab.terrains.config.rough import ROUGH_TERRAINS_CFG
-from isaaclab.terrains.terrain_importer import TerrainImporter
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.timer import Timer
 
@@ -59,6 +52,9 @@ logger = logging.getLogger(__name__)
 
 def design_scene(sim: SimulationContext, num_envs: int = 2048) -> RigidObject:
     """Design the scene."""
+    # imported here, once Kit is running: it loads scipy.spatial, which must not be imported before Kit starts
+    from isaaclab.terrains.terrain_importer import TerrainImporter
+
     # Handler for terrains importing
     terrain_importer_cfg = terrain_gen.TerrainImporterCfg(
         prim_path="/World/ground",
@@ -120,63 +116,66 @@ def main():
     """Main function."""
 
     # Load kit helper
-    sim = SimulationContext(SimulationCfg())
-    # Set main camera
-    _set_kit_camera_view([0.0, 30.0, 25.0], [0.0, 0.0, -2.5], "/OmniverseKit_Persp")
+    sim_cfg = SimulationCfg()
+    # launch omniverse app (opens the Kit viewer with --visualize)
+    with launch_simulation(sim_cfg, {"visualizer": ["kit"] if args_cli.visualize else None}):
+        sim = SimulationContext(sim_cfg)
+        # Set main camera
+        sim.set_camera_view([0.0, 30.0, 25.0], [0.0, 0.0, -2.5])
 
-    # Parameters
-    num_envs = args_cli.num_envs
-    # Design the scene
-    balls = design_scene(sim=sim, num_envs=num_envs)
+        # Parameters
+        num_envs = args_cli.num_envs
+        # Design the scene
+        balls = design_scene(sim=sim, num_envs=num_envs)
 
-    # Create a pva sensor
-    pva_cfg = PvaCfg(
-        prim_path="{ENV_REGEX_NS}/ball",
-        debug_vis=args_cli.visualize,
-    )
-    # increase scale of the arrows for better visualization
-    pva_cfg.visualizer_cfg.markers["arrow"].scale = (1.0, 0.2, 0.2)
-    pva = Pva(cfg=pva_cfg)
+        # Create a pva sensor
+        pva_cfg = PvaCfg(
+            prim_path="{ENV_REGEX_NS}/ball",
+            debug_vis=args_cli.visualize,
+        )
+        # increase scale of the arrows for better visualization
+        pva_cfg.visualizer_cfg.markers["arrow"].scale = (1.0, 0.2, 0.2)
+        pva = Pva(cfg=pva_cfg)
 
-    # Play simulator and init the Pva
-    sim.reset()
+        # Play simulator and init the Pva
+        sim.reset()
 
-    # Print the sensor information
-    print(pva)
+        # Print the sensor information
+        print(pva)
 
-    # Get the ball initial positions
-    sim.step(render=args_cli.visualize)
-    balls.update(sim.get_physics_dt())
-    ball_initial_positions = balls.data.root_pos_w.torch.clone()
-    ball_initial_orientations = balls.data.root_quat_w.torch.clone()
+        # Get the ball initial positions
+        sim.step(render=args_cli.visualize)
+        balls.update(sim.get_physics_dt())
+        ball_initial_positions = balls.data.root_pos_w.torch.clone()
+        ball_initial_orientations = balls.data.root_quat_w.torch.clone()
 
-    # Create a counter for resetting the scene
-    step_count = 0
-    # Simulate physics
-    while simulation_app.is_running():
-        # If simulation is stopped, then exit.
-        if sim.is_stopped():
-            break
-        # If simulation is paused, then skip.
-        if not sim.is_playing():
-            sim.step(render=args_cli.visualize)
-            continue
-        # Reset the scene
-        if step_count % 500 == 0:
-            # reset ball positions
-            balls.write_root_pose_to_sim(torch.cat([ball_initial_positions, ball_initial_orientations], dim=-1))
-            balls.reset()
-            # reset the sensor
-            pva.reset()
-            # reset the counter
-            step_count = 0
-        # Step simulation
-        sim.step()
-        # Update the pva sensor
-        with Timer(f"Pva sensor update with {num_envs}", synchronize="both", device=sim.device):
-            pva.update(dt=sim.get_physics_dt(), force_recompute=True)
-        # Update counter
-        step_count += 1
+        # Create a counter for resetting the scene
+        step_count = 0
+        # Simulate physics
+        while sim.is_headless_or_exist_active_visualizer():
+            # If simulation is stopped, then exit.
+            if sim.is_stopped():
+                break
+            # If simulation is paused, then skip.
+            if not sim.is_playing():
+                sim.step(render=args_cli.visualize)
+                continue
+            # Reset the scene
+            if step_count % 500 == 0:
+                # reset ball positions
+                balls.write_root_pose_to_sim(torch.cat([ball_initial_positions, ball_initial_orientations], dim=-1))
+                balls.reset()
+                # reset the sensor
+                pva.reset()
+                # reset the counter
+                step_count = 0
+            # Step simulation
+            sim.step()
+            # Update the pva sensor
+            with Timer(f"Pva sensor update with {num_envs}", synchronize="both", device=sim.device):
+                pva.update(dt=sim.get_physics_dt(), force_recompute=True)
+            # Update counter
+            step_count += 1
 
 
 if __name__ == "__main__":
@@ -187,6 +186,3 @@ if __name__ == "__main__":
         logger.error(err)
         logger.error(traceback.format_exc())
         raise
-    finally:
-        # close sim app
-        simulation_app.close()

@@ -17,32 +17,35 @@ please check: https://www.youtube.com/watch?v=vLk-f9LWj48&ab_channel=NVIDIAOmniv
 
 """
 
+from __future__ import annotations
+
 """Launch Isaac Sim Simulator first."""
 
 
 import argparse
 
-from isaaclab.app import AppLauncher
+from isaaclab.app import add_launcher_args, launch_simulation
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Check if the debug markers are visible from the camera.")
 parser.add_argument("--num_envs", type=int, default=2, help="Number of environments to spawn.")
-# append AppLauncher cli args
-AppLauncher.add_app_launcher_args(parser)
+# append launcher cli args
+add_launcher_args(parser)
 # parse the arguments
 args_cli = parser.parse_args()
 
-# launch omniverse app
-app_launcher = AppLauncher(args_cli)
-simulation_app = app_launcher.app
-
 """Rest everything follows."""
+
+from typing import TYPE_CHECKING
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
-from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
+from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import RayCasterCfg, patterns
 from isaaclab.utils import configclass
+
+if TYPE_CHECKING:
+    from isaaclab.scene import InteractiveScene
 
 ##
 # Pre-defined configs
@@ -89,7 +92,7 @@ def run_simulator(
     count = 0
 
     # Simulate physics
-    while simulation_app.is_running():
+    while sim.is_headless_or_exist_active_visualizer():
         # Reset
         if count % 500 == 0:
             # reset counter
@@ -129,23 +132,25 @@ def main():
     """Main function."""
 
     # Initialize the simulation context
-    sim_cfg = sim_utils.SimulationCfg(dt=0.005)
-    sim = sim_utils.SimulationContext(sim_cfg)
-    # Set main camera
-    sim.set_camera_view(eye=[3.5, 3.5, 3.5], target=[0.0, 0.0, 0.0])
-    # design scene
-    scene_cfg = SensorsSceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0)
-    scene = InteractiveScene(scene_cfg)
-    # Play the simulator
-    sim.reset()
-    # Now we are ready!
-    print("[INFO]: Setup complete...")
-    # Run the simulator
-    run_simulator(sim, scene)
+    sim_cfg = sim_utils.SimulationCfg(dt=0.005, device=args_cli.device)
+    with launch_simulation(sim_cfg, args_cli):
+        # imported once Kit is running: it loads pxr, which must not be imported before Kit starts
+        from isaaclab.scene import InteractiveScene
+
+        sim = sim_utils.SimulationContext(sim_cfg)
+        # Set main camera
+        sim.set_camera_view(eye=[3.5, 3.5, 3.5], target=[0.0, 0.0, 0.0])
+        # design scene
+        scene_cfg = SensorsSceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0)
+        scene = InteractiveScene(scene_cfg)
+        # Play the simulator
+        sim.reset()
+        # Now we are ready!
+        print("[INFO]: Setup complete...")
+        # Run the simulator
+        run_simulator(sim, scene)
 
 
 if __name__ == "__main__":
     # run the main function
     main()
-    # close sim app
-    simulation_app.close()

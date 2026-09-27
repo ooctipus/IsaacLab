@@ -16,21 +16,16 @@ This script demonstrates how to use the contact sensor sensor in Isaac Lab.
 
 import argparse
 
-from isaaclab.app import AppLauncher
+from isaaclab.app import add_launcher_args, launch_simulation
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Contact Sensor Test Script")
 parser.add_argument("--num_robots", type=int, default=128, help="Number of robots to spawn.")
 
-# append AppLauncher cli args
-AppLauncher.add_app_launcher_args(parser)
+# append launcher cli args
+add_launcher_args(parser)
 # parse the arguments
 args_cli = parser.parse_args()
-
-# launch omniverse app
-app_launcher = AppLauncher(args_cli)
-simulation_app = app_launcher.app
-
 
 """Rest everything follows."""
 
@@ -74,113 +69,119 @@ def main():
     """Spawns the ANYmal robot and clones it using Isaac Sim Cloner API."""
 
     # Load kit helper
-    sim = SimulationContext(SimulationCfg(dt=0.005))
-    # Set main camera
-    sim.set_camera_view([2.5, 2.5, 2.5], [0.0, 0.0, 0.0])
+    sim_cfg = SimulationCfg(dt=0.005, device=args_cli.device)
+    with launch_simulation(sim_cfg, args_cli):
+        sim = SimulationContext(sim_cfg)
+        # Set main camera
+        sim.set_camera_view([2.5, 2.5, 2.5], [0.0, 0.0, 0.0])
 
-    # Enable hydra scene-graph instancing
-    # this is needed to visualize the scene when flatcache is enabled
-    sim.set_setting("/persistent/omnihydra/useSceneGraphInstancing", True)
+        # Enable hydra scene-graph instancing
+        # this is needed to visualize the scene when flatcache is enabled
+        sim.set_setting("/persistent/omnihydra/useSceneGraphInstancing", True)
 
-    # Create environment clones using Lab's cloner utilities
-    num_envs = args_cli.num_robots
-    env_fmt = "/World/envs/env_{}"
-    env_ids = np.arange(num_envs, dtype=np.int64)
-    env_origins, _ = lab_cloner.grid_transforms(num_envs, spacing=2.0)
-    # Everything under the namespace "/World/envs/env_0" will be cloned
-    sim.stage.DefinePrim("/World/envs/env_0", "Xform")
-    # Clone the scene
-    envs_prim_paths = [f"/World/envs/env_{i}" for i in range(num_envs)]
-    lab_cloner.usd_replicate(sim.stage, [env_fmt.format(0)], [env_fmt], env_ids, positions=env_origins)
-    # Design props
-    design_scene()
-    # Spawn things into the scene
-    robot_cfg = ANYMAL_C_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-    robot_cfg.spawn.activate_contact_sensors = True
-    robot = Articulation(cfg=robot_cfg)
-    # Contact sensor
-    contact_sensor_cfg = ContactSensorCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/[^/]*_FOOT",
-        track_air_time=True,
-        track_contact_points=True,
-        track_friction_forces=True,
-        debug_vis=False,  # not args_cli.headless,
-        filter_prim_paths_expr=["/World/defaultGroundPlane/GroundPlane/CollisionPlane"],
-    )
-    contact_sensor = ContactSensor(cfg=contact_sensor_cfg)
-    # filter collisions within each environment instance
-    physics_scene_path = sim.cfg.physics_prim_path
-    lab_cloner.filter_collisions(
-        sim.stage, physics_scene_path, "/World/collisions", envs_prim_paths, global_paths=["/World/defaultGroundPlane"]
-    )
+        # Create environment clones using Lab's cloner utilities
+        num_envs = args_cli.num_robots
+        env_fmt = "/World/envs/env_{}"
+        env_ids = np.arange(num_envs, dtype=np.int64)
+        env_origins, _ = lab_cloner.grid_transforms(num_envs, spacing=2.0)
+        # Everything under the namespace "/World/envs/env_0" will be cloned
+        sim.stage.DefinePrim("/World/envs/env_0", "Xform")
+        # Clone the scene
+        envs_prim_paths = [f"/World/envs/env_{i}" for i in range(num_envs)]
+        lab_cloner.usd_replicate(sim.stage, [env_fmt.format(0)], [env_fmt], env_ids, positions=env_origins)
+        # Design props
+        design_scene()
+        # Spawn things into the scene
+        robot_cfg = ANYMAL_C_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+        robot_cfg.spawn.activate_contact_sensors = True
+        robot = Articulation(cfg=robot_cfg)
+        # Contact sensor
+        contact_sensor_cfg = ContactSensorCfg(
+            prim_path="{ENV_REGEX_NS}/Robot/[^/]*_FOOT",
+            track_air_time=True,
+            track_contact_points=True,
+            track_friction_forces=True,
+            debug_vis=False,  # not args_cli.headless,
+            filter_prim_paths_expr=["/World/defaultGroundPlane/GroundPlane/CollisionPlane"],
+        )
+        contact_sensor = ContactSensor(cfg=contact_sensor_cfg)
+        # filter collisions within each environment instance
+        physics_scene_path = sim.cfg.physics_prim_path
+        lab_cloner.filter_collisions(
+            sim.stage,
+            physics_scene_path,
+            "/World/collisions",
+            envs_prim_paths,
+            global_paths=["/World/defaultGroundPlane"],
+        )
 
-    # Play the simulator
-    sim.reset()
-    # print info
-    print(contact_sensor)
+        # Play the simulator
+        sim.reset()
+        # print info
+        print(contact_sensor)
 
-    # Now we are ready!
-    print("[INFO]: Setup complete...")
+        # Now we are ready!
+        print("[INFO]: Setup complete...")
 
-    # Define simulation stepping
-    decimation = 4
-    physics_dt = sim.get_physics_dt()
-    sim_dt = decimation * physics_dt
-    sim_time = 0.0
-    count = 0
-    dt = []
-    # Simulate physics
-    while simulation_app.is_running():
-        # If simulation is stopped, then exit.
-        if sim.is_stopped():
-            break
-        # If simulation is paused, then skip.
-        if not sim.is_playing():
-            sim.step(render=False)
-            continue
-        # reset
-        if count % 1000 == 0 and count != 0:
-            # reset counters
-            sim_time = 0.0
-            count = 0
-            print("=" * 80)
-            print("avg dt real-time", sum(dt) / len(dt))
-            print("=" * 80)
+        # Define simulation stepping
+        decimation = 4
+        physics_dt = sim.get_physics_dt()
+        sim_dt = decimation * physics_dt
+        sim_time = 0.0
+        count = 0
+        dt = []
+        # Simulate physics
+        while sim.is_headless_or_exist_active_visualizer():
+            # If simulation is stopped, then exit.
+            if sim.is_stopped():
+                break
+            # If simulation is paused, then skip.
+            if not sim.is_playing():
+                sim.step(render=False)
+                continue
+            # reset
+            if count % 1000 == 0 and count != 0:
+                # reset counters
+                sim_time = 0.0
+                count = 0
+                print("=" * 80)
+                print("avg dt real-time", sum(dt) / len(dt))
+                print("=" * 80)
 
-            # reset dof state
-            joint_pos, joint_vel = robot.data.default_joint_pos, robot.data.default_joint_vel
-            robot.write_joint_state_to_sim(joint_pos, joint_vel)
-            robot.reset()
-            dt = []
+                # reset dof state
+                joint_pos, joint_vel = robot.data.default_joint_pos, robot.data.default_joint_vel
+                robot.write_joint_state_to_sim(joint_pos, joint_vel)
+                robot.reset()
+                dt = []
 
-        # perform 4 steps
-        for _ in range(decimation):
-            # apply actions
-            robot.set_joint_position_target(robot.data.default_joint_pos)
-            # write commands to sim
-            robot.write_data_to_sim()
-            # perform step
-            sim.step()
-            # fetch data
-            robot.update(physics_dt)
-        # update sim-time
-        sim_time += sim_dt
-        count += 1
-        # update the buffers
-        if sim.is_playing():
-            with Timer(synchronize="both", device=sim.device) as timer:
+            # perform 4 steps
+            for _ in range(decimation):
+                # apply actions
+                robot.set_joint_position_target(robot.data.default_joint_pos)
+                # write commands to sim
+                robot.write_data_to_sim()
+                # perform step
+                sim.step()
+                # fetch data
+                robot.update(physics_dt)
+            # update sim-time
+            sim_time += sim_dt
+            count += 1
+            # update the buffers
+            if sim.is_playing():
+                with Timer(synchronize="both", device=sim.device) as timer:
+                    contact_sensor.update(sim_dt, force_recompute=True)
+                dt.append(timer.total_run_time)
+
                 contact_sensor.update(sim_dt, force_recompute=True)
-            dt.append(timer.total_run_time)
-
-            contact_sensor.update(sim_dt, force_recompute=True)
-            if count % 100 == 0:
-                print("Sim-time: ", sim_time)
-                print("Number of contacts: ", torch.count_nonzero(contact_sensor.data.current_air_time == 0.0).item())
-                print("-" * 80)
+                if count % 100 == 0:
+                    print("Sim-time: ", sim_time)
+                    print(
+                        "Number of contacts: ", torch.count_nonzero(contact_sensor.data.current_air_time == 0.0).item()
+                    )
+                    print("-" * 80)
 
 
 if __name__ == "__main__":
     # run the main function
     main()
-    # close sim app
-    simulation_app.close()

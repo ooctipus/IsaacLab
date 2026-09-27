@@ -19,11 +19,12 @@ the simulator or OpenGL convention for the camera, we use the robotics or ROS co
 
 """
 
-"""Launch Isaac Sim Simulator first."""
+"""Parse the command-line arguments first."""
 
 import argparse
+from typing import TYPE_CHECKING
 
-from isaaclab.app import AppLauncher
+from isaaclab.app import add_launcher_args, launch_simulation
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="This script demonstrates how to use the camera sensor.")
@@ -49,16 +50,12 @@ parser.add_argument(
         " The viewport will always initialize with the perspective of camera 0."
     ),
 )
-# append AppLauncher cli args
-AppLauncher.add_app_launcher_args(parser)
+# append simulation launcher cli args
+add_launcher_args(parser)
 # parse the arguments
 args_cli = parser.parse_args()
 # Camera sensors require the rendering extensions in headless and viewport-free launches.
 args_cli.enable_cameras = True
-
-# launch omniverse app
-app_launcher = AppLauncher(args_cli)
-simulation_app = app_launcher.app
 
 """Rest everything follows."""
 
@@ -69,19 +66,23 @@ import numpy as np
 import torch
 from isaaclab_physx.renderers import IsaacRtxRendererCfg
 
-import omni.replicator.core as rep
-
 import isaaclab.sim as sim_utils
 from isaaclab.assets import RigidObject, RigidObjectCfg
 from isaaclab.markers import VisualizationMarkers
 from isaaclab.markers.config import RAY_CASTER_MARKER_CFG
-from isaaclab.sensors.camera import Camera, CameraCfg
+from isaaclab.sensors.camera import CameraCfg
 from isaaclab.sensors.camera.utils import create_pointcloud_from_depth
 from isaaclab.utils import convert_dict_to_backend
 
+if TYPE_CHECKING:
+    from isaaclab.sensors.camera import Camera
 
-def define_sensor() -> Camera:
+
+def define_sensor() -> "Camera":
     """Defines the camera sensor to add to the scene."""
+    # classes that work on the USD stage are imported once the simulator runtime is running
+    from isaaclab.sensors.camera import Camera
+
     # Setup camera sensor
     # In contrast to the ray-cast camera, we spawn the prim at these locations.
     # This means the camera sensor will be attached to these prims.
@@ -170,6 +171,9 @@ def design_scene() -> dict:
 
 def run_simulator(sim: sim_utils.SimulationContext, scene_entities: dict):
     """Run the simulator."""
+    # Replicator is a Kit extension, so import it once the simulator runtime is running
+    import omni.replicator.core as rep
+
     # extract entities for simplified notation
     camera: Camera = scene_entities["camera"]
 
@@ -200,14 +204,14 @@ def run_simulator(sim: sim_utils.SimulationContext, scene_entities: dict):
     # Index of the camera to use for visualization and saving
     camera_index = args_cli.camera_id
 
-    # Create the markers for the --draw option outside of is_running() loop
+    # Create the markers for the --draw option outside of the simulation loop
     if sim.get_setting("/isaaclab/has_gui") and args_cli.draw:
         cfg = RAY_CASTER_MARKER_CFG.replace(prim_path="/Visuals/CameraPointCloud")
         cfg.markers["hit"].radius = 0.002
         pc_markers = VisualizationMarkers(cfg)
 
     # Simulate physics
-    while simulation_app.is_running():
+    while sim.is_headless_or_exist_active_visualizer():
         # Step simulation
         sim.step()
         # Update camera data
@@ -274,23 +278,24 @@ def run_simulator(sim: sim_utils.SimulationContext, scene_entities: dict):
 
 def main():
     """Main function."""
-    # Load simulation context
+    # Configure the simulation
     sim_cfg = sim_utils.SimulationCfg(device=args_cli.device)
-    sim = sim_utils.SimulationContext(sim_cfg)
-    # Set main camera
-    sim.set_camera_view([2.5, 2.5, 2.5], [0.0, 0.0, 0.0])
-    # Design scene
-    scene_entities = design_scene()
-    # Play simulator
-    sim.reset()
-    # Now we are ready!
-    print("[INFO]: Setup complete...")
-    # Run simulator
-    run_simulator(sim, scene_entities)
+    # Launch the simulator runtime that the configuration needs
+    with launch_simulation(sim_cfg, args_cli):
+        # Initialize the simulation context
+        sim = sim_utils.SimulationContext(sim_cfg)
+        # Set main camera
+        sim.set_camera_view([2.5, 2.5, 2.5], [0.0, 0.0, 0.0])
+        # Design scene
+        scene_entities = design_scene()
+        # Play simulator
+        sim.reset()
+        # Now we are ready!
+        print("[INFO]: Setup complete...")
+        # Run simulator
+        run_simulator(sim, scene_entities)
 
 
 if __name__ == "__main__":
     # run the main function
     main()
-    # close sim app
-    simulation_app.close()

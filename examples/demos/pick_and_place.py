@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 import torch
 import warp as wp
 
-from isaaclab.app import AppLauncher
+from isaaclab.app import add_launcher_args, launch_simulation
 
 parser = argparse.ArgumentParser(description="Keyboard control for Isaac Lab Pick and Place.")
 parser.add_argument("--num_envs", type=int, default=32, help="Number of environments to spawn.")
@@ -24,22 +25,16 @@ parser.add_argument(
     choices=["isaacsim_physx"],
     help="Physics backend.",
 )
-AppLauncher.add_app_launcher_args(parser)
-parser.set_defaults(visualizer=["kit"])
+add_launcher_args(parser)
+# surface grippers only run on CPU, and the launcher applies --device to the environment
+parser.set_defaults(visualizer=["kit"], device="cpu")
 args_cli = parser.parse_args()
 if args_cli.num_envs < 1:
     parser.error("--num_envs must be at least 1.")
 if args_cli.max_steps == 0 or args_cli.max_steps < -1:
     parser.error("--max_steps must be positive or -1.")
 
-app_launcher = AppLauncher(args_cli)
-simulation_app = app_launcher.app
-
-# Kit modules must be imported after AppLauncher starts SimulationApp.
 from isaaclab_physx.assets import SurfaceGripperCfg
-
-import carb
-import omni
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
@@ -51,6 +46,9 @@ from isaaclab.utils import configclass
 from isaaclab.utils.math import sample_uniform
 
 from isaaclab_assets.robots.pick_and_place import PICK_AND_PLACE_CFG
+
+if TYPE_CHECKING:
+    import carb
 
 
 @configclass
@@ -173,6 +171,10 @@ class PickAndPlaceEnv(DirectRLEnv):
 
     def set_up_keyboard(self) -> None:
         """Register keyboard controls."""
+        # Kit modules are importable only after launch_simulation starts Kit
+        import carb.input
+        import omni.appwindow
+
         self._input = carb.input.acquire_input_interface()
         self._keyboard = omni.appwindow.get_default_app_window().get_keyboard()
         self._sub_keyboard = self._input.subscribe_to_keyboard_events(self._keyboard, self._on_keyboard_event)
@@ -201,6 +203,8 @@ class PickAndPlaceEnv(DirectRLEnv):
 
     def _on_keyboard_event(self, event: carb.input.KeyboardEvent) -> bool:
         """Update controls from a keyboard event."""
+        import carb.input
+
         if event.type == carb.input.KeyboardEventType.KEY_PRESS:
             if event.input.name == self._auto_aim_target:
                 self.go_to_target[:] = True
@@ -398,21 +402,21 @@ def main() -> None:
     """Run the interactive surface-gripper demo."""
     env_cfg = PickAndPlaceEnvCfg()
     env_cfg.scene.num_envs = args_cli.num_envs
-    pick_and_place = PickAndPlaceEnv(env_cfg)
-    pick_and_place.reset()
-    step_count = 0
-    try:
-        while simulation_app.is_running() and (args_cli.max_steps < 0 or step_count < args_cli.max_steps):
-            with torch.inference_mode():
-                actions = torch.zeros((pick_and_place.num_envs, 4), device=pick_and_place.device)
-                pick_and_place.step(actions)
-            step_count += 1
-    finally:
-        pick_and_place.close()
+    with launch_simulation(env_cfg, args_cli):
+        pick_and_place = PickAndPlaceEnv(env_cfg)
+        pick_and_place.reset()
+        step_count = 0
+        try:
+            while pick_and_place.sim.is_headless_or_exist_active_visualizer() and (
+                args_cli.max_steps < 0 or step_count < args_cli.max_steps
+            ):
+                with torch.inference_mode():
+                    actions = torch.zeros((pick_and_place.num_envs, 4), device=pick_and_place.device)
+                    pick_and_place.step(actions)
+                step_count += 1
+        finally:
+            pick_and_place.close()
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    finally:
-        simulation_app.close()
+    main()

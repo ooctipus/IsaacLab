@@ -8,9 +8,9 @@
 import sys
 from pathlib import Path
 
-from isaaclab.app import AppLauncher
+from isaaclab.test.utils import launch_test_simulation
 
-simulation_app = AppLauncher(headless=True, enable_cameras=True).app
+launch_test_simulation(enable_cameras=True)
 
 """Rest everything follows."""
 

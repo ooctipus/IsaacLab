@@ -28,11 +28,11 @@ optional arguments:
 
 """
 
-"""Launch Isaac Sim Simulator first."""
+"""Parse the command line first."""
 
 import argparse
 
-from isaaclab.app import AppLauncher
+from isaaclab.app import add_launcher_args, launch_simulation
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Utility to convert a URDF or mesh into an Instanceable asset.")
@@ -71,24 +71,25 @@ parser.add_argument(
     help="The mass (in kg) to assign to the converted asset. If not provided, then no mass is added.",
 )
 
-# append AppLauncher cli args
-AppLauncher.add_app_launcher_args(parser)
+# append simulation launcher cli args
+add_launcher_args(parser)
 # parse the arguments
 args_cli = parser.parse_args()
-
-# launch omniverse app
-app_launcher = AppLauncher(args_cli)
-simulation_app = app_launcher.app
+# the URDF importer and mesh asset converter are Kit extensions
+args_cli.require_kit = True
 
 """Rest everything follows."""
 
 import os
 
-from isaaclab.sim.converters import MeshConverter, MeshConverterCfg, UrdfConverter, UrdfConverterCfg
+from isaaclab.sim.converters import MeshConverterCfg, UrdfConverterCfg
 from isaaclab.sim.schemas import schemas_cfg
 
 
 def main():
+    # the mesh converter imports Kit modules, so load it after Kit starts
+    from isaaclab.sim.converters import MeshConverter, UrdfConverter
+
     # Define conversion time given
     conversion_type = args_cli.conversion_type.lower()
     # Warning if conversion type input is not valid
@@ -154,7 +155,6 @@ def main():
 
 
 if __name__ == "__main__":
-    # run the main function
-    main()
-    # close sim app
-    simulation_app.close()
+    with launch_simulation(None, args_cli):
+        # run the main function
+        main()

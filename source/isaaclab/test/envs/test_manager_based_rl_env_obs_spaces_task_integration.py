@@ -9,10 +9,10 @@ This temporary relocation handoff intentionally remains in the core test tree un
 task-backed reset/step, camera, and ray-caster scenarios can move to the task package.
 """
 
-from isaaclab.app import AppLauncher
-
 # launch omniverse app
-simulation_app = AppLauncher(headless=True, enable_cameras=True).app
+from isaaclab.test.utils import launch_test_simulation
+
+launch_test_simulation(enable_cameras=True)
 
 import gymnasium as gym
 import numpy as np

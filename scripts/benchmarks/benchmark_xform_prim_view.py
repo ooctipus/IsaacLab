@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import argparse
 
-from isaaclab.app import AppLauncher
+from isaaclab.app import add_launcher_args, launch_simulation
 
 parser = argparse.ArgumentParser(description="Benchmark FrameView performance across backends.")
 parser.add_argument("--num_envs", type=int, default=100, help="Number of environments to simulate.")
@@ -29,11 +29,8 @@ parser.add_argument("--num_iterations", type=int, default=50, help="Number of it
 parser.add_argument("--profile", action="store_true", help="Enable cProfile profiling.")
 parser.add_argument("--profile_dir", type=str, default="./profile_results", help="Directory for .prof files.")
 
-AppLauncher.add_app_launcher_args(parser)
+add_launcher_args(parser)
 args_cli = parser.parse_args()
-
-app_launcher = AppLauncher(args_cli)
-simulation_app = app_launcher.app
 
 """Rest everything follows."""
 
@@ -44,16 +41,11 @@ from typing import Literal
 import torch
 import warp as wp
 from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
-from isaaclab_newton.sim.views import NewtonSiteFrameView
-from isaaclab_physx.sim.views import FabricFrameView
-
-from pxr import Gf
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import RigidObjectCfg
-from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
+from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim import SimulationCfg, build_simulation_context
-from isaaclab.sim.views import UsdFrameView
 from isaaclab.utils import configclass
 
 
@@ -82,6 +74,15 @@ def benchmark_frame_view(  # noqa: C901
     num_iterations: int,
 ) -> tuple[dict[str, float], dict[str, torch.Tensor]]:
     """Benchmark get/set world/local poses for the given FrameView backend."""
+    # the view and scene runtime classes import USD, which must load after Kit starts
+    from isaaclab_newton.sim.views import NewtonSiteFrameView
+    from isaaclab_physx.sim.views import FabricFrameView
+
+    from pxr import Gf
+
+    from isaaclab.scene import InteractiveScene
+    from isaaclab.sim.views import UsdFrameView
+
     timing_results: dict[str, float] = {}
     computed_results: dict[str, torch.Tensor] = {}
     device = args_cli.device
@@ -473,4 +474,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # each backend builds its own simulation context; the USD and Fabric views need Kit
+    with launch_simulation(None, args_cli):
+        main()

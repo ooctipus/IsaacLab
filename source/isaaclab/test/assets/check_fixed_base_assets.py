@@ -17,18 +17,14 @@ This script demonstrates fixed-base API for different robots.
 
 import argparse
 
-from isaaclab.app import AppLauncher
+from isaaclab.app import add_launcher_args, launch_simulation
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="This script checks the fixed-base API for different robots.")
-# append AppLauncher cli args
-AppLauncher.add_app_launcher_args(parser)
+# append launcher cli args
+add_launcher_args(parser)
 # parse the arguments
 args_cli = parser.parse_args()
-
-# launch omniverse app
-app_launcher = AppLauncher(args_cli)
-simulation_app = app_launcher.app
 
 """Rest everything follows."""
 
@@ -99,7 +95,7 @@ def run_simulator(sim: sim_utils.SimulationContext, entities: dict[str, Articula
     sim_time = 0.0
     count = 0
     # Simulate physics
-    while simulation_app.is_running():
+    while sim.is_headless_or_exist_active_visualizer():
         # reset
         if count % 200 == 0:
             # reset counters
@@ -146,22 +142,22 @@ def main():
     """Main function."""
 
     # Initialize the simulation context
-    sim = sim_utils.SimulationContext(sim_utils.SimulationCfg(dt=0.01))
-    # Set main camera
-    sim.set_camera_view(eye=[2.5, 2.5, 2.5], target=[0.0, 0.0, 0.0])
-    # design scene
-    scene_entities, scene_origins = design_scene()
-    scene_origins = torch.tensor(scene_origins, device=sim.device)
-    # Play the simulator
-    sim.reset()
-    # Now we are ready!
-    print("[INFO]: Setup complete...")
-    # Run the simulator
-    run_simulator(sim, scene_entities, scene_origins)
+    sim_cfg = sim_utils.SimulationCfg(dt=0.01, device=args_cli.device)
+    with launch_simulation(sim_cfg, args_cli):
+        sim = sim_utils.SimulationContext(sim_cfg)
+        # Set main camera
+        sim.set_camera_view(eye=[2.5, 2.5, 2.5], target=[0.0, 0.0, 0.0])
+        # design scene
+        scene_entities, scene_origins = design_scene()
+        scene_origins = torch.tensor(scene_origins, device=sim.device)
+        # Play the simulator
+        sim.reset()
+        # Now we are ready!
+        print("[INFO]: Setup complete...")
+        # Run the simulator
+        run_simulator(sim, scene_entities, scene_origins)
 
 
 if __name__ == "__main__":
     # run the main function
     main()
-    # close sim app
-    simulation_app.close()

@@ -16,10 +16,9 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import traceback
 from functools import partial
 
-from isaaclab.app import AppLauncher
+from isaaclab.app import add_launcher_args, launch_simulation
 from isaaclab.benchmark._cli import parse_positive_int
 from isaaclab.benchmark.sensor_suites import add_sensor_benchmark_args
 
@@ -38,13 +37,10 @@ parser.add_argument(
     action="store_true",
     help="Use cached PhysX views with ordinary eager Warp launches.",
 )
-AppLauncher.add_app_launcher_args(parser)
+add_launcher_args(parser)
 args_cli = parser.parse_args()
 
-app_launcher = AppLauncher(args_cli)
-simulation_app = app_launcher.app
-
-"""Everything below follows application launch."""
+"""Rest everything follows."""
 
 import torch
 import warp as wp
@@ -54,7 +50,7 @@ import isaaclab.sim as sim_utils
 from isaaclab.assets import RigidObjectCfg
 from isaaclab.benchmark import LatencyBenchmarkRunner, SingleMeasurement
 from isaaclab.benchmark.sensor_suites import add_sensor_latency_measurements, collect_sensor_latency_samples
-from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
+from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import FrameTransformerCfg, OffsetCfg
 from isaaclab.utils import configclass
 
@@ -92,87 +88,83 @@ def main() -> None:
     """Run the benchmark and print latency statistics."""
     sim_dt = 1.0 / 120.0
     sim_cfg = sim_utils.SimulationCfg(dt=sim_dt, device=args_cli.device, gravity=(0.0, 0.0, 0.0))
-    sim = sim_utils.SimulationContext(sim_cfg)
+    with launch_simulation(sim_cfg, args_cli):
+        # the scene runtime imports USD, which must load after Kit starts
+        from isaaclab.scene import InteractiveScene
 
-    scene_cfg = FrameTransformerBenchmarkSceneCfg(
-        num_envs=args_cli.num_envs,
-        env_spacing=1.0,
-        lazy_sensor_update=True,
-    )
-    scene_cfg.frame_transformer = FrameTransformerCfg(
-        prim_path="{ENV_REGEX_NS}/Source",
-        target_frames=[
-            FrameTransformerCfg.FrameCfg(
-                name=f"target_{index}",
-                prim_path="{ENV_REGEX_NS}/Target",
-                offset=OffsetCfg(pos=(0.0, 0.01 * index, 0.0)),
-            )
-            for index in range(args_cli.num_target_frames)
-        ],
-    )
-    scene = InteractiveScene(scene_cfg)
-    sim.reset()
-    scene.reset()
+        sim = sim_utils.SimulationContext(sim_cfg)
 
-    sensor = scene["frame_transformer"]
+        scene_cfg = FrameTransformerBenchmarkSceneCfg(
+            num_envs=args_cli.num_envs,
+            env_spacing=1.0,
+            lazy_sensor_update=True,
+        )
+        scene_cfg.frame_transformer = FrameTransformerCfg(
+            prim_path="{ENV_REGEX_NS}/Source",
+            target_frames=[
+                FrameTransformerCfg.FrameCfg(
+                    name=f"target_{index}",
+                    prim_path="{ENV_REGEX_NS}/Target",
+                    offset=OffsetCfg(pos=(0.0, 0.01 * index, 0.0)),
+                )
+                for index in range(args_cli.num_target_frames)
+            ],
+        )
+        scene = InteractiveScene(scene_cfg)
+        sim.reset()
+        scene.reset()
 
-    if args_cli.disable_recorded_launch:
-        sensor._use_recorded_launch = False
-    for _ in range(args_cli.warmup_steps):
-        sim.step(render=False)
-        sensor.update(sim_dt, force_recompute=True)
-    wp.synchronize_device(sim.device)
+        sensor = scene["frame_transformer"]
 
-    synchronize_device = partial(wp.synchronize_device, sim.device)
-    samples = collect_sensor_latency_samples(
-        num_steps=args_cli.num_steps,
-        step=lambda: sim.step(render=False),
-        update=lambda: sensor.update(sim_dt, force_recompute=True),
-        synchronize=synchronize_device,
-    )
+        if args_cli.disable_recorded_launch:
+            sensor._use_recorded_launch = False
+        for _ in range(args_cli.warmup_steps):
+            sim.step(render=False)
+            sensor.update(sim_dt, force_recompute=True)
+        wp.synchronize_device(sim.device)
 
-    target_positions = sensor.data.target_pos_w.torch
-    finite_frames = int(torch.isfinite(target_positions).all(dim=-1).sum().item())
-    expected_frames = args_cli.num_envs * args_cli.num_target_frames
+        synchronize_device = partial(wp.synchronize_device, sim.device)
+        samples = collect_sensor_latency_samples(
+            num_steps=args_cli.num_steps,
+            step=lambda: sim.step(render=False),
+            update=lambda: sensor.update(sim_dt, force_recompute=True),
+            synchronize=synchronize_device,
+        )
 
-    if finite_frames != expected_frames:
-        raise RuntimeError(f"Expected {expected_frames} finite target frames, received {finite_frames}.")
+        target_positions = sensor.data.target_pos_w.torch
+        finite_frames = int(torch.isfinite(target_positions).all(dim=-1).sum().item())
+        expected_frames = args_cli.num_envs * args_cli.num_target_frames
 
-    benchmark = LatencyBenchmarkRunner(
-        benchmark_name="physx_frame_transformer_sensor",
-        formatter_type=args_cli.benchmark_formatter,
-        output_path=args_cli.output_path,
-        metadata={
-            "physics_variant": args_cli.physics_variant,
-            "label": args_cli.label,
-            "device": str(sim.device),
-            "num_envs": args_cli.num_envs,
-            "target_frames_per_env": args_cli.num_target_frames,
-            "num_steps": args_cli.num_steps,
-            "warmup_steps": args_cli.warmup_steps,
-        },
-    )
-    add_sensor_latency_measurements(
-        benchmark,
-        samples=samples,
-        validation=[
-            SingleMeasurement(name="Finite Target Frames", value=finite_frames, unit="count"),
-            SingleMeasurement(name="Expected Target Frames", value=expected_frames, unit="count"),
-        ],
-        update_phase="sensor_update",
-        observer_phase="observer",
-        validation_phase="validation",
-    )
-    benchmark.finalize()
+        if finite_frames != expected_frames:
+            raise RuntimeError(f"Expected {expected_frames} finite target frames, received {finite_frames}.")
+
+        benchmark = LatencyBenchmarkRunner(
+            benchmark_name="physx_frame_transformer_sensor",
+            formatter_type=args_cli.benchmark_formatter,
+            output_path=args_cli.output_path,
+            metadata={
+                "physics_variant": args_cli.physics_variant,
+                "label": args_cli.label,
+                "device": str(sim.device),
+                "num_envs": args_cli.num_envs,
+                "target_frames_per_env": args_cli.num_target_frames,
+                "num_steps": args_cli.num_steps,
+                "warmup_steps": args_cli.warmup_steps,
+            },
+        )
+        add_sensor_latency_measurements(
+            benchmark,
+            samples=samples,
+            validation=[
+                SingleMeasurement(name="Finite Target Frames", value=finite_frames, unit="count"),
+                SingleMeasurement(name="Expected Target Frames", value=expected_frames, unit="count"),
+            ],
+            update_phase="sensor_update",
+            observer_phase="observer",
+            validation_phase="validation",
+        )
+        benchmark.finalize()
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except BaseException:
-        if simulation_app.config.get("fast_shutdown", False):
-            traceback.print_exc()
-        simulation_app.close(exit_code=1)
-        raise
-    else:
-        simulation_app.close()
+    main()

@@ -41,17 +41,19 @@ class _DummyEnvCfg:
         self.sim = sim_cfg
 
 
-def test_launch_simulation_passes_visualizer_intent_to_applauncher(monkeypatch):
+def test_launch_simulation_passes_visualizer_intent_to_kit_launcher(monkeypatch):
     """Ensure canonical launcher path forwards visualizer intent upstream."""
     captured: dict[str, object] = {}
 
-    class _FakeAppLauncher:
-        is_available = staticmethod(lambda: True)
+    class _FakeKitLauncher:
+        device = None
 
         def __init__(self, launcher_args):
             captured["launcher_args"] = launcher_args
             captured["closed"] = False
-            self.app = types.SimpleNamespace(close=lambda: captured.update({"closed": True}))
+
+        def close(self, exit_code=0):
+            captured["closed"] = True
 
     monkeypatch.setitem(sys.modules, "isaaclab.utils", types.SimpleNamespace(has_kit=lambda: False))
     monkeypatch.setitem(
@@ -59,8 +61,7 @@ def test_launch_simulation_passes_visualizer_intent_to_applauncher(monkeypatch):
         "isaaclab.utils.assets",
         types.SimpleNamespace(configure_storage_profile=lambda: None),
     )
-    monkeypatch.setitem(sys.modules, "isaaclab.app", types.SimpleNamespace(AppLauncher=_FakeAppLauncher))
-    monkeypatch.setattr("importlib.util.find_spec", lambda name: object() if name == "omni.kit" else None)
+    monkeypatch.setitem(sys.modules, "isaaclab_physx.app", types.SimpleNamespace(KitLauncher=_FakeKitLauncher))
 
     env_cfg = _DummyEnvCfg(_DummySimCfg([_DummyVizCfg("kit"), _DummyVizCfg("newton")]))
     launcher_args = argparse.Namespace()
@@ -82,17 +83,13 @@ def test_launch_simulation_kitless_viz_none_sets_disable_all(monkeypatch):
     """Kitless mode should persist explicit disable-all semantics for --viz none."""
     captured = {"types": None, "explicit": None, "disable_all": None}
 
-    class _FakeAppLauncher:
-        is_available = staticmethod(lambda: True)
-
-        @staticmethod
-        def sync_visualizer_cli_settings_to_carb(launcher_args: dict) -> None:
-            captured["types"] = " ".join(launcher_args["visualizer"]) if launcher_args.get("visualizer") else ""
-            captured["explicit"] = launcher_args["visualizer_explicit"]
-            captured["disable_all"] = launcher_args["visualizer_disable_all"]
+    def fake_sync(launcher_args: dict) -> None:
+        captured["types"] = " ".join(launcher_args["visualizer"]) if launcher_args.get("visualizer") else ""
+        captured["explicit"] = launcher_args["visualizer_explicit"]
+        captured["disable_all"] = launcher_args["visualizer_disable_all"]
 
     _force_kitless(monkeypatch)
-    monkeypatch.setitem(sys.modules, "isaaclab.app", types.SimpleNamespace(AppLauncher=_FakeAppLauncher))
+    monkeypatch.setattr(sim_launcher, "sync_visualizer_cli_settings", fake_sync)
 
     env_cfg = _DummyEnvCfg(_DummySimCfg(None))
     launcher_args = argparse.Namespace(visualizer=None, visualizer_explicit=True)

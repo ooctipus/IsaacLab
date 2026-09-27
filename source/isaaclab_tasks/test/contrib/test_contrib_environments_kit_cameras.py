@@ -7,14 +7,13 @@
 
 import sys
 
-# Import pinocchio before AppLauncher so Isaac Lab's dependency wins over Isaac Sim's bundled copy.
+# Import pinocchio before the Kit launcher so Isaac Lab's dependency wins over Isaac Sim's bundled copy.
 if sys.platform != "win32":
     import pinocchio  # noqa: F401
 
-from isaaclab.app import AppLauncher
+from isaaclab.test.utils import launch_test_simulation
 
-app_launcher = AppLauncher(headless=True, enable_cameras=True)
-simulation_app = app_launcher.app
+launch_test_simulation(enable_cameras=True)
 
 
 """Rest everything follows."""

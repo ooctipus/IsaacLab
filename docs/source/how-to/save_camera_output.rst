@@ -16,7 +16,7 @@ directory.
 
    .. literalinclude:: ../../../scripts/tutorials/04_sensors/run_usd_camera.py
       :language: python
-      :emphasize-lines: 174-182, 232-250, 254-267
+      :emphasize-lines: 174-175, 180-188, 238-255, 257-276
       :linenos:
 
 
@@ -36,6 +36,8 @@ Saving using Replicator Basic Writer
 To save camera outputs, we use the basic write class from Omniverse Replicator. This class allows us to save the
 images in a numpy format. For more information on the basic writer, please check the
 `documentation <https://docs.omniverse.nvidia.com/extensions/latest/ext_replicator/writer_examples.html>`_.
+Replicator is a Kit extension, so the script imports ``omni.replicator.core`` only inside the simulation
+function, which runs after :func:`~isaaclab.app.launch_simulation` has started Isaac Sim.
 
 .. literalinclude:: ../../../scripts/tutorials/04_sensors/run_usd_camera.py
    :language: python

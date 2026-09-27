@@ -10,10 +10,9 @@ Imports the shared contract tests and provides the USD-specific
 prim ordering, xformOp standardization, and Isaac Sim comparison.
 """
 
-from isaaclab.app import AppLauncher
-from isaaclab.test.utils import resolve_test_sim_device
+from isaaclab.test.utils import launch_test_simulation, resolve_test_sim_device
 
-simulation_app = AppLauncher(headless=True, device=resolve_test_sim_device()).app
+launch_test_simulation(device=resolve_test_sim_device())
 
 import pytest  # noqa: E402
 import torch  # noqa: E402

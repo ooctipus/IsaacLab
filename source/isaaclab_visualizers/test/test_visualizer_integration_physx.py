@@ -13,14 +13,12 @@ already covered by the Newton integration test (which runs in ~50 s vs ~8 min on
 import sys
 from pathlib import Path
 
-from isaaclab.app import AppLauncher
-
 # launch Kit app
-simulation_app = AppLauncher(
-    headless=True,
-    enable_cameras=True,
-    visualizer_intent={"has_any_visualizers": True, "has_kit_visualizer": True},
-).app
+from isaaclab.test.utils import launch_test_simulation
+
+simulation_app = launch_test_simulation(
+    enable_cameras=True, visualizer_intent={"has_any_visualizers": True, "has_kit_visualizer": True}
+)
 
 import pytest  # noqa: E402
 

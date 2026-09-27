@@ -31,7 +31,7 @@ Example usage:
 import argparse
 
 # isaaclab
-from isaaclab.app import AppLauncher
+from isaaclab.app import add_launcher_args, launch_simulation
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="This script shows how to use the terrain importer.")
@@ -50,14 +50,10 @@ parser.add_argument(
     choices=["height", "random", "none"],
     help="The color scheme to use for the generated terrain.",
 )
-# append AppLauncher cli args
-AppLauncher.add_app_launcher_args(parser)
+# append launcher cli args
+add_launcher_args(parser)
 # parse the arguments
 args_cli = parser.parse_args()
-
-# launch omniverse app
-app_launcher = AppLauncher(args_cli)
-simulation_app = app_launcher.app
 
 """Rest everything follows."""
 
@@ -70,7 +66,6 @@ import isaaclab.terrains as terrain_gen
 from isaaclab import cloner as lab_cloner
 from isaaclab.sim import SimulationCfg, SimulationContext
 from isaaclab.terrains.config.rough import ROUGH_TERRAINS_CFG
-from isaaclab.terrains.terrain_importer import TerrainImporter
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
 
@@ -78,136 +73,143 @@ def main():
     """Generates a terrain from isaaclab."""
 
     # Load kit helper
-    sim = SimulationContext(SimulationCfg())
-    # Set main camera
-    sim.set_camera_view(eye=(0.0, 30.0, 25.0), target=(0.0, 0.0, -2.5))
+    sim_cfg = SimulationCfg(device=args_cli.device)
+    with launch_simulation(sim_cfg, args_cli):
+        # imported once Kit is running: it loads scipy.spatial, which must not be imported before Kit starts
+        from isaaclab.terrains.terrain_importer import TerrainImporter
 
-    # Parameters
-    num_balls = 2048
+        sim = SimulationContext(sim_cfg)
+        # Set main camera
+        sim.set_camera_view(eye=(0.0, 30.0, 25.0), target=(0.0, 0.0, -2.5))
 
-    # Create interface to clone the scene
-    # Create environment clones using Lab's cloner utilities
-    env_fmt = "/World/envs/env_{}"
-    env_ids = np.arange(num_balls, dtype=np.int64)
-    env_origins, _ = lab_cloner.grid_transforms(num_balls, spacing=2.0)
-    # Everything under the namespace "/World/envs/env_0" will be cloned
-    sim_utils.define_prim("/World/envs/env_0")
+        # Parameters
+        num_balls = 2048
 
-    # Handler for terrains importing
-    terrain_importer_cfg = terrain_gen.TerrainImporterCfg(
-        num_envs=2048,
-        env_spacing=3.0,
-        prim_path="/World/ground",
-        max_init_terrain_level=None,
-        terrain_type=args_cli.terrain_type,
-        terrain_generator=ROUGH_TERRAINS_CFG.replace(curriculum=True, color_scheme=args_cli.color_scheme),
-        usd_path=f"{ISAAC_NUCLEUS_DIR}/Environments/Terrains/rough_plane.usd",
-    )
-    terrain_importer = TerrainImporter(terrain_importer_cfg)
+        # Create interface to clone the scene
+        # Create environment clones using Lab's cloner utilities
+        env_fmt = "/World/envs/env_{}"
+        env_ids = np.arange(num_balls, dtype=np.int64)
+        env_origins, _ = lab_cloner.grid_transforms(num_balls, spacing=2.0)
+        # Everything under the namespace "/World/envs/env_0" will be cloned
+        sim_utils.define_prim("/World/envs/env_0")
 
-    # Define the scene
-    # -- Light
-    cfg = sim_utils.DistantLightCfg(intensity=1000.0)
-    cfg.func("/World/Light", cfg)
-
-    # -- Ball with physics properties using Isaac Lab spawners
-    ball_prim_path = "/World/envs/env_0/ball"
-
-    # Create physics material
-    physics_material_cfg = sim_utils.RigidBodyMaterialCfg(
-        static_friction=0.2,
-        dynamic_friction=1.0,
-        restitution=0.0,
-    )
-
-    # Create visual material
-    visual_material_cfg = sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.0, 1.0))
-
-    if args_cli.geom_sphere:
-        # Spawn a geom sphere with rigid body properties
-        sphere_cfg = sim_utils.SphereCfg(
-            radius=0.25,
-            rigid_props=sim_utils.UsdPhysicsRigidBodyCfg(),
-            mass_props=sim_utils.MassCfg(mass=0.5),
-            collision_props=sim_utils.UsdPhysicsCollisionCfg(),
-            visual_material=visual_material_cfg,
-            physics_material=physics_material_cfg,
+        # Handler for terrains importing
+        terrain_importer_cfg = terrain_gen.TerrainImporterCfg(
+            num_envs=2048,
+            env_spacing=3.0,
+            prim_path="/World/ground",
+            max_init_terrain_level=None,
+            terrain_type=args_cli.terrain_type,
+            terrain_generator=ROUGH_TERRAINS_CFG.replace(curriculum=True, color_scheme=args_cli.color_scheme),
+            usd_path=f"{ISAAC_NUCLEUS_DIR}/Environments/Terrains/rough_plane.usd",
         )
-        sphere_cfg.func(ball_prim_path, sphere_cfg, translation=(0.0, 0.0, 5.0))
-    else:
-        # Spawn a mesh sphere with rigid body properties
-        mesh_sphere_cfg = sim_utils.MeshSphereCfg(
-            radius=0.25,
-            rigid_props=sim_utils.UsdPhysicsRigidBodyCfg(),
-            mass_props=sim_utils.MassCfg(mass=0.5),
-            collision_props=sim_utils.UsdPhysicsCollisionCfg(collision_enabled=True),
-            visual_material=visual_material_cfg,
-            physics_material=physics_material_cfg,
+        terrain_importer = TerrainImporter(terrain_importer_cfg)
+
+        # Define the scene
+        # -- Light
+        cfg = sim_utils.DistantLightCfg(intensity=1000.0)
+        cfg.func("/World/Light", cfg)
+
+        # -- Ball with physics properties using Isaac Lab spawners
+        ball_prim_path = "/World/envs/env_0/ball"
+
+        # Create physics material
+        physics_material_cfg = sim_utils.RigidBodyMaterialCfg(
+            static_friction=0.2,
+            dynamic_friction=1.0,
+            restitution=0.0,
         )
-        mesh_sphere_cfg.func(ball_prim_path, mesh_sphere_cfg, translation=(0.0, 0.0, 0.5))
 
-    # Clone the scene
-    envs_prim_paths = [f"/World/envs/env_{i}" for i in range(num_balls)]
-    lab_cloner.usd_replicate(sim.stage, [env_fmt.format(0)], [env_fmt], env_ids, positions=env_origins)
-    physics_scene_path = sim.cfg.physics.physics_prim_path
-    lab_cloner.filter_collisions(
-        sim.stage, physics_scene_path, "/World/collisions", prim_paths=envs_prim_paths, global_paths=["/World/ground"]
-    )
+        # Create visual material
+        visual_material_cfg = sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.0, 1.0))
 
-    # Set ball positions over terrain origins using FrameView (before simulation starts)
-    xform_view = sim_utils.FrameView("{ENV_REGEX_NS}/ball")
-    # cache initial state of the balls
-    ball_initial_positions = terrain_importer.env_origins.clone()
-    ball_initial_positions[:, 2] += 5.0
-    # set initial poses (writes to USD before simulation)
-    with xform_view.xform_world_space_writer() as w:
-        w.set_poses(positions=ball_initial_positions)
+        if args_cli.geom_sphere:
+            # Spawn a geom sphere with rigid body properties
+            sphere_cfg = sim_utils.SphereCfg(
+                radius=0.25,
+                rigid_props=sim_utils.UsdPhysicsRigidBodyCfg(),
+                mass_props=sim_utils.MassCfg(mass=0.5),
+                collision_props=sim_utils.UsdPhysicsCollisionCfg(),
+                visual_material=visual_material_cfg,
+                physics_material=physics_material_cfg,
+            )
+            sphere_cfg.func(ball_prim_path, sphere_cfg, translation=(0.0, 0.0, 5.0))
+        else:
+            # Spawn a mesh sphere with rigid body properties
+            mesh_sphere_cfg = sim_utils.MeshSphereCfg(
+                radius=0.25,
+                rigid_props=sim_utils.UsdPhysicsRigidBodyCfg(),
+                mass_props=sim_utils.MassCfg(mass=0.5),
+                collision_props=sim_utils.UsdPhysicsCollisionCfg(collision_enabled=True),
+                visual_material=visual_material_cfg,
+                physics_material=physics_material_cfg,
+            )
+            mesh_sphere_cfg.func(ball_prim_path, mesh_sphere_cfg, translation=(0.0, 0.0, 0.5))
 
-    # Play simulator
-    sim.reset()
+        # Clone the scene
+        envs_prim_paths = [f"/World/envs/env_{i}" for i in range(num_balls)]
+        lab_cloner.usd_replicate(sim.stage, [env_fmt.format(0)], [env_fmt], env_ids, positions=env_origins)
+        physics_scene_path = sim.cfg.physics.physics_prim_path
+        lab_cloner.filter_collisions(
+            sim.stage,
+            physics_scene_path,
+            "/World/collisions",
+            prim_paths=envs_prim_paths,
+            global_paths=["/World/ground"],
+        )
 
-    # Create a PhysX rigid body view for physics simulation
-    physics_sim_view = sim.physics_manager.get_physics_sim_view()
-    ball_view = physics_sim_view.create_rigid_body_view("/World/envs/env_*/ball")
+        # Set ball positions over terrain origins using FrameView (before simulation starts)
+        xform_view = sim_utils.FrameView("{ENV_REGEX_NS}/ball")
+        # cache initial state of the balls
+        ball_initial_positions = terrain_importer.env_origins.clone()
+        ball_initial_positions[:, 2] += 5.0
+        # set initial poses (writes to USD before simulation)
+        with xform_view.xform_world_space_writer() as w:
+            w.set_poses(positions=ball_initial_positions)
 
-    # Cache initial velocities (all zeros)
-    ball_initial_velocities = ball_view.get_velocities()
+        # Play simulator
+        sim.reset()
 
-    # Build initial transforms tensor for reset: (N, 7) = [pos(3), quat_xyzw(4)]
-    num_balls_actual = ball_initial_positions.shape[0]
-    ball_initial_transforms = torch.zeros(num_balls_actual, 7, device=ball_initial_positions.device)
-    ball_initial_transforms[:, :3] = ball_initial_positions
-    ball_initial_transforms[:, 6] = 1.0  # w=1 for identity quaternion (xyzw format)
+        # Create a PhysX rigid body view for physics simulation
+        physics_sim_view = sim.physics_manager.get_physics_sim_view()
+        ball_view = physics_sim_view.create_rigid_body_view("/World/envs/env_*/ball")
 
-    # Create indices for all balls (required by PhysX view API)
-    all_indices = torch.arange(num_balls_actual, dtype=torch.int32, device=ball_initial_positions.device)
+        # Cache initial velocities (all zeros)
+        ball_initial_velocities = ball_view.get_velocities()
 
-    # Create a counter for resetting the scene
-    step_count = 0
-    # Simulate physics
-    while simulation_app.is_running():
-        # If simulation is stopped, then exit.
-        if sim.is_stopped():
-            break
-        # If simulation is paused, then skip.
-        if not sim.is_playing():
+        # Build initial transforms tensor for reset: (N, 7) = [pos(3), quat_xyzw(4)]
+        num_balls_actual = ball_initial_positions.shape[0]
+        ball_initial_transforms = torch.zeros(num_balls_actual, 7, device=ball_initial_positions.device)
+        ball_initial_transforms[:, :3] = ball_initial_positions
+        ball_initial_transforms[:, 6] = 1.0  # w=1 for identity quaternion (xyzw format)
+
+        # Create indices for all balls (required by PhysX view API)
+        all_indices = torch.arange(num_balls_actual, dtype=torch.int32, device=ball_initial_positions.device)
+
+        # Create a counter for resetting the scene
+        step_count = 0
+        # Simulate physics
+        while sim.is_headless_or_exist_active_visualizer():
+            # If simulation is stopped, then exit.
+            if sim.is_stopped():
+                break
+            # If simulation is paused, then skip.
+            if not sim.is_playing():
+                sim.step()
+                continue
+            # Reset the scene
+            if step_count % 500 == 0:
+                # reset the balls using PhysX tensor API
+                ball_view.set_transforms(ball_initial_transforms, all_indices)
+                ball_view.set_velocities(ball_initial_velocities, all_indices)
+                # reset the counter
+                step_count = 0
+            # Step simulation
             sim.step()
-            continue
-        # Reset the scene
-        if step_count % 500 == 0:
-            # reset the balls using PhysX tensor API
-            ball_view.set_transforms(ball_initial_transforms, all_indices)
-            ball_view.set_velocities(ball_initial_velocities, all_indices)
-            # reset the counter
-            step_count = 0
-        # Step simulation
-        sim.step()
-        # Update counter
-        step_count += 1
+            # Update counter
+            step_count += 1
 
 
 if __name__ == "__main__":
     # run the main function
     main()
-    # close sim app
-    simulation_app.close()

@@ -129,6 +129,7 @@ The following modules are available in the ``isaaclab_physx`` extension:
 .. autosummary::
    :toctree: lab_physx
 
+   app
    assets
    cloner
    physics
@@ -174,6 +175,7 @@ The following modules are available in the ``isaaclab_ov`` extension:
 .. autosummary::
    :toctree: lab_ov
 
+   app
    assets
    cloner
    physics

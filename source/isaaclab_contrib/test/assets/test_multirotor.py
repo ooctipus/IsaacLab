@@ -8,12 +8,12 @@
 
 """Launch Isaac Sim Simulator first."""
 
-from isaaclab.app import AppLauncher
-
 HEADLESS = True
 
 # launch omniverse app
-simulation_app = AppLauncher(headless=True).app
+from isaaclab.test.utils import launch_test_simulation
+
+launch_test_simulation()
 
 """Rest everything follows."""
 

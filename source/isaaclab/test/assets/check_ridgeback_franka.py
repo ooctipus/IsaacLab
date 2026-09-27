@@ -17,20 +17,16 @@ This script demonstrates how to simulate a mobile manipulator.
 
 import argparse
 
-from isaaclab.app import AppLauncher
+from isaaclab.app import add_launcher_args, launch_simulation
 
 # add argparse arguments
 parser = argparse.ArgumentParser(
     description="This script demonstrates how to simulate a mobile manipulator with dummy joints."
 )
-# append AppLauncher cli args
-AppLauncher.add_app_launcher_args(parser)
+# append launcher cli args
+add_launcher_args(parser)
 # parse the arguments
 args_cli = parser.parse_args()
-
-# launch omniverse app
-app_launcher = AppLauncher(args_cli)
-simulation_app = app_launcher.app
 
 """Rest everything follows."""
 
@@ -80,7 +76,7 @@ def run_simulator(sim: sim_utils.SimulationContext, robot: Articulation):
     sim_time = 0.0
     ep_step_count = 0
     # Simulate physics
-    while simulation_app.is_running():
+    while sim.is_headless_or_exist_active_visualizer():
         # reset
         if ep_step_count % 1000 == 0:
             # reset counters
@@ -150,21 +146,21 @@ def run_simulator(sim: sim_utils.SimulationContext, robot: Articulation):
 def main():
     """Main function."""
     # Initialize the simulation context
-    sim = sim_utils.SimulationContext(sim_utils.SimulationCfg())
-    # Set main camera
-    sim.set_camera_view([1.5, 1.5, 1.5], [0.0, 0.0, 0.0])
-    # design scene
-    robot = design_scene()
-    # Play the simulator
-    sim.reset()
-    # Now we are ready!
-    print("[INFO]: Setup complete...")
-    # Run the simulator
-    run_simulator(sim, robot)
+    sim_cfg = sim_utils.SimulationCfg(device=args_cli.device)
+    with launch_simulation(sim_cfg, args_cli):
+        sim = sim_utils.SimulationContext(sim_cfg)
+        # Set main camera
+        sim.set_camera_view([1.5, 1.5, 1.5], [0.0, 0.0, 0.0])
+        # design scene
+        robot = design_scene()
+        # Play the simulator
+        sim.reset()
+        # Now we are ready!
+        print("[INFO]: Setup complete...")
+        # Run the simulator
+        run_simulator(sim, robot)
 
 
 if __name__ == "__main__":
     # run the main function
     main()
-    # close sim app
-    simulation_app.close()

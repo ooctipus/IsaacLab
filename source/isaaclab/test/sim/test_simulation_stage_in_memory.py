@@ -7,11 +7,11 @@
 
 """Launch Isaac Sim Simulator first."""
 
-from isaaclab.app import AppLauncher
-
 # launch omniverse app
 # FIXME (mmittal): Stage in memory requires cameras to be enabled.
-simulation_app = AppLauncher(headless=True, enable_cameras=True).app
+from isaaclab.test.utils import launch_test_simulation
+
+launch_test_simulation(enable_cameras=True)
 
 """Rest everything follows."""
 

@@ -32,7 +32,6 @@ import os
 
 import torch
 
-from isaaclab.envs import ManagerBasedRLEnv
 from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, read_file
 
@@ -61,6 +60,9 @@ def main():
         env_cfg.sim.use_fabric = False
 
     with launch_simulation(env_cfg, args_cli):
+        # environment classes import USD, which must happen after the runtime starts
+        from isaaclab.envs import ManagerBasedRLEnv
+
         # create environment
         env = ManagerBasedRLEnv(cfg=env_cfg)
 

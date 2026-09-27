@@ -5,10 +5,10 @@
 
 """Test dataset generation for Isaac-Stack-Cube-Franka-IK-Rel-Visuomotor-Mimic-v0."""
 
-from isaaclab.app import AppLauncher
-
 # launch omniverse app
-simulation_app = AppLauncher(headless=True).app
+from isaaclab.test.utils import launch_test_simulation
+
+launch_test_simulation()
 
 import os
 import sys

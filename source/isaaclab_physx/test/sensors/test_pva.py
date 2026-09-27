@@ -5,11 +5,10 @@
 
 """Launch Isaac Sim Simulator first."""
 
-from isaaclab.app import AppLauncher
-
 # launch omniverse app
-app_launcher = AppLauncher(headless=True, enable_cameras=True)
-simulation_app = app_launcher.app
+from isaaclab.test.utils import launch_test_simulation
+
+launch_test_simulation(enable_cameras=True)
 
 """Rest everything follows."""
 
@@ -136,7 +135,7 @@ class MySceneCfg(InteractiveSceneCfg):
     # A non-physics imu_link Xform is recreated in the test fixture (see setup_sim).
     pva_pendulum_imu_link: PvaCfg = PvaCfg(
         prim_path="{ENV_REGEX_NS}/pendulum/Geometry/world/link_1/imu_link",
-        debug_vis=not app_launcher._headless,
+        debug_vis=False,
         visualizer_cfg=RED_ARROW_X_MARKER_CFG.replace(prim_path="/Visuals/Acceleration/imu_link"),
     )
     pva_pendulum_base: PvaCfg = PvaCfg(
@@ -145,7 +144,7 @@ class MySceneCfg(InteractiveSceneCfg):
             pos=PEND_POS_OFFSET,
             rot=PEND_ROT_OFFSET,
         ),
-        debug_vis=not app_launcher._headless,
+        debug_vis=False,
         visualizer_cfg=GREEN_ARROW_X_MARKER_CFG.replace(prim_path="/Visuals/Acceleration/base"),
     )
 

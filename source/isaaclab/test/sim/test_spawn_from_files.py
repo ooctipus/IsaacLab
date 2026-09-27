@@ -3,12 +3,12 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-from isaaclab.app import AppLauncher
-
 """Launch Isaac Sim Simulator first."""
 
 # launch omniverse app
-simulation_app = AppLauncher(headless=True).app
+from isaaclab.test.utils import launch_test_simulation
+
+launch_test_simulation()
 
 """Rest everything follows."""
 

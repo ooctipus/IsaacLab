@@ -11,10 +11,10 @@ import contextlib
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from isaaclab.app import AppLauncher
-
 # Launch Isaac Sim before importing Newton modules so USD schema bindings are initialized.
-simulation_app = AppLauncher(headless=True, enable_cameras=True).app
+from isaaclab.test.utils import launch_test_simulation
+
+simulation_app = launch_test_simulation(enable_cameras=True)
 
 import numpy as np
 import pytest

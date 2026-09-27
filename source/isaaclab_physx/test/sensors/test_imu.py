@@ -5,11 +5,10 @@
 
 """Launch Isaac Sim Simulator first."""
 
-from isaaclab.app import AppLauncher
-
 # launch omniverse app
-app_launcher = AppLauncher(headless=True, enable_cameras=True)
-simulation_app = app_launcher.app
+from isaaclab.test.utils import launch_test_simulation
+
+launch_test_simulation(enable_cameras=True)
 
 """Rest everything follows."""
 

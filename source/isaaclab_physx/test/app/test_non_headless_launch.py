@@ -12,11 +12,10 @@ This script checks that the ``isaaclab.python.kit`` experience launches and step
 
 import pytest
 
-from isaaclab.app import AppLauncher
-
 # launch omniverse app
-app_launcher = AppLauncher(experience="isaaclab.python.kit", headless=True)
-simulation_app = app_launcher.app
+from isaaclab.test.utils import launch_test_simulation
+
+launch_test_simulation(experience="isaaclab.python.kit")
 
 """Rest everything follows."""
 
@@ -45,7 +44,7 @@ def run_simulator(
     count = 0
 
     # Simulate physics
-    while simulation_app.is_running() and count < 100:
+    while sim.is_headless_or_exist_active_visualizer() and count < 100:
         # perform step
         sim.step()
         count += 1

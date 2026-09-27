@@ -9,10 +9,10 @@ This temporary relocation handoff intentionally remains in the core test tree un
 Franka task and Gym-wrapper scenario can move to the task package.
 """
 
-from isaaclab.app import AppLauncher
-
 # launch the simulator
-simulation_app = AppLauncher(headless=True).app
+from isaaclab.test.utils import launch_test_simulation
+
+launch_test_simulation()
 
 
 """Rest everything follows."""
