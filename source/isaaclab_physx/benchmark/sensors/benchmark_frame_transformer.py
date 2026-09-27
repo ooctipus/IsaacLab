@@ -40,8 +40,6 @@ parser.add_argument(
 add_launcher_args(parser)
 args_cli = parser.parse_args()
 
-"""Rest everything follows."""
-
 import torch
 import warp as wp
 from isaaclab_physx.sim.schemas import PhysxRigidBodyCfg

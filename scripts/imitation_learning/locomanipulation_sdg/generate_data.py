@@ -437,8 +437,6 @@ def setup_navigation_scene(
     Returns:
         NavigationScene or None if the navigation scene setup failed.
     """
-    import omni.usd
-
     from isaaclab_mimic.locomanipulation_sdg.occupancy_map_utils import (
         OccupancyMap,
         OccupancyMapDataValue,
@@ -527,7 +525,7 @@ def setup_navigation_scene(
     if draw_visualization:
         occupancy_map_add_to_stage(
             occupancy_map,
-            stage=omni.usd.get_context().get_stage(),
+            stage=env.sim.stage,
             path="/OccupancyMap",
             z_offset=0.01,
             draw_path=base_path_helper.points,

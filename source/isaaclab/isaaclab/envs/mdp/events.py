@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import logging
 import math
-import re
 from typing import TYPE_CHECKING, Literal
 
 import torch
@@ -25,7 +24,6 @@ import warp as wp
 from ... import sim as sim_utils
 from ...managers import EventTermCfg, ManagerTermBase, SceneEntityCfg
 from ...utils import math as math_utils
-from ...utils.version import compare_versions
 
 if TYPE_CHECKING:
     from isaaclab_physx.assets import DeformableObject
@@ -1261,10 +1259,8 @@ class randomize_physics_scene_gravity(ManagerTermBase):
     Automatically detects the active physics backend (PhysX, OvPhysX, or Newton) and applies
     the appropriate gravity randomization strategy:
 
-    - **PhysX**: samples a single gravity vector and sets it scene-wide via the PhysX
-      simulation view.  All environments share the same gravity.
-    - **OvPhysX**: samples a single gravity vector and applies a sealed OvStage control
-      update. All environments share the same gravity.
+    - **PhysX / OvPhysX**: samples a single gravity vector and sets it scene-wide via the
+      physics manager's ``set_gravity``. All environments share the same gravity.
     - **Newton**: samples per-environment gravity vectors and writes them in-place to
       the Newton model's per-world gravity array on GPU.
 
@@ -1284,12 +1280,8 @@ class randomize_physics_scene_gravity(ManagerTermBase):
         if "newton" in manager_name:
             self._backend = "newton"
             self._init_newton(cfg, env)
-        elif "ovphysx" in manager_name:
-            self._backend = "ovphysx"
-            self._init_ovphysx(env)
         else:
-            self._backend = "physx"
-            self._init_physx(env)
+            self._backend = "manager"
 
         distribution = cfg.params.get("distribution", "uniform")
         self._distribution = distribution
@@ -1347,10 +1339,8 @@ class randomize_physics_scene_gravity(ManagerTermBase):
 
         if self._backend == "newton":
             self._call_newton(env, env_ids, operation)
-        elif self._backend == "ovphysx":
-            self._call_ovphysx(env, operation)
         else:
-            self._call_physx(env, operation)
+            self._call_manager(env, operation)
 
     def _init_newton(self, cfg: EventTermCfg, env: ManagerBasedEnv):
         """Cache Newton manager reference and solver notification flag."""
@@ -1394,15 +1384,8 @@ class randomize_physics_scene_gravity(ManagerTermBase):
             gravity[env_ids] *= random_values
         self._newton_manager.add_model_change(self._notify_model_properties)
 
-    def _init_physx(self, env: ManagerBasedEnv):
-        """Cache the ``carb`` module and PhysX simulation view for scene-wide gravity updates."""
-        import carb  # noqa: PLC0415
-
-        self._carb = carb
-        self._physics_sim_view = sim_utils.SimulationContext.instance().physics_sim_view
-
-    def _call_physx(self, env: ManagerBasedEnv, operation: str):
-        """Sample a single gravity vector and apply it scene-wide via the PhysX simulation view."""
+    def _call_manager(self, env: ManagerBasedEnv, operation: str):
+        """Sample a single gravity vector and apply it scene-wide through the physics manager."""
         gravity = torch.tensor(env.sim.cfg.gravity, device="cpu").unsqueeze(0)
         gravity = _randomize_prop_by_op(
             gravity,
@@ -1412,25 +1395,7 @@ class randomize_physics_scene_gravity(ManagerTermBase):
             operation=operation,
             distribution=self._distribution,
         )
-        gravity = gravity[0].tolist()
-        self._physics_sim_view.set_gravity(self._carb.Float3(*gravity))
-
-    def _init_ovphysx(self, env: ManagerBasedEnv):
-        """Cache the OvPhysX manager for scene-wide gravity updates."""
-        self._ovphysx_manager = env.sim.physics_manager
-
-    def _call_ovphysx(self, env: ManagerBasedEnv, operation: str):
-        """Sample a single gravity vector and apply it scene-wide through OvStage."""
-        gravity = torch.tensor(env.sim.cfg.gravity, device="cpu").unsqueeze(0)
-        gravity = _randomize_prop_by_op(
-            gravity,
-            (self._dist_param_0.cpu(), self._dist_param_1.cpu()),
-            None,
-            slice(None),
-            operation=operation,
-            distribution=self._distribution,
-        )
-        self._ovphysx_manager.set_gravity(tuple(gravity[0].tolist()))
+        env.sim.physics_manager.set_gravity(tuple(gravity[0].tolist()))
 
 
 class randomize_actuator_gains(ManagerTermBase):
@@ -2635,60 +2600,33 @@ class randomize_visual_texture_material(ManagerTermBase):
                 " randomization."
             )
 
-        # extract the replicator version
-        version = re.match(r"^(\d+\.\d+\.\d+)", rep.__file__.split("/")[-5][21:]).group(1)
+        # acquire stage from env simulation context
+        stage = env.sim.stage
+        prims_group = rep.functional.get.prims(path_pattern=prim_path, stage=stage)
 
-        # use different path for different version of replicator
-        if compare_versions(version, "1.12.4") < 0:
-            texture_paths = cfg.params.get("texture_paths")
-            event_name = cfg.params.get("event_name")
-            texture_rotation = cfg.params.get("texture_rotation", (0.0, 0.0))
+        num_prims = len(prims_group)
+        # rng that randomizes the texture and rotation
+        self.texture_rng = rep.rng.ReplicatorRNG()
 
-            # convert from radians to degrees
-            texture_rotation = tuple(math.degrees(angle) for angle in texture_rotation)
+        # Create the material first and bind it to the prims
+        for i, prim in enumerate(prims_group):
+            # Disable instancble
+            if prim.IsInstanceable():
+                prim.SetInstanceable(False)
 
-            # Create the omni-graph node for the randomization term
-            def rep_texture_randomization():
-                prims_group = rep.get.prims(path_pattern=prim_path)
+        # Resolve OmniPBR.mdl to an absolute path so that pxr.Ar.GetResolver().Resolve()
+        # returns a valid path. Kit's omni_usd_resolver intentionally returns "" for builtin
+        # MDL short-names (OMNI_USD_RESOLVER_MDL_BUILTIN_BYPASS=1), which causes Replicator
+        # >= 1.13.0 to pass an empty resolved path into UsdMdl.RegistryUtils, raising a
+        # 'rtx::neuraylib::MdlModuleId' is Invalid error.
+        import carb.tokens  # noqa: PLC0415
 
-                with prims_group:
-                    rep.randomizer.texture(
-                        textures=texture_paths,
-                        project_uvw=True,
-                        texture_rotate=rep.distribution.uniform(*texture_rotation),
-                    )
-                return prims_group.node
+        omni_pbr_mdl = carb.tokens.get_tokens_interface().resolve("${kit}/mdl/core/Base/OmniPBR.mdl")
 
-            with rep.trigger.on_custom_event(event_name=event_name):
-                rep_texture_randomization()
-        else:
-            # acquire stage from env simulation context
-            stage = env.sim.stage
-            prims_group = rep.functional.get.prims(path_pattern=prim_path, stage=stage)
-
-            num_prims = len(prims_group)
-            # rng that randomizes the texture and rotation
-            self.texture_rng = rep.rng.ReplicatorRNG()
-
-            # Create the material first and bind it to the prims
-            for i, prim in enumerate(prims_group):
-                # Disable instancble
-                if prim.IsInstanceable():
-                    prim.SetInstanceable(False)
-
-            # Resolve OmniPBR.mdl to an absolute path so that pxr.Ar.GetResolver().Resolve()
-            # returns a valid path. Kit's omni_usd_resolver intentionally returns "" for builtin
-            # MDL short-names (OMNI_USD_RESOLVER_MDL_BUILTIN_BYPASS=1), which causes Replicator
-            # >= 1.13.0 to pass an empty resolved path into UsdMdl.RegistryUtils, raising a
-            # 'rtx::neuraylib::MdlModuleId' is Invalid error.
-            import carb.tokens  # noqa: PLC0415
-
-            omni_pbr_mdl = carb.tokens.get_tokens_interface().resolve("${kit}/mdl/core/Base/OmniPBR.mdl")
-
-            # TODO: Should we specify the value when creating the material?
-            self.material_prims = rep.functional.create_batch.material(
-                mdl=omni_pbr_mdl, bind_prims=prims_group, count=num_prims, project_uvw=True
-            )
+        # TODO: Should we specify the value when creating the material?
+        self.material_prims = rep.functional.create_batch.material(
+            mdl=omni_pbr_mdl, bind_prims=prims_group, count=num_prims, project_uvw=True
+        )
 
     def __call__(
         self,
@@ -2704,31 +2642,22 @@ class randomize_visual_texture_material(ManagerTermBase):
         # we import the module here since we may not always need the replicator
         import omni.replicator.core as rep
 
-        # extract the replicator version
-        version = re.match(r"^(\d+\.\d+\.\d+)", rep.__file__.split("/")[-5][21:]).group(1)
+        # read parameters from the configuration
+        texture_paths = texture_paths if texture_paths else self._cfg.params.get("texture_paths")
+        texture_rotation = (
+            texture_rotation if texture_rotation else self._cfg.params.get("texture_rotation", (0.0, 0.0))
+        )
 
-        # use different path for different version of replicator
-        if compare_versions(version, "1.12.4") < 0:
-            rep.utils.send_og_event(event_name)
-        else:
-            # read parameters from the configuration
-            texture_paths = texture_paths if texture_paths else self._cfg.params.get("texture_paths")
-            texture_rotation = (
-                texture_rotation if texture_rotation else self._cfg.params.get("texture_rotation", (0.0, 0.0))
-            )
+        # convert from radians to degrees
+        texture_rotation = tuple(math.degrees(angle) for angle in texture_rotation)
 
-            # convert from radians to degrees
-            texture_rotation = tuple(math.degrees(angle) for angle in texture_rotation)
+        num_prims = len(self.material_prims)
+        random_textures = self.texture_rng.generator.choice(texture_paths, size=num_prims)
+        random_rotations = self.texture_rng.generator.uniform(texture_rotation[0], texture_rotation[1], size=num_prims)
 
-            num_prims = len(self.material_prims)
-            random_textures = self.texture_rng.generator.choice(texture_paths, size=num_prims)
-            random_rotations = self.texture_rng.generator.uniform(
-                texture_rotation[0], texture_rotation[1], size=num_prims
-            )
-
-            # modify the material properties
-            rep.functional.modify.attribute(self.material_prims, "diffuse_texture", random_textures)
-            rep.functional.modify.attribute(self.material_prims, "texture_rotate", random_rotations)
+        # modify the material properties
+        rep.functional.modify.attribute(self.material_prims, "diffuse_texture", random_textures)
+        rep.functional.modify.attribute(self.material_prims, "texture_rotate", random_rotations)
 
 
 class randomize_visual_color(ManagerTermBase):
@@ -2812,57 +2741,31 @@ class randomize_visual_color(ManagerTermBase):
                 )
         # TODO: Need to make it work for multiple meshes.
 
-        # extract the replicator version
-        version = re.match(r"^(\d+\.\d+\.\d+)", rep.__file__.split("/")[-5][21:]).group(1)
+        stage = env.sim.stage
+        prims_group = rep.functional.get.prims(path_pattern=mesh_prim_path, stage=stage)
 
-        # use different path for different version of replicator
-        if compare_versions(version, "1.12.4") < 0:
-            colors = cfg.params.get("colors")
-            event_name = cfg.params.get("event_name")
-            if isinstance(colors, dict):
-                # (r, g, b) - low, high --> (low_r, low_g, low_b) and (high_r, high_g, high_b)
-                color_low = [colors[key][0] for key in ["r", "g", "b"]]
-                color_high = [colors[key][1] for key in ["r", "g", "b"]]
-                colors = rep.distribution.uniform(color_low, color_high)
-            else:
-                colors = list(colors)
+        num_prims = len(prims_group)
+        self.color_rng = rep.rng.ReplicatorRNG()
 
-            # Create the omni-graph node for the randomization term
-            def rep_color_randomization():
-                prims_group = rep.get.prims(path_pattern=mesh_prim_path)
-                with prims_group:
-                    rep.randomizer.color(colors=colors)
+        # Create the material first and bind it to the prims
+        for i, prim in enumerate(prims_group):
+            # Disable instancble
+            if prim.IsInstanceable():
+                prim.SetInstanceable(False)
 
-                return prims_group.node
+        # Resolve OmniPBR.mdl to an absolute path so that pxr.Ar.GetResolver().Resolve()
+        # returns a valid path. Kit's omni_usd_resolver intentionally returns "" for builtin
+        # MDL short-names (OMNI_USD_RESOLVER_MDL_BUILTIN_BYPASS=1), which causes Replicator
+        # >= 1.13.0 to pass an empty resolved path into UsdMdl.RegistryUtils, raising a
+        # 'rtx::neuraylib::MdlModuleId' is Invalid error.
+        import carb.tokens  # noqa: PLC0415
 
-            with rep.trigger.on_custom_event(event_name=event_name):
-                rep_color_randomization()
-        else:
-            stage = env.sim.stage
-            prims_group = rep.functional.get.prims(path_pattern=mesh_prim_path, stage=stage)
+        omni_pbr_mdl = carb.tokens.get_tokens_interface().resolve("${kit}/mdl/core/Base/OmniPBR.mdl")
 
-            num_prims = len(prims_group)
-            self.color_rng = rep.rng.ReplicatorRNG()
-
-            # Create the material first and bind it to the prims
-            for i, prim in enumerate(prims_group):
-                # Disable instancble
-                if prim.IsInstanceable():
-                    prim.SetInstanceable(False)
-
-            # Resolve OmniPBR.mdl to an absolute path so that pxr.Ar.GetResolver().Resolve()
-            # returns a valid path. Kit's omni_usd_resolver intentionally returns "" for builtin
-            # MDL short-names (OMNI_USD_RESOLVER_MDL_BUILTIN_BYPASS=1), which causes Replicator
-            # >= 1.13.0 to pass an empty resolved path into UsdMdl.RegistryUtils, raising a
-            # 'rtx::neuraylib::MdlModuleId' is Invalid error.
-            import carb.tokens  # noqa: PLC0415
-
-            omni_pbr_mdl = carb.tokens.get_tokens_interface().resolve("${kit}/mdl/core/Base/OmniPBR.mdl")
-
-            # TODO: Should we specify the value when creating the material?
-            self.material_prims = rep.functional.create_batch.material(
-                mdl=omni_pbr_mdl, bind_prims=prims_group, count=num_prims, project_uvw=True
-            )
+        # TODO: Should we specify the value when creating the material?
+        self.material_prims = rep.functional.create_batch.material(
+            mdl=omni_pbr_mdl, bind_prims=prims_group, count=num_prims, project_uvw=True
+        )
 
     def __call__(
         self,
@@ -2879,27 +2782,21 @@ class randomize_visual_color(ManagerTermBase):
         # we import the module here since we may not always need the replicator
         import omni.replicator.core as rep
 
-        version = re.match(r"^(\d+\.\d+\.\d+)", rep.__file__.split("/")[-5][21:]).group(1)
+        colors = colors if colors else self._cfg.params.get("colors")
 
-        # use different path for different version of replicator
-        if compare_versions(version, "1.12.4") < 0:
-            rep.utils.send_og_event(event_name)
+        # parse the colors into replicator format
+        if isinstance(colors, dict):
+            # (r, g, b) - low, high --> (low_r, low_g, low_b) and (high_r, high_g, high_b)
+            color_low = [colors[key][0] for key in ["r", "g", "b"]]
+            color_high = [colors[key][1] for key in ["r", "g", "b"]]
+            colors = [color_low, color_high]
         else:
-            colors = colors if colors else self._cfg.params.get("colors")
+            colors = list(colors)
 
-            # parse the colors into replicator format
-            if isinstance(colors, dict):
-                # (r, g, b) - low, high --> (low_r, low_g, low_b) and (high_r, high_g, high_b)
-                color_low = [colors[key][0] for key in ["r", "g", "b"]]
-                color_high = [colors[key][1] for key in ["r", "g", "b"]]
-                colors = [color_low, color_high]
-            else:
-                colors = list(colors)
+        num_prims = len(self.material_prims)
+        random_colors = self.color_rng.generator.uniform(colors[0], colors[1], size=(num_prims, 3))
 
-            num_prims = len(self.material_prims)
-            random_colors = self.color_rng.generator.uniform(colors[0], colors[1], size=(num_prims, 3))
-
-            rep.functional.modify.attribute(self.material_prims, "diffuse_color_constant", random_colors)
+        rep.functional.modify.attribute(self.material_prims, "diffuse_color_constant", random_colors)
 
 
 """

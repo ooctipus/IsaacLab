@@ -235,7 +235,6 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: "InteractiveScene") -
 
 def main() -> None:
     """Run the camera example."""
-    # Initialize the simulation context
     sim_cfg = sim_utils.SimulationCfg(dt=0.005, device=args_cli.device, use_fabric=not args_cli.disable_fabric)
     with launch_simulation(sim_cfg, args_cli):
         sim = sim_utils.SimulationContext(sim_cfg)
@@ -244,14 +243,10 @@ def main() -> None:
         # design scene
         scene_cfg = SensorsSceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0)
         scene = scene_cfg.class_type(scene_cfg)
-        # Play the simulator
         sim.reset()
-        # Now we are ready!
         print("[INFO]: Setup complete...")
-        # Run the simulator
         run_simulator(sim, scene)
 
 
 if __name__ == "__main__":
-    # run the main function
     main()

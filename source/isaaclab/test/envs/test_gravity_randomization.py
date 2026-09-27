@@ -18,7 +18,7 @@ from isaaclab.managers import EventTermCfg, SceneEntityCfg
 
 
 @pytest.mark.parametrize("backend", ["physx", "ovphysx"])
-def test_scene_wide_backends_use_configured_distribution(monkeypatch: pytest.MonkeyPatch, backend: str) -> None:
+def test_scene_wide_backends_use_configured_distribution(backend: str) -> None:
     """PhysX and OvPhysX should use the distribution configured at initialization."""
     gravity_sink = SimpleNamespace()
     physics_manager = type(
@@ -26,7 +26,6 @@ def test_scene_wide_backends_use_configured_distribution(monkeypatch: pytest.Mon
         (),
         {"set_gravity": staticmethod(lambda gravity: setattr(gravity_sink, "value", gravity))},
     )
-    monkeypatch.setattr(randomize_physics_scene_gravity, "_init_physx", lambda *_args: None)
     env = SimpleNamespace(
         device="cpu",
         sim=SimpleNamespace(
@@ -43,8 +42,6 @@ def test_scene_wide_backends_use_configured_distribution(monkeypatch: pytest.Mon
         },
     )
     gravity_event = randomize_physics_scene_gravity(cfg, env)
-    gravity_event._carb = SimpleNamespace(Float3=lambda *values: values)
-    gravity_event._physics_sim_view = physics_manager
     torch.manual_seed(0)
     gravity_event(env, env_ids=None, **cfg.params)
     assert gravity_sink.value == pytest.approx((1.0, 2.0, 3.0))

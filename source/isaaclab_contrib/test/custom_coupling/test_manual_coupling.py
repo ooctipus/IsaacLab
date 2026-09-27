@@ -6,15 +6,9 @@
 # ignore private usage of variables warning
 # pyright: reportPrivateUsage=none
 
-
-"""Launch Isaac Sim Simulator first."""
-
-# launch omniverse app
 from isaaclab.test.utils import launch_test_simulation
 
 launch_test_simulation()
-
-"""Rest everything follows."""
 
 import torch
 from isaaclab_newton.assets import RigidObject

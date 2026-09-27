@@ -3,14 +3,10 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Launch Isaac Sim Simulator first."""
-
 # Pink IK tests strip task cameras before environment construction.
 from isaaclab.test.utils import launch_test_simulation
 
 simulation_app = launch_test_simulation()
-
-"""Rest everything follows."""
 
 import contextlib
 import json

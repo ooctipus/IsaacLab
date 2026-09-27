@@ -3,14 +3,9 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Launch Isaac Sim Simulator first."""
-
-# launch omniverse app
 from isaaclab.test.utils import launch_test_simulation
 
 launch_test_simulation()
-
-"""Rest everything follows."""
 
 import isaaclab_visualizers.newton.newton_visualization_markers as newton_markers
 import isaaclab_visualizers.newton.newton_visualizer as newton_visualizer

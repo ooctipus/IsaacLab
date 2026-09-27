@@ -10,14 +10,9 @@ This script checks the functionality of scale randomization.
 
 from __future__ import annotations
 
-"""Launch Isaac Sim Simulator first."""
-
-# launch omniverse app
 from isaaclab.test.utils import launch_test_simulation
 
 launch_test_simulation(enable_cameras=True)
-
-"""Rest everything follows."""
 
 import pytest
 import torch

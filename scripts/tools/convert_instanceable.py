@@ -28,13 +28,10 @@ optional arguments:
 
 """
 
-"""Parse the command line first."""
-
 import argparse
 
 from isaaclab.app import add_launcher_args, launch_simulation
 
-# add argparse arguments
 parser = argparse.ArgumentParser(description="Utility to convert a URDF or mesh into an Instanceable asset.")
 parser.add_argument("input", type=str, help="The path to the input directory.")
 parser.add_argument("output", type=str, help="The path to directory to store converted instanceable files.")
@@ -71,14 +68,10 @@ parser.add_argument(
     help="The mass (in kg) to assign to the converted asset. If not provided, then no mass is added.",
 )
 
-# append simulation launcher cli args
 add_launcher_args(parser)
-# parse the arguments
 args_cli = parser.parse_args()
 # the URDF importer and mesh asset converter are Kit extensions
 args_cli.require_kit = True
-
-"""Rest everything follows."""
 
 import os
 
@@ -156,5 +149,4 @@ def main():
 
 if __name__ == "__main__":
     with launch_simulation(None, args_cli):
-        # run the main function
         main()

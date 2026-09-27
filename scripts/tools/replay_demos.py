@@ -4,9 +4,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 """Script to replay demonstrations with Isaac Lab environments."""
 
-"""Parse CLI first so we can decide whether to launch Isaac Sim Kit."""
-
-
 # Isaac Lab does not use Warp autodiff; skipping adjoint codegen roughly halves the
 # time spent building kernels on a cold kernel cache.
 import warp as wp
@@ -21,7 +18,6 @@ from isaaclab.utils.string import list_intersection, string_to_callable
 
 from isaaclab_tasks.utils import setup_preset_cli
 
-# add argparse arguments
 parser = argparse.ArgumentParser(description="Replay demonstrations in Isaac Lab environments.")
 parser.add_argument("--num_envs", type=int, default=1, help="Number of environments to replay episodes.")
 parser.add_argument("--task", type=str, default=None, help="Force to use the specified task.")
@@ -59,9 +55,7 @@ parser.add_argument(
 )
 
 parser.add_argument("--external_callback", default=None, help="Fully qualified path to an externally defined callback.")
-# append simulation launcher cli args
 add_launcher_args(parser)
-# parse the arguments
 args_cli, hydra_args = setup_preset_cli(parser)
 # the pause/resume keyboard is a Kit input device, so the Kit runtime is required
 args_cli.require_kit = True
@@ -75,8 +69,6 @@ if args_cli.external_callback:
 # Hand arguments consumed by neither this parser nor the callback over to Hydra.
 hydra_args = list_intersection(hydra_args, remaining_args_env_registration)
 sys.argv = [sys.argv[0]] + hydra_args
-
-"""Rest everything follows."""
 
 import contextlib
 import os
@@ -374,5 +366,4 @@ def replay_dataset(
 
 
 if __name__ == "__main__":
-    # run the main function
     main()

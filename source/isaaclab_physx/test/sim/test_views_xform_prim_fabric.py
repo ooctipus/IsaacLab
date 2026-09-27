@@ -16,9 +16,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "isaaclab" / "test" / "sim"))
 
-from isaaclab.test.utils import DeviceScope, launch_test_simulation, resolve_test_sim_device, test_devices
+from isaaclab.test.utils import DeviceScope, launch_test_simulation, test_devices
 
-launch_test_simulation(device=resolve_test_sim_device())
+launch_test_simulation()
 
 import pytest  # noqa: E402
 import torch  # noqa: E402

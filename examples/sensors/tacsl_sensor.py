@@ -30,7 +30,6 @@ from typing import TYPE_CHECKING
 
 from isaaclab.app import add_launcher_args, launch_simulation
 
-# Add argparse arguments
 parser = argparse.ArgumentParser(description="TacSL tactile sensor example.")
 parser.add_argument("--num_envs", type=int, default=2, help="Number of environments to spawn.")
 parser.add_argument(
@@ -70,9 +69,7 @@ parser.add_argument(
     help="Type of contact object to use.",
 )
 
-# Append simulation launcher cli args
 add_launcher_args(parser)
-# Parse the arguments
 args_cli = parser.parse_args()
 if args_cli.num_envs < 1:
     parser.error("--num_envs must be at least 1.")
@@ -384,7 +381,6 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: "InteractiveScene") -
 
 def main() -> None:
     """Run the tactile-sensor example."""
-    # Initialize simulation
     sim_cfg = sim_utils.SimulationCfg(dt=0.005, device=args_cli.device, physics=PhysxCfg())
     with launch_simulation(sim_cfg, args_cli) as physics_cfg:
         # Note: We set the gpu_collision_stack_size to prevent buffer overflow in contact-rich environments.
@@ -414,7 +410,6 @@ def main() -> None:
 
         scene = scene_cfg.class_type(scene_cfg)
 
-        # Initialize simulation
         sim.reset()
 
         # The tactile RGB path internally uses an RTX camera that may request only non-color render products.

@@ -109,6 +109,8 @@ class TestResolveDistributedDeviceNamespace:
             sim_launcher._resolve_distributed_device(env_cfg, args)
 
         assert env_cfg.sim.device == "cuda:3"
+        # the Kit launcher reads the resolved device from the launcher args
+        assert args.device == "cuda:3"
         mock_set_device.assert_called_once_with("cuda:3")
 
     @patch.object(sim_launcher, "set_cuda_device")

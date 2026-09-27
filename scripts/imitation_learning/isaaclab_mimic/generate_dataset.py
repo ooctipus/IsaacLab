@@ -7,14 +7,11 @@
 Main data generation script.
 """
 
-"""Parse CLI first so we can decide whether to launch Isaac Sim Kit."""
-
 import argparse
 
 from isaaclab.app import add_launcher_args, launch_simulation, scan
 from isaaclab.utils.string import list_intersection, string_to_callable
 
-# add argparse arguments
 parser = argparse.ArgumentParser(description="Generate demonstrations for Isaac Lab environments.")
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument("--generation_num_trials", type=int, help="Number of demos to be generated.", default=None)
@@ -51,9 +48,7 @@ parser.add_argument(
     help="Fully qualified path to an externally defined callback.",
 )
 
-# append simulation launcher cli args
 add_launcher_args(parser)
-# parse the arguments
 args_cli, remaining_args = parser.parse_known_args()
 
 # Mimic environments may use camera observations or an RTX renderer. Request
@@ -70,8 +65,6 @@ if args_cli.external_callback:
 unrecognized_args = list_intersection(remaining_args, remaining_args_env_registration)
 if unrecognized_args:
     parser.error(f"unrecognized arguments: {' '.join(unrecognized_args)}")
-
-"""Rest everything follows."""
 
 import asyncio
 import inspect

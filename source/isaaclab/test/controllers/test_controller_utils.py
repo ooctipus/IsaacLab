@@ -5,9 +5,6 @@
 
 """Test cases for Isaac Lab controller utilities."""
 
-"""Launch Isaac Sim Simulator first."""
-
-# launch omniverse app
 from isaaclab.test.utils import launch_test_simulation
 
 launch_test_simulation()

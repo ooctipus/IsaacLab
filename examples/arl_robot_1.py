@@ -68,7 +68,6 @@ def main():
         robot_cfg.actuators["thrusters"].dt = sim_cfg.dt
         robot = robot_cfg.class_type(robot_cfg)
 
-        # Play the simulator
         sim.reset()
 
         # Create Lee position controller

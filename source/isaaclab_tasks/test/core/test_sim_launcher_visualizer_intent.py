@@ -11,7 +11,13 @@ import argparse
 import sys
 import types
 
+import isaaclab_physx.app as physx_app
+import pytest
+from isaaclab_newton.physics import NewtonCfg
+from isaaclab_ov.physics import OvPhysxCfg
+
 import isaaclab.app.sim_launcher as sim_launcher
+from isaaclab.app import SimulationLauncher, get_settings_manager
 
 
 def _force_kitless(monkeypatch):
@@ -41,8 +47,8 @@ class _DummyEnvCfg:
         self.sim = sim_cfg
 
 
-def test_launch_simulation_passes_visualizer_intent_to_kit_launcher(monkeypatch):
-    """Ensure canonical launcher path forwards visualizer intent upstream."""
+def test_launch_simulation_passes_kit_visualizer_to_kit_launcher(monkeypatch):
+    """Ensure canonical launcher path forwards the resolved Kit visualizer request."""
     captured: dict[str, object] = {}
 
     class _FakeKitLauncher:
@@ -71,12 +77,56 @@ def test_launch_simulation_passes_visualizer_intent_to_kit_launcher(monkeypatch)
 
     forwarded_args = captured["launcher_args"]
     assert isinstance(forwarded_args, argparse.Namespace)
-    assert getattr(forwarded_args, "visualizer_intent") == {
-        "has_any_visualizers": True,
-        "has_kit_visualizer": True,
-        "has_kit_streaming_view": False,
-    }
+    assert forwarded_args.kit_visualizer is True
     assert captured["closed"] is True
+
+
+@pytest.fixture
+def kit_launcher_args(monkeypatch) -> list:
+    """Record the launcher args of each Kit launch, without starting Kit."""
+    launches = []
+
+    class _FakeKitLauncher(SimulationLauncher):
+        def __init__(self, launcher_args):
+            launches.append(launcher_args)
+
+    monkeypatch.setattr(physx_app, "KitLauncher", _FakeKitLauncher)
+    return launches
+
+
+def test_caller_visualizer_intent_requests_kit_visualizer(kit_launcher_args):
+    """A caller's ``visualizer_intent`` requests the Kit visualizer even without a visualizer config."""
+    with sim_launcher.launch_simulation(None, {"require_kit": True, "visualizer_intent": {"has_kit_visualizer": True}}):
+        pass
+
+    assert kit_launcher_args[0]["kit_visualizer"] is True
+
+
+@pytest.mark.parametrize("physics_cfg", [NewtonCfg(), OvPhysxCfg()], ids=["newton", "ovphysx"])
+def test_cli_visualizer_selection_overrides_config_kit_visualizer(kit_launcher_args, physics_cfg):
+    """``--viz rerun`` drops a configured Kit visualizer, so the run stays kitless."""
+    cfg = argparse.Namespace(physics=physics_cfg, visualizer_cfgs=[_DummyVizCfg("kit")])
+    launcher_args = argparse.Namespace(visualizer=["rerun"], visualizer_explicit=True)
+
+    with sim_launcher.launch_simulation(cfg, launcher_args):
+        pass
+
+    assert kit_launcher_args == []
+    assert launcher_args.kit_visualizer is False
+
+
+@pytest.mark.parametrize("require_kit", [False, True], ids=["kitless", "kit"])
+def test_launch_simulation_writes_max_visible_envs_without_visualizer(kit_launcher_args, require_kit):
+    """``--max_visible_envs`` reaches the settings with or without Kit, even when no visualizer is selected."""
+    settings = get_settings_manager()
+    settings.set_int("/isaaclab/visualizer/max_visible_envs", -1)
+
+    with sim_launcher.launch_simulation(NewtonCfg(), {"require_kit": require_kit, "max_visible_envs": 3}):
+        pass
+
+    assert len(kit_launcher_args) == int(require_kit)
+    assert settings.get("/isaaclab/visualizer/max_visible_envs") == 3
+    settings.set_int("/isaaclab/visualizer/max_visible_envs", -1)
 
 
 def test_launch_simulation_kitless_viz_none_sets_disable_all(monkeypatch):

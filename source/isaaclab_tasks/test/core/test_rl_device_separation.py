@@ -34,12 +34,9 @@ Tested Libraries:
 
 """
 
-# launch the simulator
 from isaaclab.test.utils import launch_test_simulation
 
 launch_test_simulation()
-
-"""Rest everything follows."""
 
 import gymnasium as gym
 import pytest

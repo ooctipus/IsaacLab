@@ -33,8 +33,6 @@ asset: ``--viz kit`` opens it in the Isaac Sim viewport, while ``--viz newton`` 
 
 """
 
-"""Parse CLI first so we can decide whether to launch Isaac Sim Kit."""
-
 import argparse
 
 from isaaclab.app import add_launcher_args, get_settings_manager, launch_simulation

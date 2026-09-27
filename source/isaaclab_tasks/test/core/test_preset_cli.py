@@ -79,7 +79,7 @@ def test_setup_preset_cli_namespace_carries_no_preset_attributes(monkeypatch):
     Namespace gains no ``physics`` / ``renderer`` / ``presets`` attribute.
 
     This is the bug-class-level guarantee against the Kit launcher's name-based
-    forwarding (``set(_SIM_APP_CFG_TYPES) & set(vars(args))``,
+    forwarding (``_SIM_APP_CONFIG_KEYS & launcher_args.keys()``,
     ``kit_launcher.py``): an attribute that doesn't exist can't collide.
     """
     monkeypatch.setattr(

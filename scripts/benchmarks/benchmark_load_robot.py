@@ -24,7 +24,6 @@ from typing import TYPE_CHECKING
 
 from isaaclab.app import add_launcher_args, launch_simulation
 
-# add argparse arguments
 parser = argparse.ArgumentParser(description="Benchmark loading different robots.")
 parser.add_argument("--num_envs", type=int, default=32, help="Number of robots to simulate.")
 parser.add_argument("--physics", default="physx", choices=["physx", "newton_mjwarp"], help="Physics backend.")
@@ -43,12 +42,8 @@ parser.add_argument(
     help="Benchmark output formatter, defaults omniperf",
 )
 parser.add_argument("--output_path", type=str, default=".", help="Path to output benchmark results.")
-# append simulation launcher cli args
 add_launcher_args(parser)
-# parse the arguments
 args_cli, _ = parser.parse_known_args()
-
-"""Rest everything follows."""
 
 # Start the timer for imports
 imports_time_begin = time.perf_counter_ns()
@@ -173,7 +168,6 @@ def main(
     from isaaclab.scene import InteractiveScene
     from isaaclab.sim import SimulationContext
 
-    # Load kit helper
     # The default MJWarp configuration needs additional constraint capacity and solver tuning for bipeds.
     if (
         args_cli.robot in ("h1", "g1")
@@ -209,7 +203,6 @@ def main(
 
     # Start the timer for reset
     reset_time_begin = time.perf_counter_ns()
-    # Play the simulator
     sim.reset()
     # Stop the timer for reset
     reset_time_end = time.perf_counter_ns()
@@ -229,7 +222,6 @@ def main(
         "startup", measurement=SingleMeasurement(name="Imports Time", value=imports_time_ms, unit="ms")
     )
 
-    # Run the simulator
     run_simulator(sim, scene, benchmark)
 
     # Finalize benchmark
@@ -276,5 +268,4 @@ if __name__ == "__main__":
                 ]
             },
         )
-        # run the main function
         main(scene_cfg, physics_cfg, app_start_time_ms, benchmark)

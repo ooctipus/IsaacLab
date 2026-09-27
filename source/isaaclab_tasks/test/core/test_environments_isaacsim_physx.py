@@ -3,14 +3,9 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Launch Isaac Sim Simulator first."""
-
 from isaaclab.test.utils import launch_test_simulation
 
 launch_test_simulation(enable_cameras=True, limit_cpu_threads=1)
-
-
-"""Rest everything follows."""
 
 import pytest
 

@@ -5,9 +5,6 @@
 
 """Tests for GelSight utility functions - primarily focused on GelsightRender."""
 
-"""Launch Isaac Sim Simulator first."""
-
-# launch omniverse app
 from isaaclab.test.utils import launch_test_simulation
 
 launch_test_simulation(enable_cameras=True)

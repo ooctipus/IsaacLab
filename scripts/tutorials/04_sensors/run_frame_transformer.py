@@ -96,20 +96,11 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: "InteractiveScene"):
     # to step through each frame so the user can verify that the correct frame
     # is being visualized as the frame names are printing to console
     if sim.has_gui:
-        # the debug-draw extension is Kit-only, so import it once the simulator runtime is running
-        from isaaclab.sim.utils import enable_extension
-
-        enable_extension("isaacsim.util.debug_draw")
-        from isaacsim.util.debug_draw import _debug_draw as omni_debug_draw
-
         cfg = FRAME_MARKER_CFG.replace(prim_path="/Visuals/FrameVisualizerFromScript")
         cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
         transform_visualizer = cfg.class_type(cfg)
-        # debug drawing for lines connecting the frame
-        draw_interface = omni_debug_draw.acquire_debug_draw_interface()
     else:
         transform_visualizer = None
-        draw_interface = None
 
     frame_index = 0
     # Simulate physics
@@ -146,12 +137,6 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: "InteractiveScene"):
             transform_visualizer.visualize(
                 torch.cat([source_pos, target_pos], dim=0), torch.cat([source_quat, target_quat], dim=0)
             )
-            # draw the line connecting the frames
-            draw_interface.clear_lines()
-            # plain color for lines
-            lines_colors = [[1.0, 1.0, 0.0, 1.0]] * source_pos.shape[0]
-            line_thicknesses = [5.0] * source_pos.shape[0]
-            draw_interface.draw_lines(source_pos.tolist(), target_pos.tolist(), lines_colors, line_thicknesses)
 
 
 def main():
@@ -178,4 +163,3 @@ def main():
 if __name__ == "__main__":
     # Run the main function
     main()
-    # Close the simulator

@@ -275,7 +275,6 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: "InteractiveScene") -
 def main() -> None:
     """Run the multi-mesh ray-caster camera example."""
 
-    # Initialize the simulation context
     sim_cfg = sim_utils.SimulationCfg(dt=0.005, device=args_cli.device)
     with launch_simulation(sim_cfg, args_cli):
         sim = sim_utils.SimulationContext(sim_cfg)
@@ -288,11 +287,8 @@ def main() -> None:
         if args_cli.asset_type == "objects":
             randomize_shape_color(scene_cfg.asset.prim_path.format(ENV_REGEX_NS="/World/envs/env_.*"))
 
-        # Play the simulator
         sim.reset()
-        # Now we are ready!
         print("[INFO]: Setup complete...")
-        # Run the simulator
         run_simulator(sim, scene)
 
 

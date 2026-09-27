@@ -3,15 +3,10 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Launch Isaac Sim Simulator first."""
-
-# launch Kit app
 # need to set "enable_cameras" true to be able to do rendering tests
 from isaaclab.test.utils import launch_test_simulation
 
 launch_test_simulation(enable_cameras=True)
-
-"""Rest everything follows."""
 
 import pytest
 import torch

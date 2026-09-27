@@ -24,12 +24,10 @@ variable remains a legacy construction-time override.
 Launch Isaac Sim Simulator first.
 """
 
-# launch omniverse app — cameras are required to read back per-env RGB tiles.
+# Cameras are required to read back per-env RGB tiles.
 from isaaclab.test.utils import launch_test_simulation
 
 launch_test_simulation(enable_cameras=True)
-
-"""Rest everything follows."""
 
 import os
 

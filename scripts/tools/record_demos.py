@@ -235,20 +235,6 @@ def _rtx_rendering_requested(args: argparse.Namespace) -> bool:
     return external_cameras or ("kit" in visualizers) or bool(getattr(args, "xr", False))
 
 
-def _ensure_replicator_loaded() -> None:
-    """Enable ``omni.replicator.core`` so RTX/DLSS global settings can be applied.
-
-    :func:`apply_isaac_rtx_global_settings` sets the antialiasing mode through
-    ``omni.replicator.core``, which ships with the SDG/rendering extensions. Some Kit
-    experiences (e.g. the Kit-viewport-only app selected by ``--visualizer kit`` without
-    cameras or XR) do not preload it, so enable it on demand via the extension manager
-    before applying RTX settings. Idempotent when the extension is already enabled.
-    """
-    import omni.kit.app
-
-    omni.kit.app.get_app().get_extension_manager().set_extension_enabled_immediate("omni.replicator.core", True)
-
-
 class RateLimiter:
     """Convenience class for enforcing rates in loops."""
 
@@ -830,11 +816,6 @@ def main() -> None:
 
     with launch_simulation(env_cfg, args_cli):
         record_demos(success_term, use_isaac_teleop)
-        # env.close() already closes the USD stage via sim.clear_instance().
-        # Pump the event loop so the viewport processes closure before the app is closed.
-        import omni.kit.app
-
-        omni.kit.app.get_app().update()
 
 
 def record_demos(success_term: object | None, use_isaac_teleop: bool) -> None:
@@ -843,10 +824,8 @@ def record_demos(success_term: object | None, use_isaac_teleop: bool) -> None:
     from isaaclab_teleop import XrCameraFeedSession
 
     # Apply the RTX/DLSS global settings when an RTX render pipeline will run (Kit visualizer,
-    # external cameras, or XR). ``apply_isaac_rtx_global_settings`` uses ``omni.replicator``,
-    # which some experiences do not preload, so ensure it is loaded first.
+    # external cameras, or XR).
     if _rtx_rendering_requested(args_cli):
-        _ensure_replicator_loaded()
         apply_isaac_rtx_global_settings(
             IsaacRtxRendererGlobalSettingsCfg(antialiasing_mode="DLSS"),
         )

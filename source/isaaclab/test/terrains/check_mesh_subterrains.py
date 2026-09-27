@@ -3,17 +3,12 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Parse the command line first."""
-
 import argparse
 
 parser = argparse.ArgumentParser(description="Generate terrains using trimesh")
 parser.add_argument("--visualize", action="store_true", help="Open a window to display each output.")
 args_cli = parser.parse_args()
 
-"""Rest everything follows."""
-
-import argparse
 import os
 
 import trimesh
@@ -417,6 +412,5 @@ def main():
 
 
 if __name__ == "__main__":
-    # run the main function
     # note: terrain generation is pure Python (trimesh), so no simulation runtime is launched
     main()

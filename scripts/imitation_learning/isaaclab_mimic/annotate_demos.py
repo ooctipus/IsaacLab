@@ -16,7 +16,6 @@ from isaaclab.utils.string import list_intersection, string_to_callable
 # Parse CLI first so we can decide whether to launch Isaac Sim Kit.
 
 
-# add argparse arguments
 parser = argparse.ArgumentParser(description="Annotate demonstrations for Isaac Lab environments.")
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument(
@@ -37,9 +36,7 @@ parser.add_argument(
 )
 
 parser.add_argument("--external_callback", default=None, help="Fully qualified path to an externally defined callback.")
-# append simulation launcher cli args
 add_launcher_args(parser)
-# parse the arguments
 args_cli, remaining_args = parser.parse_known_args()
 
 # Call an external callback if requested.
@@ -56,8 +53,6 @@ unrecognized_args = list_intersection(
 )
 if unrecognized_args:
     parser.error(f"unrecognized arguments: {' '.join(unrecognized_args)}")
-
-"""Rest everything follows."""
 
 import contextlib
 import os
@@ -545,7 +540,6 @@ def annotate_episode_in_manual_mode(
 
 
 if __name__ == "__main__":
-    # run the main function
     successful_task_count = main()
     # exit with the number of successful task completions as return code
     exit(successful_task_count)

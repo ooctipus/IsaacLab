@@ -1030,32 +1030,15 @@ def _rtx_rendering_requested(args: argparse.Namespace) -> bool:
     return external_cameras or ("kit" in visualizers) or bool(getattr(args, "xr", False))
 
 
-def _ensure_replicator_loaded() -> None:
-    """Enable ``omni.replicator.core`` so RTX/DLSS global settings can be applied.
-
-    :func:`apply_isaac_rtx_global_settings` sets the antialiasing mode through
-    ``omni.replicator.core``, which ships with the SDG/rendering extensions. Some Kit
-    experiences (e.g. the Kit-viewport-only app selected by ``--visualizer kit`` without
-    cameras or XR) do not preload it, so enable it on demand via the extension manager
-    before applying RTX settings. Idempotent when the extension is already enabled.
-    """
-    import omni.kit.app
-
-    omni.kit.app.get_app().get_extension_manager().set_extension_enabled_immediate("omni.replicator.core", True)
-
-
 def _apply_rtx_settings() -> None:
     """Apply the RTX/DLSS global settings used for replay rendering.
 
     Only call this when an RTX render pipeline actually runs this session (Kit visualizer,
     external cameras, or XR), see :func:`_rtx_rendering_requested`; a headless replay that renders
     nothing neither needs them nor has the extensions loaded to apply them.
-    ``apply_isaac_rtx_global_settings`` uses ``omni.replicator`` (part of the SDG/rendering
-    extensions), which some experiences do not preload, so ensure it is loaded first.
     """
     from isaaclab_physx.renderers.isaac_rtx_renderer_utils import apply_isaac_rtx_global_settings
 
-    _ensure_replicator_loaded()
     apply_isaac_rtx_global_settings(
         IsaacRtxRendererGlobalSettingsCfg(antialiasing_mode="DLSS"),
     )
@@ -1188,67 +1171,6 @@ per-machine -- unlike a wall-clock delay it does not have to be tuned for hardwa
 """
 
 
-def _wait_for_stage_load(max_wait_s: float) -> None:
-    """Block until the USD stage finishes resolving every referenced asset.
-
-    Polls :meth:`omni.usd.UsdContext.get_stage_loading_status`. The third element of
-    the returned tuple is the count of assets still pending; when it reaches
-    zero the stage is fully streamed in and the renderer pipeline is ready to draw
-    against it. After the count reaches zero this function pumps an additional
-    :data:`_RENDERER_SETTLE_FRAMES` Kit app updates so shaders,
-    materials, and articulation views finish warming up before the caller begins
-    consuming MCAP frames or stepping the env.
-
-    Args:
-        max_wait_s: Upper bound on how long to spin on a non-zero loading count
-            before warning and returning. Acts as a safety net for misconfigured
-            scenes (missing assets, slow Nucleus); a successful run typically
-            completes well within this bound.
-
-    The function is best-effort: when ``omni.usd`` is unavailable (e.g. when
-    running outside a simulator context) it returns immediately so callers do not
-    need a separate code path.
-    """
-    try:
-        import omni.kit.app
-        import omni.usd
-    except (ImportError, ModuleNotFoundError):
-        logger.warning("omni.usd not available; skipping deterministic stage-load wait")
-        return
-    kit_app = omni.kit.app.get_app()
-
-    print("Waiting for USD stage to finish loading...")
-    start_s = time.monotonic()
-    last_progress_log_s = start_s
-    while kit_app.is_running():
-        context = omni.usd.get_context()
-        if context is None:
-            break
-        # get_stage_loading_status -> (message, count_loaded, count_loading)
-        _, _, count_loading = context.get_stage_loading_status()
-        if count_loading == 0:
-            break
-        elapsed_s = time.monotonic() - start_s
-        if elapsed_s >= max_wait_s:
-            logger.warning(
-                "Stage still reports %d assets pending after %.1fs; proceeding anyway. Replay may race the renderer.",
-                count_loading,
-                max_wait_s,
-            )
-            break
-        if time.monotonic() - last_progress_log_s >= 5.0:
-            print(f"  stage loading: {count_loading} assets pending (elapsed {elapsed_s:.1f}s)")
-            last_progress_log_s = time.monotonic()
-        kit_app.update()
-
-    elapsed_s = time.monotonic() - start_s
-    print(f"Stage load complete after {elapsed_s:.1f}s; settling renderer for {_RENDERER_SETTLE_FRAMES} frames...")
-    for _ in range(_RENDERER_SETTLE_FRAMES):
-        if not kit_app.is_running():
-            return
-        kit_app.update()
-
-
 def _run_single_replay(
     env: gym.Env,
     isaac_teleop_cfg,
@@ -1360,7 +1282,10 @@ def _run_single_replay(
         # at the cost of doing nothing measurable (the wait returns
         # immediately on a fully-loaded stage anyway).
         if run_index == 0:
-            _wait_for_stage_load(args_cli.max_stage_load_wait_s)
+            from isaaclab_physx.renderers.isaac_rtx_renderer_utils import wait_for_stage_load
+
+            print("Waiting for USD stage to finish loading...")
+            wait_for_stage_load(args_cli.max_stage_load_wait_s, settle_frames=_RENDERER_SETTLE_FRAMES)
 
             # Optional extra wall-clock buffer on top of the deterministic
             # wait. Useful as an escape hatch when the deterministic check
@@ -1553,7 +1478,7 @@ def main() -> int:
     multi-run batches start essentially instantly.
 
     Per-replay control flow (see :func:`_run_single_replay` for details):
-        * Pre-loop warmup: ``_wait_for_stage_load`` polls
+        * Pre-loop warmup: ``wait_for_stage_load`` polls
           ``omni.usd.UsdContext.get_stage_loading_status`` until the
           simulator reports zero pending assets, then renders a fixed number of
           settle frames (only on ``run_index == 0``). An optional
@@ -1633,10 +1558,6 @@ def main() -> int:
 
     with launch_simulation(env_cfg, args_cli):
         exit_code = _run_replay_batch(env_cfg, success_term)
-        # env.close() already closes the USD stage; pump the event loop once more before the app closes.
-        import omni.kit.app
-
-        omni.kit.app.get_app().update()
     return exit_code
 
 

@@ -37,9 +37,6 @@ optional arguments:
 
 """
 
-"""Parse the command line first."""
-
-
 import argparse
 
 from isaaclab.app import add_launcher_args, get_settings_manager, launch_simulation
@@ -56,7 +53,6 @@ _valid_collision_approx = [
     "none",
 ]
 
-# add argparse arguments
 parser = argparse.ArgumentParser(description="Utility to convert a mesh file into USD format.")
 parser.add_argument("input", type=str, help="The path to the input mesh file.")
 parser.add_argument("output", type=str, help="The path to store the USD file.")
@@ -79,14 +75,10 @@ parser.add_argument(
     default=None,
     help="The mass (in kg) to assign to the converted asset. If not provided, then no mass is added.",
 )
-# append simulation launcher cli args
 add_launcher_args(parser)
-# parse the arguments
 args_cli = parser.parse_args()
 # the mesh converter uses the Kit asset converter extension
 args_cli.require_kit = True
-
-"""Rest everything follows."""
 
 import os
 
@@ -187,5 +179,4 @@ def main():
 
 
 if __name__ == "__main__":
-    # run the main function
     main()

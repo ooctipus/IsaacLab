@@ -13,9 +13,6 @@ The test raises a downward-looking camera over the ground plane, which scales th
 visible surface, and checks both observable consequences: the reported pose and the rendered depth.
 """
 
-"""Launch Isaac Sim Simulator first."""
-
-# launch omniverse app
 from isaaclab.test.utils import launch_test_simulation
 
 launch_test_simulation(enable_cameras=True)

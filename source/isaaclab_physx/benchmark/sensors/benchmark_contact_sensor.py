@@ -49,8 +49,6 @@ parser.add_argument("--disable_graph", action="store_true", help="Disable CUDA g
 add_launcher_args(parser)
 args_cli = parser.parse_args()
 
-"""Rest everything follows."""
-
 import warp as wp
 
 import isaaclab.sim as sim_utils

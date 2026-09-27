@@ -7,18 +7,11 @@
 This script checks that the ``isaaclab.python.kit`` experience launches and steps the simulation without hanging.
 """
 
-"""Launch Isaac Sim Simulator first."""
-
-
 import pytest
 
-# launch omniverse app
 from isaaclab.test.utils import launch_test_simulation
 
 launch_test_simulation(experience="isaaclab.python.kit")
-
-"""Rest everything follows."""
-
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import AssetBaseCfg

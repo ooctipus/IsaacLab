@@ -8,14 +8,9 @@
 
 from __future__ import annotations
 
-"""Launch Isaac Sim Simulator first."""
-
-# launch omniverse app
 from isaaclab.test.utils import launch_test_simulation
 
 launch_test_simulation()
-
-"""Rest everything follows."""
 
 from unittest.mock import Mock
 

@@ -5,7 +5,6 @@
 
 """Tests for the solver-internal reset performed when env-reset masks are consumed."""
 
-# launch omniverse app
 from isaaclab.test.utils import launch_test_simulation
 
 launch_test_simulation()

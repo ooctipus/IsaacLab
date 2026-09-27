@@ -12,8 +12,6 @@ from isaaclab.test.utils import launch_test_simulation
 
 launch_test_simulation(enable_cameras=True)
 
-"""Rest everything follows."""
-
 import pytest
 from isaaclab_physx.renderers import IsaacRtxRendererCfg
 

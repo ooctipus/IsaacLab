@@ -12,13 +12,9 @@ exercise the real lifecycle. The camera is a stand-in exposing ``data.output`` a
 
 from __future__ import annotations
 
-"""Launch Isaac Sim Simulator first."""
-
 from isaaclab.test.utils import launch_test_simulation
 
 launch_test_simulation()
-
-"""Rest everything follows."""
 
 from collections import namedtuple
 from types import SimpleNamespace

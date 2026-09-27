@@ -19,9 +19,7 @@ from pathlib import Path
 
 from isaaclab.test.utils import launch_test_simulation
 
-simulation_app = launch_test_simulation(
-    enable_cameras=True, visualizer_intent={"has_any_visualizers": True, "has_kit_visualizer": True}
-)
+simulation_app = launch_test_simulation(enable_cameras=True, visualizer_intent={"has_kit_visualizer": True})
 
 import pytest  # noqa: E402
 

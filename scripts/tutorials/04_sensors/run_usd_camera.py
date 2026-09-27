@@ -6,8 +6,7 @@
 """
 This script shows how to use the camera sensor from the Isaac Lab framework.
 
-The camera sensor is created and interfaced through the Omniverse Replicator API. However, instead of using
-the simulator or OpenGL convention for the camera, we use the robotics or ROS convention.
+Instead of using the simulator or OpenGL convention for the camera, we use the robotics or ROS convention.
 
 .. code-block:: bash
 
@@ -71,8 +70,7 @@ from isaaclab.assets import RigidObject, RigidObjectCfg
 from isaaclab.markers import VisualizationMarkers
 from isaaclab.markers.config import RAY_CASTER_MARKER_CFG
 from isaaclab.sensors.camera import CameraCfg
-from isaaclab.sensors.camera.utils import create_pointcloud_from_depth
-from isaaclab.utils import convert_dict_to_backend
+from isaaclab.sensors.camera.utils import create_pointcloud_from_depth, save_images_to_file
 
 if TYPE_CHECKING:
     from isaaclab.sensors.camera import Camera
@@ -168,21 +166,12 @@ def design_scene() -> dict:
 
 def run_simulator(sim: sim_utils.SimulationContext, scene_entities: dict):
     """Run the simulator."""
-    # Replicator is a Kit extension, so import it once the simulator runtime is running
-    import omni.replicator.core as rep
-
     # extract entities for simplified notation
     camera: Camera = scene_entities["camera"]
 
-    # Create replicator writer
+    # Create the output directory
     output_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "output", "camera")
-    rep_writer = rep.BasicWriter(
-        output_dir=output_dir,
-        frame_padding=0,
-        colorize_instance_id_segmentation=camera.cfg.renderer_cfg.colorize_instance_id_segmentation,
-        colorize_instance_segmentation=camera.cfg.renderer_cfg.colorize_instance_segmentation,
-        colorize_semantic_segmentation=camera.cfg.renderer_cfg.colorize_semantic_segmentation,
-    )
+    os.makedirs(output_dir, exist_ok=True)
 
     # Camera positions, targets, orientations
     camera_positions = torch.tensor([[2.5, 2.5, 2.5], [-2.5, -2.5, 2.5]], device=sim.device)
@@ -232,24 +221,11 @@ def run_simulator(sim: sim_utils.SimulationContext, scene_entities: dict):
 
         # Extract camera data
         if args_cli.save:
-            # Save images from camera at camera_index
-            # note: BasicWriter only supports saving data in numpy format, so we need to convert the data to numpy.
-            single_cam_data = convert_dict_to_backend(
-                {k: v[camera_index] for k, v in camera.data.output.items()}, backend="numpy"
-            )
-
-            # Pack data back into replicator format to save them using its writer
-            rep_output = {"annotators": {}}
-            for key, data in single_cam_data.items():
-                info = camera.data.info.get(key)
-                if info is not None:
-                    rep_output["annotators"][key] = {"render_product": {"data": data, **info}}
-                else:
-                    rep_output["annotators"][key] = {"render_product": {"data": data}}
-            # Save images
-            # Note: We need to provide On-time data for Replicator to save the images.
-            rep_output["trigger_outputs"] = {"on_time": camera.frame[camera_index]}
-            rep_writer.write(rep_output)
+            # Save the 8-bit color images (rgb and colorized segmentations) from camera at camera_index
+            for key, data in camera.data.output.items():
+                if data.torch.dtype == torch.uint8:
+                    file_path = os.path.join(output_dir, f"{key}_{camera.frame[camera_index]}.png")
+                    save_images_to_file(data.torch[camera_index : camera_index + 1].float() / 255.0, file_path)
 
         # Draw pointcloud if there is a GUI and --draw has been passed
         if (

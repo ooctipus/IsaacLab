@@ -10,7 +10,6 @@ Unit tests for retargeters.
 # Can set this to False to see the GUI for debugging.
 HEADLESS = True
 
-# Launch omniverse app.
 from isaaclab.test.utils import launch_test_simulation
 
 launch_test_simulation(headless=HEADLESS)

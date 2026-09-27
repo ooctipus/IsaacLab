@@ -15,24 +15,18 @@ It uses the `warp` library to run the state machine in parallel on the GPU.
 
 """
 
-"""Parse the command line first."""
-
 import argparse
 
 from isaaclab.app import add_launcher_args, launch_simulation
 
-# add argparse arguments
 parser = argparse.ArgumentParser(description="Pick and lift state machine for lift environments.")
 parser.add_argument(
     "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
 )
 parser.add_argument("--num_envs", type=int, default=None, help="Number of environments to simulate.")
-# append simulation launcher cli args
 add_launcher_args(parser)
 # parse the arguments, forwarding unrecognized ones as Hydra-style task config overrides
 args_cli, hydra_overrides = parser.parse_known_args()
-
-"""Rest everything else."""
 
 from collections.abc import Sequence
 
@@ -307,5 +301,4 @@ def main():
 
 
 if __name__ == "__main__":
-    # run the main function
     main()

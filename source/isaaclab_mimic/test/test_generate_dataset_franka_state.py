@@ -5,7 +5,6 @@
 
 """Test dataset generation for Isaac Lab Mimic workflow."""
 
-# launch omniverse app
 from isaaclab.test.utils import launch_test_simulation
 
 launch_test_simulation()

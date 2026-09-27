@@ -5,14 +5,9 @@
 
 """Tests for version comparison utilities."""
 
-"""Launch Isaac Sim Simulator first."""
-
-# launch omniverse app
 from isaaclab.test.utils import launch_test_simulation
 
 launch_test_simulation()
-
-"""Rest everything follows."""
 
 import pytest
 from packaging.version import Version

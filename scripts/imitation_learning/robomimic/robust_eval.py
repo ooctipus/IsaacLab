@@ -24,13 +24,10 @@ Args:
     disable_fabric: Whether to disable fabric and use USD I/O operations.
 """
 
-"""Parse CLI first so we can decide whether to launch Isaac Sim Kit."""
-
 import argparse
 
 from isaaclab.app import add_launcher_args, launch_simulation
 
-# add argparse arguments
 parser = argparse.ArgumentParser(description="Evaluate robomimic policy for Isaac Lab environment.")
 parser.add_argument(
     "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
@@ -58,15 +55,12 @@ parser.add_argument(
     "--norm_factor_max", type=float, default=None, help="Optional: maximum value of the normalization factor."
 )
 
-# append simulation launcher cli args
 add_launcher_args(parser)
 # parse the arguments, forwarding unrecognized ones as Hydra-style task config overrides.
 # ``overrides`` must be passed explicitly to the config parser: this script keeps its own flags in
 # ``sys.argv`` rather than stripping them, so letting Hydra fall back to reading ``sys.argv`` makes it
 # reject them.
 args_cli, hydra_overrides = parser.parse_known_args()
-
-"""Rest everything follows."""
 
 import copy
 import os
@@ -335,5 +329,4 @@ def evaluate_models(env_cfg, success_term) -> None:
 
 
 if __name__ == "__main__":
-    # run the main function
     main()

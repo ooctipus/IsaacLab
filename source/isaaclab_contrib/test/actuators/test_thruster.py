@@ -5,12 +5,9 @@
 
 HEADLESS = True
 
-# if not has_kit():
 from isaaclab.test.utils import launch_test_simulation
 
 launch_test_simulation(headless=HEADLESS)
-
-"""Rest of imports follows"""
 
 import math
 from types import SimpleNamespace

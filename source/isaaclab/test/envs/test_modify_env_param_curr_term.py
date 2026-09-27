@@ -5,7 +5,6 @@
 
 """Test curriculum-based environment parameter modification."""
 
-# launch omniverse app
 from isaaclab.test.utils import launch_test_simulation
 
 launch_test_simulation()

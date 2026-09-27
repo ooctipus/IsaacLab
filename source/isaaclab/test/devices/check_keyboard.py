@@ -10,22 +10,15 @@ The teleoperation device is a keyboard device that allows the user to control th
 It is possible to add additional callbacks to it for user-defined operations.
 """
 
-"""Launch Isaac Sim Simulator first."""
-
 import argparse
 
 from isaaclab.app import add_launcher_args, launch_simulation
 
-# add argparse arguments
 parser = argparse.ArgumentParser(description="Check the keyboard teleoperation device.")
-# append launcher cli args
 add_launcher_args(parser)
 # keyboard input needs the Kit window, so open the Kit visualizer by default
 parser.set_defaults(visualizer=["kit"])
-# parse the arguments
 args_cli = parser.parse_args()
-
-"""Rest everything follows."""
 
 import sys
 
@@ -44,7 +37,6 @@ def quit_cb():
 
 
 def main():
-    # Load kit helper
     sim_cfg = SimulationCfg(dt=0.01, device=args_cli.device)
     with launch_simulation(sim_cfg, args_cli):
         # the keyboard device uses Kit's input interface, so import it once Kit is running
@@ -93,5 +85,4 @@ def main():
 
 
 if __name__ == "__main__":
-    # run the main function
     main()

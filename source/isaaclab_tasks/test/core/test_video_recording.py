@@ -22,8 +22,6 @@ from isaaclab.test.utils import launch_test_simulation
 
 launch_test_simulation(enable_cameras=True)
 
-"""Rest everything follows."""
-
 import logging
 import os
 import tempfile

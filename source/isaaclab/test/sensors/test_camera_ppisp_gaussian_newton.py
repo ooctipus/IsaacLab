@@ -45,7 +45,6 @@ _SKIP_MISSING_NEWTON = pytest.mark.skipif(
 
 if not _MISSING_MODULES:
     # Launch Isaac Sim before importing modules that depend on an active app.
-
     from isaaclab.test.utils import launch_test_simulation  # noqa: E402
 
     launch_test_simulation(enable_cameras=True)

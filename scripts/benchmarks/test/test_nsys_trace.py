@@ -18,8 +18,6 @@ from isaaclab.test.utils import launch_test_simulation
 
 launch_test_simulation()
 
-"""Rest everything follows."""
-
 import importlib
 import inspect
 import json

@@ -12,7 +12,7 @@ prim ordering, xformOp standardization, and Isaac Sim comparison.
 
 from isaaclab.test.utils import launch_test_simulation, resolve_test_sim_device
 
-launch_test_simulation(device=resolve_test_sim_device())
+launch_test_simulation()
 
 import pytest  # noqa: E402
 import torch  # noqa: E402

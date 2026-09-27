@@ -5,7 +5,6 @@
 
 """Rendering correctness tests for Cartpole environment backend combinations."""
 
-# Launch Isaac Sim Simulator first for kit-based combinations.
 from isaaclab.test.utils import launch_test_simulation
 
 launch_test_simulation(enable_cameras=True)

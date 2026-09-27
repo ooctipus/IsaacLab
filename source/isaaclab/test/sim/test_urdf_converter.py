@@ -15,8 +15,6 @@ _USE_KIT = not standalone_importers_available() and KitLauncher.is_available()
 if _USE_KIT:
     launch_test_simulation()
 
-"""Rest everything follows."""
-
 import math
 import os
 import warnings

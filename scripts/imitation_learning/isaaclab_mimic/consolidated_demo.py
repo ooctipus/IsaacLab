@@ -13,7 +13,6 @@ import argparse
 
 from isaaclab.app import add_launcher_args, launch_simulation
 
-# add argparse arguments
 parser = argparse.ArgumentParser(
     description="Record demonstrations and run mimic dataset generation for Isaac Lab environments."
 )
@@ -60,14 +59,11 @@ parser.add_argument(
     default=None,
     help="File path to export generated episodes by mimic.",
 )
-# append simulation launcher cli args
 add_launcher_args(parser)
 # parse the arguments, forwarding unrecognized ones as Hydra-style task config overrides
 args_cli, hydra_overrides = parser.parse_known_args()
 # the teleop input devices are Kit input devices, so the Kit runtime is required
 args_cli.require_kit = True
-
-"""Rest everything follows."""
 
 import asyncio
 import contextlib

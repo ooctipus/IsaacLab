@@ -15,9 +15,6 @@ from isaaclab.test.utils import launch_test_simulation
 
 launch_test_simulation(enable_cameras=True)
 
-
-"""Rest everything follows."""
-
 import pytest
 
 import isaaclab_tasks  # noqa: F401

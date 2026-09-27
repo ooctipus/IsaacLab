@@ -17,7 +17,8 @@ logger = logging.getLogger(__name__)
 
 class _NoOpApp:
     def is_running(self) -> bool:
-        return True
+        # nothing runs, so legacy ``while app.is_running():`` loops end instead of spinning forever
+        return False
 
     def update(self) -> None:
         pass

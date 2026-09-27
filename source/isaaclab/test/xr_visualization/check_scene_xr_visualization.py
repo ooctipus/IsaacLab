@@ -15,24 +15,17 @@ This script checks if the XR visualization widgets are visible from the camera.
 
 from __future__ import annotations
 
-"""Launch Isaac Sim Simulator first."""
-
 import argparse
 
 from isaaclab.app import add_launcher_args, launch_simulation
 
-# add argparse arguments
 parser = argparse.ArgumentParser(description="Check XR visualization widgets in Isaac Lab.")
 parser.add_argument("--num_envs", type=int, default=2, help="Number of environments to spawn.")
-# append launcher cli args
 add_launcher_args(parser)
-# parse the arguments
 args_cli = parser.parse_args()
 
 # launch omniverse app with XR support
 args_cli.xr = True
-
-"""Rest everything follows."""
 
 import time
 from typing import TYPE_CHECKING, Any
@@ -261,7 +254,6 @@ def run_simulator(
 def main():
     """Main function."""
 
-    # Initialize the simulation context
     sim_cfg = sim_utils.SimulationCfg(dt=0.005, device=args_cli.device)
     with launch_simulation(sim_cfg, args_cli):
         sim = sim_utils.SimulationContext(sim_cfg)
@@ -270,14 +262,10 @@ def main():
         # design scene
         scene_cfg = SimpleSceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0)
         scene = scene_cfg.class_type(scene_cfg)
-        # Play the simulator
         sim.reset()
-        # Now we are ready!
         print("[INFO]: Setup complete...")
-        # Run the simulator
         run_simulator(sim, scene)
 
 
 if __name__ == "__main__":
-    # run the main function
     main()

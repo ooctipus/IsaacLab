@@ -6,9 +6,7 @@
 # ignore private usage of variables warning
 # pyright: reportPrivateUsage=none
 
-"""Launch Isaac Sim Simulator first."""
-
-from isaaclab.test.utils import DeviceScope, launch_test_simulation, resolve_test_sim_device, test_devices
+from isaaclab.test.utils import DeviceScope, launch_test_simulation, test_devices
 from isaaclab.test.utils.articulation_ordering import (
     BRANCHING_MJWARP_BODY_NAMES,
     BRANCHING_MJWARP_JOINT_NAMES,
@@ -21,10 +19,7 @@ from isaaclab.test.utils.articulation_ordering import (
 
 HEADLESS = True
 
-# launch omniverse app
-launch_test_simulation(device=resolve_test_sim_device())
-
-"""Rest everything follows."""
+launch_test_simulation()
 
 import sys
 from pathlib import Path

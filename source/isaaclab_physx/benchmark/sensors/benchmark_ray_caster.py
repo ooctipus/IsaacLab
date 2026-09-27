@@ -48,8 +48,6 @@ if args_cli.grid_size <= 0:
 if args_cli.grid_resolution <= 0:
     parser.error("--grid_resolution must be greater than zero")
 
-"""Rest everything follows."""
-
 import torch
 import warp as wp
 from isaaclab_physx.sim.schemas import PhysxRigidBodyCfg

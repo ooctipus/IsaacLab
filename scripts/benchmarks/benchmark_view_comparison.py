@@ -55,8 +55,6 @@ parser.add_argument(
 add_launcher_args(parser)
 args_cli = parser.parse_args()
 
-"""Rest everything follows."""
-
 import cProfile
 import time
 

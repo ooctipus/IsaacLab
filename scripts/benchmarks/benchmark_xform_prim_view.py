@@ -32,8 +32,6 @@ parser.add_argument("--profile_dir", type=str, default="./profile_results", help
 add_launcher_args(parser)
 args_cli = parser.parse_args()
 
-"""Rest everything follows."""
-
 import cProfile
 import time
 from typing import Literal
