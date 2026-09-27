@@ -124,10 +124,6 @@ def main():
     # Load kit helper
     sim_cfg = SimulationCfg(device=args_cli.device)
     with launch_simulation(sim_cfg, args_cli):
-        # imported once Kit is running: these load pxr / scipy.spatial, which must not be imported before Kit starts
-        from isaaclab.sensors.ray_caster import MultiMeshRayCaster
-        from isaaclab.terrains.terrain_importer import TerrainImporter
-
         sim = SimulationContext(sim_cfg)
         # Set main camera
         sim.set_camera_view([0.0, 30.0, 25.0], [0.0, 0.0, -2.5])
@@ -146,7 +142,7 @@ def main():
             num_envs=1,
             env_spacing=10.0,
         )
-        _ = TerrainImporter(terrain_importer_cfg)
+        _ = terrain_importer_cfg.class_type(terrain_importer_cfg)
 
         mesh_targets: list[MultiMeshRayCasterCfg.RaycastTargetCfg] = [
             MultiMeshRayCasterCfg.RaycastTargetCfg(prim_expr="/World/ground", track_mesh_transforms=False),
@@ -165,7 +161,7 @@ def main():
             ray_alignment="yaw",
             debug_vis=bool(args_cli.visualizer),
         )
-        ray_caster = MultiMeshRayCaster(cfg=ray_caster_cfg)
+        ray_caster = ray_caster_cfg.class_type(ray_caster_cfg)
         # Create a view over all the balls
         balls_cfg = RigidObjectCfg(
             prim_path="{ENV_REGEX_NS}/ball",

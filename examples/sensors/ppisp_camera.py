@@ -358,31 +358,26 @@ def make_ppisp_cfg(camera_prim: Usd.Prim, num_ppisp_bindings: int) -> PpispCfg:
 
 def create_duplicated_env_scene() -> InteractiveScene:
     """Create a production-style duplicated-env scene for tiled camera rendering."""
-    from isaaclab.scene import InteractiveScene
-
     scene_cfg = PpispCameraSceneCfg(num_envs=args_cli.num_envs, env_spacing=args_cli.env_spacing)
     scene_cfg.input_scene.spawn = sim_utils.UsdFileCfg(usd_path=args_cli.input_scene)
-    scene = InteractiveScene(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
     print(f"[INFO] Referenced input scene into {args_cli.num_envs} env(s).", flush=True)
     return scene
 
 
 def make_camera(camera_prim_path: str, *, ppisp_cfg: PpispCfg | None, width: int, height: int) -> Camera:
     """Create a baseline or PPISP camera sensor for the duplicated-env camera batch."""
-    from isaaclab.sensors import Camera
-
-    return Camera(
-        CameraCfg(
-            prim_path=camera_prim_path,
-            update_period=0.0,
-            height=height,
-            width=width,
-            data_types=["rgb"],
-            spawn=None,
-            isp_cfg=ppisp_cfg,
-            renderer_cfg=make_renderer_cfg(),
-        )
+    camera_cfg = CameraCfg(
+        prim_path=camera_prim_path,
+        update_period=0.0,
+        height=height,
+        width=width,
+        data_types=["rgb"],
+        spawn=None,
+        isp_cfg=ppisp_cfg,
+        renderer_cfg=make_renderer_cfg(),
     )
+    return camera_cfg.class_type(camera_cfg)
 
 
 def save_images_grid(

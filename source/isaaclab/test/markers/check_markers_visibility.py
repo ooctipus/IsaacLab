@@ -134,15 +134,12 @@ def main():
     # Initialize the simulation context
     sim_cfg = sim_utils.SimulationCfg(dt=0.005, device=args_cli.device)
     with launch_simulation(sim_cfg, args_cli):
-        # imported once Kit is running: it loads pxr, which must not be imported before Kit starts
-        from isaaclab.scene import InteractiveScene
-
         sim = sim_utils.SimulationContext(sim_cfg)
         # Set main camera
         sim.set_camera_view(eye=[3.5, 3.5, 3.5], target=[0.0, 0.0, 0.0])
         # design scene
         scene_cfg = SensorsSceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0)
-        scene = InteractiveScene(scene_cfg)
+        scene = scene_cfg.class_type(scene_cfg)
         # Play the simulator
         sim.reset()
         # Now we are ready!

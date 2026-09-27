@@ -317,10 +317,7 @@ def main():
     env_cfg = CubeEnvCfg()
     # Launch the simulator runtime that the configuration needs
     with launch_simulation(env_cfg, args_cli):
-        # classes that work on the USD stage are imported once the simulator runtime is running
-        from isaaclab.envs import ManagerBasedEnv
-
-        env = ManagerBasedEnv(cfg=env_cfg)
+        env = env_cfg.class_type(env_cfg)
 
         # setup target position commands
         target_position = torch.rand(env.num_envs, 3, device=env.device) * 2

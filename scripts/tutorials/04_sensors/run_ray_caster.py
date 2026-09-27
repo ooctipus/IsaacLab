@@ -43,9 +43,6 @@ if TYPE_CHECKING:
 
 def define_sensor() -> "RayCaster":
     """Defines the ray-caster sensor to add to the scene."""
-    # classes that work on the USD stage are imported once the simulator runtime is running
-    from isaaclab.sensors.ray_caster import RayCaster
-
     # Create a ray-caster sensor
     ray_caster_cfg = RayCasterCfg(
         prim_path="/World/Origin.*/ball",
@@ -55,7 +52,7 @@ def define_sensor() -> "RayCaster":
         # draw the ray hits only when a visualizer is requested
         debug_vis=bool(args_cli.visualizer),
     )
-    ray_caster = RayCaster(cfg=ray_caster_cfg)
+    ray_caster = ray_caster_cfg.class_type(ray_caster_cfg)
 
     return ray_caster
 

@@ -74,13 +74,12 @@ def benchmark_frame_view(  # noqa: C901
     num_iterations: int,
 ) -> tuple[dict[str, float], dict[str, torch.Tensor]]:
     """Benchmark get/set world/local poses for the given FrameView backend."""
-    # the view and scene runtime classes import USD, which must load after Kit starts
+    # the view runtime classes import USD, which must load after Kit starts
     from isaaclab_newton.sim.views import NewtonSiteFrameView
     from isaaclab_physx.sim.views import FabricFrameView
 
     from pxr import Gf
 
-    from isaaclab.scene import InteractiveScene
     from isaaclab.sim.views import UsdFrameView
 
     timing_results: dict[str, float] = {}
@@ -98,7 +97,8 @@ def benchmark_frame_view(  # noqa: C901
         ctx = build_simulation_context(device=device, sim_cfg=newton_cfg, add_ground_plane=True)
         sim = ctx.__enter__()
         sim._app_control_on_stop_handle = None
-        InteractiveScene(_NewtonSceneCfg(num_envs=num_envs, env_spacing=2.0))
+        scene_cfg = _NewtonSceneCfg(num_envs=num_envs, env_spacing=2.0)
+        scene_cfg.class_type(scene_cfg)
 
         stage = sim_utils.get_current_stage()
         for i in range(num_envs):

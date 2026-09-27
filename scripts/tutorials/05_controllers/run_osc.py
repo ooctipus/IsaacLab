@@ -470,16 +470,13 @@ def main():
     sim_cfg = sim_utils.SimulationCfg(dt=0.01, device=args_cli.device)
     # Launch the simulator runtime that the configuration needs
     with launch_simulation(sim_cfg, args_cli):
-        # classes that work on the USD stage are imported once the simulator runtime is running
-        from isaaclab.scene import InteractiveScene
-
         # Initialize the simulation context
         sim = sim_utils.SimulationContext(sim_cfg)
         # Set main camera
         sim.set_camera_view([2.5, 2.5, 2.5], [0.0, 0.0, 0.0])
         # Design scene
         scene_cfg = SceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0)
-        scene = InteractiveScene(scene_cfg)
+        scene = scene_cfg.class_type(scene_cfg)
         # Play the simulator
         sim.reset()
         # Now we are ready!

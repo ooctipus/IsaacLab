@@ -52,9 +52,6 @@ logger = logging.getLogger(__name__)
 
 def design_scene(sim: SimulationContext, num_envs: int = 2048) -> RigidObject:
     """Design the scene."""
-    # imported here, once Kit is running: it loads scipy.spatial, which must not be imported before Kit starts
-    from isaaclab.terrains.terrain_importer import TerrainImporter
-
     # Handler for terrains importing
     terrain_importer_cfg = terrain_gen.TerrainImporterCfg(
         prim_path="/World/ground",
@@ -64,7 +61,7 @@ def design_scene(sim: SimulationContext, num_envs: int = 2048) -> RigidObject:
         max_init_terrain_level=None,
         num_envs=1,
     )
-    _ = TerrainImporter(terrain_importer_cfg)
+    _ = terrain_importer_cfg.class_type(terrain_importer_cfg)
     # obtain the current stage
     stage = sim_utils.get_current_stage()
     # Create interface to clone the scene

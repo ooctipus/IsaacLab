@@ -278,15 +278,12 @@ def main() -> None:
     # Initialize the simulation context
     sim_cfg = sim_utils.SimulationCfg(dt=0.005, device=args_cli.device)
     with launch_simulation(sim_cfg, args_cli):
-        # the scene runtime imports USD, which must load after Kit starts
-        from isaaclab.scene import InteractiveScene
-
         sim = sim_utils.SimulationContext(sim_cfg)
         # Set main camera
         sim.set_camera_view(eye=[3.5, 3.5, 3.5], target=[0.0, 0.0, 0.0])
         # design scene
         scene_cfg = RaycasterSensorSceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0, replicate_physics=True)
-        scene = InteractiveScene(scene_cfg)
+        scene = scene_cfg.class_type(scene_cfg)
 
         if args_cli.asset_type == "objects":
             randomize_shape_color(scene_cfg.asset.prim_path.format(ENV_REGEX_NS="/World/envs/env_.*"))

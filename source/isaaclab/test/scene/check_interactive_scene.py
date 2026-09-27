@@ -78,16 +78,14 @@ def main():
     # Load kit helper
     sim_cfg = sim_utils.SimulationCfg(dt=0.005, device=args_cli.device)
     with launch_simulation(sim_cfg, args_cli):
-        # imported once Kit is running: it loads pxr, which must not be imported before Kit starts
-        from isaaclab.scene import InteractiveScene
-
         sim = SimulationContext(sim_cfg)
         # Set main camera
         sim.set_camera_view(eye=[5, 5, 5], target=[0.0, 0.0, 0.0])
 
         # Spawn things into stage
         with Timer("Setup scene"):
-            scene = InteractiveScene(MySceneCfg(num_envs=args_cli.num_envs, env_spacing=5.0, lazy_sensor_update=False))
+            scene_cfg = MySceneCfg(num_envs=args_cli.num_envs, env_spacing=5.0, lazy_sensor_update=False)
+            scene = scene_cfg.class_type(scene_cfg)
 
         # Check that parsing happened as expected
         assert len(scene.env_prim_paths) == args_cli.num_envs, "Number of environments does not match."

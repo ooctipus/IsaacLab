@@ -60,11 +60,8 @@ def main():
         env_cfg.sim.use_fabric = False
 
     with launch_simulation(env_cfg, args_cli):
-        # environment classes import USD, which must happen after the runtime starts
-        from isaaclab.envs import ManagerBasedRLEnv
-
         # create environment
-        env = ManagerBasedRLEnv(cfg=env_cfg)
+        env = env_cfg.class_type(env_cfg)
 
         # run inference with the policy
         obs, _ = env.reset()

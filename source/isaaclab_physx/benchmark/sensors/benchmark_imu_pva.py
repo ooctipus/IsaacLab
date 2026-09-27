@@ -75,9 +75,6 @@ def main() -> None:
     sim_dt = 1.0 / 120.0
     sim_cfg = sim_utils.SimulationCfg(dt=sim_dt, device=args_cli.device, gravity=(0.0, 0.0, -9.81))
     with launch_simulation(sim_cfg, args_cli):
-        # the scene runtime imports USD, which must load after Kit starts
-        from isaaclab.scene import InteractiveScene
-
         sim = sim_utils.SimulationContext(sim_cfg)
 
         scene_cfg = ImuPvaBenchmarkSceneCfg(
@@ -90,7 +87,7 @@ def main() -> None:
         else:
             scene_cfg.pva = PvaCfg(prim_path="{ENV_REGEX_NS}/Body")
 
-        scene = InteractiveScene(scene_cfg)
+        scene = scene_cfg.class_type(scene_cfg)
         sim.reset()
         scene.reset()
         sensor = scene[args_cli.sensor]

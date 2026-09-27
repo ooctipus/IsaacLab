@@ -60,16 +60,13 @@ def main():
     sim_dt = 1.0 / 120.0
     sim_cfg = sim_utils.SimulationCfg(dt=sim_dt, device=args_cli.device)
     with launch_simulation(sim_cfg, args_cli):
-        # the scene runtime imports USD, which must load after Kit starts
-        from isaaclab.scene import InteractiveScene
-
         sim = sim_utils.SimulationContext(sim_cfg)
 
         scene_cfg = create_contact_sensor_scene_cfg(
             history_length=args_cli.history_length,
             num_envs=args_cli.num_envs,
         )
-        scene = InteractiveScene(scene_cfg)
+        scene = scene_cfg.class_type(scene_cfg)
         sim.reset()
         scene.reset()
 

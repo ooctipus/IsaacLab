@@ -46,7 +46,7 @@ if TYPE_CHECKING:
     from isaaclab.scene import InteractiveScene
     from isaaclab.ui.xr_widgets import DataCollector, VisualizationManager
 
-# Note: pxr, InteractiveScene and the XR widgets (Kit UI modules) are imported inside the functions below,
+# Note: pxr and the XR widgets (Kit UI modules) are imported inside the functions below,
 # since they must not be loaded before Kit starts in main().
 
 ##
@@ -264,13 +264,12 @@ def main():
     # Initialize the simulation context
     sim_cfg = sim_utils.SimulationCfg(dt=0.005, device=args_cli.device)
     with launch_simulation(sim_cfg, args_cli):
-        from isaaclab.scene import InteractiveScene
-
         sim = sim_utils.SimulationContext(sim_cfg)
         # Set main camera
         sim.set_camera_view(eye=(8, 0, 4), target=(0.0, 0.0, 0.0))
         # design scene
-        scene = InteractiveScene(SimpleSceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0))
+        scene_cfg = SimpleSceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0)
+        scene = scene_cfg.class_type(scene_cfg)
         # Play the simulator
         sim.reset()
         # Now we are ready!

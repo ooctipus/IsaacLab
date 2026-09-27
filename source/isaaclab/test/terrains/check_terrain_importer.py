@@ -75,9 +75,6 @@ def main():
     # Load kit helper
     sim_cfg = SimulationCfg(device=args_cli.device)
     with launch_simulation(sim_cfg, args_cli):
-        # imported once Kit is running: it loads scipy.spatial, which must not be imported before Kit starts
-        from isaaclab.terrains.terrain_importer import TerrainImporter
-
         sim = SimulationContext(sim_cfg)
         # Set main camera
         sim.set_camera_view(eye=(0.0, 30.0, 25.0), target=(0.0, 0.0, -2.5))
@@ -103,7 +100,7 @@ def main():
             terrain_generator=ROUGH_TERRAINS_CFG.replace(curriculum=True, color_scheme=args_cli.color_scheme),
             usd_path=f"{ISAAC_NUCLEUS_DIR}/Environments/Terrains/rough_plane.usd",
         )
-        terrain_importer = TerrainImporter(terrain_importer_cfg)
+        terrain_importer = terrain_importer_cfg.class_type(terrain_importer_cfg)
 
         # Define the scene
         # -- Light

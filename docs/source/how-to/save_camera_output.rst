@@ -16,7 +16,7 @@ directory.
 
    .. literalinclude:: ../../../scripts/tutorials/04_sensors/run_usd_camera.py
       :language: python
-      :emphasize-lines: 174-175, 180-188, 238-255, 257-276
+      :emphasize-lines: 171-172, 177-185, 235-252, 254-273
       :linenos:
 
 

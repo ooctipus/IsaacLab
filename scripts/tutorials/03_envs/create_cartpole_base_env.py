@@ -140,11 +140,8 @@ def main():
     env_cfg.sim.device = args_cli.device
     # Launch the simulator runtime that the configuration needs
     with launch_simulation(env_cfg, args_cli):
-        # classes that work on the USD stage are imported once the simulator runtime is running
-        from isaaclab.envs import ManagerBasedEnv
-
         # setup base environment
-        env = ManagerBasedEnv(cfg=env_cfg)
+        env = env_cfg.class_type(env_cfg)
 
         # simulate physics
         count = 0

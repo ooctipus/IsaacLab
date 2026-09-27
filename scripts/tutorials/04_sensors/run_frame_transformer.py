@@ -97,7 +97,6 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: "InteractiveScene"):
     # is being visualized as the frame names are printing to console
     if sim.has_gui:
         # the debug-draw extension is Kit-only, so import it once the simulator runtime is running
-        from isaaclab.markers import VisualizationMarkers
         from isaaclab.sim.utils import enable_extension
 
         enable_extension("isaacsim.util.debug_draw")
@@ -105,7 +104,7 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: "InteractiveScene"):
 
         cfg = FRAME_MARKER_CFG.replace(prim_path="/Visuals/FrameVisualizerFromScript")
         cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
-        transform_visualizer = VisualizationMarkers(cfg)
+        transform_visualizer = cfg.class_type(cfg)
         # debug drawing for lines connecting the frame
         draw_interface = omni_debug_draw.acquire_debug_draw_interface()
     else:
@@ -161,15 +160,13 @@ def main():
     sim_cfg = sim_utils.SimulationCfg(dt=0.005, device=args_cli.device)
     # Launch the simulator runtime that the configuration needs
     with launch_simulation(sim_cfg, args_cli):
-        # classes that work on the USD stage are imported once the simulator runtime is running
-        from isaaclab.scene import InteractiveScene
-
         # Initialize the simulation context
         sim = sim_utils.SimulationContext(sim_cfg)
         # Set main camera
         sim.set_camera_view(eye=[2.5, 2.5, 2.5], target=[0.0, 0.0, 0.0])
         # Design scene
-        scene = InteractiveScene(FrameTransformerSceneCfg(num_envs=1, env_spacing=0.0, replicate_physics=False))
+        scene_cfg = FrameTransformerSceneCfg(num_envs=1, env_spacing=0.0, replicate_physics=False)
+        scene = scene_cfg.class_type(scene_cfg)
         # Play the simulator
         sim.reset()
         # Now we are ready!

@@ -13,3 +13,11 @@ Added
 
 * Added :class:`~isaaclab.app.SimulationLauncher` for backend runtimes and
   :func:`isaaclab.test.utils.launch_test_simulation` to start Kit in test modules.
+* Added ``class_type`` to :class:`~isaaclab.envs.ManagerBasedEnvCfg` and :class:`~isaaclab.envs.ManagerBasedRLEnvCfg`,
+  so ``env_cfg.class_type(env_cfg)`` constructs the environment without importing its class.
+
+Fixed
+^^^^^
+
+* Fixed ``{DIR}`` in an inherited ``class_type`` resolving against the module of a config subclass that is
+  missing ``@configclass``, which made ``cfg.class_type(cfg)`` fail with ``ModuleNotFoundError``.

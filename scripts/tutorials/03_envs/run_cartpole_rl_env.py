@@ -47,11 +47,8 @@ def main():
     )
     # Launch the simulator runtime that the configuration needs
     with launch_simulation(env_cfg, args_cli):
-        # classes that work on the USD stage are imported once the simulator runtime is running
-        from isaaclab.envs import ManagerBasedRLEnv
-
         # setup RL environment
-        env = ManagerBasedRLEnv(cfg=env_cfg)
+        env = env_cfg.class_type(env_cfg)
 
         # simulate physics
         count = 0

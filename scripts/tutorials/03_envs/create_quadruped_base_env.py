@@ -207,10 +207,7 @@ def main():
     env_cfg = QuadrupedEnvCfg()
     # Launch the simulator runtime that the configuration needs
     with launch_simulation(env_cfg, args_cli):
-        # classes that work on the USD stage are imported once the simulator runtime is running
-        from isaaclab.envs import ManagerBasedEnv
-
-        env = ManagerBasedEnv(cfg=env_cfg)
+        env = env_cfg.class_type(env_cfg)
 
         # load level policy
         policy_path = ISAACLAB_NUCLEUS_DIR + "/Policies/ANYmal-C/HeightScan/policy.pt"

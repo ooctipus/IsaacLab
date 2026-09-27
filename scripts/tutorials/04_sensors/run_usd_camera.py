@@ -80,9 +80,6 @@ if TYPE_CHECKING:
 
 def define_sensor() -> "Camera":
     """Defines the camera sensor to add to the scene."""
-    # classes that work on the USD stage are imported once the simulator runtime is running
-    from isaaclab.sensors.camera import Camera
-
     # Setup camera sensor
     # In contrast to the ray-cast camera, we spawn the prim at these locations.
     # This means the camera sensor will be attached to these prims.
@@ -111,7 +108,7 @@ def define_sensor() -> "Camera":
         ),
     )
     # Create camera
-    camera = Camera(cfg=camera_cfg)
+    camera = camera_cfg.class_type(camera_cfg)
 
     return camera
 

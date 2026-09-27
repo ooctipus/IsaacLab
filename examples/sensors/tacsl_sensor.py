@@ -387,9 +387,6 @@ def main() -> None:
     # Initialize simulation
     sim_cfg = sim_utils.SimulationCfg(dt=0.005, device=args_cli.device, physics=PhysxCfg())
     with launch_simulation(sim_cfg, args_cli) as physics_cfg:
-        # the scene runtime imports USD, which must load after Kit starts
-        from isaaclab.scene import InteractiveScene
-
         # Note: We set the gpu_collision_stack_size to prevent buffer overflow in contact-rich environments.
         physics_cfg.gpu_collision_stack_size = 2**30
         sim = sim_utils.SimulationContext(sim_cfg)
@@ -415,7 +412,7 @@ def main() -> None:
                 f"Invalid contact object type: '{args_cli.contact_object_type}'. Must be 'none', 'cube', or 'nut'."
             )
 
-        scene = InteractiveScene(scene_cfg)
+        scene = scene_cfg.class_type(scene_cfg)
 
         # Initialize simulation
         sim.reset()
