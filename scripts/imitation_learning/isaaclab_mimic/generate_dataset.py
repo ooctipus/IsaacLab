@@ -16,6 +16,9 @@ parser = argparse.ArgumentParser(description="Generate demonstrations for Isaac 
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument("--generation_num_trials", type=int, help="Number of demos to be generated.", default=None)
 parser.add_argument(
+    "--max_num_failures", type=int, default=None, help="Stop after this many failed generation attempts."
+)
+parser.add_argument(
     "--num_envs", type=int, default=1, help="Number of environments to instantiate for generating datasets."
 )
 parser.add_argument("--input_file", type=str, default=None, required=True, help="File path to the source dataset file.")
@@ -50,6 +53,8 @@ parser.add_argument(
 
 add_launcher_args(parser)
 args_cli, remaining_args = parser.parse_known_args()
+if args_cli.max_num_failures is not None and args_cli.max_num_failures < 1:
+    parser.error("--max_num_failures must be positive")
 
 # Mimic environments may use camera observations or an RTX renderer. Request
 # rendering support here so callers do not need a legacy CLI flag.
@@ -132,6 +137,8 @@ def generate(env_name: str):
     )
     # resolve the automatic physics and renderer selections of this config the same way the launch did
     scan(env_cfg, args_cli)
+    if args_cli.max_num_failures is not None:
+        env_cfg.datagen_config.max_num_failures = args_cli.max_num_failures
 
     # Create environment
     env = gym.make(env_name, cfg=env_cfg).unwrapped

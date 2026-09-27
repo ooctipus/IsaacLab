@@ -11,10 +11,6 @@ without a simulator, data generator, or dataset. A step-count fuse turns an unbo
 test failure instead of a hang.
 """
 
-from isaaclab.test.utils import launch_test_simulation
-
-launch_test_simulation()
-
 import asyncio
 from types import SimpleNamespace
 

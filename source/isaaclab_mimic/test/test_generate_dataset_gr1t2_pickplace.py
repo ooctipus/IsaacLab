@@ -5,10 +5,6 @@
 
 """Test dataset generation for Isaac-PickPlace-GR1T2-Abs-Mimic-v0."""
 
-from isaaclab.test.utils import launch_test_simulation
-
-launch_test_simulation()
-
 import os
 import sys
 import tempfile
@@ -73,6 +69,8 @@ def _run_generation(workflow_root: str, input_file: str, output_file: str, num_e
         str(num_envs),
         "--generation_num_trials",
         "1",
+        "--max_num_failures",
+        "10",
     ]
 
     result = run_script(command)

@@ -3,10 +3,6 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from isaaclab.test.utils import launch_test_simulation
-
-launch_test_simulation()
-
 import numpy as np
 import pytest
 import torch

@@ -14,8 +14,6 @@ Changed
   argument. Use ``--device cpu`` instead of ``--cpu``.
 * Changed the environments to seed Replicator through a hook the Kit launcher registers with
   :func:`~isaaclab.utils.seed.register_seed_hook`, so core modules no longer import ``omni.replicator``.
-* Changed :class:`~isaaclab.envs.mdp.randomize_physics_scene_gravity` to set gravity through the physics
-  manager's ``set_gravity`` for PhysX and OvPhysX, and removed its code paths for Replicator versions older than 1.12.4.
 * Changed the ``run_usd_camera`` and ``run_ray_caster_camera`` tutorials to save images as PNG files with
   :func:`~isaaclab.utils.save_images_to_file` instead of Replicator writers.
 * Removed the ``check_*`` scripts under the core and PhysX test folders, which duplicated pytest coverage.
