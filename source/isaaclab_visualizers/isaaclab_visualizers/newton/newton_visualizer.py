@@ -1909,6 +1909,7 @@ class NewtonGLVisualizer(NewtonVisualizer):
         """
         super().__init__(cfg)
         self.cfg: NewtonGLVisualizerCfg = cfg
+        self._rigid_geometry_version = 0
 
         # Camera-selector dropdown state — populated in _build_streaming_camera_dropdown().
         # _scene_camera_map  : sensor name → Camera, from get_camera_sensors() at init time.
@@ -1930,7 +1931,18 @@ class NewtonGLVisualizer(NewtonVisualizer):
         """
         super().initialize(scene_data_provider)
         if self._is_initialized:
+            self._rigid_geometry_version = scene_data_provider.backend.rigid_geometry_version
             self._build_streaming_camera_dropdown()
+
+    def _pre_step(self) -> None:
+        """Refresh cached meshes and visibility after in-place model property changes."""
+        if self._scene_data_provider is None or self._viewer is None:
+            return
+        revision = self._scene_data_provider.backend.rigid_geometry_version
+        if revision == self._rigid_geometry_version:
+            return
+        self._viewer.refresh_shapes()
+        self._rigid_geometry_version = revision
 
     def _build_streaming_camera_dropdown(self) -> None:
         """Populate the camera-selector combo from scene sensors captured at init.

@@ -3289,7 +3289,7 @@ wheels = [
 [[package]]
 name = "newton"
 version = "1.7.0.dev0"
-source = { git = "https://github.com/ooctipus/newton.git?rev=ooctipus%2Fheterogeneous-envs#751e244bbc0d7f4e18ceaf0f57c2dd48aa3921ba" }
+source = { git = "https://github.com/ooctipus/newton.git?rev=ooctipus%2Fheterogeneous-envs#608e925a1dabd18cb31b0121bea918fbdd4d6030" }
 dependencies = [
     { name = "warp-lang" },
 ]
