@@ -5,8 +5,6 @@
 
 """Launch real Scene UI extensions without starting an XR runtime."""
 
-from isaaclab.app import AppLauncher
-
 _SCENE_UI_KIT_ARGS = " ".join(
     (
         "--enable omni.kit.xr.core",
@@ -14,12 +12,9 @@ _SCENE_UI_KIT_ARGS = " ".join(
         "--enable omni.kit.scene_view.xr_utils",
     )
 )
-simulation_app = AppLauncher(
-    headless=True,
-    enable_cameras=True,
-    device="cpu",
-    kit_args=_SCENE_UI_KIT_ARGS,
-).app
+from isaaclab.test.utils import launch_test_simulation
+
+simulation_app = launch_test_simulation(enable_cameras=True, device="cpu", kit_args=_SCENE_UI_KIT_ARGS)
 
 import pytest
 from isaaclab_teleop import XrCameraFeedCfg

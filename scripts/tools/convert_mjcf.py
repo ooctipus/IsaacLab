@@ -33,11 +33,9 @@ asset: ``--viz kit`` opens it in the Isaac Sim viewport, while ``--viz newton`` 
 
 """
 
-"""Parse CLI first so we can decide whether to launch Isaac Sim Kit."""
-
 import argparse
 
-from isaaclab.app import AppLauncher, add_launcher_args, launch_simulation
+from isaaclab.app import add_launcher_args, get_settings_manager, launch_simulation
 from isaaclab.utils import instantiate, to_dict
 from isaaclab.utils.version import standalone_importers_available
 
@@ -90,14 +88,6 @@ args_cli.require_kit = not standalone_importers_available()
 # runtime provides; without it the preview builds a simulation with no physics manager.
 args_cli.physics = "isaacsim_physx" if args_cli.require_kit else "newton_mjwarp"
 
-# Report the missing importer before converting anything. Without this the launcher reports only
-# that Isaac Sim is absent, which does not mention the wheel that would make this run kitlessly.
-if args_cli.require_kit and not AppLauncher.is_available():
-    raise ImportError(
-        "MJCF conversion requires either the full Isaac Sim runtime or the standalone"
-        " 'isaacsim-asset-isolated' importer wheel, but neither is installed."
-    )
-
 import os  # noqa: E402
 
 import isaaclab.sim as sim_utils  # noqa: E402
@@ -122,7 +112,7 @@ def preview(usd_path: str, physics_cfg: PhysicsCfg) -> None:
 
     if "kit" in visualizers:
         # a Kit app that resolved without a GUI has no viewport to display the asset in
-        if AppLauncher.has_gui():
+        if get_settings_manager().get("/isaaclab/has_gui"):
             from isaaclab_physx.app import show_stage_in_viewport
 
             show_stage_in_viewport(usd_path)

@@ -17,13 +17,9 @@ golden; the test fails so the file can be reviewed before committing.
 import sys
 from pathlib import Path
 
-from isaaclab.app import AppLauncher
+from isaaclab.test.utils import launch_test_simulation
 
-simulation_app = AppLauncher(
-    headless=True,
-    enable_cameras=True,
-    visualizer_intent={"has_any_visualizers": True, "has_kit_visualizer": True},
-).app
+simulation_app = launch_test_simulation(enable_cameras=True, visualizer_intent={"has_kit_visualizer": True})
 
 import pytest  # noqa: E402
 
