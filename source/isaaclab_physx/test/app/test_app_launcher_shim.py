@@ -35,10 +35,29 @@ _OLD_STYLE_SCRIPT = textwrap.dedent(f"""
 """)
 
 
+# ``AppLauncher(headless=True).app`` in a local that goes out of scope: Kit must keep running until exit
+_DROPPED_LAUNCHER_SCRIPT = textwrap.dedent(f"""
+    import gc
+
+    from isaaclab.app import AppLauncher
+
+    AppLauncher(headless=True, device="cpu")
+    gc.collect()
+
+    import isaaclab.sim as sim_utils
+
+    sim = sim_utils.SimulationContext(sim_utils.SimulationCfg(device="cpu"))
+    sim.reset()
+    sim.step()
+    print("{_READY_MARKER}", flush=True)
+""")
+
+
 @pytest.mark.integration
-def test_old_style_script_starts_kit_steps_and_closes():
+@pytest.mark.parametrize("script", [_OLD_STYLE_SCRIPT, _DROPPED_LAUNCHER_SCRIPT], ids=["kept-app", "dropped-launcher"])
+def test_old_style_script_starts_kit_steps_and_closes(script):
     """The shim starts Kit, the script steps a simulation, and ``close()`` ends the process with 0."""
-    result = subprocess.run([sys.executable, "-c", _OLD_STYLE_SCRIPT], capture_output=True, text=True, timeout=900)
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=900)
     output = f"--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}"
     assert _READY_MARKER in result.stdout, output
     assert result.returncode == 0, output
