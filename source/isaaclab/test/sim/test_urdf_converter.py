@@ -11,7 +11,16 @@ from isaaclab.utils.version import standalone_importers_available
 # The standalone importers need no runtime; without them the default runtime provides the importer.
 _USE_RUNTIME = not standalone_importers_available()
 if _USE_RUNTIME:
-    launch_test_simulation()
+    try:
+        launch_test_simulation()
+    except SystemExit:
+        # the launcher exits when its runtime is not installed; without either importer there is nothing to test
+        import pytest
+
+        pytest.skip(
+            "Needs the URDF importer: install isaacsim-asset-isolated or the Isaac Sim runtime.",
+            allow_module_level=True,
+        )
 
 import math
 import os
