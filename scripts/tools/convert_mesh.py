@@ -39,8 +39,8 @@ optional arguments:
 
 import argparse
 
-from isaaclab.app import add_launcher_args, get_settings_manager, launch_simulation
-from isaaclab.utils import to_dict
+from isaaclab.app import add_launcher_args, launch_simulation
+from isaaclab.utils import instantiate, to_dict
 
 # Define collision approximation choices (must be defined before parser)
 _valid_collision_approx = [
@@ -78,11 +78,15 @@ parser.add_argument(
 )
 add_launcher_args(parser)
 args_cli = parser.parse_args()
-# the mesh converter uses the Kit asset converter extension
-args_cli.require_kit = True
+# the mesh converter uses the Kit asset converter extension, which the Isaac Sim PhysX runtime provides
+args_cli.physics = "isaacsim_physx"
 
 import os
 
+import isaaclab.sim as sim_utils
+from isaaclab.assets import AssetBaseCfg
+from isaaclab.physics import PhysicsCfg
+from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim.converters import MeshConverterCfg
 from isaaclab.sim.schemas import schemas_cfg
 from isaaclab.utils.assets import check_file_path
@@ -100,6 +104,36 @@ collision_approximation_map = {
     "boundingSphere": "boundingSphere",
     "none": None,
 }
+
+
+def preview(usd_path: str, physics_cfg: PhysicsCfg) -> None:
+    """Open the converted asset in the visualizer selected on the command line.
+
+    Args:
+        usd_path: Path of the generated USD file to display.
+        physics_cfg: Physics config resolved by :func:`~isaaclab.app.launch_simulation`.
+    """
+    visualizers = args_cli.visualizer or []
+    if not visualizers:
+        return
+
+    # The physics backend ingests the USD stage and every visualizer renders the shared scene data,
+    # so no backend-specific code is needed here. Physics is not stepped -- the
+    # asset is shown in its imported pose until the visualizer window is closed.
+    sim = sim_utils.SimulationContext(sim_utils.SimulationCfg(device=args_cli.device, physics=physics_cfg))
+    scene_cfg = InteractiveSceneCfg(num_envs=1, env_spacing=0.0)
+    scene_cfg.light = AssetBaseCfg(
+        prim_path="/World/Light", spawn=sim_utils.DomeLightCfg(intensity=3000.0, color=(0.75, 0.75, 0.75))
+    )
+    scene_cfg.asset = AssetBaseCfg(prim_path="/World/ConvertedAsset", spawn=sim_utils.UsdFileCfg(usd_path=usd_path))
+    _scene = instantiate(scene_cfg)
+    sim.reset()
+
+    # Checked per visualizer rather than through ``SimulationContext.is_headless_or_exist_active_visualizer``:
+    # that predicate also reports True for an empty visualizer list (headless stepping), and ``render``
+    # drops visualizers once they close, so the preview would never exit.
+    while any(viz.is_running() and not viz.is_closed for viz in sim.visualizers):
+        sim.render()
 
 
 def main():
@@ -161,7 +195,7 @@ def main():
     print("-" * 80)
     print("-" * 80)
 
-    with launch_simulation(None, args_cli):
+    with launch_simulation(PhysicsCfg(), args_cli) as physics_cfg:
         # the mesh converter imports Kit modules, so load it after Kit starts
         from isaaclab.sim.converters import MeshConverter
 
@@ -173,11 +207,7 @@ def main():
         print("-" * 80)
         print("-" * 80)
 
-        # Show the converted asset if the launch resolved to a window or livestream
-        if get_settings_manager().get("/isaaclab/has_gui"):
-            from isaaclab_physx.app import show_stage_in_viewport
-
-            show_stage_in_viewport(mesh_converter.usd_path)
+        preview(mesh_converter.usd_path, physics_cfg)
 
 
 if __name__ == "__main__":

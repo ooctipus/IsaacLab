@@ -35,7 +35,7 @@ asset: ``--viz kit`` opens it in the Isaac Sim viewport, while ``--viz newton`` 
 
 import argparse
 
-from isaaclab.app import add_launcher_args, get_settings_manager, launch_simulation
+from isaaclab.app import add_launcher_args, launch_simulation
 from isaaclab.utils import instantiate, to_dict
 from isaaclab.utils.version import standalone_importers_available
 
@@ -110,16 +110,8 @@ def preview(usd_path: str, physics_cfg: PhysicsCfg) -> None:
     if not visualizers:
         return
 
-    if "kit" in visualizers:
-        # a Kit app that resolved without a GUI has no viewport to display the asset in
-        if get_settings_manager().get("/isaaclab/has_gui"):
-            from isaaclab_physx.app import show_stage_in_viewport
-
-            show_stage_in_viewport(usd_path)
-        return
-
-    # Kitless preview: the physics backend ingests the USD stage and every visualizer renders the
-    # shared scene data, so no backend-specific code is needed here. Physics is not stepped -- the
+    # The physics backend ingests the USD stage and every visualizer renders the shared scene data,
+    # so no backend-specific code is needed here. Physics is not stepped -- the
     # asset is shown in its imported pose until the visualizer window is closed.
     sim = sim_utils.SimulationContext(sim_utils.SimulationCfg(device=args_cli.device, physics=physics_cfg))
     scene_cfg = InteractiveSceneCfg(num_envs=1, env_spacing=0.0)
