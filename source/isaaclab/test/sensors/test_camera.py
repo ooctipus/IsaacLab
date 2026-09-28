@@ -20,7 +20,6 @@ import scipy.spatial.transform as tf
 import torch
 import warp as wp
 
-import omni.replicator.core as rep
 from pxr import Gf, Usd, UsdGeom
 
 import isaaclab.sim as sim_utils
@@ -81,8 +80,6 @@ def setup() -> tuple[sim_utils.SimulationContext, CameraCfg, float]:
 
 def teardown(sim: sim_utils.SimulationContext):
     # Cleanup
-    # close all the opened viewport from before.
-    rep.vp_manager.destroy_hydra_textures("Replicator")
     # stop simulation
     sim.stop()
     # clear the stage

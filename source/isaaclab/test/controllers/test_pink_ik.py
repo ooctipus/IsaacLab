@@ -6,7 +6,7 @@
 # Pink IK tests strip task cameras before environment construction.
 from isaaclab.test.utils import launch_test_simulation
 
-simulation_app = launch_test_simulation()
+launch_test_simulation()
 
 import contextlib
 import json
@@ -219,7 +219,7 @@ def run_movement_test(test_setup, test_config, test_cfg, aux_function=None):
         phase = "initial"
         steps_in_phase = 0
 
-        while simulation_app.is_running():
+        while True:
             num_runs += 1
             steps_in_phase += 1
 

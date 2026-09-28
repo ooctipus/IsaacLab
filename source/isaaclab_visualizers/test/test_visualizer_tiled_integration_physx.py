@@ -10,7 +10,11 @@ from pathlib import Path
 
 from isaaclab.test.utils import launch_test_simulation
 
-simulation_app = launch_test_simulation(enable_cameras=True, visualizer_intent={"has_kit_visualizer": True})
+launch_test_simulation(enable_cameras=True, visualizer_intent={"has_kit_visualizer": True})
+
+import omni.kit.app
+
+simulation_app = omni.kit.app.get_app()
 
 import pytest  # noqa: E402
 

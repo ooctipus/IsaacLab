@@ -4,6 +4,10 @@ Changed
 * Changed every script, example, tutorial, benchmark, and test to start the simulation runtime with
   :func:`~isaaclab.app.launch_simulation` (tests use :func:`isaaclab.test.utils.launch_test_simulation`)
   and to construct runtime objects from their configs with :func:`~isaaclab.utils.instantiate`.
+* **Breaking:** Changed :func:`isaaclab.test.utils.launch_test_simulation` to take an optional simulation
+  config and start the runtime that config needs (default :class:`~isaaclab.sim.SimulationCfg`) instead of
+  always requiring Kit, and to return ``None`` instead of the Kit application. Pass ``require_kit=True`` to
+  keep requiring Kit, and use ``omni.kit.app.get_app()`` where a test needs the Kit application.
 * Changed the ``run_usd_camera`` and ``run_ray_caster_camera`` tutorials to save images as PNG files with
   :func:`~isaaclab.utils.save_images_to_file` instead of Replicator writers.
 * Changed ``pick_and_place.py`` to use :class:`~isaaclab.devices.Se3Keyboard`.

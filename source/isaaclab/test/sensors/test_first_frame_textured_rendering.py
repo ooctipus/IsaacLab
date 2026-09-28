@@ -11,8 +11,6 @@ import pytest
 import torch
 from isaaclab_physx.physics import PhysxCfg
 
-import omni.replicator.core as rep
-
 import isaaclab.sim as sim_utils
 from isaaclab.assets import RigidObjectCfg
 from isaaclab.envs import ManagerBasedEnv, mdp
@@ -70,7 +68,6 @@ def setup_sim(device):
     _populate_scene()
     yield sim, dt
     # Teardown
-    rep.vp_manager.destroy_hydra_textures("Replicator")
     sim.stop()
     sim.clear_instance()
 

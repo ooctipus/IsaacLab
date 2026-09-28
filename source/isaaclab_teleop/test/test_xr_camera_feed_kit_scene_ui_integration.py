@@ -14,7 +14,11 @@ _SCENE_UI_KIT_ARGS = " ".join(
 )
 from isaaclab.test.utils import launch_test_simulation
 
-simulation_app = launch_test_simulation(enable_cameras=True, device="cpu", kit_args=_SCENE_UI_KIT_ARGS)
+launch_test_simulation(enable_cameras=True, device="cpu", kit_args=_SCENE_UI_KIT_ARGS)
+
+import omni.kit.app
+
+simulation_app = omni.kit.app.get_app()
 
 import pytest
 from isaaclab_teleop import XrCameraFeedCfg

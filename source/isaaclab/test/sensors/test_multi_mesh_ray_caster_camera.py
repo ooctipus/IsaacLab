@@ -17,7 +17,6 @@ import numpy as np
 import pytest
 import torch
 
-import omni.replicator.core as rep
 from pxr import Gf
 
 import isaaclab.sim as sim_utils
@@ -92,8 +91,6 @@ def setup_simulation():
     yield sim, dt, camera_cfg
 
     # Cleanup
-    # close all the opened viewport from before.
-    rep.vp_manager.destroy_hydra_textures("Replicator")
     # stop simulation
     sim.stop()
     # clear the stage

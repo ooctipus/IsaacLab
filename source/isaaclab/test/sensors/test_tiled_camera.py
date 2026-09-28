@@ -25,7 +25,6 @@ import numpy as np
 import pytest
 import torch
 
-import omni.replicator.core as rep
 from pxr import Gf, UsdGeom
 
 import isaaclab.sim as sim_utils
@@ -60,7 +59,6 @@ def setup_camera(device) -> tuple[sim_utils.SimulationContext, CameraCfg, float]
     _populate_scene()
     yield sim, camera_cfg, dt
     # Teardown
-    rep.vp_manager.destroy_hydra_textures("Replicator")
     sim.stop()
     sim.clear_instance()
 

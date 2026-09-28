@@ -19,7 +19,6 @@ import torch
 import warp as wp
 from flaky import flaky
 
-import omni.replicator.core as rep
 from pxr import Gf, UsdGeom
 
 import isaaclab.sim as sim_utils
@@ -55,7 +54,6 @@ def setup_camera():
     _populate_scene()
     yield camera_cfg, sim, dt
     # Teardown
-    rep.vp_manager.destroy_hydra_textures("Replicator")
     # stop simulation
     sim.stop()
     # clear the stage

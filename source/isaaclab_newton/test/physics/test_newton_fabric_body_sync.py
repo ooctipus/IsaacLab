@@ -14,7 +14,11 @@ from unittest.mock import Mock
 # Launch Isaac Sim before importing Newton modules so USD schema bindings are initialized.
 from isaaclab.test.utils import launch_test_simulation
 
-simulation_app = launch_test_simulation(enable_cameras=True)
+launch_test_simulation(enable_cameras=True)
+
+import omni.kit.app
+
+simulation_app = omni.kit.app.get_app()
 
 import numpy as np
 import pytest
