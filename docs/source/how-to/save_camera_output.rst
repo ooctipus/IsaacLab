@@ -39,7 +39,7 @@ depth and normals, are not saved.
 .. literalinclude:: ../../../scripts/tutorials/04_sensors/run_usd_camera.py
    :language: python
    :start-at: # Save the 8-bit color images
-   :end-at: save_images_to_file(data[camera_index
+   :end-at: save_images_to_file(data.torch[camera_index
 
 
 Projection into 3D Space
