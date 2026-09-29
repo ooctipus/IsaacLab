@@ -155,6 +155,12 @@ def test_task_architecture_has_no_articulation_views():
     assert not (directory / "newton_view.py").exists()
     assert not (directory / "selection_manager.py").exists()
     assert not (directory / "articulation_adapter.py").exists()
+    # Fixed-root writes stay with reset ownership; no second writer or persistent dispatch cache.
+    owners = [path for path in directory.rglob("*.py") if "def _write_fixed_root_poses(" in path.read_text()]
+    assert owners == [directory / "mdp" / "reset.py"]
+    reset_source = owners[0].read_text()
+    assert 'module="unique", module_options={"fuse_fp": False}' in reset_source
+    assert "set_module_options" not in reset_source and "combine_frame_transforms" not in reset_source
     # Configuration descriptors have one owner; do not recreate a second bank of generated metadata.
     pool = ast.parse((directory / "keyboards" / "keyboard_pool.py").read_text())
     assert not any(isinstance(node, ast.ClassDef) for node in ast.walk(pool))
@@ -275,6 +281,75 @@ def test_selected_tip_jacobian_matches_finite_difference(selections):
         samples.append(np.array([wp.transform_point(wp.transform(*pose), wp.vec3(*ik.tip_offset)) for pose in poses]))
     derivative = (samples[1] - samples[0]) / (2 * epsilon)
     np.testing.assert_allclose(analytic[:, :3, 0], derivative, atol=3e-5)
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda:0"])
+def test_fixed_root_writer_masks_frames_and_stream_order(device):
+    from types import SimpleNamespace
+
+    from isaaclab.utils.math import combine_frame_transforms
+
+    from isaaclab_tasks.contrib.keyboard.mdp.reset import write_fixed_root_poses
+
+    if device.startswith("cuda") and not wp.is_cuda_available():
+        pytest.skip("CUDA is unavailable")
+    builder = newton.ModelBuilder()
+    for world in range(3):
+        builder.begin_world()
+        for column in range(2):
+            body = builder.add_link(label=f"/{world}/root{column}", mass=1.0)
+            child = wp.transform((0.02, -0.03, 0.04), wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), 0.3))
+            builder.add_articulation([builder.add_joint_fixed(-1, body, child_xform=child)])
+        builder.end_world()
+    model = builder.finalize(device)
+    owner = NewtonSelections(model)
+    owner.world_ids = torch.tensor([2, 0, 1], device=device)
+    roots = owner.resolve(NewtonSelectorCfg(BODY, ".*/root.*", count_per_world=2))
+    roots.dense_active()[2, 1] = False
+    ids = torch.tensor([1, 2], device=device)
+    storage = torch.zeros((2, 2, 14), device=device)
+    poses = storage[..., ::2]  # Borrowed strided input, including q/-q rotations.
+    poses[..., :3] = torch.tensor([0.1, -0.2, 0.3], device=device)
+    poses[..., 3:] = torch.tensor([0.0, 0.0, 0.2955202, 0.9553365], device=device)
+    poses[1, :, 3:] *= -1
+    joint_ids = owner.root_joint_ids[roots.dense_ids()]
+    initial = wp.to_torch(model.joint_X_p).clone()
+    requested = torch.full((3,), -1, dtype=torch.long, device=device)
+    requested[ids] = torch.arange(len(ids), device=device)
+    selected = roots.dense_active() & (requested[owner.world_ids] >= 0)[:, None]
+    local = poses[requested[owner.world_ids].clamp(min=0)]
+    child = wp.to_torch(model.joint_X_c)[joint_ids]
+    position, rotation = combine_frame_transforms(local[..., :3], local[..., 3:], child[..., :3], child[..., 3:])
+    expected = initial.clone()
+    expected[joint_ids[selected]] = torch.cat((position, rotation), dim=-1)[selected]
+    calls = []
+    env = SimpleNamespace(
+        num_envs=3,
+        device=device,
+        notify_model_changed=lambda flags, rows: calls.append((flags, rows)),
+        invalidate_fk=lambda rows: calls.append(rows),
+    )
+    observed = wp.empty_like(model.joint_X_p)
+    rng = torch.get_rng_state().clone()
+    wp.synchronize_device(device)
+    producer = torch.cuda.stream(torch.cuda.Stream(device=device)) if device.startswith("cuda") else nullcontext()
+    with producer:
+        if device.startswith("cuda"):
+            torch.cuda._sleep(2_000_000)
+        delayed = torch.empty_like(storage)[..., ::2]
+        delayed.copy_(poses)
+        write_fixed_root_poses(env, roots, ids, delayed)
+        # The consumer uses the restored prior Warp stream, without an outer shared-stream scope.
+        wp.copy(observed, model.joint_X_p)
+    wp.synchronize_device(device)
+    actual = wp.to_torch(observed)
+    torch.testing.assert_close(actual, expected, rtol=0, atol=2e-6)
+    torch.testing.assert_close(actual[joint_ids[~selected]], initial[joint_ids[~selected]], rtol=0, atol=0)
+    torch.testing.assert_close(torch.get_rng_state(), rng, rtol=0, atol=0)
+    assert calls[0][0] == newton.ModelFlags.JOINT_PROPERTIES and calls[0][1] is ids and calls[1] is ids
+    calls.clear()
+    write_fixed_root_poses(env, roots, ids[:0], poses[:0])
+    assert calls == []
 
 
 @pytest.mark.parametrize("device", ["cpu", "cuda:0"])

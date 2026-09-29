@@ -26,3 +26,6 @@ Changed
   and cleanup failure paths. External selections retained valid native resources without
   hot-path garbage collection. Failed binding publication blocked further task operations
   while preserving the original error and allowing idempotent cleanup.
+
+* Fused fixed-root pose writes into one masked kernel per native keyboard population, preserving
+  reset arithmetic, inactive roots, and Torch/Warp stream ordering for both keyboard methods.

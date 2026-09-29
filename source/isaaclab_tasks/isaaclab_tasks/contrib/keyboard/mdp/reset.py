@@ -14,7 +14,7 @@ import warp as wp
 from newton import JointType, Model, ModelFlags, State
 
 from isaaclab.utils import configclass
-from isaaclab.utils.math import combine_frame_transforms, quat_from_euler_xyz, quat_mul, sample_uniform
+from isaaclab.utils.math import quat_from_euler_xyz, quat_mul, sample_uniform
 
 from ..newton_selection import NewtonSelection, NewtonSelectorCfg
 
@@ -120,25 +120,78 @@ def tip_jacobian(ik: KeyboardResetIKCfg, out: wp.array) -> torch.Tensor:
     return wp.to_torch(out)
 
 
+@wp.kernel(enable_backward=False, module="unique", module_options={"fuse_fp": False})
+def _write_fixed_root_poses(
+    requested: wp.array[wp.int64],
+    worlds: wp.array[wp.int64],
+    bodies: wp.array2d[int],
+    active: wp.array2d[bool],
+    root_joints: wp.array[wp.int64],
+    child: wp.array[wp.transform],
+    poses: wp.array3d[float],
+    parent: wp.array[wp.transform],
+):
+    world, column = wp.tid()
+    row = requested[worlds[world]]
+    if row >= 0 and active[world, column]:
+        joint = root_joints[bodies[world, column]]
+        pose = wp.transform(
+            wp.vec3(poses[row, column, 0], poses[row, column, 1], poses[row, column, 2]),
+            wp.quat(poses[row, column, 3], poses[row, column, 4], poses[row, column, 5], poses[row, column, 6]),
+        )
+        # Reset IK amplifies quaternion reassociation: preserve the task's Torch
+        # frame composition order, with contraction disabled only for this kernel.
+        other = child[joint]
+        q1, q2 = wp.transform_get_rotation(pose), wp.transform_get_rotation(other)
+        x1, y1, z1, w1 = q1[0], q1[1], q1[2], q1[3]
+        x2, y2, z2, w2 = q2[0], q2[1], q2[2], q2[3]
+        ww = (z1 + x1) * (x2 + y2)
+        yy = (w1 - y1) * (w2 + z2)
+        zz = (w1 + y1) * (w2 - z2)
+        xx = ww + yy + zz
+        qq = 0.5 * (xx + (z1 - x1) * (x2 - y2))
+        quat = wp.quat(
+            qq - xx + (x1 + w1) * (x2 + w2),
+            qq - yy + (w1 - x1) * (y2 + z2),
+            qq - zz + (z1 + y1) * (w2 - x2),
+            qq - ww + (z1 - y1) * (y2 - z2),
+        )
+        xyz = wp.vec3(x1, y1, z1)
+        offset = wp.transform_get_translation(other)
+        cross = wp.cross(xyz, offset) * 2.0
+        rotated = offset + w1 * cross + wp.cross(xyz, cross)
+        parent[joint] = wp.transform(wp.transform_get_translation(pose) + rotated, quat)
+
+
 def write_fixed_root_poses(env, roots: NewtonSelection, env_ids: torch.Tensor, poses: torch.Tensor) -> None:
-    """Write fixed root link poses [m, xyzw] and notify only the changed worlds."""
+    """Write participating fixed root poses [m, xyzw], preserving the caller's stream ordering."""
     if len(env_ids) == 0:
         return
     requested = torch.full((env.num_envs,), -1, dtype=torch.long, device=env.device)
     requested[env_ids] = torch.arange(len(env_ids), device=env.device)
-    for part, worlds in roots.native_bindings:
-        model = part.owner.model
-        joint_ids = part.owner.root_joint_ids[part.dense_ids()]
-        child_frames = wp.to_torch(model.joint_X_c)[joint_ids]
-        local_poses = poses[requested[worlds].clamp(min=0), : part.width]
-        pos, quat = combine_frame_transforms(
-            local_poses[..., :3], local_poses[..., 3:], child_frames[..., :3], child_frames[..., 3:]
-        )
-        target = wp.to_torch(model.joint_X_p)
-        active = (part.dense_active() & (requested[worlds] >= 0)[:, None]).unsqueeze(-1)
-        target[joint_ids] = torch.where(active, torch.cat((pos, quat), dim=-1), target[joint_ids])
-    env.notify_model_changed(ModelFlags.JOINT_PROPERTIES, env_ids)
-    env.invalidate_fk(env_ids)
+    requested_wp, poses_wp = wp.from_torch(requested), wp.from_torch(poses)
+    stream = wp.stream_from_torch(torch.cuda.current_stream(env.device)) if poses.is_cuda else None
+    with wp.ScopedStream(stream, sync_exit=True):
+        for part, worlds in roots.native_bindings:
+            model = part.owner.model
+            shape = part.dense_ids().shape
+            wp.launch(
+                _write_fixed_root_poses,
+                dim=shape,
+                inputs=[
+                    requested_wp,
+                    wp.from_torch(worlds),
+                    part.ids.reshape(shape),
+                    part.active.reshape(shape),
+                    wp.from_torch(part.owner.root_joint_ids),
+                    model.joint_X_c,
+                    poses_wp,
+                ],
+                outputs=[model.joint_X_p],
+                device=model.device,
+            )
+        env.notify_model_changed(ModelFlags.JOINT_PROPERTIES, env_ids)
+        env.invalidate_fk(env_ids)
 
 
 def reset_root_state_uniform(env, env_ids, roots, pose_range, velocity_range):
