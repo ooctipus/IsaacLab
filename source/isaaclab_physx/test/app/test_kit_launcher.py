@@ -259,11 +259,10 @@ def test_help_on_parser_with_required_positionals(monkeypatch: pytest.MonkeyPatc
     assert "launcher arguments" in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("value", ["none", "None"])
-def test_visualizer_none_parsing(value: str):
+def test_visualizer_none_parsing():
     parser = argparse.ArgumentParser()
     add_launcher_args(parser)
-    args = parser.parse_args(["--viz", value])
+    args = parser.parse_args(["--viz", "none"])
     assert args.visualizer == []
 
 
@@ -717,12 +716,12 @@ def test_normalize_launcher_args_rejects_negative_max_visible_envs():
 
 
 def test_parse_visualizer_csv_rejects_spaces_between_entries():
-    with pytest.raises(argparse.ArgumentTypeError, match="spaces are not allowed"):
+    with pytest.raises(argparse.ArgumentTypeError, match="without spaces"):
         parse_visualizer_csv("kit, newton_gl")
 
 
 def test_normalize_visualizers_rejects_none_with_others():
-    with pytest.raises(ValueError, match="'none' cannot be combined"):
+    with pytest.raises(ValueError, match="Invalid --visualizer value"):
         _normalize_launcher_args({"visualizer": ["none", "kit"]})
 
 

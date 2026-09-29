@@ -963,7 +963,7 @@ def test_explicit_missing_package_raises(monkeypatch: pytest.MonkeyPatch):
 
     def _failing_import(name, *args, **kwargs):
         if "isaaclab_visualizers.rerun" in name:
-            raise ImportError("No module named 'isaaclab_visualizers.rerun'")
+            raise ModuleNotFoundError("No module named 'isaaclab_visualizers.rerun'")
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(importlib, "import_module", _failing_import)
@@ -1038,7 +1038,7 @@ def test_explicit_existing_cfg_plus_failing_requested_type_raises_for_the_failur
     def _failing_import(name, *args, **kwargs):
         requested.append(name)
         if name == "isaaclab_visualizers.rerun":
-            raise ImportError("No module named 'isaaclab_visualizers.rerun'")
+            raise ModuleNotFoundError("No module named 'isaaclab_visualizers.rerun'")
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(importlib, "import_module", _failing_import)
@@ -1046,7 +1046,7 @@ def test_explicit_existing_cfg_plus_failing_requested_type_raises_for_the_failur
     with pytest.raises(RuntimeError) as exc_info:
         resolve_visualizer_cfgs([_FakeVisualizerCfg("kit")], ["kit", "rerun"])
     # 'kit' was satisfied by the pre-existing cfg, so only the unresolved type is constructed and reported.
-    assert "['rerun']" in str(exc_info.value)
+    assert "'rerun'" in str(exc_info.value)
     assert requested == ["isaaclab_visualizers.rerun"]
 
 

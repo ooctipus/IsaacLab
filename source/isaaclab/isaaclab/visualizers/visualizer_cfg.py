@@ -52,29 +52,12 @@ def parse_visualizer_csv(value: str | list[str]) -> list[str]:
 
     ``none`` yields an empty list. Parsing canonical names again returns them unchanged.
     """
-    if isinstance(value, str):
-        token = value.strip()
-        if not token:
-            raise argparse.ArgumentTypeError(
-                "Invalid --visualizer value: empty string. Use a comma-separated list, e.g. --viz kit,newton_gl."
-            )
-        if " " in token:
-            raise argparse.ArgumentTypeError(
-                "Invalid --visualizer value: spaces are not allowed. "
-                "Use a comma-separated list without spaces, e.g. --viz kit,newton_gl,rerun,viser."
-            )
-        value = token.split(",")
-    names = [str(item).strip().lower() for item in value]
-    if any(not name for name in names):
-        raise argparse.ArgumentTypeError(
-            "Invalid --visualizer value: empty visualizer entry detected. "
-            "Use a comma-separated list without empty items."
-        )
+    names = value.split(",") if isinstance(value, str) else list(value)
     invalid = [name for name in names if name not in (*VISUALIZER_TYPES, *VISUALIZER_ALIASES, "none")]
-    if invalid:
+    if invalid or ("none" in names and len(names) > 1):
         raise argparse.ArgumentTypeError(
-            f"Invalid --visualizer value(s): {', '.join(invalid)}. "
-            f"Valid options: {', '.join(sorted((*VISUALIZER_TYPES, 'none')))}."
+            f"Invalid --visualizer value {value!r}: use 'none' or a comma-separated list, without spaces, of "
+            f"{', '.join(VISUALIZER_TYPES)}."
         )
     for name in names:
         if name in VISUALIZER_ALIASES:
@@ -83,24 +66,16 @@ def parse_visualizer_csv(value: str | list[str]) -> list[str]:
                 DeprecationWarning,
                 stacklevel=3,
             )
-    names = [VISUALIZER_ALIASES.get(name, name) for name in names]
-    if "none" in names:
-        if len(names) > 1:
-            raise argparse.ArgumentTypeError(
-                "Invalid --visualizer value: 'none' cannot be combined with other visualizer types."
-            )
-        return []
-    return list(dict.fromkeys(names))
+    return list(dict.fromkeys(VISUALIZER_ALIASES.get(name, name) for name in names if name != "none"))
 
 
 def _make_visualizer_cfg(visualizer_type: str) -> VisualizerCfg:
     """Construct the default config of a visualizer type, importing only its backend package."""
     try:
         cfg_class = string_to_callable(VISUALIZER_TYPES[visualizer_type])
-    except (ImportError, ValueError) as exc:  # string_to_callable reports a missing module as ValueError
+    except ValueError as exc:  # string_to_callable reports a missing module as ValueError
         raise RuntimeError(
-            f"Explicitly requested visualizer(s) {[visualizer_type]} could not be configured: {exc}. "
-            f"{get_visualizer_install_hint(visualizer_type)}"
+            f"Visualizer '{visualizer_type}' is not available: {exc}. {get_visualizer_install_hint(visualizer_type)}"
         ) from exc
     return cfg_class()
 
