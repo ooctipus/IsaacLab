@@ -12,6 +12,13 @@ Changed
 
 * **Breaking:** Scripts and tasks no longer open a visualizer by default. Pass ``--visualizer`` (for example
   ``--visualizer kit`` or ``--visualizer newton_gl``) to open one.
+* **Breaking:** Without ``--visualizer``, :func:`~isaaclab.app.launch_simulation` runs no visualizer, even if
+  :attr:`~isaaclab.sim.SimulationCfg.visualizer_cfgs` lists some. ``--visualizer`` selects which visualizers
+  run and the configured ones only supply the settings of the selected types: each selected type uses the
+  configured visualizer of that type, or else its default config. Configured visualizers no longer start Kit,
+  OVRTX, or cameras unless selected. To keep running a visualizer your config lists, pass
+  ``--visualizer <type>`` (or ``launch_simulation(cfg, {"visualizer": "<type>"})``). A
+  :class:`~isaaclab.sim.SimulationContext` built without a launch still runs the configured visualizers as given.
 * :func:`~isaaclab.app.launch_simulation` decides the run's visualizers and device once and writes them to the
   :class:`~isaaclab.sim.SimulationCfg` of the launched config: ``visualizer_cfgs`` holds exactly the visualizers
   that run (``--visualizer`` and ``--max_visible_envs`` applied) and ``device`` holds the resolved device
@@ -23,26 +30,18 @@ Changed
 * :class:`~isaaclab.sim.SimulationContext` normalizes :attr:`~isaaclab.sim.SimulationCfg.visualizer_cfgs` to a
   list, so a single config becomes a one-element list and None becomes ``[]``.
 
-Fixed
-^^^^^
-
-* Fixed :func:`~isaaclab.app.launch_simulation` rejecting ``--visualizer kit`` for a config that lists a
-  ``newton_rtx`` visualizer: an explicit ``--visualizer`` selection drops it, so it no longer starts OVRTX.
-* Fixed a Kit visualizer that an explicit ``--visualizer`` selection drops still auto-enabling cameras for its
-  ``streaming_view``.
-
 Removed
 ^^^^^^^
 
 * **Breaking:** Removed the ``/isaaclab/visualizer/explicit`` and ``/isaaclab/visualizer/disable_all`` settings,
-  and ``/isaaclab/visualizer/types`` and ``/isaaclab/visualizer/max_visible_envs`` are only set when the launched
-  config holds no :class:`~isaaclab.sim.SimulationCfg` (``types`` is then a comma-separated selection).
+  and ``/isaaclab/visualizer/types`` and ``/isaaclab/visualizer/max_visible_envs`` hold the launch's selection
+  (``types`` is a comma-separated list, empty when none was selected).
   Read :attr:`~isaaclab.sim.SimulationCfg.visualizer_cfgs` or
   :meth:`~isaaclab.sim.SimulationContext.resolve_visualizer_types` instead.
 * **Breaking:** Removed the ``visualizers`` argument of :func:`~isaaclab.sim.build_simulation_context`, which only
   set a setting and never created the visualizers. Set :attr:`~isaaclab.sim.SimulationCfg.visualizer_cfgs` on
   the ``sim_cfg`` you pass instead.
-* **Breaking:** Removed ``--visualizer none``. Omit ``--visualizer`` to run without visualizers unless the
-  config lists some in :attr:`~isaaclab.sim.SimulationCfg.visualizer_cfgs`.
-* **Breaking:** Removed the ``has_kit_streaming_view`` key of the ``visualizer_intent`` launcher argument of
-  :func:`~isaaclab.app.launch_simulation`; only ``has_kit_visualizer`` is read.
+* **Breaking:** Removed ``--visualizer none``. Omit ``--visualizer`` to run without visualizers.
+* **Breaking:** Removed the ``visualizer_intent`` launcher argument of :func:`~isaaclab.app.launch_simulation`
+  and the ``kit_visualizer`` launcher argument it wrote. Pass ``visualizer="kit"`` to request the Kit
+  visualizer.

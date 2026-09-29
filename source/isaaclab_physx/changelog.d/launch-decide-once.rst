@@ -1,6 +1,6 @@
 Changed
 ^^^^^^^
 
-* :class:`~isaaclab_physx.app.KitLauncher` auto-starts XR only when the run has no Kit visualizer, whether it comes
-  from the config or ``--visualizer``, so a Kit visualizer declared in the config keeps its window with ``--xr``
-  instead of being forced headless.
+* :class:`~isaaclab_physx.app.KitLauncher` reads whether the run has the Kit visualizer from the ``visualizer``
+  selection (``--visualizer kit``) instead of the removed ``kit_visualizer`` launcher argument. It auto-starts XR,
+  and runs headless, only when ``--visualizer`` does not select ``kit``.

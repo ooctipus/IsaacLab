@@ -83,13 +83,16 @@ def _make_visualizer_cfg(visualizer_type: str) -> VisualizerCfg:
 def resolve_visualizer_cfgs(
     visualizer_cfgs: list[VisualizerCfg] | VisualizerCfg | None, visualizers: list[str] | None, max_visible_envs=None
 ) -> list[VisualizerCfg]:
-    """Return the visualizers a run uses: the configured ones, narrowed by a ``--visualizer`` selection.
+    """Return the visualizers a run uses: exactly the selected types, configured by *visualizer_cfgs*.
+
+    Each selected type reuses the configured visualizer of that type, with its settings, or else gets its default
+    config; configured visualizers of unselected types do not run.
 
     Args:
         visualizer_cfgs: Configured visualizers, e.g. :attr:`~isaaclab.sim.SimulationCfg.visualizer_cfgs`.
-        visualizers: Selection in canonical names (see :func:`parse_visualizer_csv`): None keeps the configured
-            visualizers, and names keep exactly those types, reusing a configured visualizer of each type (with
-            its settings) or else its default config.
+        visualizers: Selection in canonical names (see :func:`parse_visualizer_csv`), empty for no visualizers.
+            None applies no selection and keeps the configured visualizers, for a simulation built without a
+            launch.
         max_visible_envs: ``--max_visible_envs`` applied to every resulting visualizer, or None.
     """
     if visualizer_cfgs is None:

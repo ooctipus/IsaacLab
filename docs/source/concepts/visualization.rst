@@ -646,12 +646,12 @@ streaming views, and renderer-based sensor data capture.
      </div>
    </div>
 
-Pass ``--video`` on the command line for a quick recording from the default visualizer, or
-define multiple ``VideoRecorderCfg`` entries to record multiple sources at once. Kit, Newton
-GL, and Newton RTX visualizers can be recorded while in headless mode, to reduce overhead or
-in case no display is available.
+Pass ``--video`` on the command line for a quick recording from the visualizer ``--viz`` selects,
+or from a headless Kit visualizer without ``--viz``, or define multiple ``VideoRecorderCfg``
+entries to record multiple sources at once. Kit, Newton GL, and Newton RTX visualizers can be
+recorded while in headless mode, to reduce overhead or in case no display is available.
 
-Not currently supported by the web-based visualizers Viser and Rerun; add a headless
+Not currently supported by the web-based visualizers Viser and Rerun; select a headless
 visualizer as a capture source alongside them to record video.
 
 See :doc:`/source/features/record_video` for the full guide and tutorial.
@@ -690,7 +690,8 @@ See :doc:`/source/features/record_video` for clip length, interval, and multi-so
 
 **Combining an interactive view with a headless recording source**
 
-Watch training live in Kit while recording from a separate headless Newton GL angle:
+Watch training live in Kit while recording from a separate headless Newton GL angle, running with
+``--viz kit,newton_gl``:
 
 .. code-block:: python
 
@@ -708,7 +709,7 @@ See the "Recording from an independent camera angle" section of
 **Following a moving robot (Kit)**
 
 Lock the Kit camera to a moving asset instead of updating ``eye``/``lookat`` yourself every
-step:
+step, running with ``--viz kit``:
 
 .. code-block:: python
 
@@ -725,7 +726,7 @@ step:
 **Sharing a live view with a remote teammate**
 
 Viser can request a public share URL for the running session, useful for remote pairing
-without screen-sharing:
+without screen-sharing, running with ``--viz viser``:
 
 .. code-block:: python
 
@@ -739,16 +740,17 @@ share button in the native UI.
 Resolution Rules
 ~~~~~~~~~~~~~~~~
 
-Visualizers are resolved from ``--viz`` (comma-separated, e.g. ``--viz kit,newton_gl``) or
-``SimulationCfg.visualizer_cfgs`` in code. If ``--viz`` is omitted, the config value is used,
-which by default is empty (no visualizers); otherwise exactly the listed types are launched.
+``--viz`` (comma-separated, e.g. ``--viz kit,newton_gl``) selects which visualizers run, and
+``SimulationCfg.visualizer_cfgs`` configures them. Exactly the listed types are launched: each uses
+the configured visualizer of its type, with its settings, or else that type's default config. If
+``--viz`` is omitted, no visualizer runs, even if ``visualizer_cfgs`` lists some.
 
 Add ``--headless`` alongside ``--viz kit`` or ``--viz newton_gl`` to keep that visualizer
 running without an on-screen window, e.g. as a ``--video`` recording source on a machine
 without a display.
 
 To configure visualizer settings in code, pass ``VisualizerCfg`` instances to
-``SimulationCfg``:
+``SimulationCfg``; they take effect for the types ``--viz`` selects:
 
 .. code-block:: python
 
@@ -785,6 +787,9 @@ To configure visualizer settings in code, pass ``VisualizerCfg`` instances to
      - ``[NewtonGLVisualizerCfg(...), RerunVisualizerCfg(...)]``
      - Launch default Kit and custom Newton GL; Rerun is not launched.
    * - no ``--viz``
+     - ``[NewtonGLVisualizerCfg(...), RerunVisualizerCfg(...)]``
+     - No visualizer launches; the configs only apply when ``--viz`` selects their types.
+   * - ``--viz newton_gl,rerun``
      - ``[NewtonGLVisualizerCfg(...), RerunVisualizerCfg(...)]``
      - Launch custom Newton GL and Rerun from config.
 

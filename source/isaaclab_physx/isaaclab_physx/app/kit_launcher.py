@@ -309,7 +309,8 @@ class KitLauncher(SimulationLauncher):
           Isaac Lab experiences use one renderer GPU by default. Applications that need single-process
           multi-GPU rendering can override the ``renderer.multiGpu`` settings through this argument.
 
-        * ``visualizer`` (str): Visualizer backends to enable. Omit it to use the config's visualizers.
+        * ``visualizer`` (str): Visualizer backends to run. Omit it to run none. A visualizer configured in
+          :attr:`~isaaclab.sim.SimulationCfg.visualizer_cfgs` supplies the settings of its type when selected.
           Valid options are:
 
           - ``rerun``: Use Rerun visualizer.
@@ -365,7 +366,10 @@ class KitLauncher(SimulationLauncher):
             "--viz",
             type=parse_visualizer_csv,
             default=None,
-            help="Visualizer backends to enable as CSV (e.g., kit,newton,rerun,viser).",
+            help=(
+                "Visualizer backends to run as CSV (e.g., kit,newton_gl,rerun,viser); none run without it. A"
+                " visualizer configured in the task's sim.visualizer_cfgs supplies the settings of its type."
+            ),
         )
         arg_group.add_argument(
             "--verbose",  # Note: This is read by SimulationApp through sys.argv
@@ -449,10 +453,10 @@ class KitLauncher(SimulationLauncher):
         Args:
             launcher_args: A dictionary of all input arguments passed to the class object.
         """
-        self._kit_visualizer = bool(launcher_args.get("kit_visualizer", False))
+        self._kit_visualizer = "kit" in launcher_args["visualizer"]
         self._resolve_livestream_settings(launcher_args)
         # XR must be resolved before headless so that XR can prevent
-        # visualizer-intent-based headless forcing.
+        # headless forcing for a run without the Kit visualizer.
         self._resolve_xr_settings(launcher_args)
         self._resolve_headless_settings(launcher_args)
         self._resolve_camera_settings(launcher_args)
@@ -528,8 +532,8 @@ class KitLauncher(SimulationLauncher):
             self._xr = bool(xr_env)
 
         # Determine whether XR should auto-inject a KitVisualizer.
-        # When XR is enabled but the run has no Kit visualizer (from the config or
-        # --viz), we auto-inject one so that app.update() and forward() are pumped
+        # When XR is enabled but the run has no Kit visualizer (``--viz kit``),
+        # we auto-inject one so that app.update() and forward() are pumped
         # each frame -- the XR runtime needs both to receive updated hand/joint
         # transforms.
         self._xr_auto_start = self._xr and not self._kit_visualizer

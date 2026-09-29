@@ -15,7 +15,7 @@ Example 1 — Kit viewport (simplest)
     .. code-block:: bash
 
         uv run python scripts/tutorials/07_visualizers/run_video_recording.py \
-            --example 1 --num_envs 4
+            --example 1 --num_envs 4 --viz kit
 
 Example 2 — scene sensor only, headless
     One clip captured directly from the scene's tiled-camera sensor.
@@ -32,10 +32,11 @@ Example 3 — Kit viewport + Kit tiled grid + Newton viewport + scene sensor
     .. code-block:: bash
 
         uv run python scripts/tutorials/07_visualizers/run_video_recording.py \
-            --example 3 --num_envs 4
+            --example 3 --num_envs 4 --viz kit,newton_gl
 
 Clips are written to ``videos/recording_tutorial/example_<N>/`` in the working directory.
 Examples 1 and 2 each demonstrate one recording source; Example 3 combines all of them.
+``--viz`` selects the visualizers to record from; the configs below only set their camera and panels.
 """
 
 from __future__ import annotations
@@ -121,7 +122,6 @@ def _build_env_cfg_example_1(num_envs: int):
 def _build_env_cfg_example_2(num_envs: int):
     """Shadow Hand + headless: scene tiled-camera sensor clip only."""
     env_cfg = _shadow_env_cfg(num_envs, env_spacing=2.0)
-    env_cfg.sim.visualizer_cfgs = []  # no interactive visualizer
 
     out = _output_dir(2)
     env_cfg.video_recorders = [

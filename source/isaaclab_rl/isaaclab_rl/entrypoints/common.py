@@ -851,37 +851,43 @@ Video recording.
 
 
 def pre_launch_video_config(env_cfg: Any, args_cli: argparse.Namespace) -> None:
-    """Add a headless Kit visualizer to *env_cfg* for ``--video`` to record from when it names none.
+    """Select a headless Kit visualizer for ``--video`` to record from when ``--viz`` selects none.
 
     Must be called before :func:`~isaaclab.app.launch_simulation`, so the launch includes the Kit runtime.
-    Only acts when ``--video`` is set and neither the environment config nor the command line names a
-    visualizer or a video recorder to record from; :func:`apply_video_recording` wires the recorder after
+    Only acts when ``--video`` is set and neither the command line names a visualizer nor the environment
+    config a video recorder to record from. It then selects ``--viz kit``, runs headless, and makes the Kit
+    visualizer of *env_cfg*, or a default one, headless; :func:`apply_video_recording` wires the recorder after
     the launch.
 
     Args:
         env_cfg: Isaac Lab environment config to modify in-place.
-        args_cli: Parsed command-line arguments.
+        args_cli: Parsed command-line arguments, updated in-place.
     """
     if not getattr(args_cli, "video", False) or getattr(env_cfg, "video_recorders", None):
         return
     # ``--viz`` decides the visualizers itself
-    if getattr(args_cli, "visualizer", None) is not None:
+    if getattr(args_cli, "visualizer", None):
         return
     sim_cfg = env_cfg.sim
     visualizer_cfgs = (
         sim_cfg.visualizer_cfgs if isinstance(sim_cfg.visualizer_cfgs, list) else [sim_cfg.visualizer_cfgs]
     )
-    # a base ``VisualizerCfg`` without a ``visualizer_type`` is a hint-only placeholder
-    if any(cfg.visualizer_type for cfg in visualizer_cfgs):
-        return
-    try:
-        from isaaclab_visualizers.kit import KitVisualizerCfg
-    except ImportError:
-        # isaaclab_visualizers is optional; apply_video_recording reports the missing visualizer
-        return
-    sim_cfg.visualizer_cfgs = [*visualizer_cfgs, KitVisualizerCfg(headless=True)]
+    # a configured Kit visualizer keeps its settings, e.g. the camera pose, for the recording
+    kit_cfgs = [cfg for cfg in visualizer_cfgs if cfg.visualizer_type == "kit"]
+    if not kit_cfgs:
+        try:
+            from isaaclab_visualizers.kit import KitVisualizerCfg
+        except ImportError:
+            # isaaclab_visualizers is optional; apply_video_recording reports the missing visualizer
+            return
+        kit_cfgs = [KitVisualizerCfg()]
+        sim_cfg.visualizer_cfgs = [*visualizer_cfgs, *kit_cfgs]
+    for cfg in kit_cfgs:
+        cfg.headless = True
+    args_cli.visualizer = ["kit"]
+    args_cli.headless = True
     print(
-        "[INFO] --video specified without --viz: adding a headless Kit visualizer to record from. Pass "
+        "[INFO] --video specified without --viz: recording from a headless Kit visualizer. Pass "
         "--viz <type> to choose a different visualizer, or set video_recorders in your env config to record "
         "from a scene sensor instead."
     )
@@ -991,9 +997,6 @@ def _no_capture_visualizer_message(names: list[str]) -> str:
     """Explain why streaming-only visualizers cannot back ``--video`` and how to record anyway."""
     quoted = " and ".join(repr(name) for name in names)
     verb = "is a streaming visualizer" if len(names) == 1 else "are streaming visualizers"
-    example_cfg = {"rerun": "RerunVisualizerCfg", "viser": "ViserVisualizerCfg"}.get(
-        names[0], f"{names[0].title()}VisualizerCfg"
-    )
     return (
         f"--video is not supported with --viz {quoted}: {quoted} {verb} "
         "and do not expose a local frame-capture API.\n\n"
@@ -1001,12 +1004,9 @@ def _no_capture_visualizer_message(names: list[str]) -> str:
         "  --viz kit        Kit/Omniverse viewport\n"
         "  --viz newton_gl  Newton OpenGL viewport\n"
         "  --viz newton_rtx Newton OVRTX path-traced viewport\n\n"
-        f"To run {quoted} alongside video recording, add a headless capture backend\n"
-        "to sim.visualizer_cfgs in your environment config, for example:\n\n"
-        "  sim_cfg.visualizer_cfgs = [\n"
-        f"      {example_cfg}(...),\n"
-        "      KitVisualizerCfg(headless=True),   # provides frames for --video\n"
-        "  ]\n\n"
+        f"To run {quoted} alongside video recording, also select a capture backend, e.g.\n"
+        f"--viz {','.join(names)},kit, and configure it headless in your environment config:\n\n"
+        "  sim_cfg.visualizer_cfgs = [KitVisualizerCfg(headless=True)]   # provides frames for --video\n\n"
         "Frames can also be captured from a scene camera sensor without any visualizer:\n"
         "  VideoRecorderCfg(source='sensor:<name>')   # add to env_cfg.video_recorders\n\n"
         "See: https://isaac-sim.github.io/IsaacLab/main/source/features/record_video.html"

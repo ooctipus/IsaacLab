@@ -2535,8 +2535,9 @@ The details below describe how CLI visualizer arguments resolve together with
 
 - ``--viz`` accepts **comma-separated** values (for example ``--viz kit,newton_gl``).
   ``"newton"`` is a deprecated alias for ``"newton_gl"``; prefer ``"newton_gl"`` or ``"newton_rtx"``.
-- If omitted, visualizers are resolved from ``SimulationCfg.visualizer_cfgs``, which is empty (no
-  visualizers) by default.
+- If omitted, no visualizer runs. ``SimulationCfg.visualizer_cfgs`` only configures the visualizers
+  ``--viz`` selects: a selected type uses the configured visualizer of that type, with its settings, or
+  else its default config.
 
 For the full behavior of visualizer resolution with the visualizer CLI argument and visualizer configs,
 see :ref:`visualization-common-modes`.
@@ -2584,14 +2585,14 @@ In Isaac Lab 3.0, the equivalent is:
        --viz kit --enable_cameras --headless --video
 
 As a convenience, passing ``--video`` without ``--viz`` still works: Isaac Lab
-auto-creates a headless Kit visualizer (falling back to Newton GL if Kit is unavailable)
-and sets ``source="visualizer:kit"`` on the default recorder, printing:
+selects a headless Kit visualizer, configured by the Kit visualizer of the task config if it lists
+one, and sets ``source="visualizer:kit"`` on the default recorder, printing:
 
 .. code-block:: text
 
-   [INFO] --video specified without --viz: adding a headless Kit visualizer to record
-   from. Pass --viz <type> to choose a different visualizer, or set video_recorders in
-   your env config to record from a scene sensor instead.
+   [INFO] --video specified without --viz: recording from a headless Kit visualizer. Pass
+   --viz <type> to choose a different visualizer, or set video_recorders in your env config
+   to record from a scene sensor instead.
 
 
 .. rubric:: Viewport Camera Configuration (``ViewerCfg`` deprecated)
@@ -2631,7 +2632,7 @@ For asset-body tracking (previously ``origin_type="asset_root"`` / ``"asset_body
 
    # After (Isaac Lab 3.x)
    from isaaclab_visualizers.kit import KitVisualizerCfg
-   env_cfg.sim.visualizer_cfgs = [KitVisualizerCfg(origin_type="asset", origin_track_path="robot")]
+   env_cfg.sim.visualizer_cfgs = [KitVisualizerCfg(origin_type="asset", origin_track_path="robot")]  # --viz kit
 
 The :class:`~isaaclab.envs.ui.ViewportCameraController` class is also deprecated; camera
 tracking is handled directly by :class:`~isaaclab_visualizers.kit.KitVisualizer`.

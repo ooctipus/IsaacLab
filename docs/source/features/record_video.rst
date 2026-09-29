@@ -31,8 +31,8 @@ Add a ``VideoRecorderCfg`` to ``env_cfg.video_recorders``:
         VideoRecorderCfg(source="visualizer:kit", output_dir="videos/")
     ]
 
-Or pass ``--video`` on the command line to record from the default visualizer without editing
-the environment config:
+Or pass ``--video`` on the command line to record from the visualizer ``--viz`` selects without
+editing the environment config. Without ``--viz``, ``--video`` records from a headless Kit visualizer:
 
 .. tab-set::
 
@@ -100,7 +100,7 @@ Example 1: Kit viewport
 .. code-block:: bash
 
    uv run python scripts/tutorials/07_visualizers/run_video_recording.py \
-       --example 1 --num_envs 4
+       --example 1 --num_envs 4 --viz kit
 
 * Records the Kit interactive viewport (RTX renderer)
 * Shows 4 parallel environments
@@ -156,7 +156,7 @@ Example 3: All sources simultaneously
 .. code-block:: bash
 
    uv run python scripts/tutorials/07_visualizers/run_video_recording.py \
-       --example 3 --num_envs 4
+       --example 3 --num_envs 4 --viz kit,newton_gl
 
 Four independent clips are written to ``videos/recording_tutorial/example_3/``:
 
@@ -225,7 +225,8 @@ The ``source`` string selects what to capture:
      - Surface normals, colorized
 
 The camera angle, resolution, and other visualizer settings are configured on the corresponding
-visualizer config, not on the recorder.
+visualizer config, not on the recorder. A recorded visualizer must be selected with ``--viz``; its
+config in ``sim.visualizer_cfgs`` only supplies its settings.
 
 .. note::
 
@@ -286,7 +287,8 @@ Recording from an independent camera angle
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Configure the recording angle on the visualizer, not the recorder. To open a headless Newton
-visualizer at a different angle alongside an interactive Kit viewer:
+visualizer at a different angle alongside an interactive Kit viewer, run with ``--viz kit,newton_gl``
+and configure both:
 
 .. code-block:: python
 
@@ -350,8 +352,8 @@ Limitations and compatibility
      - Browser streaming tool; no local frame-capture API. Passing ``--video`` alongside
        ``--viz viser`` raises an error unless another recording-capable visualizer is set.
 
-To record video while streaming with Rerun or Viser, add a headless capture-capable
-visualizer alongside it in ``sim.visualizer_cfgs``:
+To record video while streaming with Rerun or Viser, also select a capture-capable visualizer,
+for example ``--viz rerun,kit``, and configure it headless in ``sim.visualizer_cfgs``:
 
 .. code-block:: python
 

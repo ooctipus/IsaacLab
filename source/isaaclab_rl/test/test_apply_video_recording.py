@@ -17,6 +17,7 @@ from isaaclab_visualizers.kit import KitVisualizerCfg
 
 from isaaclab.envs import ManagerBasedRLEnvCfg
 from isaaclab.envs.utils.video_recorder_cfg import VideoRecorderCfg
+from isaaclab.visualizers import VisualizerCfg
 from isaaclab.visualizers.visualizer_cfg import resolve_visualizer_cfgs
 
 from isaaclab_rl.entrypoints.common import (
@@ -28,17 +29,16 @@ from isaaclab_rl.entrypoints.common import (
 
 
 def _args(**kwargs: object) -> SimpleNamespace:
-    defaults = dict(video=True, video_length=None, video_interval=None)
+    defaults = dict(video=True, video_length=None, video_interval=None, visualizer=None)
     return SimpleNamespace(**{**defaults, **kwargs})
 
 
-def _launched_env_cfg(args: SimpleNamespace) -> ManagerBasedRLEnvCfg:
+def _launched_env_cfg(args: SimpleNamespace, visualizer_cfgs: list | None = None) -> ManagerBasedRLEnvCfg:
     """Return an env config whose visualizers are resolved as ``pre_launch_video_config`` and the launch do."""
     env_cfg = ManagerBasedRLEnvCfg()
+    env_cfg.sim.visualizer_cfgs = visualizer_cfgs or []
     pre_launch_video_config(env_cfg, args)
-    env_cfg.sim.visualizer_cfgs = resolve_visualizer_cfgs(
-        env_cfg.sim.visualizer_cfgs, getattr(args, "visualizer", None)
-    )
+    env_cfg.sim.visualizer_cfgs = resolve_visualizer_cfgs(env_cfg.sim.visualizer_cfgs, args.visualizer or [])
     return env_cfg
 
 
@@ -73,6 +73,19 @@ def test_apply_video_recording_creates_default_recorder(
     assert len(env_cfg.sim.visualizer_cfgs) == 1
     assert isinstance(env_cfg.sim.visualizer_cfgs[0], KitVisualizerCfg)
     assert env_cfg.sim.visualizer_cfgs[0].headless
+    # the Kit visualizer is selected, as ``--viz kit``, and the run is headless
+    assert (args.visualizer, args.headless) == (["kit"], True)
+
+
+def test_pre_launch_video_config_records_from_configured_kit_visualizer():
+    """``--video`` without ``--viz`` selects a configured Kit visualizer, keeping its camera, and makes it headless."""
+    kit_cfg = KitVisualizerCfg(eye=(1.0, 2.0, 3.0))
+    args = _args()
+    env_cfg = _launched_env_cfg(args, [kit_cfg, VisualizerCfg(visualizer_type="rerun")])
+
+    assert len(env_cfg.sim.visualizer_cfgs) == 1 and env_cfg.sim.visualizer_cfgs[0] is kit_cfg
+    assert kit_cfg.headless and kit_cfg.eye == (1.0, 2.0, 3.0)
+    assert (args.visualizer, args.headless) == (["kit"], True)
 
 
 @pytest.mark.parametrize(

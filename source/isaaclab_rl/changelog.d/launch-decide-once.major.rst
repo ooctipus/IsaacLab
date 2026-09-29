@@ -8,9 +8,11 @@ Changed
   show each rank's device. Automatic backend selectors are no longer shown next to the backend they resolved to.
 * **Breaking:** Call :func:`~isaaclab_rl.entrypoints.common.apply_video_recording` inside
   :func:`~isaaclab.app.launch_simulation`: without declared recorders it records from the first capture-capable
-  visualizer the launch resolved into ``env_cfg.sim.visualizer_cfgs`` and raises when there is none. Only
-  :func:`~isaaclab_rl.entrypoints.common.pre_launch_video_config`, called before the launch, adds a headless Kit
-  visualizer for ``--video``. The zero and random agents now configure recording after the launch.
+  visualizer the launch resolved into ``env_cfg.sim.visualizer_cfgs`` and raises when there is none. For
+  ``--video`` without ``--visualizer``, :func:`~isaaclab_rl.entrypoints.common.pre_launch_video_config`, called
+  before the launch, selects ``--visualizer kit`` and ``--headless`` and makes the configured Kit visualizer, or a
+  default one, headless, so the recording keeps its camera settings. The zero and random agents now configure
+  recording after the launch.
 
 Removed
 ^^^^^^^
