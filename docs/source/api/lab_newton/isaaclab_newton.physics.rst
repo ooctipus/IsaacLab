@@ -186,3 +186,30 @@ Solver Managers
   :members:
   :inherited-members:
   :show-inheritance:
+
+Experimental Homogeneous Populations
+-----------------------------------
+
+These explicitly composed resources support headless native-contact MuJoCo Warp
+populations. Their lifecycle belongs to ``SimulationContext``; task assignments
+and policy buffers belong to the calling environment.
+
+.. autoclass:: isaaclab_newton.physics.population.NewtonPopulationCfg
+  :members:
+  :show-inheritance:
+  :exclude-members: __init__
+
+.. autoclass:: isaaclab_newton.physics.population.NewtonPopulationManager
+  :members:
+  :show-inheritance:
+
+.. autoclass:: isaaclab_newton.physics.population.NewtonPopulationBackendCfg
+  :members:
+  :show-inheritance:
+  :exclude-members: __init__
+
+.. autoclass:: isaaclab_newton.physics.population.NewtonPopulationBackend
+  :members:
+
+.. autoclass:: isaaclab_newton.physics.population.NewtonPopulation
+  :members:

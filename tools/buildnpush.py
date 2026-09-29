@@ -48,10 +48,10 @@ EXTRA_SYMLINKS = [Path("dep"), Path("dep/rsl_rl")]
 # the Dockerfiles and are only used to re-run ``uv sync --check`` against a built image;
 # ``test_uv_sync_extras_match_the_dockerfiles`` fails if the two drift apart.
 BASE_UV_SYNC_EXTRAS = (
-    "--extra sb3 --extra skrl --extra rl-games --extra rsl-rl --extra viser --extra rerun --extra mimic"
+    "--extra sb3 --extra skrl --extra rl-games --extra rsl-rl --extra wandb --extra viser --extra rerun --extra mimic"
     " --extra teleop --extra test --extra tetrahedralization --extra ov --no-install-package imageio-ffmpeg"
 )
-KITLESS_UV_SYNC_EXTRAS = "--extra all --extra importers --extra test"
+KITLESS_UV_SYNC_EXTRAS = "--extra all --extra importers --extra test --extra wandb"
 # Emitted by ``uv sync --check`` when it did run and found the environment stale. Its absence on a
 # failure means the check itself broke (missing uv, unreadable lock) rather than the image drifting.
 UV_OUTDATED_MARKER = "The environment is outdated"

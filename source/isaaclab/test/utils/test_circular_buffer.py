@@ -289,3 +289,26 @@ def test_stack_dim_stacked_raises_when_default_mode():
     buf.append(torch.zeros(4, 3))
     with pytest.raises(RuntimeError, match="stack_dim"):
         _ = buf.stacked
+
+
+@pytest.mark.parametrize("stack_dim", [None, -1])
+@pytest.mark.parametrize("warm", [False, True])
+def test_preview_matches_next_append_without_mutating_live_storage(stack_dim, warm):
+    buffer = CircularBuffer(3, 2, "cpu", stack_dim=stack_dim)
+    if warm:
+        buffer.append(torch.ones(2, 4))
+        buffer.append(torch.full((2, 4), 2.0))
+        buffer.reset([1])
+    original = buffer._buffer
+    values = None if original is None else original.clone()
+    pushes = buffer._num_pushes.clone()
+    reset = buffer._need_reset
+    preview = buffer.preview(torch.full((2, 4), 3.0))
+    assert buffer._buffer is original and buffer._need_reset == reset
+    torch.testing.assert_close(buffer._num_pushes, pushes)
+    if values is not None:
+        torch.testing.assert_close(original, values)
+    buffer.append(torch.full((2, 4), 3.0))
+    torch.testing.assert_close(preview, buffer.buffer, rtol=0, atol=0)
+    preview.zero_()
+    assert buffer.buffer.any()

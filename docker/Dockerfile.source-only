@@ -16,7 +16,7 @@ ARG RUN_PIP_INSTALL=0
 # the base or the kit-less dependency image, which carry different extras, so
 # ``buildnpush.py`` always passes the matching set; the default below only covers
 # a direct ``docker build`` of this file.
-ARG ISAACLAB_UV_SYNC_ARGS="--extra sb3 --extra skrl --extra rl-games --extra rsl-rl --extra viser --extra rerun --extra mimic --extra teleop --extra test --extra tetrahedralization --extra ov --no-install-package imageio-ffmpeg"
+ARG ISAACLAB_UV_SYNC_ARGS="--extra sb3 --extra skrl --extra rl-games --extra rsl-rl --extra wandb --extra viser --extra rerun --extra mimic --extra teleop --extra test --extra tetrahedralization --extra ov --no-install-package imageio-ffmpeg"
 
 ENV ISAACLAB_PATH=${ISAACLAB_PATH_ARG}
 

@@ -8,6 +8,7 @@ __all__ = [
     "RslRlDistillationRunnerCfg",
     "RslRlDistillationStudentTeacherCfg",
     "RslRlDistillationStudentTeacherRecurrentCfg",
+    "RslRlEnv",
     "check_rsl_rl_version",
     "create_rsl_rl_runner",
     "export_policy_as_jit",
@@ -46,4 +47,4 @@ from .rl_cfg import (
 from .rnd_cfg import RslRlRndCfg
 from .symmetry_cfg import RslRlSymmetryCfg
 from .utils import check_rsl_rl_version, create_rsl_rl_runner, handle_deprecated_rsl_rl_cfg
-from .vecenv_wrapper import RslRlVecEnvWrapper
+from .vecenv_wrapper import RslRlEnv, RslRlVecEnvWrapper

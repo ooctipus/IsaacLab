@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING
 
 import torch
 import warp as wp
-from isaaclab_newton.physics import NewtonManager
 
 from isaaclab.managers import ManagerTermBase
 
@@ -58,15 +57,16 @@ def _velocity_limit_violation(
     ids: wp.array[int],
     worlds: wp.array[int],
     starts: wp.array[int],
+    logical_worlds: wp.array[wp.int64],
     velocity: wp.array[float],
     limits: wp.array[float],
     out: wp.array[int],
 ):
     i = wp.tid()
-    if i < starts[out.shape[0]]:
+    if i < starts[logical_worlds.shape[0]]:
         dof = ids[i]
         if wp.abs(velocity[dof]) > limits[dof]:
-            wp.atomic_max(out, worlds[i], 1)
+            wp.atomic_max(out, logical_worlds[worlds[i]], 1)
 
 
 class joint_vel_out_of_limit(ManagerTermBase):
@@ -80,24 +80,42 @@ class joint_vel_out_of_limit(ManagerTermBase):
 
     def __call__(self, env, joints: NewtonSelection) -> torch.Tensor:
         self._out.zero_()
-        model, state = NewtonManager.get_model(), NewtonManager.get_state()
-        wp.launch(
-            _velocity_limit_violation,
-            dim=joints.capacity,
-            inputs=[joints.freq_ids, joints.env_ids, joints.world_start, state.joint_qd, model.joint_velocity_limit],
-            outputs=[self._out],
-            device=model.device,
-        )
+        for part, worlds in joints.native_bindings:
+            model, state = part.owner.model, part.owner.state
+            wp.launch(
+                _velocity_limit_violation,
+                dim=part.capacity,
+                inputs=[
+                    part.freq_ids,
+                    part.env_ids,
+                    part.world_start,
+                    wp.from_torch(worlds),
+                    state.joint_qd,
+                    model.joint_velocity_limit,
+                ],
+                outputs=[self._out],
+                device=model.device,
+            )
         return wp.to_torch(self._out).bool()
 
 
 class illegal_contact(ManagerTermBase):
-    """Reduce existing contact-sensor forces over participating selected bodies [N]."""
+    """Threshold net normal force [N] on participating bodies after the physics frame.
+
+    ``sensor_name=None`` consumes model-scoped sensor/contact pairs prepared in
+    ``env.native_contacts`` by the composition root. This matches the task's
+    one-frame contact history: intermediate substep maxima are not used.
+    """
 
     def __init__(self, cfg, env):
         super().__init__(cfg, env)
-        self._sensor = env.scene.sensors[cfg.params["sensor_name"]]
         bodies = cfg.params["bodies"]
+        sensor_name = cfg.params["sensor_name"]
+        self._sensor = env.scene.sensors[sensor_name] if sensor_name is not None else None
+        if self._sensor is None:
+            if bodies.frequency != "body":
+                raise ValueError("Keyboard contact termination requires selected bodies.")
+            return
         native = self._sensor.contact_view
         if native.sensing_type != "body":
             raise ValueError("Keyboard contact termination requires a body contact sensor.")
@@ -106,7 +124,22 @@ class illegal_contact(ManagerTermBase):
             bodies.dense_ids().shape
         )
 
-    def __call__(self, env, bodies, sensor_name: str, threshold: float):
-        forces = self._sensor.data.net_normal_forces_w_history.torch
-        magnitude = forces.norm(dim=-1).amax(dim=1).flatten()[self._rows]
-        return ((magnitude > threshold) & bodies.dense_active()).any(dim=1)
+    def __call__(self, env, bodies, sensor_name: str | None, threshold: float):
+        if self._sensor is not None:
+            forces = self._sensor.data.net_normal_forces_w_history.torch
+            magnitude = forces.norm(dim=-1).amax(dim=1).flatten()[self._rows]
+            return ((magnitude > threshold) & bodies.dense_active()).any(dim=1)
+
+        result = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+        for part, worlds in bodies.native_bindings:
+            owner = part.owner
+            if owner.solver is None or owner.solver.model is not owner.model:
+                raise ValueError("Native contact termination requires the selection's bound solver.")
+            sensor, contacts = env.native_contacts[owner.model]
+            owner.solver.update_contacts(contacts)
+            # Poses and counterpart positions are unused; force accumulation is identical.
+            sensor.update(None, contacts)
+            normal = wp.to_torch(sensor.total_force) - wp.to_torch(sensor.total_force_friction)
+            magnitude = normal.reshape(len(worlds), part.width, 3).norm(dim=-1)
+            result[worlds] = ((magnitude > threshold) & part.dense_active()).any(dim=1)
+        return result

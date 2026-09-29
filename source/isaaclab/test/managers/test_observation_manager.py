@@ -816,3 +816,110 @@ def test_observation_delay_config_validation(params, error):
     cfg = ObservationTermCfg(func=dummy_observation, **params)
     with pytest.raises(error, match="delay"):
         cfg.validate()
+
+
+@pytest.mark.parametrize("reset_row", [False, True])
+@pytest.mark.parametrize("warm", [False, True])
+@pytest.mark.parametrize("filter_type", ["integrator", "digital_filter"])
+def test_preview_is_the_next_sample_with_isolated_history_postprocessors_and_rng(
+    setup_env, reset_row, warm, filter_type
+):
+    env = setup_env
+    group = ObservationGroupCfg(concatenate_terms=True, enable_corruption=True)
+    modifier_cfg = (
+        modifiers.IntegratorCfg(dt=0.1)
+        if filter_type == "integrator"
+        else modifiers.DigitalFilterCfg(A=[-0.2], B=[0.3, 0.7])
+    )
+    group.position = ObservationTermCfg(
+        func=pos_w_data,
+        history_length=2,
+        delay_min_lag=1,
+        delay_max_lag=2,
+        delay_hold_prob=0.5,
+        modifiers=[modifier_cfg],
+        noise=noise.NoiseModelWithAdditiveBiasCfg(
+            noise_cfg=noise.GaussianNoiseCfg(mean=0.0, std=0.1),
+            bias_noise_cfg=noise.UniformNoiseCfg(n_min=-0.1, n_max=0.1),
+        ),
+    )
+    manager = ObservationManager({"policy": group}, env)
+    for value in (1.0, 2.0) if warm else ():
+        env.data.pos_w.fill_(value)
+        manager.compute(update_history=True)
+    if reset_row:
+        manager.reset([1])
+    env.data.pos_w.fill_(3.0)
+    cache = manager._obs_buffer
+    modifier, noise_model = manager._group_obs_class_instances
+    identities = {name: value for name, value in vars(modifier).items() if isinstance(value, torch.Tensor)}
+    values = {name: value.clone() for name, value in identities.items()}
+    bias, components = noise_model._bias, noise_model._num_components
+    bias_value = bias.clone()
+    histories = manager._group_obs_term_history_buffer["policy"]["position"]
+    delay = manager._group_obs_term_delay_buffer["policy"]["position"]
+    counters = (histories._num_pushes.clone(), delay.num_pushes.clone(), delay._write_index.clone())
+    rng = torch.random.get_rng_state().clone()
+    preview = manager.preview()
+    assert manager._obs_buffer is cache
+    assert torch.equal(torch.random.get_rng_state(), rng)
+    assert noise_model._bias is bias and noise_model._num_components == components
+    torch.testing.assert_close(bias, bias_value, rtol=0, atol=0)
+    for name, original in identities.items():
+        assert getattr(modifier, name) is original
+        torch.testing.assert_close(original, values[name], rtol=0, atol=0)
+    for current, old in zip((histories._num_pushes, delay.num_pushes, delay._write_index), counters, strict=True):
+        torch.testing.assert_close(current, old, rtol=0, atol=0)
+    actual = manager.compute(update_history=True)
+    torch.testing.assert_close(preview["policy"], actual["policy"], rtol=0, atol=0)
+
+
+def test_preview_rejects_stateful_terms_before_any_callback(setup_env):
+    calls = []
+
+    def first(env):
+        calls.append(1)
+        return env.data.pos_w
+
+    group = ObservationGroupCfg(concatenate_terms=True, enable_corruption=True)
+    group.first = ObservationTermCfg(func=first)
+    group.second = ObservationTermCfg(func=complex_function_class, params={"interval": 0.1})
+    manager = ObservationManager({"policy": group}, setup_env)
+    calls.clear()
+    term = manager._group_obs_term_cfgs["policy"][1].func
+    previous = term._time_passed.clone()
+    with pytest.raises(TypeError, match="pure function"):
+        manager.preview()
+    assert not calls
+    torch.testing.assert_close(term._time_passed, previous)
+
+
+def test_preview_failure_preserves_history_postprocessor_state_and_rng(setup_env):
+    should_fail = False
+
+    def fail(env):
+        if should_fail:
+            raise RuntimeError("observation failed")
+        return env.data.pos_w
+
+    group = ObservationGroupCfg(concatenate_terms=True, enable_corruption=True)
+    group.first = ObservationTermCfg(
+        func=pos_w_data,
+        history_length=2,
+        modifiers=[modifiers.IntegratorCfg(dt=0.1)],
+        noise=noise.UniformNoiseCfg(n_min=-0.2, n_max=0.2),
+    )
+    group.second = ObservationTermCfg(func=fail)
+    manager = ObservationManager({"policy": group}, setup_env)
+    manager.compute(update_history=True)
+    modifier = manager._group_obs_class_instances[0]
+    history = manager._group_obs_term_history_buffer["policy"]["first"]
+    previous = (modifier.integral.clone(), history.buffer.clone(), torch.random.get_rng_state().clone())
+    cache = manager._obs_buffer
+    should_fail = True
+    with pytest.raises(RuntimeError, match="observation failed"):
+        manager.preview()
+    assert manager._obs_buffer is cache
+    torch.testing.assert_close(modifier.integral, previous[0], rtol=0, atol=0)
+    torch.testing.assert_close(history.buffer, previous[1], rtol=0, atol=0)
+    assert torch.equal(torch.random.get_rng_state(), previous[2])

@@ -143,6 +143,22 @@ class SharedEncoderPPO(PPO):
         object.__setattr__(critic, "encoders", actor.encoders)
         super().__init__(actor, critic, storage, **kwargs)
 
+    def process_env_step(
+        self, obs: TensorDict, rewards: torch.Tensor, dones: torch.Tensor, extras: dict[str, Any]
+    ) -> None:
+        """Bootstrap explicit autoreset truncations from their pre-reset observations."""
+        if "final_obs" in extras and "time_outs" in extras:
+            # These shared-encoder MLPs are nonrecurrent. Evaluate before the
+            # base algorithm updates observation normalization, keeping V(s_t)
+            # intact for PPO's stored values and advantage calculation.
+            with torch.no_grad():
+                final = TensorDict(extras["final_obs"], batch_size=obs.batch_size).to(self.device)
+                values = self.critic(final).squeeze(-1)
+                timeouts = extras["time_outs"].to(device=self.device, dtype=torch.bool)
+                rewards = rewards + self.gamma * torch.where(timeouts, values, 0.0)
+            extras = {key: value for key, value in extras.items() if key != "time_outs"}
+        super().process_env_step(obs, rewards, dones, extras)
+
 
 class _TorchSharedEncoderModel(nn.Module):
     """Exportable shared-encoder model for TorchScript."""

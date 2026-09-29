@@ -11,12 +11,53 @@ from dataclasses import MISSING
 
 import torch
 import warp as wp
-from isaaclab_newton.physics import NewtonManager
 
 from isaaclab.managers import ActionTerm, ActionTermCfg
 from isaaclab.utils import configclass
 
-from ..newton_selection import JOINT_COORD, JOINT_DOF, NewtonSelectorCfg
+from ..newton_selection import (
+    JOINT_COORD,
+    JOINT_DOF,
+    NewtonScalarField,
+    NewtonSelectorCfg,
+    scalar_field_read,
+    scalar_field_write,
+)
+
+
+@wp.kernel(enable_backward=False, module="unique", module_options={"fuse_fp": False})
+def _relative_joint_targets(
+    q: NewtonScalarField,
+    qd: NewtonScalarField,
+    ke: NewtonScalarField,
+    kd: NewtonScalarField,
+    limit: NewtonScalarField,
+    target_q: NewtonScalarField,
+    target_qd: NewtonScalarField,
+    force: NewtonScalarField,
+    action: wp.array2d[float],
+    applied_effort: wp.array2d[float],
+):
+    world, slot = wp.tid()
+    position = scalar_field_read(q, world, slot)
+    target = position
+    effort = float(0.0)
+    if qd.active[world, slot]:
+        target = position + action[world, slot]
+        # Keep target rounding and separate products identical to the tensor term.
+        effort = scalar_field_read(ke, world, slot) * (target - position)
+        effort -= scalar_field_read(kd, world, slot) * scalar_field_read(qd, world, slot)
+        maximum = scalar_field_read(limit, world, slot)
+        if effort < -maximum:
+            effort = -maximum
+        if effort > maximum:
+            effort = maximum
+        if wp.isnan(maximum):
+            effort = maximum
+    scalar_field_write(target_q, world, slot, target)
+    scalar_field_write(target_qd, world, slot, 0.0)
+    scalar_field_write(force, world, slot, 0.0)
+    applied_effort[world, slot] = effort
 
 
 @configclass
@@ -37,16 +78,16 @@ class NewtonRelativeJointPositionAction(ActionTerm):
         if cfg.joints.frequency != JOINT_COORD or cfg.dofs.frequency != JOINT_DOF:
             raise ValueError("Relative joint targets require coordinate and DOF selectors.")
         self.joints, self.dofs = cfg.joints, cfg.dofs
-        self._q_ids, self._qd_ids = self.joints.dense_ids(), self.dofs.dense_ids()
-        if self._q_ids.shape != self._qd_ids.shape:
+        if self.joints.counts != self.dofs.counts:
             raise ValueError("Relative joint targets require scalar joints (one coordinate per DOF).")
         if not torch.equal(wp.to_torch(self.joints.joint_ids), wp.to_torch(self.dofs.joint_ids)):
             raise ValueError("Coordinate and DOF selectors must refer to the same scalar joints in the same order.")
-        model = NewtonManager.get_model()
-        self._target_ids = self._q_ids if model.use_coord_layout_targets else self._qd_ids
-        self._raw = torch.zeros(self._q_ids.shape, device=env.device)
+        self._targets = self.joints if self.joints.use_coord_layout_targets else self.dofs
+        self._raw = torch.zeros((env.num_envs, self.joints.width), device=env.device)
         self._processed = torch.zeros_like(self._raw)
         self.applied_effort = torch.zeros_like(self._raw)
+        self._processed_wp = wp.from_torch(self._processed)
+        self._effort_wp = wp.from_torch(self.applied_effort)
 
     @property
     def action_dim(self):
@@ -65,19 +106,23 @@ class NewtonRelativeJointPositionAction(ActionTerm):
         self._processed.copy_(actions * self.cfg.scale)
 
     def apply_actions(self):
-        model, state, control = NewtonManager.get_model(), NewtonManager.get_state(), NewtonManager.get_control()
-        q = wp.to_torch(state.joint_q)[self._q_ids]
-        qd = wp.to_torch(state.joint_qd)[self._qd_ids]
-        active = self.dofs.dense_active()
-        target = torch.where(active, q + self._processed, q)
-        wp.to_torch(control.joint_target_q)[self._target_ids] = target
-        wp.to_torch(control.joint_target_qd)[self._qd_ids] = 0.0
-        wp.to_torch(control.joint_f)[self._qd_ids] = 0.0
-        ke = wp.to_torch(model.joint_target_ke)[self._qd_ids]
-        kd = wp.to_torch(model.joint_target_kd)[self._qd_ids]
-        limit = wp.to_torch(model.joint_effort_limit)[self._qd_ids]
-        effort = (ke * (target - q) - kd * qd).clamp(-limit, limit)
-        self.applied_effort.copy_(torch.where(active, effort, 0.0))
+        wp.launch(
+            _relative_joint_targets,
+            dim=self._processed.shape,
+            inputs=[
+                self.joints.scalar_field("state", "joint_q"),
+                self.dofs.scalar_field("state", "joint_qd"),
+                self.dofs.scalar_field("model", "joint_target_ke"),
+                self.dofs.scalar_field("model", "joint_target_kd"),
+                self.dofs.scalar_field("model", "joint_effort_limit"),
+                self._targets.scalar_field("control", "joint_target_q"),
+                self.dofs.scalar_field("control", "joint_target_qd"),
+                self.dofs.scalar_field("control", "joint_f"),
+                self._processed_wp,
+            ],
+            outputs=[self._effort_wp],
+            device=self._processed_wp.device,
+        )
 
     def reset(self, env_ids=None):
         ids = slice(None) if env_ids is None else env_ids

@@ -22,10 +22,8 @@ if TYPE_CHECKING:
 
 def mechanical_power(env: ManagerBasedRLEnv, joints, action_name: str = "action") -> torch.Tensor:
     """Absolute implicit-PD telemetry power [W], sampled at the existing physics-step boundary."""
-    from isaaclab_newton.physics import NewtonManager
-
     action = env.action_manager.get_term(action_name)
-    power = (action.applied_effort * joints.dense(NewtonManager.get_state().joint_qd)).abs().sum(dim=1)
+    power = (action.applied_effort * joints.read_state("joint_qd")).abs().sum(dim=1)
     return torch.where(torch.isfinite(power), power, torch.zeros_like(power))
 
 
@@ -83,10 +81,8 @@ class reach_key(ManagerTermBase):
     def __call__(
         self, env, bodies, tip_offsets, command_name: str = "typing", std: float = 0.2, press_depth: float = 0.0
     ):
-        from isaaclab_newton.physics import NewtonManager
-
         command = env.command_manager.get_term(command_name)
-        pose = bodies.dense(NewtonManager.get_state().body_q)
+        pose = bodies.read_state("body_q")
         tips = pose[..., :3] + quat_apply(pose[..., 3:], self._offsets.expand(pose.shape[0], -1, -1))
         target = command.target_key_pos_w() - self._press_offset
         distance = torch.linalg.vector_norm(tips - target[:, None], dim=-1)

@@ -7,6 +7,9 @@
 
 import ast
 import copy
+import gc
+import weakref
+from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import patch
 
@@ -20,6 +23,7 @@ from isaaclab_tasks.contrib.keyboard.newton_selection import (
     BODY,
     JOINT_COORD,
     JOINT_DOF,
+    NewtonSelectionGroup,
     NewtonSelections,
     NewtonSelectorCfg,
 )
@@ -53,6 +57,36 @@ def test_frequency_expansion_and_validation(selections):
         selections.resolve(NewtonSelectorCfg(BODY, ".*", count_per_world=1))
     with pytest.raises(ValueError, match="Unknown Newton frequency"):
         selections.resolve(NewtonSelectorCfg("joint", ".*"))
+
+
+def test_retired_selection_owner_preserves_existing_bindings_without_a_cache_cycle():
+    builder = newton.ModelBuilder()
+    builder.begin_world()
+    builder.add_body(label="/body", mass=1.0)
+    builder.end_world()
+    model = builder.finalize("cpu")
+    owner = NewtonSelections(model, state=model.state(), control=model.control())
+    cfg = NewtonSelectorCfg(BODY, ".*", count_per_world=1)
+    selected = owner.resolve(cfg)
+    references = [weakref.ref(value) for value in (owner, model, owner.state, owner.control)]
+    del model
+    enabled = gc.isenabled()
+    gc.disable()
+    try:
+        owner.retire()
+        owner.retire()
+        for selector in (cfg, cfg.replace(path="/body")):
+            with pytest.raises(RuntimeError, match="retired"):
+                owner.resolve(selector)
+        del owner
+        assert all(reference() is not None for reference in references)
+        assert selected.read_state("body_q").shape == (1, 1, 7)
+        selected.refresh()
+        del selected
+        assert all(reference() is None for reference in references)
+    finally:
+        if enabled:
+            gc.enable()
 
 
 def test_ragged_membership_empty_world_and_reactivation(selections):
@@ -109,6 +143,8 @@ def test_task_architecture_has_no_articulation_views():
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom):
                 assert not (node.module or "").startswith("newton.selection"), path
+                if "mdp" in path.parts:
+                    assert "NewtonManager" not in {alias.name for alias in node.names}, path
                 assert not {alias.name for alias in node.names} & {
                     "Articulation",
                     "ArticulationView",
@@ -213,9 +249,7 @@ def test_108_key_task_without_views_and_partial_reset(use_graph, keyboard_mode, 
             env.close()
 
 
-def test_selected_tip_jacobian_matches_finite_difference(selections, monkeypatch):
-    from isaaclab_newton.physics import NewtonManager
-
+def test_selected_tip_jacobian_matches_finite_difference(selections):
     from isaaclab_tasks.contrib.keyboard.mdp.reset import KeyboardResetIKCfg, tip_jacobian
 
     model = selections.model
@@ -226,8 +260,7 @@ def test_selected_tip_jacobian_matches_finite_difference(selections, monkeypatch
         body=selections.resolve(NewtonSelectorCfg(BODY, ".*/tip0", count_per_world=1)),
         tip_offset=(0.3, 0.2, -0.1),
     )
-    monkeypatch.setattr(NewtonManager, "get_model", classmethod(lambda cls: model))
-    monkeypatch.setattr(NewtonManager, "get_state", classmethod(lambda cls: state))
+    selections.state = state
     ids = ik.joints.dense_ids()
     wp.to_torch(state.joint_q)[ids] = 0.4
     newton.eval_fk(model, state.joint_q, state.joint_qd, state)
@@ -244,10 +277,154 @@ def test_selected_tip_jacobian_matches_finite_difference(selections, monkeypatch
     np.testing.assert_allclose(analytic[:, :3, 0], derivative, atol=3e-5)
 
 
-def test_velocity_reduction_uses_compact_ragged_dofs(selections, monkeypatch):
+@pytest.mark.parametrize("device", ["cpu", "cuda:0"])
+@pytest.mark.parametrize("grouped", [False, True])
+def test_reset_kinematics_updates_only_requested_logical_worlds(device, grouped):
+    from isaaclab_tasks.contrib.keyboard.mdp.reset import prepare_reset_kinematics
+
+    if device.startswith("cuda") and not wp.is_cuda_available():
+        pytest.skip("CUDA is unavailable")
+    stream = (
+        wp.ScopedStream(wp.stream_from_torch(torch.cuda.current_stream()))
+        if device.startswith("cuda")
+        else nullcontext()
+    )
+    with stream:
+        actors = ([4, 0], [1, 3, 2]) if grouped else ([0, 1],)
+        cfg = NewtonSelectorCfg(BODY, ".*/root", count_per_world=2)
+        parts = []
+        for logical_worlds in actors:
+            builder = newton.ModelBuilder()
+            global_body = builder.add_link(label="global", mass=1.0)
+            builder.add_articulation([builder.add_joint_fixed(parent=-1, child=global_body)])
+            for world in range(len(logical_worlds)):
+                builder.begin_world()
+                for articulation in ("robot", "keyboard"):
+                    root = builder.add_link(label=f"/{world}/{articulation}/root", mass=1.0)
+                    tip = builder.add_link(label=f"/{world}/{articulation}/tip", mass=1.0)
+                    fixed = builder.add_joint_fixed(parent=-1, child=root)
+                    hinge = builder.add_joint_revolute(parent=root, child=tip)
+                    builder.add_articulation([fixed, hinge])
+                builder.end_world()
+            model = builder.finalize(device)
+            state = model.state()
+            # Unselected and global bodies must retain these non-FK values exactly.
+            wp.to_torch(state.body_q)[:, 0] = torch.arange(model.body_count, device=device) + 100
+            wp.to_torch(state.body_qd).fill_(7)
+            owner = NewtonSelections(model, state=state)
+            parts.append((owner.resolve(cfg), torch.tensor(logical_worlds, device=device)))
+        roots = NewtonSelectionGroup(cfg, parts, 5) if grouped else parts[0][0]
+        ids = torch.tensor([0, 3] if grouped else [1], device=device)
+        kinematics = prepare_reset_kinematics(roots, ids)
+        for angle in (0.25, 0.75):
+            for (part, worlds), (model, state, mask) in zip(parts, kinematics, strict=True):
+                before_q, before_qd = state.body_q.numpy().copy(), state.body_qd.numpy().copy()
+                state.joint_q.fill_(angle)
+                state.joint_qd.fill_(0.1)
+                expected = model.state()
+                newton.eval_fk(model, state.joint_q, state.joint_qd, expected)
+                newton.eval_fk(model, state.joint_q, state.joint_qd, state, mask=mask)
+                body_world = model.body_world.numpy()
+                selected_worlds = torch.isin(worlds, ids).cpu().numpy()
+                selected = (body_world >= 0) & selected_worlds[body_world.clip(min=0)]
+                np.testing.assert_array_equal(state.body_q.numpy()[selected], expected.body_q.numpy()[selected])
+                np.testing.assert_array_equal(state.body_qd.numpy()[selected], expected.body_qd.numpy()[selected])
+                np.testing.assert_array_equal(state.body_q.numpy()[~selected], before_q[~selected])
+                np.testing.assert_array_equal(state.body_qd.numpy()[~selected], before_qd[~selected])
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda:0"])
+def test_reset_ik_uses_current_bindings_without_retaining_a_graph(device):
     from types import SimpleNamespace
 
-    from isaaclab_newton.physics import NewtonManager
+    from isaaclab_tasks.contrib.keyboard.mdp.commands.typing_commands import LetterTypingCommand
+    from isaaclab_tasks.contrib.keyboard.mdp.reset import KeyboardResetIKCfg
+
+    if device.startswith("cuda") and not wp.is_cuda_available():
+        pytest.skip("CUDA is unavailable")
+
+    def owner(count):
+        builder = newton.ModelBuilder()
+        for world in range(count):
+            builder.begin_world()
+            root = builder.add_link(label=f"/{world}/root", mass=1.0)
+            tip = builder.add_link(label=f"/{world}/tip", mass=1.0)
+            fixed = builder.add_joint_fixed(parent=-1, child=root)
+            slider = builder.add_joint_prismatic(parent=root, child=tip, axis=(1, 0, 0), label=f"/{world}/slider")
+            builder.add_articulation([fixed, slider])
+            builder.end_world()
+        result = NewtonSelections(builder.finalize(device))
+        result.state = result.model.state()
+        result.state.joint_q.fill_(-0.3)
+        newton.eval_fk(result.model, result.state.joint_q, result.state.joint_qd, result.state)
+        return result
+
+    stream = (
+        wp.ScopedStream(wp.stream_from_torch(torch.cuda.current_stream()))
+        if device.startswith("cuda")
+        else nullcontext()
+    )
+    with stream:
+        owners, actors = (owner(2), owner(1)), ([2, 0], [1])
+        configs = (
+            NewtonSelectorCfg(BODY, ".*/root", count_per_world=1),
+            NewtonSelectorCfg(BODY, ".*/tip", count_per_world=1),
+            NewtonSelectorCfg(JOINT_COORD, ".*/slider", count_per_world=1),
+            NewtonSelectorCfg(JOINT_DOF, ".*/slider", count_per_world=1),
+        )
+        groups = [
+            NewtonSelectionGroup(
+                cfg, [(part.resolve(cfg), torch.tensor(ids, device=device)) for part, ids in zip(owners, actors)], 3
+            )
+            for cfg in configs
+        ]
+        roots, bodies, coords, dofs = groups
+        ik = KeyboardResetIKCfg(joints=coords, dofs=dofs, body=bodies)
+        command = object.__new__(LetterTypingCommand)
+        command._env = SimpleNamespace(num_envs=3, device=device, invalidate_fk=lambda _: None, forward=lambda: None)
+        command.cfg = SimpleNamespace(
+            robot_joints=coords,
+            robot_dofs=dofs,
+            reset_roots=roots,
+            reset=SimpleNamespace(ik=ik, pre_solve_reset=None, ik_seed_joint_noise=0.0),
+        )
+        command._reset_ik, command._ik_iters = ik, (2, 2)
+        command.target_len = torch.ones(3, dtype=torch.long, device=device)
+        command._default_robot_q = torch.zeros((3, 1), device=device)
+        command._ik_jacobian = wp.zeros((3, 6, 1), dtype=wp.float32, device=device)
+        command._ik_limits = torch.tensor([-2.0, 2.0], device=device).expand(3, 1, 2)
+        command._ik_offset, command._ik_hover = torch.zeros((3, 3), device=device), torch.zeros(3, device=device)
+        target = torch.zeros((3, 3), device=device)
+        target[:, 0] = torch.tensor([0.1, 0.2, 0.3], device=device)
+        command.target_key_pos_w = lambda: target
+        command._approach_target_quat = lambda quat: quat
+        expected = torch.clamp(target[:, :1] / (1 + 0.05**2), -0.2, 0.2)
+        expected += torch.clamp((target[:, :1] - expected) / (1 + 0.05**2), -0.2, 0.2)
+        for selected in (torch.tensor([2], device=device), torch.arange(3, device=device)):
+            old_q, old_bodies = coords.read_state("joint_q").clone(), bodies.read_state("body_q").clone()
+            with patch.object(wp, "ScopedCapture", wraps=wp.ScopedCapture) as capture:
+                command._solve_reset_pose(selected)
+                assert capture.call_count == int(device.startswith("cuda"))
+            q = coords.read_state("joint_q")
+            torch.testing.assert_close(q[selected], expected[selected], atol=1e-7, rtol=0)
+            untouched = torch.tensor(
+                [i for i in range(3) if i not in selected.tolist()], device=device, dtype=torch.long
+            )
+            torch.testing.assert_close(q[untouched], old_q[untouched], atol=0, rtol=0)
+            torch.testing.assert_close(bodies.read_state("body_q")[untouched], old_bodies[untouched], atol=0, rtol=0)
+            assert not any(isinstance(value, wp.Graph) for value in vars(command).values())
+        retired = [part.state.joint_q.numpy().copy() for part in owners]
+        replacement = owner(3)
+        for cfg, group in zip(configs, groups, strict=True):
+            group.rebind([(replacement.resolve(cfg), torch.tensor([1, 2, 0], device=device))])
+        command._solve_reset_pose(torch.arange(3, device=device))
+        torch.testing.assert_close(coords.read_state("joint_q"), expected, atol=1e-7, rtol=0)
+        for part, old in zip(owners, retired, strict=True):
+            np.testing.assert_array_equal(part.state.joint_q.numpy(), old)
+
+
+def test_velocity_reduction_uses_compact_ragged_dofs(selections):
+    from types import SimpleNamespace
 
     from isaaclab.managers import TerminationTermCfg
 
@@ -258,8 +435,7 @@ def test_velocity_reduction_uses_compact_ragged_dofs(selections, monkeypatch):
     joints = selections.resolve(NewtonSelectorCfg(JOINT_DOF, ".*/hinge.*"))
     model.joint_velocity_limit.fill_(2.0)
     wp.to_torch(state.joint_qd)[joints.ids.numpy()[-2:]] = -3.0
-    monkeypatch.setattr(NewtonManager, "get_model", classmethod(lambda cls: model))
-    monkeypatch.setattr(NewtonManager, "get_state", classmethod(lambda cls: state))
+    selections.state = state
     env = SimpleNamespace(num_envs=2, device=str(model.device))
     term = joint_vel_out_of_limit(TerminationTermCfg(func=joint_vel_out_of_limit, params={"joints": joints}), env)
     np.testing.assert_array_equal(term(env, joints).cpu().numpy(), [False, True])
@@ -290,6 +466,64 @@ def test_keyboard_generator_supports_every_multiple_of_six():
         assert any(key.label.lower() in ("backspace", "bksp") for key in layout.active_keys)
         assert all(sum(key.active for key in layout.keys[p : p + 6]) in (0, 6) for p in range(0, 108, 6))
         assert not layout.warnings
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda:0"])
+def test_grouped_selection_routes_exact_native_populations(device):
+    """Different native widths gather/scatter by actor identity, without a synthetic state."""
+    if device.startswith("cuda") and not wp.is_cuda_available():
+        pytest.skip("CUDA is unavailable")
+    sources, bindings, states = [], [], []
+    actors = [torch.tensor([4, 0, 2], device=device), torch.tensor([1, 3], device=device)]
+    for width, worlds in ((1, 3), (2, 2)):
+        builder = newton.ModelBuilder()
+        builder.begin_world()
+        root = builder.add_link(label="/Robot/root", mass=1.0)
+        joints = [builder.add_joint_fixed(parent=-1, child=root)]
+        for column in range(width):
+            body = builder.add_link(label=f"/Robot/link{column}", mass=1.0)
+            joints.append(builder.add_joint_revolute(parent=root, child=body, label=f"/Robot/hinge{column}"))
+        builder.add_articulation(joints)
+        builder.end_world()
+        source = NewtonSelections(builder.finalize(device))
+        sources.append(source)
+        model = source.model.replicate(worlds)
+        state, control = model.state(), model.control()
+        # A hot native clone must never read back model topology to bind task selections.
+        with patch.object(wp.array, "numpy", side_effect=AssertionError("clone binding readback")):
+            owner = NewtonSelections(model, state=state, control=control, source=source)
+        bindings.append(owner)
+        states.append(state)
+    cfg = NewtonSelectorCfg(JOINT_COORD, "/Robot/hinge.*", dense_width=2)
+    parts = [(owner.resolve(cfg), actor_ids) for owner, actor_ids in zip(bindings, actors, strict=True)]
+    selected = NewtonSelectionGroup(cfg, parts, 5)
+    selected.write_state(
+        "joint_q", torch.tensor([[1.0, 9.0], [2.0, 12.0], [3.0, 9.0], [4.0, 14.0], [5.0, 9.0]], device=device)
+    )
+    expected = torch.tensor([[1.0, 0.0], [2.0, 12.0], [3.0, 0.0], [4.0, 14.0], [5.0, 0.0]], device=device)
+    torch.testing.assert_close(selected.read_state("joint_q"), expected)
+    torch.testing.assert_close(wp.to_torch(states[0].joint_q), torch.tensor([5.0, 1.0, 3.0], device=device))
+    selected.write_state(
+        "joint_q", torch.tensor([[31.0, 32.0], [11.0, 99.0]], device=device), torch.tensor([3, 0], device=device)
+    )
+    expected[3] = torch.tensor([31.0, 32.0], device=device)
+    expected[0, 0] = 11.0
+    torch.testing.assert_close(selected.read_state("joint_q"), expected)
+    selected.write_control("joint_target_q", expected)
+    for part, actor_ids in parts:
+        torch.testing.assert_close(
+            wp.to_torch(part.owner.control.joint_target_q), expected[actor_ids, : part.width].flatten()
+        )
+    bodies_cfg = NewtonSelectorCfg(BODY, "/Robot/.*", dense_width=3)
+    bodies = NewtonSelectionGroup(
+        bodies_cfg, [(owner.resolve(bodies_cfg), rows) for owner, rows in zip(bindings, actors, strict=True)], 5
+    )
+    poses = bodies.read_state("body_q")
+    assert poses.shape == (5, 3, 7)
+    assert not poses[[0, 2, 4], 2].any()
+    from isaaclab.utils import class_to_dict
+
+    assert class_to_dict(selected) == class_to_dict(cfg)
 
 
 @pytest.mark.parametrize("partition_mode", ["single", "fixed_dof"])

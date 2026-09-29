@@ -6,6 +6,7 @@
 # needed because we concatenate int and torch.Tensor in the type hints
 from __future__ import annotations
 
+import copy
 from collections.abc import Sequence
 
 import torch
@@ -233,3 +234,22 @@ class DelayBuffer:
         self._num_pushes.add_(1)
         self._write_index.add_(1).remainder_(self.history_length + 1)
         return result
+
+    def preview(self, data: torch.Tensor) -> torch.Tensor:
+        """Return the next delayed sample without changing live storage, lags, or counters.
+
+        Automatic lag sampling consumes Torch randomness, just like :meth:`compute`. Callers composing
+        several stochastic operations can preserve their entire preview's RNG in one enclosing scope.
+
+        Args:
+            data: Next sample, with first dimension equal to the batch size.
+
+        Returns:
+            Independent delayed observation with the same shape as ``data``.
+        """
+        temporary = copy.copy(self)
+        temporary._buffer = None if self._buffer is None else self._buffer.clone()
+        temporary._write_index = self._write_index.clone()
+        temporary._num_pushes = self._num_pushes.clone()
+        temporary._time_lags = self._time_lags.clone()
+        return temporary.compute(data)

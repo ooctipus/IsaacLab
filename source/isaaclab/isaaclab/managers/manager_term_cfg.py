@@ -83,11 +83,12 @@ class ActionTermCfg:
     The class should inherit from :class:`isaaclab.managers.action_manager.ActionTerm`.
     """
 
-    asset_name: str = MISSING
+    asset_name: str | None = MISSING
     """The name of the scene entity.
 
     This is the name defined in the scene configuration file. See the :class:`InteractiveSceneCfg`
-    class for more details.
+    class for more details. Set to ``None`` for a term that binds its control targets directly
+    without a scene asset. Such a term must not access ``self._asset``.
     """
 
     debug_vis: bool = False

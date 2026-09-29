@@ -10,8 +10,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import torch
-import warp as wp
-from isaaclab_newton.physics import NewtonManager
 
 from isaaclab.utils.math import subtract_frame_transforms
 
@@ -28,9 +26,8 @@ def _slots_onehot(slots: torch.Tensor, num_keys: int) -> torch.Tensor:
 
     Empty/padding positions (slot ``-1``) become all-zero rows, so they contribute nothing.
     """
-    valid = slots >= 0
-    onehot = torch.nn.functional.one_hot(slots.clamp(min=0), num_classes=num_keys).to(torch.float)
-    onehot = onehot * valid.unsqueeze(-1).to(onehot.dtype)
+    onehot = torch.zeros((*slots.shape, num_keys), dtype=torch.float, device=slots.device)
+    onehot.scatter_(-1, slots.clamp(min=0).unsqueeze(-1), (slots >= 0).unsqueeze(-1).to(torch.float))
     return onehot.reshape(slots.shape[0], -1)
 
 
@@ -60,22 +57,20 @@ def typed_keys_onehot(env: ManagerBasedRLEnv, command_name: str) -> torch.Tensor
 
 def joint_pos(env: ManagerBasedRLEnv, joints: NewtonSelection) -> torch.Tensor:
     """Selected joint coordinates [m or rad, depending on joint type]."""
-    return joints.dense(NewtonManager.get_state().joint_q)
+    return joints.read_state("joint_q")
 
 
 def joint_vel(env: ManagerBasedRLEnv, joints: NewtonSelection) -> torch.Tensor:
     """Selected joint velocities [m/s or rad/s, depending on joint type]."""
-    return joints.dense(NewtonManager.get_state().joint_qd)
+    return joints.read_state("joint_qd")
 
 
 def key_positions_b(env: ManagerBasedRLEnv, keys: NewtonSelection, root: NewtonSelection) -> torch.Tensor:
     """Key positions [m] relative to exactly one robot root per world, in stable slot order."""
     if any(count != 1 for count in root.counts):
         raise ValueError("Relative key positions require exactly one root per world.")
-    state = NewtonManager.get_state()
-    poses = wp.to_torch(state.body_q)
-    root_pose = poses[root.dense_ids()]
-    key_pose = poses[keys.dense_ids()]
+    root_pose = root.read_state("body_q")
+    key_pose = keys.read_state("body_q")
     pos, _ = subtract_frame_transforms(root_pose[..., :3], root_pose[..., 3:], key_pose[..., :3])
     active = keys.dense_active() & root.dense_active()
     return torch.where(active.unsqueeze(-1), pos, 0.0).flatten(1)

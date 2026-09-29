@@ -5,8 +5,6 @@
 
 """Composition root for the Newton SO101 keyboard task."""
 
-from dataclasses import fields, is_dataclass
-
 import torch
 import warp as wp
 from isaaclab_newton.physics import NewtonManager
@@ -15,7 +13,7 @@ from newton import JointTargetMode, JointType, ModelFlags
 from isaaclab.envs import ManagerBasedRLEnv
 
 from .keyboard_variants import KeyboardVariants
-from .newton_selection import NewtonSelections, NewtonSelectorCfg
+from .newton_selection import NewtonSelections, bind_selectors
 
 
 class SO101KeyboardEnv(ManagerBasedRLEnv):
@@ -25,20 +23,10 @@ class SO101KeyboardEnv(ManagerBasedRLEnv):
         super().__init__(cfg.copy(), render_mode=render_mode, **kwargs)
 
     def load_managers(self):
-        self.selections = NewtonSelections(NewtonManager.get_model())
-
-        def bind(value):
-            if isinstance(value, NewtonSelectorCfg):
-                return self.selections.resolve(value)
-            if isinstance(value, dict):
-                for key, item in value.items():
-                    value[key] = bind(item)
-            elif isinstance(value, (tuple, list)):
-                return type(value)(bind(item) for item in value)
-            elif is_dataclass(value):
-                for field in fields(value):
-                    setattr(value, field.name, bind(getattr(value, field.name)))
-            return value
+        self.episode_interrupted = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        self.selections = NewtonSelections(
+            NewtonManager.get_model(), state=NewtonManager.get_state(), control=NewtonManager.get_control()
+        )
 
         for cfg in (
             self.cfg.commands,
@@ -48,7 +36,7 @@ class SO101KeyboardEnv(ManagerBasedRLEnv):
             self.cfg.terminations,
             self.event_manager.cfg,
         ):
-            bind(cfg)
+            bind_selectors(cfg, self.selections.resolve)
         # Authored robot USD can carry a calibrated pose. The task's reset seed is zero.
         state = NewtonManager.get_state()
         robot = self.cfg.actions.action.joints
@@ -70,6 +58,31 @@ class SO101KeyboardEnv(ManagerBasedRLEnv):
         )
         super().load_managers()
 
+    @property
+    def all_env_ids(self):
+        """Stable logical actor IDs used by the task's MDP."""
+        return self.scene._ALL_INDICES
+
+    @property
+    def env_origins(self):
+        """Physical world origins for portable reset snapshots."""
+        return self.scene.env_origins
+
+    def forward(self):
+        """Reconcile task-authored state and update native forward kinematics."""
+        self.sim.forward()
+
+    def curriculum_worlds(self, variant):
+        """Provide scratch worlds of one keyboard variant during initial curriculum construction."""
+        if self.keyboard_variants is not None:
+            self.keyboard_variants.apply(self.all_env_ids, torch.full_like(self.all_env_ids, variant))
+        return self.all_env_ids
+
+    def finish_curriculum(self, original_variants):
+        """Restore keyboard assignments after constructing reset snapshots."""
+        if self.keyboard_variants is not None:
+            self.keyboard_variants.apply(self.all_env_ids, original_variants)
+
     def _reset_idx(self, env_ids, *, variant_ids=None):
         ids = self.scene._ALL_INDICES[env_ids]
         if self.keyboard_variants is not None:
@@ -82,6 +95,16 @@ class SO101KeyboardEnv(ManagerBasedRLEnv):
                 variants = torch.as_tensor(variant_ids, dtype=torch.long, device=self.device)
             self.keyboard_variants.apply(ids, variants)
         super()._reset_idx(ids)
+
+    def invalidate_fk(self, env_ids) -> None:
+        """Mark task-authored coordinates for reconciliation before native state reads."""
+        NewtonManager.invalidate_fk(env_ids=wp.from_torch(env_ids.to(torch.int32)))
+
+    def notify_model_changed(self, flags, env_ids) -> None:
+        """Synchronize task-authored model properties in the selected logical worlds."""
+        self._property_world_mask.zero_()
+        wp.to_torch(self._property_world_mask)[env_ids] = True
+        NewtonManager.notify_model_changed(flags, world_mask=self._property_world_mask)
 
     def reset_keyboard(self, env_ids, variant_ids) -> None:
         """Reset selected episodes to registered keyboard variants, then reconcile forward kinematics."""

@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 # Class names of the kitless physics backends (Newton, OvPhysX). Matched by exact
 # name so subclasses with distinct names opt out.
-_KITLESS_PHYSICS_CFGS = ("NewtonCfg", "OvPhysxCfg")
+_KITLESS_PHYSICS_CFGS = ("NewtonCfg", "NewtonPopulationCfg", "OvPhysxCfg")
 
 
 def add_launcher_args(parser: argparse.ArgumentParser) -> None:

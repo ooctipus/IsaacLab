@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg, NewtonShapeCfg
+from isaaclab_newton.physics.population import NewtonPopulationCfg
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import AssetBaseCfg
@@ -29,7 +30,7 @@ from .keyboards.keyboard_geometry import generate_keyboard
 from .keyboards.keyboard_pool import TYPING_KEYBOARD_VARIANTS
 from .mdp.actions import NewtonRelativeJointPositionActionCfg
 from .mdp.reset import KeyboardResetIKCfg
-from .newton_selection import BODY, JOINT_COORD, JOINT_DOF, NewtonSelectorCfg
+from .newton_selection import BODY, JOINT_COORD, JOINT_DOF, NewtonSelectorCfg, bind_selectors
 
 _REFERENCE_KEYBOARD = generate_keyboard(TYPING_KEYBOARD_VARIANTS[0])
 _BACKSPACE_SLOT = next(key.slot for key in _REFERENCE_KEYBOARD.active_keys if key.label.lower() == "backspace")
@@ -147,7 +148,7 @@ class CommandsCfg:
 
 @configclass
 class SO101RelJointPosActionCfg:
-    action = NewtonRelativeJointPositionActionCfg(asset_name="robot", joints=ROBOT_Q, dofs=ROBOT_QD, scale=0.02)
+    action = NewtonRelativeJointPositionActionCfg(asset_name=None, joints=ROBOT_Q, dofs=ROBOT_QD, scale=0.02)
 
 
 @configclass
@@ -326,4 +327,48 @@ class SO101KeyboardEnvPresets(PresetCfg):
     single_108.commands.typing.reset.pre_solve_reset.params["roots"] = _root
     single_108.events.reset_keyboard.params["roots"] = _root
     single_108.observations.perception.key_positions.params["keys"] = _key_bodies
+    default = heterogeneous
+
+
+@configclass
+class PopulationPhysicsCfg(PresetCfg):
+    newton_mjwarp = NewtonPopulationCfg(prototype_physics=PhysicsCfg().newton_mjwarp)
+    default = newton_mjwarp
+
+
+@configclass
+class SO101KeyboardPopulationEnvCfg(SO101KeyboardEnvCfg):
+    """The same global typing MDP over exact, independently sized native populations."""
+
+    sim: SimulationCfg = SimulationCfg(physics=PopulationPhysicsCfg(), dt=0.01)
+    compute_final_obs: bool = True
+    """Preserve pre-reset successor observations for timeout value bootstrapping."""
+    redistribution_interval: int = 128
+    """Policy steps between desired-distribution reconciliation boundaries."""
+    redistribution_mode: str = "truncate_pending"
+    """End pending episodes at each boundary. Opt-in ``episode_boundary`` has no guaranteed turnover interval."""
+    population_stream_count: int = 8
+    """Maximum concurrently executing homogeneous population streams."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        if self.terminations.excessive_contact is not None:
+            self.terminations.excessive_contact.params["sensor_name"] = None
+
+        def policy_slots(cfg):
+            paths = (cfg.path,) if isinstance(cfg.path, str) else cfg.path
+            if any("/Keyboard/" in path for path in paths) and cfg.count_per_world is not None:
+                return cfg.replace(count_per_world=None, dense_width=cfg.count_per_world)
+            return cfg
+
+        # Native key/root counts vary. Keep the reference policy and reset-snapshot
+        # widths explicit in configuration, while native bindings stay compact.
+        for cfg in (self.commands, self.actions, self.observations, self.rewards, self.terminations, self.events):
+            bind_selectors(cfg, policy_slots)
+
+
+@configclass
+class SO101KeyboardPopulationEnvPresets(PresetCfg):
+    heterogeneous = SO101KeyboardPopulationEnvCfg()
+    partitioned_108 = SO101KeyboardPopulationEnvCfg(keyboard_variants=())
     default = heterogeneous

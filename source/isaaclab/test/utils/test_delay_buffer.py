@@ -157,3 +157,26 @@ def test_delay_buffer_cuda_graph(delay_buffer, device):
                 expected[1].clamp_(min=4)
             torch.testing.assert_close(result, expected)
             torch.testing.assert_close(read, expected)
+
+
+@pytest.mark.parametrize("hold_prob", [None, 0.0, 0.5, 1.0])
+@pytest.mark.parametrize("warm", [False, True])
+def test_preview_matches_next_sample_without_mutating_live_storage(hold_prob, warm):
+    buffer = DelayBuffer(3, 2, "cpu", min_lag=1, hold_prob=hold_prob)
+    if hold_prob is None:
+        buffer.set_time_lag(torch.tensor([1, 3]))
+    if warm:
+        for index in range(7):
+            buffer.compute(torch.full((2, 2), float(index)))
+        buffer.reset([1])
+    names = ("_buffer", "_write_index", "_num_pushes", "_time_lags")
+    original = {name: getattr(buffer, name) for name in names}
+    before = {name: None if value is None else value.clone() for name, value in original.items()}
+    data = torch.full((2, 2), 8.0)
+    with torch.random.fork_rng(devices=[]):
+        preview = buffer.preview(data)
+    for name, value in original.items():
+        assert getattr(buffer, name) is value
+        if value is not None:
+            torch.testing.assert_close(value, before[name])
+    torch.testing.assert_close(preview, buffer.compute(data), rtol=0, atol=0)
