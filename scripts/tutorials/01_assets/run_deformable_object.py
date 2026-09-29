@@ -8,13 +8,12 @@ This script demonstrates how to work with the deformable object and interact wit
 
 .. code-block:: bash
 
-    # Usage with default PhysX physics and the Kit visualizer.
-    uv run --extra isaacsim --extra tetrahedralization python scripts/tutorials/01_assets/run_deformable_object.py \
-        --viz kit
+    # Usage with default PhysX physics and default kit visualizer.
+    uv run --extra isaacsim --extra tetrahedralization python scripts/tutorials/01_assets/run_deformable_object.py
 
-    # Usage with Newton VBD physics and the Kit visualizer.
+    # Usage with Newton VBD physics and default kit visualizer.
     uv run --extra isaacsim --extra tetrahedralization python scripts/tutorials/01_assets/run_deformable_object.py \
-        --backend newton_vbd --viz kit
+        --backend newton_vbd
 
     # Usage with OvPhysX physics without a visualizer.
     uv run --extra ovphysx --extra tetrahedralization python scripts/tutorials/01_assets/run_deformable_object.py \
@@ -36,6 +35,9 @@ parser.add_argument(
 )
 # append simulation launcher CLI arguments
 add_launcher_args(parser)
+# Kit cannot be combined with OvPhysX, so use no visualizer by default for that backend
+backend_args, _ = parser.parse_known_args()
+parser.set_defaults(visualizer=None if backend_args.backend == "ovphysx" else ["kit"])
 # parse the arguments
 args_cli = parser.parse_args()
 args_cli.physics = args_cli.backend

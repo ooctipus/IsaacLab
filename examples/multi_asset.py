@@ -7,7 +7,7 @@
 
 .. code-block:: bash
 
-    uvx isaaclab example multi-asset --num_envs 1024 --viz newton_gl
+    uvx isaaclab example multi-asset --num_envs 1024
 """
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ parser.add_argument(
 )
 parser.add_argument("--max_steps", type=int, default=-1, help="Stop after this many steps; negative runs forever.")
 add_launcher_args(parser)
+parser.set_defaults(visualizer=["newton_gl"])
 args_cli = parser.parse_args()
 if args_cli.max_steps == 0 or args_cli.max_steps < -1:
     parser.error("--max_steps must be positive or -1.")

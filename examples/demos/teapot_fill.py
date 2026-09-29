@@ -10,7 +10,7 @@ The teapot is a hollow, double-walled shell, so the fluid is seeded in its enclo
 
 .. code-block:: bash
 
-    # Fast Newton visualizer:
+    # Fast Newton visualizer (the default):
     uvx isaaclab demo teapot-fill --device cuda:0 --visualizer newton_gl
     # Display both the raw particles and reconstructed surface:
     uvx isaaclab demo teapot-fill --visualizer newton_gl --fluid_render_mode both
@@ -137,6 +137,7 @@ parser.add_argument(
     help="Optional RTX catch-bowl visual. An empty or unavailable path uses the procedural bowl.",
 )
 add_launcher_args(parser)
+parser.set_defaults(visualizer=["newton_gl"])
 args_cli = parser.parse_args()
 
 

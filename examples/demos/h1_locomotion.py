@@ -8,7 +8,7 @@
 .. code-block:: bash
 
     # Usage
-    uvx isaaclab demo h1-locomotion --viz newton_gl
+    uvx isaaclab demo h1-locomotion
 
 """
 
@@ -31,6 +31,7 @@ parser.add_argument(
     "--physics", default="newton_mjwarp", choices=["isaacsim_physx", "newton_mjwarp"], help="Physics backend."
 )
 add_launcher_args(parser)
+parser.set_defaults(visualizer=["newton_gl"])
 args_cli = parser.parse_args()
 if args_cli.num_envs < 1:
     parser.error("--num_envs must be at least 1.")

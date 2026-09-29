@@ -9,16 +9,16 @@
 .. code-block:: bash
 
     # with allegro hand
-    uvx isaaclab example multi-mesh-ray-caster --num_envs 16 --asset_type allegro_hand --viz newton_gl
+    uvx isaaclab example multi-mesh-ray-caster --num_envs 16 --asset_type allegro_hand
 
     # with anymal-D bodies
-    uvx isaaclab example multi-mesh-ray-caster --num_envs 16 --asset_type anymal_d --viz newton_gl
+    uvx isaaclab example multi-mesh-ray-caster --num_envs 16 --asset_type anymal_d
 
     # with random multiple objects
-    uvx isaaclab example multi-mesh-ray-caster --num_envs 16 --asset_type objects --viz newton_gl
+    uvx isaaclab example multi-mesh-ray-caster --num_envs 16 --asset_type objects
 
     # with Newton (MJWarp) physics
-    uvx isaaclab example multi-mesh-ray-caster --physics newton_mjwarp --viz newton_gl
+    uvx isaaclab example multi-mesh-ray-caster --physics newton_mjwarp
 
 """
 
@@ -51,6 +51,7 @@ parser.add_argument(
 )
 parser.add_argument("--max_steps", type=int, default=-1, help="Stop after this many steps; negative runs forever.")
 add_launcher_args(parser)
+parser.set_defaults(visualizer=["newton_gl"])
 args_cli = parser.parse_args()
 if args_cli.max_steps == 0 or args_cli.max_steps < -1:
     parser.error("--max_steps must be positive or -1.")

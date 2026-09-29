@@ -26,7 +26,7 @@ parser.add_argument(
 )
 add_launcher_args(parser)
 # surface grippers only run on CPU, and the launcher applies --device to the environment
-parser.set_defaults(device="cpu")
+parser.set_defaults(visualizer=["kit"], device="cpu")
 args_cli = parser.parse_args()
 if args_cli.num_envs < 1:
     parser.error("--num_envs must be at least 1.")

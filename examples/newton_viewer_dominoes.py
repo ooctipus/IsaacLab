@@ -10,7 +10,7 @@ across all rows.
 
 .. code-block:: bash
 
-    uvx isaaclab example newton-dominoes --viz newton_gl
+    uvx isaaclab example newton-dominoes
 """
 
 import argparse
@@ -21,6 +21,7 @@ from isaaclab.app import add_launcher_args, launch_simulation
 parser = argparse.ArgumentParser(description="NVIDIA-logo domino dragging example (XPBD).")
 parser.add_argument("--max_steps", type=int, default=-1, help="Stop after this many steps; negative runs forever.")
 add_launcher_args(parser)
+parser.set_defaults(visualizer=["newton_gl"])
 args_cli = parser.parse_args()
 
 import torch

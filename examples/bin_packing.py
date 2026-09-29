@@ -25,8 +25,8 @@ velocity, and mass noise, teleporting out-of-bounds objects back in.
 
 .. code-block:: bash
 
-    # Usage with default PhysX physics and the Kit visualizer.
-    uvx --from 'isaaclab[isaacsim]' isaaclab example bin-packing --viz kit
+    # Usage with default PhysX physics and default kit visualizer.
+    uvx --from 'isaaclab[isaacsim]' isaaclab example bin-packing
 
 """
 
@@ -45,6 +45,7 @@ parser.add_argument("--num_envs", type=int, default=16, help="Number of environm
 parser.add_argument("--physics", default="isaacsim_physx", choices=["isaacsim_physx"], help="Physics backend.")
 parser.add_argument("--max_steps", type=int, default=-1, help="Stop after this many steps; negative runs forever.")
 add_launcher_args(parser)
+parser.set_defaults(visualizer=["kit"])
 args_cli = parser.parse_args()
 if args_cli.max_steps == 0 or args_cli.max_steps < -1:
     parser.error("--max_steps must be positive or -1.")

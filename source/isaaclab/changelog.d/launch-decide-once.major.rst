@@ -10,8 +10,10 @@ Added
 Changed
 ^^^^^^^
 
-* **Breaking:** Scripts and tasks no longer open a visualizer by default. Pass ``--visualizer`` (for example
-  ``--visualizer kit`` or ``--visualizer newton_gl``) to open one.
+* **Breaking:** Tasks, ``run_cartpole_rl_env.py``, ``lift_franka_soft.py`` and ``check_keyboard.py`` no longer
+  open a visualizer by default. Pass ``--visualizer`` (for example ``--visualizer kit`` or
+  ``--visualizer newton_gl``) to open one. Demos, examples and visualizer tutorials keep their default visualizer
+  through ``parser.set_defaults(visualizer=[...])``; ``--visualizer`` replaces it.
 * **Breaking:** Without ``--visualizer``, :func:`~isaaclab.app.launch_simulation` runs no visualizer, even if
   :attr:`~isaaclab.sim.SimulationCfg.visualizer_cfgs` lists some. ``--visualizer`` selects which visualizers
   run and the configured ones only supply the settings of the selected types: each selected type uses the

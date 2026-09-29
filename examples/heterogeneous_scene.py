@@ -15,7 +15,7 @@ simulation settings.
 .. code-block:: bash
 
     # Usage with the full default task selection.
-    uvx --from 'isaaclab[isaacsim]' isaaclab example heterogeneous-scene --viz kit
+    uvx --from 'isaaclab[isaacsim]' isaaclab example heterogeneous-scene
 
     # Usage with a smaller composition.
     uvx --from 'isaaclab[isaacsim]' isaaclab example heterogeneous-scene --num_task 3 --num_envs 3
@@ -53,6 +53,7 @@ parser.add_argument(
 )
 parser.add_argument("--physics", default="isaacsim_physx", choices=["isaacsim_physx"], help="Physics backend.")
 add_launcher_args(parser)
+parser.set_defaults(visualizer=["kit"])
 args_cli, hydra_args = parser.parse_known_args()
 if args_cli.num_envs < 1:
     parser.error("--num_envs must be at least 1.")

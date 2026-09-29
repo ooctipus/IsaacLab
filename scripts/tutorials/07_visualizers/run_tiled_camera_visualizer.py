@@ -47,7 +47,7 @@ def _resolve_env_regex_path(prim_path: str) -> str:
 
 
 def _requested_visualizers(args_cli: argparse.Namespace) -> list[str]:
-    """Return the requested visualizers; the tutorial runs without the tiled camera panel when there are none."""
+    """Return the requested visualizers (Kit by default); without any, the tiled camera panel is skipped."""
     visualizers = [str(visualizer).lower() for visualizer in args_cli.visualizer or []]
 
     unsupported = sorted(set(visualizers) & UNSUPPORTED_TILED_VISUALIZERS)
@@ -132,6 +132,7 @@ parser.add_argument("--num_envs", type=int, default=None, help="Number of enviro
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 # append simulation launcher cli args
 add_launcher_args(parser)
+parser.set_defaults(visualizer=["kit"])
 args_cli, hydra_args = setup_preset_cli(parser)
 args_cli.task = _resolve_task(args_cli)
 sys.argv = [sys.argv[0]] + hydra_args
