@@ -90,7 +90,7 @@ class NewtonPopulation:
             # warm up and reset: that needlessly changes the prepared snapshot.
             # CUDA cannot capture Torch's legacy default stream. Record on an
             # owned nonblocking stream, then replay on the caller's producer stream.
-            with wp.ScopedStream(wp.Stream(self.model.device)):
+            with wp.ScopedStream(wp.Stream(self.model.device), sync_exit=True):
                 with wp.ScopedCapture(device=self.model.device) as capture:
                     self._simulate(2)
                 self.graph = capture.graph
@@ -211,6 +211,10 @@ class NewtonPopulationBackend:
         self._streams = tuple(wp.Stream(self.device) for _ in range(stream_count)) if stream_count > 1 else ()
         self._complete = tuple(wp.Event(self.device) for _ in self._streams)
         self._fork = wp.Event(self.device) if self._streams else None
+        self._last_work = wp.Event(self.device) if self.device.is_cuda else None
+        self._transfer_status = (
+            wp.empty(len(self.prototypes), dtype=wp.int32, device="cpu", pinned=True) if self.device.is_cuda else None
+        )
         self._stream_groups: tuple[tuple[int, ...], ...] = tuple(() for _ in self._streams)
         self.populations: tuple[NewtonPopulation | None, ...] = (None,) * len(self.prototypes)
         self._closed = False
@@ -254,54 +258,88 @@ class NewtonPopulationBackend:
                     raise ValueError("Unchanged populations retain their native row indices.")
         if counts == self.counts:
             return
-        replacements = list(self.populations)
+        old_counts = self.counts
+        replacements = [
+            population if count else None for population, count in zip(self.populations, counts, strict=True)
+        ]
+        stream_groups = self._stream_groups
+        if self._streams:
+            groups, loads = [[] for _ in self._streams], [0] * len(self._streams)
+            active = [i for i, count in enumerate(counts) if count]
+            # Prepared sources contain one local world; exact replication scales
+            # their native DOF count without reading the new device allocations.
+            weights = [
+                source.model.joint_dof_count * count for source, count in zip(self.prototypes, counts, strict=True)
+            ]
+            for index in sorted(active, key=weights.__getitem__, reverse=True):
+                stream = min(range(len(loads)), key=loads.__getitem__)
+                groups[stream].append(index)
+                loads[stream] += max(1, weights[index])
+            stream_groups = tuple(tuple(group) for group in groups)
+        build_groups = stream_groups if self._streams else (tuple(i for i, count in enumerate(counts) if count),)
+        producer = wp.get_stream(self.device) if self.device.is_cuda else None
         statuses = []
         try:
-            for index, (count, old_count) in enumerate(zip(counts, self.counts, strict=True)):
-                if count != old_count:
-                    replacements[index] = (
-                        NewtonPopulation(
+            if producer is not None:
+                producer.wait_event(self._last_work)
+            if self._streams:
+                producer.record_event(self._fork)
+            for group, indices in enumerate(build_groups):
+                changed = [index for index in indices if counts[index] != old_counts[index]]
+                if not changed:
+                    continue
+                stream = self._streams[group] if self._streams else None
+                if stream is not None:
+                    stream.wait_event(self._fork)
+                # One host thread records independent graphs sequentially. Only
+                # queued construction and migration work can overlap on device.
+                with wp.ScopedStream(stream, sync_enter=False, sync_exit=False):
+                    for index in changed:
+                        replacements[index] = NewtonPopulation(
                             self.prototypes[index],
-                            count,
+                            counts[index],
                             dt=self.dt,
                             substeps=self.substeps,
                             use_cuda_graph=self.use_cuda_graph,
                         )
-                        if count
-                        else None
-                    )
-                    if survivors is not None and count and old_count:
-                        source_rows, target_rows = survivors[index]
-                        if len(source_rows):
-                            old, new = self.populations[index], replacements[index]
-                            statuses.append(
-                                new.solver.copy_worlds_from(
+                        if survivors is not None and old_counts[index]:
+                            source_rows, target_rows = survivors[index]
+                            if len(source_rows):
+                                old, new = self.populations[index], replacements[index]
+                                status = new.solver.copy_worlds_from(
                                     old.solver,
                                     source_rows,
                                     target_rows,
                                     states=((old.state_0, new.state_0), (old.state_1, new.state_1)),
                                     controls=((old.control, new.control),),
                                 )
-                            )
+                                # Retain the status and its native descriptor
+                                # owners until this transaction has completed.
+                                statuses.append((index, status))
+                                if self._transfer_status is not None:
+                                    wp.copy(self._transfer_status, status, dest_offset=index, count=1)
+                if stream is not None:
+                    stream.record_event(self._complete[group])
+                    producer.wait_event(self._complete[group])
+            # The previous-work dependency and new joins cover initialization,
+            # capture setup and pinned status copies, even if the caller changed
+            # streams or this plan removes every population.
+            if producer is not None:
+                producer.record_event(self._last_work)
+                wp.synchronize_stream(producer)
+            else:
+                wp.synchronize_device(self.device)
+            if statuses:
+                values = self._transfer_status.numpy() if self._transfer_status is not None else None
+                if any(
+                    int(values[index] if values is not None else status.numpy()[0]) != 0 for index, status in statuses
+                ):
+                    raise RuntimeError("Native world transfer failed; the previous populations remain active.")
         except BaseException:
+            # Construction can fail before a worker completion event is recorded.
+            # Keep the conservative failure fence before releasing partial owners.
             wp.synchronize_device(self.device)
             raise
-        stream_groups = self._stream_groups
-        if self._streams:
-            groups, loads = [[] for _ in self._streams], [0] * len(self._streams)
-            active = [i for i, population in enumerate(replacements) if population is not None]
-            # Native DOF count includes the exact population size and gives a
-            # cheap deterministic load estimate without a timing/readback pass.
-            for index in sorted(active, key=lambda i: replacements[i].model.joint_dof_count, reverse=True):
-                stream = min(range(len(loads)), key=loads.__getitem__)
-                groups[stream].append(index)
-                loads[stream] += max(1, replacements[index].model.joint_dof_count)
-            stream_groups = tuple(tuple(group) for group in groups)
-        # Old graphs may still be queued. Retain the complete old tuple until all
-        # device work finishes, then publish at the caller's control boundary.
-        wp.synchronize_device(self.device)
-        if any(int(status.numpy()[0]) != 0 for status in statuses):
-            raise RuntimeError("Native world transfer failed; the previous populations remain active.")
         self.populations, self._stream_groups = tuple(replacements), stream_groups
 
     def step(self) -> None:
@@ -340,36 +378,49 @@ class NewtonPopulationBackend:
         """Fork producer inputs, execute independent populations, and join their outputs."""
         if self._closed:
             raise RuntimeError("The population backend is closed.")
-        if not self._streams:
-            for index, population in enumerate(self.populations):
-                if population is not None:
-                    operation(index)
-            return
-        producer = wp.get_stream(self.device)
-        producer.record_event(self._fork)
-        submitted = []
+        producer = wp.get_stream(self.device) if self._last_work is not None else None
+        if producer is not None:
+            producer.wait_event(self._last_work)
         try:
-            for stream, indices, complete in zip(self._streams, self._stream_groups, self._complete, strict=True):
-                if indices:
-                    stream.wait_event(self._fork)
-                    try:
-                        with wp.ScopedStream(stream, sync_enter=False, sync_exit=False):
-                            for index in indices:
-                                operation(index)
-                    finally:
-                        stream.record_event(complete)
-                        submitted.append(complete)
+            if not self._streams:
+                for index, population in enumerate(self.populations):
+                    if population is not None:
+                        operation(index)
+                return
+            producer.record_event(self._fork)
+            submitted = []
+            try:
+                for stream, indices, complete in zip(self._streams, self._stream_groups, self._complete, strict=True):
+                    if indices:
+                        stream.wait_event(self._fork)
+                        try:
+                            with wp.ScopedStream(stream, sync_enter=False, sync_exit=False):
+                                for index in indices:
+                                    operation(index)
+                        finally:
+                            stream.record_event(complete)
+                            submitted.append(complete)
+            finally:
+                for complete in submitted:
+                    producer.wait_event(complete)
         finally:
-            for complete in submitted:
-                producer.wait_event(complete)
+            if producer is not None:
+                producer.record_event(self._last_work)
 
     def forward(self) -> None:
         """Update forward kinematics for every active population."""
         if self._closed:
             raise RuntimeError("The population backend is closed.")
-        for population in self.populations:
-            if population is not None:
-                population.forward()
+        producer = wp.get_stream(self.device) if self._last_work is not None else None
+        if producer is not None:
+            producer.wait_event(self._last_work)
+        try:
+            for population in self.populations:
+                if population is not None:
+                    population.forward()
+        finally:
+            if producer is not None:
+                producer.record_event(self._last_work)
 
     def close(self) -> None:
         """Wait for queued work before releasing graphs and their native storage."""
@@ -378,7 +429,7 @@ class NewtonPopulationBackend:
             self.populations = ()
             self.prototypes = ()
             self._stream_groups = self._streams = self._complete = ()
-            self._fork = None
+            self._fork = self._last_work = self._transfer_status = None
             self._closed = True
 
 
