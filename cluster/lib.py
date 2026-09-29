@@ -13,6 +13,10 @@ Usage from shell:
     python3 cluster/lib.py submit <script> [args...]
     python3 cluster/lib.py pbt <script> [args...]
     python3 cluster/lib.py cancel <prefix-N> <count>
+
+For an intentional single-node queue, pass target_node=<hostname> together with
+expected_gpu_uuids=<comma-separated GPU UUIDs>. Other currently listed pool nodes
+are excluded, and the task verifies the exact GPU set before starting training.
 """
 
 from __future__ import annotations
@@ -89,6 +93,9 @@ CLUSTER_KEY_ORDER = [
     "storage",
     "master_port",
     "kitless",
+    "target_node",
+    "expected_gpu_uuids",
+    "nodes_excluded",
 ]
 
 BOOL_FLAGS = {"--video", "--enable_cameras"}
@@ -182,7 +189,7 @@ class ParsedArgs:
     run_name: str = ""
 
 
-_CLUSTER_KEYS = set(CLUSTER_DEFAULTS) | {"pool", "priority", "run_name"}
+_CLUSTER_KEYS = set(CLUSTER_DEFAULTS) | {"pool", "priority", "run_name", "target_node", "expected_gpu_uuids"}
 
 
 def _try_cluster_key(arg: str, next_arg: str | None, p: ParsedArgs) -> int:
@@ -214,7 +221,7 @@ def _set_cluster_key(key_bare: str, val: str, p: ParsedArgs):
         p.priority = priority
     elif key_bare == "run_name":
         p.run_name = val
-    elif key_bare in CLUSTER_DEFAULTS:
+    elif key_bare in CLUSTER_DEFAULTS or key_bare in {"target_node", "expected_gpu_uuids"}:
         p.cluster[key_bare] = val
         p.cluster_overrides.add(key_bare)
     return True
@@ -379,7 +386,7 @@ def _nodes_that_fit(
 
 
 def apply_auto_resources(p: ParsedArgs, nodes: list[PoolNodeResources] | None = None) -> ResourcePlan:
-    """Fill unspecified CPU, memory, and storage from pool resource data."""
+    """Plan resources; explicit target nodes may queue against their known capacity."""
     num_gpu = _positive_cluster_int(p, "num_gpu")
     num_node = _positive_cluster_int(p, "num_node")
     defaults = _default_auto_resources(num_gpu)
@@ -389,6 +396,17 @@ def apply_auto_resources(p: ParsedArgs, nodes: list[PoolNodeResources] | None = 
         nodes, warning = _load_pool_node_resources(p.pool, p.cluster["platform"])
         if warning is not None:
             plan.warnings.append(warning)
+
+    target_node = p.cluster.get("target_node")
+    if target_node:
+        targets = [node for node in nodes if node.hostname == target_node]
+        if len(targets) != 1:
+            print(f"Error: target_node='{target_node}' is not uniquely present in pool '{p.pool}'.", file=sys.stderr)
+            sys.exit(1)
+        p.cluster["nodes_excluded"] = json.dumps(
+            sorted({node.hostname for node in nodes if node.hostname != target_node}), separators=(",", ":")
+        )
+        nodes = targets
 
     if nodes:
         capacity_candidates = [node for node in nodes if node.allocatable_gpu >= num_gpu]
@@ -402,7 +420,7 @@ def apply_auto_resources(p: ParsedArgs, nodes: list[PoolNodeResources] | None = 
             sys.exit(1)
 
         available_candidates = [node for node in nodes if node.available_gpu >= num_gpu]
-        if len(available_candidates) >= num_node:
+        if not target_node and len(available_candidates) >= num_node:
             basis = available_candidates
             plan.source = "osmo-free"
         else:
@@ -437,6 +455,9 @@ def apply_auto_resources(p: ParsedArgs, nodes: list[PoolNodeResources] | None = 
             sys.exit(1)
         available_fit = _nodes_that_fit(nodes, num_gpu, final_cpu, final_memory, final_storage, available=True)
         if len(available_fit) < num_node:
+            if target_node:
+                plan.warnings.append(f"target_node='{target_node}' is busy; this explicit request may queue.")
+                return plan
             free_gpus = sorted((node.available_gpu for node in nodes), reverse=True)
             max_free = free_gpus[0] if free_gpus else 0
             total_free = sum(free_gpus)
@@ -561,11 +582,28 @@ def parse_args(raw_args: list[str]) -> ParsedArgs:
         p.pool = "isaac-dev-h100-01"
     _set_derived_cluster_defaults(p)
 
+    if "target_node" in p.cluster or "expected_gpu_uuids" in p.cluster:
+        target = p.cluster.get("target_node", "")
+        uuids = p.cluster.get("expected_gpu_uuids", "").split(",")
+        if (
+            not re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", target)
+            or _positive_cluster_int(p, "num_node") != 1
+            or len(uuids) != _positive_cluster_int(p, "num_gpu")
+            or len(set(uuids)) != len(uuids)
+            or any(not re.fullmatch(r"GPU-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", value) for value in uuids)
+        ):
+            print(
+                "Error: target_node requires a valid hostname, num_node=1, and expected_gpu_uuids "
+                "with exactly num_gpu unique GPU UUIDs.",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+
     return p
 
 
 def build_cluster_str(cluster: dict[str, str]) -> str:
-    return " ".join(f"{k}={cluster[k]}" for k in CLUSTER_KEY_ORDER)
+    return " ".join(f"{k}={cluster[k]}" for k in CLUSTER_KEY_ORDER if k in cluster)
 
 
 def build_combos(sweep: dict[str, list[str]]) -> list[dict[str, str]]:
