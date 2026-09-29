@@ -12,6 +12,9 @@ workflow:
       memory: {{ memory }}Gi
       storage: {{ storage }}Gi
       platform: {{ platform }}
+      {% if target_node %}
+      nodesExcluded: {{ nodes_excluded }}
+      {% endif %}
 
   groups:
   - name: training
@@ -48,6 +51,18 @@ workflow:
       - path: /tmp/run.sh
         contents: |
           set -euo pipefail
+
+          {% if target_node %}
+          # Inventory exclusions may age while queued; verify hardware before training.
+          expected_gpus=$(printf '%s' '{{ expected_gpu_uuids }}' | tr ',' '\n' | LC_ALL=C sort)
+          actual_gpus=$(nvidia-smi --query-gpu=uuid --format=csv,noheader | LC_ALL=C sort)
+          if [ "${actual_gpus}" != "${expected_gpus}" ]; then
+            echo "[ERROR] Assigned GPUs do not match target_node={{ target_node }}." >&2
+            printf 'Expected:\n%s\nActual:\n%s\n' "${expected_gpus}" "${actual_gpus}" >&2
+            exit 1
+          fi
+          echo "[INFO] Verified exact GPU UUIDs for target_node={{ target_node }}."
+          {% endif %}
 
           # Avoid Vulkan conflicts in Isaac containers
           if [ -e "/usr/share/vulkan" ] && [ -e "/etc/vulkan" ]; then
@@ -164,6 +179,9 @@ default-values:
   memory: 64
   storage: 256
   platform: dgx-h100
+  target_node: ""
+  expected_gpu_uuids: ""
+  nodes_excluded: []
   cache_user: zhengyuz
   cluster_cache_root: ""
   script: scripts/reinforcement_learning/rsl_rl/train.py

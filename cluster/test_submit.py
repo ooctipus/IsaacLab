@@ -10,6 +10,7 @@ Tests verify that the exact LAUNCHING output matches expected patterns,
 preserving the behavior observed in production terminal output.
 """
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -199,6 +200,33 @@ class TestParseArgs:
         p = parse_args(["num_gpu=8", "num_cpu=12"])
         assert p.cluster["num_cpu"] == "12"
 
+    def test_target_hardware_is_cluster_configuration(self):
+        uuids = "GPU-11111111-2222-3333-4444-555555555555,GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        p = parse_args(["num_gpu=2", "target_node=node-1", f"expected_gpu_uuids={uuids}"])
+        assert p.cluster["target_node"] == "node-1"
+        assert p.cluster["expected_gpu_uuids"] == uuids
+        assert not p.fixed and not p.sweep
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            ["target_node=node-1"],
+            ["expected_gpu_uuids=GPU-11111111-2222-3333-4444-555555555555"],
+            ["target_node=node-1", "expected_gpu_uuids=bad"],
+            ["target_node=node-1;echo", "expected_gpu_uuids=GPU-11111111-2222-3333-4444-555555555555"],
+            ["target_node=node-1", "num_node=2", "expected_gpu_uuids=GPU-11111111-2222-3333-4444-555555555555"],
+            ["target_node=node-1", "num_gpu=2", "expected_gpu_uuids=GPU-11111111-2222-3333-4444-555555555555"],
+            [
+                "target_node=node-1",
+                "num_gpu=2",
+                "expected_gpu_uuids=GPU-11111111-2222-3333-4444-555555555555,GPU-11111111-2222-3333-4444-555555555555",
+            ],
+        ],
+    )
+    def test_target_hardware_requires_an_exact_single_node_request(self, args):
+        with pytest.raises(SystemExit):
+            parse_args(args)
+
 
 # =============================================================================
 # apply_auto_resources
@@ -322,6 +350,36 @@ class TestApplyAutoResources:
         p = parse_args(["pool=groot-l40s-03", "num_gpu=8", "num_node=1"])
         with pytest.raises(SystemExit):
             apply_auto_resources(p, [node])
+
+    def test_target_node_queues_using_its_capacity_and_excludes_other_nodes(self):
+        from dataclasses import replace
+
+        target = self._node(available_gpu=0, available_cpu=0, available_memory=0, available_storage=0)
+        other = replace(self._node(), hostname="other")
+        uuids = ",".join(f"GPU-{i:08x}-2222-3333-4444-555555555555" for i in range(4))
+        p = parse_args(["num_gpu=4", "target_node=node", f"expected_gpu_uuids={uuids}"])
+        plan = apply_auto_resources(p, [other, target])
+
+        assert plan.source == "osmo-capacity"
+        assert p.cluster["num_cpu"] == "120"
+        assert p.cluster["memory"] == "512"
+        assert p.cluster["nodes_excluded"] == '["other"]'
+        assert any("queue" in warning for warning in plan.warnings)
+        cluster_str = build_cluster_str(p.cluster)
+        assert 'nodes_excluded=["other"]' in cluster_str
+        assert f"expected_gpu_uuids={uuids}" in cluster_str
+
+    @pytest.mark.parametrize("empty_inventory", [True, False])
+    def test_target_node_must_be_in_live_inventory(self, empty_inventory):
+        p = parse_args(["target_node=missing", "expected_gpu_uuids=GPU-11111111-2222-3333-4444-555555555555"])
+        with pytest.raises(SystemExit):
+            apply_auto_resources(p, [] if empty_inventory else [self._node()])
+
+    def test_target_node_still_rejects_impossible_capacity(self):
+        uuids = ",".join(f"GPU-{i:08x}-2222-3333-4444-555555555555" for i in range(8))
+        p = parse_args(["num_gpu=8", "target_node=node", f"expected_gpu_uuids={uuids}"])
+        with pytest.raises(SystemExit):
+            apply_auto_resources(p, [self._node()])
 
 
 # =============================================================================
@@ -666,6 +724,35 @@ class TestWorkflowSpecArchitecture:
 
     def test_workflow_does_not_own_wandb_username(self):
         assert "WANDB_USERNAME" not in self._spec()
+
+    @pytest.mark.parametrize("allocation", ["matching", "missing", "different"])
+    def test_target_hardware_guard_runs_before_training(self, allocation):
+        from jinja2 import Template
+
+        uuids = ["GPU-11111111-2222-3333-4444-555555555555", "GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"]
+        rendered = Template(self._spec().replace("{{host:master}}", "127.0.0.1")).render(
+            num_node=1,
+            num_gpu=2,
+            platform="ovx-l40",
+            target_node="node",
+            nodes_excluded='["other"]',
+            expected_gpu_uuids=",".join(uuids),
+        )
+        assert 'nodesExcluded: ["other"]' in rendered
+        guard = rendered.split("set -euo pipefail", 1)[1].split("# Avoid Vulkan", 1)[0]
+        matching = allocation == "matching"
+        actual = list(reversed(uuids)) if matching else uuids[:1]
+        if allocation == "different":
+            actual.append("GPU-99999999-2222-3333-4444-555555555555")
+        shell = "nvidia-smi() { printf '%s\\n' " + " ".join(actual) + "; }\n"
+        result = subprocess.run(
+            ["bash", "-c", shell + "set -euo pipefail\n" + guard + "echo TRAINING_ALLOWED"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert (result.returncode == 0) == matching
+        assert ("TRAINING_ALLOWED" in result.stdout) == matching
 
 
 class TestManipulationResumeImageArchitecture:
