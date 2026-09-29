@@ -231,7 +231,7 @@ in physics, rendering, environment code, and policy inference.
 For PhysX workloads, check the following common causes:
 
 * **Unneeded visualization:** Commands that do not select a visualizer launch without a viewer by
-  default. If a configuration would otherwise launch one, pass ``--viz none`` to disable it.
+  default. If a configuration lists visualizers in ``SimulationCfg.visualizer_cfgs``, remove them there.
 * **Excessive collision work:** Avoid duplicated or overlapping collision geometry and use the
   simplest collider that provides the required fidelity.
 * **GPU collider fallbacks:** A warning that a convex mesh failed to cook as GPU-compatible means

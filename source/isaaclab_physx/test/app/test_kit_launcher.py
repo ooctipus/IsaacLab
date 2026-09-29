@@ -259,13 +259,6 @@ def test_help_on_parser_with_required_positionals(monkeypatch: pytest.MonkeyPatc
     assert "launcher arguments" in capsys.readouterr().out
 
 
-def test_visualizer_none_parsing():
-    parser = argparse.ArgumentParser()
-    add_launcher_args(parser)
-    args = parser.parse_args(["--viz", "none"])
-    assert args.visualizer == []
-
-
 @pytest.mark.parametrize(
     ("launcher_args", "livestream_env"),
     [
@@ -388,13 +381,6 @@ def test_livestream_injects_kit_visualizer_when_missing():
     assert args.visualizer == ["kit"]
 
 
-def test_livestream_rejects_disabled_visualizers():
-    args = argparse.Namespace(livestream=2, visualizer=[])
-
-    with pytest.raises(ValueError, match="Livestreaming requires the Kit visualizer"):
-        _normalize_launcher_args(vars(args))
-
-
 def test_livestream_rejects_invalid_environment_value(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("LIVESTREAM", "3")
 
@@ -452,7 +438,7 @@ _XR_KIT = {"xr": True, "visualizer": ["kit"]}
         ({"xr": True}, 0, 0, False),
         (_XR_KIT, 0, 0, False),
         # XR without a Kit visualizer auto-starts headless.
-        ({"xr": True, "visualizer": ["none"]}, 0, 0, True),
+        ({"xr": True, "visualizer": ["rerun"]}, 0, 0, True),
         # ...but an explicit '--viz kit' cannot override HEADLESS=1.
         (_XR_KIT, 1, 0, True),
         # Livestreaming forces headless.
@@ -715,14 +701,11 @@ def test_normalize_launcher_args_rejects_negative_max_visible_envs():
         _normalize_launcher_args({"visualizer": ["viser"], "max_visible_envs": -5})
 
 
-def test_parse_visualizer_csv_rejects_spaces_between_entries():
+def test_parse_visualizer_csv_rejects_invalid_names():
     with pytest.raises(argparse.ArgumentTypeError, match="without spaces"):
         parse_visualizer_csv("kit, newton_gl")
-
-
-def test_normalize_visualizers_rejects_none_with_others():
-    with pytest.raises(ValueError, match="Invalid --visualizer value"):
-        _normalize_launcher_args({"visualizer": ["none", "kit"]})
+    with pytest.raises(argparse.ArgumentTypeError, match="Invalid --visualizer value 'none'"):
+        parse_visualizer_csv("none")
 
 
 def test_visualizer_csv_does_not_swallow_hydra_overrides():
@@ -760,13 +743,6 @@ def test_matrix_viz_kit_dict_resolves_windowed(monkeypatch: pytest.MonkeyPatch):
     headless, args = _resolve_headless_for_case(monkeypatch, {"visualizer": ["kit"]})
     assert headless is False
     assert args["visualizer"] == ["kit"]
-
-
-@pytest.mark.parametrize("visualizer", [[], ["none"]])
-def test_matrix_viz_none_disables_all_and_headless(monkeypatch: pytest.MonkeyPatch, visualizer):
-    headless, args = _resolve_headless_for_case(monkeypatch, {"visualizer": visualizer}, cfg_has_kit=True)
-    assert headless is True
-    assert args["visualizer"] == []
 
 
 def test_matrix_headless_flag_deprecated_takes_precedence(monkeypatch: pytest.MonkeyPatch):

@@ -309,7 +309,7 @@ class KitLauncher(SimulationLauncher):
           Isaac Lab experiences use one renderer GPU by default. Applications that need single-process
           multi-GPU rendering can override the ``renderer.multiGpu`` settings through this argument.
 
-        * ``visualizer`` (str): Visualizer backends to enable.
+        * ``visualizer`` (str): Visualizer backends to enable. Omit it to use the config's visualizers.
           Valid options are:
 
           - ``rerun``: Use Rerun visualizer.
@@ -317,7 +317,6 @@ class KitLauncher(SimulationLauncher):
           - ``newton_rtx``: Use Newton RTX path-tracer visualizer (experimental).
           - ``viser``: Use Viser visualizer.
           - ``kit``: Use Omniverse Kit visualizer.
-          - ``none``: Disable all visualizers explicitly.
           - Multiple visualizers can be specified as a comma-delimited list:
             ``--viz rerun,newton_gl,viser``.
 

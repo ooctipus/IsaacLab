@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -120,16 +121,24 @@ def test_apply_video_recording_patches_existing_recorders():
 @pytest.mark.parametrize(
     ("visualizer_args", "message"),
     [
-        (dict(visualizer=[]), "--video needs a visualizer"),
         (dict(visualizer=["rerun"]), "--video is not supported"),
         (dict(visualizer=["viser"]), "--video is not supported"),
     ],
 )
 def test_apply_video_recording_rejects_visualizers_without_capture(visualizer_args: dict, message: str):
-    """Video recording rejects a disabled visualizer and visualizers without frame capture."""
+    """Video recording rejects visualizers without frame capture."""
     args = _args(**visualizer_args)
     env_cfg = _launched_env_cfg(args)
     with pytest.raises(ValueError, match=message):
+        apply_video_recording(env_cfg, "/my/log", args)
+
+
+def test_apply_video_recording_rejects_a_run_without_visualizers(monkeypatch: pytest.MonkeyPatch):
+    """Without the optional Kit visualizer to add, a run that has no visualizer has nothing to record from."""
+    monkeypatch.setitem(sys.modules, "isaaclab_visualizers.kit", None)
+    args = _args()
+    env_cfg = _launched_env_cfg(args)
+    with pytest.raises(ValueError, match="--video needs a visualizer"):
         apply_video_recording(env_cfg, "/my/log", args)
 
 

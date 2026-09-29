@@ -171,9 +171,9 @@ def _normalize_launcher_args(args: dict) -> None:
     """Resolve the livestream mode and the visualizer selection in place, once for every consumer.
 
     Writes ``livestream`` (the effective mode: ``--livestream`` when set (>= 0), else the ``LIVESTREAM``
-    environment variable) and ``visualizer``: canonical names, an empty list when ``--viz none`` disabled
-    all visualizers, or None when no visualizer was requested. Livestreaming adds the Kit visualizer, whose
-    viewport produces the stream. Normalizing twice gives the same result.
+    environment variable) and ``visualizer``: canonical names, or None when no visualizer was requested.
+    Livestreaming adds the Kit visualizer, whose viewport produces the stream. Normalizing twice gives the same
+    result.
     """
     livestream = args.get("livestream", -1)
     if livestream is None or int(livestream) < 0:
@@ -184,17 +184,14 @@ def _normalize_launcher_args(args: dict) -> None:
     max_visible_envs = args.get("max_visible_envs")
     if max_visible_envs is not None and int(max_visible_envs) < 0:
         raise ValueError(f"Invalid value for --max_visible_envs: {max_visible_envs}. Expected non-negative int.")
-    visualizers = args.get("visualizer")
-    if visualizers:
+    visualizers = args.get("visualizer") or None
+    if visualizers is not None:
         try:
             visualizers = parse_visualizer_csv(visualizers)
         except argparse.ArgumentTypeError as error:
             raise ValueError(str(error)) from error
-    if livestream > 0:
-        if visualizers == []:
-            raise ValueError("Livestreaming requires the Kit visualizer. Remove '--viz none' or pass '--viz kit'.")
-        if "kit" not in (visualizers or []):
-            visualizers = [*(visualizers or []), "kit"]
+    if livestream > 0 and "kit" not in (visualizers or []):
+        visualizers = [*(visualizers or []), "kit"]
     args["livestream"] = livestream
     args["visualizer"] = visualizers
 
@@ -612,12 +609,12 @@ def launch_simulation(
     # after the launchers, so a started Kit already backs the settings
     _resolve_device(sim_cfg, args, launchers)
     # A config without a SimulationCfg (e.g. a bare physics config) leaves the selection for the
-    # SimulationContext built after launch; otherwise clear one left by an earlier launch. ``none``
-    # round-trips through ``parse_visualizer_csv`` as ``--viz none``; empty means no selection.
+    # SimulationContext built after launch; otherwise clear one left by an earlier launch. Empty means
+    # no selection.
     visualizers = None if sim_cfg is not None else args.get("visualizer")
     max_visible_envs = None if sim_cfg is not None else args.get("max_visible_envs")
     settings = get_settings_manager()
-    settings.set("/isaaclab/visualizer/types", "" if visualizers is None else ",".join(visualizers) or "none")
+    settings.set("/isaaclab/visualizer/types", ",".join(visualizers or []))
     settings.set("/isaaclab/visualizer/max_visible_envs", -1 if max_visible_envs is None else int(max_visible_envs))
 
     exit_code = 0

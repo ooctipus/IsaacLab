@@ -9,7 +9,8 @@ The Inverse3 provides position tracking and force feedback. The VerseGrip provid
 
 .. code-block:: bash
 
-    uvx --from 'isaaclab[teleop]' isaaclab example haply-teleoperation --websocket_uri ws://localhost:10001
+    uvx --from 'isaaclab[teleop]' isaaclab example haply-teleoperation \\
+        --websocket_uri ws://localhost:10001 --viz newton_gl
 
 Prerequisites:
     Install the ``websockets`` package, start the Haply WebSocket service, and connect both devices.
@@ -65,7 +66,6 @@ parser.add_argument(
 )
 
 add_launcher_args(parser)
-parser.set_defaults(visualizer=["newton_gl"])
 args_cli = parser.parse_args()
 if args_cli.max_steps == 0 or args_cli.max_steps < -1:
     parser.error("--max_steps must be positive or -1.")

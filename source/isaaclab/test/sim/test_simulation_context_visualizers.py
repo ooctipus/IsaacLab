@@ -941,17 +941,6 @@ def test_is_rendering_false_when_only_cfg_visualizer_is_headless():
     assert ctx.is_rendering is False
 
 
-def test_is_rendering_false_when_cli_disable_all_even_with_cfg_visualizer():
-    from isaaclab.visualizers.visualizer_cfg import resolve_visualizer_cfgs
-
-    cfg_visualizer = type("CfgVisualizer", (), {"visualizer_type": "newton_gl"})()
-    settings = {
-        "/isaaclab/render/rtx_sensors": False,
-    }
-    ctx = _make_context_with_settings(settings, visualizer_cfgs=resolve_visualizer_cfgs([cfg_visualizer], []))
-    assert ctx.is_rendering is False
-
-
 def test_explicit_missing_package_raises(monkeypatch: pytest.MonkeyPatch):
     """Requesting a valid type whose package is not installed raises RuntimeError."""
     # Force import to fail for the rerun visualizer module

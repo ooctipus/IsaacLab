@@ -420,7 +420,7 @@ def show_run_summary(
             "RL library": library,
             "Physics": _physics_backend_name(env_cfg.sim.physics),
             "Renderer": "n/a (no camera sensors)" if renderer is None else renderer,
-            "Visualizer": ", ".join(visualizers) or "none (headless)",
+            "Visualizer": ", ".join(visualizers) or "headless",
             "Device": env_cfg.sim.device,
             "Environments": str(getattr(args_cli, "num_envs", None) or env_cfg.scene.num_envs),
         },
@@ -864,7 +864,7 @@ def pre_launch_video_config(env_cfg: Any, args_cli: argparse.Namespace) -> None:
     """
     if not getattr(args_cli, "video", False) or getattr(env_cfg, "video_recorders", None):
         return
-    # ``--viz`` (including ``--viz none``) decides the visualizers itself
+    # ``--viz`` decides the visualizers itself
     if getattr(args_cli, "visualizer", None) is not None:
         return
     sim_cfg = env_cfg.sim
@@ -972,14 +972,13 @@ def _resolve_video_source(env_cfg: Any) -> str:
     :attr:`~isaaclab.sim.SimulationCfg.visualizer_cfgs`.
 
     Raises:
-        ValueError: If the run has no visualizer (e.g. ``--viz none``) or only streaming visualizers.
+        ValueError: If the run has no visualizer or only streaming visualizers.
     """
     visualizers = [cfg.visualizer_type for cfg in env_cfg.sim.visualizer_cfgs if cfg.visualizer_type]
     if not visualizers:
         raise ValueError(
-            "--video needs a visualizer to record from, but the run has none (e.g. --viz none). "
-            "Remove --viz none so that video recording can auto-create a visualizer, "
-            "pass --viz kit (or another capture-capable type), "
+            "--video needs a visualizer to record from, but the run has none. "
+            "Pass --viz kit (or another capture-capable type), "
             "or add VideoRecorderCfg(source='sensor:<name>') to your env config."
         )
     capture_capable = [name for name in visualizers if name not in _NO_CAPTURE_VISUALIZERS]

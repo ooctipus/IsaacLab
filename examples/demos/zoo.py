@@ -7,7 +7,7 @@
 
 .. code-block:: bash
 
-    uvx isaaclab demo zoo
+    uvx isaaclab demo zoo --viz newton_gl
 """
 
 from __future__ import annotations
@@ -25,7 +25,6 @@ parser.add_argument(
 parser.add_argument("--num_envs", type=int, default=1, help="Number of zoo environments to spawn.")
 parser.add_argument("--max_steps", type=int, default=-1, help="Stop after this many steps; negative runs forever.")
 add_launcher_args(parser)
-parser.set_defaults(visualizer=["newton_gl"])
 args_cli = parser.parse_args()
 if args_cli.num_envs < 1:
     parser.error("--num_envs must be at least 1.")

@@ -8,10 +8,10 @@
 .. code-block:: bash
 
     # Usage
-    uvx --from 'isaaclab[isaacsim]' isaaclab example camera
+    uvx --from 'isaaclab[isaacsim]' isaaclab example camera --viz kit
 
     # Usage without a visualizer window
-    uvx --from 'isaaclab[isaacsim]' isaaclab example camera --viz none
+    uvx --from 'isaaclab[isaacsim]' isaaclab example camera
 
 """
 
@@ -40,7 +40,6 @@ parser.add_argument(
     help="Physics backend.",
 )
 add_launcher_args(parser)
-parser.set_defaults(visualizer=["kit"])
 args_cli = parser.parse_args()
 if args_cli.log_interval < 1:
     parser.error("--log_interval must be at least 1.")

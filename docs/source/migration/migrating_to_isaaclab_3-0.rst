@@ -2535,8 +2535,8 @@ The details below describe how CLI visualizer arguments resolve together with
 
 - ``--viz`` accepts **comma-separated** values (for example ``--viz kit,newton_gl``).
   ``"newton"`` is a deprecated alias for ``"newton_gl"``; prefer ``"newton_gl"`` or ``"newton_rtx"``.
-- If omitted, visualizers are resolved from ``SimulationCfg.visualizer_cfgs``.
-- ``--viz none`` explicitly disables all visualizers, including config-defined ones.
+- If omitted, visualizers are resolved from ``SimulationCfg.visualizer_cfgs``, which is empty (no
+  visualizers) by default.
 
 For the full behavior of visualizer resolution with the visualizer CLI argument and visualizer configs,
 see :ref:`visualization-common-modes`.
@@ -2551,8 +2551,8 @@ In Isaac Lab 3.0, ``--headless`` and ``--viz`` are independent:
 
 Passing ``--viz kit --headless`` now launches a Kit visualizer in headless mode using the
 Replicator offscreen renderer (no display window required).  Passing ``--viz newton_gl --headless``
-launches a Newton GL visualizer using pyglet's EGL headless backend.  To disable all visualizers
-explicitly, use ``--viz none``.
+launches a Newton GL visualizer using pyglet's EGL headless backend.  To run without visualizers,
+omit ``--viz``.
 
 .. list-table:: Headless visualizer requirements
    :header-rows: 1

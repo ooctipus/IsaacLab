@@ -149,8 +149,8 @@ def test_launch_simulation_writes_max_visible_envs_without_visualizer(kit_launch
 
 @pytest.mark.parametrize(
     "visualizer, expected_types",
-    [(None, ["kit", "newton_gl"]), (["none"], []), (["newton_gl", "rerun"], ["newton_gl", "rerun"])],
-    ids=["config", "none", "explicit"],
+    [(None, ["kit", "newton_gl"]), (["newton_gl", "rerun"], ["newton_gl", "rerun"])],
+    ids=["config", "explicit"],
 )
 def test_launch_simulation_resolves_visualizers_into_config(kit_launcher_args, visualizer, expected_types):
     """The launch writes the run's visualizers into the config; an explicit selection keeps configured settings."""
@@ -177,8 +177,8 @@ def test_launch_simulation_leaves_selection_for_a_config_built_after_launch(kit_
     """Without a SimulationCfg to write into, the selection reaches the SimulationContext through the settings."""
     settings = get_settings_manager()
 
-    with sim_launcher.launch_simulation(NewtonCfg(), {"visualizer": ["none"], "require_kit": True}):
-        assert settings.get("/isaaclab/visualizer/types") == "none"
+    with sim_launcher.launch_simulation(NewtonCfg(), {"visualizer": ["newton_gl"], "require_kit": True}):
+        assert settings.get("/isaaclab/visualizer/types") == "newton_gl"
     with sim_launcher.launch_simulation(_DummyEnvCfg(SimulationCfg(visualizer_cfgs=[])), {"require_kit": True}):
         assert settings.get("/isaaclab/visualizer/types") == ""
     settings.set("/isaaclab/visualizer/max_visible_envs", -1)
@@ -195,7 +195,7 @@ def test_launch_simulation_kitless_applies_python_logging_level(monkeypatch):
     monkeypatch.setattr(sim_launcher, "apply_python_logging_level", fake_apply)
 
     env_cfg = _DummyEnvCfg(SimulationCfg(visualizer_cfgs=None))
-    launcher_args = argparse.Namespace(visualizer=["none"], verbose=True)
+    launcher_args = argparse.Namespace(visualizer=None, verbose=True)
     with sim_launcher.launch_simulation(env_cfg, launcher_args):
         pass
 

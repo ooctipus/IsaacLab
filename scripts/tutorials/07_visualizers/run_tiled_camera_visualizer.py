@@ -47,12 +47,9 @@ def _resolve_env_regex_path(prim_path: str) -> str:
 
 
 def _requested_visualizers(args_cli: argparse.Namespace) -> list[str]:
-    """Return requested visualizers, defaulting to Kit for this tutorial."""
-    visualizers = args_cli.visualizer or ["kit"]
-    visualizers = [str(visualizer).lower() for visualizer in visualizers]
+    """Return the requested visualizers; the tutorial runs without the tiled camera panel when there are none."""
+    visualizers = [str(visualizer).lower() for visualizer in args_cli.visualizer or []]
 
-    if "none" in visualizers:
-        raise ValueError("This demo requires a tiled-camera visualizer. Use '--viz kit' or '--viz newton_gl'.")
     unsupported = sorted(set(visualizers) & UNSUPPORTED_TILED_VISUALIZERS)
     if unsupported:
         raise ValueError(

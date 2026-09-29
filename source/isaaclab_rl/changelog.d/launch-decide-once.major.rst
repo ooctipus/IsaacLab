@@ -1,9 +1,11 @@
 Changed
 ^^^^^^^
 
+* **Breaking:** The zero and random agents no longer open the Newton GL visualizer by default. Pass
+  ``--visualizer newton_gl`` to open it.
 * The run summary of the reinforcement learning workflows is printed after the launch and reports the resolved
-  backends, visualizers, and device, so ``--viz none`` shows no visualizer and distributed runs show each
-  rank's device. Automatic backend selectors are no longer shown next to the backend they resolved to.
+  backends, visualizers, and device, so a run without visualizers shows ``headless`` and distributed runs
+  show each rank's device. Automatic backend selectors are no longer shown next to the backend they resolved to.
 * **Breaking:** Call :func:`~isaaclab_rl.entrypoints.common.apply_video_recording` inside
   :func:`~isaaclab.app.launch_simulation`: without declared recorders it records from the first capture-capable
   visualizer the launch resolved into ``env_cfg.sim.visualizer_cfgs`` and raises when there is none. Only

@@ -50,13 +50,13 @@ def get_visualizer_install_hint(visualizer_type: str) -> str:
 def parse_visualizer_csv(value: str | list[str]) -> list[str]:
     """Parse a ``--visualizer`` comma-separated list, or a list of names, into canonical names.
 
-    ``none`` yields an empty list. Parsing canonical names again returns them unchanged.
+    Parsing canonical names again returns them unchanged.
     """
     names = value.split(",") if isinstance(value, str) else list(value)
-    invalid = [name for name in names if name not in (*VISUALIZER_TYPES, *VISUALIZER_ALIASES, "none")]
-    if invalid or ("none" in names and len(names) > 1):
+    invalid = [name for name in names if name not in (*VISUALIZER_TYPES, *VISUALIZER_ALIASES)]
+    if invalid:
         raise argparse.ArgumentTypeError(
-            f"Invalid --visualizer value {value!r}: use 'none' or a comma-separated list, without spaces, of "
+            f"Invalid --visualizer value {value!r}: use a comma-separated list, without spaces, of "
             f"{', '.join(VISUALIZER_TYPES)}."
         )
     for name in names:
@@ -66,7 +66,7 @@ def parse_visualizer_csv(value: str | list[str]) -> list[str]:
                 DeprecationWarning,
                 stacklevel=3,
             )
-    return list(dict.fromkeys(VISUALIZER_ALIASES.get(name, name) for name in names if name != "none"))
+    return list(dict.fromkeys(VISUALIZER_ALIASES.get(name, name) for name in names))
 
 
 def _make_visualizer_cfg(visualizer_type: str) -> VisualizerCfg:
@@ -88,8 +88,8 @@ def resolve_visualizer_cfgs(
     Args:
         visualizer_cfgs: Configured visualizers, e.g. :attr:`~isaaclab.sim.SimulationCfg.visualizer_cfgs`.
         visualizers: Selection in canonical names (see :func:`parse_visualizer_csv`): None keeps the configured
-            visualizers, an empty list (``--viz none``) disables all, and names keep exactly those types, reusing
-            a configured visualizer of each type (with its settings) or else its default config.
+            visualizers, and names keep exactly those types, reusing a configured visualizer of each type (with
+            its settings) or else its default config.
         max_visible_envs: ``--max_visible_envs`` applied to every resulting visualizer, or None.
     """
     if visualizer_cfgs is None:

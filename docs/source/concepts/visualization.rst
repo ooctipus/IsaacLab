@@ -740,8 +740,8 @@ Resolution Rules
 ~~~~~~~~~~~~~~~~
 
 Visualizers are resolved from ``--viz`` (comma-separated, e.g. ``--viz kit,newton_gl``) or
-``SimulationCfg.visualizer_cfgs`` in code. If ``--viz`` is omitted, the config value is used;
-``--viz none`` always disables all visualizers, regardless of config.
+``SimulationCfg.visualizer_cfgs`` in code. If ``--viz`` is omitted, the config value is used,
+which by default is empty (no visualizers); otherwise exactly the listed types are launched.
 
 Add ``--headless`` alongside ``--viz kit`` or ``--viz newton_gl`` to keep that visualizer
 running without an on-screen window, e.g. as a ``--video`` recording source on a machine
@@ -787,9 +787,6 @@ To configure visualizer settings in code, pass ``VisualizerCfg`` instances to
    * - no ``--viz``
      - ``[NewtonGLVisualizerCfg(...), RerunVisualizerCfg(...)]``
      - Launch custom Newton GL and Rerun from config.
-   * - ``--viz none``
-     - ``[NewtonGLVisualizerCfg(...), RerunVisualizerCfg(...)]``
-     - All visualizers disabled; no window, no capture source.
 
 For migration context, see :doc:`/source/migration/migrating_to_isaaclab_3-0`.
 

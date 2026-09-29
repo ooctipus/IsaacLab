@@ -9,16 +9,16 @@
 .. code-block:: bash
 
     # with allegro hand
-    uvx isaaclab example multi-mesh-ray-caster --num_envs 16 --asset_type allegro_hand
+    uvx isaaclab example multi-mesh-ray-caster --num_envs 16 --asset_type allegro_hand --viz newton_gl
 
     # with anymal-D bodies
-    uvx isaaclab example multi-mesh-ray-caster --num_envs 16 --asset_type anymal_d
+    uvx isaaclab example multi-mesh-ray-caster --num_envs 16 --asset_type anymal_d --viz newton_gl
 
     # with random multiple objects
-    uvx isaaclab example multi-mesh-ray-caster --num_envs 16 --asset_type objects
+    uvx isaaclab example multi-mesh-ray-caster --num_envs 16 --asset_type objects --viz newton_gl
 
     # with Newton (MJWarp) physics
-    uvx isaaclab example multi-mesh-ray-caster --physics newton_mjwarp
+    uvx isaaclab example multi-mesh-ray-caster --physics newton_mjwarp --viz newton_gl
 
 """
 
@@ -51,15 +51,11 @@ parser.add_argument(
 )
 parser.add_argument("--max_steps", type=int, default=-1, help="Stop after this many steps; negative runs forever.")
 add_launcher_args(parser)
-parser.set_defaults(visualizer=["newton_gl"])
 args_cli = parser.parse_args()
 if args_cli.max_steps == 0 or args_cli.max_steps < -1:
     parser.error("--max_steps must be positive or -1.")
-if args_cli.physics == "newton_mjwarp":
-    if not getattr(args_cli, "visualizer_explicit", False):
-        args_cli.visualizer = ["newton_gl"]
-    elif "kit" in (args_cli.visualizer or []):
-        parser.error("the Kit visualizer is not supported with Newton physics; select newton, rerun, viser, or none")
+if args_cli.physics == "newton_mjwarp" and "kit" in (args_cli.visualizer or []):
+    parser.error("the Kit visualizer is not supported with Newton physics; select newton_gl, rerun, or viser")
 
 import random
 
@@ -81,7 +77,7 @@ from isaaclab_assets.robots.anymal import ANYMAL_D_CFG
 if TYPE_CHECKING:
     from isaaclab.scene import InteractiveScene
 
-DEBUG_VISUALIZATION_ENABLED = "none" not in (args_cli.visualizer or [])
+DEBUG_VISUALIZATION_ENABLED = bool(args_cli.visualizer)
 if args_cli.flat_ground:
     ground_spawn_cfg = sim_utils.MeshCuboidCfg(
         size=(20.0, 20.0, 0.1),
