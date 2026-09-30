@@ -394,6 +394,8 @@ class SO101KeyboardWorldsEnvCfg(SO101KeyboardPopulationEnvCfg):
     redistribution_interval: int = 1
     redistribution_mode: str = "episode_boundary"
     worlds_memory_budget_bytes: int = 16 * 1024**3
+    # Retain available spare backing within the total budget, rounded to allocation granules; None keeps all.
+    worlds_spare_memory_budget_bytes: int | None = 1024**3
 
 
 @configclass

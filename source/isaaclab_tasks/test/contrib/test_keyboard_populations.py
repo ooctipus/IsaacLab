@@ -581,3 +581,17 @@ def test_failed_native_world_construction_retires_sources_without_gc(phase, clea
     finally:
         if enabled:
             gc.enable()
+
+
+@pytest.mark.parametrize("spare_bytes", [-1, True, 1.5])
+def test_native_spare_budget_rejects_invalid_values_before_prototype_allocation(spare_bytes):
+    from isaaclab_tasks.contrib.keyboard import keyboard_worlds
+    from isaaclab_tasks.utils import resolve_task_config
+
+    cfg, _ = resolve_task_config("IsaacContrib-Keyboard-SO101-Worlds", "", overrides=["physics=newton_mjwarp"])
+    cfg.worlds_spare_memory_budget_bytes = spare_bytes
+    with (
+        patch.object(keyboard_worlds, "prepare_keyboard_prototype", side_effect=AssertionError("prototype allocation")),
+        pytest.raises(ValueError, match="spare backing budget"),
+    ):
+        keyboard_worlds.KeyboardWorlds(SimpleNamespace(cfg=cfg))

@@ -183,6 +183,9 @@ class KeyboardWorlds:
         self._sources, self._solvers = [], []
         self._selection_owner = None
         try:
+            spare_bytes = env.cfg.worlds_spare_memory_budget_bytes
+            if spare_bytes is not None and (type(spare_bytes) is not int or spare_bytes < 0):
+                raise ValueError("Native spare backing budget must be a nonnegative integer or None.")
             physics = env.cfg.sim.physics.prototype_physics
             if not isinstance(physics, NewtonCfg) or not isinstance(physics.solver_cfg, MJWarpSolverCfg):
                 raise ValueError("Native keyboard worlds require prepared Newton MJWarp physics.")
@@ -625,7 +628,9 @@ class KeyboardWorlds:
                     ready = min(group.rows.capacity, required + max(8, required // 2)) if required else 0
                 targets.append(ready)
             if any(n != group.ready_worlds for group, n in zip(runtime.prototypes, targets, strict=True)):
-                runtime.resize_backing(tuple(targets), streams=streams)
+                runtime.resize_backing(
+                    tuple(targets), streams=streams, spare_bytes=self.env.cfg.worlds_spare_memory_budget_bytes
+                )
             self.backend.forward()
             self._failed.zero_()
             wp.launch(
@@ -658,7 +663,9 @@ class KeyboardWorlds:
                     ready = min(group.rows.capacity, live + max(8, live // 2)) if live else 0
                 targets.append(ready)
             if any(n != group.ready_worlds for group, n in zip(runtime.prototypes, targets, strict=True)):
-                runtime.resize_backing(tuple(targets), streams=streams)
+                runtime.resize_backing(
+                    tuple(targets), streams=streams, spare_bytes=self.env.cfg.worlds_spare_memory_budget_bytes
+                )
         except BaseException:
             self.env._population_bindings_valid = False
             raise
