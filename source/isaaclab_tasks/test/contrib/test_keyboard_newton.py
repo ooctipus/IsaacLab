@@ -866,7 +866,7 @@ def test_native_fields_follow_handles_strides_generations_and_reference_coordina
         generation=wp.array([7, 0, 5], dtype=wp.uint64, device="cpu"),
         starts=wp.array([0, 4, 8], dtype=int, device="cpu"),
         slot_id=wp.array([2, -1, -1, -1, -1, 0, -1, -1], dtype=int, device="cpu"),
-        ready_count=wp.zeros(2, dtype=int, device="cpu"),  # No free slots is not an unreadable population.
+        free_count=wp.zeros(2, dtype=int, device="cpu"),  # No free slots is not an unreadable population.
     )
     actors = wp.array([2, 0, 1], dtype=int, device="cpu")
     generations = wp.array([5, 7, 0], dtype=wp.uint64, device="cpu")
