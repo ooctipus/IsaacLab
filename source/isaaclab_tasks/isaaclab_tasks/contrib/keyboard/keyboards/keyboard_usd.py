@@ -395,36 +395,12 @@ def _define_tapered_keycap(
         (tx, ty, z1),
         (-tx, ty, z1),
     ]
-    indices = [
-        0,
-        1,
-        2,
-        3,
-        4,
-        7,
-        6,
-        5,
-        0,
-        4,
-        5,
-        1,
-        1,
-        5,
-        6,
-        2,
-        2,
-        6,
-        7,
-        3,
-        3,
-        7,
-        4,
-        0,
-    ]
+    # Right-handed USD faces point outwards so ordinary back-face culling preserves the cap.
+    faces = ((0, 3, 2, 1), (4, 5, 6, 7), (0, 1, 5, 4), (1, 2, 6, 5), (2, 3, 7, 6), (3, 0, 4, 7))
     mesh = UsdGeom.Mesh.Define(stage, path)
     mesh.CreatePointsAttr(Vt.Vec3fArray([Gf.Vec3f(*point) for point in points]))
     mesh.CreateFaceVertexCountsAttr([4, 4, 4, 4, 4, 4])
-    mesh.CreateFaceVertexIndicesAttr(indices)
+    mesh.CreateFaceVertexIndicesAttr([index for face in faces for index in face])
     UsdGeom.Gprim(mesh.GetPrim()).CreateDisplayColorAttr([Gf.Vec3f(*color)])
     return mesh.GetPrim()
 

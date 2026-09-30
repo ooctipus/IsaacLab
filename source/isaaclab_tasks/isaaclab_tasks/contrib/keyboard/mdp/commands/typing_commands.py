@@ -28,7 +28,7 @@ from isaaclab.utils.math import (
 
 from isaaclab_tasks.utils.success_monitor import SuccessMonitor, SuccessMonitorCfg
 
-from ..reset import capture_reset_state, prepare_reset_kinematics, restore_reset_state, tip_jacobian
+from ..reset import capture_reset_state, prepare_reset_kinematics, sample_root_poses, tip_jacobian
 from . import typing_vis
 
 if TYPE_CHECKING:
@@ -179,6 +179,12 @@ class LetterTypingCommand(CommandTerm):
             else torch.tensor(cfg.typeable_slots, device=self.device)
         )
         self._default_backspace = torch.full((self.num_envs,), cfg.backspace_slot, device=self.device, dtype=torch.long)
+        self._prototype_membership = None
+        if env.keyboard_variants is not None:
+            membership = torch.zeros((len(env.keyboard_variants.layouts), self.num_keys), dtype=torch.bool)
+            for variant, layout in enumerate(env.keyboard_variants.layouts):
+                membership[variant, [key.slot for key in layout.active_keys]] = True
+            self._prototype_membership = membership.to(self.device)
 
         # per-key press threshold (filled lazily once joint limits are available)
         self._press_level: torch.Tensor | None = None
@@ -228,7 +234,12 @@ class LetterTypingCommand(CommandTerm):
             types = ik_cfg.dofs.joint_types()
             if torch.any((types != newton.JointType.REVOLUTE) & (types != newton.JointType.PRISMATIC)):
                 raise ValueError("Reset IK supports scalar revolute and prismatic joints.")
-            self._ik_jacobian = wp.zeros((self.num_envs, 6, ik_cfg.joints.width), dtype=wp.float32, device=self.device)
+            from ...keyboard_worlds import KeyboardWorlds
+
+            if not isinstance(self._env.keyboard_variants, KeyboardWorlds):
+                self._ik_jacobian = wp.zeros(
+                    (self.num_envs, 6, ik_cfg.joints.width), dtype=wp.float32, device=self.device
+                )
             lower = ik_cfg.dofs.read_model("joint_limit_lower")
             upper = ik_cfg.dofs.read_model("joint_limit_upper")
             center, half = (lower + upper) * 0.5, (upper - lower) * (0.5 * cfg.soft_joint_pos_limit_factor)
@@ -303,6 +314,7 @@ class LetterTypingCommand(CommandTerm):
             # Per-snapshot reach residual [m] (tip -> target key) at build time; reported in the build stats.
             self._buf_reach = torch.zeros(cap, dtype=torch.float32, device=self.device)
             self._buf_variant = torch.zeros(cap, dtype=torch.long, device=self.device)
+            self._buffer_compatible = torch.ones(cap, dtype=torch.bool, device=self.device)
             # Snapshot id that seeded each env this episode (-1 == normal reset), for outcome attribution.
             self._env_source = torch.full((self.num_envs,), -1, dtype=torch.long, device=self.device)
 
@@ -353,7 +365,13 @@ class LetterTypingCommand(CommandTerm):
             self._resample_normal(normal_ids)
         buf_mask = ~normal_mask
         if bool(buf_mask.any()):
-            self._restore_snapshot(env_ids_t[buf_mask], source[buf_mask])
+            from ...keyboard_worlds import KeyboardWorlds
+
+            self._restore_snapshot(
+                env_ids_t[buf_mask],
+                source[buf_mask],
+                publish=not isinstance(self._env.keyboard_variants, KeyboardWorlds),
+            )
 
     def _sample_sources(self, env_ids: torch.Tensor) -> torch.Tensor:
         """Pick a reset source per env: ``-1`` for the normal reset, else a snapshot index in ``[0, cap)``.
@@ -368,22 +386,29 @@ class LetterTypingCommand(CommandTerm):
         scores = self.success_monitor.target_weights()
         bank = self._env.keyboard_variants
         if bank is not None:
-            compatible = self._buf_variant[None, :] == bank.variant_ids[env_ids, None]
+            variants = self._env.reset_variant_ids(env_ids)
+            compatible = self._buf_variant[None, :] == variants[:, None]
+            if self.cfg.reset.replay_only:
+                torch._assert_async(compatible.any(dim=1).all(), "Every reset prototype needs a compatible snapshot.")
+                weights = scores.clamp(min=self._cur_sample_eps)[None, :] * compatible
+                return torch.multinomial(weights, 1).squeeze(1)
             normal = (self._cur_normal_weight * compatible.sum(dim=1, keepdim=True)).clamp(min=self._cur_sample_eps)
             weights = torch.cat((normal, scores.clamp(min=self._cur_sample_eps)[None, :] * compatible), dim=1)
             return torch.multinomial(weights, 1).squeeze(1) - 1
+        scores = scores.clamp(min=self._cur_sample_eps) * self._buffer_compatible
+        if self.cfg.reset.replay_only:
+            return torch.multinomial(scores, len(env_ids), replacement=True)
         # Scale the normal weight by cap so it competes with the mean (not summed) snapshot score, making
         # p(normal) buffer-size-invariant while still handing sampling to the normal path as the buffer masters.
-        normal_w = self._cur_normal_weight * self._cur_buffer_size
-        weights = torch.cat([scores.new_full((1,), normal_w), scores])  # (cap + 1,)
+        normal_w = (self._cur_normal_weight * self._buffer_compatible.sum()).clamp(min=self._cur_sample_eps)
+        weights = torch.cat([normal_w.reshape(1), scores])  # (cap + 1,)
         # Floor every weight so the distribution can never sum to 0 (which makes torch.multinomial assert
         # "sum of probabilities <= 0"). That degenerate case arises when normal_weight == 0 and every snapshot
         # weight has reached its exploration floor; the clamp then falls back to roughly uniform replay.
-        weights = weights.clamp(min=self._cur_sample_eps)
         idx = torch.multinomial(weights, len(env_ids), replacement=True)  # (k,) in [0, cap]
         return idx - 1  # 0 -> -1 (normal); j -> snapshot j - 1
 
-    def _oversample(self, m_candidates: int, world_ids: torch.Tensor | None = None):
+    def _oversample(self, m_candidates: int, world_ids: torch.Tensor | None = None, variant_ids=None):
         """Draw ``m_candidates`` random typing states from the optional logical-world cohort in one launch.
 
         Returns ``(target, typed, target_len, typed_len, prefix_len)`` as torch tensors (``target``/``typed``
@@ -406,7 +431,7 @@ class LetterTypingCommand(CommandTerm):
             dim=m_candidates,
             inputs=[
                 wp.from_torch(env_ids, dtype=wp.int32),
-                *self._sampling_keys(world_ids),
+                *self._sampling_keys(world_ids, variant_ids),
                 int(lo),
                 int(hi),
                 int(self._resample_seed),
@@ -427,7 +452,7 @@ class LetterTypingCommand(CommandTerm):
         wp.synchronize()
         return target, typed, target_len, typed_len, prefix_len
 
-    def _sample_diverse_states(self, cap: int, world_ids: torch.Tensor | None = None):
+    def _sample_diverse_states(self, cap: int, world_ids: torch.Tensor | None = None, variant_ids=None):
         """Oversample candidate states and grid-bucket-downsample to ``cap`` with uniform coverage.
 
         The feature is the (per-axis weighted) ``(target, next_key, wrongness, prefix_complete, remaining)``
@@ -440,11 +465,13 @@ class LetterTypingCommand(CommandTerm):
         Returns the chosen ``(target, typed, target_len, typed_len)`` (each ``cap`` rows).
         """
         m_candidates = cap * self._cur_oversample
-        target, typed, target_len, typed_len, prefix = self._oversample(m_candidates, world_ids)
+        target, typed, target_len, typed_len, prefix = self._oversample(m_candidates, world_ids, variant_ids)
         rows = torch.arange(m_candidates, device=self.device)
         nxt = torch.minimum(prefix, (target_len - 1).clamp(min=0))
         needs_bs = typed_len > prefix
         backspace = self._backspace if world_ids is None else self._backspace[world_ids]
+        if variant_ids is not None:
+            backspace = self._env.keyboard_variants.backspaces[variant_ids]
         next_key = torch.where(needs_bs, backspace[rows % len(backspace)], target[rows, nxt]).clamp(min=0)
         # Backspace depth as a FRACTION of the word length, so "fully wrong" costs the same regardless of length
         # (len-1 unmatched=1 and len-3 unmatched=3 both map to 1.0). This removes the only structural length
@@ -511,12 +538,16 @@ class LetterTypingCommand(CommandTerm):
 
     def _build_buffer(self):
         """Build one shared snapshot buffer using task-owned cohorts for each registered variant."""
+        if self.cfg.reset.bank_path is not None:
+            self._load_buffer(self.cfg.reset.bank_path)
+            return
         from tqdm import tqdm
 
         cap = self._cur_buffer_size
         bank = self._env.keyboard_variants
         all_ids = self._env.all_env_ids
         original_variants = None if bank is None else bank.variant_ids.clone()
+        original_requested = None if bank is None else self._env.reset_variant_ids(all_ids).clone()
         original_state = capture_reset_state(
             self._env, all_ids, self.cfg.reset_roots, self.cfg.reset_coords, self.cfg.reset_dofs
         )
@@ -531,7 +562,8 @@ class LetterTypingCommand(CommandTerm):
                     world_ids = self._env.curriculum_worlds(variant)
                     if len(world_ids) == 0:
                         raise ValueError("Curriculum variants require a nonempty logical-world cohort.")
-                    tgt, typd, tlen, typlen = self._sample_diverse_states(size, world_ids)
+                    variants = None if bank is None else self._env.reset_variant_ids(world_ids)
+                    tgt, typd, tlen, typlen = self._sample_diverse_states(size, world_ids, variants)
                     self._buf_target[offset : offset + size] = tgt
                     self._buf_typed[offset : offset + size] = typd
                     self._buf_target_len[offset : offset + size] = tlen
@@ -557,12 +589,106 @@ class LetterTypingCommand(CommandTerm):
                         pbar.update(n)
                     offset += size
         finally:
-            self._env.finish_curriculum(original_variants)
-            restore_reset_state(
-                self._env, original_state, all_ids, self.cfg.reset_roots, self.cfg.reset_coords, self.cfg.reset_dofs
-            )
+            self._env.finish_curriculum(original_requested)
+            variants = torch.zeros_like(all_ids) if original_variants is None else original_variants
+            self._env.restore_reset_snapshot(all_ids, variants, original_state)
         self._buffer_built = True
         self._log_buffer_stats()
+
+    def _load_buffer(self, path):
+        """Load and validate portable physical/typing snapshots, with fresh curriculum history."""
+        import hashlib
+
+        payload = torch.load(path, map_location="cpu", weights_only=True)
+        contract, tensors = payload["contract"], payload["bank"]
+        fields = (
+            "_buf_state",
+            "_buf_target",
+            "_buf_typed",
+            "_buf_target_len",
+            "_buf_typed_len",
+            "_buf_reach",
+            "_buf_variant",
+        )
+        widths = (self.cfg.reset_roots.width, self.cfg.reset_coords.width, self.cfg.reset_dofs.width)
+        if (
+            contract.get("format") != 1
+            or contract["buffer_size"] != self._cur_buffer_size
+            or contract["max_len"] != self.max_len
+            or tuple(contract[key] for key in ("root_width", "coord_width", "dof_width")) != widths
+            or set(tensors) != set(fields)
+        ):
+            raise ValueError("Reset bank schema differs from the configured task.")
+        expected_shapes = {
+            "_buf_state": (self._cur_buffer_size, 7 * widths[0] + widths[1] + widths[2]),
+            "_buf_target": (self._cur_buffer_size, self.max_len),
+            "_buf_typed": (self._cur_buffer_size, self.max_len),
+        }
+        for name in fields:
+            value = tensors[name]
+            shape = expected_shapes.get(name, (self._cur_buffer_size,))
+            dtype = torch.float32 if name in ("_buf_state", "_buf_reach") else torch.long
+            if value.shape != shape or value.dtype != dtype or not torch.isfinite(value).all():
+                raise ValueError(f"Invalid reset-bank field: {name}.")
+            digest = hashlib.sha256(value.contiguous().numpy().tobytes()).hexdigest()
+            if digest != payload["tensor_manifest"][name]["sha256"]:
+                raise ValueError(f"Reset-bank integrity check failed: {name}.")
+        bank = self._env.keyboard_variants
+        variant_count = len(contract["active_labels"])
+        if not ((tensors["_buf_variant"] >= 0) & (tensors["_buf_variant"] < variant_count)).all():
+            raise ValueError("Reset-bank prototype IDs are out of range.")
+        positions = torch.arange(self.max_len)[None, :]
+        for name, length_name, minimum in (("_buf_target", "_buf_target_len", 1), ("_buf_typed", "_buf_typed_len", 0)):
+            tokens, lengths = tensors[name], tensors[length_name]
+            if not ((lengths >= minimum) & (lengths <= self.max_len)).all():
+                raise ValueError("Reset-bank typing lengths are out of range.")
+            valid = positions < lengths[:, None]
+            if not torch.where(valid, (tokens >= 0) & (tokens < self.num_keys), tokens == -1).all():
+                raise ValueError("Reset-bank typing tokens do not match their declared lengths.")
+        if bank is not None:
+            if self.cfg.reset.bank_variant is not None:
+                raise ValueError("reset.bank_variant applies only to a homogeneous keyboard without a variant bank.")
+            if variant_count < len(bank.layouts):
+                raise ValueError("Reset-bank prototype labels differ from the configured task.")
+            for variant, layout in enumerate(bank.layouts):
+                labels = [key.label for key in layout.active_keys]
+                if labels != contract["active_labels"][variant]:
+                    raise ValueError("Reset-bank key ordering differs from a prepared prototype.")
+                rows = tensors["_buf_variant"] == variant
+                if not rows.any():
+                    raise ValueError("Every registered keyboard needs reset-bank coverage.")
+                for name in ("_buf_target", "_buf_typed"):
+                    tokens = tensors[name][rows]
+                    if not ((tokens >= -1) & (tokens < layout.active_key_count)).all():
+                        raise ValueError("Reset-bank typing tokens reference absent keys.")
+        else:
+            from ...keyboards.keyboard_geometry import generate_keyboard
+
+            layout = generate_keyboard(self._env.cfg.scene.keyboard.spawn)
+            labels = [key.label for key in layout.active_keys]
+            compatible = torch.tensor([entry == labels for entry in contract["active_labels"]], dtype=torch.bool)
+            selected_variant = self.cfg.reset.bank_variant
+            if selected_variant is None:
+                matches = compatible.nonzero().flatten()
+                if len(matches) > 1:
+                    raise ValueError("Reset bank has ambiguous matching labels; set reset.bank_variant explicitly.")
+                if len(matches) == 0:
+                    raise ValueError("Reset bank has no prototype matching the homogeneous keyboard labels.")
+                selected_variant = int(matches[0])
+            if (
+                isinstance(selected_variant, bool)
+                or not isinstance(selected_variant, int)
+                or not 0 <= selected_variant < variant_count
+                or not compatible[selected_variant]
+            ):
+                raise ValueError("reset.bank_variant must select a valid prototype with matching keyboard labels.")
+            self._buffer_compatible = (tensors["_buf_variant"] == selected_variant).to(self.device)
+            if not self._buffer_compatible.any():
+                raise ValueError("Reset bank has no snapshots matching the homogeneous keyboard layout.")
+        for name in fields:
+            setattr(self, name, tensors[name].to(self.device, copy=True))
+        self._buf_avg_distance = payload["avg_distance"]
+        self._buffer_built = True
 
     def _log_buffer_stats(self):
         """Print one-time coverage/distribution stats for the freshly built snapshot buffer."""
@@ -640,12 +766,11 @@ class LetterTypingCommand(CommandTerm):
             f" {lo_cm:.1f}/{med:.1f}/{mean_cm:.1f}/{p90:.1f}/{hi_cm:.1f} cm"
         )
 
-    def _restore_snapshot(self, env_ids: torch.Tensor, snap: torch.Tensor):
-        """Restore the physical state + typing command of snapshots ``snap`` into ``env_ids``."""
+    def _restore_snapshot(self, env_ids: torch.Tensor, snap: torch.Tensor, *, publish: bool = True):
+        """Restore typing state; native episode reset may assemble the physical publication later."""
         assert self._buf_state is not None  # allocated in _build_buffer, which always runs first
-        restore_reset_state(
-            self._env, self._buf_state[snap], env_ids, self.cfg.reset_roots, self.cfg.reset_coords, self.cfg.reset_dofs
-        )
+        if publish:
+            self._env.restore_reset_snapshot(env_ids, self._buf_variant[snap], self._buf_state[snap])
         self.target[env_ids] = self._buf_target[snap]
         self.typed[env_ids] = self._buf_typed[snap]
         self.target_len[env_ids] = self._buf_target_len[snap]
@@ -660,21 +785,37 @@ class LetterTypingCommand(CommandTerm):
         self.new_high[env_ids] = False
         self.new_low[env_ids] = False
         tokens = torch.cat((self.target[env_ids], self.typed[env_ids]), dim=1)
-        membership = self.key_joints.dense_active()[env_ids]
+        if publish:
+            membership = self.key_joints.dense_active()[env_ids]
+            backspace = self._backspace[env_ids]
+        else:
+            variants = self._env.reset_variant_ids(env_ids)
+            torch._assert_async(
+                (self._buf_variant[snap] == variants).all(), "Replay snapshot must match requested prototype."
+            )
+            membership = self._prototype_membership[variants]
+            backspace = self._env.keyboard_variants.backspaces[variants]
         active = membership.gather(1, tokens.clamp(min=0))
         needs_backspace = self.typed_len[env_ids] > prefix
-        backspace_active = membership.gather(1, self._backspace[env_ids, None]).squeeze(1)
+        backspace_active = membership.gather(1, backspace[:, None]).squeeze(1)
         invalid = env_ids[((tokens >= 0) & ~active).any(dim=1) | (needs_backspace & ~backspace_active)]
         if invalid.numel():
             self._env_source[invalid] = -1
             self._resample_normal(invalid)
 
-    def _sampling_keys(self, world_ids: torch.Tensor | None = None):
-        """Pack eligible slots for a logical-world cohort; ordinary solver sleep is irrelevant."""
-        membership = self.key_joints.dense_active()
-        backspace_slots = self._backspace
-        if world_ids is not None:
-            membership, backspace_slots = membership[world_ids], backspace_slots[world_ids]
+    def _sampling_keys(self, world_ids: torch.Tensor | None = None, variant_ids: torch.Tensor | None = None):
+        """Pack committed or explicitly prospective topology for one logical-world cohort."""
+        if variant_ids is None:
+            membership, backspace_slots = self.key_joints.dense_active(), self._backspace
+            if world_ids is not None:
+                membership, backspace_slots = membership[world_ids], backspace_slots[world_ids]
+        else:
+            if self._prototype_membership is None:
+                raise ValueError("Prospective sampling requires registered keyboard prototypes.")
+            if world_ids is not None and len(world_ids) != len(variant_ids):
+                raise ValueError("Prospective prototypes must match the requested cohort.")
+            membership = self._prototype_membership[variant_ids]
+            backspace_slots = self._env.keyboard_variants.backspaces[variant_ids]
         if len(membership) == 0:
             raise ValueError("Sampling requires a nonempty logical-world cohort.")
         active = membership[:, self._typeable] & (self._typeable[None, :] != backspace_slots[:, None])
@@ -695,12 +836,15 @@ class LetterTypingCommand(CommandTerm):
             return
         lo, hi = self.cfg.letter_length
         self._resample_seed += 1
+        variants = None
+        if self._episode_reset and self._env.keyboard_variants is not None:
+            variants = self._env.reset_variant_ids(self._env.all_env_ids)
         wp.launch(
             _resample_reset_kernel,
             dim=k,
             inputs=[
                 wp.from_torch(env_ids_t.to(torch.int32).contiguous(), dtype=wp.int32),
-                *self._sampling_keys(),
+                *self._sampling_keys(variant_ids=variants),
                 int(lo),
                 int(hi),
                 int(self._resample_seed),
@@ -894,8 +1038,10 @@ class LetterTypingCommand(CommandTerm):
         # Mark the episode-reset window so _resample_command takes the curriculum path (snapshot restore)
         # here, while the mid-episode resampling timer stays on the normal random resample.
         self._episode_reset = True
-        extras = super().reset(env_ids)
-        self._episode_reset = False
+        try:
+            extras = super().reset(env_ids)
+        finally:
+            self._episode_reset = False
         # Record the starting distance of the freshly-seeded episodes (both reset paths set self.distance to the
         # start value; the IK snap below only moves the arm) for the distance<K success split at their next reset.
         self._start_distance[ids] = self.distance[ids].long()
@@ -906,18 +1052,42 @@ class LetterTypingCommand(CommandTerm):
         if self._buf_avg_distance is not None:
             extras["distance"] = self._buf_avg_distance
 
+        from ...keyboard_worlds import KeyboardWorlds
+
+        bank = self._env.keyboard_variants
+        staged = isinstance(bank, KeyboardWorlds)
+        payload = None
+        snap_ids = ids
+        if self._cur_enabled and self._buffer_built:
+            normal = self._env_source[ids] < 0
+            snap_ids = ids[normal]
+        if staged and len(ids):
+            variants = self._env.reset_variant_ids(ids)
+            if self._cur_enabled and self._buffer_built:
+                payload = self._buf_state[self._env_source[ids].clamp(min=0)]
+                if len(snap_ids):
+                    payload[normal] = bank.reset_defaults[variants[normal]]
+            else:
+                payload = bank.reset_defaults[variants].clone()
         if self._reset_ik is not None:
             # Snap above the key the agent must press next for the (possibly pre-filled) buffer. The solve
             # reads target_key_slot(), which already accounts for the correct prefix and any pending
             # backspace, so no need to assume an empty buffer here.
-            snap_ids = ids
-            if self._cur_enabled and self._buffer_built:
-                # Buffer-restored envs already sit at their snapshot pose; only re-solve the normal-path envs.
-                snap_ids = ids[self._env_source[ids] < 0]
-            self._solve_reset_pose(snap_ids)
+            # Replay rows retain their snapshots; only the normal cohort needs a solve.
+            if staged:
+                completed = self._solve_reset_pose(snap_ids, publish=False)
+                if completed is not None:
+                    completed_ids, snapshots = completed
+                    row_for_actor = torch.empty_like(self._env.all_env_ids)
+                    row_for_actor[ids] = torch.arange(len(ids), device=self.device)
+                    payload[row_for_actor[completed_ids]] = snapshots
+            else:
+                self._solve_reset_pose(snap_ids)
+        if payload is not None:
+            self._env.restore_reset_snapshot(ids, variants, payload)
         return extras
 
-    def _solve_reset_pose(self, env_ids: torch.Tensor):
+    def _solve_reset_pose(self, env_ids: torch.Tensor, *, publish: bool = True):
         """Snap the arm so the moving-jaw tip hovers above the first key, angled to press, without stepping.
 
         Seeds the arm from its default pose (optionally jittered by ``reset.ik_seed_joint_noise``), then runs
@@ -925,35 +1095,58 @@ class LetterTypingCommand(CommandTerm):
         moving-jaw tip. Position is the primary task (always driven to zero); the ``~40%`` of iterations
         after the base pan settles also drive the approach orientation from ``reset.ik_rpy_deg`` (see
         :meth:`_approach_target_quat`), but only within the null space of position so the tip never leaves
-        the key. Each iteration evaluates selected Newton forward kinematics and the fingertip Jacobian
-        without resetting native solver state. The final ``env.forward()`` reconciles the completed reset.
-        The solve runs over all envs but only ``env_ids`` are written, leaving mid-episode envs untouched.
-        CUDA records FK and Jacobians once per solve; CPU evaluates them eagerly. This MDP-local
-        optimization is independent of the physics manager's ``use_cuda_graph`` stepping option.
+        the key. Native worlds evaluate a compact prospective robot/root payload, then publish the
+        completed snapshot once; continuing episodes are never used as reset scratch. Other backends
+        evaluate selected live Newton FK/Jacobians and reconcile once with ``env.forward()``. Both paths
+        preserve the full-environment iteration draw and use the same DLS equations and joint limits.
+        With ``publish=False``, return eligible actor IDs and their complete native snapshots for the
+        episode-reset owner to combine with replay rows; online bank construction publishes by default.
         """
         if self._reset_ik is None or len(env_ids) == 0:
-            return
+            return None
+        from ...keyboard_worlds import KeyboardWorlds
+
+        bank = self._env.keyboard_variants
+        staged = isinstance(bank, KeyboardWorlds)
+        if not staged and not publish:
+            raise ValueError("Only native reset payloads can be prepared without publishing.")
         # _resample_command filled typed/target and the derived typed_len/prefix_len via a Warp kernel
         # launched moments earlier in super().reset(). target_key_pos_w() below reads those tensors back
         # in torch within this same call (no env step in between), so synchronize Warp first: otherwise
         # the read can race the kernel and see stale lengths, making needs_backspace False and snapping the
         # arm to the next key instead of the backspace key for a pre-filled wrong buffer.
         wp.synchronize()
-        eligible = (
-            (self.target_len > 0)
-            & self.cfg.robot_joints.dense_active().all(dim=1)
-            & self.cfg.reset.ik.body.dense_active()[:, 0]
-        )
+        eligible = self.target_len > 0
+        if not staged:
+            eligible = (
+                eligible & self.cfg.robot_joints.dense_active().all(dim=1) & self.cfg.reset.ik.body.dense_active()[:, 0]
+            )
         env_ids = env_ids[eligible[env_ids]]
         if len(env_ids) == 0:
-            return
+            return None
         # Apply the pre-solve reset (e.g. keyboard-pose randomization) to these envs BEFORE reading key
         # positions below, so the arm is posed to this reset's keyboard. Runs per build batch (so the buffer
         # captures diverse keyboard poses) and for normal-path reset envs; buffer-restored envs never reach
         # here and keep their snapshot's keyboard. Selected FK sees the root write immediately; native
         # property/state reconciliation is deferred until the complete solve finishes.
         pre = self.cfg.reset.pre_solve_reset
-        if pre is not None:
+        if staged:
+            variants = self._env.reset_variant_ids(env_ids)
+            snapshot = bank.reset_defaults[variants].clone()
+            root_width, q_width = self.cfg.reset_roots.width, self.cfg.reset_coords.width
+            roots = snapshot[:, : 7 * root_width].reshape(-1, root_width, 7)
+            sampled = sample_root_poses(roots, pre.params["pose_range"], pre.params["velocity_range"])
+            roots.copy_(torch.where(bank.reset_keyboard_roots[variants, :, None], sampled, roots))
+            rows = torch.arange(len(env_ids), device=self.device)
+            nxt = torch.minimum(self.prefix_len[env_ids], (self.target_len[env_ids] - 1).clamp(min=0))
+            slots = torch.where(
+                self.typed_len[env_ids] > self.prefix_len[env_ids], bank.backspaces[variants], self.target[env_ids, nxt]
+            ).clamp(min=0)
+            key_roots = roots[rows, bank.reset_key_root[variants, slots]]
+            target_w = (
+                key_roots[:, :3] + quat_apply(key_roots[:, 3:], bank.reset_key_local[variants, slots]) + self._ik_hover
+            )
+        elif pre is not None:
             # Mirror EventManager term resolution: class-based terms (ManagerTermBase subclasses)
             # are instantiated once with (cfg, env) and the callable instance replaces ``func``.
             if inspect.isclass(pre.func) and issubclass(pre.func, ManagerTermBase):
@@ -971,46 +1164,53 @@ class LetterTypingCommand(CommandTerm):
             seed_q = torch.clamp(seed_q, limits[..., 0], limits[..., 1])
         else:
             seed_q = default_q
-        self.cfg.robot_joints.write_state("joint_q", seed_q, env_ids)
-        self.cfg.robot_dofs.write_state("joint_qd", torch.zeros_like(seed_q), env_ids)
-        self._env.invalidate_fk(env_ids)
-        kinematics = prepare_reset_kinematics(self.cfg.reset_roots, env_ids)
+        if not staged:
+            self.cfg.robot_joints.write_state("joint_q", seed_q, env_ids)
+            self.cfg.robot_dofs.write_state("joint_qd", torch.zeros_like(seed_q), env_ids)
+            self._env.invalidate_fk(env_ids)
+            kinematics = prepare_reset_kinematics(self.cfg.reset_roots, env_ids)
         kinematic_graph = None
 
         def update_kinematics():
+            if staged:
+                return bank.reset_kinematics.evaluate(seed_q, roots[:, bank.reset_robot_root])
             if kinematic_graph is None:
                 for model, state, mask in kinematics:
                     newton.eval_fk(model, state.joint_q, state.joint_qd, state, mask=mask)
                 tip_jacobian(self.cfg.reset.ik, self._ik_jacobian)
             else:
                 wp.capture_launch(kinematic_graph)
+            return None
 
-        if self._ik_jacobian.device.is_cuda:
+        if not staged and self._ik_jacobian.device.is_cuda:
             with wp.ScopedStream(wp.Stream(self._ik_jacobian.device)):
                 with wp.ScopedCapture(device=self._ik_jacobian.device) as capture:
                     update_kinematics()
                 kinematic_graph = capture.graph
-        update_kinematics()
+        compact = update_kinematics()
         # world-frame hover target above each env's first key (all envs; only env_ids are written back).
-        target_w = self.target_key_pos_w() + self._ik_hover
+        if not staged:
+            target_w = self.target_key_pos_w() + self._ik_hover
         lo, hi = self._ik_iters
         n_position = max(1, int(round(0.6 * hi)))
         # Per-env iteration budget: after an env hits its sampled count it stops refining (pose frozen), so
         # snapshots land at varying convergence - different tip-to-key distances - a reach-difficulty gradient.
         iters_env = torch.randint(lo, hi + 1, (self.num_envs,), device=self.device)
+        if staged:
+            iters_env = iters_env[env_ids]
         max_step = 0.2  # rad/iter cap so a near-singular DLS solve can't flip the arm on a hard key
         lambda_sq = 0.05**2  # damped-least-squares damping (squared), for the pseudo-inverses below
         eye_task = torch.eye(3, device=self.device)
         eye_joint = torch.eye(self.cfg.reset.ik.joints.width, device=self.device)
         quat_des: torch.Tensor | None = None
         for i in range(hi):
-            ee_pose = self.cfg.reset.ik.body.read_state("body_q")[:, 0]
+            ee_pose = compact[0] if staged else self.cfg.reset.ik.body.read_state("body_q")[:, 0]
             ee_pos_w, ee_quat_w = ee_pose[:, :3], ee_pose[:, 3:]
             # shift the parent-body pose/Jacobian to the jaw tip (world frame).
-            lever_w = quat_apply(ee_quat_w, self._ik_offset)  # tip offset expressed in world
+            lever_w = quat_apply(ee_quat_w, self._ik_offset[: len(ee_pose)])  # tip offset expressed in world
             tip_pos_w = ee_pos_w + lever_w
-            jac = wp.to_torch(self._ik_jacobian)
-            q_arm = self.cfg.reset.ik.joints.read_state("joint_q")
+            jac = compact[1] if staged else wp.to_torch(self._ik_jacobian)
+            q_arm = seed_q[:, bank.reset_ik_columns] if staged else self.cfg.reset.ik.joints.read_state("joint_q")
 
             # Task-priority damped least squares. The 5-DoF arm cannot reach an arbitrary key position AND
             # a downward pitch, so full-pose DLS trades away position (measured ~6 cm off). Instead make
@@ -1019,7 +1219,10 @@ class LetterTypingCommand(CommandTerm):
             j_pos = jac[:, 0:3, :]  # (N, 3, n_joints)
             e_pos = target_w - tip_pos_w  # (N, 3)
             jt_pos = j_pos.transpose(1, 2)
-            pos_pinv = jt_pos @ torch.linalg.inv(j_pos @ jt_pos + lambda_sq * eye_task)  # (N, n_joints, 3)
+            # Keep inversion errors on the producer stream instead of synchronizing each iteration.
+            pos_inverse, pos_info = torch.linalg.inv_ex(j_pos @ jt_pos + lambda_sq * eye_task)
+            torch._assert_async((pos_info == 0).all(), "Reset IK position inversion failed.")
+            pos_pinv = jt_pos @ pos_inverse  # (N, n_joints, 3)
             dq = pos_pinv @ e_pos.unsqueeze(-1)  # (N, n_joints, 1)
 
             # Phase 2 (once position has settled): pitch the finger down, but only within position's null
@@ -1030,18 +1233,32 @@ class LetterTypingCommand(CommandTerm):
                 e_rot = axis_angle_from_quat(quat_mul(quat_des, quat_conjugate(ee_quat_w)))  # (N, 3) world
                 j_rot = jac[:, 3:6, :]
                 jt_rot = j_rot.transpose(1, 2)
-                rot_pinv = jt_rot @ torch.linalg.inv(j_rot @ jt_rot + lambda_sq * eye_task)
+                rot_inverse, rot_info = torch.linalg.inv_ex(j_rot @ jt_rot + lambda_sq * eye_task)
+                torch._assert_async((rot_info == 0).all(), "Reset IK orientation inversion failed.")
+                rot_pinv = jt_rot @ rot_inverse
                 null_proj = eye_joint - pos_pinv @ j_pos  # (N, n_joints, n_joints)
                 dq = dq + null_proj @ (rot_pinv @ e_rot.unsqueeze(-1))
 
             q_des = q_arm + torch.clamp(dq.squeeze(-1), -max_step, max_step)
-            limits = self._ik_limits
+            limits = self._ik_limits[env_ids] if staged else self._ik_limits
             q_des = torch.clamp(q_des, limits[..., 0], limits[..., 1])
             # Freeze envs that have spent their sampled iteration budget (write back their current pose).
             q_des = torch.where((i < iters_env)[:, None], q_des, q_arm)
-            self.cfg.reset.ik.joints.write_state("joint_q", q_des[env_ids], env_ids)
-            update_kinematics()
-        self._env.forward()
+            if staged:
+                seed_q[:, bank.reset_ik_columns] = q_des
+            else:
+                self.cfg.reset.ik.joints.write_state("joint_q", q_des[env_ids], env_ids)
+            compact = update_kinematics()
+        if staged:
+            snapshot[:, 7 * root_width + bank.reset_robot_columns] = seed_q
+            snapshot[:, 7 * root_width + q_width :] = 0
+            if publish:
+                self._env.restore_reset_snapshot(env_ids, variants, snapshot)
+            else:
+                return env_ids, snapshot
+        else:
+            self._env.forward()
+        return None
 
     def _approach_target_quat(self, ee_quat_w: torch.Tensor) -> torch.Tensor:
         """Desired approach orientation from ``reset.ik_rpy_deg = (roll, pitch, yaw)``.
@@ -1055,7 +1272,7 @@ class LetterTypingCommand(CommandTerm):
         Args:
             ee_quat_w: Current moving-jaw link orientation (x, y, z, w), shape ``(num_envs, 4)``.
         """
-        finger = quat_apply(ee_quat_w, self._ik_finger_axis)  # current finger axis in world
+        finger = quat_apply(ee_quat_w, self._ik_finger_axis[: len(ee_quat_w)])  # current finger axis in world
         heading = finger[:, :2] / torch.linalg.norm(finger[:, :2], dim=-1, keepdim=True).clamp_min(1.0e-6)
         # yaw: rotate the horizontal heading about world +Z.
         if self._ik_yaw != 0.0:

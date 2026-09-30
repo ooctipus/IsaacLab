@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 import torch
 
-from isaaclab_tasks.contrib.keyboard.keyboard_populations import KeyboardPopulations
+from isaaclab_tasks.contrib.keyboard.keyboard_populations import KeyboardPopulations, prepare_keyboard_prototype
 from isaaclab_tasks.contrib.keyboard.so101_population_env import SO101KeyboardPopulationEnv
 
 
@@ -34,6 +34,53 @@ def test_deterministic_population_modes_are_rejected_before_authoring(setting):
         KeyboardPopulations(SimpleNamespace(cfg=cfg))
 
 
+@pytest.mark.parametrize("missing", ["enabled", "ik", "prototype_coverage", "single_coverage"])
+def test_native_replay_rejects_incomplete_snapshot_curriculum_before_authoring(missing):
+    from isaaclab_tasks.contrib.keyboard.keyboard_worlds import KeyboardWorlds
+    from isaaclab_tasks.utils import resolve_task_config
+
+    cfg, _ = resolve_task_config("IsaacContrib-Keyboard-SO101-Worlds", "", overrides=["physics=newton_mjwarp"])
+    cfg.commands.typing.reset.bank_path = "unused.pt"
+    cfg.commands.typing.reset.replay_only = True
+    if missing in ("enabled", "ik"):
+        setattr(cfg.commands.typing.reset, missing, False if missing == "enabled" else None)
+        message = "enabled typing curriculum"
+    else:
+        cfg.keyboard_variants = None if missing == "single_coverage" else (cfg.scene.keyboard.spawn,) * 3
+        cfg.commands.typing.reset.bank_path = None
+        cfg.commands.typing.reset.buffer_size = 0 if missing == "single_coverage" else 2
+        message = "at least one snapshot per keyboard prototype"
+    with (
+        patch("isaaclab_tasks.contrib.keyboard.keyboard_worlds.generate_keyboard") as generate,
+        pytest.raises(ValueError, match=message),
+    ):
+        KeyboardWorlds(SimpleNamespace(cfg=cfg))
+    generate.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "prototype_count, buffer_size, replay_only, bank_path",
+    [(3, 3, True, None), (3, 2, False, None), (3, 0, True, "unused.pt"), (None, 1, True, None)],
+)
+def test_native_buffer_coverage_preserves_admitted_reset_modes(prototype_count, buffer_size, replay_only, bank_path):
+    from isaaclab_tasks.contrib.keyboard.keyboard_worlds import KeyboardWorlds
+    from isaaclab_tasks.utils import resolve_task_config
+
+    cfg, _ = resolve_task_config("IsaacContrib-Keyboard-SO101-Worlds", "", overrides=["physics=newton_mjwarp"])
+    cfg.keyboard_variants = None if prototype_count is None else (cfg.scene.keyboard.spawn,) * prototype_count
+    reset = cfg.commands.typing.reset
+    reset.buffer_size, reset.replay_only, reset.bank_path = buffer_size, replay_only, bank_path
+    with (
+        patch(
+            "isaaclab_tasks.contrib.keyboard.keyboard_worlds.generate_keyboard",
+            side_effect=RuntimeError("authoring reached"),
+        ),
+        pytest.raises(RuntimeError, match="authoring reached"),
+    ):
+        KeyboardWorlds(SimpleNamespace(cfg=cfg))
+    assert reset.buffer_size == buffer_size  # Admission never silently enlarges the configured bank.
+
+
 @pytest.mark.parametrize("phase", ["second_prototype", "backend", "native_binding"])
 @pytest.mark.parametrize("cleanup_fails", [False, True])
 def test_failed_bank_construction_retires_acquired_bindings_without_gc(phase, cleanup_fails):
@@ -47,8 +94,8 @@ def test_failed_bank_construction_retires_acquired_bindings_without_gc(phase, cl
     startup_error, cleanup_error = MemoryError("startup allocation"), RuntimeError("cleanup failed")
     references, calls = [], []
 
-    def prepare(bank, *_):
-        if phase == "second_prototype" and bank._sources:
+    def prepare(_env, *_):
+        if phase == "second_prototype" and references:
             raise startup_error
         builder = newton.ModelBuilder()
         builder.begin_world()
@@ -97,7 +144,7 @@ def test_failed_bank_construction_retires_acquired_bindings_without_gc(phase, cl
         with (
             patch("isaaclab_tasks.contrib.keyboard.keyboard_populations.generate_keyboard", return_value=layout),
             patch.object(KeyboardPopulations, "_manager_configs", return_value=()),
-            patch.object(KeyboardPopulations, "_prepare_prototype", new=prepare),
+            patch("isaaclab_tasks.contrib.keyboard.keyboard_populations.prepare_keyboard_prototype", new=prepare),
             patch.object(KeyboardPopulations, "_bind_native", new=bind),
             patch.object(KeyboardPopulations, "close", new=close),
             pytest.raises(MemoryError) as error,
@@ -120,8 +167,7 @@ def test_failed_local_prototype_preparation_retires_unreturned_source_without_gc
     from isaaclab_tasks.utils import resolve_task_config
 
     cfg, _ = resolve_task_config("IsaacContrib-Keyboard-SO101-Populations", "", overrides=["physics=newton_mjwarp"])
-    bank = KeyboardPopulations.__new__(KeyboardPopulations)
-    bank._selector_cfgs = {"body": NewtonSelectorCfg(BODY, ".*", count_per_world=1)}
+    selectors = (NewtonSelectorCfg(BODY, ".*", count_per_world=1),)
     references = []
 
     def add_usd(builder, *args, **kwargs):
@@ -134,7 +180,7 @@ def test_failed_local_prototype_preparation_retires_unreturned_source_without_gc
         return source
 
     # The source cache is populated before the deliberately unmatched robot selector fails.
-    bank.env = SimpleNamespace(
+    env = SimpleNamespace(
         cfg=cfg, device="cpu", sim=SimpleNamespace(physics_manager=SimpleNamespace(create_builder=newton.ModelBuilder))
     )
     spawn = SimpleNamespace(func=lambda *args, **kwargs: None)
@@ -148,7 +194,7 @@ def test_failed_local_prototype_preparation_retires_unreturned_source_without_gc
             patch("isaaclab_tasks.contrib.keyboard.keyboard_populations.NewtonSelections", new=create_source),
             pytest.raises(ValueError, match="matched no") as error,
         ):
-            bank._prepare_prototype(spawn, cfg.sim.physics.prototype_physics)
+            prepare_keyboard_prototype(env, spawn, cfg.sim.physics.prototype_physics, selectors)
         error.value.__traceback__ = None
         del error
         assert references and all(reference() is None for reference in references)
@@ -430,3 +476,108 @@ def test_post_publication_failure_rejects_continuation_and_allows_explicit_close
     env.sim.clear_instance.assert_called_once()
     gc.collect()
     assert model_ref() is None and state_ref() is None
+
+
+@pytest.mark.parametrize("setting", ["manager", "prototype", "prototype_mode"])
+def test_native_world_determinism_rejected_before_authoring(setting):
+    from isaaclab_tasks.contrib.keyboard.keyboard_worlds import KeyboardWorlds
+    from isaaclab_tasks.utils import resolve_task_config
+
+    cfg, _ = resolve_task_config("IsaacContrib-Keyboard-SO101-Worlds", "", overrides=["physics=newton_mjwarp"])
+    cfg.commands.typing.reset.bank_path = "unused.pt"
+    if setting == "manager":
+        cfg.sim.physics.deterministic = True
+    elif setting == "prototype":
+        cfg.sim.physics.prototype_physics.deterministic = True
+    else:
+        cfg.sim.physics.prototype_physics.deterministic_mode = "run_to_run"
+    with pytest.raises(ValueError, match="Deterministic"):
+        KeyboardWorlds(SimpleNamespace(cfg=cfg))
+
+
+@pytest.mark.parametrize("phase", ["second_prototype", "backend", "native_binding"])
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+def test_failed_native_world_construction_retires_sources_without_gc(phase, cleanup_fails):
+    import warp as wp
+
+    from isaaclab_tasks.contrib.keyboard import keyboard_worlds
+    from isaaclab_tasks.contrib.keyboard.newton_selection import BODY, NewtonSelections, NewtonSelectorCfg
+    from isaaclab_tasks.utils import resolve_task_config
+
+    cfg, _ = resolve_task_config("IsaacContrib-Keyboard-SO101-Worlds", "", overrides=["physics=newton_mjwarp"])
+    cfg.keyboard_variants = (cfg.scene.keyboard.spawn,) * 2
+    cfg.commands.typing.reset.bank_path = "unused.pt"
+    cfg.commands.typing.reset.replay_only = True
+    cfg.terminations.excessive_contact = None
+    startup_error, cleanup_error = MemoryError("startup allocation"), RuntimeError("cleanup failed")
+    references, calls = [], []
+
+    def prepare(*_, **__):
+        if phase == "second_prototype" and references:
+            raise startup_error
+        builder = newton.ModelBuilder()
+        builder.begin_world()
+        body = builder.add_body(label="/body")
+        builder.add_shape_box(body, hx=0.03, hy=0.03, hz=0.03)
+        builder.end_world()
+        source = NewtonSelections(builder.finalize("cpu"))
+        source.resolve(NewtonSelectorCfg(BODY, ".*", count_per_world=1))
+        references.extend((weakref.ref(source), weakref.ref(source.model)))
+        native_model = SimpleNamespace(opt=SimpleNamespace(timestep=wp.zeros(1, dtype=float, device="cpu")))
+        return SimpleNamespace(model=source.model, mjw_model=native_model, mjw_data=object()), source
+
+    backend_owner = SimpleNamespace(runtime=SimpleNamespace(prototypes=()), close=Mock())
+
+    def backend(_):
+        if phase == "backend":
+            raise startup_error
+        return backend_owner
+
+    original_close = keyboard_worlds.KeyboardWorlds.close
+
+    def bind(*_, **__):
+        raise startup_error
+
+    def close(bank):
+        calls.append("close")
+        original_close(bank)
+        if cleanup_fails:
+            raise cleanup_error
+
+    key = SimpleNamespace(label="backspace", slot=0)
+    layout = SimpleNamespace(active_key_count=6, active_keys=(key,), keys=(key,), slot_count=6)
+    env = SimpleNamespace(
+        cfg=cfg,
+        device="cpu",
+        num_envs=2,
+        all_env_ids=torch.arange(2),
+        physics_dt=0.01,
+        sim=SimpleNamespace(get_or_create_backend=backend),
+    )
+    enabled = gc.isenabled()
+    gc.disable()
+    try:
+        with (
+            patch.object(keyboard_worlds, "generate_keyboard", return_value=layout),
+            patch.object(keyboard_worlds, "prepare_keyboard_prototype", new=prepare),
+            patch.object(keyboard_worlds.KeyboardWorlds, "_manager_configs", return_value=()),
+            patch.object(keyboard_worlds.KeyboardWorlds, "_snapshot_columns", new=lambda *_: ()),
+            patch.object(keyboard_worlds.KeyboardWorlds, "close", new=close),
+            patch.object(keyboard_worlds.mjw, "replicate_data", return_value=object()),
+            patch.object(keyboard_worlds.mjw, "forward"),
+            patch.object(keyboard_worlds.mjw, "make_step_workspace"),
+            patch.object(keyboard_worlds.mjw, "step"),
+            patch.object(keyboard_worlds, "NativeSelections", new=bind),
+            pytest.raises(MemoryError) as error,
+        ):
+            keyboard_worlds.KeyboardWorlds(env)
+        assert error.value is startup_error
+        assert calls == ["close"]
+        assert startup_error.__cause__ is (cleanup_error if cleanup_fails else None)
+        backend_owner.close.assert_not_called()  # SimulationContext owns registered backends.
+        startup_error.__traceback__ = cleanup_error.__traceback__ = None
+        del error
+        assert references and all(reference() is None for reference in references)
+    finally:
+        if enabled:
+            gc.enable()

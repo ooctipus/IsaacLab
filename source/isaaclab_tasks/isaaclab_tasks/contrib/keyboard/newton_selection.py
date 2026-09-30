@@ -65,6 +65,12 @@ class NewtonScalarField:
 
 
 @wp.func
+def scalar_field_active(field: NewtonScalarField, world: int, slot: int) -> bool:
+    """Whether a selected scalar participates in the current task episode."""
+    return field.active[world, slot]
+
+
+@wp.func
 def scalar_field_read(field: NewtonScalarField, world: int, slot: int) -> float:
     """Read one selected scalar, returning zero for an excluded policy slot."""
     value = float(0.0)

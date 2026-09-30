@@ -28,6 +28,69 @@ from .keyboards.keyboard_geometry import generate_keyboard
 from .newton_selection import NewtonSelectionGroup, NewtonSelections, bind_selectors
 
 
+def prepare_keyboard_prototype(env, keyboard_cfg, physics, selector_cfgs, *, contact_capacity=None):
+    """Author and finalize one immutable source; replication never repeats this work."""
+    stage = Usd.Stage.CreateInMemory()
+    UsdGeom.SetStageUpAxis(stage, "Z")
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+    stage.SetDefaultPrim(UsdGeom.Xform.Define(stage, "/World").GetPrim())
+    scene = env.cfg.scene
+    with use_stage(stage):
+        for name, asset, spawn in (
+            ("Robot", scene.robot, scene.robot.spawn),
+            ("Keyboard", scene.keyboard, keyboard_cfg),
+            ("GroundPlane", scene.plane, scene.plane.spawn),
+        ):
+            spawn.func(
+                f"/World/{name}",
+                spawn,
+                translation=asset.init_state.pos,
+                orientation=asset.init_state.rot,
+                stage=stage,
+            )
+    builder = env.sim.physics_manager.create_builder(up_axis="Z")
+    builder.begin_world()
+    builder.add_usd(
+        stage,
+        root_path="/World",
+        load_visual_shapes=bool(physics.load_visual_shapes),
+        hide_collision_shapes=True,
+        schema_resolvers=[SchemaResolverNewton(), SchemaResolverPhysx(), SchemaResolverMjc()],
+    )
+    builder.end_world()
+    model = builder.finalize(env.device)
+    source = NewtonSelections(model)
+    try:
+        for cfg in selector_cfgs:
+            source.resolve(cfg.replace(dense_width=None))
+        robot_q = source.resolve(env.cfg.actions.action.joints.replace(dense_width=None))
+        robot_qd = source.resolve(env.cfg.actions.action.dofs.replace(dense_width=None))
+        wp.to_torch(model.joint_q)[robot_q.dense_ids()] = 0.0
+        wp.to_torch(model.joint_qd).zero_()
+        wp.to_torch(model.joint_target_mode)[robot_qd.dense_ids()] = int(newton.JointTargetMode.POSITION_VELOCITY)
+        roots = source.resolve(env.cfg.commands.typing.reset_roots.replace(dense_width=None))
+        root_joints = source.root_joint_ids[roots.dense_ids()]
+        if torch.any(root_joints < 0) or torch.any(
+            wp.to_torch(model.joint_type)[root_joints] != int(newton.JointType.FIXED)
+        ):
+            raise ValueError("Keyboard population reset snapshots require fixed articulation roots.")
+        parameters = inspect.signature(SolverMuJoCo.__init__).parameters
+        kwargs = {key: value for key, value in physics.solver_cfg.to_dict().items() if key in parameters}
+        if contact_capacity is not None:
+            kwargs["nconmax"] = contact_capacity
+        solver = SolverMuJoCo(model, **kwargs)
+        return solver, source
+    except BaseException as error:
+        try:
+            try:
+                wp.synchronize_device(model.device)
+            finally:
+                source.retire()
+        except BaseException as cleanup_error:
+            raise error from cleanup_error
+        raise
+
+
 class KeyboardPopulations:
     """Own keyboard assignments and task bindings; the simulation owns native resources.
 
@@ -83,7 +146,7 @@ class KeyboardPopulations:
         try:
             prototypes = []
             for cfg in configs:
-                solver, selections = self._prepare_prototype(cfg, physics)
+                solver, selections = prepare_keyboard_prototype(env, cfg, physics, self._selector_cfgs.values())
                 prototypes.append(solver)
                 self._sources.append(selections)
                 contact_term = env.cfg.terminations.excessive_contact
@@ -125,70 +188,30 @@ class KeyboardPopulations:
         cfg = self.env.cfg
         return cfg.commands, cfg.actions, cfg.observations, cfg.rewards, cfg.terminations, cfg.events
 
+    def reset_variants(self, env_ids):
+        """Return the committed prototypes used by an upcoming snapshot reset."""
+        return self.variant_ids[env_ids]
+
+    def reset_snapshot(self, env_ids, variant_ids, snapshot):
+        """Restore a complete task snapshot into the already assigned exact populations."""
+        from .mdp.reset import restore_reset_state
+
+        torch._assert_async((variant_ids == self.variant_ids[env_ids]).all(), "Snapshot prototype is not committed.")
+        command = self.env.cfg.commands.typing
+        restore_reset_state(self.env, snapshot, env_ids, command.reset_roots, command.reset_coords, command.reset_dofs)
+
+    @property
+    def active_prototypes(self):
+        return sum(count > 0 for count in self.backend.counts)
+
+    @property
+    def native_dofs(self):
+        return sum(p.model.joint_dof_count for p in self.backend.populations if p is not None)
+
     @staticmethod
     def _key(cfg):
         paths = (cfg.path,) if isinstance(cfg.path, str) else tuple(cfg.path)
         return cfg.frequency, paths, cfg.count_per_world, cfg.dense_width
-
-    def _prepare_prototype(self, keyboard_cfg, physics):
-        """Author and finalize one immutable source; replication never repeats this work."""
-        stage = Usd.Stage.CreateInMemory()
-        UsdGeom.SetStageUpAxis(stage, "Z")
-        UsdGeom.SetStageMetersPerUnit(stage, 1.0)
-        stage.SetDefaultPrim(UsdGeom.Xform.Define(stage, "/World").GetPrim())
-        scene = self.env.cfg.scene
-        with use_stage(stage):
-            for name, asset, spawn in (
-                ("Robot", scene.robot, scene.robot.spawn),
-                ("Keyboard", scene.keyboard, keyboard_cfg),
-                ("GroundPlane", scene.plane, scene.plane.spawn),
-            ):
-                spawn.func(
-                    f"/World/{name}",
-                    spawn,
-                    translation=asset.init_state.pos,
-                    orientation=asset.init_state.rot,
-                    stage=stage,
-                )
-        builder = self.env.sim.physics_manager.create_builder(up_axis="Z")
-        builder.begin_world()
-        builder.add_usd(
-            stage,
-            root_path="/World",
-            load_visual_shapes=bool(physics.load_visual_shapes),
-            hide_collision_shapes=True,
-            schema_resolvers=[SchemaResolverNewton(), SchemaResolverPhysx(), SchemaResolverMjc()],
-        )
-        builder.end_world()
-        model = builder.finalize(self.env.device)
-        source = NewtonSelections(model)
-        try:
-            for cfg in self._selector_cfgs.values():
-                source.resolve(cfg.replace(dense_width=None))
-            robot_q = source.resolve(self.env.cfg.actions.action.joints.replace(dense_width=None))
-            robot_qd = source.resolve(self.env.cfg.actions.action.dofs.replace(dense_width=None))
-            wp.to_torch(model.joint_q)[robot_q.dense_ids()] = 0.0
-            wp.to_torch(model.joint_qd).zero_()
-            wp.to_torch(model.joint_target_mode)[robot_qd.dense_ids()] = int(newton.JointTargetMode.POSITION_VELOCITY)
-            roots = source.resolve(self.env.cfg.commands.typing.reset_roots.replace(dense_width=None))
-            root_joints = source.root_joint_ids[roots.dense_ids()]
-            if torch.any(root_joints < 0) or torch.any(
-                wp.to_torch(model.joint_type)[root_joints] != int(newton.JointType.FIXED)
-            ):
-                raise ValueError("Keyboard population reset snapshots require fixed articulation roots.")
-            parameters = inspect.signature(SolverMuJoCo.__init__).parameters
-            kwargs = {key: value for key, value in physics.solver_cfg.to_dict().items() if key in parameters}
-            solver = SolverMuJoCo(model, **kwargs)
-            return solver, source
-        except BaseException as error:
-            try:
-                try:
-                    wp.synchronize_device(model.device)
-                finally:
-                    source.retire()
-            except BaseException as cleanup_error:
-                raise error from cleanup_error
-            raise
 
     def _bind_native(self):
         models = {population.model for population in self.backend.populations if population is not None}

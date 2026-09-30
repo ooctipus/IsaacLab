@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import MISSING
 
+import numpy as np
 import torch
 import warp as wp
 from newton import JointType, Model, ModelFlags, State
@@ -27,6 +28,158 @@ class KeyboardResetIKCfg:
     dofs: NewtonSelectorCfg = MISSING
     body: NewtonSelectorCfg = MISSING
     tip_offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
+
+
+@wp.kernel
+def _reset_kinematics(
+    q: wp.array2d[float],
+    root: wp.array2d[float],
+    parents: wp.array[int],
+    kinds: wp.array[int],
+    columns: wp.array[int],
+    joint_parent: wp.array[wp.transform],
+    joint_child: wp.array[wp.transform],
+    axes: wp.array[wp.vec3],
+    selected: wp.array[int],
+    offset: wp.vec3,
+    poses: wp.array2d[wp.transform],
+    jacobian: wp.array3d[float],
+):
+    row = wp.tid()
+    root_pose = wp.transform(
+        wp.vec3(root[row, 0], root[row, 1], root[row, 2]),
+        wp.quat(root[row, 3], root[row, 4], root[row, 5], root[row, 6]),
+    )
+    for joint in range(parents.shape[0]):
+        anchor = root_pose
+        parent = parents[joint]
+        if parent >= 0:
+            anchor = poses[row, parent] * joint_parent[joint]
+        motion = wp.transform_identity()
+        column = columns[joint]
+        if kinds[joint] == int(JointType.REVOLUTE):
+            motion = wp.transform(wp.vec3(), wp.quat_from_axis_angle(axes[joint], q[row, column]))
+        elif kinds[joint] == int(JointType.PRISMATIC):
+            motion = wp.transform(axes[joint] * q[row, column], wp.quat_identity())
+        poses[row, joint] = (anchor * motion) * wp.transform_inverse(joint_child[joint])
+    tip = wp.transform_point(poses[row, parents.shape[0] - 1], offset)
+    for column in range(selected.shape[0]):
+        joint = selected[column]
+        anchor = poses[row, parents[joint]] * joint_parent[joint]
+        axis = wp.transform_vector(anchor, axes[joint])
+        linear, angular = axis, wp.vec3()
+        if kinds[joint] == int(JointType.REVOLUTE):
+            linear = wp.cross(axis, tip - wp.transform_get_translation(anchor))
+            angular = axis
+        for component in range(3):
+            jacobian[row, component, column] = linear[component]
+            jacobian[row, component + 3, column] = angular[component]
+
+
+class ResetKinematics:
+    """Compact scalar-chain reset workspace, independent of live physics state.
+
+    Immutable topology is copied from one prepared world. Mutable storage contains
+    only ancestor poses [m, xyzw] and a fingertip Jacobian [m/rad, rad/rad] for a
+    reset batch. Joint coordinates and root poses belong to the caller's payload.
+    The fixed root's child frame must be identity, matching keyboard snapshots.
+    """
+
+    def __init__(self, model, robot_coord_ids, ik_dof_ids, tip_body_id, capacity, offset):
+        if isinstance(capacity, bool) or not isinstance(capacity, int) or capacity < 1:
+            raise ValueError("Reset kinematics requires positive batch capacity.")
+        arrays = self._compile(model, robot_coord_ids, ik_dof_ids, tip_body_id)
+        self._topology = arrays
+        self.device, self.capacity = model.device, capacity
+        self.width = len(robot_coord_ids)
+        self._offset = wp.vec3(*offset)
+        dtypes = (int, int, int, wp.transform, wp.transform, wp.vec3, int)
+        self._arrays = tuple(wp.array(value, dtype=dtype, device=self.device) for value, dtype in zip(arrays, dtypes))
+        self._poses = wp.empty((capacity, len(arrays[0])), dtype=wp.transform, device=self.device)
+        self._jacobian = wp.empty((capacity, 6, len(ik_dof_ids)), dtype=float, device=self.device)
+
+    @staticmethod
+    def _compile(model, robot_coord_ids, ik_dof_ids, tip_body_id):
+        if model.world_count != 1:
+            raise ValueError("Reset kinematics topology must come from one prepared world.")
+        coords, dofs = np.asarray(robot_coord_ids), np.asarray(ik_dof_ids)
+        if (
+            coords.ndim != 1
+            or dofs.ndim != 1
+            or len(coords) == 0
+            or len(dofs) == 0
+            or len(set(coords.tolist())) != len(coords)
+            or len(set(dofs.tolist())) != len(dofs)
+        ):
+            raise ValueError("Reset kinematics requires unique coordinate and DOF selections.")
+        if (
+            not np.issubdtype(coords.dtype, np.integer)
+            or not np.issubdtype(dofs.dtype, np.integer)
+            or np.any(coords < 0)
+            or np.any(coords >= model.joint_coord_count)
+            or np.any(dofs < 0)
+            or np.any(dofs >= model.joint_dof_count)
+            or not 0 <= tip_body_id < model.body_count
+        ):
+            raise ValueError("Reset kinematics selections are outside the prepared model.")
+        child, parent = model.joint_child.numpy(), model.joint_parent.numpy()
+        kinds, qs, ds = model.joint_type.numpy(), model.joint_q_start.numpy(), model.joint_qd_start.numpy()
+        owner = {int(body): joint for joint, body in enumerate(child)}
+        chain, body = [], int(tip_body_id)
+        while body >= 0:
+            if body not in owner or len(chain) >= model.joint_count:
+                raise ValueError("Reset tip must have an acyclic articulated ancestor chain.")
+            joint = owner[body]
+            if kinds[joint] not in (JointType.FIXED, JointType.REVOLUTE, JointType.PRISMATIC):
+                raise ValueError("Reset kinematics supports only fixed and scalar ancestor joints.")
+            chain.append(joint)
+            body = int(parent[joint])
+        chain.reverse()
+        xc = model.joint_X_c.numpy()[chain]
+        if kinds[chain[0]] != JointType.FIXED or not np.array_equal(xc[0], [0, 0, 0, 0, 0, 0, 1]):
+            raise ValueError("Reset kinematics requires a fixed root with an identity child frame.")
+        local = {int(child[joint]): i for i, joint in enumerate(chain)}
+        coord_columns = {int(coord): i for i, coord in enumerate(coords)}
+        dof_joints = {int(ds[j]): i for i, j in enumerate(chain) if kinds[j] != JointType.FIXED}
+        if any(int(qs[j]) not in coord_columns for j in chain if kinds[j] != JointType.FIXED):
+            raise ValueError("Robot coordinates must include every scalar ancestor joint.")
+        if any(int(dof) not in dof_joints for dof in dofs):
+            raise ValueError("IK DOFs must be scalar ancestors of the selected tip.")
+        axes = model.joint_axis.numpy()
+        return (
+            np.array([local.get(int(parent[j]), -1) for j in chain], dtype=np.int32),
+            kinds[chain].copy(),
+            np.array([coord_columns[int(qs[j])] if kinds[j] != JointType.FIXED else -1 for j in chain], dtype=np.int32),
+            model.joint_X_p.numpy()[chain],
+            xc,
+            np.array([axes[ds[j]] if kinds[j] != JointType.FIXED else [0, 0, 0] for j in chain], dtype=np.float32),
+            np.array([dof_joints[int(dof)] for dof in dofs], dtype=np.int32),
+        )
+
+    def validate_model(self, model, robot_coord_ids, ik_dof_ids, tip_body_id):
+        """Reject a prototype whose compiled robot topology differs from this workspace."""
+        other = self._compile(model, robot_coord_ids, ik_dof_ids, tip_body_id)
+        if any(not np.array_equal(a, b) for a, b in zip(self._topology, other, strict=True)):
+            raise ValueError("Keyboard prototypes must share identical reset robot kinematics.")
+
+    def evaluate(self, q: torch.Tensor, root_pose: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Evaluate compact coordinates [rad or m] and root poses [m, xyzw], without live writes."""
+        count = len(q)
+        if q.shape != (count, self.width) or root_pose.shape != (count, 7) or count > self.capacity:
+            raise ValueError("Reset coordinate/root batch differs from the prepared layout.")
+        if q.dtype != torch.float32 or root_pose.dtype != torch.float32 or q.device != root_pose.device:
+            raise ValueError("Reset coordinates and root poses must be float32 on the same device.")
+        q_wp, root_wp = wp.from_torch(q), wp.from_torch(root_pose)
+        if q_wp.device != self.device:
+            raise ValueError("Reset payload device differs from the prepared workspace.")
+        if count:
+            wp.launch(
+                _reset_kinematics,
+                count,
+                [q_wp, root_wp, *self._arrays, self._offset, self._poses, self._jacobian],
+                device=self.device,
+            )
+        return wp.to_torch(self._poses)[:count, -1], wp.to_torch(self._jacobian)[:count]
 
 
 @wp.kernel
@@ -170,7 +323,12 @@ def write_fixed_root_poses(env, roots: NewtonSelection, env_ids: torch.Tensor, p
     requested = torch.full((env.num_envs,), -1, dtype=torch.long, device=env.device)
     requested[env_ids] = torch.arange(len(env_ids), device=env.device)
     requested_wp, poses_wp = wp.from_torch(requested), wp.from_torch(poses)
-    stream = wp.stream_from_torch(torch.cuda.current_stream(env.device)) if poses.is_cuda else None
+    stream = None
+    if poses.is_cuda:
+        stream = wp.get_stream(env.device)
+        producer = torch.cuda.current_stream(env.device)
+        if (stream.cuda_stream or 0) != producer.cuda_stream:
+            stream = wp.stream_from_torch(producer)
     with wp.ScopedStream(stream, sync_exit=True):
         for part, worlds in roots.native_bindings:
             model = part.owner.model
@@ -194,21 +352,35 @@ def write_fixed_root_poses(env, roots: NewtonSelection, env_ids: torch.Tensor, p
         env.invalidate_fk(env_ids)
 
 
-def reset_root_state_uniform(env, env_ids, roots, pose_range, velocity_range):
-    """Randomize fixed root poses [m, rad] with the original task's random-draw ordering."""
+def sample_root_poses(poses: torch.Tensor, pose_range, velocity_range) -> torch.Tensor:
+    """Sample fixed root poses [m, xyzw], preserving both original six-axis RNG draws."""
     if any(any(v != 0 for v in bounds) for bounds in velocity_range.values()):
         raise ValueError("The fixed keyboard root cannot have nonzero reset velocity.")
-    ids = env.all_env_ids[env_ids]
     axes = ("x", "y", "z", "roll", "pitch", "yaw")
-    ranges = torch.tensor([pose_range.get(key, (0.0, 0.0)) for key in axes], device=env.device)
-    samples = sample_uniform(ranges[:, 0], ranges[:, 1], (len(ids), 6), device=env.device)
-    poses = roots.read_model("body_q")[ids].clone()
+    ranges = torch.tensor([pose_range.get(key, (0.0, 0.0)) for key in axes], device=poses.device)
+    samples = sample_uniform(ranges[:, 0], ranges[:, 1], (len(poses), 6), device=poses.device)
+    poses = poses.clone()
     poses[..., :3] += samples[:, None, :3]
     delta = quat_from_euler_xyz(samples[:, 3], samples[:, 4], samples[:, 5])
     poses[..., 3:] = quat_mul(poses[..., 3:], delta[:, None, :].expand_as(poses[..., 3:]))
     # Preserve RNG consumption of the old zero-velocity sample.
-    sample_uniform(0.0, 0.0, (len(ids), 6), device=env.device)
-    write_fixed_root_poses(env, roots, ids, poses)
+    sample_uniform(0.0, 0.0, (len(poses), 6), device=poses.device)
+    return poses
+
+
+def reset_root_state_uniform(env, env_ids, roots, pose_range, velocity_range, *, defer_to_typing=False):
+    """Randomize fixed roots, or consume the same draws before a complete typing reset.
+
+    ``defer_to_typing`` is explicit: the caller must guarantee no intervening event
+    observes the sampled pose and typing IK/snapshot reset replaces every root.
+    Pre-solve reset keeps the default immediate write.
+    """
+    if defer_to_typing and env.cfg.commands.typing.reset.ik is None:
+        raise ValueError("Deferred keyboard root writes require typing reset IK or complete snapshot replay.")
+    ids = env.all_env_ids[env_ids]
+    poses = sample_root_poses(roots.read_model("body_q")[ids], pose_range, velocity_range)
+    if not defer_to_typing:
+        write_fixed_root_poses(env, roots, ids, poses)
 
 
 def capture_reset_state(env, env_ids, roots, coords, dofs) -> torch.Tensor:

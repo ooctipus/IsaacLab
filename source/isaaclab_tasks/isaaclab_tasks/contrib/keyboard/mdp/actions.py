@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from dataclasses import MISSING
+from typing import Any
 
 import torch
 import warp as wp
@@ -18,8 +19,8 @@ from isaaclab.utils import configclass
 from ..newton_selection import (
     JOINT_COORD,
     JOINT_DOF,
-    NewtonScalarField,
     NewtonSelectorCfg,
+    scalar_field_active,
     scalar_field_read,
     scalar_field_write,
 )
@@ -27,14 +28,14 @@ from ..newton_selection import (
 
 @wp.kernel(enable_backward=False, module="unique", module_options={"fuse_fp": False})
 def _relative_joint_targets(
-    q: NewtonScalarField,
-    qd: NewtonScalarField,
-    ke: NewtonScalarField,
-    kd: NewtonScalarField,
-    limit: NewtonScalarField,
-    target_q: NewtonScalarField,
-    target_qd: NewtonScalarField,
-    force: NewtonScalarField,
+    q: Any,
+    qd: Any,
+    ke: Any,
+    kd: Any,
+    limit: Any,
+    target_q: Any,
+    target_qd: Any,
+    force: Any,
     action: wp.array2d[float],
     applied_effort: wp.array2d[float],
 ):
@@ -42,7 +43,7 @@ def _relative_joint_targets(
     position = scalar_field_read(q, world, slot)
     target = position
     effort = float(0.0)
-    if qd.active[world, slot]:
+    if scalar_field_active(qd, world, slot):
         target = position + action[world, slot]
         # Keep target rounding and separate products identical to the tensor term.
         effort = scalar_field_read(ke, world, slot) * (target - position)

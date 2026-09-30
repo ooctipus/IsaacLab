@@ -72,6 +72,22 @@ class SO101KeyboardEnv(ManagerBasedRLEnv):
         """Reconcile task-authored state and update native forward kinematics."""
         self.sim.forward()
 
+    def reset_variant_ids(self, env_ids):
+        """Return the committed keyboard variants used by snapshot sampling."""
+        return self.keyboard_variants.variant_ids[env_ids]
+
+    def restore_reset_snapshot(self, env_ids, variant_ids, snapshot):
+        """Restore physical snapshot data before the command publishes its typing state."""
+        from .mdp.reset import restore_reset_state
+
+        if self.keyboard_variants is not None:
+            torch._assert_async(
+                (variant_ids == self.keyboard_variants.variant_ids[env_ids]).all(),
+                "Snapshot keyboard differs from the committed variant.",
+            )
+        command = self.cfg.commands.typing
+        restore_reset_state(self, snapshot, env_ids, command.reset_roots, command.reset_coords, command.reset_dofs)
+
     def curriculum_worlds(self, variant):
         """Provide scratch worlds of one keyboard variant during initial curriculum construction."""
         if self.keyboard_variants is not None:

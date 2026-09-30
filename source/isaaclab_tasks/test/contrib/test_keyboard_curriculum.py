@@ -31,16 +31,46 @@ def _command(heterogeneous=True):
     command._env = SimpleNamespace(
         num_envs=5, device="cpu", all_env_ids=torch.arange(5), keyboard_variants=bank if heterogeneous else None
     )
-    command.cfg = SimpleNamespace(letter_length=(1, 3), reset=SimpleNamespace(match_prob=0.5))
+    command._env.reset_variant_ids = lambda ids: variants[ids]
+    command.cfg = SimpleNamespace(
+        letter_length=(1, 3), reset=SimpleNamespace(match_prob=0.5, bank_path=None, replay_only=False)
+    )
     command.key_joints = SimpleNamespace(dense_active=lambda: active)
     command.num_keys = 12
     command.max_len = 3
     command._default_backspace = torch.full((5,), 3)
     command._typeable = torch.arange(12)
     command._resample_seed = 0
+    command._episode_reset = False
+    command._prototype_membership = active[torch.tensor([0, 1, 3])].clone() if heterogeneous else None
     command._cur_oversample = 4
     command._cur_feat_w = (1.0, 1.0, 1.0, 1.0, 1.0)
     return command
+
+
+@pytest.mark.parametrize("replay_only", [False, True])
+def test_native_world_config_copy_preserves_explicit_reset_mode(replay_only):
+    from isaaclab_tasks.contrib.keyboard.so101_env_cfg import SO101KeyboardWorldsEnvCfg
+
+    cfg = SO101KeyboardWorldsEnvCfg()
+    cfg.commands.typing.reset.replay_only = replay_only
+    assert cfg.copy().commands.typing.reset.replay_only is replay_only
+
+
+def test_replay_only_samples_requested_prototypes_without_normal_weight_floor():
+    command = _command()
+    command.cfg.reset.replay_only = True
+    command._cur_sample_eps = 1e-4
+    command._cur_normal_weight = 0.0
+    command._buf_variant = torch.tensor([0, 1, 2, 2])
+    command.success_monitor = SimpleNamespace(target_weights=lambda: torch.zeros(4))
+    desired = torch.tensor([2, 2, 1, 0, 0])
+    command._env.reset_variant_ids = lambda ids: desired[ids]
+    for _ in range(16):
+        selected = command._sample_sources(torch.arange(5))
+        assert (selected >= 0).all()
+        torch.testing.assert_close(command._buf_variant[selected], desired)
+    assert not torch.equal(desired, command._env.keyboard_variants.variant_ids)
 
 
 def test_candidate_sampling_uses_only_the_requested_noncontiguous_cohort():
@@ -60,6 +90,204 @@ def test_candidate_sampling_uses_only_the_requested_noncontiguous_cohort():
         command._sampling_keys(torch.empty(0, dtype=torch.long))
 
 
+def test_prospective_sampling_uses_requested_layout_without_changing_committed_membership():
+    command = _command()
+    original = command.key_joints.dense_active().clone()
+    requested = torch.tensor([2, 0])
+    keys, counts, backspace = command._sampling_keys(torch.tensor([4, 1]), requested)
+    assert wp.to_torch(keys)[0, :4].tolist() == [7, 8, 9, 10]
+    assert wp.to_torch(keys)[1, :3].tolist() == [0, 1, 2]
+    assert wp.to_torch(counts).tolist() == [4, 3]
+    assert wp.to_torch(backspace).tolist() == [True, True]
+    worlds = torch.tensor([4, 1])
+    for sample in (command._oversample(64, worlds, requested), command._sample_diverse_states(16, worlds, requested)):
+        for tokens in sample[:2]:
+            assert torch.isin(tokens[tokens >= 0], torch.tensor([0, 1, 2, 7, 8, 9, 10])).all()
+    torch.testing.assert_close(command.key_joints.dense_active(), original, rtol=0, atol=0)
+    with pytest.raises(ValueError, match="cohort"):
+        command._sampling_keys(torch.tensor([4]), requested)
+
+
+def test_homogeneous_sources_exclude_incompatible_superset_bank_rows():
+    command = _command(False)
+    command._cur_sample_eps, command._cur_normal_weight, command._cur_buffer_size = 1e-4, 0.1, 5
+    command.success_monitor = SimpleNamespace(target_weights=lambda: torch.ones(5))
+    command._buffer_compatible = torch.tensor([False, True, False, True, False])
+    for replay_only in (False, True):
+        command.cfg.reset.replay_only = replay_only
+        source = command._sample_sources(torch.arange(200))
+        assert torch.isin(source, torch.tensor([1, 3] if replay_only else [-1, 1, 3])).all()
+
+
+def test_homogeneous_bank_requires_explicit_ambiguous_variant_and_valid_typing_schema(tmp_path, monkeypatch):
+    import hashlib
+
+    from isaaclab_tasks.contrib.keyboard.keyboards import keyboard_geometry
+
+    command = _command(False)
+    command._cur_buffer_size = 2
+    command.cfg.reset.bank_variant = None
+    command.cfg.reset_roots = command.cfg.reset_coords = command.cfg.reset_dofs = SimpleNamespace(width=1)
+    command._env.cfg = SimpleNamespace(scene=SimpleNamespace(keyboard=SimpleNamespace(spawn=object())))
+    labels = ["a", "b", "backspace"]
+    layout = SimpleNamespace(active_keys=[SimpleNamespace(label=label) for label in labels])
+    monkeypatch.setattr(keyboard_geometry, "generate_keyboard", lambda _: layout)
+    bank = {
+        "_buf_state": torch.zeros((2, 9)),
+        "_buf_target": torch.tensor([[0, -1, -1], [1, -1, -1]]),
+        "_buf_typed": torch.full((2, 3), -1),
+        "_buf_target_len": torch.ones(2, dtype=torch.long),
+        "_buf_typed_len": torch.zeros(2, dtype=torch.long),
+        "_buf_reach": torch.zeros(2),
+        "_buf_variant": torch.tensor([0, 1]),
+    }
+    contract = {
+        "format": 1,
+        "buffer_size": 2,
+        "max_len": 3,
+        "root_width": 1,
+        "coord_width": 1,
+        "dof_width": 1,
+        "active_labels": [labels, labels],
+    }
+    path = tmp_path / "bank.pt"
+
+    def save():
+        manifest = {
+            name: {"sha256": hashlib.sha256(value.numpy().tobytes()).hexdigest()} for name, value in bank.items()
+        }
+        torch.save({"contract": contract, "bank": bank, "tensor_manifest": manifest, "avg_distance": 1.0}, path)
+
+    save()
+    with pytest.raises(ValueError, match="ambiguous"):
+        command._load_buffer(path)
+    command.cfg.reset.bank_variant = 0
+    command._load_buffer(path)
+    assert command._buffer_compatible.tolist() == [True, False]
+    command.cfg.reset.bank_variant = 1
+    command._load_buffer(path)
+    assert command._buffer_compatible.tolist() == [False, True]
+    contract["active_labels"][1] = ["other"]
+    save()
+    with pytest.raises(ValueError, match="matching keyboard labels"):
+        command._load_buffer(path)
+    command.cfg.reset.bank_variant = 0
+    bank["_buf_typed_len"][0] = 4
+    save()
+    with pytest.raises(ValueError, match="lengths"):
+        command._load_buffer(path)
+    bank["_buf_typed_len"][0] = 0
+    bank["_buf_target"][0, 0] = -1
+    save()
+    with pytest.raises(ValueError, match="declared lengths"):
+        command._load_buffer(path)
+
+
+@pytest.mark.parametrize("publish", [False, True])
+@pytest.mark.parametrize("inverse_fails", [False, True])
+def test_native_normal_ik_completes_prospective_payload_before_publication_and_preserves_rng(
+    monkeypatch, publish, inverse_fails
+):
+    import newton
+
+    from isaaclab_tasks.contrib.keyboard.keyboard_worlds import KeyboardWorlds
+    from isaaclab_tasks.contrib.keyboard.mdp.reset import ResetKinematics, sample_root_poses
+
+    builder = newton.ModelBuilder()
+    builder.begin_world()
+    root, tip = (builder.add_link(mass=1.0) for _ in range(2))
+    fixed = builder.add_joint_fixed(parent=-1, child=root)
+    slider = builder.add_joint_prismatic(parent=root, child=tip, axis=(1, 0, 0))
+    builder.add_articulation([fixed, slider])
+    builder.end_world()
+    model = builder.finalize("cpu")
+    bank = object.__new__(KeyboardWorlds)
+    bank.variant_ids = torch.zeros(3, dtype=torch.long)
+    bank.backspaces = torch.tensor([1, 1])
+    bank.reset_defaults = torch.zeros((2, 16))
+    bank.reset_defaults[:, 6] = bank.reset_defaults[:, 13] = 1
+    bank.reset_defaults[0, 7], bank.reset_defaults[1, 7] = 0.05, 0.3
+    bank.reset_keyboard_roots = torch.tensor([[False, True], [False, True]])
+    bank.reset_key_root = torch.ones((2, 2), dtype=torch.long)
+    bank.reset_key_local = torch.zeros((2, 2, 3))
+    bank.reset_robot_columns = bank.reset_ik_columns = torch.tensor([0])
+    bank.reset_robot_root = 0
+    bank.reset_kinematics = ResetKinematics(model, [0], [0], tip, 3, (0, 0, 0))
+    desired = torch.tensor([1, 0, 1])
+    command = object.__new__(LetterTypingCommand)
+    published = []
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Native staging must not read or write live selections")
+
+    selected = SimpleNamespace(width=1, write_state=forbidden, read_state=forbidden, dense_active=forbidden)
+    command._env = SimpleNamespace(
+        num_envs=3,
+        device="cpu",
+        keyboard_variants=bank,
+        reset_variant_ids=lambda ids: desired[ids],
+        forward=forbidden,
+        invalidate_fk=forbidden,
+        restore_reset_snapshot=lambda ids, variants, payload: published.append(
+            (ids.clone(), variants.clone(), payload.clone())
+        ),
+    )
+    ik = SimpleNamespace(joints=selected, body=selected)
+    command.cfg = SimpleNamespace(
+        robot_joints=selected,
+        robot_dofs=selected,
+        reset_roots=SimpleNamespace(width=2),
+        reset_coords=SimpleNamespace(width=1),
+        reset=SimpleNamespace(
+            ik=ik,
+            ik_seed_joint_noise=0.01,
+            pre_solve_reset=SimpleNamespace(params={"pose_range": {}, "velocity_range": {}}),
+        ),
+    )
+    command._reset_ik, command._ik_iters = ik, (1, 1)
+    command._default_robot_q = torch.zeros((3, 1))
+    command._robot_limits = command._ik_limits = torch.tensor([-1.0, 1.0]).expand(3, 1, 2)
+    command._ik_offset, command._ik_hover = torch.zeros((3, 3)), torch.zeros(3)
+    command.target = torch.zeros((3, 1), dtype=torch.long)
+    command.target_len = torch.ones(3, dtype=torch.long)
+    command.typed_len = command.prefix_len = torch.zeros(3, dtype=torch.long)
+    ids = torch.tensor([2, 0])
+    before = bank.reset_defaults.clone()
+    torch.manual_seed(721)
+    if inverse_fails:
+        monkeypatch.setattr(
+            torch.linalg,
+            "inv_ex",
+            lambda matrix: (torch.zeros_like(matrix), torch.ones(matrix.shape[:-2], dtype=torch.int32)),
+        )
+        with pytest.raises(RuntimeError, match="position inversion failed"):
+            command._solve_reset_pose(ids, publish=publish)
+        assert not published
+        torch.testing.assert_close(bank.reset_defaults, before, atol=0, rtol=0)
+        return
+    completed = command._solve_reset_pose(ids, publish=publish)
+    final_rng = torch.random.get_rng_state()
+    assert len(published) == int(publish)
+    if publish:
+        actual_ids, actual_variants, payload = published[0]
+    else:
+        actual_ids, payload = completed
+        actual_variants = desired[actual_ids]
+    torch.testing.assert_close(actual_ids, ids)
+    torch.testing.assert_close(actual_variants, desired[ids])
+    torch.testing.assert_close(payload[:, 7], torch.full((2,), 0.3))
+    torch.testing.assert_close(payload[:, 15], torch.zeros(2))
+    torch.testing.assert_close(bank.reset_defaults, before, atol=0, rtol=0)
+    assert bank.variant_ids.tolist() == [0, 0, 0]
+    torch.manual_seed(721)
+    sample_root_poses(before[desired[ids], :14].reshape(2, 2, 7), {}, {})
+    seed = (torch.rand((2, 1)) * 2 - 1) * 0.01
+    torch.randint(1, 2, (3,))
+    assert torch.equal(final_rng, torch.random.get_rng_state())
+    expected = seed[:, 0] + torch.clamp((0.3 - seed[:, 0]) / (1 + 0.05**2), -0.2, 0.2)
+    torch.testing.assert_close(payload[:, 14], expected, atol=1e-7, rtol=0)
+
+
 def test_explicit_all_world_cohort_preserves_baseline_samples():
     implicit, explicit = _command(False), _command(False)
     for expected, actual in zip(
@@ -68,15 +296,20 @@ def test_explicit_all_world_cohort_preserves_baseline_samples():
         torch.testing.assert_close(actual, expected, rtol=0, atol=0)
 
 
-@pytest.mark.parametrize("heterogeneous", [False, True])
+@pytest.mark.parametrize(("heterogeneous", "pending_first_reset"), [(False, False), (True, False), (True, True)])
 @pytest.mark.parametrize("fail_during_build", [False, True])
-def test_buffer_build_uses_logical_ids_and_restores_original_state(monkeypatch, heterogeneous, fail_during_build):
+def test_buffer_restores_state_and_pending_reset(monkeypatch, heterogeneous, pending_first_reset, fail_during_build):
     command = _command(heterogeneous)
     env = command._env
     original = torch.arange(5, dtype=torch.float32)[:, None]
     physical = original.clone()
     requested, solved, finished = [], [], []
     active_cohort = None
+    pending = None
+    if heterogeneous:
+        pending = (env.keyboard_variants.variant_ids + int(pending_first_reset)) % 3
+        original_pending = pending.clone()
+        env.reset_variant_ids = lambda ids: pending[ids]
 
     def curriculum_worlds(variant):
         nonlocal active_cohort
@@ -84,6 +317,8 @@ def test_buffer_build_uses_logical_ids_and_restores_original_state(monkeypatch, 
             env.all_env_ids if not heterogeneous else env.all_env_ids[env.keyboard_variants.variant_ids == variant]
         )
         requested.append(variant)
+        if pending is not None:
+            pending[active_cohort] = variant
         return active_cohort.flip(0)  # Ordering and gaps must not be mistaken for a world prefix.
 
     def solve(ids):
@@ -94,7 +329,13 @@ def test_buffer_build_uses_logical_ids_and_restores_original_state(monkeypatch, 
             raise RuntimeError("IK failed")
 
     env.curriculum_worlds = curriculum_worlds
-    env.finish_curriculum = lambda variants: finished.append(None if variants is None else variants.clone())
+
+    def finish(variants):
+        finished.append(None if variants is None else variants.clone())
+        if pending is not None:
+            pending.copy_(variants)
+
+    env.finish_curriculum = finish
     command._solve_reset_pose = solve
     command._log_buffer_stats = lambda: None
     command._cur_buffer_size = 13
@@ -121,10 +362,12 @@ def test_buffer_build_uses_logical_ids_and_restores_original_state(monkeypatch, 
     command.target_key_pos_w = lambda: torch.zeros((5, 3))
     monkeypatch.setattr(typing_commands, "capture_reset_state", lambda _, ids, *args: physical[ids].clone())
 
-    def restore(_, snapshot, ids, *args):
+    def restore(ids, variants, snapshot):
+        if heterogeneous:
+            torch.testing.assert_close(variants, env.keyboard_variants.variant_ids)
         physical[ids] = snapshot
 
-    monkeypatch.setattr(typing_commands, "restore_reset_state", restore)
+    env.restore_reset_snapshot = restore
     if fail_during_build:
         with pytest.raises(RuntimeError, match="IK failed"):
             command._build_buffer()
@@ -144,7 +387,8 @@ def test_buffer_build_uses_logical_ids_and_restores_original_state(monkeypatch, 
     torch.testing.assert_close(physical, original)
     assert len(finished) == 1
     if heterogeneous:
-        torch.testing.assert_close(finished[0], env.keyboard_variants.variant_ids)
+        torch.testing.assert_close(finished[0], original_pending)
+        torch.testing.assert_close(pending, original_pending)
     else:
         assert finished[0] is None
 
@@ -382,3 +626,108 @@ def test_final_observation_contains_current_press_and_successor_history_without_
     actual = manager.compute(update_history=True)
     for name in successor:
         torch.testing.assert_close(successor[name], actual[name], rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("source", [(2, -1, 1), (2, 0, 1), (-1, -1, -1)])
+@pytest.mark.parametrize("invalid_replay", [False, True])
+def test_native_reset_publishes_one_complete_mixed_payload(monkeypatch, source, invalid_replay):
+    from isaaclab.managers import CommandTerm
+
+    from isaaclab_tasks.contrib.keyboard.keyboard_worlds import KeyboardWorlds
+
+    command = _command()
+    bank = object.__new__(KeyboardWorlds)
+    bank.__dict__.update(vars(command._env.keyboard_variants))
+    bank.reset_defaults = torch.zeros((3, 2))
+    command._env.keyboard_variants = bank
+    desired = torch.tensor([1, 0, 2, 1, 2])
+    command._env.reset_variant_ids = lambda ids: desired[ids]
+    command._env.episode_interrupted = torch.zeros(5, dtype=torch.bool)
+    command._env_source = torch.full((5,), -1)
+    if source == (2, 0, 1) and not invalid_replay:
+        del bank.reset_defaults  # A replay-only bank has no normal IK staging metadata.
+    command._cur_enabled = command._buffer_built = True
+    command._sample_sources = lambda ids: torch.tensor(source)
+    command._buf_variant = torch.arange(3)
+    command._buf_state = torch.tensor([[100.0, 200.0], [101.0, 201.0], [102.0, 202.0]])
+    command._buf_target = torch.tensor([[0, -1, -1], [4, -1, -1], [7, -1, -1]])
+    command._buf_typed = torch.full((3, 3), -1)
+    command._buf_target_len, command._buf_typed_len = torch.ones(3, dtype=torch.long), torch.zeros(3, dtype=torch.long)
+    if invalid_replay:
+        command._buf_target[2, 0] = 0  # Active in the old world, invalid in requested prototype2.
+    command.target, command.typed = torch.full((5, 3), -1), torch.full((5, 3), -1)
+    for name in ("target_len", "typed_len", "prefix_len", "max_prefix", "min_prefix"):
+        setattr(command, name, torch.zeros(5, dtype=torch.long))
+    for name in ("new_high", "new_low", "_just_reset"):
+        setattr(command, name, torch.zeros(5, dtype=torch.bool))
+    command._prev_pressed = torch.zeros((5, 12), dtype=torch.bool)
+    command.distance = torch.ones(5)
+    command._start_distance = torch.ones(5, dtype=torch.long)
+    command._distance_bands, command._split_last, command._buf_avg_distance = (), {}, None
+    command._reset_ik = object()
+    publications, solved = [], []
+    original_variants = bank.variant_ids.clone()
+
+    def normal(ids):
+        command.target[ids] = -1
+        command.target[ids, 0] = torch.tensor([0, 4, 7])[desired[ids]]
+        command.typed[ids] = -1
+        command.target_len[ids], command.typed_len[ids] = 1, 0
+        command.distance[ids] = 1
+
+    def solve(ids, *, publish):
+        assert not publish and not publications
+        torch.testing.assert_close(bank.variant_ids, original_variants)
+        solved.extend(ids.tolist())
+        # Deliberately return a different order to exercise actor-to-payload row mapping.
+        return ids.flip(0), torch.stack((ids.flip(0) + 900, ids.flip(0) + 800), dim=1).float()
+
+    def publish(ids, variants, payload):
+        publications.append((ids.clone(), variants.clone(), payload.clone()))
+        bank.variant_ids[ids] = variants
+
+    def base_reset(term, ids):
+        term._resample_command(ids)
+        return {}
+
+    command._resample_normal, command._solve_reset_pose = normal, solve
+    command._env.restore_reset_snapshot = publish
+    command.key_joints.dense_active = lambda: pytest.fail("Deferred replay must not read committed membership")
+    monkeypatch.setattr(CommandTerm, "reset", base_reset)
+    ids = torch.tensor([4, 1, 3])
+    command.reset(ids)
+    assert len(publications) == 1
+    actual_ids, variants, payload = publications[0]
+    torch.testing.assert_close(actual_ids, ids)
+    torch.testing.assert_close(variants, desired[ids])
+    expected = []
+    expected_normal = []
+    for actor, snapshot in zip(ids.tolist(), source, strict=True):
+        if snapshot < 0 or (invalid_replay and snapshot == 2):
+            expected.append([actor + 900.0, actor + 800.0])
+            expected_normal.append(actor)
+        else:
+            expected.append([snapshot + 100.0, snapshot + 200.0])
+    torch.testing.assert_close(payload, torch.tensor(expected))
+    assert solved == expected_normal
+    assert not command._episode_reset
+
+
+def test_failed_command_reset_always_clears_episode_window(monkeypatch):
+    from isaaclab.managers import CommandTerm
+
+    command = _command(False)
+    command._env.episode_interrupted = torch.zeros(5, dtype=torch.bool)
+    command._cur_enabled = command._buffer_built = False
+    command.distance = torch.ones(5)
+    command._start_distance = torch.ones(5, dtype=torch.long)
+    command._distance_bands, command._split_last = (), {}
+
+    def fail(term, ids):
+        assert term._episode_reset
+        raise RuntimeError("sample failed")
+
+    monkeypatch.setattr(CommandTerm, "reset", fail)
+    with pytest.raises(RuntimeError, match="sample failed"):
+        command.reset(torch.tensor([4, 1]))
+    assert not command._episode_reset

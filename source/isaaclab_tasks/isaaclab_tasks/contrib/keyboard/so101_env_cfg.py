@@ -5,6 +5,7 @@
 
 from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg, NewtonShapeCfg
 from isaaclab_newton.physics.population import NewtonPopulationCfg
+from isaaclab_newton.physics.worlds import NewtonWorldsCfg
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import AssetBaseCfg
@@ -371,4 +372,32 @@ class SO101KeyboardPopulationEnvCfg(SO101KeyboardEnvCfg):
 class SO101KeyboardPopulationEnvPresets(PresetCfg):
     heterogeneous = SO101KeyboardPopulationEnvCfg()
     partitioned_108 = SO101KeyboardPopulationEnvCfg(keyboard_variants=())
+    default = heterogeneous
+
+
+@configclass
+class WorldsPhysicsCfg(PresetCfg):
+    newton_mjwarp = NewtonWorldsCfg(prototype_physics=PhysicsCfg().newton_mjwarp)
+    default = newton_mjwarp
+
+
+@configclass
+class SO101KeyboardWorldsEnvCfg(SO101KeyboardPopulationEnvCfg):
+    """Immediate heterogeneous resets through one prepared native world graph.
+
+    Normal IK and replay resets stage complete snapshots before publication.
+    Supply ``commands.typing.reset.bank_path`` to reuse a prepared curriculum;
+    otherwise the task builds its curriculum from the same reset implementation.
+    """
+
+    sim: SimulationCfg = SimulationCfg(physics=WorldsPhysicsCfg(), dt=0.01)
+    redistribution_interval: int = 1
+    redistribution_mode: str = "episode_boundary"
+    worlds_memory_budget_bytes: int = 16 * 1024**3
+
+
+@configclass
+class SO101KeyboardWorldsEnvPresets(PresetCfg):
+    heterogeneous = SO101KeyboardWorldsEnvCfg()
+    partitioned_108 = SO101KeyboardWorldsEnvCfg(keyboard_variants=())
     default = heterogeneous

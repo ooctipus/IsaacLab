@@ -7,14 +7,15 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import torch
 import warp as wp
 
 from isaaclab.managers import ManagerTermBase
 
-from ..newton_selection import JOINT_DOF, NewtonSelection
+from ..native_selection import NativeSelection
+from ..newton_selection import JOINT_DOF, NewtonSelection, scalar_field_active, scalar_field_read
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
@@ -69,8 +70,20 @@ def _velocity_limit_violation(
             wp.atomic_max(out, logical_worlds[worlds[i]], 1)
 
 
+@wp.kernel
+def _selected_velocity_limit_violation(
+    velocity: Any,
+    limits: Any,
+    out: wp.array[int],
+):
+    world, slot = wp.tid()
+    if scalar_field_active(velocity, world, slot):
+        if wp.abs(scalar_field_read(velocity, world, slot)) > scalar_field_read(limits, world, slot):
+            wp.atomic_max(out, world, 1)
+
+
 class joint_vel_out_of_limit(ManagerTermBase):
-    """Reduce compact participating DOFs into race-safe per-world velocity violations."""
+    """Reduce selected DOFs into race-safe per-world velocity violations."""
 
     def __init__(self, cfg, env):
         super().__init__(cfg, env)
@@ -80,22 +93,31 @@ class joint_vel_out_of_limit(ManagerTermBase):
 
     def __call__(self, env, joints: NewtonSelection) -> torch.Tensor:
         self._out.zero_()
-        for part, worlds in joints.native_bindings:
-            model, state = part.owner.model, part.owner.state
+        if isinstance(joints, NativeSelection):
             wp.launch(
-                _velocity_limit_violation,
-                dim=part.capacity,
-                inputs=[
-                    part.freq_ids,
-                    part.env_ids,
-                    part.world_start,
-                    wp.from_torch(worlds),
-                    state.joint_qd,
-                    model.joint_velocity_limit,
-                ],
+                _selected_velocity_limit_violation,
+                dim=(env.num_envs, joints.width),
+                inputs=[joints.scalar_field("state", "joint_qd"), joints.scalar_field("model", "joint_velocity_limit")],
                 outputs=[self._out],
-                device=model.device,
+                device=self._out.device,
             )
+        else:
+            for part, worlds in joints.native_bindings:
+                model, state = part.owner.model, part.owner.state
+                wp.launch(
+                    _velocity_limit_violation,
+                    dim=part.capacity,
+                    inputs=[
+                        part.freq_ids,
+                        part.env_ids,
+                        part.world_start,
+                        wp.from_torch(worlds),
+                        state.joint_qd,
+                        model.joint_velocity_limit,
+                    ],
+                    outputs=[self._out],
+                    device=model.device,
+                )
         return wp.to_torch(self._out).bool()
 
 
@@ -125,6 +147,8 @@ class illegal_contact(ManagerTermBase):
         )
 
     def __call__(self, env, bodies, sensor_name: str | None, threshold: float):
+        if isinstance(bodies, NativeSelection):
+            return (bodies.selected_net_normal_forces().norm(dim=-1) > threshold).any(dim=1)
         if self._sensor is not None:
             forces = self._sensor.data.net_normal_forces_w_history.torch
             magnitude = forces.norm(dim=-1).amax(dim=1).flatten()[self._rows]

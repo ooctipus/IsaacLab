@@ -15,6 +15,7 @@ import numpy as np
 import torch
 import warp as wp
 from isaaclab_newton.physics.population import NewtonPopulationCfg
+from isaaclab_newton.physics.worlds import NewtonWorldsCfg
 
 from isaaclab.managers import (
     ActionManager,
@@ -45,8 +46,8 @@ class SO101KeyboardPopulationEnv(gym.Env):
         super().__init__()
         self.cfg = cfg.copy()
         self.cfg.validate()
-        if not isinstance(self.cfg.sim.physics, NewtonPopulationCfg):
-            raise ValueError("The population task requires NewtonPopulationCfg.")
+        if not isinstance(self.cfg.sim.physics, (NewtonPopulationCfg, NewtonWorldsCfg)):
+            raise ValueError("The population task requires NewtonPopulationCfg or NewtonWorldsCfg.")
         if render_mode is not None or self.cfg.video_recorders:
             raise ValueError("Keyboard populations currently support headless training without video recording.")
         try:
@@ -90,8 +91,13 @@ class SO101KeyboardPopulationEnv(gym.Env):
         self.native_contacts = {}
         self.sim = SimulationContext(self.cfg.sim)
         try:
-            with wp.ScopedStream(wp.stream_from_torch(torch.cuda.current_stream(self.device))):
-                self.keyboard_variants = KeyboardPopulations(self)
+            with self._stream_scope():
+                if isinstance(self.cfg.sim.physics, NewtonWorldsCfg):
+                    from .keyboard_worlds import KeyboardWorlds
+
+                    self.keyboard_variants = KeyboardWorlds(self)
+                else:
+                    self.keyboard_variants = KeyboardPopulations(self)
                 self.sim.reset()
                 self.event_manager = EventManager(self.cfg.events, self)
                 self.command_manager = CommandManager(self.cfg.commands, self)
@@ -131,6 +137,15 @@ class SO101KeyboardPopulationEnv(gym.Env):
         if not self._population_bindings_valid:
             raise RuntimeError("Population bindings publication failed; close this environment and create another.")
 
+    def _stream_scope(self):
+        """Borrow an existing wrapper; nested wrappers unregister the same CUDA handle in Warp 1.17."""
+        stream = wp.get_stream(self.device)
+        producer = torch.cuda.current_stream(self.device)
+        if (stream.cuda_stream or 0) != producer.cuda_stream:
+            stream = wp.stream_from_torch(producer)
+        # Restored Warp consumers must also wait when the caller changed streams.
+        return wp.ScopedStream(stream, sync_exit=True)
+
     def invalidate_fk(self, env_ids):
         """Record task-authored state edits for reconciliation before native reads."""
         self._dirty_worlds[env_ids] = True
@@ -144,7 +159,7 @@ class SO101KeyboardPopulationEnv(gym.Env):
     def forward(self):
         """Reconcile reset coordinates/properties and native solver state exactly once."""
         self._check_active()
-        with wp.ScopedStream(wp.stream_from_torch(torch.cuda.current_stream(self.device))):
+        with self._stream_scope():
             if self._dirty:
                 self.keyboard_variants.reconcile_state(self._dirty_worlds, self._dirty_flags)
                 self._dirty_worlds.zero_()
@@ -155,6 +170,10 @@ class SO101KeyboardPopulationEnv(gym.Env):
         """Use an existing homogeneous cohort as scratch worlds during initial IK sampling."""
         if self._has_reset:
             raise RuntimeError("Curriculum snapshots must be prepared before episodes start.")
+        if isinstance(self.cfg.sim.physics, NewtonWorldsCfg):
+            self.keyboard_variants.request(self.all_env_ids, torch.full_like(self.all_env_ids, variant))
+            self.keyboard_variants.redistribute(self.all_env_ids)
+            return self.all_env_ids
         worlds = self.keyboard_variants.worlds[variant]
         if not len(worlds):
             # Tiny test/play batches can have fewer actors than prototypes. This
@@ -165,35 +184,80 @@ class SO101KeyboardPopulationEnv(gym.Env):
 
     def finish_curriculum(self, original_variants):
         """Restore initial assignments after temporary scratch cohorts, if any."""
-        self.keyboard_variants.apply(self.all_env_ids, original_variants)
+        if isinstance(self.cfg.sim.physics, NewtonWorldsCfg):
+            self.keyboard_variants.request(self.all_env_ids, original_variants)
+            self.keyboard_variants.redistribute(self.all_env_ids)
+        else:
+            self.keyboard_variants.apply(self.all_env_ids, original_variants)
 
     def _reset_idx(self, env_ids):
-        self.curriculum_manager.compute(env_ids=env_ids)
-        if self.cfg.keyboard_variants:
-            command = self.cfg.commands.typing
-            zeros = torch.zeros((len(env_ids), command.keys.width), device=self.device)
-            command.keys.write_state("joint_q", zeros, env_ids)
-            command.key_dofs.write_state("joint_qd", zeros, env_ids)
-            targets = command.keys if command.keys.use_coord_layout_targets else command.key_dofs
-            targets.write_control("joint_target_q", zeros, env_ids)
-            command.key_dofs.write_control("joint_target_qd", zeros, env_ids)
-            command.key_dofs.write_control("joint_f", zeros, env_ids)
-            self.invalidate_fk(env_ids)
-        if "reset" in self.event_manager.available_modes:
-            self.event_manager.apply(mode="reset", env_ids=env_ids, global_env_step_count=self.common_step_counter)
-        self.extras["log"] = {}
-        for manager in (
-            self.observation_manager,
-            self.action_manager,
-            self.reward_manager,
-            self.curriculum_manager,
-            self.command_manager,
-            self.event_manager,
-            self.termination_manager,
-        ):
-            self.extras["log"].update(manager.reset(env_ids))
-        self.episode_length_buf[env_ids] = 0
-        self.forward()
+        try:
+            self.curriculum_manager.compute(env_ids=env_ids)
+            replay_only = self.cfg.commands.typing.reset.replay_only
+            native_worlds = isinstance(self.cfg.sim.physics, NewtonWorldsCfg)
+            if self.cfg.keyboard_variants and not replay_only and not native_worlds:
+                command = self.cfg.commands.typing
+                zeros = torch.zeros((len(env_ids), command.keys.width), device=self.device)
+                command.keys.write_state("joint_q", zeros, env_ids)
+                command.key_dofs.write_state("joint_qd", zeros, env_ids)
+                targets = command.keys if command.keys.use_coord_layout_targets else command.key_dofs
+                targets.write_control("joint_target_q", zeros, env_ids)
+                command.key_dofs.write_control("joint_target_qd", zeros, env_ids)
+                command.key_dofs.write_control("joint_f", zeros, env_ids)
+                self.invalidate_fk(env_ids)
+            if "reset" in self.event_manager.available_modes and not replay_only:
+                if native_worlds:
+                    from .mdp.reset import sample_root_poses
+
+                    # The admitted keyboard event is overwritten by snapshot/IK reset.
+                    # Preserve its random draws without mutating the ending lifetime.
+                    bank = self.keyboard_variants
+                    roots = self.cfg.commands.typing.reset_roots.width
+                    defaults = bank.reset_defaults[bank.reset_variants(env_ids), : roots * 7]
+                    for event in vars(self.cfg.events).values():
+                        if getattr(event, "mode", None) == "reset":
+                            sample_root_poses(
+                                defaults.reshape(-1, roots, 7),
+                                event.params["pose_range"],
+                                event.params["velocity_range"],
+                            )
+                else:
+                    self.event_manager.apply(
+                        mode="reset", env_ids=env_ids, global_env_step_count=self.common_step_counter
+                    )
+            self.extras["log"] = {}
+            for manager in (
+                self.observation_manager,
+                self.action_manager,
+                self.reward_manager,
+                self.curriculum_manager,
+                self.command_manager,
+                self.event_manager,
+                self.termination_manager,
+            ):
+                self.extras["log"].update(manager.reset(env_ids))
+            self.episode_length_buf[env_ids] = 0
+            self.forward()
+        except BaseException:
+            self._population_bindings_valid = False
+            raise
+
+    def reset_variant_ids(self, env_ids):
+        """Query committed or staged prototypes for the current reset transaction."""
+        return self.keyboard_variants.reset_variants(env_ids)
+
+    def reset_keyboard(self, env_ids, variant_ids):
+        """Reset selected episodes immediately to explicitly requested keyboard prototypes."""
+        self._check_active()
+        with self._stream_scope():
+            self.keyboard_variants.request(env_ids, variant_ids)
+            self.keyboard_variants.redistribute(env_ids)
+            self.episode_interrupted[env_ids] = False
+            self._reset_idx(env_ids)
+
+    def restore_reset_snapshot(self, env_ids, variant_ids, snapshot):
+        """Publish complete physical reset state before the command's typing state."""
+        self.keyboard_variants.reset_snapshot(env_ids, variant_ids, snapshot)
 
     def reset(self, env_ids=slice(None), seed=None, options=None):
         """Reset requested logical episodes; the first reset builds the shared curriculum."""
@@ -201,10 +265,11 @@ class SO101KeyboardPopulationEnv(gym.Env):
         if seed is not None:
             self.seed(seed)
         ids = self.all_env_ids[slice(None) if env_ids is None else env_ids]
-        with wp.ScopedStream(wp.stream_from_torch(torch.cuda.current_stream(self.device))):
+        with self._stream_scope():
             self.episode_interrupted[ids] = False
             if self._has_reset:
                 self.keyboard_variants.request(ids)
+                self.keyboard_variants.redistribute(ids)
             self._reset_idx(ids)
             self.obs_buf = self.observation_manager.compute(update_history=True)
             self._has_reset = True
@@ -213,7 +278,7 @@ class SO101KeyboardPopulationEnv(gym.Env):
     def step(self, action):
         """Advance eight native substeps with relative PD refreshed every physics frame."""
         self._check_active()
-        with wp.ScopedStream(wp.stream_from_torch(torch.cuda.current_stream(self.device))):
+        with self._stream_scope():
             self.episode_interrupted.zero_()
             self.extras.pop("final_obs", None)
             self.action_manager.process_action(action.to(self.device))
@@ -221,6 +286,16 @@ class SO101KeyboardPopulationEnv(gym.Env):
                 self._sim_step_counter += 1
                 self.action_manager.apply_action()
                 self.sim.step(render=False)
+            if isinstance(self.cfg.sim.physics, NewtonWorldsCfg):
+                bank = self.keyboard_variants
+                torch._assert_async(
+                    ((wp.to_torch(bank.overflow) & bank.capacity_overflow_mask) == 0).all(),
+                    "Native keyboard contact workspace overflow.",
+                )
+                torch._assert_async(
+                    wp.to_torch(bank.backend.runtime.directory.d.flags)[2] == 0,
+                    "Native keyboard directory transaction failed.",
+                )
             self.episode_length_buf += 1
             self.common_step_counter += 1
             self.reset_buf = self.termination_manager.compute()
@@ -267,12 +342,14 @@ class SO101KeyboardPopulationEnv(gym.Env):
                     "Populations/redistributions": bank.redistribution_count,
                     "Populations/last_changed_worlds": bank.last_changed_worlds,
                     "Populations/last_redistribution_host_ms": bank.last_redistribution_ms,
-                    "Populations/active_prototypes": sum(count > 0 for count in bank.backend.counts),
-                    "Populations/native_dofs": sum(
-                        p.model.joint_dof_count for p in bank.backend.populations if p is not None
-                    ),
+                    "Populations/active_prototypes": bank.active_prototypes,
+                    "Populations/native_dofs": bank.native_dofs,
                 }
             )
+            if isinstance(self.cfg.sim.physics, NewtonWorldsCfg):
+                self.extras["log"]["Populations/prototypes_ever_at_iteration_limit"] = (
+                    (wp.to_torch(bank.overflow) & ~bank.capacity_overflow_mask) != 0
+                ).sum()
         return self.obs_buf, self.reward_buf, terminated, truncated, self.extras
 
     def close(self):

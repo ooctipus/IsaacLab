@@ -129,6 +129,15 @@ class LetterTypingCommandCfg(CommandTermCfg):
         ``ceil(size / num_envs)`` reset-IK batches on the first reset, so keep it a small multiple of
         ``num_envs`` to bound the one-time build cost."""
 
+        bank_path: str | None = None
+        """Optional portable reset-bank file, loaded before the first episode instead of rebuilding IK samples."""
+
+        bank_variant: int | None = None
+        """Source bank prototype for a homogeneous keyboard. Required when several prototypes share its labels."""
+
+        replay_only: bool = False
+        """Sample exclusively from compatible snapshots, excluding the normal IK path even at the weight floor."""
+
         beta_target: float = 0.5
         """Target success rate the replay sampler is peaked at. A snapshot's sampling score is the Beta kernel
         ``rate**(a-1) * (1-rate)**(b-1)`` with ``a = 1 + kappa*target`` and ``b = 1 + kappa*(1-target)`` (mode
