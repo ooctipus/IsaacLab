@@ -8,9 +8,14 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
+import importlib.metadata
+import json
+import os
 import re
 import subprocess
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -108,6 +113,7 @@ class BuildnpushTest(unittest.TestCase):
 
         verify_lockfile = mock.Mock()
         verify_synced_deps = mock.Mock()
+        steps = []
         with mock.patch.multiple(
             bp,
             clean_stale_egg_info=lambda: None,
@@ -122,15 +128,17 @@ class BuildnpushTest(unittest.TestCase):
             print_build_config=lambda ctx, plan: None,
             parse_env_file=lambda path: {"DOCKER_ISAACLAB_PATH": "/workspace/isaaclab"},
             resolved_symlinks=contextlib.nullcontext,
-            build_overlay=lambda ctx, plan, docker_env: None,
+            build_overlay=lambda ctx, plan, docker_env: steps.append("overlay"),
             build_full_deps=reject_deps_build,
             verify_synced_deps=verify_synced_deps,
-            tag_and_push=lambda ctx, plan: None,
+            build_newton_bridge=lambda: steps.append("bridge"),
+            tag_and_push=lambda ctx, plan: steps.append("tag"),
         ):
             bp.build_image(bp.BuildArgs(tag="factory", source=True, skip_push=True))
 
         verify_lockfile.assert_called_once_with()
         verify_synced_deps.assert_not_called()
+        self.assertEqual(steps, ["overlay", "bridge", "tag"])
 
     def test_pip_overlay_uses_prepared_image_before_deps_cache(self) -> None:
         ctx = _ctx(bp.BuildArgs(tag="factory", pip=True))
@@ -389,6 +397,100 @@ class BuildnpushTest(unittest.TestCase):
             )
 
         self.assertIn(f"ISAACLAB_UV_SYNC_ARGS={bp.KITLESS_UV_SYNC_EXTRAS}", calls[0])
+
+    def test_bridge_finalization_uses_locked_installed_source_without_runtime_compiler(self) -> None:
+        source = {
+            "source": "/opt/venv/newton/_src/utils/cuda_graph.cu",
+            "sha256": "a" * 64,
+            "commit": "b" * 40,
+            "version": "1.7.0",
+        }
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "uv.lock").write_text(
+                '[[package]]\nname="newton"\nversion="1.7.0"\nsource={git="https://example/newton#' + "b" * 40 + '"}\n'
+            )
+            with (
+                mock.patch.object(bp, "REPO_ROOT", root),
+                mock.patch.object(bp, "docker", return_value=json.dumps(source)) as docker,
+            ):
+                bp.build_newton_bridge()
+        probe, build = docker.call_args_list
+        self.assertIn("runc", probe.args)
+        self.assertIn("none", probe.args)
+        self.assertIn("docker/Dockerfile.cuda-graph", build.args)
+        self.assertIn(f"NEWTON_CUDA_SOURCE={source['source']}", build.args)
+        self.assertIn(f"NEWTON_SOURCE_SHA256={source['sha256']}", build.args)
+
+    def test_bridge_finalization_rejects_newton_drift_even_before_first_native_upgrade(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "uv.lock").write_text('[[package]]\nname="newton"\nversion="1.7.0"\nsource={git="repo#new"}\n')
+            for source_path in (None, "/opt/newton/cuda_graph.cu"):
+                with self.subTest(source_path=source_path), mock.patch.object(bp, "REPO_ROOT", root):
+                    installed = {"source": source_path, "sha256": "a" * 64, "commit": "old", "version": "1.7.0"}
+                    with mock.patch.object(bp, "docker", return_value=json.dumps(installed)) as docker:
+                        with self.assertRaisesRegex(bp.BuildError, "-p/--pip"):
+                            bp.build_newton_bridge()
+                    self.assertEqual(docker.call_count, 1)
+
+    def test_bridge_finalization_skips_pinned_newton_without_native_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "uv.lock").write_text('[[package]]\nname="newton"\nversion="1.7.0"\nsource={git="repo#same"}\n')
+            (root / "pyproject.toml").write_text('[project]\nname="other-project"\ndependencies=[]\n')
+            for installed in ({}, {"source": None, "commit": "same", "version": "1.7.0"}):
+                with self.subTest(installed=installed), mock.patch.object(bp, "REPO_ROOT", root):
+                    with mock.patch.object(bp, "docker", return_value=json.dumps(installed)) as docker:
+                        bp.build_newton_bridge()
+                    self.assertEqual(docker.call_count, 1)
+
+    def test_bridge_finalization_rejects_missing_required_newton_before_startup_install(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "uv.lock").write_text('[[package]]\nname="newton"\nversion="1.7.0"\nsource={git="repo#new"}\n')
+            (root / "pyproject.toml").write_text(
+                '[project]\nname="isaaclab-dev"\ndependencies=["newton[sim] @ git+https://example/newton@new"]\n'
+            )
+            with mock.patch.object(bp, "REPO_ROOT", root), mock.patch.object(bp, "docker", return_value="{}") as docker:
+                with self.assertRaisesRegex(bp.BuildError, "missing from the image.*-p/--pip"):
+                    bp.build_newton_bridge()
+            self.assertEqual(docker.call_count, 1)
+
+    def test_bridge_finalization_does_not_require_newton_when_checkout_omits_it(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "uv.lock").write_text('[[package]]\nname="other-package"\nversion="1.0"\n')
+            with mock.patch.object(bp, "REPO_ROOT", root), mock.patch.object(bp, "docker", return_value="{}") as docker:
+                bp.build_newton_bridge()
+            self.assertEqual(docker.call_count, 1)
+
+    def test_cluster_rejects_stale_or_corrupt_bridge_after_dependency_sync(self) -> None:
+        workflow = (bp.REPO_ROOT / "docker/cluster/multi_node.yaml").read_text()
+        marker = "uv run --no-sync python - <<'PY_NEWTON_BRIDGE'"
+        source = textwrap.dedent(workflow.split(marker, 1)[1].split("PY_NEWTON_BRIDGE", 1)[0])
+        self.assertLess(workflow.index("uv sync --locked"), workflow.index(marker))
+        self.assertLess(workflow.index(marker), workflow.index("-m torch.distributed.run"))
+        with tempfile.TemporaryDirectory() as temp:
+            library, cu = Path(temp) / "cuda_graph.so", Path(temp) / "cuda_graph.cu"
+            library.write_bytes(b"binary")
+            cu.write_bytes(b"source")
+            manifest = {
+                "source_sha256": hashlib.sha256(cu.read_bytes()).hexdigest(),
+                "library_sha256": hashlib.sha256(library.read_bytes()).hexdigest(),
+            }
+            library.with_suffix(".json").write_text(json.dumps(manifest))
+            with mock.patch.dict(os.environ, {"NEWTON_CUDA_GRAPH_LIBRARY": str(library)}):
+                with mock.patch.object(importlib.metadata, "distribution") as distribution:
+                    distribution.return_value.locate_file.return_value = cu
+                    exec(compile(source, "<cluster-native-bridge-check>", "exec"), {})
+                    cu.write_bytes(b"new source")
+                    with self.assertRaisesRegex(RuntimeError, "source changed"):
+                        exec(compile(source, "<cluster-native-bridge-check>", "exec"), {})
+                    cu.write_bytes(b"source")
+                    library.write_bytes(b"corrupt")
+                    with self.assertRaisesRegex(RuntimeError, "library differs"):
+                        exec(compile(source, "<cluster-native-bridge-check>", "exec"), {})
 
 
 if __name__ == "__main__":

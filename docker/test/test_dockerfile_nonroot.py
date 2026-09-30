@@ -40,6 +40,7 @@ UV_PIN = "ghcr.io/astral-sh/uv:0.12.9@sha256:8b940d3a9d65bed080436972241af2e21c8
 DOCKERFILE_RUNTIME_USERS = {
     "Dockerfile.base": "isaaclab",
     "Dockerfile.curobo": "isaaclab",
+    "Dockerfile.cuda-graph": "isaaclab",
     "Dockerfile.installci": "isaaclab",
     "Dockerfile.kitless": "isaaclab",
     "Dockerfile.ros2": "isaaclab",
@@ -147,6 +148,19 @@ def test_curobo_compiler_matches_torch_without_replacing_runtime_libraries():
     # System CUDA libraries must not replace Kit's libraries or shadow the locked wheels.
     assert not re.search(r"^ENV LD_LIBRARY_PATH=.*\$\{CUDA_HOME\}", text, re.MULTILINE)
     assert not re.search(r"^\s+(?:libcudnn|libcusparselt|libnccl|libnvjitlink)\S*\s", text, re.MULTILINE)
+
+
+def test_newton_bridge_compiler_is_pinned_and_excluded_from_runtime():
+    text = (DOCKER_DIR / "Dockerfile.cuda-graph").read_text()
+    assert re.search(r"FROM nvidia/cuda:12\.9\.1-devel-ubuntu24\.04@sha256:[0-9a-f]{64} AS compiler", text)
+    assert "-gencode=arch=compute_89,code=sm_89" in text
+    assert "-gencode=arch=compute_120,code=sm_120" in text
+    assert "--cudart=static --cudadevrt=static" in text
+    assert "-L/usr/local/cuda/lib64/stubs -lcuda" in text
+    runtime = text.split("FROM source AS runtime", 1)[1]
+    assert "COPY --from=compiler /out/ /opt/newton-cuda-graph/" in runtime
+    assert "nvcc" not in runtime and "/usr/local/cuda" not in runtime
+    assert "ENV LD_LIBRARY_PATH" not in text
 
 
 def test_kitless_dockerfile_installs_newton_rl_ov_and_visualizers_without_isaac_sim():

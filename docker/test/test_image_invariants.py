@@ -61,6 +61,32 @@ def test_wandb_logger_is_installed():
     ).strip()
 
 
+def test_native_newton_bridge_matches_its_installed_source():
+    """Native images ship the matching L40/Blackwell bridge without a host compiler path."""
+    _in_image("""
+"${VIRTUAL_ENV}/bin/python" - <<'PY'
+import hashlib
+import importlib.metadata
+import json
+import os
+from pathlib import Path
+try:
+    package = importlib.metadata.distribution("newton")
+except importlib.metadata.PackageNotFoundError:
+    raise SystemExit(0)
+source = Path(package.locate_file("newton/_src/utils/cuda_graph.cu"))
+if not source.is_file():
+    raise SystemExit(0)
+library = Path(os.environ["NEWTON_CUDA_GRAPH_LIBRARY"])
+manifest = json.loads(library.with_suffix(".json").read_text())
+assert manifest["architectures"] == [89, 120]
+assert manifest["cuda_toolkit"] == "12.9.1"
+assert manifest["source_sha256"] == hashlib.sha256(source.read_bytes()).hexdigest()
+assert manifest["library_sha256"] == hashlib.sha256(library.read_bytes()).hexdigest()
+assert library.is_relative_to("/opt/newton-cuda-graph")
+PY""")
+
+
 def test_bundled_keyboard_assets_compose_without_remote_client():
     """The runtime user can read the complete USD trees without contacting Omniverse."""
     _in_image("""cd /workspace/isaaclab && uv run --no-sync python - <<'PY'

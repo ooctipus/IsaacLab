@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -619,6 +620,61 @@ def verify_synced_deps(ctx: BuildContext, docker_env: dict[str, str]) -> None:
     print("Verified image environment matches the repository's uv.lock (workspace members aside).")
 
 
+def build_newton_bridge() -> None:
+    """Compile the optional installed Newton bridge without adding a runtime toolchain.
+
+    Source-only updates may defer unrelated dependencies, but an existing native
+    bridge cannot be built against a Newton revision that cluster startup replaces.
+    """
+    probe = """import hashlib, importlib.metadata as metadata, json
+from pathlib import Path
+try:
+    package = metadata.distribution("newton")
+except metadata.PackageNotFoundError:
+    print("{}")
+    raise SystemExit(0)
+source = Path(package.locate_file("newton/_src/utils/cuda_graph.cu"))
+direct = json.loads(package.read_text("direct_url.json") or "{}")
+print(json.dumps({"source": str(source) if source.is_file() else None,
+                  "sha256": hashlib.sha256(source.read_bytes()).hexdigest() if source.is_file() else None,
+                  "commit": direct.get("vcs_info", {}).get("commit_id"), "version": package.version}))
+"""
+    probe_args = ["run", "--rm", "--runtime", "runc", "--network", "none", "--entrypoint", "bash", BASE_IMAGE]
+    probe_args += ["-c", 'exec "${VIRTUAL_ENV}/bin/python" -c "$1"', "bridge-inspection", probe]
+    installed = json.loads(docker(*probe_args, capture=True))
+    with (REPO_ROOT / "uv.lock").open("rb") as file:
+        locked = next((p for p in tomllib.load(file)["package"] if p["name"] == "newton"), None)
+    expected = locked["source"].get("git", "").partition("#")[2] if locked else ""
+    if not locked:
+        print("Newton is not selected by uv.lock; skipping native image finalization.")
+        return
+    if not installed:
+        # Both supported image families sync root dependencies at startup. A stale
+        # source-only base must not defer its first Newton install past compilation.
+        with (REPO_ROOT / "pyproject.toml").open("rb") as file:
+            dependencies = tomllib.load(file)["project"].get("dependencies", [])
+        if any(re.match(r"newton(?:\[|[\s<>=!~;@]|$)", requirement, re.IGNORECASE) for requirement in dependencies):
+            raise BuildError(
+                "Newton is required by this checkout but missing from the image. "
+                "Use -p/--pip or -d/--deps before publishing this image."
+            )
+        print("Newton is not installed or required by the root project; skipping native image finalization.")
+        return
+    matches = installed["commit"] == expected if expected else installed["version"] == locked["version"]
+    if not matches:
+        raise BuildError(
+            "Cannot prepare the CUDA graph bridge from a Newton revision that differs from uv.lock. "
+            "Use -p/--pip or -d/--deps before publishing this image."
+        )
+    if installed["source"] is None:
+        print("Pinned Newton has no CUDA graph bridge; skipping native image finalization.")
+        return
+    build_args = ["build", "-f", "docker/Dockerfile.cuda-graph", "--build-arg", f"INPUT_IMAGE={BASE_IMAGE}"]
+    build_args += ["--build-arg", f"NEWTON_CUDA_SOURCE={installed['source']}"]
+    build_args += ["--build-arg", f"NEWTON_SOURCE_SHA256={installed['sha256']}"]
+    docker(*build_args, "-t", BASE_IMAGE, ".", env={"DOCKER_BUILDKIT": "1"})
+
+
 def tag_and_push(ctx: BuildContext, plan: BuildPlan) -> None:
     """Record dependency checkpoints, tag the final image, and optionally push."""
 
@@ -740,6 +796,7 @@ def build_image(args: BuildArgs) -> None:
         dependencies_synced = plan.run_pip_install or not plan.skip_deps
         if dependencies_synced:
             verify_synced_deps(ctx, docker_env)
+        build_newton_bridge()
         tag_and_push(ctx, plan)
     if ctx.deps_hash:
         update_state_and_cleanup(ctx)
