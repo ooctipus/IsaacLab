@@ -29,6 +29,10 @@ __all__ = [
     "NewtonSoftContactCfg",
     "NewtonSolverCfg",
     "NewtonVBDManager",
+    "NewtonWorldsBackend",
+    "NewtonWorldsBackendCfg",
+    "NewtonWorldsCfg",
+    "NewtonWorldsManager",
     "VBDSolverCfg",
     "NewtonXPBDManager",
     "XPBDSolverCfg",
@@ -63,5 +67,6 @@ from .newton_manager_cfg import (
 )
 from .vbd_manager import NewtonVBDManager
 from .vbd_manager_cfg import VBDSolverCfg
+from .worlds import NewtonWorldsBackend, NewtonWorldsBackendCfg, NewtonWorldsCfg, NewtonWorldsManager
 from .xpbd_manager import NewtonXPBDManager
 from .xpbd_manager_cfg import XPBDSolverCfg
