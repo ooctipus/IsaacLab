@@ -151,7 +151,7 @@ class SO101KeyboardPopulationEnv(gym.Env):
         self._dirty_worlds[env_ids] = True
         self._dirty = True
 
-    def notify_model_changed(self, flags, env_ids):
+    def notify_model_changed(self, flags, env_ids, *, root_poses_only=False):
         """Accumulate physical property edits at the next forward boundary."""
         self._dirty_flags |= int(flags)
         self.invalidate_fk(env_ids)

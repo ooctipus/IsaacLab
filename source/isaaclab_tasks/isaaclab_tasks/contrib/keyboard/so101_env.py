@@ -116,11 +116,11 @@ class SO101KeyboardEnv(ManagerBasedRLEnv):
         """Mark task-authored coordinates for reconciliation before native state reads."""
         NewtonManager.invalidate_fk(env_ids=wp.from_torch(env_ids.to(torch.int32)))
 
-    def notify_model_changed(self, flags, env_ids) -> None:
+    def notify_model_changed(self, flags, env_ids, *, root_poses_only=False) -> None:
         """Synchronize task-authored model properties in the selected logical worlds."""
         self._property_world_mask.zero_()
         wp.to_torch(self._property_world_mask)[env_ids] = True
-        NewtonManager.notify_model_changed(flags, world_mask=self._property_world_mask)
+        NewtonManager.notify_model_changed(flags, world_mask=self._property_world_mask, root_poses_only=root_poses_only)
 
     def reset_keyboard(self, env_ids, variant_ids) -> None:
         """Reset selected episodes to registered keyboard variants, then reconcile forward kinematics."""

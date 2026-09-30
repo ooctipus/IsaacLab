@@ -275,6 +275,9 @@ class SO101KeyboardEnvCfg(ManagerBasedRLEnvCfg):
     keyboard_variants: tuple[KeyboardSpawnerCfg, ...] = TYPING_KEYBOARD_VARIANTS
     """Registered reset variants; an empty tuple keeps the authored 108-key partitioned baseline."""
 
+    cache_keyboard_constants: bool = True
+    """Prepare immutable sleeping-variant solver constants once, before episode resets."""
+
     scene: SO101SceneCfg = SO101SceneCfg(num_envs=4096, env_spacing=1.0, replicate_physics=True)
     observations: SO101ObservationsCfg = SO101ObservationsCfg()
     actions: SO101RelJointPosActionCfg = SO101RelJointPosActionCfg()

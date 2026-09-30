@@ -343,7 +343,7 @@ def test_fixed_root_writer_masks_frames_and_stream_order(device, nested_task):
     env = SimpleNamespace(
         num_envs=3,
         device=device,
-        notify_model_changed=lambda flags, rows: calls.append((flags, rows)),
+        notify_model_changed=lambda flags, rows, *, root_poses_only: calls.append((flags, rows, root_poses_only)),
         invalidate_fk=lambda rows: calls.append(rows),
     )
     observed = wp.empty_like(model.joint_X_p)
@@ -381,6 +381,7 @@ def test_fixed_root_writer_masks_frames_and_stream_order(device, nested_task):
     torch.testing.assert_close(actual[joint_ids[~selected]], initial[joint_ids[~selected]], rtol=0, atol=0)
     torch.testing.assert_close(torch.get_rng_state(), rng, rtol=0, atol=0)
     assert calls[0][0] == newton.ModelFlags.JOINT_PROPERTIES and calls[0][1] is ids and calls[1] is ids
+    assert calls[0][2] is True
     calls.clear()
     write_fixed_root_poses(env, roots, ids[:0], poses[:0])
     assert calls == []

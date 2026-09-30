@@ -1139,7 +1139,21 @@ class NewtonManager(PhysicsManager):
         cls._model_changes.add(change)
 
     @classmethod
-    def notify_model_changed(cls, change: ModelFlags, *, world_mask: wp.array | None = None) -> None:
+    def get_solver(cls) -> SolverBase:
+        """Return the active solver for solver-specific preparation APIs."""
+        if cls._solver is None:
+            raise RuntimeError("The Newton solver has not been initialized.")
+        return cls._solver
+
+    @classmethod
+    def notify_model_changed(
+        cls,
+        change: ModelFlags,
+        *,
+        world_mask: wp.array | None = None,
+        constant_variant_ids: wp.array | None = None,
+        root_poses_only: bool = False,
+    ) -> None:
         """Synchronize authored properties before a state read or reset.
 
         Args:
@@ -1147,8 +1161,19 @@ class NewtonManager(PhysicsManager):
             world_mask: Worlds to wake, including the trailing global-world entry.
                 Selective notification requires the MuJoCo solver. Property writes
                 themselves must already be restricted to the selected worlds.
+            constant_variant_ids: Prepared MuJoCo constant variant ID for each world.
+            root_poses_only: Only fixed world-root parent poses changed; preserves prepared constants.
         """
-        if world_mask is None:
+        if constant_variant_ids is not None or root_poses_only:
+            if not isinstance(cls._solver, SolverMuJoCo):
+                raise NotImplementedError("Prepared constants require SolverMuJoCo.")
+            cls._solver.notify_model_changed(
+                change,
+                world_mask=world_mask,
+                constant_variant_ids=constant_variant_ids,
+                root_poses_only=root_poses_only,
+            )
+        elif world_mask is None:
             cls._solver.notify_model_changed(change)
         elif isinstance(cls._solver, SolverMuJoCo):
             cls._solver.notify_model_changed(change, world_mask=world_mask)

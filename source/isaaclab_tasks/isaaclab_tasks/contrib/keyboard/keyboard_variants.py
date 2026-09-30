@@ -191,6 +191,21 @@ class KeyboardVariants:
         shape_bodies = model.shape_body.numpy()[shape_ids[0]]
         self._shape_body_column = torch.tensor([body_columns[int(body)] for body in shape_bodies], device=env.device)
         self._shape_ids_t = torch.as_tensor(shape_ids, device=env.device)
+        self._constants_prepared = False
+        if env.cfg.cache_keyboard_constants:
+            solver = NewtonManager.get_solver()
+            if not isinstance(solver, SolverMuJoCo):
+                raise ValueError("Prepared keyboard constants require SolverMuJoCo.")
+            # Avoid baking far-origin float32 cancellation into every world's reference constants.
+            world_index = int(env.env_origins.square().sum(dim=-1).argmin().item())
+            representative = torch.tensor([world_index], dtype=torch.long, device=env.device)
+
+            def apply_variant(variant):
+                self.apply(representative, torch.full_like(representative, variant))
+
+            solver.prepare_model_constants(len(self.layouts), apply_variant, world_index=world_index)
+            self._constants_prepared = True
+            self.apply(representative, torch.zeros_like(representative))
 
     def apply(self, env_ids: torch.Tensor, variant_ids: torch.Tensor) -> None:
         """Install registered meshes, physical properties and participation before reset state writes.
@@ -244,6 +259,7 @@ class KeyboardVariants:
             | ModelFlags.JOINT_DOF_PROPERTIES
             | ModelFlags.SHAPE_PROPERTIES,
             world_mask=self.env._property_world_mask,
+            constant_variant_ids=wp.from_torch(self.variant_ids) if self._constants_prepared else None,
         )
         selected = self.body_ids[env_ids]
         for mask, policy in (

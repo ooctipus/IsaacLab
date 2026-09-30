@@ -348,7 +348,7 @@ def write_fixed_root_poses(env, roots: NewtonSelection, env_ids: torch.Tensor, p
                 outputs=[model.joint_X_p],
                 device=model.device,
             )
-        env.notify_model_changed(ModelFlags.JOINT_PROPERTIES, env_ids)
+        env.notify_model_changed(ModelFlags.JOINT_PROPERTIES, env_ids, root_poses_only=True)
         env.invalidate_fk(env_ids)
 
 
