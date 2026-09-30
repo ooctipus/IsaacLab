@@ -11,8 +11,9 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 from isaaclab_ov.cloner import OvReplicateContext, ovphysx_replicate
+from isaaclab_ov.cloner.replicate import _expand_for_ovstage
 
-from pxr import Gf, Usd, UsdGeom
+from pxr import Gf, Sdf, Usd, UsdGeom
 
 from isaaclab.sim import SimulationContext
 
@@ -157,3 +158,53 @@ def test_raw_replicate_rejects_malformed_pose_array(name, value):
             mapping=np.array([[True, True]], dtype=np.bool_),
             **{name: value},
         )
+
+
+_OVSTAGE_SNAPSHOT = """#usda 1.0
+def Xform "World"
+{
+    def Xform "envs"
+    {
+        def Xform "env_0"
+        {
+            def Xform "Robot"
+            {
+                def Material "glass"
+                {
+                    token outputs:mdl:surface.connect = </World/envs/env_0/Robot/glass/Shader.outputs:out>
+                    def Shader "Shader"
+                    {
+                        token outputs:out
+                    }
+                }
+            }
+        }
+        def Xform "env_1"
+        {
+            def Xform "Robot" (instanceable = true)
+            {
+                rel material:binding = </World/envs/env_1/Robot/glass>
+            }
+        }
+    }
+}
+"""
+
+
+def test_ovstage_snapshot_expands_clone_rows_and_instancing():
+    """Cloned materials must own their shaders and instanced prims must be expanded."""
+    layer = Sdf.Layer.CreateAnonymous(".usda")
+    layer.ImportFromString(
+        _expand_for_ovstage(_OVSTAGE_SNAPSHOT, [("/World/envs/env_0/Robot/glass", ["/World/envs/env_1/Robot/glass"])])
+    )
+
+    source = layer.GetAttributeAtPath("/World/envs/env_0/Robot/glass.outputs:mdl:surface")
+    target = layer.GetAttributeAtPath("/World/envs/env_1/Robot/glass.outputs:mdl:surface")
+    assert list(source.connectionPathList.explicitItems) == [
+        Sdf.Path("/World/envs/env_0/Robot/glass/Shader.outputs:out")
+    ]
+    assert list(target.connectionPathList.explicitItems) == [
+        Sdf.Path("/World/envs/env_1/Robot/glass/Shader.outputs:out")
+    ]
+    assert layer.GetPrimAtPath("/World/envs/env_1/Robot/glass/Shader") is not None
+    assert not layer.GetPrimAtPath("/World/envs/env_1/Robot").HasInfo("instanceable")

@@ -21,6 +21,8 @@ from isaaclab import cloner
 from isaaclab.sim import SimulationContext
 
 if TYPE_CHECKING:
+    import ovstage
+
     from isaaclab.cloner.clone_plan import ClonePlan
     from isaaclab.renderers.base_renderer import VisualMaterialBatch
 
@@ -103,6 +105,43 @@ def _clone_rows(
     return rows
 
 
+def _expand_for_ovstage(usda: str, rows: Sequence[tuple[str, Sequence[str]]]) -> str:
+    """Return ``usda`` with instancing cleared and every clone row copied onto its targets.
+
+    OVStage ignores a material binding that a clone overrides on an instanceable prim, so instancing is
+    expanded. Its native clone also leaves a copied prim's internal connections pointing at the source
+    environment, which leaves cloned materials without their shaders, so the rows are copied here and
+    their intra-subtree paths rebased onto each target.
+    """
+    layer = Sdf.Layer.CreateAnonymous(".usda")
+    layer.ImportFromString(usda)
+    pending = [layer.pseudoRoot]
+    while pending:
+        spec = pending.pop()
+        pending.extend(spec.nameChildren)
+        if spec.HasInfo("instanceable"):
+            spec.ClearInfo("instanceable")
+    for source, targets in rows:
+        source_path = Sdf.Path(source)
+        for target in targets:
+            target_path = Sdf.Path(target)
+            if not Sdf.CopySpec(layer, source_path, layer, target_path):
+                raise RuntimeError(f"Failed to copy {source!r} to {target!r} in the OVStage snapshot.")
+            pending = [layer.GetPrimAtPath(target_path)]
+            while pending:
+                spec = pending.pop()
+                pending.extend(spec.nameChildren)
+                for prop in (*spec.attributes, *spec.relationships):
+                    items = prop.connectionPathList if hasattr(prop, "connectionPathList") else prop.targetPathList
+                    rebased = [
+                        path.ReplacePrefix(source_path, target_path) if path.HasPrefix(source_path) else path
+                        for path in items.explicitItems
+                    ]
+                    if rebased != list(items.explicitItems):
+                        items.explicitItems = rebased
+    return layer.ExportToString()
+
+
 def _whole_env_copy(plan: ClonePlan) -> tuple[str, str] | None:
     """Return a whole-environment native copy only when every replicated row proves it safe."""
     if plan.env_ids is None or not plan.env_ids.size:
@@ -148,7 +187,18 @@ class OvReplicateContext:
         self._materialized_rows: frozenset[int] = frozenset()
         self._env_prim_paths: list[str] = []
         self._stage_usda: str | None = None
+        self._ovstage_requested = False
         self._replicated = False
+
+    def _request_ovstage(self) -> None:
+        """Declare a consumer that builds its own rendering ovstage from this context's snapshot.
+
+        The snapshot keeps the environment roots only for consumers that render it, so this must be
+        called before the clone plan is replicated.
+        """
+        if self._replicated:
+            raise RuntimeError("An OVStage consumer cannot join a clone context after replication.")
+        self._ovstage_requested = True
 
     def _add_renderer(self, renderer: Any) -> int:
         """Register an OVRTX renderer that consumes this context's snapshot and clone rows."""
@@ -392,6 +442,28 @@ class OvReplicateContext:
                 top_level.append((source, targets))
         return tuple(top_level)
 
+    def create_ovstage(self) -> ovstage.Stage:
+        """Build a populated rendering ovstage for a consumer that draws it, e.g. Newton's ``ViewerRTX``.
+
+        The stage holds the plan-gated snapshot with every native clone row already copied onto its
+        targets, so each environment has its own prims and visual materials, and USD instancing is
+        expanded so per-environment material bindings apply. It uses GPU hierarchy computation, which
+        ``ViewerRTX`` requires of a stage it borrows. The caller owns the stage.
+
+        Returns:
+            The populated :class:`ovstage.Stage`.
+        """
+        import ovrtx  # noqa: PLC0415
+        import ovstage  # noqa: PLC0415
+
+        from isaaclab_ov.stage import create_ovstage  # noqa: PLC0415
+
+        ovrtx.register_schema_paths()
+        stage = create_ovstage("isaaclab_render", gpu_hierarchy=True)
+        ovstage.population.open_usd_from_string(stage, _expand_for_ovstage(self.stage_usda, self.clone_rows), ordinal=1)
+        stage.advance_write_floor(1).wait()
+        return stage
+
     @property
     def physics_clone_rows(self) -> tuple[tuple[str, tuple[str, ...], tuple[CloneTransform, ...]], ...]:
         """Return whole-environment or exact heterogeneous rows OVPhysX can clone natively."""
@@ -497,7 +569,7 @@ class OvReplicateContext:
                             continue
                         retained.add(dependency)
                         pending.append(dependency)
-            if self._materialized_rows or self._renderers:
+            if self._materialized_rows or self._renderers or self._ovstage_requested:
                 retained.update(Sdf.Path(path) for path in self._env_prim_paths)
             self._retain_sources(layer.pseudoRoot, Sdf.Path.absoluteRootPath, frozenset(retained))
         logger.info(

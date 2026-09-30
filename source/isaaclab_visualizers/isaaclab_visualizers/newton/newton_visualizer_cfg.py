@@ -15,6 +15,7 @@ from isaaclab.visualizers.visualizer_cfg import VisualizerCfg
 if typing.TYPE_CHECKING:
     from isaaclab.visualizers import BaseVisualizer
 
+    from .newton_rtx_stage_visualizer import NewtonRTXStageVisualizer
     from .newton_visualizer import NewtonGLVisualizer, NewtonRTXVisualizer
 
 
@@ -143,3 +144,32 @@ class NewtonRTXVisualizerCfg(VisualizerCfg):
 
     streaming_view: bool = True
     """Always enabled; this visualizer requires a planned camera stream."""
+
+
+@configclass
+class NewtonRTXStageVisualizerCfg(VisualizerCfg):
+    """Render the simulation's own USD scene through Newton's ``ViewerRTX``.
+
+    Isaac Lab clones the scene into an OVStage stage, and ``ViewerRTX`` draws that stage as authored,
+    so MDL materials and lights are kept. Newton only drives the body poses. Unlike
+    :class:`NewtonRTXVisualizerCfg`, this visualizer owns an OVStage stage and a ``ViewerRTX``, and needs
+    a Newton release that includes the borrowed-stage ``ViewerRTX(ovstage=...)`` API.
+    """
+
+    class_type: type[NewtonRTXStageVisualizer] | str = "{DIR}.newton_rtx_stage_visualizer:NewtonRTXStageVisualizer"
+    """Visualizer implementation class."""
+
+    visualizer_type: str = "newton_rtx_stage"
+    """Visualizer type identifier. Do not change."""
+
+    window_width: int = 1280
+    """Window width in pixels."""
+
+    window_height: int = 720
+    """Window height in pixels."""
+
+    headless: bool = False
+    """Render without a window. Forced on when no display is available."""
+
+    update_frequency: int = 1
+    """Render every this many simulation steps."""

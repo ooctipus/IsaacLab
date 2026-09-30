@@ -8,7 +8,7 @@ from isaaclab_ov.renderers import OVRTXRendererCfg
 from isaaclab_physx.physics import PhysxCfg
 from isaaclab_physx.renderers import IsaacRtxRendererCfg
 from isaaclab_visualizers.kit import KitVisualizerCfg
-from isaaclab_visualizers.newton import NewtonGLVisualizerCfg, NewtonRTXVisualizerCfg
+from isaaclab_visualizers.newton import NewtonGLVisualizerCfg, NewtonRTXStageVisualizerCfg, NewtonRTXVisualizerCfg
 from isaaclab_visualizers.rerun import RerunVisualizerCfg
 from isaaclab_visualizers.viser import ViserVisualizerCfg
 
@@ -46,6 +46,7 @@ class MultiBackendVisualizerCfg(PresetCfg):
     kit: KitVisualizerCfg = KitVisualizerCfg()
     newton_gl: NewtonGLVisualizerCfg = NewtonGLVisualizerCfg()
     newton_rtx: NewtonRTXVisualizerCfg = NewtonRTXVisualizerCfg(streaming_camera=_STREAMING_CAMERA_PATH)
+    newton_rtx_stage: NewtonRTXStageVisualizerCfg = NewtonRTXStageVisualizerCfg()
     rerun: RerunVisualizerCfg = RerunVisualizerCfg()
     viser: ViserVisualizerCfg = ViserVisualizerCfg()
 

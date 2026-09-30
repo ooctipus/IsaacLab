@@ -23,7 +23,7 @@ OVSTAGE_XFORM_DTYPE = ovstage.DLDataType(code=ovstage.DLDataTypeCode.kDLFloat, b
 OVSTAGE_POINT_DTYPE = ovstage.DLDataType(code=ovstage.DLDataTypeCode.kDLFloat, bits=32, lanes=3)
 
 
-def create_ovstage(name: str) -> ovstage.Stage:
+def create_ovstage(name: str, *, gpu_hierarchy: bool = False) -> ovstage.Stage:
     """Create an ovstage stage using Isaac Lab's process-wide stage configuration.
 
     ovstage's hierarchy computation model drives its automatic world-transform updates. It is
@@ -37,15 +37,23 @@ def create_ovstage(name: str) -> ovstage.Stage:
     :attr:`~ovstage.HierarchyComputationModel.GPU_INCREMENTAL` is currently not working - objects
     are out-of-place.  Needs investigation
 
+    Newton's ``ViewerRTX`` renders a borrowed stage only when that stage uses ``GPU_INCREMENTAL``
+    (OVStage 0.2 or newer), so a stage it renders must be created with ``gpu_hierarchy=True``. That
+    conflicts with a live ``CPU_INCREMENTAL`` stage, such as the one OVPhysX keeps.
+
     Args:
         name: Instance name used for ovstage diagnostics.
+        gpu_hierarchy: Whether to use ``GPU_INCREMENTAL`` instead of ``CPU_INCREMENTAL``.
 
     Returns:
         The created :class:`ovstage.Stage`.
     """
-    config = ovstage.StageConfig(
-        runtime_default_hierarchy_computation_model=ovstage.HierarchyComputationModel.CPU_INCREMENTAL
+    model = (
+        ovstage.HierarchyComputationModel.GPU_INCREMENTAL
+        if gpu_hierarchy
+        else ovstage.HierarchyComputationModel.CPU_INCREMENTAL
     )
+    config = ovstage.StageConfig(runtime_default_hierarchy_computation_model=model)
     return ovstage.Stage(name, config=config)
 
 

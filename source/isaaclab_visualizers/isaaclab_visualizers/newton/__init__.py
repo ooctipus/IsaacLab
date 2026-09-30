@@ -13,9 +13,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .newton_visualizer_cfg import NewtonGLVisualizerCfg, NewtonRTXVisualizerCfg, NewtonVisualizerCfg
+from .newton_visualizer_cfg import (
+    NewtonGLVisualizerCfg,
+    NewtonRTXStageVisualizerCfg,
+    NewtonRTXVisualizerCfg,
+    NewtonVisualizerCfg,
+)
 
 if TYPE_CHECKING:
+    from .newton_rtx_stage_visualizer import NewtonRTXStageVisualizer
     from .newton_visualizer import NewtonGLVisualizer, NewtonRTXVisualizer
 
 __all__ = [
@@ -27,10 +33,17 @@ __all__ = [
     # RTX backend
     "NewtonRTXVisualizer",
     "NewtonRTXVisualizerCfg",
+    # RTX backend that renders the simulation's own USD stage
+    "NewtonRTXStageVisualizer",
+    "NewtonRTXStageVisualizerCfg",
 ]
 
 
 def __getattr__(name: str):
+    if name == "NewtonRTXStageVisualizer":
+        from .newton_rtx_stage_visualizer import NewtonRTXStageVisualizer
+
+        return NewtonRTXStageVisualizer
     if name in ("NewtonGLVisualizer", "NewtonRTXVisualizer"):
         from .newton_visualizer import NewtonGLVisualizer, NewtonRTXVisualizer
 

@@ -380,6 +380,15 @@ Visualizer Overview
          ``presets=newton_mjwarp,ovrtx`` with ``--viz newton_rtx``, or switch to ``--viz newton_gl``,
          ``--viz viser``, ``--viz rerun``, or ``--viz kit`` with a Kit-compatible physics backend.
 
+      .. note::
+
+         ``--viz newton_rtx_stage`` (:class:`~isaaclab_visualizers.newton.NewtonRTXStageVisualizerCfg`) is
+         a variant that draws the simulation's own cloned USD stage with Newton's ``ViewerRTX`` instead of
+         presenting a camera sensor, so authored MDL materials such as glass are visible. It needs a
+         Newton release whose ``ViewerRTX`` accepts ``ovstage=``, OVRTX 0.5, and OVStage 0.2, and it
+         cannot share a process with OVPhysX because the two need different OVStage hierarchy models.
+         Runtime visual-material randomization does not reach its stage yet.
+
    .. tab-item:: Rerun
 
       Like Viser, `Rerun <https://rerun.io/>`_ streams simulation state to a local web server, for
