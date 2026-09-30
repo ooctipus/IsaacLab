@@ -419,7 +419,7 @@ def _resolve_headless_for_case(
     launcher._kit_visualizer = "kit" in launcher_args["visualizer"]
     launcher._livestream = launcher_args["livestream"]
     launcher._resolve_xr_settings(launcher_args)
-    launcher._resolve_headless_settings(launcher_args)
+    launcher._resolve_headless_settings()
     return launcher._headless, launcher_args
 
 
@@ -564,9 +564,35 @@ def test_limit_cpu_threads_forwarded_to_simulation_app(monkeypatch: pytest.Monke
     launcher = KitLauncher.__new__(KitLauncher)
     monkeypatch.setattr(launcher, "_resolve_experience_file", lambda _launcher_args: None)
 
-    launcher._config_resolution({"headless": True, "device": "cpu", "limit_cpu_threads": 1, "visualizer": []})
+    launcher._config_resolution({"device": "cpu", "limit_cpu_threads": 1, "visualizer": []})
 
     assert launcher._sim_app_config["limit_cpu_threads"] == 1
+    assert launcher._sim_app_config["headless"] is True
+
+
+@pytest.mark.parametrize(
+    "launcher_args, headless_env, expected_headless",
+    [
+        ({"visualizer": ["kit"]}, 0, False),
+        # a Kit visualizer only a video records from (``--video viz:kit``) is not selected, and records headless
+        ({"visualizer": []}, 0, True),
+        ({"visualizer": ["kit"]}, 1, True),
+    ],
+    ids=["kit-selected", "kit-only-records", "HEADLESS=1"],
+)
+def test_kit_runs_windowed_only_for_a_selected_kit_visualizer(
+    monkeypatch: pytest.MonkeyPatch, launcher_args: dict, headless_env: int, expected_headless: bool
+):
+    """Kit opens a window only when ``--viz`` selects the Kit visualizer, and never with ``HEADLESS=1``."""
+    monkeypatch.setenv("HEADLESS", str(headless_env))
+    monkeypatch.setenv("LIVESTREAM", "0")
+    monkeypatch.setenv("XR", "0")
+    launcher = KitLauncher.__new__(KitLauncher)
+    monkeypatch.setattr(launcher, "_resolve_experience_file", lambda _launcher_args: None)
+
+    launcher._config_resolution({"device": "cpu", **launcher_args})
+
+    assert launcher._sim_app_config["headless"] is expected_headless
 
 
 class _DummySettings:
@@ -739,12 +765,6 @@ def test_matrix_viz_kit_dict_resolves_windowed(monkeypatch: pytest.MonkeyPatch):
     headless, args = _resolve_headless_for_case(monkeypatch, {"visualizer": ["kit"]})
     assert headless is False
     assert args["visualizer"] == ["kit"]
-
-
-def test_matrix_headless_flag_deprecated_takes_precedence(monkeypatch: pytest.MonkeyPatch):
-    headless, args = _resolve_headless_for_case(monkeypatch, {"headless": True, "headless_explicit": True})
-    assert headless is True
-    assert args["visualizer"] == []
 
 
 def _new_launcher_for_experience_check():

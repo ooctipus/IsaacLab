@@ -139,8 +139,8 @@ def test_launch_simulation_resolves_visualizers_into_config(kit_launcher_args, v
         else:
             assert isinstance(cfg, RerunVisualizerCfg)
     assert configured["kit"].eye == (1.0, 2.0, 3.0)
-    # the launch replaces the earlier selection, so its SimulationContext keeps these visualizers
-    assert settings.get("/isaaclab/visualizer/types") == ",".join(visualizer or [])
+    # the launch replaces the earlier selection with its visualizers, so its SimulationContext keeps them
+    assert settings.get("/isaaclab/visualizer/types") == ",".join(expected_types)
     settings.set("/isaaclab/visualizer/types", None)
 
 

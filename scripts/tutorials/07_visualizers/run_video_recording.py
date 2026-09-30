@@ -108,7 +108,7 @@ def _build_env_cfg_example_1(num_envs: int):
     out = _output_dir(1)
     env_cfg.video_recorders = [
         VideoRecorderCfg(
-            source="visualizer:kit",
+            source="viz:kit",
             output_dir=out,
             output_filename_prefix="kit_viewport",
             video_length=_VIDEO_LENGTH,
@@ -139,7 +139,7 @@ def _build_env_cfg_example_2(num_envs: int):
 def _build_env_cfg_example_3(num_envs: int):
     """Shadow Hand + Kit viewport + Kit tiled grid + Newton viewport + sensor: four simultaneous streams.
 
-    Note: ``source='visualizer:newton'`` captures the full Newton GL window. When
+    Note: ``source='viz:newton_gl'`` captures the full Newton GL window. When
     ``streaming_view=True`` is set on :class:`~isaaclab_visualizers.newton.NewtonGLVisualizerCfg`,
     the GL window displays the per-environment camera panel, so this effectively records
     a Newton streaming view without a separate ``render_tiled_rgb_array()`` call.
@@ -169,7 +169,7 @@ def _build_env_cfg_example_3(num_envs: int):
     out = _output_dir(3)
     env_cfg.video_recorders = [
         VideoRecorderCfg(
-            source="visualizer:kit",
+            source="viz:kit",
             output_dir=out,
             output_filename_prefix="kit_viewport",
             video_length=_VIDEO_LENGTH,
@@ -177,7 +177,7 @@ def _build_env_cfg_example_3(num_envs: int):
             step_offset=_KIT_STEP_OFFSET,
         ),
         VideoRecorderCfg(
-            source="visualizer:kit:streaming_view",
+            source="viz:kit:streaming_view",
             output_dir=out,
             output_filename_prefix="tiled_kit_viewport",
             video_length=_VIDEO_LENGTH,
@@ -185,7 +185,7 @@ def _build_env_cfg_example_3(num_envs: int):
             step_offset=_KIT_STEP_OFFSET,
         ),
         VideoRecorderCfg(
-            source="visualizer:newton",
+            source="viz:newton_gl",
             output_dir=out,
             output_filename_prefix="newton_viewport",
             video_length=_VIDEO_LENGTH,

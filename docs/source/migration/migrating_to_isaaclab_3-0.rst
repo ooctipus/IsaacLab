@@ -2576,23 +2576,15 @@ omit ``--viz``.
 **Headless video recording (``--video`` without ``--viz``).**
 
 In Isaac Lab 2.x, ``--video`` alone would use the Kit Replicator pipeline implicitly.
-In Isaac Lab 3.0, the equivalent is:
+In Isaac Lab 3.0, ``--video`` alone records from a headless Newton GL visualizer. The equivalent of the
+2.x behavior records from a headless Kit visualizer, configured by the Kit visualizer of the task config
+if it lists one:
 
 .. code-block:: bash
 
-   # Record from Kit viewport headlessly (equivalent to 2.x --video behaviour)
-   uv run isaaclab train --rl_library rsl_rl --task Isaac-Cartpole-Direct \
-       --viz kit --enable_cameras --headless --video
+   uv run isaaclab train --rl_library rsl_rl --task Isaac-Cartpole-Direct --video viz:kit
 
-As a convenience, passing ``--video`` without ``--viz`` still works: Isaac Lab
-selects a headless Kit visualizer, configured by the Kit visualizer of the task config if it lists
-one, and sets ``source="visualizer:kit"`` on the default recorder, printing:
-
-.. code-block:: text
-
-   [INFO] --video specified without --viz: recording from a headless Kit visualizer. Pass
-   --viz <type> to choose a different visualizer, or set video_recorders in your env config
-   to record from a scene sensor instead.
+See :ref:`record_video_cli` for the ``--video`` sources.
 
 
 .. rubric:: Viewport Camera Configuration (``ViewerCfg`` deprecated)
@@ -2744,8 +2736,8 @@ Similarly, when importing the config class directly:
    cfg = NewtonGLVisualizerCfg()
 
 The ``source="visualizer:newton"`` string in :class:`~isaaclab.envs.utils.video_recorder_cfg.VideoRecorderCfg`
-continues to work as a backward-compatible alias for ``"visualizer:newton_gl"``, but
-``"visualizer:newton_gl"`` and ``"visualizer:newton_rtx"`` are now the canonical source strings.
+continues to work as a deprecated alias for ``"viz:newton_gl"``; ``"viz:newton_gl"`` and
+``"viz:newton_rtx"`` are the canonical source strings.
 
 
 .. rubric:: Video Recording (``gym.wrappers.RecordVideo`` replaced)
@@ -2763,14 +2755,13 @@ environment config, sourcing frames from the active visualizer or a scene sensor
    # After (Isaac Lab 3.x)
    from isaaclab.envs.utils.video_recorder_cfg import VideoRecorderCfg
    env_cfg.video_recorders = [
-       VideoRecorderCfg(source="visualizer", output_dir="videos/", video_length=200)
+       VideoRecorderCfg(source="viz", output_dir="videos/", video_length=200)
    ]
    env = gym.make(task, cfg=env_cfg)
 
-Available sources: ``"visualizer"`` (auto-pick), ``"visualizer:kit"``, ``"visualizer:newton_gl"``,
-``"visualizer:newton_rtx"``, ``"visualizer:newton_gl:tiled"``, ``"sensor:<name>"``.
-``"visualizer:newton"`` and ``"visualizer:newton:tiled"`` remain as deprecated backward-compatible
-aliases for ``"visualizer:newton_gl"`` and ``"visualizer:newton_gl:tiled"`` respectively.
+Available sources: ``"viz"`` (auto-pick), ``"viz:kit"``, ``"viz:newton_gl"``, ``"viz:newton_rtx"``,
+``"viz:<type>:streaming_view"``, ``"sensor:<name>[:<channel>]"``. The ``visualizer`` prefix and the
+``newton`` type remain as deprecated aliases of ``viz`` and ``newton_gl``.
 The ``eye`` and ``lookat`` fields have been removed from ``VideoRecorderCfg``; position the
 camera via ``sim.default_visualizer_cfg`` instead.
 
