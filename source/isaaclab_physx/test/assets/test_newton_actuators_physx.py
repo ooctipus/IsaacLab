@@ -26,13 +26,14 @@ from types import SimpleNamespace
 import pytest
 import torch
 import warp as wp
-from isaaclab_physx.assets import Articulation
 from isaaclab_physx.assets.articulation.actuator_control import PhysxActuatorControl
 from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
+from isaaclab import cloner
 from isaaclab.actuators import IdealPDActuatorCfg
 from isaaclab.actuators.newton import read_group_parameter
+from isaaclab.assets import AssetBaseCfg
 from isaaclab.sim import SimulationCfg, build_simulation_context
 from isaaclab.test.utils.actuator_equivalence import (
     CARTPOLE_EXPLICIT_ACTUATORS,
@@ -61,6 +62,7 @@ NUM_ENVS = 2
 NUM_STEPS = 10
 DT = 1.0 / 120.0
 TARGET_OFFSET = 0.1  # [rad] added to initial joint positions
+GROUND_CFG = AssetBaseCfg(prim_path="/World/ground", spawn=sim_utils.GroundPlaneCfg(), collision_group=-1)
 _ANYMAL_C_PHYSX_JOINT_NAMES = (
     "LF_HAA",
     "LH_HAA",
@@ -79,8 +81,6 @@ _ANYMAL_C_PHYSX_JOINT_NAMES = (
 
 def test_prepare_native_actuators_does_not_zero_solver_gains(monkeypatch):
     """Leave solver gains untouched until collection construction resolves actuator defaults."""
-    from isaaclab_physx.assets.articulation import actuator_control
-
     from isaaclab.actuators.newton import NewtonActuatorAdapter, PhysxActuatorWrapper
 
     joint_buffer = SimpleNamespace(warp=wp.zeros((1, 1), dtype=wp.float32, device="cpu"))
@@ -90,6 +90,7 @@ def test_prepare_native_actuators_does_not_zero_solver_gains(monkeypatch):
     gain_writes = []
     articulation = SimpleNamespace(
         _sim_cfg=SimpleNamespace(use_newton_actuators=True),
+        _articulation_layout=object(),
         cfg=SimpleNamespace(prim_path="/World/Robot"),
         joint_names=["joint"],
         num_instances=1,
@@ -101,9 +102,8 @@ def test_prepare_native_actuators_does_not_zero_solver_gains(monkeypatch):
     )
     wrapper = SimpleNamespace()
     adapter = SimpleNamespace(joint_indices=wp.array([0], dtype=wp.int32), finalize=lambda _: None)
-    monkeypatch.setattr(actuator_control, "find_first_matching_prim", lambda _: None)
     monkeypatch.setattr(PhysxActuatorWrapper, "create", lambda **_: wrapper)
-    monkeypatch.setattr(NewtonActuatorAdapter, "from_usd", lambda **_: adapter)
+    monkeypatch.setattr(NewtonActuatorAdapter, "from_layout", lambda **_: adapter)
 
     native_groups = PhysxActuatorControl(articulation).prepare_native_actuators(
         collection,
@@ -149,19 +149,18 @@ def _run_simulation(
     sim_cfg = SimulationCfg(dt=DT, physics=PhysxCfg(), use_newton_actuators=use_newton_actuators)
     with build_simulation_context(
         device="cuda:0",
-        gravity_enabled=True,
-        add_ground_plane=True,
         sim_cfg=sim_cfg,
     ) as sim:
         sim._app_control_on_stop_handle = None
-        for i in range(NUM_ENVS):
-            sim_utils.create_prim(f"/World/Env_{i}", "Xform", translation=(i * 3.0, 0, 0))
         art_cfg = ANYMAL_C_CFG.replace(
             actuators=actuators,
-            prim_path="/World/Env_[^/]*/Robot",
+            prim_path="{ENV_REGEX_NS}/Robot",
             joint_ordering=joint_ordering,
         )
-        articulation = Articulation(art_cfg)
+        with cloner.ReplicateSession([GROUND_CFG, art_cfg], num_clones=NUM_ENVS, env_spacing=3.0):
+            (ground_path,) = cloner.query.cfg_source_paths(sim.get_clone_plan(), GROUND_CFG)
+            GROUND_CFG.spawn.func(ground_path, GROUND_CFG.spawn)
+            articulation = art_cfg.class_type(art_cfg)
         sim.reset()
         assert articulation.is_initialized
 
@@ -321,19 +320,18 @@ def _assert_newton_actuator_uses_current_joint_state(
     sim_cfg = SimulationCfg(dt=DT, physics=PhysxCfg(), use_newton_actuators=True)
     with build_simulation_context(
         device="cuda:0",
-        gravity_enabled=True,
-        add_ground_plane=True,
         sim_cfg=sim_cfg,
     ) as sim:
         sim._app_control_on_stop_handle = None
-        for i in range(NUM_ENVS):
-            sim_utils.create_prim(f"/World/Env_{i}", "Xform", translation=(i * 3.0, 0, 0))
         art_cfg = ANYMAL_C_CFG.replace(
             actuators=actuators,
-            prim_path="/World/Env_[^/]*/Robot",
+            prim_path="{ENV_REGEX_NS}/Robot",
             joint_ordering=joint_ordering,
         )
-        articulation = Articulation(art_cfg)
+        with cloner.ReplicateSession([GROUND_CFG, art_cfg], num_clones=NUM_ENVS, env_spacing=3.0):
+            (ground_path,) = cloner.query.cfg_source_paths(sim.get_clone_plan(), GROUND_CFG)
+            GROUND_CFG.spawn.func(ground_path, GROUND_CFG.spawn)
+            articulation = art_cfg.class_type(art_cfg)
         sim.reset()
         assert articulation.is_initialized
 
@@ -495,24 +493,26 @@ def _run_anymal_and_cartpole(use_newton_actuators: bool, *, num_steps: int = NUM
     sim_cfg = SimulationCfg(dt=DT, physics=PhysxCfg(), use_newton_actuators=use_newton_actuators)
     with build_simulation_context(
         device="cuda:0",
-        gravity_enabled=True,
-        add_ground_plane=True,
         sim_cfg=sim_cfg,
     ) as sim:
         sim._app_control_on_stop_handle = None
 
-        for i in range(NUM_ENVS):
-            sim_utils.create_prim(f"/World/Env_{i}", "Xform", translation=(i * 6.0, 0, 0))
-
-        anymal_cfg = ANYMAL_C_CFG.replace(actuators=IDEAL_PD_ACTUATORS, prim_path="/World/Env_[^/]*/Anymal")
+        anymal_cfg = ANYMAL_C_CFG.replace(actuators=IDEAL_PD_ACTUATORS, prim_path="{ENV_REGEX_NS}/Anymal")
         cartpole_cfg = CARTPOLE_CFG.replace(
             actuators=CARTPOLE_EXPLICIT_ACTUATORS,
-            prim_path="/World/Env_[^/]*/Cartpole",
+            prim_path="{ENV_REGEX_NS}/Cartpole",
         )
         cartpole_cfg.init_state = cartpole_cfg.init_state.replace(pos=(0.0, 3.0, 2.0))
 
-        anymal = Articulation(anymal_cfg)
-        cartpole = Articulation(cartpole_cfg)
+        with cloner.ReplicateSession(
+            [GROUND_CFG, anymal_cfg, cartpole_cfg],
+            num_clones=NUM_ENVS,
+            env_spacing=6.0,
+        ):
+            (ground_path,) = cloner.query.cfg_source_paths(sim.get_clone_plan(), GROUND_CFG)
+            GROUND_CFG.spawn.func(ground_path, GROUND_CFG.spawn)
+            anymal = anymal_cfg.class_type(anymal_cfg)
+            cartpole = cartpole_cfg.class_type(cartpole_cfg)
         sim.reset()
         assert anymal.is_initialized and cartpole.is_initialized
 
@@ -602,18 +602,15 @@ class TestRandomizeActuatorGainsViaEventsPhysx(unittest.TestCase):
         sim_cfg = SimulationCfg(dt=DT, physics=PhysxCfg(), use_newton_actuators=False)
         with build_simulation_context(
             device="cuda:0",
-            gravity_enabled=True,
-            add_ground_plane=True,
             sim_cfg=sim_cfg,
         ) as sim:
             sim._app_control_on_stop_handle = None
-            for i in range(NUM_ENVS):
-                sim_utils.create_prim(f"/World/Env_{i}", "Xform", translation=(i * 3.0, 0, 0))
             art_cfg = ANYMAL_C_CFG.replace(
                 actuators=IMPLICIT_ONLY_ACTUATORS,
-                prim_path="/World/Env_.*/Robot",
+                prim_path="{ENV_REGEX_NS}/Robot",
             )
-            anymal = Articulation(art_cfg)
+            with cloner.ReplicateSession((art_cfg,), num_clones=NUM_ENVS, env_spacing=3.0):
+                anymal = art_cfg.class_type(art_cfg)
             sim.reset()
 
             actuator = anymal.actuators["legs"]
@@ -647,18 +644,17 @@ class TestRandomizeActuatorGainsViaEventsPhysx(unittest.TestCase):
         sim_cfg = SimulationCfg(dt=DT, physics=PhysxCfg(), use_newton_actuators=True)
         with build_simulation_context(
             device="cuda:0",
-            gravity_enabled=True,
-            add_ground_plane=True,
             sim_cfg=sim_cfg,
         ) as sim:
             sim._app_control_on_stop_handle = None
-            for i in range(NUM_ENVS):
-                sim_utils.create_prim(f"/World/Env_{i}", "Xform", translation=(i * 3.0, 0, 0))
             art_cfg = ANYMAL_C_CFG.replace(
                 actuators=IDEAL_PD_ACTUATORS,
-                prim_path="/World/Env_[^/]*/Robot",
+                prim_path="{ENV_REGEX_NS}/Robot",
             )
-            anymal = Articulation(art_cfg)
+            with cloner.ReplicateSession([GROUND_CFG, art_cfg], num_clones=NUM_ENVS, env_spacing=3.0):
+                (ground_path,) = cloner.query.cfg_source_paths(sim.get_clone_plan(), GROUND_CFG)
+                GROUND_CFG.spawn.func(ground_path, GROUND_CFG.spawn)
+                anymal = art_cfg.class_type(art_cfg)
             sim.reset()
 
             adapter = anymal.newton_actuator_adapter
@@ -698,22 +694,24 @@ class TestRandomizeActuatorGainsViaEventsPhysx(unittest.TestCase):
         sim_cfg = SimulationCfg(dt=DT, physics=PhysxCfg(), use_newton_actuators=True)
         with build_simulation_context(
             device="cuda:0",
-            gravity_enabled=True,
-            add_ground_plane=True,
             sim_cfg=sim_cfg,
         ) as sim:
             sim._app_control_on_stop_handle = None
-            for i in range(NUM_ENVS):
-                sim_utils.create_prim(f"/World/Env_{i}", "Xform", translation=(i * 6.0, 0, 0))
-
-            anymal_cfg = ANYMAL_C_CFG.replace(actuators=IDEAL_PD_ACTUATORS, prim_path="/World/Env_[^/]*/Anymal")
+            anymal_cfg = ANYMAL_C_CFG.replace(actuators=IDEAL_PD_ACTUATORS, prim_path="{ENV_REGEX_NS}/Anymal")
             cartpole_cfg = CARTPOLE_CFG.replace(
                 actuators=CARTPOLE_EXPLICIT_ACTUATORS,
-                prim_path="/World/Env_[^/]*/Cartpole",
+                prim_path="{ENV_REGEX_NS}/Cartpole",
             )
             cartpole_cfg.init_state = cartpole_cfg.init_state.replace(pos=(0.0, 3.0, 2.0))
-            anymal = Articulation(anymal_cfg)
-            cartpole = Articulation(cartpole_cfg)
+            with cloner.ReplicateSession(
+                [GROUND_CFG, anymal_cfg, cartpole_cfg],
+                num_clones=NUM_ENVS,
+                env_spacing=6.0,
+            ):
+                (ground_path,) = cloner.query.cfg_source_paths(sim.get_clone_plan(), GROUND_CFG)
+                GROUND_CFG.spawn.func(ground_path, GROUND_CFG.spawn)
+                anymal = anymal_cfg.class_type(anymal_cfg)
+                cartpole = cartpole_cfg.class_type(cartpole_cfg)
             sim.reset()
 
             # On PhysX each articulation owns its own adapter — they are distinct objects.
@@ -775,8 +773,38 @@ class TestActuatorStateReset(ActuatorStateResetBase, unittest.TestCase):
     def _make_sim_cfg(self, use_newton_actuators: bool) -> SimulationCfg:
         return SimulationCfg(dt=DT, physics=PhysxCfg(), use_newton_actuators=use_newton_actuators)
 
-    def _make_articulation(self) -> Articulation:
-        return Articulation(ANYMAL_C_CFG.replace(actuators=DELAYED_PD_ACTUATORS, prim_path="/World/Env_.*/Robot"))
+    def _build_and_warm(self, *, use_newton_actuators: bool):
+        sim_cfg = SimulationCfg(
+            dt=DT,
+            physics=PhysxCfg(),
+            use_newton_actuators=use_newton_actuators,
+        )
+        ctx = build_simulation_context(
+            device="cuda:0",
+            sim_cfg=sim_cfg,
+        )
+        sim = ctx.__enter__()
+        sim._app_control_on_stop_handle = None
+        art_cfg = ANYMAL_C_CFG.replace(
+            actuators=DELAYED_PD_ACTUATORS,
+            prim_path="{ENV_REGEX_NS}/Robot",
+        )
+        with cloner.ReplicateSession([GROUND_CFG, art_cfg], num_clones=NUM_ENVS, env_spacing=3.0):
+            (ground_path,) = cloner.query.cfg_source_paths(sim.get_clone_plan(), GROUND_CFG)
+            GROUND_CFG.spawn.func(ground_path, GROUND_CFG.spawn)
+            articulation = art_cfg.class_type(art_cfg)
+        sim.reset()
+
+        init_pos = articulation.data.joint_pos.torch.clone()
+        target_pos = init_pos + self.TARGET_OFFSET
+        target_vel = torch.zeros_like(init_pos)
+        articulation.actuators.target_command.set_position_index(value=target_pos)
+        articulation.actuators.target_command.set_velocity_index(value=target_vel)
+        for _ in range(self.RESET_WARMUP_STEPS):
+            articulation.write_data_to_sim()
+            sim.step()
+            articulation.update(self.DT)
+        return ctx, sim, articulation
 
     def _get_adapter(self, articulation):
         return articulation.newton_actuator_adapter

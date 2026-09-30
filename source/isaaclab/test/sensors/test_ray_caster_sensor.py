@@ -16,6 +16,7 @@ simulation_app = AppLauncher(headless=True).app
 import numpy as np
 import pytest
 import torch
+from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
 from isaaclab.sensors.ray_caster import RayCaster, RayCasterCfg, patterns
@@ -36,7 +37,7 @@ def _make_sim_and_ground():
     """Create a blank stage with a flat ground plane at z=0 and return the SimulationContext."""
     sim_utils.create_new_stage()
     dt = 0.01
-    sim_cfg = sim_utils.SimulationCfg(dt=dt)
+    sim_cfg = sim_utils.SimulationCfg(physics=PhysxCfg(), dt=dt)
     sim = sim_utils.SimulationContext(sim_cfg)
     mesh = make_plane(size=(100, 100), height=0.0, center_zero=True)
     create_prim_from_mesh(_GROUND_PATH, mesh)

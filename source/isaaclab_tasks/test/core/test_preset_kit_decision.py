@@ -66,8 +66,8 @@ def test_camera_cli_size_overrides_update_observation_space(monkeypatch: pytest.
     from isaaclab_tasks.core.cartpole.cartpole_direct_camera_env import CartpoleCameraEnv, CartpoleEnv
 
     env_cfg = _resolve_with_args(
-        "env.tiled_camera.height=45",
-        "env.tiled_camera.width=80",
+        "env.scene.camera.height=45",
+        "env.scene.camera.width=80",
         "env.frame_stack=1",
     )
 

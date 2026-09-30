@@ -3,21 +3,19 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Unit tests for VideoRecorder, VideoRecorderCfg, and the ViewerCfg deprecation shim.
+"""Unit tests for VideoRecorder and VideoRecorderCfg.
 
 All tests are pure-Python mocks — no simulation context or Kit app required.
 """
 
 from __future__ import annotations
 
-import warnings
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
 
-from isaaclab.envs.common import ViewerCfg
 from isaaclab.envs.utils.video_recorder import VideoRecorder, _parse_source
 from isaaclab.envs.utils.video_recorder_cfg import VideoRecorderCfg
 
@@ -81,7 +79,7 @@ def _make_env(visualizers=(), sensors: dict | None = None):
     [
         ("visualizer", ("visualizer", "", "")),
         ("visualizer:kit", ("visualizer", "kit", "")),
-        ("visualizer:newton:streaming_view", ("visualizer", "newton", "streaming_view")),
+        ("visualizer:newton_gl:streaming_view", ("visualizer", "newton_gl", "streaming_view")),
         ("sensor:tiled_camera", ("sensor", "tiled_camera", "")),
         ("  visualizer:kit  ", ("visualizer", "kit", "")),
     ],
@@ -240,31 +238,10 @@ def test_visualizer_source_auto_no_visualizer_logs_and_returns_none(caplog):
     assert any("no recording-capable visualizer" in r.message for r in caplog.records)
 
 
-def test_kit_visualizer_newton_physics_logs_warning(caplog):
-    """source='visualizer:kit' with Newton physics logs a warning and attempts capture.
-
-    With cubric the capture succeeds; without it frames may be black.  Either way
-    the recorder warns and does not hard-fail.
-    """
-    import logging
-
-    kit_viz = _FakeViz("kit")
-    env = _make_env(visualizers=[kit_viz])
-    env.sim.physics_manager.video_capture_backend.return_value = "newton_gl"
-
-    recorder = VideoRecorder(_cfg(source="visualizer:kit"), env)
-    with caplog.at_level(logging.WARNING, logger="isaaclab.envs.utils.video_recorder"):
-        recorder._get_frame()
-
-    assert any("source='visualizer:newton'" in r.message for r in caplog.records)
-    # The recorder attempts capture rather than short-circuiting.
-    assert kit_viz.render_calls == 1
-
-
-def test_visualizer_newton_alias_resolves_newton_gl():
-    """source='visualizer:newton' should match a visualizer with visualizer_type='newton_gl'."""
+def test_visualizer_newton_gl_selects_newton_gl():
+    """source='visualizer:newton_gl' selects a Newton GL visualizer."""
     viz = _FakeViz("newton_gl")
-    recorder = VideoRecorder(_cfg(source="visualizer:newton"), _make_env(visualizers=[viz]))
+    recorder = VideoRecorder(_cfg(source="visualizer:newton_gl"), _make_env(visualizers=[viz]))
     frame = recorder._get_frame()
     assert viz.render_calls == 1
     assert frame is not None
@@ -329,104 +306,6 @@ def test_close_with_empty_frame_buffer_does_not_write():
     with patch("isaaclab.envs.utils.video_recorder.ImageSequenceClip", mock_cls):
         recorder.close()
     mock_cls.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
-# ViewerCfg deprecation shim
-# ---------------------------------------------------------------------------
-
-
-def test_viewer_cfg_warns_on_non_default_field():
-    with pytest.warns(DeprecationWarning, match="ViewerCfg is deprecated"):
-        ViewerCfg(eye=(1.0, 2.0, 3.0))
-
-
-def test_viewer_cfg_default_no_warning():
-    with warnings.catch_warnings():
-        warnings.simplefilter("error", DeprecationWarning)
-        ViewerCfg()  # must not raise
-
-
-# ---------------------------------------------------------------------------
-# _apply_deprecated_viewer_cfg bridge
-# ---------------------------------------------------------------------------
-
-
-def _make_env_cfg(eye=(7.5, 7.5, 7.5)):
-    viewer = ViewerCfg()
-    viewer.eye = eye
-    sim = SimpleNamespace(default_visualizer_cfg=None)
-    return SimpleNamespace(viewer=viewer, sim=sim)
-
-
-def test_apply_deprecated_viewer_sets_visualizer_cfg():
-    from isaaclab.envs.common import _apply_deprecated_viewer_cfg
-
-    env_cfg = _make_env_cfg(eye=(1.0, 2.0, 3.0))
-    _apply_deprecated_viewer_cfg(env_cfg)
-    assert env_cfg.sim.default_visualizer_cfg is not None
-    assert env_cfg.sim.default_visualizer_cfg.eye == (1.0, 2.0, 3.0)
-
-
-def test_apply_deprecated_viewer_noop_when_defaults():
-    from isaaclab.envs.common import _apply_deprecated_viewer_cfg
-
-    env_cfg = _make_env_cfg()
-    _apply_deprecated_viewer_cfg(env_cfg)
-    assert env_cfg.sim.default_visualizer_cfg is None
-
-
-# ---------------------------------------------------------------------------
-# Minor 11: asset_root / asset_body origin_type migration
-# ---------------------------------------------------------------------------
-
-
-def test_apply_deprecated_viewer_asset_root_migration():
-    """origin_type='asset_root' → origin_type='asset' + origin_track_path=asset_name."""
-    from isaaclab.envs.common import _apply_deprecated_viewer_cfg
-
-    env_cfg = _make_env_cfg(eye=(1.0, 2.0, 3.0))
-    env_cfg.viewer.origin_type = "asset_root"
-    env_cfg.viewer.asset_name = "robot"
-    _apply_deprecated_viewer_cfg(env_cfg)
-    cfg = env_cfg.sim.default_visualizer_cfg
-    assert cfg is not None
-    assert getattr(cfg, "origin_type", None) == "asset"
-    assert getattr(cfg, "origin_track_path", None) == "robot"
-
-
-def test_apply_deprecated_viewer_asset_body_migration():
-    """origin_type='asset_body' → origin_type='asset' + origin_track_path='asset/body'."""
-    from isaaclab.envs.common import _apply_deprecated_viewer_cfg
-
-    env_cfg = _make_env_cfg(eye=(1.0, 2.0, 3.0))
-    env_cfg.viewer.origin_type = "asset_body"
-    env_cfg.viewer.asset_name = "robot"
-    env_cfg.viewer.body_name = "panda_hand"
-    _apply_deprecated_viewer_cfg(env_cfg)
-    cfg = env_cfg.sim.default_visualizer_cfg
-    assert cfg is not None
-    assert getattr(cfg, "origin_type", None) == "asset"
-    assert getattr(cfg, "origin_track_path", None) == "robot/panda_hand"
-
-
-# ---------------------------------------------------------------------------
-# Minor 12: conflict branch — default_visualizer_cfg already set
-# ---------------------------------------------------------------------------
-
-
-def test_apply_deprecated_viewer_skips_when_default_visualizer_cfg_already_set():
-    """If sim.default_visualizer_cfg is already set, the shim logs and returns without overwriting."""
-    from unittest.mock import MagicMock
-
-    from isaaclab.envs.common import _apply_deprecated_viewer_cfg
-
-    existing_cfg = MagicMock()
-    env_cfg = _make_env_cfg(eye=(1.0, 2.0, 3.0))
-    env_cfg.sim.default_visualizer_cfg = existing_cfg
-    _apply_deprecated_viewer_cfg(env_cfg)
-    # Must not overwrite the existing cfg.
-    assert env_cfg.sim.default_visualizer_cfg is existing_cfg
 
 
 # ---------------------------------------------------------------------------

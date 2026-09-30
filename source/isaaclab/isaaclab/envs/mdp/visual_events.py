@@ -60,7 +60,7 @@ class randomize_visual_material(ManagerTermBase):
         count = env.scene.num_envs if env_ids is None else len(env_ids)
         shape = (len(self._materials), count) if self._per_env else (len(self._materials),)
         sampled = {channel: sampler(shape) for channel, sampler in self._samplers.items()}
-        env.sim.render_context.write_visual_materials(self._materials, sampled, env_ids if self._per_env else None)
+        self._materials[0].write_channels(self._materials, sampled, env_ids if self._per_env else None)
 
 
 class randomize_visual_shape(FactoryBase, ManagerTermBase):
@@ -68,7 +68,10 @@ class randomize_visual_shape(FactoryBase, ManagerTermBase):
 
     @classmethod
     def _get_backend(cls, cfg: EventTermCfg, env: ManagerBasedEnv) -> str:
-        consumers = (*env.sim.resolve_visualizer_types(), *env.sim.render_context.renderer_types)
+        consumers = tuple(
+            getattr(consumer.cfg, "visualizer_type", getattr(consumer.cfg, "renderer_type", None))
+            for consumer in (*env.sim.visualizers, *env.sim._renderer_entries)
+        )
         supported = ("newton_gl", "newton_rtx", "newton_warp")
         if consumers and all(name in supported for name in consumers):
             return "newton"

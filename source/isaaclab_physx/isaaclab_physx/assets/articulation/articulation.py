@@ -18,12 +18,11 @@ import torch
 import warp as wp
 from prettytable import PrettyTable
 
-from pxr import UsdPhysics
-
 from isaaclab.actuators import ActuatorCollection
 from isaaclab.assets.articulation import ordering_kernels
 from isaaclab.assets.articulation.base_articulation import BaseArticulation
-from isaaclab.sim.utils.queries import path_expr_to_glob, resolve_matching_prims_from_source
+from isaaclab.sim import SimulationContext
+from isaaclab.sim.utils.queries import path_expr_to_glob
 from isaaclab.utils.string import resolve_matching_names, resolve_matching_names_values
 from isaaclab.utils.version import get_isaac_sim_version, has_kit
 from isaaclab.utils.warp import ProxyArray
@@ -31,7 +30,6 @@ from isaaclab.utils.wrench_composer import WrenchComposer
 
 from isaaclab_physx.assets import kernels as shared_kernels
 from isaaclab_physx.assets.articulation import kernels as articulation_kernels
-from isaaclab_physx.physics import PhysxManager as SimulationManager
 
 from .actuator_control import PhysxActuatorControl
 from .articulation_data import ArticulationData
@@ -40,6 +38,7 @@ if TYPE_CHECKING:
     import omni.physics.tensors as physx
 
     from isaaclab.assets.articulation.articulation_cfg import ArticulationCfg
+    from isaaclab.cloner.clone_plan import JointLayout
 
 # import logger
 logger = logging.getLogger(__name__)
@@ -102,6 +101,8 @@ class Articulation(BaseArticulation):
     __backend_native_orderings__: tuple[str, ...] = ("physx",)
     """PhysX tensor-view order already matches the ``"physx"`` convention."""
 
+    """PhysX tensor-view order already matches the ``"physx"`` convention."""
+
     actuators: dict
     """Dictionary of actuator instances for the articulation.
 
@@ -116,12 +117,7 @@ class Articulation(BaseArticulation):
         Args:
             cfg: A configuration instance.
         """
-        from isaaclab.sim import SimulationContext  # noqa: PLC0415
-
         super().__init__(cfg)
-
-        sim_ctx = SimulationContext.instance()
-        self._sim_cfg = sim_ctx.cfg if sim_ctx is not None else None
 
     """
     Properties
@@ -283,7 +279,7 @@ class Articulation(BaseArticulation):
 
         # Compute processed actuator commands (native path is a no-op here) and
         # submit them to the backend through the collection's control adapter.
-        self.actuators.compute(SimulationManager.get_physics_dt())
+        self.actuators.compute(self._physics_manager.get_physics_dt())
         self.actuators.submit_commands()
 
         # tendon targets are applied as the offset property, so a commanded target rides the same
@@ -3934,27 +3930,26 @@ class Articulation(BaseArticulation):
 
     def _initialize_impl(self):
         # obtain global simulation view
-        self._physics_sim_view = SimulationManager.get_physics_sim_view()
+        self._physics_sim_view = self._physics_manager.get_physics_sim_view()
 
-        if self.cfg.articulation_root_prim_path is not None:
-            root_prim_path_expr = self.cfg.prim_path + self.cfg.articulation_root_prim_path
-        else:
-
-            def has_articulation_root_api(prim) -> bool:
-                return bool(prim.HasAPI(UsdPhysics.ArticulationRootAPI))
-
-            resolve_kwargs = {"predicate": has_articulation_root_api, "expected_num_matches": 1}
-            _, root_prim_path_expr = resolve_matching_prims_from_source(self.cfg.prim_path, **resolve_kwargs)[0]
+        path_expr = self.cfg.prim_path + (self.cfg.articulation_root_prim_path or "")
+        layout = SimulationContext.instance().get_clone_plan()
+        articulation = layout.match_articulation(path_expr)
+        self._articulation_layout = articulation
+        root_prim_path_expr = articulation.view_path
+        planned_joints = {joint.path: joint for joint in articulation.joints}
         # -- articulation
-        self._root_view = SimulationManager.views[SimulationManager, root_prim_path_expr] = (
-            self._physics_sim_view.create_articulation_view(path_expr_to_glob(root_prim_path_expr))
-        )
+        self._root_view = self._physics_manager._articulation_views.get(root_prim_path_expr)
+        if self._root_view is None:
+            self._root_view = self._physics_manager._articulation_views[root_prim_path_expr] = (
+                self._physics_sim_view.create_articulation_view(path_expr_to_glob(root_prim_path_expr))
+            )
         if self.root_view._backend is None:
             raise RuntimeError(f"Failed to create articulation at: {root_prim_path_expr}. Please check PhysX logs.")
 
         # container for data access
-        joint_dof_signs = self._resolve_joint_dof_signs()
-        self._data = ArticulationData(self.root_view, self.device)
+        joint_dof_signs = self._resolve_joint_dof_signs(planned_joints)
+        self._data = ArticulationData(self.root_view, self.device, self._physics_manager)
         if -1 in joint_dof_signs:
             self._data._joint_dof_signs = wp.array(joint_dof_signs, dtype=wp.int32, device=self.device)
             self._data._has_reversed_joints = True
@@ -3964,7 +3959,7 @@ class Articulation(BaseArticulation):
         # process configuration
         self._process_cfg()
         self._process_actuators_cfg()
-        self._process_tendons()
+        self._process_tendons(planned_joints)
         # validate configuration
         self._validate_cfg()
         # update the robot data
@@ -3974,16 +3969,14 @@ class Articulation(BaseArticulation):
         # Let the articulation data know that it is fully instantiated and ready to use.
         self.data.is_primed = True
 
-    def _resolve_joint_dof_signs(self) -> tuple[int, ...]:
+    def _resolve_joint_dof_signs(self, joints: dict[str, JointLayout]) -> tuple[int, ...]:
         """Resolve joint directions once from the source USD."""
         body_indices = {path: index for index, path in enumerate(self.root_view.link_paths[0])}
         signs = []
         for joint_path in self.root_view.dof_paths[0]:
-            joint = UsdPhysics.Joint.Get(self.stage, joint_path)
-            body0 = joint.GetBody0Rel().GetTargets()
-            body1 = joint.GetBody1Rel().GetTargets()
-            body0_index = body_indices.get(str(body0[0])) if body0 else None
-            body1_index = body_indices.get(str(body1[0])) if body1 else None
+            joint = joints[joint_path]
+            body0_index = body_indices.get(joint.parent_path)
+            body1_index = body_indices.get(joint.child_path)
             signs.append(-1 if body0_index is not None and body1_index is not None and body0_index > body1_index else 1)
         return tuple(signs)
 
@@ -4138,42 +4131,19 @@ class Articulation(BaseArticulation):
         self._physx_actuator_wrapper = self._actuator_control._physx_actuator_wrapper
         self._data.bind_actuator_collection(self.actuators)
 
-    def _process_tendons(self):
+    def _process_tendons(self, planned_joints: dict[str, JointLayout]):
         """Process fixed and spatial tendons."""
-        # create a list to store the fixed tendon names
-        self._fixed_tendon_names = list()
-        self._spatial_tendon_names = list()
-        # parse fixed tendons properties if they exist
+        self._fixed_tendon_names = []
+        self._spatial_tendon_names = []
         if self.num_fixed_tendons > 0 or self.num_spatial_tendons > 0:
-            joint_paths = self.root_view.dof_paths[0]
-
-            # iterate over all joints to find tendons attached to them
-            for j in range(self.num_joints):
-                usd_joint_path = joint_paths[j]
-                # check whether joint has tendons - tendon name follows the joint name it is attached to
-                joint = UsdPhysics.Joint.Get(self.stage, usd_joint_path)
-                joint_applied_schemas = joint.GetPrim().GetAppliedSchemas()
-                # a fixed tendon is named after its PhysxTendonAxisRootAPI instance, not the joint carrying it
-                root_instances = [
-                    str(schema_name).removeprefix("PhysxTendonAxisRootAPI:")
-                    for schema_name in joint_applied_schemas
-                    if str(schema_name).startswith("PhysxTendonAxisRootAPI:")
-                ]
-                if root_instances:
-                    self._fixed_tendon_names.extend(root_instances)
-                elif any(
-                    "PhysxTendonAttachmentRootAPI" in schema_name or "PhysxTendonAttachmentLeafAPI" in schema_name
-                    for schema_name in joint_applied_schemas
-                ):
-                    self._spatial_tendon_names.append(usd_joint_path.split("/")[-1])
-
-            # store the fixed tendon names
+            for path in self.root_view.dof_paths[0]:
+                joint = planned_joints[path]
+                if joint.tendon_type == "fixed":
+                    self._fixed_tendon_names.append(joint.name)
+                elif joint.tendon_type == "spatial":
+                    self._spatial_tendon_names.append(joint.name)
             self._data.fixed_tendon_names = self._fixed_tendon_names
             self._data.spatial_tendon_names = self._spatial_tendon_names
-
-    """
-    Internal helpers -- Debugging.
-    """
 
     def _validate_cfg(self):
         """Validate the configuration after processing.

@@ -13,8 +13,7 @@ This module defines the recommended write API for FrameView poses and scales:
         writer.set_poses(positions=p, orientations=o)
         writer.set_scales(scales=s)
         # ... any number of writes ...
-    # On exit the writer derives the opposite-space matrices once,
-    # synchronizes once, and restores any saved Fabric tracking state.
+    # On exit the writer finalizes the backend's opposite-space state once.
 
 Only one writer may be active per view at a time.  While a writer scope is
 active on a view, view-level getters (``view.get_world_poses``,

@@ -19,7 +19,6 @@ from isaaclab.utils.warp import ProxyArray
 
 from isaaclab_ov import tensor_types as TT
 from isaaclab_ov.assets import kernels as shared_kernels
-from isaaclab_ov.physics import OvPhysxManager as SimulationManager
 from isaaclab_ov.sim.views.ovphysx_view import OvPhysxView
 
 
@@ -62,6 +61,7 @@ class RigidObjectCollectionData(BaseRigidObjectCollectionData):
         root_view: OvPhysxView,
         num_bodies: int,
         device: str,
+        physics_manager,
     ):
         """Initializes the rigid object data.
 
@@ -73,6 +73,7 @@ class RigidObjectCollectionData(BaseRigidObjectCollectionData):
             device: The device used for processing.
         """
         super().__init__(root_view, num_bodies, device)
+        self._physics_manager = physics_manager
         # The view owns the fused bindings and the CPU/GPU device policy.
         self._view = root_view
         self.num_bodies = num_bodies
@@ -96,10 +97,7 @@ class RigidObjectCollectionData(BaseRigidObjectCollectionData):
             self.num_instances = pose_binding.count // num_bodies
         self._num_instances = self.num_instances
 
-        if SimulationManager._sim is not None and hasattr(SimulationManager._sim, "cfg"):
-            gravity = SimulationManager._sim.cfg.gravity
-        else:
-            gravity = (0.0, 0.0, -9.81)
+        gravity = self._physics_manager.get_gravity()
 
         gravity_dir = torch.tensor((gravity[0], gravity[1], gravity[2]), device=self.device)
         if torch.linalg.norm(gravity_dir) > 0.0:
@@ -408,7 +406,7 @@ class RigidObjectCollectionData(BaseRigidObjectCollectionData):
                 device=self.device,
                 inputs=[
                     self.body_com_vel_w.warp,
-                    SimulationManager.get_physics_dt(),
+                    self._physics_manager.get_physics_dt(),
                     self._previous_body_com_vel,
                 ],
                 outputs=[

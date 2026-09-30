@@ -26,7 +26,7 @@ from typing import Any
 import newton
 import torch
 import warp as wp
-from isaaclab_newton.cloner import copy_newton_clone_source
+from isaaclab_newton.cloner import NewtonReplicateContext, copy_newton_clone_source
 
 from isaaclab.app import add_launcher_args, launch_simulation
 from isaaclab.utils import math as math_utils
@@ -269,27 +269,6 @@ def _grasp_objective(
     target_score = horizontal_score * height_score
     inversion *= target_score * (horizontal <= cfg.objective_inversion_gate_horizontal_threshold)
     return (distance_score + inversion + target_score) / 3.0
-
-
-def _tabletop_bounds(env: FrankaPourEnv, source_env_path: str) -> tuple[torch.Tensor, torch.Tensor]:
-    from pxr import Usd, UsdGeom
-
-    import isaaclab.sim as sim_utils
-
-    prim = sim_utils.get_current_stage().GetPrimAtPath(f"{source_env_path.rstrip('/')}/Table/Collisions/Cube")
-    if not prim.IsValid():
-        raise RuntimeError("Could not find the SeattleLab tabletop collision prim.")
-    cache = UsdGeom.BBoxCache(
-        Usd.TimeCode.Default(),
-        [UsdGeom.Tokens.default_, UsdGeom.Tokens.render, UsdGeom.Tokens.proxy],
-        useExtentsHint=False,
-    )
-    bounds = cache.ComputeWorldBound(prim).ComputeAlignedRange()
-    lower = torch.tensor(tuple(bounds.GetMin()), device=env.device)[:2] - env.env_origins[0, :2]
-    upper = torch.tensor(tuple(bounds.GetMax()), device=env.device)[:2] - env.env_origins[0, :2]
-    if not bool(torch.isfinite(lower).all() & torch.isfinite(upper).all() & torch.all(lower < upper)):
-        raise RuntimeError("Could not derive finite tabletop support bounds.")
-    return lower, upper
 
 
 class _GeneratorEnv(FrankaPourEnv):
@@ -624,14 +603,14 @@ class _Generator:
             NewtonIKSolverCfg,
         )
 
-        import isaaclab.sim as sim_utils
         from isaaclab import cloner
 
-        plan = sim_utils.SimulationContext.instance().get_clone_plan()
+        resource = self.env.sim.get_or_create_backend(NewtonReplicateContext, self.env.sim)
+        plan = self.env.sim.get_clone_plan()
         resolved = cloner.query.path_to_source(plan, self.env._robot.cfg.prim_path) if plan is not None else None
         if resolved is None:
             raise RuntimeError("Could not resolve the Franka clone-plan source.")
-        source_builder = copy_newton_clone_source(resolved[0])
+        source_builder = copy_newton_clone_source(resource, resolved[0])
         prototype_origin = -self.env.env_origins[0]
         prototype_xform = wp.transform(wp.vec3(*prototype_origin.tolist()), wp.quat_identity())
         self.prototype = newton.ModelBuilder(up_axis=source_builder.up_axis)
@@ -641,10 +620,33 @@ class _Generator:
             table_resolved = cloner.query.path_to_source(plan, table_path)
             if table_resolved is None:
                 raise RuntimeError("Could not resolve the SeattleLab table clone-plan source.")
-            self.prototype.add_builder(copy_newton_clone_source(table_resolved[0]), xform=prototype_xform)
+            self.prototype.add_builder(copy_newton_clone_source(resource, table_resolved[0]), xform=prototype_xform)
         if not any("/Table/" in str(label) or str(label).endswith("/Table") for label in self.prototype.shape_label):
             raise RuntimeError("The reset generator requires the SeattleLab table collision geometry.")
-        self.support_lower, self.support_upper = _tabletop_bounds(self.env, resolved[0])
+        table_colliders = [
+            index
+            for index, label in enumerate(self.prototype.shape_label)
+            if str(label).endswith("/Table/Collisions/Cube")
+        ]
+        if len(table_colliders) != 1 or self.prototype.shape_type[table_colliders[0]] != newton.GeoType.BOX:
+            raise RuntimeError("The reset generator requires one box-shaped SeattleLab tabletop collider.")
+        table_id = table_colliders[0]
+        half_extents = self.prototype.shape_scale[table_id]
+        transform = self.prototype.shape_transform[table_id]
+        corners = torch.tensor(
+            [
+                tuple(
+                    wp.transform_point(
+                        transform, wp.vec3(x * half_extents[0], y * half_extents[1], z * half_extents[2])
+                    )
+                )
+                for x in (-1.0, 1.0)
+                for y in (-1.0, 1.0)
+                for z in (-1.0, 1.0)
+            ],
+            device=self.device,
+        )[:, :2]
+        self.support_lower, self.support_upper = corners.amin(dim=0), corners.amax(dim=0)
         self.ik_model = self.prototype.finalize(device=str(self.device))
 
         body_names = [str(label).rsplit("/", 1)[-1] for label in self.ik_model.body_label]

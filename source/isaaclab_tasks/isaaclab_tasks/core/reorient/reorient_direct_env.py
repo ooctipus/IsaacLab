@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING
 
 import torch
 
-from isaaclab import cloner
 from isaaclab.envs import DirectRLEnv
 from isaaclab.utils.math import (
     quat_conjugate,
@@ -113,25 +112,26 @@ class ReorientDirectEnv(DirectRLEnv):
         super().__init__(cfg, render_mode, **kwargs)
 
         # -- robot introspection: joints, bodies, limits --
-        self.num_hand_dofs = self.hand.num_joints
-        self.actuated_dof_indices, _ = self.hand.find_joints(cfg.actuated_joint_names)
+        self.num_hand_dofs = self.scene["robot"].num_joints
+        self.actuated_dof_indices, _ = self.scene["robot"].find_joints(cfg.actuated_joint_names)
         if len(self.actuated_dof_indices) != len(cfg.actuated_joint_names):
             raise ValueError(
                 f"Expected {len(cfg.actuated_joint_names)} actuated joints, found {len(self.actuated_dof_indices)}."
             )
 
-        self.finger_bodies, fingertip_body_names = self.hand.find_bodies(self.cfg.fingertip_body_names)
+        self.finger_bodies, fingertip_body_names = self.scene["robot"].find_bodies(self.cfg.fingertip_body_names)
         if len(self.finger_bodies) != len(self.cfg.fingertip_body_names):
             raise ValueError(
                 f"Expected {len(self.cfg.fingertip_body_names)} fingertip bodies, found {len(self.finger_bodies)}."
             )
         self.num_fingertips = len(self.finger_bodies)
         self.finger_wrench_bodies = []
-        if getattr(self, "_joint_wrench_sensor", None) is not None:
+        joint_wrench_sensor = self.scene.sensors.get("joint_wrench")
+        if joint_wrench_sensor is not None:
             for body_name in fingertip_body_names:
-                self.finger_wrench_bodies.append(self._joint_wrench_sensor.body_names.index(body_name))
+                self.finger_wrench_bodies.append(joint_wrench_sensor.body_names.index(body_name))
             self.finger_wrench_bodies.sort()
-        joint_pos_limits = self.hand.data.joint_limits.torch.to(self.device)
+        joint_pos_limits = self.scene["robot"].data.joint_limits.torch.to(self.device)
         self.hand_dof_lower_limits = joint_pos_limits[..., 0]
         self.hand_dof_upper_limits = joint_pos_limits[..., 1]
 
@@ -141,7 +141,7 @@ class ReorientDirectEnv(DirectRLEnv):
 
         # -- goal and success state --
         # in-hand target = object default position + shared offset (mirrors ReorientCommand)
-        self.in_hand_pos = self.object.data.default_root_pose.torch[:, 0:3].clone()
+        self.in_hand_pos = self.scene["object"].data.default_root_pose.torch[:, 0:3].clone()
         self.in_hand_pos += torch.tensor(self.cfg.in_hand_pos_offset, dtype=torch.float, device=self.device)
         self.goal_rot = torch.zeros((self.num_envs, 4), dtype=torch.float, device=self.device)
         self.goal_rot[:, 3] = 1.0  # identity quaternion in (x, y, z, w) layout
@@ -162,37 +162,13 @@ class ReorientDirectEnv(DirectRLEnv):
         self.y_unit_tensor = torch.tensor([0, 1, 0], dtype=torch.float, device=self.device).repeat((self.num_envs, 1))
         self.z_unit_tensor = torch.tensor([0, 0, 1], dtype=torch.float, device=self.device).repeat((self.num_envs, 1))
 
-        # -- articulation write handles --
-        self._set_joint_pos_target = self.hand.set_joint_position_target_index
-        self._write_obj_root_pose = self.object.write_root_pose_to_sim_index
-        self._write_obj_root_vel = self.object.write_root_velocity_to_sim_index
-        self._write_hand_joint_pos = self.hand.write_joint_position_to_sim_index
-        self._write_hand_joint_vel = self.hand.write_joint_velocity_to_sim_index
-
-    def _setup_scene(self):
-        asset_cfgs = self.cfg.robot_cfg, self.cfg.object_cfg, self.cfg.ground_cfg
-        asset_cfgs += self.cfg.light_cfg, self.cfg.goal_object_cfg
-        if self.cfg.asymmetric_obs:
-            asset_cfgs += (self.cfg.joint_wrench,)
-        plan = cloner.clone_plan_from_env_0(
-            self.cfg.scene.clone_cfg, asset_cfgs, self.cfg.scene.num_envs, self.cfg.scene.env_spacing
-        )
-        self.hand = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
-        self.object = self.cfg.object_cfg.class_type(self.cfg.object_cfg)
-        self._joint_wrench_sensor = (
-            self.cfg.joint_wrench.class_type(self.cfg.joint_wrench) if self.cfg.asymmetric_obs else None
-        )
-        for cfg in (self.cfg.ground_cfg, self.cfg.light_cfg):
-            cfg.spawn.func(cfg.spawn.spawn_path, cfg.spawn, cfg.init_state.pos, cfg.init_state.rot)
-        self.goal_markers = self.cfg.goal_object_cfg.class_type(self.cfg.goal_object_cfg)
-        cloner.replicate(plan, replicate_physics=self.cfg.scene.replicate_physics)
-        if "physx" in self.scene.physics_backend:
-            self.scene.filter_collisions(global_prim_paths=[self.cfg.ground_cfg.prim_path])
-        # add articulation to scene - we must register to scene to randomize with EventManager
-        self.scene.articulations["robot"] = self.hand
-        self.scene.rigid_objects["object"] = self.object
-        if self._joint_wrench_sensor is not None:
-            self.scene.sensors["joint_wrench"] = self._joint_wrench_sensor
+        # -- visualization and articulation write handles --
+        self.goal_markers = self.cfg.scene.goal_object_cfg.class_type(self.cfg.scene.goal_object_cfg)
+        self._set_joint_pos_target = self.scene["robot"].set_joint_position_target_index
+        self._write_obj_root_pose = self.scene["object"].write_root_pose_to_sim_index
+        self._write_obj_root_vel = self.scene["object"].write_root_velocity_to_sim_index
+        self._write_hand_joint_pos = self.scene["robot"].write_joint_position_to_sim_index
+        self._write_hand_joint_vel = self.scene["robot"].write_joint_velocity_to_sim_index
 
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
         self.actions = actions.clone()
@@ -240,13 +216,14 @@ class ReorientDirectEnv(DirectRLEnv):
 
     def _update_fingertip_force_sensors(self) -> None:
         """Update fingertip force/torque observations from the joint-wrench sensor."""
-        if getattr(self, "_joint_wrench_sensor", None) is None:
+        joint_wrench_sensor = self.scene.sensors.get("joint_wrench")
+        if joint_wrench_sensor is None:
             self.fingertip_force_sensors = torch.zeros(
                 self.num_envs, len(self.finger_bodies), 6, dtype=torch.float32, device=self.device
             )
             return
 
-        sensor_data = self._joint_wrench_sensor.data
+        sensor_data = joint_wrench_sensor.data
         force_data = sensor_data.force
         torque_data = sensor_data.torque
         if force_data is None or torque_data is None:
@@ -298,8 +275,6 @@ class ReorientDirectEnv(DirectRLEnv):
         return total_reward
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
-        self._compute_intermediate_values()
-
         # reset when cube has fallen
         goal_dist = torch.linalg.norm(self.object_pos - self.in_hand_pos, ord=2, dim=-1)
         out_of_reach = goal_dist >= self.cfg.fall_dist
@@ -338,8 +313,8 @@ class ReorientDirectEnv(DirectRLEnv):
         self._reset_target_pose(env_ids)
 
         # reset object
-        object_default_pose = self.object.data.default_root_pose.torch.clone()[env_ids]
-        object_default_vel = self.object.data.default_root_vel.torch.clone()[env_ids]
+        object_default_pose = self.scene["object"].data.default_root_pose.torch.clone()[env_ids]
+        object_default_vel = self.scene["object"].data.default_root_vel.torch.clone()[env_ids]
         pos_noise = sample_uniform(-1.0, 1.0, (len(env_ids), 3), device=self.device)
         # global object positions
         object_default_pose[:, 0:3] = (
@@ -356,12 +331,14 @@ class ReorientDirectEnv(DirectRLEnv):
         self._write_obj_root_vel(root_velocity=object_default_vel, env_ids=env_ids)
 
         # reset hand
-        default_dof_pos = self.hand.data.default_joint_pos.torch[env_ids]
-        dof_limits = self.hand.data.joint_limits.torch[env_ids]
+        default_dof_pos = self.scene["robot"].data.default_joint_pos.torch[env_ids]
+        dof_limits = self.scene["robot"].data.joint_limits.torch[env_ids]
         dof_pos = sample_joint_positions_within_limits(default_dof_pos, dof_limits, self.cfg.reset_dof_pos_noise)
 
         dof_vel_noise = sample_uniform(-1.0, 1.0, (len(env_ids), self.num_hand_dofs), device=self.device)
-        dof_vel = self.hand.data.default_joint_vel.torch[env_ids] + self.cfg.reset_dof_vel_noise * dof_vel_noise
+        dof_vel = (
+            self.scene["robot"].data.default_joint_vel.torch[env_ids] + self.cfg.reset_dof_vel_noise * dof_vel_noise
+        )
 
         self.prev_targets[env_ids] = dof_pos
         self.cur_targets[env_ids] = dof_pos
@@ -371,7 +348,6 @@ class ReorientDirectEnv(DirectRLEnv):
         self._write_hand_joint_vel(velocity=dof_vel, env_ids=env_ids)
 
         self.successes[env_ids] = 0
-        self._compute_intermediate_values()
 
     def _reset_target_pose(self, env_ids):
         # reset goal rotation
@@ -391,25 +367,25 @@ class ReorientDirectEnv(DirectRLEnv):
 
         self.reset_goal_buf[env_ids] = 0
 
-    def _compute_intermediate_values(self):
+    def _refresh_task_state(self):
         """Refresh the torch-side state snapshots consumed by the observation and reward paths."""
         # data for hand
-        self.fingertip_pos = self.hand.data.body_pos_w.torch[:, self.finger_bodies]
-        self.fingertip_rot = self.hand.data.body_quat_w.torch[:, self.finger_bodies]
+        self.fingertip_pos = self.scene["robot"].data.body_pos_w.torch[:, self.finger_bodies]
+        self.fingertip_rot = self.scene["robot"].data.body_quat_w.torch[:, self.finger_bodies]
         self.fingertip_pos -= self.scene.env_origins.repeat((1, self.num_fingertips)).reshape(
             self.num_envs, self.num_fingertips, 3
         )
-        self.fingertip_velocities = self.hand.data.body_vel_w.torch[:, self.finger_bodies]
+        self.fingertip_velocities = self.scene["robot"].data.body_vel_w.torch[:, self.finger_bodies]
 
-        self.hand_dof_pos = self.hand.data.joint_pos.torch
-        self.hand_dof_vel = self.hand.data.joint_vel.torch
+        self.hand_dof_pos = self.scene["robot"].data.joint_pos.torch
+        self.hand_dof_vel = self.scene["robot"].data.joint_vel.torch
 
         # data for object
-        self.object_pos = self.object.data.root_pos_w.torch - self.scene.env_origins
-        self.object_rot = self.object.data.root_quat_w.torch
-        self.object_velocities = self.object.data.root_vel_w.torch
-        self.object_linvel = self.object.data.root_lin_vel_w.torch
-        self.object_angvel = self.object.data.root_ang_vel_w.torch
+        self.object_pos = self.scene["object"].data.root_pos_w.torch - self.scene.env_origins
+        self.object_rot = self.scene["object"].data.root_quat_w.torch
+        self.object_velocities = self.scene["object"].data.root_vel_w.torch
+        self.object_linvel = self.scene["object"].data.root_lin_vel_w.torch
+        self.object_angvel = self.scene["object"].data.root_ang_vel_w.torch
 
     def compute_reduced_observations(self):
         # Per https://arxiv.org/pdf/1808.00177.pdf Table 2

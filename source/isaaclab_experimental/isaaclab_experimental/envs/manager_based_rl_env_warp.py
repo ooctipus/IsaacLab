@@ -76,7 +76,7 @@ class ManagerBasedRLEnvWarp(ManagerBasedEnvWarp, gym.Env):
     is_vector_env: ClassVar[bool] = True
     """Whether the environment is a vectorized environment."""
     metadata: ClassVar[dict[str, Any]] = {
-        "render_modes": [None, "human", "rgb_array"],
+        "render_modes": [None, "human"],
         # "isaac_sim_version": get_version(),
     }
     """Metadata for the environment."""
@@ -356,6 +356,9 @@ class ManagerBasedRLEnvWarp(ManagerBasedEnvWarp, gym.Env):
             ):
                 self._reset_idx(env_ids=reset_env_ids, env_mask=self.reset_mask_wp)
 
+            self.scene.write_data_to_sim()
+            self.sim.forward()
+
             # if sensors are added to the scene, make sure we render to reflect changes in reset
             if self.has_rtx_sensors and self.cfg.num_rerenders_on_reset > 0:
                 for _ in range(self.cfg.num_rerenders_on_reset):
@@ -390,68 +393,24 @@ class ManagerBasedRLEnvWarp(ManagerBasedEnvWarp, gym.Env):
         return self.obs_buf, self.reward_buf, self.reset_terminated, self.reset_time_outs, self.extras
 
     def render(self, recompute: bool = False) -> np.ndarray | None:
-        """Run rendering without stepping through the physics.
-
-        By convention, if mode is:
-
-        - **human**: Render to the current display and return nothing. Usually for human consumption.
-        - **rgb_array**: Return a numpy.ndarray with shape (x, y, 3), representing RGB values for an
-          x-by-y pixel image, suitable for turning into a video.
+        """Render the active visualizers without stepping physics.
 
         Args:
-            recompute: Whether to force a render even if the simulator has already rendered the scene.
-                Defaults to False.
+            recompute: Whether to render even when the simulation step already rendered.
 
         Returns:
-            The rendered image as a numpy array if mode is "rgb_array". Otherwise, returns None.
+            ``None``.
 
         Raises:
-            RuntimeError: If mode is set to "rgb_data" and simulation render mode does not support it.
-                In this case, the simulation render mode must be set to ``RenderMode.PARTIAL_RENDERING``
-                or ``RenderMode.FULL_RENDERING``.
             NotImplementedError: If an unsupported rendering mode is specified.
         """
-        # run a rendering step of the simulator
-        # if we have rtx sensors, we do not need to render again sin
         if not self.has_rtx_sensors and not recompute:
             self.sim.render()
-        # decide the rendering mode
         if self.render_mode == "human" or self.render_mode is None:
             return None
-        elif self.render_mode == "rgb_array":
-            # rendering requires a GUI or offscreen rendering (mirrors the stable env)
-            if not (self.sim.has_gui or self.sim.has_offscreen_render):
-                raise RuntimeError(
-                    f"Cannot render '{self.render_mode}' when the simulation render mode does not support"
-                    " rendering. Please set the simulation render mode to 'PARTIAL_RENDERING' or"
-                    " 'FULL_RENDERING'."
-                )
-            # create the annotator if it does not exist
-            if not hasattr(self, "_rgb_annotator"):
-                import omni.replicator.core as rep
-
-                # create render product from the main Kit viewport camera
-                _cam_prim_path = "/OmniverseKit_Persp"
-                _resolution = (1280, 720)
-                self._render_product = rep.create.render_product(_cam_prim_path, _resolution)
-                self._render_resolution = _resolution
-                # create rgb annotator -- used to read data from the render product
-                self._rgb_annotator = rep.AnnotatorRegistry.get_annotator("rgb", device="cpu")
-                self._rgb_annotator.attach([self._render_product])
-            # obtain the rgb data
-            rgb_data = self._rgb_annotator.get_data()
-            # convert to numpy array
-            rgb_data = np.frombuffer(rgb_data, dtype=np.uint8).reshape(*rgb_data.shape)
-            # return the rgb data
-            # note: initially the renerer is warming up and returns empty data
-            if rgb_data.size == 0:
-                return np.zeros((self._render_resolution[1], self._render_resolution[0], 3), dtype=np.uint8)
-            else:
-                return rgb_data[:, :, :3]
-        else:
-            raise NotImplementedError(
-                f"Render mode '{self.render_mode}' is not supported. Please use: {self.metadata['render_modes']}."
-            )
+        raise NotImplementedError(
+            f"Render mode {self.render_mode!r} is not supported; use VideoRecorderCfg with a planned camera."
+        )
 
     def close(self):
         if not self._is_closed:

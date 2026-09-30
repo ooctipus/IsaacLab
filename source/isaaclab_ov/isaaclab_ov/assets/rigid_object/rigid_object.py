@@ -7,7 +7,6 @@
 
 from __future__ import annotations
 
-import re
 import warnings
 from collections.abc import Sequence
 
@@ -15,11 +14,10 @@ import numpy as np
 import torch
 import warp as wp
 
-from pxr import UsdPhysics
-
 from isaaclab.assets.rigid_object.base_rigid_object import BaseRigidObject
 from isaaclab.assets.rigid_object.rigid_object_cfg import RigidObjectCfg
-from isaaclab.sim.utils.queries import path_expr_to_glob, resolve_matching_prims_from_source
+from isaaclab.sim import SimulationContext
+from isaaclab.sim.utils.queries import path_expr_to_glob
 from isaaclab.utils.string import resolve_matching_names
 from isaaclab.utils.warp import ProxyArray
 from isaaclab.utils.wrench_composer import WrenchComposer
@@ -27,7 +25,6 @@ from isaaclab.utils.wrench_composer import WrenchComposer
 from isaaclab_ov import tensor_types as TT
 from isaaclab_ov.assets import kernels as shared_kernels
 from isaaclab_ov.assets.kernels import _body_wrench_to_world
-from isaaclab_ov.physics import OvPhysxManager
 from isaaclab_ov.sim.views.ovphysx_view import OvPhysxView
 
 from .rigid_object_data import RigidObjectData
@@ -936,7 +933,7 @@ class RigidObject(BaseRigidObject):
 
     def _initialize_impl(self) -> None:
         # acquire ovphysx instance
-        physx_instance = OvPhysxManager.get_physx_instance()
+        physx_instance = self._physics_manager.get_physx_instance()
         if physx_instance is None:
             raise RuntimeError("OvPhysxManager has not been initialized yet.")
         self._ovphysx = physx_instance
@@ -944,19 +941,12 @@ class RigidObject(BaseRigidObject):
         # The ovphysx PhysX object does not expose a .device property; reading it would
         # raise AttributeError (masked by hasattr) and fall back to "cuda:0" even when the
         # simulation is running on CPU, causing a device mismatch in binding.read().
-        self._device = OvPhysxManager.get_device()
+        self._device = self._physics_manager.get_device()
 
-        # Resolve the rigid body root expression.
-        def has_rigid_body_api(prim) -> bool:
-            return bool(prim.HasAPI(UsdPhysics.RigidBodyAPI))
+        layout = SimulationContext.instance().get_clone_plan()
+        root_prim_path_expr = layout.match_rigid_body(self.cfg.prim_path).view_path
 
-        resolve_kwargs = {"predicate": has_rigid_body_api, "expected_num_matches": 1}
-        _, root_prim_path_expr = resolve_matching_prims_from_source(self.cfg.prim_path, **resolve_kwargs)[0]
-
-        # IsaacLab paths may use ``.*`` regex or ``{ENV_REGEX_NS}`` placeholder; ovphysx
-        # ``create_tensor_binding`` expects fnmatch globs.
-        pattern = re.sub(r"\{ENV_REGEX_NS\}", "*", root_prim_path_expr)
-        pattern = path_expr_to_glob(pattern)
+        pattern = path_expr_to_glob(root_prim_path_expr)
         self._binding_pattern = pattern
 
         # Eagerly create every binding the data container reads at init, so failures
@@ -1000,7 +990,9 @@ class RigidObject(BaseRigidObject):
             self._body_names = ["base_link"]
 
         # container for data access
-        self._data = RigidObjectData(self._root_view, self._device, check_shapes=self._check_shapes)
+        self._data = RigidObjectData(
+            self._root_view, self._device, self._physics_manager, check_shapes=self._check_shapes
+        )
 
         # create buffers
         self._create_buffers()

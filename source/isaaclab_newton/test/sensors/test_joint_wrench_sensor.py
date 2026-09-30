@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import pytest
 import torch
 import warp as wp
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
+from isaaclab_newton.physics import MJWarpSolverCfg
 
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
@@ -119,8 +119,7 @@ def sim():
     """Simulation context using the Newton backend."""
     sim_cfg = SimulationCfg(
         dt=1.0 / 200.0,
-        physics=NewtonCfg(
-            solver_cfg=MJWarpSolverCfg(),
+        physics=MJWarpSolverCfg(
             num_substeps=1,
         ),
     )
@@ -150,7 +149,8 @@ def test_data_before_init_is_none():
 
 def test_initialization_and_shapes(sim):
     """Sensor initializes on sim reset and exposes correctly-shaped buffers."""
-    scene = InteractiveScene(_SingleJointSceneCfg(num_envs=2))
+    scene_cfg = _SingleJointSceneCfg(num_envs=2)
+    scene = InteractiveScene(scene_cfg)
     sim.reset()
 
     robot: Articulation = scene["robot"]
@@ -169,7 +169,8 @@ def test_initialization_and_shapes(sim):
 
 def test_multi_body_articulation(sim):
     """Cartpole (2 joints) exposes a wrench for each joint labelled by its child body."""
-    scene = InteractiveScene(_CartpoleSceneCfg(num_envs=2))
+    scene_cfg = _CartpoleSceneCfg(num_envs=2)
+    scene = InteractiveScene(scene_cfg)
     sim.reset()
 
     sensor: JointWrenchSensor = scene["wrench"]
@@ -186,7 +187,8 @@ def test_multi_body_articulation(sim):
 
 def test_nested_articulation_root_resolution(sim):
     """Sensor covers a nested articulation root from the configured asset prefix."""
-    scene = InteractiveScene(_NestedRootAntSceneCfg(num_envs=1))
+    scene_cfg = _NestedRootAntSceneCfg(num_envs=1)
+    scene = InteractiveScene(scene_cfg)
     sim.reset()
 
     robot: Articulation = scene["robot"]
@@ -316,7 +318,8 @@ def _compute_expected_wrench_in_joint_frame(
 
 def test_force_and_torque_components_at_rest(sim):
     """Component-level validation of force and torque against analytical expectations (gravity only)."""
-    scene = InteractiveScene(_SingleJointSceneCfg(num_envs=1))
+    scene_cfg = _SingleJointSceneCfg(num_envs=1)
+    scene = InteractiveScene(scene_cfg)
     sim.reset()
 
     sensor: JointWrenchSensor = scene["wrench"]
@@ -348,7 +351,8 @@ def test_wrench_with_external_force_and_torque(sim):
     apply a known wrench, settle, compute the expected reaction wrench analytically,
     and compare component-by-component.
     """
-    scene = InteractiveScene(_SingleJointSceneCfg(num_envs=1))
+    scene_cfg = _SingleJointSceneCfg(num_envs=1)
+    scene = InteractiveScene(scene_cfg)
     sim.reset()
 
     sensor: JointWrenchSensor = scene["wrench"]
@@ -396,7 +400,8 @@ def test_interior_joint_wrench_at_rest(sim):
     joint must equal the combined weight of cart and pole, with torque
     computed from each body's moment about the joint anchor.
     """
-    scene = InteractiveScene(_CartpoleDampedSceneCfg(num_envs=1))
+    scene_cfg = _CartpoleDampedSceneCfg(num_envs=1)
+    scene = InteractiveScene(scene_cfg)
     sim.reset()
 
     sensor: JointWrenchSensor = scene["wrench"]
@@ -433,7 +438,8 @@ def test_interior_joint_wrench_at_rest(sim):
 
 def test_reset_zeros_buffers(sim):
     """Resetting the sensor clears the force / torque buffers."""
-    scene = InteractiveScene(_SingleJointSceneCfg(num_envs=2))
+    scene_cfg = _SingleJointSceneCfg(num_envs=2)
+    scene = InteractiveScene(scene_cfg)
     sim.reset()
 
     sensor: JointWrenchSensor = scene["wrench"]
@@ -454,7 +460,8 @@ def test_reset_zeros_buffers(sim):
 
 def test_reset_with_env_ids_only_zeros_selected_envs(sim):
     """Partial reset via env_ids should zero the selected envs and preserve the others."""
-    scene = InteractiveScene(_SingleJointSceneCfg(num_envs=4))
+    scene_cfg = _SingleJointSceneCfg(num_envs=4)
+    scene = InteractiveScene(scene_cfg)
     sim.reset()
 
     sensor: JointWrenchSensor = scene["wrench"]
@@ -480,7 +487,8 @@ def test_no_stale_data_after_scene_reset(sim):
     Mirrors the PhysX equivalent. The joint-wrench sensor's lazy ``data`` accessor must not
     refetch from the Newton articulation view here (the wrench buffer reflects the previous step).
     """
-    scene = InteractiveScene(_SingleJointSceneCfg(num_envs=1))
+    scene_cfg = _SingleJointSceneCfg(num_envs=1)
+    scene = InteractiveScene(scene_cfg)
     sim.reset()
 
     sensor: JointWrenchSensor = scene["wrench"]

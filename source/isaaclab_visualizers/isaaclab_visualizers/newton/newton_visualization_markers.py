@@ -7,7 +7,6 @@
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -21,18 +20,16 @@ import isaaclab.sim as sim_utils
 from isaaclab.markers.visualization_markers_cfg import VisualizationMarkersCfg
 from isaaclab.utils.math import quat_apply
 
-logger = logging.getLogger(__name__)
-
 _OMNIPBR_DEFAULTS = {
     "diffuse_color_constant": (0.2, 0.2, 0.2),
     "diffuse_tint": (1.0, 1.0, 1.0),
 }
-_UNBOUND_DEFAULT_FALLBACK_GRAY = (0.18, 0.18, 0.18)
+_DEFAULT_UNBOUND_COLOR = (0.18, 0.18, 0.18)
 
 
 @dataclass(frozen=True)
 class _NewtonMarkerSpec:
-    renderer: Literal["mesh", "frame", "none"]
+    renderer: Literal["mesh", "frame"]
     mesh_type: Literal["arrow", "box", "sphere", "cylinder", "capsule", "cone", "usd"] | None = None
     mesh_params: dict[str, float | tuple[float, float, float]] | None = None
     scale: tuple[float, float, float] | None = None
@@ -46,9 +43,9 @@ def render_newton_visualization_markers(viewer: ViewerBase, visible_env_ids: lis
     """Render all active Newton visualization marker groups into a Newton-family viewer."""
     sim = sim_utils.SimulationContext.instance()
     if sim is None:
-        return
+        raise RuntimeError("Newton marker rendering requires an active SimulationContext.")
 
-    for marker in sim.vis_marker_registry.get_groups().values():
+    for marker in sim.vis_marker_registry.get_groups():
         if isinstance(marker, NewtonVisualizationMarkers):
             marker.render(viewer, visible_env_ids=visible_env_ids, num_envs=num_envs)
 
@@ -66,29 +63,12 @@ class NewtonVisualizationMarkers:
         self.marker_indices: torch.Tensor | None = None
         self.count = len(cfg.markers)
         self._registered_meshes: set[tuple[int, str]] = set()
-        self._warned_unsupported: set[str] = set()
         self._marker_specs: dict[str, _NewtonMarkerSpec] = {
             name: _infer_newton_marker_cfg(marker_cfg) for name, marker_cfg in cfg.markers.items()
         }
 
-        sim = sim_utils.SimulationContext.instance()
-        self._registry = sim.vis_marker_registry if sim is not None else None
-        if self._registry is not None:
-            self._registry.set_group(self.group_id, self)
-
     def close(self) -> None:
-        """Remove marker backend from the simulation marker registry."""
-        registry = getattr(self, "_registry", None)
-        self._registry = None
-        if registry is not None:
-            registry.remove_group(self.group_id)
-
-    def infer_device(self) -> torch.device:
-        """Infer the device from current marker state."""
-        for value in (self.translations, self.orientations, self.scales, self.marker_indices):
-            if value is not None:
-                return value.device
-        return torch.device("cpu")
+        """Close the marker backend."""
 
     def set_visibility(self, visible: bool) -> None:
         """Set marker visibility."""
@@ -177,17 +157,6 @@ class NewtonVisualizationMarkers:
                     self._hide_batch(viewer, name, newton_cfg)
                     continue
 
-            if newton_cfg.renderer == "none":
-                unsupported_key = f"{self.group_id}:{name}"
-                if unsupported_key not in self._warned_unsupported:
-                    logger.warning(
-                        "[NewtonVisualizationMarkers] Unsupported marker prototype '%s' in group '%s'; skipping.",
-                        name,
-                        self.group_id,
-                    )
-                    self._warned_unsupported.add(unsupported_key)
-                continue
-
             selected_translations = translations[selected]
             selected_count = selected_translations.shape[0]
             if orientations is None:
@@ -211,14 +180,14 @@ class NewtonVisualizationMarkers:
                 # ViewerGL gates texture sampling with material.w. Rerun and Viser ignore this flag.
                 texture_flag = float(newton_cfg.texture is not None)
                 materials = selected_translations.new_tensor((0.0, 0.0, 0.0, texture_flag)).expand(selected_count, -1)
-                xforms = torch.cat((selected_translations, selected_orientations), dim=1).detach().cpu().numpy()
+                xforms = torch.cat((selected_translations, selected_orientations), dim=1).to(torch.float32).contiguous()
                 viewer.log_instances(
                     batch_name,
                     mesh_name,
-                    wp.array(xforms.astype(np.float32), dtype=wp.transform),
-                    wp.array(selected_scales.detach().cpu().numpy().astype(np.float32), dtype=wp.vec3),
-                    wp.array(colors.detach().cpu().numpy().astype(np.float32), dtype=wp.vec3),
-                    wp.array(materials.detach().cpu().numpy().astype(np.float32), dtype=wp.vec4),
+                    wp.from_torch(xforms, dtype=wp.transform),
+                    wp.from_torch(selected_scales.to(torch.float32).contiguous(), dtype=wp.vec3),
+                    wp.from_torch(colors.to(torch.float32).contiguous(), dtype=wp.vec3),
+                    wp.from_torch(materials.to(torch.float32).contiguous(), dtype=wp.vec4),
                     hidden=False,
                 )
             elif newton_cfg.renderer == "frame":
@@ -226,16 +195,16 @@ class NewtonVisualizationMarkers:
                 width = max(float(selected_scales.mean().item()) * 0.05, 0.0025)
                 viewer.log_lines(
                     batch_name,
-                    wp.array(starts.detach().cpu().numpy().astype(np.float32), dtype=wp.vec3),
-                    wp.array(ends.detach().cpu().numpy().astype(np.float32), dtype=wp.vec3),
-                    wp.array(colors.detach().cpu().numpy().astype(np.float32), dtype=wp.vec3),
+                    wp.from_torch(starts.to(torch.float32).contiguous(), dtype=wp.vec3),
+                    wp.from_torch(ends.to(torch.float32).contiguous(), dtype=wp.vec3),
+                    wp.from_torch(colors.to(torch.float32).contiguous(), dtype=wp.vec3),
                     width=width,
                     hidden=False,
                 )
 
     def _hide_batch(self, viewer: ViewerBase, name: str, newton_cfg: _NewtonMarkerSpec) -> None:
         batch_name = f"{self.group_id}/{name}"
-        if newton_cfg.renderer == "mesh" and newton_cfg.mesh_type is not None:
+        if newton_cfg.renderer == "mesh":
             mesh_name = f"{self.group_id}/meshes/{name}"
             self._ensure_mesh_registered(viewer, mesh_name, newton_cfg)
             viewer.log_instances(batch_name, mesh_name, None, None, None, None, hidden=True)
@@ -247,7 +216,7 @@ class NewtonVisualizationMarkers:
         # registration is viewer-local, so the same marker mesh must be logged
         # once per viewer (for example, once for Rerun and once for Viser).
         registered_key = (id(viewer), mesh_name)
-        if registered_key in self._registered_meshes or newton_cfg.mesh_type is None:
+        if registered_key in self._registered_meshes:
             return
         mesh = _create_mesh(newton_cfg)
         normals_arr = mesh.normals
@@ -295,6 +264,8 @@ def _infer_newton_marker_cfg(marker_cfg: object) -> _NewtonMarkerSpec:
         )
 
     if cfg_type == "UsdFileCfg":
+        from isaaclab.utils.assets import retrieve_file_path  # noqa: PLC0415
+
         usd_path = str(marker_cfg.usd_path)
         usd_path_lower = usd_path.lower()
         default_scale = _extract_scale_hint(marker_cfg)
@@ -307,22 +278,19 @@ def _infer_newton_marker_cfg(marker_cfg: object) -> _NewtonMarkerSpec:
             )
         if usd_path_lower.endswith("frame_prim.usd"):
             return _NewtonMarkerSpec(renderer="frame", scale=default_scale)
-        newton_mesh = _load_usd_mesh(usd_path)
-        if newton_mesh is not None:
-            mesh_color = newton_mesh.color
-            color = (
-                (float(mesh_color[0]), float(mesh_color[1]), float(mesh_color[2])) if mesh_color is not None else None
-            )
-            return _NewtonMarkerSpec(
-                renderer="mesh",
-                mesh_type="usd",
-                scale=default_scale,
-                color=color,
-                texture=newton_mesh.texture,
-                preloaded_mesh=newton_mesh,
-            )
+        newton_mesh = Mesh.create_from_usd(retrieve_file_path(usd_path), load_normals=True, load_uvs=True)
+        mesh_color = newton_mesh.color
+        color = (float(mesh_color[0]), float(mesh_color[1]), float(mesh_color[2])) if mesh_color is not None else None
+        return _NewtonMarkerSpec(
+            renderer="mesh",
+            mesh_type="usd",
+            scale=default_scale,
+            color=color,
+            texture=newton_mesh.texture,
+            preloaded_mesh=newton_mesh,
+        )
 
-    return _NewtonMarkerSpec(renderer="none")
+    raise TypeError(f"Newton cannot represent marker cfg type {cfg_type!r}")
 
 
 def _create_mesh(newton_cfg: _NewtonMarkerSpec):
@@ -365,80 +333,6 @@ def _create_mesh(newton_cfg: _NewtonMarkerSpec):
     raise ValueError(f"Unsupported Newton mesh type: {newton_cfg.mesh_type}")
 
 
-def _load_usd_mesh(usd_path: str) -> Mesh | None:
-    """Open a USD file and return a Newton :class:`~newton.Mesh` from the first :class:`UsdGeom.Mesh` prim found.
-
-    Material properties (color, texture) are resolved from the prim's bound USD material and stored
-    on the returned :class:`~newton.Mesh`.
-
-    Args:
-        usd_path: Absolute path or URL to a USD asset.
-
-    Returns:
-        A :class:`~newton.Mesh` with vertices, indices, normals, UVs, and material properties, or
-        ``None`` if the USD could not be opened or contains no mesh geometry.
-    """
-    try:
-        from pxr import Usd, UsdGeom  # noqa: PLC0415
-
-        from isaaclab.utils.assets import retrieve_file_path  # noqa: PLC0415
-
-        local_path = retrieve_file_path(usd_path)
-        stage = Usd.Stage.Open(local_path)
-        if stage is None:
-            logger.warning("[NewtonVisualizationMarkers] Failed to open USD stage: %s", usd_path)
-            return None
-        mesh_prims = [p for p in stage.Traverse() if p.IsA(UsdGeom.Mesh)]
-        from_prototype = False
-        if not mesh_prims:
-            # Instanceable USDs store geometry in prototypes rather than the main prim tree.
-            for proto in stage.GetPrototypes():
-                mesh_prims = [
-                    p for p in proto.GetFilteredChildren(Usd.TraverseInstanceProxies()) if p.IsA(UsdGeom.Mesh)
-                ]
-                if mesh_prims:
-                    from_prototype = True
-                    break
-        if not mesh_prims:
-            logger.warning("[NewtonVisualizationMarkers] No UsdGeom.Mesh prims found in USD: %s", usd_path)
-            return None
-        if len(mesh_prims) > 1:
-            logger.debug(
-                "[NewtonVisualizationMarkers] Multiple mesh prims in '%s'; using first: %s",
-                usd_path,
-                mesh_prims[0].GetPath(),
-            )
-        mesh = Mesh.create_from_usd(mesh_prims[0], load_normals=True, load_uvs=True)
-        if mesh is not None and from_prototype:
-            # Prototype prims carry a local transform (e.g. unit-cube → metres scale) that
-            # Mesh.create_from_usd does not apply. Bake it into vertex positions now.
-            from pxr import Gf  # noqa: PLC0415
-
-            xf = UsdGeom.Xformable(mesh_prims[0])
-            mat = xf.ComputeLocalToWorldTransform(Usd.TimeCode.Default())
-            if mat != Gf.Matrix4d(1):
-                # mesh.vertices may be a numpy array or a Warp array depending on Newton version.
-                verts = mesh.vertices
-                pts = verts.numpy() if hasattr(verts, "numpy") else np.asarray(verts)
-                ones = np.ones((len(pts), 1), dtype=np.float32)
-                mat_np = np.array(mat, dtype=np.float32).T
-                pts_world = (np.hstack([pts.astype(np.float32), ones]) @ mat_np)[:, :3]
-                if hasattr(verts, "numpy"):
-                    import warp as _wp  # noqa: PLC0415
-
-                    mesh.vertices = _wp.array(pts_world, dtype=_wp.vec3, device=verts.device)
-                else:
-                    mesh.vertices = pts_world
-        return mesh
-    except Exception:
-        logger.warning(
-            "[NewtonVisualizationMarkers] Failed to load USD mesh from '%s'; marker will not be rendered.",
-            usd_path,
-            exc_info=True,
-        )
-        return None
-
-
 def _extract_scale_hint(marker_cfg: object) -> tuple[float, float, float]:
     scale = marker_cfg.scale if type(marker_cfg).__name__ == "UsdFileCfg" else None
     if scale is None:
@@ -449,18 +343,24 @@ def _extract_scale_hint(marker_cfg: object) -> tuple[float, float, float]:
 def _extract_color(marker_cfg: object) -> tuple[float, float, float]:
     material_cfg = marker_cfg.visual_material
     if material_cfg is None:
-        return _UNBOUND_DEFAULT_FALLBACK_GRAY
+        return _DEFAULT_UNBOUND_COLOR
 
     if color := _extract_omnipbr_like_color(material_cfg):
         return color
 
     material_type = type(material_cfg).__name__
     if material_type == "PreviewSurfaceCfg":
-        return _extract_rgb(material_cfg.diffuse_color) or _UNBOUND_DEFAULT_FALLBACK_GRAY
+        color = _extract_rgb(material_cfg.diffuse_color)
+        if color is None:
+            raise ValueError("PreviewSurfaceCfg marker material has no valid diffuse color.")
+        return color
     if material_type == "GlassMdlCfg":
-        return _extract_rgb(material_cfg.glass_color) or _UNBOUND_DEFAULT_FALLBACK_GRAY
+        color = _extract_rgb(material_cfg.glass_color)
+        if color is None:
+            raise ValueError("GlassMdlCfg marker material has no valid glass color.")
+        return color
 
-    return _UNBOUND_DEFAULT_FALLBACK_GRAY
+    raise TypeError(f"Newton cannot represent marker material cfg type {material_type!r}")
 
 
 def _extract_omnipbr_like_color(material_cfg: object) -> tuple[float, float, float] | None:

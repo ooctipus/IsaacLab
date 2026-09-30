@@ -8,26 +8,24 @@
 from __future__ import annotations
 
 import logging
-import re
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import warp as wp
 
-from pxr import Usd, UsdPhysics
-
 from isaaclab.sensors.joint_wrench import BaseJointWrenchSensor
-from isaaclab.sim.utils.queries import find_first_matching_prim, get_all_matching_child_prims, path_expr_to_glob
+from isaaclab.sim.simulation_context import SimulationContext
+from isaaclab.sim.utils.queries import path_expr_to_glob
 
 import isaaclab_ov.tensor_types as TT
-from isaaclab_ov.physics import OvPhysxManager
 from isaaclab_ov.sim.views.ovphysx_view import OvPhysxView
 
 from .joint_wrench_sensor_data import JointWrenchSensorData
 from .kernels import joint_wrench_reset_kernel, joint_wrench_split_kernel
 
 if TYPE_CHECKING:
+    from isaaclab.cloner.clone_plan import ArticulationLayout
     from isaaclab.sensors.joint_wrench import JointWrenchSensorCfg
 
 logger = logging.getLogger(__name__)
@@ -126,15 +124,16 @@ class JointWrenchSensor(BaseJointWrenchSensor):
         """PHYSICS_READY callback: builds the tensor binding and allocates buffers."""
         super()._initialize_impl()
 
-        physx_instance = OvPhysxManager.get_physx_instance()
+        physx_instance = self._physics_manager.get_physx_instance()
         if physx_instance is None:
             raise RuntimeError("OvPhysxManager has not been initialized yet.")
         self._physx_instance = physx_instance
 
-        # Resolve the articulation root and translate to an fnmatch glob.
-        root_prim_path_expr = self._resolve_articulation_root_prim_path()
-        pattern = re.sub(r"\{ENV_REGEX_NS\}", "*", root_prim_path_expr)
-        pattern = path_expr_to_glob(pattern)
+        plan = SimulationContext.instance().get_clone_plan()
+        if plan is None or not plan.is_complete:
+            raise RuntimeError(f"Joint wrench sensor at {self.cfg.prim_path!r} requires a completed clone plan.")
+        articulation = plan.match_articulation(self.cfg.prim_path)
+        pattern = path_expr_to_glob(articulation.view_path)
 
         self._root_view = OvPhysxView(physx_instance, pattern=pattern, device=self._device)
         self._wrench_binding = self._root_view.binding_for(TT.LINK_INCOMING_JOINT_FORCE)
@@ -144,21 +143,10 @@ class JointWrenchSensor(BaseJointWrenchSensor):
         self._num_bodies = self._wrench_binding.body_count
         self._data._body_names = list(self._wrench_binding.body_names)
 
-        # OVPhysX clone_usd=False means SensorBase's USD-glob count only saw env_0;
-        # the binding's ``count`` reports the true number of articulation instances
-        # (one per env).  Mirrors how OVPhysX Articulation reads ``sample.count``
-        # directly as ``num_instances``.
-        binding_num_envs = self._wrench_binding.count
-        if binding_num_envs != self._num_envs:
-            self._num_envs = binding_num_envs
-            self._ALL_ENV_MASK = wp.ones((self._num_envs,), dtype=wp.bool, device=self._device)
-            self._reset_mask = wp.zeros((self._num_envs,), dtype=wp.bool, device=self._device)
-            self._reset_mask_torch = wp.to_torch(self._reset_mask)
-            self._is_outdated = wp.ones(self._num_envs, dtype=wp.bool, device=self._device)
-            self._timestamp = wp.zeros(self._num_envs, dtype=wp.float32, device=self._device)
-            self._timestamp_last_update = wp.zeros_like(self._timestamp)
+        if self._wrench_binding.count != self._num_envs:
+            raise ValueError("OVPhysX joint-wrench binding does not match the clone plan.")
 
-        self._create_joint_frame_buffers()
+        self._create_joint_frame_buffers(articulation)
 
         # Wrench storage as (N, L) spatial_vectorf, read each step via the view. The view
         # reinterprets this structured buffer off the binding's flat float32 shape and caches
@@ -169,70 +157,17 @@ class JointWrenchSensor(BaseJointWrenchSensor):
 
         logger.info(f"Joint wrench sensor initialized: {self._num_envs} envs, {self._num_bodies} bodies")
 
-    def _resolve_articulation_root_prim_path(self) -> str:
-        """Resolve the articulation root prim path expression from the configured asset prim path."""
-        first_env_matching_prim = find_first_matching_prim(self.cfg.prim_path)
-        if first_env_matching_prim is None:
-            raise RuntimeError(f"Failed to find prim for expression: '{self.cfg.prim_path}'.")
-        first_env_matching_prim_path = first_env_matching_prim.GetPath().pathString
-
-        first_env_root_prims = get_all_matching_child_prims(
-            first_env_matching_prim_path,
-            predicate=lambda prim: prim.HasAPI(UsdPhysics.ArticulationRootAPI)
-            and prim.GetAttribute("physxArticulation:articulationEnabled").Get() is not False,
-            traverse_instance_prims=False,
-        )
-        if len(first_env_root_prims) == 0:
-            raise RuntimeError(
-                f"Failed to find an articulation when resolving '{first_env_matching_prim_path}'."
-                " Please ensure that the prim has 'USD ArticulationRootAPI' applied."
-            )
-        if len(first_env_root_prims) > 1:
-            raise RuntimeError(
-                f"Failed to find a single articulation when resolving '{first_env_matching_prim_path}'."
-                f" Found multiple '{first_env_root_prims}' under '{first_env_matching_prim_path}'."
-                " Please ensure that there is only one articulation in the prim path tree."
-            )
-
-        first_env_root_prim_path = first_env_root_prims[0].GetPath().pathString
-        root_prim_path_relative_to_prim_path = first_env_root_prim_path[len(first_env_matching_prim_path) :]
-        return self.cfg.prim_path + root_prim_path_relative_to_prim_path
-
-    def _create_joint_frame_buffers(self) -> None:
+    def _create_joint_frame_buffers(self, articulation: ArticulationLayout) -> None:
         """Create child-side joint frame transforms indexed by OVPhysX link order."""
         joint_pos_b = np.zeros((self._num_bodies, 3), dtype=np.float32)
         joint_quat_b = np.zeros((self._num_bodies, 4), dtype=np.float32)
         joint_quat_b[:, 3] = 1.0
-
-        first_env_matching_prim = find_first_matching_prim(self.cfg.prim_path)
-        if first_env_matching_prim is None:
-            raise RuntimeError(f"Failed to find prim for expression: '{self.cfg.prim_path}'.")
         link_name_to_index = {name: index for index, name in enumerate(self._data._body_names)}
-
-        for prim in Usd.PrimRange(first_env_matching_prim):
-            joint = UsdPhysics.Joint(prim)
-            if not joint or joint.GetJointEnabledAttr().Get() is False:
-                continue
-            body1_targets = joint.GetBody1Rel().GetTargets()
-            if len(body1_targets) == 0:
-                continue
-            body_index = link_name_to_index.get(body1_targets[0].name)
-            if body_index is None:
-                continue
-
-            local_pos1 = joint.GetLocalPos1Attr().Get()
-            if local_pos1 is not None:
-                joint_pos_b[body_index] = (float(local_pos1[0]), float(local_pos1[1]), float(local_pos1[2]))
-
-            local_rot1 = joint.GetLocalRot1Attr().Get()
-            if local_rot1 is not None:
-                local_rot1_imag = local_rot1.GetImaginary()
-                joint_quat_b[body_index] = (
-                    float(local_rot1_imag[0]),
-                    float(local_rot1_imag[1]),
-                    float(local_rot1_imag[2]),
-                    float(local_rot1.GetReal()),
-                )
+        body_names = {body.path: body.name for body in articulation.bodies}
+        for joint in articulation.joints:
+            body_index = link_name_to_index[body_names[joint.child_path]]
+            joint_pos_b[body_index] = joint.pose[:3]
+            joint_quat_b[body_index] = joint.pose[3:]
 
         self._joint_pos_b = wp.array(joint_pos_b, dtype=wp.vec3f, device=self._device)
         self._joint_quat_b = wp.array(joint_quat_b, dtype=wp.quatf, device=self._device)

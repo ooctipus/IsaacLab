@@ -85,7 +85,7 @@ only.
 Newton physics determinism
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Set :attr:`isaaclab_newton.physics.NewtonCfg.deterministic_mode` to
+Set :attr:`isaaclab_newton.physics.NewtonSolverCfg.deterministic_mode` to
 ``"gpu_to_gpu"`` to request reproducibility across GPU architectures, or to
 ``"run_to_run"`` to request reproducibility on one GPU. Newton applies the
 selected mode to supported solver kernels and enables deterministic contact

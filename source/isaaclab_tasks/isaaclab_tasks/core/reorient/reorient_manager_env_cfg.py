@@ -20,19 +20,16 @@ from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
-from isaaclab.markers import VisualizationMarkersCfg
-from isaaclab.scene import InteractiveSceneCfg
-from isaaclab.sim.simulation_cfg import SimulationCfg
 from isaaclab.sim.spawners.materials import RigidBodyMaterialBaseCfg
 from isaaclab.utils.configclass import configclass
-from isaaclab.visualizers import VisualizerCfg
 
 import isaaclab_tasks.core.reorient.mdp as mdp
 from isaaclab_tasks.utils import PresetCfg
+from isaaclab_tasks.utils.presets import MultiBackendSceneCfg, MultiBackendSimulationCfg
 
 
 @configclass
-class ReorientSceneBaseCfg(InteractiveSceneCfg):
+class ReorientSceneBaseCfg(MultiBackendSceneCfg):
     """Shared reorientation scene. A hand supplies its robot and its object."""
 
     num_envs = 8192
@@ -185,9 +182,6 @@ class ReorientManagerEnvBaseCfg(ManagerBasedRLEnvCfg):
     """Joints the action term drives."""
     goal_orientation_threshold: float = MISSING
     """Orientation error below which a goal counts as reached [rad]."""
-    goal_marker_cfg: VisualizationMarkersCfg = MISSING
-    """Marker spawned at the goal pose."""
-
     observations: ObservationsCfg = ObservationsCfg()
     actions: ActionsCfg = ActionsCfg()
     commands: CommandsCfg = CommandsCfg()
@@ -195,7 +189,7 @@ class ReorientManagerEnvBaseCfg(ManagerBasedRLEnvCfg):
     terminations: TerminationsCfg = TerminationsCfg()
 
     episode_length_s = 10.0
-    sim: SimulationCfg = SimulationCfg(
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(
         dt=1 / 120,
         physics_material=RigidBodyMaterialBaseCfg(static_friction=1.0, dynamic_friction=1.0),
     )
@@ -210,10 +204,4 @@ class ReorientManagerEnvBaseCfg(ManagerBasedRLEnvCfg):
                     term.params["asset_cfg"] = SceneEntityCfg("robot", body_names=self.fingertip_body_names)
         self.actions.joint_pos.joint_names = self.actuated_joint_names
         self.commands.object_pose.orientation_success_threshold = self.goal_orientation_threshold
-        self.commands.object_pose.goal_pose_visualizer_cfg = self.goal_marker_cfg
         self.sim.render_interval = self.decimation
-        # Frame the hand, which lies horizontal around (0, -0.25, 0.51). Looking at the origin
-        # from 2 m away renders a 20 cm hand a few pixels wide, so a recorded video shows nothing.
-        self.sim.default_visualizer_cfg = VisualizerCfg(
-            eye=(0.62, -0.80, 0.85), lookat=(0.0, -0.28, 0.53), focal_length=35.0
-        )

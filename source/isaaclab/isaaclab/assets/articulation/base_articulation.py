@@ -18,13 +18,14 @@ import torch
 import warp as wp
 
 from ...sim import SimulationContext
+from ...sim.schemas.schemas_actuators import define_actuator_properties
 from ...utils.buffers import TimestampedBufferWarp
 from ...utils.leapp.leapp_semantics import OutputKindEnum, joint_names_resolver, leapp_tensor_semantics
 from ...utils.warp import ProxyArray
 from ..asset_base import AssetBase
 from . import ordering_kernels
-from .ordering import ArticulationNameMap, ArticulationOrderingConvention, build_articulation_name_map
-from .ordering_resolvers import _resolve_articulation_ordering_names
+from .ordering import ArticulationNameMap, build_articulation_name_map
+from .ordering_resolvers import _resolve_articulation_ordering_names, _ResolvedConventionNames
 
 if TYPE_CHECKING:
     from isaaclab.actuators import ActuatorCollection
@@ -134,19 +135,13 @@ class BaseArticulation(AssetBase):
             cfg: A configuration instance.
         """
         super().__init__(cfg)
+        define_actuator_properties(self.cfg.prim_path, self.cfg.actuators, self.stage)
         sim_ctx = SimulationContext.instance()
         self._sim_cfg = sim_ctx.cfg if sim_ctx is not None else None
         # Set when a fixed-tendon target is commanded, cleared once ``write_data_to_sim`` has
         # pushed it: carrying tendons alone schedules no write, and a property buffered
         # through the offset setter keeps its explicit-write contract.
         self._fixed_tendon_target_dirty = False
-        # Per-articulation cache of resolved cross-backend convention name orderings,
-        # populated lazily while ordering maps are resolved. A single resolution may
-        # query the same convention for both joints and bodies, so results are keyed
-        # by ``(convention, kind)``.
-        self._ordering_convention_name_cache: dict[
-            tuple[ArticulationOrderingConvention, Literal["joint", "body"]], tuple[str, ...]
-        ] = {}
 
     """
     Properties
@@ -390,11 +385,12 @@ class BaseArticulation(AssetBase):
         permutation and ``is not None`` checks alone decide whether reordering is
         active.
         """
-        joint_names, joint_ordering = self._resolve_axis_ordering("joint")
+        resolved_names: _ResolvedConventionNames = {}
+        joint_names, joint_ordering = self._resolve_axis_ordering("joint", resolved_names)
         self.data.joint_names = joint_names
         self.data.joint_ordering = joint_ordering
 
-        body_names, body_ordering = self._resolve_axis_ordering("body")
+        body_names, body_ordering = self._resolve_axis_ordering("body", resolved_names)
         if body_ordering is not None and self.is_fixed_base:
             root_body_name = self.backend_body_names[0]
             requested_index = body_ordering.backend_to_user_indices[0]
@@ -410,7 +406,9 @@ class BaseArticulation(AssetBase):
 
         self.data._apply_ordering_maps_after_resolve()
 
-    def _resolve_axis_ordering(self, kind: Literal["joint", "body"]) -> tuple[list[str], ArticulationNameMap | None]:
+    def _resolve_axis_ordering(
+        self, kind: Literal["joint", "body"], resolved_names: _ResolvedConventionNames | None = None
+    ) -> tuple[list[str], ArticulationNameMap | None]:
         """Resolve one axis's public names and permutation from the configuration.
 
         Args:
@@ -432,6 +430,7 @@ class BaseArticulation(AssetBase):
             ordering=cfg_ordering,
             active_backend_name=self.__backend_name__,
             articulation=self,
+            resolved_names=resolved_names,
         )
         ordering = build_articulation_name_map(
             kind=kind, backend_names=backend_names, user_names=user_names, device=self.device

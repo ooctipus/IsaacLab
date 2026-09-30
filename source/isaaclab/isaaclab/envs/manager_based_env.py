@@ -16,13 +16,12 @@ import torch
 
 from isaaclab.app.loading_screen import report_activity
 from isaaclab.managers import ActionManager, EventManager, ObservationManager, RecorderManager
-from isaaclab.scene import InteractiveScene
 from isaaclab.sim import SimulationContext
 from isaaclab.sim.utils.stage import use_stage
 from isaaclab.utils.seed import configure_seed
 from isaaclab.utils.timer import Timer
 
-from .common import VecEnvObs, _apply_deprecated_viewer_cfg
+from .common import VecEnvObs
 from .manager_based_env_cfg import ManagerBasedEnvCfg
 from .utils.io_descriptors import export_articulations_data, export_scene_data
 from .utils.video_recorder import VideoRecorder
@@ -93,16 +92,6 @@ class ManagerBasedEnv:
         # initialize internal variables
         self._physics_handles_decimation = False
 
-        # set the seed for the environment
-        if self.cfg.seed is not None:
-            self.cfg.seed = self.seed(self.cfg.seed)
-        else:
-            logger.warning("Seed not set for the environment. The environment creation may not be deterministic.")
-
-        # Backwards-compat: if the deprecated viewer field has non-default eye/lookat, apply
-        # them to sim.default_visualizer_cfg so the scene camera still matches user intent.
-        _apply_deprecated_viewer_cfg(self.cfg)
-
         # create a simulation context to control the simulator
         if SimulationContext.instance() is None:
             # the type-annotation is required to avoid a type-checking error
@@ -120,6 +109,10 @@ class ManagerBasedEnv:
         # From this point on, if __init__ fails we must tear down the SimulationContext
         # singleton (only if we created it) so callers can retry or proceed.
         try:
+            if self.cfg.seed is not None:
+                self.cfg.seed = self.seed(self.cfg.seed)
+            else:
+                logger.warning("Seed not set for the environment. The environment creation may not be deterministic.")
             self._init_sim()
         except Exception:
             if created_sim:
@@ -171,8 +164,7 @@ class ManagerBasedEnv:
         with Timer("[INFO]: Time taken for scene creation", "scene_creation", activity="Creating scene"):
             # set the stage context for scene creation steps which use the stage
             with use_stage(self.sim.stage):
-                self.scene = InteractiveScene(self.cfg.scene)
-            self.sim.register_interactive_scene(self.scene)
+                self.scene = self.cfg.scene.class_type(self.cfg.scene)
         print("[INFO]: Scene manager: ", self.scene)
 
         # create event manager
@@ -201,8 +193,7 @@ class ManagerBasedEnv:
             self.scene.update(dt=self.physics_dt)
         # let the physics backend know about the env decimation so it can
         # fold the full loop into a single step() when possible
-        self.sim.physics_manager.set_decimation(self.cfg.decimation)
-        self._physics_handles_decimation = self.sim.physics_manager.handles_decimation()
+        self._physics_handles_decimation = self.sim._configure_decimation(self.cfg.decimation)
         # add timeline event to load managers
         report_activity("Setting up managers")
         self.load_managers()
@@ -435,12 +426,6 @@ class ManagerBasedEnv:
         # compute observations
         self.obs_buf = self.observation_manager.compute(update_history=True)
 
-        if self.cfg.wait_for_textures and self.has_rtx_sensors:
-            # Wait for assets to finish loading (PhysX-specific)
-            if hasattr(self.sim.physics_manager, "assets_loading"):
-                while self.sim.physics_manager.assets_loading():
-                    self.sim.render()
-
         # return observations
         return self.obs_buf, self.extras
 
@@ -589,15 +574,14 @@ class ManagerBasedEnv:
         Returns:
             The seed used for random generator.
         """
-        # set seed for replicator
+        seed = configure_seed(seed)
         try:
             import omni.replicator.core as rep
 
             rep.set_global_seed(seed)
         except (ModuleNotFoundError, AttributeError):
             pass
-        # set seed for torch and other libraries
-        return configure_seed(seed)
+        return seed
 
     def close(self):
         """Cleanup for the environment."""
@@ -664,5 +648,3 @@ class ManagerBasedEnv:
         # -- recorder manager
         info = self.recorder_manager.reset(env_ids)
         self.extras["log"].update(info)
-
-        self.sim.render_context.reset_scene_state_cadence()

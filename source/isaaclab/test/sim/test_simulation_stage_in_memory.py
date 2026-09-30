@@ -18,6 +18,7 @@ simulation_app = AppLauncher(headless=True, enable_cameras=True).app
 
 import numpy as np
 import pytest
+from isaaclab_physx.physics import PhysxCfg
 
 import omni.physx
 import usdrt
@@ -34,7 +35,7 @@ pytestmark = pytest.mark.integration
 @pytest.fixture
 def sim():
     """Create a simulation context."""
-    cfg = SimulationCfg(create_stage_in_memory=True)
+    cfg = SimulationCfg(physics=PhysxCfg(), create_stage_in_memory=True)
     sim = SimulationContext(cfg=cfg)
     sim_utils.update_stage()
     yield sim
@@ -98,7 +99,6 @@ def test_stage_in_memory_with_shapes(sim):
                     ),
                 ),
             ],
-            random_choice=True,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 solver_position_iteration_count=4, solver_velocity_iteration_count=0
             ),
@@ -145,7 +145,6 @@ def test_stage_in_memory_with_usds(sim):
 
         cfg = sim_utils.MultiUsdFileCfg(
             usd_path=usd_paths,
-            random_choice=True,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 disable_gravity=False,
                 retain_accelerations=False,
@@ -175,8 +174,8 @@ def test_stage_in_memory_with_usds(sim):
     assert len(prims) == num_robot_prototypes
 
 
-def test_stage_in_memory_with_clone_in_fabric(sim):
-    """Test cloning in fabric with stage in memory."""
+def test_stage_in_memory_replication_updates_fabric(sim):
+    """Test that USD replication on an in-memory stage reaches Fabric."""
 
     # skip test if stage in memory is not supported
     if get_isaac_sim_version().major < 5:

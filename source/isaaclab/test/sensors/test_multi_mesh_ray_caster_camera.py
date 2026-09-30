@@ -21,6 +21,8 @@ from collections.abc import Callable
 import numpy as np
 import pytest
 import torch
+from isaaclab_physx.physics import PhysxCfg
+from isaaclab_physx.renderers import IsaacRtxRendererCfg
 
 import omni.replicator.core as rep
 from pxr import Gf
@@ -49,6 +51,17 @@ MESH_ID_OBJECT = 1
 MESH_ID_ROBOT_MIN = 2
 
 
+def _camera_in_plan(cfg):
+    """Build a camera inside a clone plan, the way a scene does.
+
+    Every asset the scene draws is declared to a plan and copied by the cloning pass, cameras
+    included: a camera reads where its copies land from the plan, so the plan has to exist before
+    it is built.
+    """
+    with lab_cloner.ReplicateSession((cfg,), num_clones=1, env_spacing=0.0):
+        return Camera(cfg)
+
+
 def _assert_quat_close(actual, expected, **kwargs):
     """Assert quaternions match while allowing the equivalent negated representation."""
     if hasattr(actual, "torch"):
@@ -69,7 +82,7 @@ def setup_simulation():
     # Simulation time-step
     dt = 0.01
     # Load kit helper
-    sim_cfg = sim_utils.SimulationCfg(dt=dt)
+    sim_cfg = sim_utils.SimulationCfg(physics=PhysxCfg(), dt=dt)
     sim: sim_utils.SimulationContext = sim_utils.SimulationContext(sim_cfg)
     # Ground-plane
     mesh = make_plane(size=(100, 100), height=0.0, center_zero=True)
@@ -395,8 +408,9 @@ def test_output_equal_to_usdcamera(setup_simulation, data_types):
         spawn=PinholeCameraCfg(
             focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(1e-4, 1.0e5)
         ),
+        renderer_cfg=IsaacRtxRendererCfg(),
     )
-    camera_usd = Camera(camera_cfg_usd)
+    camera_usd = _camera_in_plan(camera_cfg_usd)
 
     # play sim
     sim.reset()
@@ -457,7 +471,12 @@ def test_output_equal_to_usdcamera(setup_simulation, data_types):
     del camera_usd, camera_warp
 
 
-def _create_heterogeneous_clone_scene(sim: sim_utils.SimulationContext, num_envs: int) -> torch.Tensor:
+def _create_heterogeneous_clone_scene(
+    sim: sim_utils.SimulationContext,
+    num_envs: int,
+    ray_camera_cfg: MultiMeshRayCasterCameraCfg,
+    usd_camera_cfg: CameraCfg,
+) -> torch.Tensor:
     """Create alternating Spot/ANYmal and cube/sphere cloned environments."""
     stage = sim_utils.get_current_stage()
     env_fmt = "/World/envs/env_{}"
@@ -467,7 +486,7 @@ def _create_heterogeneous_clone_scene(sim: sim_utils.SimulationContext, num_envs
     sim_utils.create_prim("/World/envs", "Xform", stage=stage)
     for env_id, origin in enumerate(env_origins):
         sim_utils.create_prim(env_fmt.format(env_id), "Xform", translation=tuple(origin), stage=stage)
-        sim_utils.create_prim(env_fmt.format(env_id) + "/RayCasterCamera", "Xform", stage=stage)
+    sim_utils.create_prim(env_fmt.format(0) + "/RayCasterCamera", "Xform", stage=stage)
 
     robot_mask = np.zeros((2, num_envs), dtype=np.bool_)
     robot_mask[0, 0::2] = True
@@ -494,34 +513,41 @@ def _create_heterogeneous_clone_scene(sim: sim_utils.SimulationContext, num_envs
     cube_spawn(env_fmt.format(0) + "/Object", cube_cfg, translation=(0.45, 0.0, 0.25))
     sphere_spawn(env_fmt.format(1) + "/Object", sphere_cfg, translation=(0.45, 0.0, 0.25))
 
-    lab_cloner.usd_replicate(
-        stage,
-        [env_fmt.format(i) + f"/{asset_name}" for asset_name in ("Robot", "Object") for i in range(2)],
-        [env_fmt + "/Robot", env_fmt + "/Robot", env_fmt + "/Object", env_fmt + "/Object"],
-        env_ids,
-        mask=np.concatenate((robot_mask, object_mask), axis=0),
+    camera_mask = np.ones((1, num_envs), dtype=np.bool_)
+    plan = ClonePlan(
+        sources=(
+            env_fmt.format(0) + "/Robot",
+            env_fmt.format(1) + "/Robot",
+            env_fmt.format(0) + "/Object",
+            env_fmt.format(1) + "/Object",
+            env_fmt.format(0) + "/RayCasterCamera",
+            env_fmt.format(0) + "/UsdCamera",
+            "/World/defaultGroundPlane",
+        ),
+        destinations=(
+            env_fmt + "/Robot",
+            env_fmt + "/Robot",
+            env_fmt + "/Object",
+            env_fmt + "/Object",
+            env_fmt + "/RayCasterCamera",
+            env_fmt + "/UsdCamera",
+            "/World/defaultGroundPlane",
+        ),
+        clone_mask=np.concatenate(
+            (robot_mask, object_mask, camera_mask, camera_mask, np.zeros((1, num_envs), dtype=np.bool_))
+        ),
+        env_ids=env_ids,
+        positions=env_origins,
+        cfg_rows={id(ray_camera_cfg): (4,), id(usd_camera_cfg): (5,)},
+        global_paths=("/World/defaultGroundPlane",),
+        geometry_requests=(
+            "/World/defaultGroundPlane",
+            "/World/envs/env_[^/]+/Object",
+            "/World/envs/env_[^/]+/Robot/[^/]+",
+        ),
+        root_layer_identifier=stage.GetRootLayer().identifier,
     )
-
-    sim.set_clone_plan(
-        ClonePlan(
-            sources=(
-                env_fmt.format(0) + "/Robot",
-                env_fmt.format(1) + "/Robot",
-                env_fmt.format(0) + "/Object",
-                env_fmt.format(1) + "/Object",
-            ),
-            destinations=(
-                env_fmt + "/Robot",
-                env_fmt + "/Robot",
-                env_fmt + "/Object",
-                env_fmt + "/Object",
-            ),
-            clone_mask=np.concatenate((robot_mask, object_mask), axis=0),
-            env_ids=env_ids,
-            positions=None,
-            cfg_rows={},
-        )
-    )
+    sim.set_clone_plan(plan)
     sim_utils.update_stage()
     return torch.as_tensor(env_origins, device=sim.device)
 
@@ -537,8 +563,6 @@ def test_depth_output_equal_to_usd_camera_heterogeneous_scene(setup_simulation):
     """
     sim, dt, _ = setup_simulation
     num_envs = 16
-    env_origins = _create_heterogeneous_clone_scene(sim, num_envs)
-
     height, width = 96, 128
     camera_pattern_cfg = patterns.PinholeCameraPatternCfg(
         focal_length=24.0,
@@ -582,8 +606,13 @@ def test_depth_output_equal_to_usd_camera_heterogeneous_scene(setup_simulation):
             horizontal_aperture=20.955,
             clipping_range=(0.01, 25.0),
         ),
+        renderer_cfg=IsaacRtxRendererCfg(),
     )
+    env_origins = _create_heterogeneous_clone_scene(sim, num_envs, camera_cfg_warp, camera_cfg_usd)
+    # _create_heterogeneous_clone_scene already published a 16-env plan; the camera reads its
+    # copies from that plan rather than opening one of its own.
     camera_usd = Camera(camera_cfg_usd)
+    lab_cloner.replicate(sim.get_clone_plan())
 
     sim.reset()
     sim.play()
@@ -670,8 +699,9 @@ def test_output_equal_to_usdcamera_offset(setup_simulation):
             focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(1e-6, 1.0e5)
         ),
         offset=CameraCfg.OffsetCfg(pos=(2.5, 2.5, 4.0), rot=offset_rot, convention="ros"),
+        renderer_cfg=IsaacRtxRendererCfg(),
     )
-    camera_usd = Camera(camera_cfg_usd)
+    camera_usd = _camera_in_plan(camera_cfg_usd)
 
     # play sim
     sim.reset()
@@ -758,12 +788,13 @@ def test_output_equal_to_usdcamera_prim_offset(setup_simulation):
         ),
         offset=CameraCfg.OffsetCfg(pos=(0, 0, 2.0), rot=offset_rot, convention="ros"),
         update_latest_camera_pose=True,
+        renderer_cfg=IsaacRtxRendererCfg(),
     )
     prim_usd = sim_utils.create_prim("/World/Camera_usd", "Xform")
     prim_usd.GetAttribute("xformOp:translate").Set(tuple(POSITION))
     prim_usd.GetAttribute("xformOp:orient").Set(gf_quatf)
 
-    camera_usd = Camera(camera_cfg_usd)
+    camera_usd = _camera_in_plan(camera_cfg_usd)
 
     # play sim
     sim.reset()
@@ -847,6 +878,7 @@ def test_output_equal_to_usd_camera_intrinsics(setup_simulation, height, width):
         height=height,
         width=width,
         data_types=["distance_to_image_plane"],
+        renderer_cfg=IsaacRtxRendererCfg(),
     )
 
     # set aperture offsets to 0, as currently not supported for usd camera
@@ -856,7 +888,7 @@ def test_output_equal_to_usd_camera_intrinsics(setup_simulation, height, width):
     camera_usd_cfg.spawn.vertical_aperture_offset = 0
     # init cameras
     camera_warp = MultiMeshRayCasterCamera(camera_warp_cfg)
-    camera_usd = Camera(camera_usd_cfg)
+    camera_usd = _camera_in_plan(camera_usd_cfg)
 
     # play sim
     sim.reset()
@@ -939,8 +971,9 @@ def test_output_equal_to_usd_camera_when_intrinsics_set(setup_simulation):
         spawn=PinholeCameraCfg(
             focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(1e-4, 1.0e5)
         ),
+        renderer_cfg=IsaacRtxRendererCfg(),
     )
-    camera_usd = Camera(camera_cfg_usd)
+    camera_usd = _camera_in_plan(camera_cfg_usd)
 
     # play sim
     sim.reset()

@@ -14,8 +14,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
-from isaaclab_physx.renderers import visual_material
-from isaaclab_physx.renderers.visual_material import FabricVisualMaterialWriter
+
+from isaaclab.renderers import fabric_visual_material as visual_material
 
 
 @pytest.mark.parametrize(
@@ -33,7 +33,7 @@ def test_supported_tensor_layouts(shape, warp_type) -> None:
 def test_writer_dispatches_only_requested_channels() -> None:
     roughness_selection = MagicMock()
     color_selection = MagicMock()
-    writer = FabricVisualMaterialWriter.__new__(FabricVisualMaterialWriter)
+    writer = visual_material.FabricVisualMaterialWriter.__new__(visual_material.FabricVisualMaterialWriter)
     roughness_values = MagicMock(device="cuda:0")
     writer._writes = {
         "roughness": ((object(), roughness_values, roughness_selection, "inverse", "inputs:roughness"),),
@@ -59,7 +59,7 @@ def test_writer_dispatches_only_requested_channels() -> None:
 
 
 def test_runtime_only_reuses_fabric_addresses_and_launches_kernels() -> None:
-    source = textwrap.dedent(inspect.getsource(FabricVisualMaterialWriter.__call__))
+    source = textwrap.dedent(inspect.getsource(visual_material.FabricVisualMaterialWriter.__call__))
     tree = ast.parse(source)
     calls = {
         node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id

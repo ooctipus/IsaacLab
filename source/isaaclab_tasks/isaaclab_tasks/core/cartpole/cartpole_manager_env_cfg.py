@@ -5,11 +5,7 @@
 
 import math
 
-from isaaclab_newton.physics import (
-    KaminoPADMMSolverCfg,
-    MJWarpSolverCfg,
-    NewtonCfg,
-)
+from isaaclab_newton.physics import KaminoPADMMSolverCfg, MJWarpSolverCfg, NewtonSolverCfg, VBDSolverCfg
 from isaaclab_ov.physics import OvPhysxCfg
 from isaaclab_physx.physics import PhysxCfg
 
@@ -23,15 +19,14 @@ from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.physics import PhysxAutoCfg
-from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils.configclass import configclass
-from isaaclab.visualizers import VisualizerCfg
 
 import isaaclab_tasks.core.cartpole.mdp as mdp
 from isaaclab_tasks.utils import PresetCfg
 
 from isaaclab_assets.robots.cartpole import CARTPOLE_CFG  # isort:skip
 
+from isaaclab_tasks.utils.presets import MultiBackendSceneCfg, MultiBackendSimulationCfg
 
 ##
 # Physics backend presets
@@ -43,24 +38,23 @@ class CartpolePhysicsCfg(PresetCfg):
     isaacsim_physx: PhysxCfg = PhysxCfg()
     ovphysx: OvPhysxCfg = OvPhysxCfg()
     physx: PhysxAutoCfg = PhysxAutoCfg(isaacsim_physx=isaacsim_physx, ovphysx=ovphysx)
-    newton_mjwarp: NewtonCfg = NewtonCfg(
-        solver_cfg=MJWarpSolverCfg(
-            njmax=5,
-            nconmax=3,
-            cone="pyramidal",
-            impratio=1,
-            integrator="implicitfast",
-        ),
+    newton_mjwarp: NewtonSolverCfg = MJWarpSolverCfg(
+        njmax=5,
+        nconmax=3,
+        cone="pyramidal",
+        impratio=1,
+        integrator="implicitfast",
         num_substeps=1,
         debug_mode=False,
         use_cuda_graph=True,
     )
-    default: NewtonCfg = newton_mjwarp
-    newton_kamino: NewtonCfg = NewtonCfg(
-        solver_cfg=KaminoPADMMSolverCfg(sparse_jacobian=True),
+    default: NewtonSolverCfg = newton_mjwarp
+    newton_kamino: NewtonSolverCfg = KaminoPADMMSolverCfg(
+        sparse_jacobian=True,
         debug_mode=False,
         use_cuda_graph=True,
     )
+    newton_vbd: NewtonSolverCfg = VBDSolverCfg(debug_mode=False, use_cuda_graph=True)
 
 
 ##
@@ -69,7 +63,7 @@ class CartpolePhysicsCfg(PresetCfg):
 
 
 @configclass
-class CartpoleSceneCfg(InteractiveSceneCfg):
+class CartpoleSceneCfg(MultiBackendSceneCfg):
     """Configuration for a cart-pole scene."""
 
     # ground plane
@@ -202,8 +196,9 @@ class TerminationsCfg:
 class CartpoleEnvCfg(ManagerBasedRLEnvCfg):
     """Configuration for the cartpole environment."""
 
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg()
     # Scene settings
-    scene: CartpoleSceneCfg = CartpoleSceneCfg(num_envs=4096, env_spacing=4.0, clone_in_fabric=True)
+    scene: CartpoleSceneCfg = CartpoleSceneCfg(num_envs=4096, env_spacing=4.0)
     # Basic settings
     observations: ObservationsCfg = ObservationsCfg()
     actions: ActionsCfg = ActionsCfg()
@@ -218,8 +213,6 @@ class CartpoleEnvCfg(ManagerBasedRLEnvCfg):
         # general settings
         self.decimation = 2
         self.episode_length_s = 5
-        # visualizer camera settings
-        self.sim.default_visualizer_cfg = VisualizerCfg(eye=(8.0, 0.0, 5.0))
         # simulation settings
         self.sim.dt = 1 / 120
         self.sim.render_interval = self.decimation

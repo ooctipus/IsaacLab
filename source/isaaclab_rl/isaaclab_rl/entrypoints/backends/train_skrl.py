@@ -28,13 +28,13 @@ from isaaclab_rl.entrypoints.common import (
     create_isaaclab_env,
     dump_train_configs,
     enable_cameras_for_video,
-    pre_launch_video_config,
     preserve_attribute,
     resolve_checkpoint_selector,
     set_hydra_args,
     show_run_summary,
     startup_screen,
     validate_distributed_device,
+    validate_video_config,
     wrap_training_capture,
     write_run_manifest,
 )
@@ -138,7 +138,7 @@ def _run(args_cli: argparse.Namespace) -> None:
     agent_cfg_entry_point, algorithm = _resolve_agent_entry_point(args_cli)
     with startup_screen(args_cli, num_stages=3) as screen:
         env_cfg, agent_cfg = resolve_task_config(args_cli.task, agent_cfg_entry_point)
-        pre_launch_video_config(env_cfg, args_cli=args_cli)
+        validate_video_config(env_cfg, args_cli)
         show_run_summary(screen, args_cli, env_cfg, library="skrl", action="train")
         screen.stage("Launching simulation")
         with launch_simulation(env_cfg, args_cli):

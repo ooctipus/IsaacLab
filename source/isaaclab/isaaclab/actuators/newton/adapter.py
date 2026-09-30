@@ -7,8 +7,8 @@
 
 Owns the actuator-state lifecycle, the pre-clamp computed-effort buffer,
 and the per-step ``step`` / ``reset`` / ``finalize`` calls. The
-:meth:`~NewtonActuatorAdapter.from_usd` classmethod parses
-``NewtonActuator`` USD prims for PhysX and OVPhysX. Newton populates
+:meth:`~NewtonActuatorAdapter.from_layout` classmethod consumes the parsed
+clone-plan declarations for PhysX and OVPhysX. Newton populates
 ``model.actuators`` itself.
 
 DR gain updates bypass the adapter — the articulation writes straight
@@ -38,6 +38,7 @@ from .kernels import (
 
 if TYPE_CHECKING:
     from isaaclab.actuators import ActuatorCollection
+    from isaaclab.cloner.clone_plan import ArticulationLayout, JointLayout
 
 # ---------------------------------------------------------------------------
 # Abstract base — backend-independent logic
@@ -256,51 +257,39 @@ class NewtonActuatorAdapter:
         return any(a.is_stateful() for a in self.actuators)
 
     @classmethod
-    def from_usd(
+    def from_layout(
         cls,
-        stage: Any,
+        layout: ArticulationLayout,
         joint_names: list[str],
         num_envs: int,
         num_joints: int,
         device: str,
-        articulation_prim_path: str | None = None,
     ) -> NewtonActuatorAdapter:
-        """Build an adapter from ``NewtonActuator`` prims authored on *stage*.
+        """Build an adapter from planned ``NewtonActuator`` declarations.
 
-        This is the host-adapter counterpart of Newton's
-        ``ModelBuilder.add_usd``. It reads the same prims and constructs matching
-        :class:`~newton.actuators.Actuator` objects. Structurally compatible
-        joints are merged into one actuator with per-DOF parameter arrays and
-        combined indices. Newton backends use ``model.actuators`` instead.
+        This is the host-adapter counterpart of Newton's ``ModelBuilder.add_usd``.
+        Structurally compatible declarations are merged into one actuator with
+        per-DOF parameter arrays and combined indices. Newton backends use
+        ``model.actuators`` instead.
 
         On PhysX and OVPhysX, :paramref:`joint_names` is in this adapter's local
         public order and defines the local indices assigned to parsed actuator targets.
 
         Args:
-            stage: USD stage containing ``NewtonActuator`` prims.
+            layout: Clone-plan articulation declaration.
             joint_names: All articulation joint names in adapter-local public order.
             num_envs: Number of environments.
             num_joints: Number of joints per environment.
             device: Warp device string, for example ``"cuda:0"``.
-            articulation_prim_path: Root prim path of environment zero's
-                articulation. When set, only prims under this subtree are
-                considered; otherwise the whole stage is scanned.
 
         Returns:
             Adapter whose actuator indices use :paramref:`joint_names` order.
 
         Raises:
-            ValueError: If no authored actuator targets a name in
+            ValueError: If no planned actuator targets a name in
                 :paramref:`joint_names`.
         """
-        actuators = _create_actuators_from_usd(
-            stage,
-            joint_names,
-            num_envs,
-            num_joints,
-            device,
-            articulation_prim_path=articulation_prim_path,
-        )
+        actuators = _create_actuators(layout.joints, joint_names, num_envs, num_joints, device)
         return cls(actuators, num_envs, num_joints, dof_offset=0, device=device)
 
 
@@ -517,7 +506,7 @@ class NewtonActuatorSelection:
 
 
 # ---------------------------------------------------------------------------
-# PhysX-only USD parsing
+# Plan-declared PhysX-family actuator construction
 # ---------------------------------------------------------------------------
 
 _ResolvedComponent: TypeAlias = tuple[type, dict[str, Any]]
@@ -531,14 +520,9 @@ def _actuator_signature(
 ) -> tuple:
     """Build Newton's structural grouping key for a parsed actuator spec."""
 
-    def make_hashable(value: Any) -> Any:
-        if isinstance(value, list | tuple):
-            return tuple(make_hashable(item) for item in value)
-        return value
-
     def shared_key(component_class: type, resolved: dict[str, Any]) -> tuple:
         shared_names = getattr(component_class, "SHARED_PARAMS", set())
-        return tuple(sorted((name, make_hashable(resolved[name])) for name in shared_names if name in resolved))
+        return tuple(sorted((name, resolved[name]) for name in shared_names if name in resolved))
 
     clamping_key: list[tuple] = []
     has_delay = False
@@ -572,15 +556,14 @@ def _tile_per_dof_arguments(
     }
 
 
-def _create_actuators_from_usd(
-    stage: Any,
+def _create_actuators(
+    joints: tuple[JointLayout, ...],
     joint_names: list[str],
     num_envs: int,
     num_total_joints: int,
     device: str,
-    articulation_prim_path: str | None = None,
 ) -> list[Actuator]:
-    """Parse ``NewtonActuator`` prims and instantiate standalone actuators.
+    """Instantiate standalone actuators from clone-plan declarations.
 
     This mirrors the actuator construction that Newton's
     ``ModelBuilder.add_usd`` performs, but operates independently of a
@@ -600,39 +583,26 @@ def _create_actuators_from_usd(
     """
     from collections import defaultdict  # noqa: PLC0415
 
-    from newton.actuators import parse_actuator_prim  # noqa: PLC0415
-
-    from pxr import Usd  # noqa: PLC0415
-
     wp_device = wp.get_device(device)
 
     joint_name_to_idx: dict[str, int] = {name: i for i, name in enumerate(joint_names)}
+    planned_per_joint = {
+        joint_name_to_idx[joint.name]: joint.newton_actuator
+        for joint in joints
+        if joint.newton_actuator is not None and joint.name in joint_name_to_idx
+    }
 
-    if articulation_prim_path is not None:
-        root_prim = stage.GetPrimAtPath(articulation_prim_path)
-    else:
-        root_prim = stage.GetPseudoRoot()
-
-    parsed_per_joint: dict[int, Any] = {}
-    for prim in Usd.PrimRange(root_prim):
-        parsed = parse_actuator_prim(prim)
-        if parsed is None:
-            continue
-        target_name = parsed.target_path.rsplit("/", 1)[-1]
-        if target_name in joint_name_to_idx:
-            parsed_per_joint[joint_name_to_idx[target_name]] = parsed
-
-    if not parsed_per_joint:
-        raise ValueError(f"No NewtonActuator prims found targeting any of: {joint_names}")
+    if not planned_per_joint:
+        raise ValueError(f"No planned NewtonActuator declarations target any of: {joint_names}")
 
     groups: dict[tuple, list[_ResolvedActuatorSpec]] = defaultdict(list)
-    for local_idx, parsed in sorted(parsed_per_joint.items()):
-        controller_arguments = parsed.controller_class.resolve_arguments(dict(parsed.controller_kwargs))
+    for local_idx, declaration in sorted(planned_per_joint.items()):
+        controller_arguments = dict(declaration.controller_arguments)
         component_arguments = [
-            (comp_cls, comp_cls.resolve_arguments(comp_kwargs)) for comp_cls, comp_kwargs in parsed.component_specs
+            (component_class, dict(arguments)) for component_class, arguments in declaration.component_arguments
         ]
-        sig = _actuator_signature(parsed.controller_class, controller_arguments, component_arguments)
-        groups[sig].append((local_idx, parsed.controller_class, controller_arguments, component_arguments))
+        signature = _actuator_signature(declaration.controller_class, controller_arguments, component_arguments)
+        groups[signature].append((local_idx, declaration.controller_class, controller_arguments, component_arguments))
 
     actuators = []
     for grouped_specs in groups.values():

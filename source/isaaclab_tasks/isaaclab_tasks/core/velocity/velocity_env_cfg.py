@@ -6,13 +6,7 @@
 import math
 from dataclasses import MISSING
 
-from isaaclab_newton.physics import (
-    KaminoPADMMSolverCfg,
-    MJWarpSolverCfg,
-    NewtonCfg,
-    NewtonCollisionPipelineCfg,
-    NewtonShapeCfg,
-)
+from isaaclab_newton.physics import KaminoPADMMSolverCfg, MJWarpSolverCfg, NewtonCollisionPipelineCfg, NewtonShapeCfg
 from isaaclab_ov.physics import OvPhysxCfg
 from isaaclab_physx.physics import PhysxCfg
 
@@ -26,10 +20,9 @@ from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
+from isaaclab.markers import VisualizationMarkersCfg
 from isaaclab.physics import PhysxAutoCfg
-from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import ContactSensorCfg, RayCasterCfg, patterns
-from isaaclab.sim import SimulationCfg
 from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
 from isaaclab.utils.configclass import configclass
@@ -37,6 +30,7 @@ from isaaclab.utils.noise import UniformNoiseCfg as Unoise
 
 import isaaclab_tasks.core.velocity.mdp as mdp
 from isaaclab_tasks.utils import PresetCfg, preset
+from isaaclab_tasks.utils.presets import MultiBackendSceneCfg, MultiBackendSimulationCfg
 
 ##
 # Pre-defined configs
@@ -56,21 +50,19 @@ class RoughPhysicsCfg(PresetCfg):
     isaacsim_physx = PhysxCfg(gpu_max_rigid_patch_count=10 * 2**15)
     ovphysx = OvPhysxCfg(gpu_max_rigid_patch_count=10 * 2**15)
     physx = PhysxAutoCfg(isaacsim_physx=isaacsim_physx, ovphysx=ovphysx)
-    newton_mjwarp = NewtonCfg(
-        solver_cfg=MJWarpSolverCfg(
-            njmax=1000,
-            nconmax=300,
-            cone="pyramidal",
-            impratio=1.0,
-            integrator="implicitfast",
-            use_mujoco_contacts=False,
-        ),
+    newton_mjwarp = MJWarpSolverCfg(
+        njmax=1000,
+        nconmax=300,
+        cone="pyramidal",
+        impratio=1.0,
+        integrator="implicitfast",
+        use_mujoco_contacts=False,
         collision_cfg=NewtonCollisionPipelineCfg(max_triangle_pairs=2_500_000),
         num_substeps=2,
         debug_mode=False,
         default_shape_cfg=NewtonShapeCfg(margin=0.0, ke=160000.0, kd=1100.0),
     )
-    newton_kamino = NewtonCfg(solver_cfg=KaminoPADMMSolverCfg(max_contacts_per_world=64))
+    newton_kamino = KaminoPADMMSolverCfg(max_contacts_per_world=64)
     default = newton_mjwarp
 
 
@@ -80,15 +72,19 @@ class RoughPhysicsCfg(PresetCfg):
 
 
 @configclass
-class MySceneCfg(InteractiveSceneCfg):
+class MySceneCfg(MultiBackendSceneCfg):
     """Configuration for the terrain scene with a legged robot."""
 
     # ground terrain
     terrain = TerrainImporterCfg(
         prim_path="/World/ground",
         terrain_type="generator",
-        terrain_generator=ROUGH_TERRAINS_CFG,
-        max_init_terrain_level=5,
+        terrain_generator=ROUGH_TERRAINS_CFG.replace(
+            num_rows=preset(default=ROUGH_TERRAINS_CFG.num_rows, play=5),
+            num_cols=preset(default=ROUGH_TERRAINS_CFG.num_cols, play=5),
+            curriculum=preset(default=True, play=False),
+        ),
+        max_init_terrain_level=preset(default=5, play=None),
         collision_group=-1,
         physics_material=sim_utils.RigidBodyMaterialCfg(
             friction_combine_mode="multiply",
@@ -105,6 +101,8 @@ class MySceneCfg(InteractiveSceneCfg):
     )
     # robots
     robot: ArticulationCfg = MISSING
+    command_goal_marker: VisualizationMarkersCfg | None = None
+    command_current_marker: VisualizationMarkersCfg | None = None
     # sensors -- the concrete implementation is selected automatically from the active physics
     # backend (Newton / PhysX / OvPhysX); backend-specific fields such as ``global_world_only`` are
     # documented on the config and ignored by the backends that do not use them.
@@ -166,6 +164,8 @@ class ObservationsCfg:
     class PolicyCfg(ObsGroup):
         """Observations for policy group."""
 
+        enable_corruption = preset(default=True, play=False)
+
         # observation terms (order preserved)
         base_lin_vel = ObsTerm(func=mdp.base_lin_vel, noise=Unoise(n_min=-0.1, n_max=0.1))
         base_ang_vel = ObsTerm(func=mdp.base_ang_vel, noise=Unoise(n_min=-0.2, n_max=0.2))
@@ -185,7 +185,6 @@ class ObservationsCfg:
         )
 
         def __post_init__(self):
-            self.enable_corruption = True
             self.concatenate_terms = True
 
     # observation groups
@@ -271,11 +270,14 @@ class EventsCfg:
     )
 
     # interval
-    push_robot = EventTerm(
-        func=mdp.push_by_setting_velocity,
-        mode="interval",
-        interval_range_s=(10.0, 15.0),
-        params={"velocity_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5)}},
+    push_robot = preset(
+        default=EventTerm(
+            func=mdp.push_by_setting_velocity,
+            mode="interval",
+            interval_range_s=(10.0, 15.0),
+            params={"velocity_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5)}},
+        ),
+        play=None,
     )
 
 
@@ -343,7 +345,7 @@ class LocomotionVelocityRoughEnvCfg(ManagerBasedRLEnvCfg):
     """Configuration for the locomotion velocity-tracking environment."""
 
     # Simulation settings — shared physics preset (PhysX + MJWarp) for all rough-terrain envs
-    sim: SimulationCfg = SimulationCfg(physics=RoughPhysicsCfg())
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(physics=RoughPhysicsCfg())
     # Scene settings
     scene: MySceneCfg = MySceneCfg(num_envs=4096, env_spacing=2.5)
     # Basic settings
@@ -358,6 +360,8 @@ class LocomotionVelocityRoughEnvCfg(ManagerBasedRLEnvCfg):
 
     def __post_init__(self):
         """Post initialization."""
+        self.scene.command_goal_marker = self.commands.base_velocity.goal_vel_visualizer_cfg
+        self.scene.command_current_marker = self.commands.base_velocity.current_vel_visualizer_cfg
         # general settings
         self.decimation = 4
         self.episode_length_s = 20.0
@@ -371,26 +375,3 @@ class LocomotionVelocityRoughEnvCfg(ManagerBasedRLEnvCfg):
             self.scene.height_scanner.update_period = self.decimation * self.sim.dt
         if self.scene.contact_forces is not None:
             self.scene.contact_forces.update_period = self.sim.dt
-
-        # check if terrain levels curriculum is enabled - if so, enable curriculum for terrain generator
-        # this generates terrains with increasing difficulty and is useful for training
-        if getattr(self.curriculum, "terrain_levels", None) is not None:
-            if self.scene.terrain.terrain_generator is not None:
-                self.scene.terrain.terrain_generator.curriculum = True
-        else:
-            if self.scene.terrain.terrain_generator is not None:
-                self.scene.terrain.terrain_generator.curriculum = False
-
-    def play_mode(self):
-        """Play-mode overrides shared by the velocity-tracking environments."""
-        super().play_mode()
-        # spawn the robot randomly in the grid (instead of their terrain levels)
-        self.scene.terrain.max_init_terrain_level = None
-        # reduce the number of terrains to save memory
-        if self.scene.terrain.terrain_generator is not None:
-            self.scene.terrain.terrain_generator.num_rows = 5
-            self.scene.terrain.terrain_generator.num_cols = 5
-            self.scene.terrain.terrain_generator.curriculum = False
-        # remove random pushing events
-        self.events.base_external_force_torque = None
-        self.events.push_robot = None

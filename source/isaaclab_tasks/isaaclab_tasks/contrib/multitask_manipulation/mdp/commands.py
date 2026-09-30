@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING
 import torch
 
 from isaaclab.managers import CommandTerm
-from isaaclab.markers import VisualizationMarkers
 from isaaclab.utils.math import combine_frame_transforms, quat_from_euler_xyz, quat_unique
 
 if TYPE_CHECKING:
@@ -65,8 +64,9 @@ class SelectedUniformPoseCommand(CommandTerm):
 
     def _set_debug_vis_impl(self, debug_vis: bool) -> None:
         if debug_vis and not hasattr(self, "goal_pose_visualizer"):
-            self.goal_pose_visualizer = VisualizationMarkers(self.cfg.goal_pose_visualizer_cfg)
-            self.current_pose_visualizer = VisualizationMarkers(self.cfg.current_pose_visualizer_cfg)
+            goal_cfg, current_cfg = self.cfg.goal_pose_visualizer_cfg, self.cfg.current_pose_visualizer_cfg
+            self.goal_pose_visualizer = goal_cfg.class_type(goal_cfg)
+            self.current_pose_visualizer = current_cfg.class_type(current_cfg)
         if not hasattr(self, "goal_pose_visualizer"):
             return
         self.goal_pose_visualizer.set_visibility(debug_vis)

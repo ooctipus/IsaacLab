@@ -7,50 +7,49 @@
 
 .. code-block:: bash
 
-    # Usage with default PhysX physics and default kit visualizer.
+    # Usage with default PhysX physics and no visualizer.
     uv run python scripts/demos/arms.py
 
     # Usage with Newton visualizer and default PhysX physics.
-    uv run python scripts/demos/arms.py --visualizer newton
+    uv run python scripts/demos/arms.py visualizer=newton_gl
 
-    # Usage with Newton (MJWarp) physics and default kit visualizer.
-    uv run python scripts/demos/arms.py --physics newton_mjwarp
+    # Usage with Newton (MJWarp) physics and no visualizer.
+    uv run python scripts/demos/arms.py physics=newton_mjwarp
 
     # Usage with Newton visualizer and Newton (MJWarp) physics.
-    uv run python scripts/demos/arms.py --visualizer newton --physics newton_mjwarp
+    uv run python scripts/demos/arms.py visualizer=newton_gl physics=newton_mjwarp
 
 """
-
-"""Parse CLI first so we can decide whether to launch Isaac Sim Kit."""
 
 import argparse
 from typing import TYPE_CHECKING
 
 from isaaclab.app import add_launcher_args, launch_simulation
 
+from isaaclab_tasks.utils import preset, resolve_config, setup_preset_cli
+from isaaclab_tasks.utils.presets import MultiBackendCameraCfg, MultiBackendSimulationCfg
+
 parser = argparse.ArgumentParser(
     description="This script demonstrates different single-arm manipulators.",
     conflict_handler="resolve",
 )
-parser.add_argument(
-    "--physics", default="isaacsim_physx", choices=["isaacsim_physx", "newton_mjwarp"], help="Physics backend."
-)
 add_launcher_args(parser)
-parser.set_defaults(visualizer=["kit"])
-args_cli = parser.parse_args()
+args_cli, config_overrides = setup_preset_cli(parser)
 
-import numpy as np
 import torch
 
 import isaaclab.sim as sim_utils
+from isaaclab.assets import ArticulationCfg, AssetBaseCfg
+from isaaclab.cloner import ReplicateSession
 
 ##
 # Pre-defined configs
 ##
-from isaaclab.physics import PhysicsCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
+from isaaclab.utils.configclass import configclass
 
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg  # isort:skip
+from isaaclab_newton.physics import MJWarpSolverCfg  # isort:skip
+from isaaclab_physx.physics import PhysxCfg  # isort:skip
 from isaaclab_assets.robots.franka import FRANKA_PANDA_CFG  # isort:skip
 from isaaclab_assets.robots.kinova import KINOVA_GEN3_N7_CFG, KINOVA_JACO2_N6S300_CFG, KINOVA_JACO2_N7S300_CFG  # isort:skip
 from isaaclab_assets.robots.sawyer import SAWYER_CFG  # isort:skip
@@ -60,129 +59,106 @@ if TYPE_CHECKING:
     from isaaclab.assets import Articulation
 
 
-def define_origins(num_origins: int, spacing: float) -> list[list[float]]:
-    """Defines the origins of the scene."""
-    # create tensor based on number of environments
-    env_origins = torch.zeros(num_origins, 3)
-    # create a grid of origins
-    num_rows = np.floor(np.sqrt(num_origins))
-    num_cols = np.ceil(num_origins / num_rows)
-    xx, yy = torch.meshgrid(torch.arange(num_rows), torch.arange(num_cols), indexing="xy")
-    env_origins[:, 0] = spacing * xx.flatten()[:num_origins] - spacing * (num_rows - 1) / 2
-    env_origins[:, 1] = spacing * yy.flatten()[:num_origins] - spacing * (num_cols - 1) / 2
-    env_origins[:, 2] = 0.0
-    # return the origins
-    return env_origins.tolist()
+@configclass
+class DemoCfg:
+    """Manipulator demo configuration."""
 
-
-def design_scene() -> tuple[dict, list[list[float]]]:
-    """Designs the scene."""
-    # Ground-plane
-    cfg = sim_utils.GroundPlaneCfg()
-    cfg.func("/World/defaultGroundPlane", cfg)
-    # Lights
-    cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
-    cfg.func("/World/Light", cfg)
-
-    # Create separate groups called "Origin1", "Origin2", "Origin3"
-    # Each group will have a mount and a robot on top of it
-    origins = define_origins(num_origins=6, spacing=2.0)
-
-    # Origin 1 with Franka Panda
-    sim_utils.create_prim("/World/Origin1", "Xform", translation=origins[0])
-    # -- Table
-    cfg = sim_utils.UsdFileCfg(usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Mounts/SeattleLabTable/table_instanceable.usd")
-    cfg.func("/World/Origin1/Table", cfg, translation=(0.55, 0.0, 1.05))
-    # -- Robot
-    franka_arm_cfg = FRANKA_PANDA_CFG.replace(prim_path="/World/Origin1/Robot")
-    franka_arm_cfg.spawn.usd_path = f"{ISAAC_NUCLEUS_DIR}/Robots/FrankaRobotics/FrankaPanda/franka.usd"
-    franka_arm_cfg.init_state.pos = (0.0, 0.0, 1.05)
-    franka_panda = franka_arm_cfg.class_type(franka_arm_cfg)
-
-    # Origin 2 with UR10
-    sim_utils.create_prim("/World/Origin2", "Xform", translation=origins[1])
-    # -- Table
-    cfg = sim_utils.UsdFileCfg(
-        usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Mounts/Stand/stand_instanceable.usd", scale=(2.0, 2.0, 2.0)
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(
+        device=args_cli.device,
+        physics=preset(
+            default=PhysxCfg(),
+            isaacsim_physx=PhysxCfg(),
+            newton_mjwarp=MJWarpSolverCfg(
+                njmax=70,
+                nconmax=70,
+                ls_iterations=40,
+                cone="elliptic",
+                impratio=100,
+                integrator="implicitfast",
+                num_substeps=2,
+            ),
+        ),
     )
-    cfg.func("/World/Origin2/Table", cfg, translation=(0.0, 0.0, 1.03))
-    # -- Robot
-    ur10_cfg = UR10_CFG.replace(prim_path="/World/Origin2/Robot")
-    ur10_cfg.init_state.pos = (0.0, 0.0, 1.03)
-    ur10 = ur10_cfg.class_type(ur10_cfg)
-
-    # Origin 3 with Kinova JACO2 (7-Dof) arm
-    sim_utils.create_prim("/World/Origin3", "Xform", translation=origins[2])
-    # -- Table
-    cfg = sim_utils.UsdFileCfg(usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Mounts/ThorlabsTable/table_instanceable.usd")
-    cfg.func("/World/Origin3/Table", cfg, translation=(0.0, 0.0, 0.8))
-    # -- Robot
-    kinova_arm_cfg = KINOVA_JACO2_N7S300_CFG.replace(prim_path="/World/Origin3/Robot")
-    kinova_arm_cfg.init_state.pos = (0.0, 0.0, 0.8)
-    kinova_j2n7s300 = kinova_arm_cfg.class_type(kinova_arm_cfg)
-
-    # Origin 4 with Kinova JACO2 (6-Dof) arm
-    sim_utils.create_prim("/World/Origin4", "Xform", translation=origins[3])
-    # -- Table
-    cfg = sim_utils.UsdFileCfg(usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Mounts/ThorlabsTable/table_instanceable.usd")
-    cfg.func("/World/Origin4/Table", cfg, translation=(0.0, 0.0, 0.8))
-    # -- Robot
-    kinova_arm_cfg = KINOVA_JACO2_N6S300_CFG.replace(prim_path="/World/Origin4/Robot")
-    kinova_arm_cfg.init_state.pos = (0.0, 0.0, 0.8)
-    kinova_j2n6s300 = kinova_arm_cfg.class_type(kinova_arm_cfg)
-
-    # Origin 5 with Sawyer
-    sim_utils.create_prim("/World/Origin5", "Xform", translation=origins[4])
-    # -- Table
-    cfg = sim_utils.UsdFileCfg(usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Mounts/SeattleLabTable/table_instanceable.usd")
-    cfg.func("/World/Origin5/Table", cfg, translation=(0.55, 0.0, 1.05))
-    # -- Robot
-    kinova_arm_cfg = KINOVA_GEN3_N7_CFG.replace(prim_path="/World/Origin5/Robot")
-    kinova_arm_cfg.init_state.pos = (0.0, 0.0, 1.05)
-    kinova_gen3n7 = kinova_arm_cfg.class_type(kinova_arm_cfg)
-
-    # Origin 6 with Kinova Gen3 (7-Dof) arm
-    sim_utils.create_prim("/World/Origin6", "Xform", translation=origins[5])
-    # -- Table
-    cfg = sim_utils.UsdFileCfg(
-        usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Mounts/Stand/stand_instanceable.usd", scale=(2.0, 2.0, 2.0)
+    camera: MultiBackendCameraCfg = MultiBackendCameraCfg()
+    ground: AssetBaseCfg = AssetBaseCfg(prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg())
+    light: AssetBaseCfg = AssetBaseCfg(
+        prim_path="/World/Light",
+        spawn=sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75)),
     )
-    cfg.func("/World/Origin6/Table", cfg, translation=(0.0, 0.0, 1.03))
-    # -- Robot
-    sawyer_arm_cfg = SAWYER_CFG.replace(prim_path="/World/Origin6/Robot")
-    sawyer_arm_cfg.init_state.pos = (0.0, 0.0, 1.03)
-    sawyer = sawyer_arm_cfg.class_type(sawyer_arm_cfg)
+    tables: list[AssetBaseCfg] = [
+        AssetBaseCfg(
+            prim_path="/World/Origin1/Table",
+            spawn=sim_utils.UsdFileCfg(
+                usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Mounts/SeattleLabTable/table_instanceable.usd"
+            ),
+            init_state=AssetBaseCfg.InitialStateCfg(pos=(-0.45, -2.0, 1.05)),
+        ),
+        AssetBaseCfg(
+            prim_path="/World/Origin2/Table",
+            spawn=sim_utils.UsdFileCfg(
+                usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Mounts/Stand/stand_instanceable.usd", scale=(2.0, 2.0, 2.0)
+            ),
+            init_state=AssetBaseCfg.InitialStateCfg(pos=(1.0, -2.0, 1.03)),
+        ),
+        AssetBaseCfg(
+            prim_path="/World/Origin3/Table",
+            spawn=sim_utils.UsdFileCfg(
+                usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Mounts/ThorlabsTable/table_instanceable.usd"
+            ),
+            init_state=AssetBaseCfg.InitialStateCfg(pos=(-1.0, 0.0, 0.8)),
+        ),
+        AssetBaseCfg(
+            prim_path="/World/Origin4/Table",
+            spawn=sim_utils.UsdFileCfg(
+                usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Mounts/ThorlabsTable/table_instanceable.usd"
+            ),
+            init_state=AssetBaseCfg.InitialStateCfg(pos=(1.0, 0.0, 0.8)),
+        ),
+        AssetBaseCfg(
+            prim_path="/World/Origin5/Table",
+            spawn=sim_utils.UsdFileCfg(
+                usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Mounts/SeattleLabTable/table_instanceable.usd"
+            ),
+            init_state=AssetBaseCfg.InitialStateCfg(pos=(-0.45, 2.0, 1.05)),
+        ),
+        AssetBaseCfg(
+            prim_path="/World/Origin6/Table",
+            spawn=sim_utils.UsdFileCfg(
+                usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Mounts/Stand/stand_instanceable.usd", scale=(2.0, 2.0, 2.0)
+            ),
+            init_state=AssetBaseCfg.InitialStateCfg(pos=(1.0, 2.0, 1.03)),
+        ),
+    ]
+    franka: ArticulationCfg = FRANKA_PANDA_CFG.replace(prim_path="/World/Origin1/Robot")
+    franka.spawn.usd_path = f"{ISAAC_NUCLEUS_DIR}/Robots/FrankaRobotics/FrankaPanda/franka.usd"
+    franka.init_state.pos = (-1.0, -2.0, 1.05)
+    ur10: ArticulationCfg = UR10_CFG.replace(prim_path="/World/Origin2/Robot")
+    ur10.init_state.pos = (1.0, -2.0, 1.03)
+    kinova_j2n7s300: ArticulationCfg = KINOVA_JACO2_N7S300_CFG.replace(prim_path="/World/Origin3/Robot")
+    kinova_j2n7s300.init_state.pos = (-1.0, 0.0, 0.8)
+    kinova_j2n6s300: ArticulationCfg = KINOVA_JACO2_N6S300_CFG.replace(prim_path="/World/Origin4/Robot")
+    kinova_j2n6s300.init_state.pos = (1.0, 0.0, 0.8)
+    kinova_gen3n7: ArticulationCfg = KINOVA_GEN3_N7_CFG.replace(prim_path="/World/Origin5/Robot")
+    kinova_gen3n7.init_state.pos = (-1.0, 2.0, 1.05)
+    sawyer: ArticulationCfg = SAWYER_CFG.replace(prim_path="/World/Origin6/Robot")
+    sawyer.init_state.pos = (1.0, 2.0, 1.03)
 
-    # return the scene information
-    scene_entities = {
-        "franka_panda": franka_panda,
-        "ur10": ur10,
-        "kinova_j2n7s300": kinova_j2n7s300,
-        "kinova_j2n6s300": kinova_j2n6s300,
-        "kinova_gen3n7": kinova_gen3n7,
-        "sawyer": sawyer,
-    }
-    return scene_entities, origins
 
-
-def run_simulator(sim: "sim_utils.SimulationContext", entities: dict[str, "Articulation"], origins: torch.Tensor):
+def run_simulator(sim: "sim_utils.SimulationContext", entities: dict[str, "Articulation"]):
     """Runs the simulation loop."""
     # Define simulation stepping
     sim_dt = sim.get_physics_dt()
-    sim_time = 0.0
     count = 0
     # Step while a visualizer window is still open (or none exist, e.g. headless); works for kit and newton.
     while sim.is_headless_or_exist_active_visualizer():
         # reset
         if count % 200 == 0:
             # reset counters
-            sim_time = 0.0
             count = 0
             # reset the scene entities
-            for index, robot in enumerate(entities.values()):
+            for robot in entities.values():
                 # root state
                 root_pose = robot.data.default_root_pose.torch.clone()
-                root_pose[:, :3] += origins[index]
                 robot.write_root_pose_to_sim_index(root_pose=root_pose)
                 root_vel = robot.data.default_root_vel.torch.clone()
                 robot.write_root_velocity_to_sim_index(root_velocity=root_vel)
@@ -209,7 +185,6 @@ def run_simulator(sim: "sim_utils.SimulationContext", entities: dict[str, "Artic
         # perform step
         sim.step()
         # update sim-time
-        sim_time += sim_dt
         count += 1
         # update buffers
         for robot in entities.values():
@@ -218,32 +193,49 @@ def run_simulator(sim: "sim_utils.SimulationContext", entities: dict[str, "Artic
 
 def main():
     """Main function."""
-    with launch_simulation(cfg=PhysicsCfg(), launcher_args=args_cli) as physics_cfg:
-        # The default newton mjwarp solver configuration needs to be tuned for these arms.
-        if isinstance(physics_cfg, NewtonCfg) and isinstance(physics_cfg.solver_cfg, MJWarpSolverCfg):
-            physics_cfg.solver_cfg.njmax = 70
-            physics_cfg.solver_cfg.nconmax = 70
-            physics_cfg.solver_cfg.ls_iterations = 40
-            physics_cfg.solver_cfg.cone = "elliptic"
-            physics_cfg.solver_cfg.impratio = 100
-            physics_cfg.solver_cfg.ls_parallel = False
-            physics_cfg.solver_cfg.integrator = "implicitfast"
-            physics_cfg.num_substeps = 2
-
+    cfg = resolve_config(DemoCfg(), config_overrides)
+    with launch_simulation(cfg, args_cli):
         # Initialize the simulation context
-        sim_cfg = sim_utils.SimulationCfg(device=args_cli.device, physics=physics_cfg)
-        sim = sim_utils.SimulationContext(sim_cfg)
+        sim = sim_utils.SimulationContext(cfg.sim)
         # Set main camera
         sim.set_camera_view([3.5, 0.0, 3.2], [0.0, 0.0, 0.5])
-        # design scene
-        scene_entities, scene_origins = design_scene()
-        scene_origins = torch.tensor(scene_origins, device=sim.device)
+        asset_cfgs = tuple(
+            asset_cfg
+            for asset_cfg in (
+                cfg.ground,
+                cfg.light,
+                *cfg.tables,
+                cfg.franka,
+                cfg.ur10,
+                cfg.kinova_j2n7s300,
+                cfg.kinova_j2n6s300,
+                cfg.kinova_gen3n7,
+                cfg.sawyer,
+                cfg.camera,
+            )
+            if asset_cfg is not None
+        )
+        with ReplicateSession(asset_cfgs, 1, 0.0):
+            _camera = cfg.camera.class_type(cfg.camera) if cfg.camera is not None else None
+            for static_cfg in (cfg.ground, cfg.light, *cfg.tables):
+                static_cfg.class_type(static_cfg)
+            scene_entities = {
+                name: robot_cfg.class_type(robot_cfg)
+                for name, robot_cfg in (
+                    ("franka_panda", cfg.franka),
+                    ("ur10", cfg.ur10),
+                    ("kinova_j2n7s300", cfg.kinova_j2n7s300),
+                    ("kinova_j2n6s300", cfg.kinova_j2n6s300),
+                    ("kinova_gen3n7", cfg.kinova_gen3n7),
+                    ("sawyer", cfg.sawyer),
+                )
+            }
         # Play the simulator
         sim.reset()
         # Now we are ready!
         print("[INFO]: Setup complete...")
         # Run the simulator
-        run_simulator(sim, scene_entities, scene_origins)
+        run_simulator(sim, scene_entities)
 
 
 if __name__ == "__main__":

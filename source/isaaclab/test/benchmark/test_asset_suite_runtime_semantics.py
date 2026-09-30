@@ -191,6 +191,7 @@ def test_ovphysx_data_targets_are_independent_and_properties_preflight_when_avai
         raise
 
     for component in ("articulation", "rigid_object", "rigid_object_collection"):
+        physics_manager = ovphysx_runtime._mock_physics_manager()
         config = replace(
             _CONFIG,
             num_bodies=1 if component == "rigid_object" else _CONFIG.num_bodies,
@@ -206,8 +207,9 @@ def test_ovphysx_data_targets_are_independent_and_properties_preflight_when_avai
             num_bodies=config.num_bodies,
             **({"num_joints": config.num_joints} if component == "articulation" else {}),
             device=config.device,
+            physics_manager=physics_manager,
         )
-        data_target, refresh = ovphysx_runtime._create_data_target(component, config)
+        data_target, refresh = ovphysx_runtime._create_data_target(component, config, physics_manager)
 
         assert data_target is not method_target._data
         adapter = get_asset_benchmark_adapter("ovphysx", component)
@@ -235,13 +237,13 @@ def test_newton_articulation_data_target_restores_model_dynamics_and_ordering(mo
             return view
 
     class FakeData:
-        def __init__(self, root_view, device):
+        def __init__(self, root_view, device, physics_manager):
             self.root_view = root_view
             self.device = device
+            self.physics_manager = physics_manager
             self.ordering_applied = False
             self._jacobian_body_user_to_backend = None
             self._sim_timestamp = 0.0
-            self._fk_timestamp = 0.0
 
         def _apply_ordering_maps_after_resolve(self) -> None:
             self.ordering_applied = True
@@ -249,16 +251,11 @@ def test_newton_articulation_data_target_restores_model_dynamics_and_ordering(mo
 
     monkeypatch.setattr(newton_runtime, "MockNewtonArticulationView", FakeView, raising=False)
     monkeypatch.setattr(newton_runtime, "NewtonArticulationData", FakeData, raising=False)
-    monkeypatch.setattr(
-        newton_runtime,
-        "NewtonSimulationManager",
-        SimpleNamespace(get_model=lambda: model),
-        raising=False,
-    )
+    physics_manager = SimpleNamespace(get_model=lambda: model)
     create_target = getattr(newton_runtime, "_create_articulation_data_target", None)
 
     assert create_target is not None
-    data, refresh = create_target(_CONFIG)
+    data, refresh = create_target(_CONFIG, physics_manager)
 
     assert model.articulation_count == 2
     assert model.max_joints_per_articulation == 3
@@ -269,10 +266,10 @@ def test_newton_articulation_data_target_restores_model_dynamics_and_ordering(mo
     assert callable(view.eval_jacobian)
     assert callable(view.eval_mass_matrix)
     assert data.ordering_applied
+    assert data.physics_manager is physics_manager
     assert data._jacobian_body_user_to_backend is not None
     refresh(_CONFIG)
     assert data._sim_timestamp == 1.0
-    assert data._fk_timestamp == 1.0
 
 
 def test_newton_articulation_open_targets_constructs_real_method_and_data_targets(monkeypatch) -> None:
@@ -298,7 +295,9 @@ def test_physx_cpu_boundary_reuses_int32_scratch_for_int64_env_ids(monkeypatch) 
     monkeypatch.setattr(wp, "zeros", lambda *args, **kwargs: zeros(*args, **(kwargs | {"pinned": False})))
     monkeypatch.setattr(wp, "empty", lambda *args, **kwargs: empty(*args, **(kwargs | {"pinned": False})))
     physx_runtime.PhysxManager.get_physics_sim_view.return_value.get_gravity.return_value = (0.0, 0.0, -9.81)
-    target = physx_runtime.create_test_rigid_object(num_instances=2, num_bodies=1, device="cpu")[0]
+    target = physx_runtime.create_test_rigid_object(
+        physx_runtime._mock_physics_manager(), num_instances=2, num_bodies=1, device="cpu"
+    )[0]
     env_ids = wp.array([1, 0], dtype=wp.int64, device="cpu")
     sim_env_ids = wp.array([1, 0], dtype=wp.int32, device="cpu")
 
@@ -313,7 +312,9 @@ def test_physx_collection_reuses_bounded_flat_view_id_scratch(monkeypatch) -> No
     empty = wp.empty
     monkeypatch.setattr(wp, "zeros", lambda *args, **kwargs: zeros(*args, **(kwargs | {"pinned": False})))
     monkeypatch.setattr(wp, "empty", lambda *args, **kwargs: empty(*args, **(kwargs | {"pinned": False})))
-    target = physx_runtime.create_test_collection(num_instances=2, num_bodies=2, device="cpu")[0]
+    target = physx_runtime.create_test_collection(
+        physx_runtime._mock_physics_manager(), num_instances=2, num_bodies=2, device="cpu"
+    )[0]
     env_ids = wp.array([1, 0], dtype=wp.int64, device="cpu")
     body_ids = wp.array([0, 1], dtype=wp.int64, device="cpu")
 
@@ -412,13 +413,14 @@ def test_ovphysx_factories_use_exported_binding_set_signature(
 
     with pytest.raises(ConstructorAccepted):
         if factory_name == "_create_data_target":
-            factory("articulation", _CONFIG)
+            factory("articulation", _CONFIG, SimpleNamespace())
         else:
             factory(
                 num_instances=_CONFIG.num_instances,
                 num_bodies=1 if factory_name == "create_test_rigid_object" else _CONFIG.num_bodies,
                 **({"num_joints": _CONFIG.num_joints} if factory_name == "create_test_articulation" else {}),
                 device=_CONFIG.device,
+                physics_manager=SimpleNamespace(),
             )
 
 

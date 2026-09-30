@@ -15,8 +15,6 @@ import isaaclab.utils.math as math_utils
 from isaaclab.managers import ManagerTermBase, ObservationTermCfg, SceneEntityCfg
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-
     from isaaclab.assets import RigidObject
     from isaaclab.envs import ManagerBasedRLEnv
     from isaaclab.sensors import Camera
@@ -172,8 +170,13 @@ def shadow_hand_camera_cached_features(env: ManagerBasedRLEnv) -> torch.Tensor:
     return embeddings
 
 
+shadow_hand_camera_cached_features._output_shape = (27,)
+
+
 class ShadowHandCameraFeatures(ManagerTermBase):
     """Run the Direct camera feature pipeline as one Manager observation term."""
+
+    _output_shape = (27,)
 
     def __init__(self, cfg: ObservationTermCfg, env: ManagerBasedRLEnv):
         super().__init__(cfg, env)
@@ -192,21 +195,7 @@ class ShadowHandCameraFeatures(ManagerTermBase):
             height=camera.cfg.height,
             width=camera.cfg.width,
         )
-        # ObservationManager calls terms once to infer their shape. Do not train
-        # or save a CNN checkpoint during that initialization probe.
-        self._shape_probe_pending = True
         self._keypoints_buf = torch.empty(env.num_envs, 8, 3, dtype=torch.float32, device=env.device)
-
-    def reset(self, env_ids: Sequence[int] | None = None) -> None:
-        """Finish the shape-probe phase on the first Manager reset.
-
-        Args:
-            env_ids: Environment indices being reset. The feature extractor
-                has no per-environment state, so the indices are unused.
-        """
-        del env_ids
-        if self._shape_probe_pending:
-            self._shape_probe_pending = False
 
     def __call__(
         self,
@@ -228,11 +217,6 @@ class ShadowHandCameraFeatures(ManagerTermBase):
             ``(num_envs, 27)``.
         """
         del feature_extractor_cfg  # consumed in __init__
-        if self._shape_probe_pending:
-            embeddings = torch.zeros(env.num_envs, 27, dtype=torch.float32, device=env.device)
-            env._shadow_hand_camera_embeddings = embeddings
-            return embeddings
-
         camera: Camera = env.scene.sensors[sensor_cfg.name]
         object_asset: RigidObject = env.scene[object_cfg.name]
         object_pos = object_asset.data.root_pos_w.torch - env.scene.env_origins

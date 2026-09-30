@@ -277,8 +277,7 @@ generic commands above.
      - Notes
    * - ``Isaac-Lift-Franka``
      - ``lift_franka``
-     - No ordering override needed; joint and body order is identical in both backends. The
-       ``play`` entry point applies ``play_mode`` overrides automatically.
+     - No ordering override needed; joint and body order is identical in both backends.
    * - ``Isaac-Velocity-Rough-G1``
      - ``g1_rough``
      - Branched topology: add ``env.scene.robot.joint_ordering=physx

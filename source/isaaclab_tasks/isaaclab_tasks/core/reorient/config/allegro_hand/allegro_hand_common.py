@@ -9,7 +9,7 @@ Asset and marker configurations, joint/body name lists, backend physics
 presets, and the sim mixin. No task tunables.
 """
 
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
+from isaaclab_newton.physics import MJWarpSolverCfg
 from isaaclab_ov.physics import OvPhysxCfg
 from isaaclab_physx.physics import PhysxCfg
 
@@ -55,15 +55,13 @@ class PhysicsCfg(PresetCfg):
     isaacsim_physx = PhysxCfg(
         bounce_threshold_velocity=0.2,
     )
-    newton_mjwarp = NewtonCfg(
-        solver_cfg=MJWarpSolverCfg(
-            integrator="implicitfast",
-            njmax=80,
-            nconmax=70,
-            impratio=10.0,
-            cone="elliptic",
-            update_data_interval=2,
-        ),
+    newton_mjwarp = MJWarpSolverCfg(
+        integrator="implicitfast",
+        njmax=80,
+        nconmax=70,
+        impratio=10.0,
+        cone="elliptic",
+        update_data_interval=2,
         num_substeps=2,
     )
     ovphysx = OvPhysxCfg()

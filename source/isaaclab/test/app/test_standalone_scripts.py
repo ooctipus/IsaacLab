@@ -61,6 +61,17 @@ SCREENSHOT_DIR = os.environ.get("ISAACLAB_STANDALONE_SCREENSHOT_DIR")
 SOAK_TIME = float(os.environ.get("ISAACLAB_STANDALONE_SOAK_TIME", "5"))
 STARTUP_TIMEOUT = float(os.environ.get("ISAACLAB_STANDALONE_STARTUP_TIMEOUT", "300"))
 SCREENSHOT_DELAY = float(os.environ.get("ISAACLAB_STANDALONE_SCREENSHOT_DELAY", "3"))
+VISUALIZER_CFG_MIGRATION_SCRIPTS = (
+    "scripts/tutorials/03_envs/create_cube_base_env.py",
+    "scripts/tutorials/03_envs/create_cartpole_base_env.py",
+    "scripts/environments/state_machine/lift_cube_sm.py",
+    "scripts/environments/state_machine/lift_franka_soft.py",
+    "scripts/environments/state_machine/open_cabinet_sm.py",
+)
+DIRECT_SIMULATION_CFG_SCRIPTS = {
+    "scripts/tutorials/03_envs/create_cube_base_env.py",
+    "scripts/tutorials/03_envs/create_cartpole_base_env.py",
+}
 
 
 def test_every_standalone_script_has_a_readiness_contract_or_exemption():
@@ -80,8 +91,8 @@ def test_launch_matrix_covers_declared_backends_and_visualizers():
     """Each script must expand across every declared backend and visualizer."""
     for spec in SPECS:
         spec_cases = build_cases([spec])
-        assert {case.physics_backend for case in spec_cases} == {backend for _, backend in spec.physics_backends}
-        assert {case.renderer_backend for case in spec_cases} == {backend for _, backend in spec.rendering_backends}
+        assert {case.physics_backend for case in spec_cases} == set(spec.physics_backends)
+        assert {case.renderer_backend for case in spec_cases} == set(spec.rendering_backends)
         assert {case.visualizer for case in spec_cases} == set(spec.visualizers)
         assert len(spec_cases) == len(spec.physics_backends) * len(spec.rendering_backends) * len(spec.visualizers)
 
@@ -94,16 +105,40 @@ def test_runtime_groups_partition_matrix_without_overlap():
     assert sorted(grouped_ids) == sorted(case.id for case in cases)
     assert len(grouped_ids) == len(set(grouped_ids))
     assert all(
-        case.physics_backend == "isaacsim_physx" or case.renderer_backend == "isaac_rtx" or case.visualizer == "kit"
+        case.physics_backend == "isaacsim_physx" or case.renderer_backend == "isaacsim_rtx" or case.visualizer == "kit"
         for case in groups[0]
     )
     assert all(
-        case.physics_backend != "isaacsim_physx" and case.renderer_backend != "isaac_rtx" and case.visualizer != "kit"
+        case.physics_backend != "isaacsim_physx"
+        and case.renderer_backend != "isaacsim_rtx"
+        and case.visualizer != "kit"
         for case in groups[1]
     )
 
     with pytest.raises(ValueError, match="runtime group"):
         select_runtime_group(cases, "invalid")
+
+
+def test_only_ov_backends_mixed_with_kit_or_isaac_sim_are_excluded():
+    """The launch matrix skips the one known cross-runtime incompatibility."""
+    spec = next(spec for spec in SPECS if spec.relative_path.endswith("create_cube_base_env.py"))
+    base = build_cases([spec])[0]
+    for physics, renderer, visualizer in (
+        ("ovphysx", "default", "kit"),
+        ("newton_mjwarp", "ovrtx", "kit"),
+        ("isaacsim_physx", "ovrtx", "none"),
+        ("ovphysx", "isaacsim_rtx", "none"),
+    ):
+        assert replace(base, physics_backend=physics, renderer_backend=renderer, visualizer=visualizer).skip_reason
+
+    for physics, renderer, visualizer in (
+        ("ovphysx", "default", "newton_rtx"),
+        ("newton_mjwarp", "ovrtx", "newton_rtx"),
+        ("isaacsim_physx", "default", "newton_gl"),
+    ):
+        assert (
+            replace(base, physics_backend=physics, renderer_backend=renderer, visualizer=visualizer).skip_reason is None
+        )
 
 
 def test_script_scope_rejects_empty_selection():
@@ -142,14 +177,14 @@ def test_showroom_documents_options_for_each_mentioned_demo():
     assert demo_specs.keys() == referenced_paths
     for path, spec in demo_specs.items():
         entry = documented_entries[path]
-        expected_physics = {backend for _, backend in spec.physics_backends}
+        expected_physics = set(spec.physics_backends)
         expected_visualizers = set(spec.visualizers)
         assert documented_values(entry, "Physics") == expected_physics, f"{path} documents incorrect physics options"
         assert documented_values(entry, "Visualizer") == expected_visualizers, (
             f"{path} documents incorrect visualizer options"
         )
 
-        selectable_renderers = {backend for option, backend in spec.rendering_backends if option is not None}
+        selectable_renderers = set(spec.preset_options.get("renderer", ()))
         if selectable_renderers:
             assert documented_values(entry, "Renderer") == selectable_renderers, (
                 f"{path} documents incorrect renderer options"
@@ -158,15 +193,12 @@ def test_showroom_documents_options_for_each_mentioned_demo():
             assert "**Renderer:**" not in entry, f"{path} advertises a renderer option that it does not expose"
 
 
-def test_commands_respect_script_launcher_capabilities():
-    """Commands must enable cameras and avoid unsupported launcher arguments."""
-    h1_case = next(case for case in build_cases(SPECS) if case.spec.relative_path == "scripts/demos/h1_locomotion.py")
-    assert h1_case.command()[-4:] == ["--physics", "isaacsim_physx", "--visualizer", "kit"]
-
+def test_commands_use_declarative_selectors_and_script_flags():
+    """Commands must use Hydra selectors while retaining script-specific argparse flags."""
     pick_and_place_case = next(
         case for case in build_cases(SPECS) if case.spec.relative_path == "scripts/demos/pick_and_place.py"
     )
-    assert pick_and_place_case.command()[-4:] == ["--physics", "isaacsim_physx", "--visualizer", "kit"]
+    assert pick_and_place_case.command()[-2:] == ["physics=isaacsim_physx", "visualizer=kit"]
 
     camera_case = next(
         case
@@ -174,28 +206,42 @@ def test_commands_respect_script_launcher_capabilities():
         if case.spec.relative_path == "scripts/demos/sensors/cameras.py" and case.visualizer == "none"
     )
     assert camera_case.command()[3:5] == ["--num_envs", "1"]
-    assert camera_case.command()[-2:] == ["--visualizer", "none"]
+    assert camera_case.command()[-2:] == ["physics=isaacsim_physx", "sim.visualizer_cfgs=[]"]
     assert camera_case.spec.startup_timeout == 900.0
 
     kitless_case = next(
-        case for case in build_cases(SPECS) if case.spec.relative_path == "scripts/demos/sensors/ppisp_camera_ovrtx.py"
+        case
+        for case in build_cases(SPECS)
+        if case.spec.relative_path == "scripts/demos/sensors/ppisp_camera_ovrtx.py" and case.visualizer == "none"
     )
-    assert kitless_case.command()[-2:] == ["--viz", "none"]
+    assert kitless_case.physics_backend == "newton_mjwarp"
+    assert kitless_case.command()[-2:] == ["renderer=ovrtx", "sim.visualizer_cfgs=[]"]
 
     renderer_case = next(
         case
         for case in build_cases(SPECS)
-        if case.spec.relative_path == "scripts/demos/sensors/ppisp_camera.py" and case.renderer_backend == "isaac_rtx"
+        if case.spec.relative_path == "scripts/demos/sensors/ppisp_camera.py"
+        and case.renderer_backend == "isaacsim_rtx"
+        and case.visualizer == "none"
     )
-    assert renderer_case.command()[-4:] == ["--renderer", "isaac_rtx", "--visualizer", "none"]
+    assert renderer_case.command()[-3:] == [
+        "physics=newton_mjwarp",
+        "renderer=isaacsim_rtx",
+        "sim.visualizer_cfgs=[]",
+    ]
 
     newton_renderer_case = next(
         case
         for case in build_cases(SPECS)
         if case.spec.relative_path == "scripts/demos/sensors/ppisp_camera.py"
         and case.renderer_backend == "newton_renderer"
+        and case.visualizer == "none"
     )
-    assert newton_renderer_case.command()[-4:] == ["--renderer", "newton_renderer", "--visualizer", "none"]
+    assert newton_renderer_case.command()[-3:] == [
+        "physics=newton_mjwarp",
+        "renderer=newton_renderer",
+        "sim.visualizer_cfgs=[]",
+    ]
 
     physics_case = next(
         case
@@ -207,7 +253,7 @@ def test_commands_respect_script_launcher_capabilities():
     assert "--num_envs" in physics_case.command()
     num_envs_index = physics_case.command().index("--num_envs")
     assert physics_case.command()[num_envs_index + 1] == "2"
-    assert physics_case.command()[-4:] == ["--physics", "isaacsim_physx", "--visualizer", "none"]
+    assert physics_case.command()[-2:] == ["physics=isaacsim_physx", "sim.visualizer_cfgs=[]"]
 
     multi_asset_case = next(
         case
@@ -226,13 +272,23 @@ def test_commands_respect_script_launcher_capabilities():
     assert "--device" in surface_gripper_case.command()
     assert "cpu" in surface_gripper_case.command()
 
-    ray_camera_case = next(
-        case
-        for case in build_cases(SPECS)
-        if case.spec.relative_path == "scripts/tutorials/04_sensors/run_ray_caster_camera.py"
-        and case.visualizer == "none"
-    )
-    assert "--enable_cameras" not in ray_camera_case.command()
+
+def test_commands_never_generate_legacy_backend_or_visualizer_flags():
+    """The smoke harness must have only the declarative selector vocabulary."""
+    forbidden_flags = {"--physics", "--backend", "--renderer", "--visualizer", "--viz"}
+    forbidden_fields = {"physics_option", "renderer_option", "visualizer_option"}
+    assert forbidden_fields.isdisjoint(script_cases.LaunchCase.__dataclass_fields__)
+    assert forbidden_fields.isdisjoint(script_cases.ScriptSpec.__dataclass_fields__)
+    for case in build_cases(SPECS):
+        command = case.command()
+        assert forbidden_flags.isdisjoint(command), case.id
+        assert "visualizer=none" not in command, case.id
+        assert (f"physics={case.physics_backend}" in command) == ("physics" in case.spec.preset_options), case.id
+        assert (f"renderer={case.renderer_backend}" in command) == ("renderer" in case.spec.preset_options), case.id
+        if case.visualizer == "none" and case.spec.preset_options:
+            assert "sim.visualizer_cfgs=[]" in command, case.id
+        elif case.visualizer != "none":
+            assert f"visualizer={case.visualizer}" in command, case.id
 
     usd_camera_case = next(
         case
@@ -250,60 +306,137 @@ def test_hands_demo_uses_asset_owned_shadow_hand_configs():
         (node.module, alias.name) for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) for alias in node.names
     }
 
-    assert not {module for module, _ in imports if module and module.startswith("isaaclab_tasks")}
+    assert not {
+        module
+        for module, name in imports
+        if module and module.startswith("isaaclab_tasks") and name == "ShadowHandRobotCfg"
+    }
     assert {
         ("isaaclab_assets.robots.shadow_hand", "SHADOW_HAND_PHYSX_CFG"),
         ("isaaclab_assets.robots.shadow_hand", "SHADOW_HAND_NEWTON_CFG"),
     } <= imports
 
 
-@pytest.mark.parametrize(
-    "relative_path",
-    [
-        "scripts/demos/sensors/cameras.py",
-        "scripts/demos/sensors/frame_transformer_sensor.py",
-        "scripts/demos/sensors/imu_sensor.py",
-        "scripts/demos/sensors/multi_mesh_raycaster_camera.py",
-        "scripts/demos/sensors/pva_sensor.py",
-        "scripts/demos/sensors/raycaster_sensor.py",
-        "scripts/demos/sensors/tacsl_sensor.py",
-    ],
-)
-def test_physx_only_sensor_demos_accept_explicit_physics_selector(relative_path):
-    """PhysX-only sensor demos must accept their documented backend explicitly."""
-    spec = next(spec for spec in SPECS if spec.relative_path == relative_path)
-    assert spec.physics_backends == (("--physics", "isaacsim_physx"),)
+def test_scripts_never_own_legacy_backend_or_visualizer_cli_state():
+    """Standalone scripts must get backend choices from cfg, not argparse state."""
+    selectors = {"physics", "renderer", "visualizer"}
+    legacy_flags = {f"--{selector}" for selector in selectors} | {"--backend", "--viz"}
+    offenders = []
+    for spec in SPECS:
+        tree = ast.parse(spec.path.read_text(encoding="utf-8"), filename=str(spec.path))
+        if legacy_flags.intersection(spec.flags):
+            offenders.append(spec.relative_path)
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+                if node.value.id == "args_cli" and node.attr in selectors:
+                    offenders.append(spec.relative_path)
+                    break
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "set_defaults":
+                if selectors.intersection(keyword.arg for keyword in node.keywords):
+                    offenders.append(spec.relative_path)
+                    break
+    assert not offenders, f"standalone scripts retain legacy backend/visualizer CLI state: {offenders}"
 
 
-def test_contact_sensor_demo_accepts_physx_and_newton_selectors():
-    """The contact sensor demo exposes both PhysX and Newton MJWarp."""
-    spec = next(spec for spec in SPECS if spec.relative_path == "scripts/demos/sensors/contact_sensor.py")
-    assert spec.physics_backends == (("--physics", "isaacsim_physx"), ("--physics", "newton_mjwarp"))
+def test_scripts_never_redeclare_or_inject_visualizer_presets():
+    """Script composition roots must use the canonical typed visualizer config."""
+    scenario_script = script_cases.ROOT / "scripts/tutorials/07_visualizers/run_video_recording.py"
+    offenders = []
+    for path in (script_cases.ROOT / "scripts").rglob("*.py"):
+        if "test" in path.parts or path == scenario_script:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef) and node.name.endswith("VisualizerCfg"):
+                if any(
+                    (base.id if isinstance(base, ast.Name) else base.attr if isinstance(base, ast.Attribute) else None)
+                    == "PresetCfg"
+                    for base in node.bases
+                ):
+                    offenders.append(path.relative_to(script_cases.ROOT).as_posix())
+                    break
+            if isinstance(node, ast.Call):
+                for keyword in node.keywords:
+                    value = keyword.value
+                    if (
+                        keyword.arg == "visualizer_cfgs"
+                        and isinstance(value, ast.Call)
+                        and (value.func.id if isinstance(value.func, ast.Name) else None) == "preset"
+                    ):
+                        offenders.append(path.relative_to(script_cases.ROOT).as_posix())
+                        break
+            if isinstance(node, (ast.Assign, ast.AnnAssign)):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                if any(isinstance(target, ast.Attribute) and target.attr == "visualizer_cfgs" for target in targets):
+                    offenders.append(path.relative_to(script_cases.ROOT).as_posix())
+                    break
+    assert not sorted(set(offenders)), f"scripts own visualizer selector state: {sorted(set(offenders))}"
 
 
-def test_cable_demo_accepts_explicit_newton_vbd_selector():
-    """The Newton-only cable demo must accept its documented backend explicitly."""
-    spec = next(spec for spec in SPECS if spec.relative_path == "scripts/demos/cables.py")
-    assert spec.physics_backends == (("--physics", "newton_vbd"),)
+def test_migrated_environment_scripts_use_the_shared_visualizer_preset_only():
+    """Environment entrypoints compose visualizers through the canonical typed config."""
+    for relative_path in VISUALIZER_CFG_MIGRATION_SCRIPTS:
+        path = script_cases.ROOT / relative_path
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(path))
+        imports_shared_sim_cfg = any(
+            isinstance(node, ast.ImportFrom)
+            and node.module == "isaaclab_tasks.utils.presets"
+            and any(alias.name == "MultiBackendSimulationCfg" for alias in node.names)
+            for node in tree.body
+        )
+        calls = {
+            node.func.id for node in ast.walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+        visualizer_values = [
+            keyword.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            for keyword in node.keywords
+            if keyword.arg == "visualizer_cfgs"
+        ]
+        visualizer_values.extend(
+            node.value
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.Assign, ast.AnnAssign))
+            and any(
+                isinstance(target, ast.Attribute) and target.attr == "visualizer_cfgs"
+                for target in (node.targets if isinstance(node, ast.Assign) else [node.target])
+            )
+        )
+
+        assert {"resolve_config", "setup_preset_cli", "launch_simulation"} <= calls, relative_path
+        assert not visualizer_values, f"{relative_path} shadows its shared simulation config's visualizer preset"
+        if relative_path in DIRECT_SIMULATION_CFG_SCRIPTS:
+            assert imports_shared_sim_cfg and "MultiBackendSimulationCfg" in calls, relative_path
+            assert set(script_cases._preset_options(tree)["visualizer"]) == set(script_cases.VISUALIZERS) - {
+                "none",
+                "newton_rtx",
+            }
+        assert "default_visualizer_cfg" not in source, relative_path
+        assert "--viz" not in source and "--visualizer" not in source, relative_path
+        assert not any(
+            isinstance(node, ast.ImportFrom)
+            and node.module == "isaaclab.visualizers"
+            and any(alias.name == "VisualizerCfg" for alias in node.names)
+            for node in tree.body
+        ), relative_path
 
 
-def test_multi_mesh_raycaster_uses_cli_visualizer_defaults():
-    """The interactive raycaster demo must let CLI requests create default visualizer configs."""
-    path = script_cases.ROOT / "scripts/demos/sensors/multi_mesh_raycaster.py"
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    simulation_cfg_calls = [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "SimulationCfg"
-    ]
-    assert len(simulation_cfg_calls) == 1
-
-    visualizer_cfg_values = [
-        keyword.value for keyword in simulation_cfg_calls[0].keywords if keyword.arg == "visualizer_cfgs"
-    ]
-    assert len(visualizer_cfg_values) == 1
-    assert isinstance(visualizer_cfg_values[0], ast.Constant)
-    assert visualizer_cfg_values[0].value is None
+def test_special_demos_declare_exact_typed_presets():
+    """Standalone demos discover visualizers from the canonical simulation config."""
+    deformables = next(spec for spec in SPECS if spec.relative_path == "scripts/demos/deformables.py")
+    assert deformables.preset_options == {
+        "physics": ("isaacsim_physx", "newton_vbd", "ovphysx"),
+        "visualizer": ("kit", "newton_gl", "newton_rtx", "rerun", "viser"),
+    }
+    h1 = next(spec for spec in SPECS if spec.relative_path == "scripts/demos/h1_locomotion.py")
+    assert h1.preset_options == {
+        "physics": ("isaacsim_physx",),
+        "visualizer": ("kit", "newton_gl", "rerun", "viser"),
+    }
+    assert h1.visualizers == ("kit",)
 
 
 def test_h1_locomotion_uses_backend_aware_checkpoint_and_rejects_missing_policy():
@@ -574,25 +707,93 @@ def test_smoke_assertion_rejects_each_failure_mode():
         assert_smoke_passed(SmokeResult(True, 2, "tail", 0.1, False), case)
 
 
-def test_ast_discovery_recognizes_main_guards_and_literal_choices():
-    """Static discovery must distinguish executable scripts and preserve literal choices."""
+def test_ast_discovery_recognizes_main_guards_flags_and_typed_presets():
+    """Static discovery must find executable scripts and declarative launch choices."""
     tree = ast.parse(
         """
 import argparse
 parser = argparse.ArgumentParser()
-parser.add_argument('--physics', choices=['physx', 'newton_mjwarp'])
-parser.add_argument('--viz', choices=('none',))
+parser.add_argument('--num_envs', type=int)
 parser.add_argument('positional')
+
+class Visualizers(PresetCfg):
+    kit = KitVisualizerCfg()
+    default = kit
+    newton_gl = NewtonGLVisualizerCfg()
+
+class DemoCfg:
+    sim = SimulationCfg(
+        physics=preset(default=PhysxCfg(), isaacsim_physx=PhysxCfg(), newton_mjwarp=MJWarpSolverCfg()),
+        visualizer_cfgs=Visualizers(),
+    )
+    renderer = preset(default=NewtonRendererCfg(), newton_renderer=NewtonRendererCfg(), ovrtx=OVRTXRendererCfg())
+
 if __name__ == '__main__':
     pass
 """
     )
     assert script_cases._has_main_guard(tree)
-    assert script_cases._literal_cli_options(tree) == {
-        "--physics": ("physx", "newton_mjwarp"),
-        "--viz": ("none",),
+    assert script_cases._literal_cli_flags(tree) == frozenset({"--num_envs"})
+    assert script_cases._preset_options(tree) == {
+        "physics": ("isaacsim_physx", "newton_mjwarp"),
+        "renderer": ("newton_renderer", "ovrtx"),
+        "visualizer": ("kit", "newton_gl"),
     }
     assert not script_cases._has_main_guard(ast.parse("print('library module')"))
+
+
+def test_ast_discovery_requires_a_planned_camera_for_newton_rtx():
+    """The shared visualizer alone cannot advertise a camera presenter."""
+    tree = ast.parse(
+        """
+class DemoCfg:
+    sim = MultiBackendSimulationCfg()
+"""
+    )
+    assert set(script_cases._preset_options(tree)["visualizer"]) == set(script_cases.VISUALIZERS) - {
+        "none",
+        "newton_rtx",
+    }
+
+    tree = ast.parse(
+        """
+class DemoCfg:
+    sim = MultiBackendSimulationCfg()
+    camera = MultiBackendCameraCfg()
+
+def main(cfg):
+    with ReplicateSession((cfg.camera,), 1, 0.0):
+        _camera = cfg.camera.class_type(cfg.camera)
+"""
+    )
+    assert "newton_rtx" in script_cases._preset_options(tree)["visualizer"]
+
+    tree = ast.parse(
+        """
+class SceneCfg(MultiBackendSceneCfg):
+    pass
+
+class DemoCfg:
+    sim = MultiBackendSimulationCfg()
+    scene = SceneCfg()
+
+def main(cfg):
+    scene = cfg.scene.class_type(cfg.scene)
+"""
+    )
+    assert "newton_rtx" in script_cases._preset_options(tree)["visualizer"]
+
+
+def test_discovered_newton_rtx_cases_all_own_their_camera_contract():
+    """No override or unrelated camera may create a false launch claim."""
+    claiming = [spec for spec in SPECS if "newton_rtx" in spec.visualizers]
+    assert claiming
+    for spec in claiming:
+        tree = ast.parse(spec.path.read_text(encoding="utf-8"), filename=str(spec.path))
+        assert script_cases._has_planned_newton_rtx_camera(tree), spec.relative_path
+
+    camera_less = next(spec for spec in SPECS if spec.relative_path == "scripts/demos/arl_robot_1.py")
+    assert "newton_rtx" not in camera_less.preset_options["visualizer"]
 
 
 @pytest.mark.parametrize(
@@ -611,21 +812,18 @@ def test_backend_availability_resolves_implementation_package(monkeypatch, backe
     assert queried == [package]
 
 
-def test_builtin_backend_availability_handles_default_and_isaac_rtx(monkeypatch):
+def test_builtin_backend_availability_handles_default_and_isaacsim_rtx(monkeypatch):
     """Built-in backend gates must not require an extension package lookup."""
     monkeypatch.setattr(script_cases.importlib.util, "find_spec", lambda name: None)
     assert backend_is_available("default")
-    assert backend_is_available("isaac_rtx") == (script_cases.ROOT / "_isaac_sim").exists()
+    assert backend_is_available("isaacsim_rtx") == (script_cases.ROOT / "_isaac_sim").exists()
 
 
-def test_visualizer_availability_requires_shared_and_backend_packages(monkeypatch):
-    """External visualizers require both the visualizer extension and selected implementation."""
-    available = {"isaaclab_visualizers", "isaaclab_newton", "rerun"}
+def test_visualizer_availability_requires_only_its_implementation_packages(monkeypatch):
+    """The camera presenter does not depend on the Newton physics package."""
+    available = {"isaaclab_visualizers", "rerun"}
     monkeypatch.setattr(script_cases.importlib.util, "find_spec", lambda name: object() if name in available else None)
-    assert visualizer_is_available("newton")
-    assert visualizer_is_available("newton_gl")
-    assert not visualizer_is_available("newton_rtx")
-    available.add("ovrtx")
+    assert not visualizer_is_available("newton_gl")
     assert visualizer_is_available("newton_rtx")
     assert visualizer_is_available("rerun")
     assert not visualizer_is_available("viser")
@@ -691,7 +889,7 @@ def test_standalone_script_remains_healthy_after_startup(case):
     missing_modules = [module for module in case.spec.required_modules if not script_cases.module_is_available(module)]
     if missing_modules:
         pytest.skip(f"required runtime module(s) not installed: {', '.join(missing_modules)}")
-    if case.visualizer in {"kit", "newton", "newton_gl", "newton_rtx"} and not gui_is_available():
+    if case.visualizer in {"kit", "newton_gl", "newton_rtx"} and not gui_is_available():
         pytest.skip("GUI smoke test requires DISPLAY or WAYLAND_DISPLAY")
     if not backend_is_available(case.physics_backend):
         pytest.skip(f"physics backend package for {case.physics_backend!r} is not installed")
@@ -780,7 +978,7 @@ def test_launch_matrix_runs_supported_case_with_screenshot(monkeypatch, tmp_path
     monkeypatch.setattr(module, "gui_is_available", lambda: True)
     monkeypatch.setattr(module, "backend_is_available", lambda backend: True)
     monkeypatch.setattr(module, "visualizer_is_available", lambda visualizer: True)
-    case = replace(next(case for case in build_cases(SPECS) if case.skip_reason is None), visualizer="newton")
+    case = replace(next(case for case in build_cases(SPECS) if case.skip_reason is None), visualizer="newton_gl")
     case = replace(case, spec=replace(case.spec, startup_timeout=600.0))
     calls = []
 

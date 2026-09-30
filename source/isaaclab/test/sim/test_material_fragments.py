@@ -13,6 +13,7 @@ simulation_app = AppLauncher(headless=True).app
 """Rest everything follows."""
 
 import pytest
+from isaaclab_physx.physics import PhysxCfg
 
 from pxr import UsdPhysics, UsdShade
 
@@ -65,7 +66,7 @@ def test_spawn_rigid_body_material_from_fragments_composes_namespaces():
     from isaaclab.sim.spawners.materials.physics_materials_cfg import UsdPhysicsRigidBodyMaterialCfg
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     prim = spawn_rigid_body_material_from_fragments(
         "/World/Mat",
@@ -91,7 +92,7 @@ def test_spawn_rigid_body_material_from_fragments_accepts_single_fragment():
     from isaaclab.sim.spawners.materials.physics_materials_cfg import UsdPhysicsRigidBodyMaterialCfg
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     prim = spawn_rigid_body_material_from_fragments(
         "/World/Mat2", UsdPhysicsRigidBodyMaterialCfg(static_friction=0.3), stage
@@ -110,7 +111,7 @@ def test_spawn_physics_material_dispatches_fragments_and_legacy():
     from isaaclab.sim.spawners.materials.physics_materials_cfg import UsdPhysicsRigidBodyMaterialCfg
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
 
     # tuple form is accepted by the low-level dispatcher alongside the list form used by cfg slots
     frag_prim = spawn_physics_material("/World/MaterialA", (UsdPhysicsRigidBodyMaterialCfg(static_friction=0.4),))
@@ -134,7 +135,7 @@ def test_spawn_physics_material_rejects_non_current_stage_for_legacy():
     from isaaclab.sim.spawners.materials import spawn_physics_material
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     other = Usd.Stage.CreateInMemory()
     with pytest.raises(ValueError, match="current stage"):
         spawn_physics_material("/World/MatOther", PhysxRigidBodyMaterialCfg(), stage=other)
@@ -156,7 +157,7 @@ def test_fragment_writer_validates_inputs_before_authoring():
     from isaaclab.sim.spawners.materials.physics_materials_cfg import UsdPhysicsRigidBodyMaterialCfg
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
 
     with pytest.raises(ValueError):
@@ -180,7 +181,7 @@ def test_spawn_rigid_body_material_from_fragments_leaves_none_fields_unwritten()
     from isaaclab.sim.spawners.materials.physics_materials_cfg import UsdPhysicsRigidBodyMaterialCfg
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     prim = spawn_rigid_body_material_from_fragments(
         "/World/Mat3", [UsdPhysicsRigidBodyMaterialCfg(static_friction=0.5)], stage
@@ -202,7 +203,7 @@ def test_usd_physics_rigid_body_material_density_round_trips():
     from isaaclab.sim.spawners.materials.physics_materials_cfg import UsdPhysicsRigidBodyMaterialCfg
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     prim = spawn_rigid_body_material_from_fragments(
         "/World/MatDensity", [UsdPhysicsRigidBodyMaterialCfg(density=1200.0)], stage
@@ -236,7 +237,7 @@ def test_physx_material_fragment_authors_damping_combine_mode_and_acceleration_s
     from isaaclab.sim.spawners.materials.physics_materials import spawn_rigid_body_material_from_fragments
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     prim = spawn_rigid_body_material_from_fragments(
         "/World/MatPhysxExtra",
@@ -261,7 +262,7 @@ def test_spawn_mesh_with_rigid_props_accepts_fragment_list_physics_material():
     from isaaclab.sim.spawners.meshes.meshes_cfg import MeshCuboidCfg
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     cfg = MeshCuboidCfg(
         size=(1.0, 1.0, 1.0),
@@ -291,7 +292,7 @@ def test_spawn_ground_plane_accepts_fragment_list_physics_material():
     from isaaclab.sim.spawners.materials.physics_materials_cfg import UsdPhysicsRigidBodyMaterialCfg
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     cfg = GroundPlaneCfg(physics_material=[UsdPhysicsRigidBodyMaterialCfg(static_friction=0.42)])
     prim = cfg.func("/World/groundPlane", cfg)
@@ -328,7 +329,7 @@ def test_spawn_mesh_with_rigid_props_accepts_legacy_physx_rigid_body_material():
     from isaaclab.sim.spawners.meshes.meshes_cfg import MeshCuboidCfg
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     cfg = MeshCuboidCfg(
         size=(1.0, 1.0, 1.0),
@@ -356,7 +357,7 @@ def test_spawn_mesh_with_rigid_props_accepts_legacy_newton_material():
     from isaaclab.sim.spawners.meshes.meshes_cfg import MeshCuboidCfg
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     cfg = MeshCuboidCfg(
         size=(1.0, 1.0, 1.0),
@@ -391,7 +392,7 @@ def test_legacy_physx_rigid_body_material_authors_damping_combine_mode_and_accel
     from isaaclab.sim.spawners.materials import spawn_rigid_body_material
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     cfg = PhysxRigidBodyMaterialCfg(damping_combine_mode="min", compliant_contact_acceleration_spring=True)
     prim = spawn_rigid_body_material("/World/MatLegacyPhysxExtra", cfg)
     assert "PhysxMaterialAPI" in prim.GetAppliedSchemas()
@@ -414,7 +415,7 @@ def test_create_prim_from_mesh_accepts_fragment_list():
     from isaaclab.terrains.utils import create_prim_from_mesh
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     mesh = trimesh.creation.box(extents=(1.0, 1.0, 0.2))
     create_prim_from_mesh(
         "/World/terrainFrag",
@@ -438,7 +439,7 @@ def test_legacy_base_cfg_authors_density():
     from isaaclab.sim.spawners.materials.physics_materials_cfg import RigidBodyMaterialBaseCfg
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     prim = spawn_rigid_body_material("/World/LegacyDensity", RigidBodyMaterialBaseCfg(density=800.0))
     assert prim.GetAttribute("physics:density").Get() == pytest.approx(800.0)
     # None default -> unauthored (backward compatible)
@@ -453,7 +454,9 @@ def test_public_default_material_types_remain_core_importable():
     from isaaclab.terrains.terrain_importer_cfg import TerrainImporterCfg
 
     defaults = (
-        SimulationCfg().physics_material,
+        SimulationCfg(
+            physics=PhysxCfg(),
+        ).physics_material,
         GroundPlaneCfg().physics_material,
         TerrainImporterCfg(prim_path="/World/terrain").physics_material,
     )

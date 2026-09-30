@@ -13,8 +13,8 @@ For most new Newton solvers, the integration surface is intentionally small:
   :class:`~isaaclab_newton.physics.NewtonSolverCfg`;
 * point the config's ``class_type`` at a manager subclass;
 * implement ``_build_solver()`` in that manager;
-* set the three base-manager slots: ``_solver``, ``_use_single_state``, and
-  ``_needs_collision_pipeline``.
+* set ``_solver``, ``_use_single_state``, ``_needs_collision_pipeline``, and the
+  shared resource's ``_supports_rigid_body_force_input`` capability.
 
 The existing MuJoCo Warp, XPBD, Featherstone, and Kamino managers are examples
 of this pattern.
@@ -35,24 +35,15 @@ dispatch target:
     @configclass
     class MySolverCfg(NewtonSolverCfg):
         class_type: type[NewtonManager] | str = "{DIR}.my_solver_manager:NewtonMySolverManager"
-        solver_type: str = "my_solver"
         iterations: int = 16
 
 
-``NewtonCfg`` copies ``solver_cfg.class_type`` into its own ``class_type`` in
-``__post_init__``. User code keeps the normal shape:
+User code passes the concrete solver config directly to the simulation:
 
 .. code-block:: python
 
     from isaaclab.sim import SimulationCfg
-    from isaaclab_newton.physics import NewtonCfg
-
-    sim_cfg = SimulationCfg(
-        physics=NewtonCfg(
-            solver_cfg=MySolverCfg(iterations=32),
-            num_substeps=2,
-        )
-    )
+    sim_cfg = SimulationCfg(physics=MySolverCfg(iterations=32, num_substeps=2))
 
 
 The manager then owns solver construction:
@@ -66,11 +57,11 @@ The manager then owns solver construction:
 
 
     class NewtonMySolverManager(NewtonManager):
-        @classmethod
-        def _build_solver(cls, model: Model, solver_cfg: MySolverCfg) -> None:
-            NewtonManager._solver = SolverMySolver(model, iterations=solver_cfg.iterations)
-            NewtonManager._use_single_state = False
-            NewtonManager._needs_collision_pipeline = True
+        def _build_solver(self, model: Model, solver_cfg: MySolverCfg) -> None:
+            self._solver = SolverMySolver(model, iterations=solver_cfg.iterations)
+            self._use_single_state = False
+            self._needs_collision_pipeline = True
+            self._newton._supports_rigid_body_force_input = True
 
 
 ``_use_single_state`` tells the base manager whether the solver advances in
@@ -92,16 +83,7 @@ solver actually needs it:
   such as rebuilding a BVH.
 * ``_reset_solver_internals(world_mask)``: clear solver-owned state for reset
   environments.
-* ``start_simulation()`` or ``instantiate_builder_from_stage()``: customize model
-  building or post-finalize setup.
-* ``_register_builder_attributes(builder)``: register solver-specific Newton
-  custom attributes (particle, shape, body) on the builder before particles or
-  finalize run. The active manager class invokes this hook from
-  ``create_builder()``, ``start_simulation()``, and
-  ``instantiate_builder_from_stage()``.
-  :class:`~isaaclab_newton.physics.NewtonMPMManager` is the in-tree example —
-  it registers ``mpm:young_modulus`` and the rest of the implicit MPM
-  particle attributes.
+* ``start_simulation()``: customize post-clone model finalization.
 * ``_prepare_builder_for_finalize(builder)``: normalize imported or replicated
   builder data right before ``ModelBuilder.finalize()``.
   :class:`~isaaclab_newton.physics.NewtonMPMManager` uses this to clear mass and
@@ -113,13 +95,17 @@ solver actually needs it:
 * ``_requires_initial_reset_before_graph_capture()``: delay headless CUDA graph
   capture until the first post-reset step when solver resources depend on
   reset-authored state.
-* ``_solver_specific_clear()``: release any class-level state owned by the
+* ``_solver_specific_clear()``: release instance state owned by the
   solver manager.
+
+Builder attributes belong to the operation that emits the corresponding data,
+not to the active solver manager. For example, the declarative MPM particle
+spawner registers ``mpm:*`` attributes immediately before it adds particles.
 
 For implicit MPM, use a fixed grid or follow Newton's rebuildable-sparse capture
 requirements, including a positive ``max_active_cell_count``. Dense and
 unbounded sparse grids fall back to eager execution with a warning when
-``NewtonCfg.use_cuda_graph`` is enabled.
+``NewtonSolverCfg.use_cuda_graph`` is enabled.
 
 Keep the manager name prefixed with ``Newton`` and the solver config grouped
 with the other Newton solver configs so autocomplete and backend discovery stay
@@ -239,12 +225,12 @@ Tune the coupled contact behavior before training a policy:
   friction value. Use
   :attr:`~isaaclab_newton.physics.NewtonSoftContactCfg.soft_contact_kd` for
   stabilization if contacts chatter.
-  Set this configuration on the outer
-  :attr:`~isaaclab_newton.physics.NewtonCfg.soft_contact_cfg` field.
+  Set this configuration on the concrete solver's
+  :attr:`~isaaclab_newton.physics.NewtonSolverCfg.soft_contact_cfg` field.
 * Tune the ``soft_contact_*`` values together with the rigid shape contact
   material, because the shape's ``ke``/``kd``/``mu`` also affect the effective
   contact. Set shape defaults via
-  :class:`~isaaclab_newton.physics.NewtonShapeCfg` on ``NewtonCfg.default_shape_cfg``,
+  :class:`~isaaclab_newton.physics.NewtonShapeCfg` on ``NewtonSolverCfg.default_shape_cfg``,
   or override per asset through the asset's Newton contact material.
 * If ``soft_contact_ke`` is not sufficient, or ``soft_contact_mu`` must be
   unphysically high, tune the Franka arm and hand actuator stiffness and maximum

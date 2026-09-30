@@ -32,7 +32,6 @@ pytest.importorskip("ovphysx.types", reason="ovphysx wheel not installed")
 import warp as wp  # noqa: E402
 from isaaclab_ov.sim.views.ovphysx_view import (  # noqa: E402
     OvPhysxView,
-    OvPhysxViewError,
     attribute_vocabulary,
     is_cpu_only,
     is_read_only,
@@ -292,7 +291,7 @@ def test_eager_creates_requested_and_exposes_metadata():
 def test_eager_default_sweep_empty_view_raises():
     # Default sweep (no tensor_types) on a pattern that matches nothing -> aggregate raise.
     physx = _FakePhysX(all_unavailable=True)
-    with pytest.raises(OvPhysxViewError, match="Could not create any bindings"):
+    with pytest.raises(OvPhysxView.OvPhysxViewError, match="Could not create any bindings"):
         OvPhysxView(physx, pattern="/no/match", device="cpu", eager=True)
 
 
@@ -630,7 +629,7 @@ def test_close_destroys_bindings_and_clears_caches():
     assert view._bindings == {}
     assert view._read_views == {}
     assert view._physx is None
-    with pytest.raises(OvPhysxViewError, match="closed"):
+    with pytest.raises(OvPhysxView.OvPhysxViewError, match="closed"):
         view.binding_for("rigid_body_pose")
 
 

@@ -3,54 +3,43 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Backend-dispatching FrameView.
-
-``FrameView(path, device=...)`` automatically selects the right backend:
-- PhysX: :class:`~isaaclab_physx.sim.views.FabricFrameView`
-- Newton: :class:`~isaaclab_newton.sim.views.NewtonSiteFrameView`
-"""
+"""Backend-dispatching FrameView."""
 
 from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from isaaclab.utils.backend_utils import FactoryBase
 
 from .base_frame_view import BaseFrameView
 
+if TYPE_CHECKING:
+    from isaaclab.sim import SimulationContext
+
 
 class FrameView(FactoryBase, BaseFrameView):
     """FrameView that dispatches to the active physics backend.
 
-    Callers use ``FrameView(prim_path, device=device)`` and get the
-    correct implementation automatically:
+    An active :class:`~isaaclab.sim.SimulationContext` selects the implementation:
 
-    - **PhysX / no backend**: :class:`~isaaclab_physx.sim.views.FabricFrameView`
-      (Fabric GPU acceleration with USD fallback).
+    - **PhysX**: :class:`~isaaclab_physx.sim.views.PhysxFrameView`
+      (Warp-native, reads body poses through the scene-data provider).
     - **OVPhysX**: :class:`~isaaclab_ov.sim.views.OvPhysxFrameView`
-      (Warp-native, reads body poses via an OVPhysX ``RIGID_BODY_POSE``
-      tensor binding).
+      (Warp-native, reads body poses through the scene-data provider).
     - **Newton**: :class:`~isaaclab_newton.sim.views.NewtonSiteFrameView`
-      (Warp-native, reads ``body_q`` from the Newton state).
+      (Warp-native, reads body poses through the scene-data provider).
     """
 
     _backend_class_names = {
-        "physx": "FabricFrameView",
+        "physx": "PhysxFrameView",
         "ovphysx": "OvPhysxFrameView",
         "newton": "NewtonSiteFrameView",
     }
 
     @classmethod
-    def _get_backend(cls, *args, **kwargs) -> str:
-        from isaaclab.sim.simulation_context import SimulationContext  # noqa: PLC0415
-
-        ctx = SimulationContext.instance()
-        if ctx is None:
-            return "physx"
-        manager_name = ctx.physics_manager.__name__.lower()
-        if "newton" in manager_name:
-            return "newton"
-        if "ovphysx" in manager_name:
-            return "ovphysx"
-        return "physx"
+    def _get_backend(cls, _prim_path, simulation_context: SimulationContext, *_args, **_kwargs) -> str:
+        """Select the backend from the explicitly owned simulation context."""
+        return simulation_context.physics_backend
 
     def __new__(cls, *args, **kwargs) -> BaseFrameView:
         """Create a new FrameView for the active physics backend."""

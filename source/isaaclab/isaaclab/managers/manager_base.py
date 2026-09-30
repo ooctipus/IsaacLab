@@ -7,14 +7,13 @@ from __future__ import annotations
 
 import copy
 import inspect
-import weakref
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import fields
 from typing import TYPE_CHECKING, Any
 
 import isaaclab.utils.string as string_utils
-from isaaclab.physics import PhysicsEvent, PhysicsManager
+from isaaclab.physics import PhysicsEvent
 from isaaclab.utils import class_to_dict, string_to_callable
 from isaaclab.utils.modifiers import ModifierCfg
 
@@ -154,17 +153,8 @@ class ManagerBase(ABC):
         # entities configuration. this is needed for cases where the manager is created after the
         # simulation, but before the simulation is playing.
         if not self._env.sim.is_playing():
-            # note: Use weakref on all callbacks to ensure that this object can be deleted when its destructor
-            # is called. The order is set to 20 to allow asset/sensor initialization to complete before the
-            # scene entities are resolved. Those have the order 10.
-
-            physics_mgr_cls = self._env.sim.physics_manager
-            obj_ref = weakref.proxy(self)
-
-            self._resolve_terms_handle = physics_mgr_cls.register_callback(
-                lambda payload: PhysicsManager.safe_callback_invoke(
-                    obj_ref._resolve_terms_callback, None, physics_manager=physics_mgr_cls
-                ),
+            self._resolve_terms_handle = self._env.sim._register_physics_callback(
+                self._resolve_terms_callback,
                 PhysicsEvent.PHYSICS_READY,
                 order=20,
             )

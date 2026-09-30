@@ -19,14 +19,13 @@ import numpy as np
 import torch
 
 from isaaclab.managers import EventManager
-from isaaclab.scene import InteractiveScene
 from isaaclab.sim import SimulationContext
 from isaaclab.sim.utils.stage import use_stage
 from isaaclab.utils.noise import NoiseModel
 from isaaclab.utils.seed import configure_seed
 from isaaclab.utils.timer import Timer
 
-from .common import ActionType, AgentID, EnvStepReturn, ObsType, StateType, _apply_deprecated_viewer_cfg
+from .common import ActionType, AgentID, EnvStepReturn, ObsType, StateType
 from .direct_marl_env_cfg import DirectMARLEnvCfg
 from .utils.spaces import sample_space, spec_to_gym_space
 from .utils.video_recorder import VideoRecorder
@@ -87,16 +86,6 @@ class DirectMARLEnv(gym.Env):
         # initialize internal variables
         self._physics_handles_decimation = False
 
-        # set the seed for the environment
-        if self.cfg.seed is not None:
-            self.cfg.seed = self.seed(self.cfg.seed)
-        else:
-            logger.warning("Seed not set for the environment. The environment creation may not be deterministic.")
-
-        # Backwards-compat: if the deprecated viewer field has non-default eye/lookat, apply
-        # them to sim.default_visualizer_cfg so the scene camera still matches user intent.
-        _apply_deprecated_viewer_cfg(self.cfg)
-
         # create a simulation context to control the simulator
         if SimulationContext.instance() is None:
             self.sim: SimulationContext = SimulationContext(self.cfg.sim)
@@ -106,6 +95,10 @@ class DirectMARLEnv(gym.Env):
         # From this point on, if __init__ fails we must tear down the SimulationContext
         # singleton so that callers (tests, training loops) can retry or proceed.
         try:
+            if self.cfg.seed is not None:
+                self.cfg.seed = self.seed(self.cfg.seed)
+            else:
+                logger.warning("Seed not set for the environment. The environment creation may not be deterministic.")
             self._init_sim(render_mode, **kwargs)
         except Exception:
             self.sim.clear_instance()
@@ -142,9 +135,10 @@ class DirectMARLEnv(gym.Env):
         with Timer("[INFO]: Time taken for scene creation", "scene_creation", activity="Creating scene"):
             # set the stage context for scene creation steps which use the stage
             with use_stage(self.sim.stage):
-                self.scene = InteractiveScene(self.cfg.scene)
+                self.scene = self.cfg.scene.class_type(self.cfg.scene)
                 self._setup_scene()
-            self.sim.register_interactive_scene(self.scene)
+                if self.sim.get_clone_plan() is None:
+                    raise RuntimeError("The configured direct scene must publish and replicate one ClonePlan.")
         print("[INFO]: Scene manager: ", self.scene)
 
         # create event manager
@@ -175,8 +169,7 @@ class DirectMARLEnv(gym.Env):
             self.scene.update(dt=self.physics_dt)
         # let the physics backend know about the env decimation so it can
         # fold the full loop into a single step() when possible
-        self.sim.physics_manager.set_decimation(self.cfg.decimation)
-        self._physics_handles_decimation = self.sim.physics_manager.handles_decimation()
+        self._physics_handles_decimation = self.sim._configure_decimation(self.cfg.decimation)
 
         # check if debug visualization is has been implemented by the environment
         source_code = inspect.getsource(self._set_debug_vis_impl)
@@ -353,6 +346,10 @@ class DirectMARLEnv(gym.Env):
         indices = torch.arange(self.num_envs, dtype=torch.int64, device=self.device)
         self._reset_idx(indices)
 
+        self.scene.write_data_to_sim()
+        self.sim.forward()
+        self._refresh_task_state()
+
         # update observations and the list of current agents (sorted as in possible_agents)
         self.obs_dict = self._get_observations()
         self.agents = [agent for agent in self.possible_agents if agent in self.obs_dict]
@@ -439,6 +436,8 @@ class DirectMARLEnv(gym.Env):
                 # update buffers at sim dt
                 self.scene.update(dt=self.physics_dt)
 
+        self._refresh_task_state()
+
         # post-step:
         # -- update env counters (used for curriculum generation)
         self.episode_length_buf += 1  # step in current episode (per env)
@@ -450,6 +449,7 @@ class DirectMARLEnv(gym.Env):
 
         # -- reset envs that terminated/timed-out and log the episode information
         reset_env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1)
+        reset_occurred = len(reset_env_ids) > 0
         if len(reset_env_ids) > 0:
             # capture the per-agent terminal observation before reset and expose it for Same-Step
             # autoreset. apply the same observation noise as the returned obs so the bootstrapped
@@ -474,6 +474,12 @@ class DirectMARLEnv(gym.Env):
                 for agent in self.terminated_dict:
                     self.terminated_dict[agent][manual_reset_ids] = True
                 self._reset_idx(manual_reset_ids)
+                reset_occurred = True
+
+        if reset_occurred:
+            self.scene.write_data_to_sim()
+            self.sim.forward()
+            self._refresh_task_state()
 
         # post-step: step interval event
         if self.cfg.events:
@@ -530,15 +536,14 @@ class DirectMARLEnv(gym.Env):
         Returns:
             The seed used for random generator.
         """
-        # set seed for replicator
+        seed = configure_seed(seed)
         try:
             import omni.replicator.core as rep
 
             rep.set_global_seed(seed)
         except ModuleNotFoundError:
             pass
-        # set seed for torch and other libraries
-        return configure_seed(seed)
+        return seed
 
     def render(self, recompute: bool = False) -> np.ndarray | None:
         """Run rendering without stepping through the physics.
@@ -728,22 +733,20 @@ class DirectMARLEnv(gym.Env):
         # reset the episode length buffer
         self.episode_length_buf[env_ids] = 0
 
-        self.sim.render_context.reset_scene_state_cadence()
-
     """
     Implementation-specific functions.
     """
 
     def _setup_scene(self):
-        """Setup the scene for the environment.
+        """Perform optional task-specific setup after the configured scene is constructed.
 
-        This function is responsible for creating the scene objects and setting up the scene for the environment.
-        The scene creation can happen through :class:`isaaclab.scene.InteractiveSceneCfg` or through
-        directly creating the scene objects and registering them with the scene manager.
-
-        We leave the implementation of this function to the derived classes. If the environment does not require
-        any explicit scene setup, the function can be left empty.
+        Assets and sensors belong on :attr:`DirectMARLEnvCfg.scene`; implementations must not construct,
+        spawn, or clone them here.
         """
+        pass
+
+    def _refresh_task_state(self):
+        """Refresh derived task state after a simulation lifecycle boundary."""
         pass
 
     @abstractmethod

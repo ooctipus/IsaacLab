@@ -15,7 +15,13 @@ from typing import TYPE_CHECKING, cast
 import pytest
 import torch
 
-from isaaclab.managers import ObservationGroupCfg, ObservationManager, ObservationTermCfg
+from isaaclab.managers import (
+    ManagerTermBase,
+    ObservationGroupCfg,
+    ObservationManager,
+    ObservationTermCfg,
+    SceneEntityCfg,
+)
 from isaaclab.utils import modifiers
 from isaaclab.utils.configclass import configclass
 
@@ -27,7 +33,22 @@ if TYPE_CHECKING:
 
 def dummy_observation(env: DummyEnv) -> torch.Tensor:
     """Return the dummy environment observation."""
+    env.term_calls += 1
     return env.observation
+
+
+def selected_body_observation(env: DummyEnv, sensor_cfg: SceneEntityCfg) -> torch.Tensor:
+    """Return a body-sized observation without participating in shape discovery."""
+    env.term_calls += 1
+    return env.observation.expand(-1, 6 * len(sensor_cfg.body_ids))
+
+
+def _selected_body_output_shape(env: DummyEnv, sensor_cfg: SceneEntityCfg, **_: object) -> tuple[int, ...]:
+    env.shape_calls += 1
+    return (6 * len(sensor_cfg.body_ids),)
+
+
+selected_body_observation._output_shape = _selected_body_output_shape
 
 
 class DummySimulation:
@@ -46,6 +67,35 @@ class DummyEnv:
         self.device = "cpu"
         self.sim = DummySimulation()
         self.observation = torch.arange(num_envs, dtype=torch.float32).unsqueeze(-1)
+        self.term_calls = 0
+        self.term_resets = 0
+        self.shape_calls = 0
+        self.scene = {
+            "sensor": type(
+                "DummyEntity",
+                (),
+                {
+                    "body_names": ["left", "middle", "right"],
+                    "num_bodies": 3,
+                    "find_bodies": lambda self, names, preserve_order=False: ([0, 2], names),
+                },
+            )()
+        }
+
+
+class DeclaredShapeObservation(ManagerTermBase):
+    """Observation term whose shape is known without evaluating it."""
+
+    def __init__(self, cfg: ObservationTermCfg, env: ManagerBasedEnv):
+        super().__init__(cfg, env)
+        self._output_shape = (3,)
+
+    def reset(self, env_ids=None) -> None:
+        self._env.term_resets += 1
+
+    def __call__(self, env: DummyEnv) -> torch.Tensor:
+        env.term_calls += 1
+        return env.observation.expand(-1, 3)
 
 
 class StatefulBiasModifier(modifiers.ModifierBase):
@@ -146,6 +196,67 @@ def test_modifier_resolution_stays_out_of_observation_manager():
 def test_modifier_base_cfg_marker_does_not_exist():
     """Stateful modifiers must not require a marker configuration subtype."""
     assert not hasattr(modifiers, "ModifierBaseCfg")
+
+
+@configclass
+class DeclaredShapeObservationsCfg:
+    """Observation configuration with a class-declared output shape."""
+
+    @configclass
+    class PolicyCfg(ObservationGroupCfg):
+        declared: ObservationTermCfg = ObservationTermCfg(func=DeclaredShapeObservation)
+
+    policy: PolicyCfg = PolicyCfg()
+
+
+@configclass
+class ResolvedShapeObservationsCfg:
+    """Observation configuration whose shape depends on a resolved scene entity."""
+
+    @configclass
+    class PolicyCfg(ObservationGroupCfg):
+        selected: ObservationTermCfg = ObservationTermCfg(
+            func=selected_body_observation,
+            params={"sensor_cfg": SceneEntityCfg("sensor", body_names=["left", "right"])},
+        )
+
+    policy: PolicyCfg = PolicyCfg()
+
+
+def test_declared_shape_skips_construction_probe_and_reset():
+    """A declared term shape must not execute or reset the term during manager construction."""
+    env = DummyEnv()
+    manager = ObservationManager(DeclaredShapeObservationsCfg(), cast("ManagerBasedEnv", env))
+
+    assert env.term_calls == 0
+    assert env.term_resets == 0
+    assert manager.group_obs_term_dim["policy"] == [(3,)]
+
+    observations = manager.compute()["policy"]
+    assert env.term_calls == 1
+    assert observations.shape == (env.num_envs, 3)
+
+
+def test_resolved_shape_invokes_only_resolver_during_construction():
+    """Dynamic shapes see resolved entity ids without evaluating the observation."""
+    env = DummyEnv()
+    manager = ObservationManager(ResolvedShapeObservationsCfg(), cast("ManagerBasedEnv", env))
+
+    assert env.shape_calls == 1
+    assert env.term_calls == 0
+    assert manager.group_obs_term_dim["policy"] == [(12,)]
+
+    observations = manager.compute()["policy"]
+    assert env.term_calls == 1
+    assert observations.shape == (env.num_envs, 12)
+
+
+def test_legacy_term_retains_single_construction_probe():
+    """Pure legacy functions without shape metadata retain one-call inference."""
+    env = DummyEnv()
+    ObservationManager(HistoryObservationsCfg(), cast("ManagerBasedEnv", env))
+
+    assert env.term_calls == 1
 
 
 def test_compute_updates_history_only_when_requested():

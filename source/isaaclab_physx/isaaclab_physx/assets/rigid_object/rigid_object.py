@@ -13,16 +13,14 @@ import numpy as np
 import torch
 import warp as wp
 
-from pxr import UsdPhysics
-
 import isaaclab.utils.string as string_utils
 from isaaclab.assets.rigid_object.base_rigid_object import BaseRigidObject
-from isaaclab.sim.utils.queries import path_expr_to_glob, resolve_matching_prims_from_source
+from isaaclab.sim import SimulationContext
+from isaaclab.sim.utils.queries import path_expr_to_glob
 from isaaclab.utils.warp import ProxyArray
 from isaaclab.utils.wrench_composer import WrenchComposer
 
 from isaaclab_physx.assets import kernels as shared_kernels
-from isaaclab_physx.physics import PhysxManager as SimulationManager
 
 from .rigid_object_data import RigidObjectData
 
@@ -996,13 +994,9 @@ class RigidObject(BaseRigidObject):
 
     def _initialize_impl(self):
         # obtain global simulation view
-        self._physics_sim_view = SimulationManager.get_physics_sim_view()
-
-        def has_rigid_body_api(prim) -> bool:
-            return bool(prim.HasAPI(UsdPhysics.RigidBodyAPI))
-
-        resolve_kwargs = {"predicate": has_rigid_body_api, "expected_num_matches": 1}
-        _, root_prim_path_expr = resolve_matching_prims_from_source(self.cfg.prim_path, **resolve_kwargs)[0]
+        self._physics_sim_view = self._physics_manager.get_physics_sim_view()
+        layout = SimulationContext.instance().get_clone_plan()
+        root_prim_path_expr = layout.match_rigid_body(self.cfg.prim_path).view_path
         # -- object view
         self._root_view = self._physics_sim_view.create_rigid_body_view(path_expr_to_glob(root_prim_path_expr))
 
@@ -1011,7 +1005,7 @@ class RigidObject(BaseRigidObject):
             raise RuntimeError(f"Failed to create rigid body at: {self.cfg.prim_path}. Please check PhysX logs.")
 
         # container for data access
-        self._data = RigidObjectData(self.root_view, self.device)
+        self._data = RigidObjectData(self.root_view, self.device, self._physics_manager)
 
         # create buffers
         self._create_buffers()

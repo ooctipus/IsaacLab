@@ -14,7 +14,6 @@ import torch
 
 from isaaclab.assets import Articulation
 from isaaclab.managers import CommandTerm
-from isaaclab.markers import VisualizationMarkers
 from isaaclab.terrains import TerrainImporter
 from isaaclab.utils.math import quat_apply_inverse, quat_from_euler_xyz, wrap_to_pi, yaw_quat
 
@@ -153,7 +152,9 @@ class UniformPose2dCommand(CommandTerm):
         # create markers if necessary for the first time
         if debug_vis:
             if not hasattr(self, "goal_pose_visualizer"):
-                self.goal_pose_visualizer = VisualizationMarkers(self.cfg.goal_pose_visualizer_cfg)
+                self.goal_pose_visualizer = self.cfg.goal_pose_visualizer_cfg.class_type(
+                    self.cfg.goal_pose_visualizer_cfg
+                )
             # set their visibility to true
             self.goal_pose_visualizer.set_visibility(True)
         else:

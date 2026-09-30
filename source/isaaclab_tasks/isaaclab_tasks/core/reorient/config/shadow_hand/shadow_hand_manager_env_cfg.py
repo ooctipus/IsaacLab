@@ -22,6 +22,7 @@ from isaaclab_tasks.core.reorient.config.shadow_hand.shadow_hand_common import (
 )
 from isaaclab_tasks.core.reorient.reorient_manager_env_cfg import (
     ActionsCfg,
+    CommandsCfg,
     ReorientFullStateObsCfg,
     ReorientManagerEnvBaseCfg,
     ReorientSceneBaseCfg,
@@ -75,10 +76,11 @@ class ShadowHandManagerEnvCfg(ReorientManagerEnvBaseCfg):
     fingertip_body_names = FINGERTIP_NAMES
     actuated_joint_names = JOINT_NAMES
     goal_orientation_threshold = 0.1
-    goal_marker_cfg = GOAL_OBJECT_CFG
     decimation = 2
 
     actions: ShadowHandActionsCfg = ShadowHandActionsCfg()
+    commands: CommandsCfg = CommandsCfg()
+    commands.object_pose.goal_pose_visualizer_cfg = GOAL_OBJECT_CFG
     scene: ShadowHandManagerSceneCfg = ShadowHandManagerSceneCfg()
     # ``presets=randomized`` adds the domain-randomization terms
     events: ShadowHandManagerEventPresetCfg = ShadowHandManagerEventPresetCfg()

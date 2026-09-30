@@ -33,12 +33,6 @@ parser.add_argument(
 parser.add_argument("--demo", type=str, default=None, help="The demo in the input dataset to use, e.g. 'demo_0'")
 parser.add_argument("--num_runs", type=int, default=1, help="The number of trajectories to generate.")
 parser.add_argument(
-    "--draw_visualization",
-    action="store_true",
-    default=False,
-    help="Draw the occupancy map and path planning visualization.",
-)
-parser.add_argument(
     "--angular_gain",
     type=float,
     default=2.0,
@@ -140,9 +134,10 @@ import warp as wp
 
 import omni.kit
 import omni.kit.viewport.utility
-import omni.usd
 
+from isaaclab.assets import AssetBaseCfg
 from isaaclab.managers import DatasetExportMode
+from isaaclab.sim.spawners.from_files.from_files_cfg import UsdFileCfg
 from isaaclab.utils.configclass import configclass
 from isaaclab.utils.datasets import EpisodeData, HDF5DatasetFileHandler
 from isaaclab.utils.math import convert_quat
@@ -161,7 +156,6 @@ from isaaclab_mimic.locomanipulation_sdg.occupancy_map_utils import (
     OccupancyMap,
     OccupancyMapDataValue,
     merge_occupancy_maps,
-    occupancy_map_add_to_stage,
 )
 from isaaclab_mimic.locomanipulation_sdg.path_utils import ParameterizedPath, plan_path
 from isaaclab_mimic.locomanipulation_sdg.scene_utils import RelativePose, place_randomly
@@ -419,7 +413,6 @@ def setup_navigation_scene(
     input_episode_data: EpisodeData,
     approach_distance: float,
     randomize_placement: bool = True,
-    draw_visualization: bool = False,
 ) -> NavigationScene | None:
     """Set up the navigation scene with occupancy map and path planning.
 
@@ -428,7 +421,6 @@ def setup_navigation_scene(
         input_episode_data: Input episode data
         approach_distance: Buffer distance from final goal
         randomize_placement: Whether to randomize fixture placement
-        draw_visualization: Whether to add occupancy map and path to the USD stage
 
     Returns:
         NavigationScene or None if the navigation scene setup failed.
@@ -507,15 +499,6 @@ def setup_navigation_scene(
         return None
 
     sync_simulation_state(env)
-
-    if draw_visualization:
-        occupancy_map_add_to_stage(
-            occupancy_map,
-            stage=omni.usd.get_context().get_stage(),
-            path="/OccupancyMap",
-            z_offset=0.01,
-            draw_path=base_path_helper.points,
-        )
 
     return NavigationScene(
         occupancy_map=occupancy_map,
@@ -832,7 +815,6 @@ def replay(
     input_episode_data: EpisodeData,
     lift_step: int,
     navigate_step: int,
-    draw_visualization: bool = False,
     angular_gain: float = 2.0,
     linear_gain: float = 1.0,
     linear_max: float = 1.0,
@@ -857,7 +839,6 @@ def replay(
         input_episode_data: Static manipulation episode data to replay
         lift_step: Recording step where lifting phase begins
         navigate_step: Recording step where navigation phase begins
-        draw_visualization: Whether to visualize occupancy map and path
         angular_gain: Proportional gain for angular velocity control
         linear_gain: Proportional gain for linear velocity control
         linear_max: Maximum linear velocity (m/s)
@@ -892,9 +873,7 @@ def replay(
         approach_distance=approach_distance,
     )
 
-    nav_scene = setup_navigation_scene(
-        env, input_episode_data, approach_distance, randomize_placement, draw_visualization
-    )
+    nav_scene = setup_navigation_scene(env, input_episode_data, approach_distance, randomize_placement)
     if nav_scene is None:
         print("Failed to setup navigation scene", flush=True)
         return False
@@ -1002,10 +981,15 @@ if __name__ == "__main__":
         env_cfg.recorders.export_in_record_pre_reset = True
 
         if args_cli.background_usd_path is not None and args_cli.background_occupancy_yaml_file is not None:
-            env_cfg.background_usd_path = args_cli.background_usd_path
+            env_cfg.scene.background = AssetBaseCfg(
+                prim_path="{ENV_REGEX_NS}/Background",
+                spawn=UsdFileCfg(usd_path=args_cli.background_usd_path),
+            )
+            env_cfg.scene.ground.spawn.visible = False
             env_cfg.background_occupancy_yaml_file = args_cli.background_occupancy_yaml_file
 
-        env_cfg.high_res_video = args_cli.high_res_video
+        env_cfg.scene.robot_pov_cam.height = 540 if args_cli.high_res_video else 160
+        env_cfg.scene.robot_pov_cam.width = 960 if args_cli.high_res_video else 256
 
         env = gym.make(args_cli.task, cfg=env_cfg).unwrapped
 
@@ -1040,7 +1024,6 @@ if __name__ == "__main__":
                 input_episode_data=input_episode_data,
                 lift_step=args_cli.lift_step,
                 navigate_step=args_cli.navigate_step,
-                draw_visualization=args_cli.draw_visualization,
                 angular_gain=args_cli.angular_gain,
                 linear_gain=args_cli.linear_gain,
                 linear_max=args_cli.linear_max,

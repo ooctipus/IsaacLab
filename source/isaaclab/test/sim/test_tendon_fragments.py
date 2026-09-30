@@ -16,6 +16,7 @@ import dataclasses
 
 import pytest
 from isaaclab_newton.sim.schemas import MujocoFixedTendonCfg, apply_mujoco_fixed_tendon
+from isaaclab_physx.physics import PhysxCfg
 from isaaclab_physx.sim.schemas import (
     PhysxFixedTendonPropertiesCfg,
     PhysxSpatialTendonPropertiesCfg,
@@ -41,7 +42,7 @@ pytestmark = pytest.mark.integration
 
 def _new_sim():
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     return sim_utils.get_current_stage()
 
 

@@ -8,15 +8,16 @@
 from isaaclab.app import AppLauncher
 
 # launch omniverse app
-simulation_app = AppLauncher(headless=True).app
+simulation_app = AppLauncher(headless=True, device="cpu").app
 
 """Rest everything follows."""
 
 import pytest
 import torch
+from isaaclab_physx.physics import PhysxCfg
 
 from isaaclab.managers import TerminationManager, TerminationTermCfg
-from isaaclab.sim import SimulationContext
+from isaaclab.sim import SimulationCfg, SimulationContext
 
 pytestmark = pytest.mark.integration
 
@@ -49,10 +50,16 @@ def fail_every_3_steps(env) -> torch.Tensor:
     return torch.full((env.num_envs,), cond, dtype=torch.bool, device=env.device)
 
 
+def fail_selected_envs(env, term: str) -> torch.Tensor:
+    """Return the environment mask selected for a term by the test."""
+    return env.term_masks[term]
+
+
 @pytest.fixture
 def env():
-    sim = SimulationContext()
-    return DummyEnv(num_envs=20, device="cpu", sim=sim)
+    sim = SimulationContext(SimulationCfg(device="cpu", physics=PhysxCfg()))
+    yield DummyEnv(num_envs=20, device="cpu", sim=sim)
+    sim.clear_instance()
 
 
 def test_initial_state_and_shapes(env):
@@ -65,60 +72,77 @@ def test_initial_state_and_shapes(env):
     # Active term names
     assert tm.active_terms == ["term_5", "term_10"]
 
-    # Internal buffers have expected shapes and start as all False
-    assert tm._term_dones.shape == (env.num_envs, 2)
-    assert tm._last_episode_dones.shape == (env.num_envs, 2)
+    # Public term values have expected shapes and start as all False
+    assert tm.get_term("term_5").shape == (env.num_envs,)
+    assert tm.get_term("term_10").shape == (env.num_envs,)
     assert tm.dones.shape == (env.num_envs,)
     assert tm.time_outs.shape == (env.num_envs,)
     assert tm.terminated.shape == (env.num_envs,)
-    assert torch.all(~tm._term_dones) and torch.all(~tm._last_episode_dones)
+    assert torch.all(~tm.get_term("term_5")) and torch.all(~tm.get_term("term_10"))
 
 
-def test_term_transitions_and_persistence(env):
-    """Concise transitions: single fire, persist, switch, both, persist.
-
-    Uses 3-step and 5-step terms and verifies current-step values and last-episode persistence.
-    """
+def test_term_transitions_and_reset_metrics(env):
+    """Reset metrics report the terms that ended the current episodes."""
     cfg = {
         "term_3": TerminationTermCfg(func=fail_every_3_steps, time_out=False),
         "term_5": TerminationTermCfg(func=fail_every_5_steps, time_out=False),
     }
     tm = TerminationManager(cfg, env)
 
-    # step 3: only term_3 -> last_episode [True, False]
     env.counter = 3
     out = tm.compute()
     assert torch.all(tm.get_term("term_3")) and torch.all(~tm.get_term("term_5"))
     assert torch.all(out)
-    assert torch.all(tm._last_episode_dones[:, 0]) and torch.all(~tm._last_episode_dones[:, 1])
+    assert tm.reset() == {"Episode_Termination/term_3": 1.0, "Episode_Termination/term_5": 0.0}
 
-    # step 4: none -> last_episode persists [True, False]
     env.counter = 4
     out = tm.compute()
     assert torch.all(~out)
     assert torch.all(~tm.get_term("term_3")) and torch.all(~tm.get_term("term_5"))
-    assert torch.all(tm._last_episode_dones[:, 0]) and torch.all(~tm._last_episode_dones[:, 1])
 
-    # step 5: only term_5 -> last_episode [False, True]
     env.counter = 5
     out = tm.compute()
     assert torch.all(~tm.get_term("term_3")) and torch.all(tm.get_term("term_5"))
     assert torch.all(out)
-    assert torch.all(~tm._last_episode_dones[:, 0]) and torch.all(tm._last_episode_dones[:, 1])
+    assert tm.reset() == {"Episode_Termination/term_3": 0.0, "Episode_Termination/term_5": 1.0}
 
-    # step 15: both -> last_episode [True, True]
     env.counter = 15
     out = tm.compute()
     assert torch.all(tm.get_term("term_3")) and torch.all(tm.get_term("term_5"))
     assert torch.all(out)
-    assert torch.all(tm._last_episode_dones[:, 0]) and torch.all(tm._last_episode_dones[:, 1])
+    assert tm.reset() == {"Episode_Termination/term_3": 1.0, "Episode_Termination/term_5": 1.0}
 
-    # step 16: none -> persist [True, True]
-    env.counter = 16
-    out = tm.compute()
-    assert torch.all(~out)
-    assert torch.all(~tm.get_term("term_3")) and torch.all(~tm.get_term("term_5"))
-    assert torch.all(tm._last_episode_dones[:, 0]) and torch.all(tm._last_episode_dones[:, 1])
+
+def test_reset_metrics_track_each_environments_last_episode(env):
+    """Reset metrics retain the last completed episode for environments not reset now."""
+    env.term_masks = {
+        "first": torch.arange(env.num_envs) == 0,
+        "second": torch.arange(env.num_envs) == 1,
+    }
+    tm = TerminationManager(
+        {
+            "first": TerminationTermCfg(func=fail_selected_envs, params={"term": "first"}),
+            "second": TerminationTermCfg(func=fail_selected_envs, params={"term": "second"}),
+        },
+        env,
+    )
+    tm.compute()
+    metrics = tm.reset([0, 1])
+    assert metrics["Episode_Termination/first"] == pytest.approx(1 / env.num_envs)
+    assert metrics["Episode_Termination/second"] == pytest.approx(1 / env.num_envs)
+
+    env.term_masks["first"] = torch.arange(env.num_envs) == 2
+    env.term_masks["second"] = torch.zeros(env.num_envs, dtype=torch.bool)
+    tm.compute()
+    metrics = tm.reset([2])
+    assert metrics["Episode_Termination/first"] == pytest.approx(2 / env.num_envs)
+    assert metrics["Episode_Termination/second"] == pytest.approx(1 / env.num_envs)
+
+    env.term_masks["first"][:] = False
+    tm.compute()
+    metrics = tm.reset([0])
+    assert metrics["Episode_Termination/first"] == pytest.approx(1 / env.num_envs)
+    assert metrics["Episode_Termination/second"] == pytest.approx(1 / env.num_envs)
 
 
 def test_time_out_vs_terminated_split(env):

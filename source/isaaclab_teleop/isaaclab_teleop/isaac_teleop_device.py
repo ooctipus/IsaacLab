@@ -19,6 +19,8 @@ from .control_events import ControlEvents
 from .isaac_teleop_cfg import IsaacTeleopCfg
 from .session_lifecycle import TeleopSessionLifecycle
 from .xr_anchor_manager import XrAnchorManager
+from .xr_anchor_utils import _PlannedFrameTransform
+from .xr_cfg import XrCfg
 
 if TYPE_CHECKING:
     from .haptic_feedback import HapticFeedbackCfg
@@ -78,25 +80,26 @@ class IsaacTeleopDevice:
         .. code-block:: python
 
             cfg = IsaacTeleopCfg(
-                pipeline_builder=my_pipeline_builder,
+                pipeline_cfg=TeleopPipelineCfg(class_type=create_pipeline),
                 sim_device="cuda:0",
             )
+            xr_cfg = env.cfg.scene.xr_anchor
 
             # Poses in world frame (default)
-            with IsaacTeleopDevice(cfg) as device:
+            with IsaacTeleopDevice(cfg, xr_cfg) as device:
                 while running:
                     action = device.advance()
                     env.step(action.repeat(num_envs, 1))
 
             # Config-driven rebase into robot base frame
             cfg.target_frame_prim_path = "/World/Robot/base_link"
-            with IsaacTeleopDevice(cfg) as device:
+            with IsaacTeleopDevice(cfg, xr_cfg) as device:
                 while running:
                     action = device.advance()
                     env.step(action.repeat(num_envs, 1))
 
             # Explicit rebase into robot base frame
-            with IsaacTeleopDevice(cfg) as device:
+            with IsaacTeleopDevice(cfg, xr_cfg) as device:
                 while running:
                     robot_T_world = get_robot_base_transform()
                     action = device.advance(target_T_world=robot_T_world)
@@ -106,6 +109,7 @@ class IsaacTeleopDevice:
     def __init__(
         self,
         cfg: IsaacTeleopCfg,
+        xr_cfg: XrCfg,
         cloudxr_env_file: str | None = None,
         auto_launch_cloudxr: bool = True,
         use_kit_xr_bridge: bool = True,
@@ -118,6 +122,7 @@ class IsaacTeleopDevice:
 
         Args:
             cfg: Configuration object for IsaacTeleop settings.
+            xr_cfg: Scene-owned XR anchor configuration.
             cloudxr_env_file: Optional path to a CloudXR ``.env`` file.
                 When provided and *auto_launch_cloudxr* is ``True``, the
                 CloudXR runtime is launched automatically during session
@@ -151,8 +156,12 @@ class IsaacTeleopDevice:
                 ...).  ``None`` disables haptics.
         """
         self._cfg = cfg
+        self._xr_cfg = xr_cfg
 
-        self._anchor_manager = XrAnchorManager(cfg.xr_cfg)
+        self._anchor_manager = XrAnchorManager(xr_cfg)
+        self._target_frame = (
+            None if cfg.target_frame_prim_path is None else _PlannedFrameTransform(cfg.target_frame_prim_path)
+        )
         self._command_handler = CommandHandler()
         self._session_lifecycle = TeleopSessionLifecycle(
             cfg,
@@ -168,14 +177,10 @@ class IsaacTeleopDevice:
         self._prev_right_a_pressed = False
         self._prev_control_is_active: bool | None = None
 
-        # Each visualizer is created lazily on the first frame with matching
-        # data; the failure latches stop retry spam if creation fails (e.g.
-        # sim not ready).
+        # Each visualizer is created lazily on the first frame with matching data.
         self._enable_debug_visualization = enable_debug_visualization
         self._hand_visualizer: HandJointVisualizer | None = None
-        self._hand_visualizer_failed = False
         self._aim_visualizer: ControllerAimVisualizer | None = None
-        self._aim_visualizer_failed = False
 
     def __del__(self):
         """Clean up resources when the object is destroyed."""
@@ -186,7 +191,7 @@ class IsaacTeleopDevice:
 
     def __str__(self) -> str:
         """Returns a string containing information about the IsaacTeleop device."""
-        xr_cfg = self._cfg.xr_cfg
+        xr_cfg = self._xr_cfg
         msg = f"IsaacTeleop Device: {self.__class__.__name__}\n"
         msg += f"\tAnchor Position: {xr_cfg.anchor_pos}\n"
         msg += f"\tAnchor Rotation: {xr_cfg.anchor_rot}\n"
@@ -313,8 +318,7 @@ class IsaacTeleopDevice:
 
                 When ``None`` and
                 :attr:`~IsaacTeleopCfg.target_frame_prim_path` is set, the
-                transform is computed automatically by reading the prim's
-                world matrix from Fabric and inverting it.
+                transform is computed from its plan-declared scene data.
 
         Returns:
             A flattened action :class:`torch.Tensor` ready for the Isaac Lab
@@ -386,28 +390,20 @@ class IsaacTeleopDevice:
         world_T_anchor = self._anchor_manager.get_world_matrix()
 
         if TeleopSessionLifecycle.HAND_LEFT_KEY in result or TeleopSessionLifecycle.HAND_RIGHT_KEY in result:
-            if self._hand_visualizer is None and not self._hand_visualizer_failed:
-                try:
-                    from .visualizers.hand_joint_visualizer import HandJointVisualizer
+            if self._hand_visualizer is None:
+                from .visualizers.hand_joint_visualizer import HandJointVisualizer
 
-                    self._hand_visualizer = HandJointVisualizer()
-                except Exception:
-                    logger.debug("HandJointVisualizer creation failed; disabling hand debug", exc_info=True)
-                    self._hand_visualizer_failed = True
+                self._hand_visualizer = HandJointVisualizer(self._cfg.hand_joint_visualizer_cfg)
             if self._hand_visualizer is not None:
                 self._hand_visualizer.update(result, world_T_anchor)
 
         left_controller = self._session_lifecycle.last_left_controller
         right_controller = self._session_lifecycle.last_right_controller
         if left_controller is not None or right_controller is not None:
-            if self._aim_visualizer is None and not self._aim_visualizer_failed:
-                try:
-                    from .visualizers.controller_aim_visualizer import ControllerAimVisualizer
+            if self._aim_visualizer is None:
+                from .visualizers.controller_aim_visualizer import ControllerAimVisualizer
 
-                    self._aim_visualizer = ControllerAimVisualizer()
-                except Exception:
-                    logger.debug("ControllerAimVisualizer creation failed; disabling aim debug", exc_info=True)
-                    self._aim_visualizer_failed = True
+                self._aim_visualizer = ControllerAimVisualizer(self._cfg.controller_aim_visualizer_cfg)
             if self._aim_visualizer is not None:
                 self._aim_visualizer.update(left_controller, right_controller, world_T_anchor)
 
@@ -444,70 +440,11 @@ class IsaacTeleopDevice:
     # Target frame transform (config-driven rebase)
     # ------------------------------------------------------------------
 
-    def _get_target_frame_T_world(self) -> np.ndarray | None:
-        """Read the target-frame prim's world matrix from Fabric and return its inverse.
-
-        Uses USDRT to read the prim's hierarchical world matrix, matching the
-        pattern used by :class:`XrAnchorSynchronizer` for anchor prim reads.
-
-        Returns:
-            A (4, 4) float32 :class:`numpy.ndarray` representing the inverse
-            of the prim's world transform (i.e. ``target_T_world``), or
-            ``None`` if the prim cannot be read.
-        """
-        try:
-            import omni.usd
-            import usdrt
-            from pxr import UsdUtils
-            from usdrt import Rt
-
-            stage = omni.usd.get_context().get_stage()
-            stage_cache = UsdUtils.StageCache.Get()
-            stage_id = stage_cache.GetId(stage).ToLongInt()
-            if stage_id < 0:
-                stage_id = stage_cache.Insert(stage).ToLongInt()
-            rt_stage = usdrt.Usd.Stage.Attach(stage_id)
-            if rt_stage is None:
-                return None
-
-            rt_prim = rt_stage.GetPrimAtPath(self._cfg.target_frame_prim_path)
-            if not rt_prim.IsValid():
-                return None
-
-            rt_xformable = Rt.Xformable(rt_prim)
-            if not rt_xformable.GetPrim().IsValid():
-                return None
-
-            world_matrix_attr = rt_xformable.GetFabricHierarchyWorldMatrixAttr()
-            if world_matrix_attr is None:
-                return None
-
-            rt_matrix = world_matrix_attr.Get()
-            if rt_matrix is None:
-                return None
-
-            pos = rt_matrix.ExtractTranslation()
-            rt_quat = rt_matrix.ExtractRotationQuat()
-
-            from scipy.spatial.transform import Rotation
-
-            quat_xyzw = [
-                float(rt_quat.GetImaginary()[0]),
-                float(rt_quat.GetImaginary()[1]),
-                float(rt_quat.GetImaginary()[2]),
-                float(rt_quat.GetReal()),
-            ]
-
-            R = Rotation.from_quat(quat_xyzw).as_matrix().astype(np.float32)
-            t = np.array([float(pos[0]), float(pos[1]), float(pos[2])], dtype=np.float32)
-
-            inv_mat = np.eye(4, dtype=np.float32)
-            inv_mat[:3, :3] = R.T
-            inv_mat[:3, 3] = -(R.T @ t)
-            return inv_mat
-        except Exception as e:
-            logger.warning(f"Failed to read target frame prim '{self._cfg.target_frame_prim_path}': {e}")
-            return None
+    def _get_target_frame_T_world(self) -> np.ndarray:
+        """Return the inverse world matrix of the plan-declared target frame."""
+        if self._target_frame is None:
+            raise RuntimeError("No target frame is configured.")
+        return np.linalg.inv(self._target_frame.world_matrix()).astype(np.float32)
 
     # ------------------------------------------------------------------
     # Controller button polling (glue between session and anchor manager)
@@ -550,6 +487,7 @@ def _enable_teleop_bridge() -> None:
 
 def create_isaac_teleop_device(
     cfg: IsaacTeleopCfg,
+    xr_cfg: XrCfg,
     sim_device: str | None = None,
     callbacks: dict[str, Callable] | None = None,
     cloudxr_env_file: str | None = None,
@@ -578,6 +516,7 @@ def create_isaac_teleop_device(
 
     Args:
         cfg: IsaacTeleop configuration.
+        xr_cfg: Scene-owned XR anchor configuration.
         sim_device: If provided, overrides ``cfg.sim_device`` so action tensors
             are placed on the requested torch device (e.g. ``"cuda:0"``).
         callbacks: Optional mapping of command keys (e.g. ``"START"``, ``"STOP"``,
@@ -639,6 +578,7 @@ def create_isaac_teleop_device(
         logger.info("Using IsaacTeleop stack for teleoperation")
     device = IsaacTeleopDevice(
         cfg,
+        xr_cfg,
         cloudxr_env_file=cloudxr_env_file,
         auto_launch_cloudxr=auto_launch_cloudxr,
         use_kit_xr_bridge=use_kit_xr_bridge,

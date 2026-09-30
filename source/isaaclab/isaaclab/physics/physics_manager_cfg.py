@@ -47,13 +47,13 @@ class PhysicsCfg:
     Deterministic execution can increase memory use and reduce simulation performance.
     """
 
+    backend: str = MISSING
+    """Canonical backend identity. Must be set by concrete subclasses."""
+
 
 @configclass
 class PhysxAutoCfg(PhysicsCfg):
     """PhysX configuration resolved to a concrete backend at launch."""
-
-    class_type: Any = None
-    """Unused because this configuration is resolved before simulation construction."""
 
     isaacsim_physx: PhysxCfg | None = None
     """Concrete Isaac Sim PhysX configuration, or ``None`` when unavailable."""

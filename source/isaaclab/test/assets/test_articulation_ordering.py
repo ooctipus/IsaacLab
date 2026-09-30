@@ -41,14 +41,9 @@ class _SpawnerCfg:
 
 sim_stub.SimulationContext = _SimulationContext
 sim_stub.SpawnerCfg = _SpawnerCfg
-simulation_context_stub = types.ModuleType("isaaclab.sim.simulation_context")
-simulation_context_stub.SimulationContext = _SimulationContext
-_inserted_sim_stub = "isaaclab.sim" not in sys.modules
-_inserted_sim_context_stub = "isaaclab.sim.simulation_context" not in sys.modules
-sys.modules.setdefault("isaaclab.sim", sim_stub)
-sys.modules.setdefault("isaaclab.sim.simulation_context", simulation_context_stub)
-
-
+schemas_stub = types.ModuleType("isaaclab.sim.schemas")
+actuator_schemas_stub = types.ModuleType("isaaclab.sim.schemas.schemas_actuators")
+actuator_schemas_stub.define_actuator_properties = lambda *args, **kwargs: None
 asset_base_stub = types.ModuleType("isaaclab.assets.asset_base")
 
 
@@ -58,21 +53,24 @@ class _AssetBase:
 
 
 asset_base_stub.AssetBase = _AssetBase
-_inserted_asset_base_stub = "isaaclab.assets.asset_base" not in sys.modules
-sys.modules.setdefault("isaaclab.assets.asset_base", asset_base_stub)
+stubs = {
+    "isaaclab.sim": sim_stub,
+    "isaaclab.sim.schemas": schemas_stub,
+    "isaaclab.sim.schemas.schemas_actuators": actuator_schemas_stub,
+    "isaaclab.assets.asset_base": asset_base_stub,
+}
+inserted_stubs = tuple(name for name in stubs if name not in sys.modules)
+for name, module in stubs.items():
+    sys.modules.setdefault(name, module)
 
 
 from isaaclab.assets.articulation.articulation_cfg import ArticulationCfg
 from isaaclab.assets.articulation.base_articulation import BaseArticulation
 from isaaclab.assets.articulation.base_articulation_data import BaseArticulationData
 
-if _inserted_sim_stub:
-    sys.modules.pop("isaaclab.sim", None)
-if _inserted_sim_context_stub:
-    sys.modules.pop("isaaclab.sim.simulation_context", None)
-if _inserted_asset_base_stub:
-    sys.modules.pop("isaaclab.assets.asset_base", None)
-if _inserted_sim_stub or _inserted_asset_base_stub:
+for name in inserted_stubs:
+    sys.modules.pop(name, None)
+if inserted_stubs:
     sys.modules.pop("isaaclab.assets.articulation.base_articulation", None)
 
 
@@ -336,7 +334,6 @@ def test_backend_native_orderings_declaration_drives_identity_fast_path(monkeypa
     class _Articulation:
         __backend_name__ = "fourth_backend"
         __backend_native_orderings__ = ("physx",)
-        _ordering_convention_name_cache: dict = {}
         backend_joint_names = ("shoulder", "elbow")
         backend_body_names = ("base", "arm")
 
@@ -357,7 +354,6 @@ def test_undeclared_convention_bypasses_identity_fast_path(monkeypatch: pytest.M
     class _Articulation:
         __backend_name__ = "fourth_backend"
         __backend_native_orderings__ = ("physx",)
-        _ordering_convention_name_cache: dict = {}
         backend_joint_names = ("shoulder", "elbow")
         backend_body_names = ("base", "arm")
 
@@ -383,7 +379,6 @@ def test_mjwarp_ordering_helper_reports_actionable_cross_backend_failure(
 
     class _Articulation:
         __backend_name__ = "physx"
-        _ordering_convention_name_cache: dict = {}
         backend_joint_names = ("hip", "knee")
         backend_body_names = ("base", "foot")
 
@@ -405,7 +400,6 @@ def test_mjwarp_ordering_helper_reports_incomplete_usd_builder_names_reason(monk
 
     class _Articulation:
         __backend_name__ = "physx"
-        _ordering_convention_name_cache: dict = {}
         backend_joint_names = ("hip", "knee")
         backend_body_names = ("base", "foot")
 
@@ -431,7 +425,6 @@ def test_mjwarp_ordering_helper_surfaces_specific_usd_builder_unavailability_rea
 
     class _Articulation:
         __backend_name__ = "physx"
-        _ordering_convention_name_cache: dict = {}
         backend_joint_names = ("hip", "knee")
         backend_body_names = ("base", "foot")
 
@@ -576,7 +569,6 @@ def _make_robot_schema_articulation(
     """Build an articulation surface that resolves robot-schema ordering from an in-memory stage."""
     return types.SimpleNamespace(
         __backend_name__="newton",
-        _ordering_convention_name_cache={},
         cfg=types.SimpleNamespace(prim_path=_ROBOT_SCHEMA_SOURCE_EXPR, articulation_root_prim_path=None),
         backend_joint_names=list(backend_joint_names) if backend_joint_names is not None else [],
         backend_body_names=list(backend_body_names) if backend_body_names is not None else [],
@@ -800,7 +792,6 @@ def test_mjwarp_ordering_helper_builds_newton_view_from_usd_source(monkeypatch: 
 
     class _Articulation:
         __backend_name__ = "physx"
-        _ordering_convention_name_cache: dict = {}
         cfg = types.SimpleNamespace(prim_path="/World/envs/env_[^/]+/Robot", articulation_root_prim_path=None)
 
         @property
@@ -815,11 +806,11 @@ def test_mjwarp_ordering_helper_builds_newton_view_from_usd_source(monkeypatch: 
 
     assert get_articulation_name_ordering(articulation, "mjwarp", kind="joint") == ("knee", "hip", "ankle")
     assert get_articulation_name_ordering(articulation, "mjwarp", kind="body") == ("base", "thigh", "foot")
-    assert calls["registered"] == 1
-    assert len(calls["add_usd"]) == 1
+    assert calls["registered"] == 2
+    assert len(calls["add_usd"]) == 2
     assert calls["add_usd"][0]["root_path"] == "/World/envs/env_0/Robot"
     assert calls["add_usd"][0]["joint_ordering"] == "dfs"
-    assert calls["views"] == [("/World/envs/env_0/Robot/base", {"verbose": False, "exclude_joint_types": [0, 1]})]
+    assert calls["views"] == 2 * [("/World/envs/env_0/Robot/base", {"verbose": False, "exclude_joint_types": [0, 1]})]
 
 
 def test_physx_ordering_helper_builds_bfs_newton_view_from_usd_source(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -849,7 +840,6 @@ def test_physx_ordering_helper_builds_bfs_newton_view_from_usd_source(monkeypatc
 
     class _Articulation:
         __backend_name__ = "newton"
-        _ordering_convention_name_cache: dict = {}
         cfg = types.SimpleNamespace(prim_path="/World/envs/env_[^/]+/Robot", articulation_root_prim_path=None)
 
         @property
@@ -874,12 +864,12 @@ def test_physx_ordering_helper_builds_bfs_newton_view_from_usd_source(monkeypatc
         "forearm",
         "hand",
     )
-    assert calls["registered"] == 1
-    assert len(calls["add_usd"]) == 1
+    assert calls["registered"] == 2
+    assert len(calls["add_usd"]) == 2
     assert calls["add_usd"][0]["root_path"] == "/World/envs/env_0/Robot"
     assert calls["add_usd"][0]["joint_ordering"] == "bfs"
     assert calls["add_usd"][0]["bodies_follow_joint_ordering"] is True
-    assert calls["views"] == [("/World/envs/env_0/Robot/base", {"verbose": False, "exclude_joint_types": [0, 1]})]
+    assert calls["views"] == 2 * [("/World/envs/env_0/Robot/base", {"verbose": False, "exclude_joint_types": [0, 1]})]
 
 
 def test_symbolic_cross_backend_resolver_uses_newton_builder_names(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -888,7 +878,6 @@ def test_symbolic_cross_backend_resolver_uses_newton_builder_names(monkeypatch: 
 
     class _Articulation:
         __backend_name__ = "physx"
-        _ordering_convention_name_cache: dict = {}
         backend_joint_names = ("hip", "knee", "ankle")
         backend_body_names = ("foot", "base", "thigh")
 
@@ -915,36 +904,14 @@ def test_symbolic_cross_backend_resolver_uses_newton_builder_names(monkeypatch: 
     assert calls == [articulation]
 
 
-def test_symbolic_resolver_skips_incomplete_cached_names(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Continue to the Newton USD builder when cached names are incomplete."""
-
-    class _Articulation:
-        __backend_name__ = "physx"
-        backend_joint_names = ("joint_0", "joint_1")
-        backend_body_names = ("body_0", "body_1")
-        _ordering_convention_name_cache = {
-            (ArticulationOrderingConvention.MJWARP, "joint"): ("joint_0",),
-        }
-
-    monkeypatch.setattr(
-        ordering_resolvers,
-        "_get_mjwarp_names_from_newton_usd_builder",
-        lambda _: {
-            "joint": ("joint_1", "joint_0"),
-            "body": ("body_1", "body_0"),
-        },
-    )
-
-    assert get_articulation_name_ordering(_Articulation(), "mjwarp", kind="joint") == ("joint_1", "joint_0")
-
-
-def test_symbolic_resolver_does_not_cache_incomplete_builder_names(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Cache a builder result only when both joint and body orders are complete."""
+def test_symbolic_resolver_shares_only_complete_names_within_one_lifecycle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Share a complete builder result without persistent articulation state."""
     calls = []
 
     class _Articulation:
         __backend_name__ = "physx"
-        _ordering_convention_name_cache: dict = {}
         backend_joint_names = ("joint_0", "joint_1")
         backend_body_names = ("body_0", "body_1")
 
@@ -960,13 +927,34 @@ def test_symbolic_resolver_does_not_cache_incomplete_builder_names(monkeypatch: 
 
     monkeypatch.setattr(ordering_resolvers, "_get_mjwarp_names_from_newton_usd_builder", _build_names)
 
+    resolved_names = {}
     with pytest.raises(NotImplementedError, match="Unable to resolve 'mjwarp' joint ordering"):
-        get_articulation_name_ordering(articulation, "mjwarp", kind="joint")
-    assert articulation._ordering_convention_name_cache == {}
+        _resolve_articulation_ordering_names(
+            kind="joint",
+            backend_names=articulation.backend_joint_names,
+            ordering="mjwarp",
+            active_backend_name=articulation.__backend_name__,
+            articulation=articulation,
+            resolved_names=resolved_names,
+        )
+    assert resolved_names == {}
 
     builder_names["joint"] = ("joint_1", "joint_0")
-    assert get_articulation_name_ordering(articulation, "mjwarp", kind="joint") == ("joint_1", "joint_0")
-    assert get_articulation_name_ordering(articulation, "mjwarp", kind="body") == ("body_1", "body_0")
+    for kind, backend_names, expected in (
+        ("joint", articulation.backend_joint_names, ("joint_1", "joint_0")),
+        ("body", articulation.backend_body_names, ("body_1", "body_0")),
+    ):
+        assert (
+            _resolve_articulation_ordering_names(
+                kind=kind,
+                backend_names=backend_names,
+                ordering="mjwarp",
+                active_backend_name=articulation.__backend_name__,
+                articulation=articulation,
+                resolved_names=resolved_names,
+            )
+            == expected
+        )
     assert calls == [articulation, articulation]
 
 
@@ -977,7 +965,6 @@ def test_symbolic_cross_backend_resolver_normalizes_newton_multi_dof_joint_names
 
     class _Articulation:
         __backend_name__ = "physx"
-        _ordering_convention_name_cache: dict = {}
         backend_joint_names = ("hinge", "ball_rot_z", "ball_rot_x", "ball_rot_y")
         backend_body_names = ("base",)
 
@@ -1094,7 +1081,6 @@ def _make_ordering_resolution_articulation(
     )
     articulation = types.SimpleNamespace(
         __backend_name__="mock",
-        _ordering_convention_name_cache={},
         cfg=types.SimpleNamespace(
             prim_path="/World/Robot",
             joint_ordering=None,

@@ -257,6 +257,7 @@ The TacSL tactile sensor system includes:
 ```python
 import isaaclab.sim as sim_utils
 from isaaclab.sensors import CameraCfg
+from isaaclab_tasks.utils.presets import MultiBackendRendererCfg
 
 from isaaclab_contrib.sensors.tacsl_sensor import VisuoTactileSensorCfg
 
@@ -264,15 +265,14 @@ from isaaclab_assets.sensors import GELSIGHT_R15_CFG
 
 # Define tactile sensor configuration
 tactile_sensor_cfg = VisuoTactileSensorCfg(
-    prim_path="{ENV_REGEX_NS}/Robot/elastomer/tactile_sensor",
+    prim_path="{ENV_REGEX_NS}/Robot/elastomer",
     history_length=0,
     debug_vis=False,
 
     # Sensor rendering configuration
     render_cfg=GELSIGHT_R15_CFG,  # Use GelSight R15 sensor parameters
 
-    # Enable RGB and/or force field sensing
-    enable_camera_tactile=True,    # RGB tactile images
+    # Enable force field sensing; camera_cfg below enables RGB tactile images
     enable_force_field=True,        # Force field data
 
     # Elastomer configuration
@@ -294,6 +294,7 @@ tactile_sensor_cfg = VisuoTactileSensorCfg(
         width=GELSIGHT_R15_CFG.image_width,
         data_types=["distance_to_image_plane"],
         spawn=None,  # Camera already exists in USD
+        renderer_cfg=MultiBackendRendererCfg(),
     ),
 )
 ```
@@ -365,7 +366,7 @@ if tactile_data.tactile_normal_force is not None:
 
 The TacSL sensor supports two complementary sensing modalities:
 
-1. **Camera-Based RGB Sensing** (`enable_camera_tactile=True`):
+1. **Camera-Based RGB Sensing** (``camera_cfg`` is not ``None``):
    - Uses depth information from a camera inside the elastomer
    - Renders realistic tactile images showing contact patterns and deformation
    - Employs the Taxim rendering model for physically-based appearance

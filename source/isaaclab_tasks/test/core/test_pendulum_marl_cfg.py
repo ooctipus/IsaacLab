@@ -7,7 +7,7 @@ import subprocess
 import sys
 import textwrap
 
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
+from isaaclab_newton.physics import MJWarpSolverCfg
 
 from isaaclab_tasks.utils.hydra import resolve_presets
 from isaaclab_tasks.utils.parse_cfg import load_cfg_from_registry
@@ -38,5 +38,4 @@ def test_pendulum_marl_defaults_to_mjwarp_newton_physics():
     """The unqualified task should resolve to the validated MJWarp Newton preset."""
     cfg = resolve_presets(load_cfg_from_registry(_TASK, "env_cfg_entry_point"))
 
-    assert isinstance(cfg.sim.physics, NewtonCfg)
-    assert isinstance(cfg.sim.physics.solver_cfg, MJWarpSolverCfg)
+    assert isinstance(cfg.sim.physics, MJWarpSolverCfg)

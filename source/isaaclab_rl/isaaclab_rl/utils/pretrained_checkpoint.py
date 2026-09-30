@@ -353,10 +353,9 @@ def _get_physics_backend_name(physics_cfg: PhysicsCfg | None) -> str:
         return "physx"
     type_path = f"{type(physics_cfg).__module__}.{type(physics_cfg).__name__}".lower()
     if "newton" in type_path:
-        solver_cfg = getattr(physics_cfg, "solver_cfg", None)
-        solver_name = _get_newton_solver_name(solver_cfg)
+        solver_name = _get_newton_solver_name(physics_cfg)
         if solver_name is None:
-            raise ValueError(f"Unsupported Newton solver for pretrained checkpoints: {type(solver_cfg).__name__}")
+            raise ValueError(f"Unsupported Newton solver for pretrained checkpoints: {type(physics_cfg).__name__}")
         return f"newton{solver_name}"
     if "physx" in type_path:
         return "physx"

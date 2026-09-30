@@ -6,8 +6,7 @@
 """Benchmark script comparing FrameView implementations across backends.
 
 Compares batched transform operation performance across:
-- Isaac Lab FrameView (USD backend) -- baseline
-- Isaac Lab FrameView (Fabric backend)
+- Isaac Lab FrameView (PhysX backend) -- baseline
 - Isaac Lab FrameView (Newton backend)
 
 Usage:
@@ -39,27 +38,30 @@ simulation_app = app_launcher.app
 
 import cProfile
 import time
+from dataclasses import MISSING
 from typing import Literal
 
 import torch
 import warp as wp
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
+from isaaclab_newton.physics import MJWarpSolverCfg
 from isaaclab_newton.sim.views import NewtonSiteFrameView
-from isaaclab_physx.sim.views import FabricFrameView
-
-from pxr import Gf
+from isaaclab_physx.physics import PhysxCfg
+from isaaclab_physx.sim.views import PhysxFrameView
 
 import isaaclab.sim as sim_utils
-from isaaclab.assets import RigidObjectCfg
-from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
-from isaaclab.sim import SimulationCfg, build_simulation_context
-from isaaclab.sim.views import UsdFrameView
+from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
+from isaaclab.cloner import CloneCfg, ReplicateSession
+from isaaclab.sim import SimulationCfg
 from isaaclab.utils.configclass import configclass
 
 
 @configclass
-class _NewtonSceneCfg(InteractiveSceneCfg):
-    cube: RigidObjectCfg = RigidObjectCfg(
+class FrameViewBenchmarkCfg:
+    """Complete direct scene and clone lifecycle for one FrameView run."""
+
+    sim: SimulationCfg = MISSING
+    clone: CloneCfg = CloneCfg()
+    object: RigidObjectCfg = RigidObjectCfg(
         prim_path="{ENV_REGEX_NS}/Object",
         spawn=sim_utils.CuboidCfg(
             size=(0.2, 0.2, 0.2),
@@ -68,6 +70,11 @@ class _NewtonSceneCfg(InteractiveSceneCfg):
             collision_props=sim_utils.CollisionPropertiesCfg(),
         ),
         init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 1.0)),
+    )
+    sensor: AssetBaseCfg = AssetBaseCfg(
+        prim_path="{ENV_REGEX_NS}/Object/Sensor",
+        spawn=sim_utils.SensorFrameCfg(),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.1, 0.0, 0.05)),
     )
 
 
@@ -78,7 +85,7 @@ class _NewtonSceneCfg(InteractiveSceneCfg):
 
 @torch.no_grad()
 def benchmark_frame_view(  # noqa: C901
-    api: Literal["isaaclab-usd", "isaaclab-fabric", "isaaclab-newton-site"],
+    api: Literal["isaaclab-physx", "isaaclab-newton-site"],
     num_iterations: int,
 ) -> tuple[dict[str, float], dict[str, torch.Tensor]]:
     """Benchmark get/set world/local poses for the given FrameView backend."""
@@ -90,53 +97,37 @@ def benchmark_frame_view(  # noqa: C901
     # -- Scene setup (backend-specific) --------------------------------
 
     print("  Setting up scene")
-    cleanup = None
+    use_newton = api == "isaaclab-newton-site"
+    physics = MJWarpSolverCfg() if use_newton else PhysxCfg()
+    cfg = FrameViewBenchmarkCfg(sim=SimulationCfg(dt=0.01, device=device, physics=physics))
+    sim = sim_utils.SimulationContext(cfg.sim)
+    start_time = time.perf_counter()
+    view_type = NewtonSiteFrameView if use_newton else PhysxFrameView
+    xform_view = view_type(
+        "/World/envs/env_.*/Object/Sensor",
+        simulation_context=sim,
+        device=device,
+        validate_xform_ops=False,
+    )
+    view_construct_time = time.perf_counter() - start_time
+    with ReplicateSession(
+        (cfg.object, cfg.sensor),
+        num_clones=num_envs,
+        env_spacing=2.0,
+        clone_strategy=cfg.clone.clone_strategy,
+        env_template=cfg.clone.clone_template,
+        replicate_physics=cfg.clone.replicate_physics,
+    ):
+        cfg.object.class_type(cfg.object)
+        cfg.sensor.class_type(cfg.sensor)
 
-    if api == "isaaclab-newton-site":
-        newton_cfg = SimulationCfg(device=device, physics=NewtonCfg(solver_cfg=MJWarpSolverCfg()))
-        ctx = build_simulation_context(device=device, sim_cfg=newton_cfg, add_ground_plane=True)
-        sim = ctx.__enter__()
-        sim._app_control_on_stop_handle = None
-        InteractiveScene(_NewtonSceneCfg(num_envs=num_envs, env_spacing=2.0))
-
-        stage = sim_utils.get_current_stage()
-        for i in range(num_envs):
-            prim = stage.DefinePrim(f"/World/envs/env_{i}/Object/Sensor", "Xform")
-            sim_utils.standardize_xform_ops(prim)
-            prim.GetAttribute("xformOp:translate").Set(Gf.Vec3d(0.1, 0.0, 0.05))
-            prim.GetAttribute("xformOp:orient").Set(Gf.Quatd(1.0, 0.0, 0.0, 0.0))
-
-        sim.reset()
-
-        start_time = time.perf_counter()
-        xform_view = NewtonSiteFrameView("/World/envs/env_.*/Object/Sensor", device=device)
-        timing_results["init"] = time.perf_counter() - start_time
-        cleanup = lambda: ctx.__exit__(None, None, None)  # noqa: E731
-
-    else:
-        sim_utils.create_new_stage()
-        start_time = time.perf_counter()
-        use_fabric = api == "isaaclab-fabric"
-        sim = sim_utils.SimulationContext(sim_utils.SimulationCfg(dt=0.01, device=device, use_fabric=use_fabric))
-        stage = sim_utils.get_current_stage()
-
-        for i in range(num_envs):
-            sim_utils.create_prim(f"/World/Env_{i}", "Xform", stage=stage, translation=(i * 2.0, 0.0, 1.0))
-            sim_utils.create_prim(f"/World/Env_{i}/Object", "Xform", stage=stage, translation=(0.0, 0.0, 0.0))
-
-        sim.reset()
-
-        pattern = "/World/Env_.*/Object"
-        start_time = time.perf_counter()
-        ViewClass = FabricFrameView if use_fabric else UsdFrameView
-        xform_view = ViewClass(pattern, device=device, validate_xform_ops=False)
-        timing_results["init"] = time.perf_counter() - start_time
-        cleanup = lambda: sim.clear_instance()  # noqa: E731
+    sim.reset()
+    start_time = time.perf_counter()
+    xform_view.initialize(sim.get_clone_plan(), sim.get_scene_data_provider())
+    timing_results["init"] = view_construct_time + (time.perf_counter() - start_time)
 
     num_prims = xform_view.count
     print(f"  {api} managing {num_prims} prims")
-
-    is_newton = api == "isaaclab-newton-site"
 
     # Synchronize around timed regions using Warp directly (rather than torch),
     # since all backend kernels here are Warp launches and ``wp.synchronize()``
@@ -180,7 +171,7 @@ def benchmark_frame_view(  # noqa: C901
         # requires.  ProxyArray was introduced in PR #5304 ("ProxyArray and
         # Asset/Sensor level property caching") which changed the FrameView
         # getter return type.  Applies to every ``wp.clone`` call below.
-        if is_newton:
+        if use_newton:
             new_positions = wp.clone(positions.warp)
             wp.to_torch(new_positions)[:, 2] += 0.1
         else:
@@ -213,7 +204,7 @@ def benchmark_frame_view(  # noqa: C901
         computed_results["initial_local_orientations"] = orientations_local_t.clone()
 
         # -- set_local_poses -----------------------------------------------
-        if is_newton:
+        if use_newton:
             new_translations = wp.clone(translations.warp)
             wp.to_torch(new_translations)[:, 2] += 0.1
         else:
@@ -244,7 +235,7 @@ def benchmark_frame_view(  # noqa: C901
         computed_results["initial_world_scales"] = world_scales_t.clone()
 
         # -- set_world_scales ----------------------------------------------
-        if is_newton:
+        if use_newton:
             new_world_scales = wp.clone(world_scales.warp)
             wp.to_torch(new_world_scales)[:] = 1.1
         else:
@@ -273,7 +264,7 @@ def benchmark_frame_view(  # noqa: C901
         computed_results["initial_local_scales"] = local_scales_t.clone()
 
         # -- set_local_scales ----------------------------------------------
-        if is_newton:
+        if use_newton:
             new_local_scales = wp.clone(local_scales.warp)
             wp.to_torch(new_local_scales)[:] = 0.9
         else:
@@ -310,8 +301,7 @@ def benchmark_frame_view(  # noqa: C901
         timing_results["interleaved_world_set_get"] = (time.perf_counter() - start_time) / num_iterations
 
     finally:
-        if cleanup:
-            cleanup()
+        sim.clear_instance()
 
     return timing_results, computed_results
 
@@ -373,7 +363,7 @@ def print_results(results_dict: dict[str, dict[str, float]], num_prims: int, num
         total_row += f" {per_iter_total * 1000:>{col_width}.4f}"
     print(f"\n{total_row}")
 
-    baseline = "isaaclab-usd"
+    baseline = "isaaclab-physx"
     if baseline in results_dict and len(api_names) > 1:
         print("\n" + "=" * 120)
         print(f"SPEEDUP vs {baseline.replace('-', ' ').title()} (per-iter ops; one-time init excluded)")
@@ -413,7 +403,7 @@ def print_results(results_dict: dict[str, dict[str, float]], num_prims: int, num
     print("\n" + "=" * 120)
     print("\nNotes:")
     print("  - Times are averaged over all iterations")
-    print("  - Speedup > 1.0 means faster than USD baseline")
+    print("  - Speedup > 1.0 means faster than PhysX baseline")
     print()
 
 
@@ -436,8 +426,7 @@ def main():
     profile_files = {}
 
     apis = [
-        ("isaaclab-usd", "Isaac Lab FrameView (USD)"),
-        ("isaaclab-fabric", "Isaac Lab FrameView (Fabric)"),
+        ("isaaclab-physx", "Isaac Lab FrameView (PhysX)"),
         ("isaaclab-newton-site", "Isaac Lab FrameView (Newton Site)"),
     ]
 

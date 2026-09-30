@@ -6,16 +6,13 @@
 from __future__ import annotations
 
 from dataclasses import MISSING
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from isaaclab.devices.openxr import XrCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim import SimulationCfg
 from isaaclab.utils.configclass import configclass
 from isaaclab.utils.noise import NoiseModelCfg
 
-from .common import SpaceType, ViewerCfg
+from .common import SpaceType
 from .utils.video_recorder_cfg import VideoRecorderCfg
 
 
@@ -27,8 +24,8 @@ class DirectRLEnvCfg:
     """
 
     # simulation settings
-    sim: SimulationCfg = SimulationCfg()
-    """Physics simulation configuration. Default is SimulationCfg()."""
+    sim: SimulationCfg = MISSING
+    """Physics simulation configuration."""
 
     # ui settings
     ui_window_class_type: type | str | None = "isaaclab.envs.ui.base_env_window:BaseEnvWindow"
@@ -112,7 +109,7 @@ class DirectRLEnvCfg:
 
     # environment settings
     scene: InteractiveSceneCfg = MISSING
-    """Scene settings.
+    """Scene settings, constructed automatically by :class:`~isaaclab.envs.DirectRLEnv`.
 
     Please refer to the :class:`isaaclab.scene.InteractiveSceneCfg` class for more details.
     """
@@ -261,48 +258,21 @@ class DirectRLEnvCfg:
       render steps will be performed after each time an environment is reset.
     """
 
-    wait_for_textures: bool = True
-    """True to wait for assets to be loaded completely, False otherwise. Defaults to True."""
-
-    xr: XrCfg | None = None
-    """Configuration for viewing and interacting with the environment through an XR device."""
-
     log_dir: str | None = None
     """Directory for logging experiment artifacts. Defaults to None, in which case no specific log directory is set."""
 
     video_recorders: list[VideoRecorderCfg] = []
     """Video recording streams. Each entry records from its configured source independently.
 
-    Leave empty to disable recording. Set ``--video`` on the CLI to auto-populate this list
-    with a default stream from the active visualizer.
-    """
-
-    viewer: ViewerCfg = ViewerCfg()
-    """Deprecated viewer configuration. Use :attr:`~isaaclab.sim.SimulationCfg.default_visualizer_cfg`
-    or :attr:`~isaaclab.sim.SimulationCfg.visualizer_cfgs` instead.
-
-    .. deprecated::
-        This field is deprecated and will be removed in a future release. Configure the viewport
-        camera via :class:`~isaaclab.visualizers.VisualizerCfg` on the simulation config::
-
-            from isaaclab.visualizers import VisualizerCfg
-            env_cfg.sim.default_visualizer_cfg = VisualizerCfg(eye=(4.5, 0.0, 6.0))
+    Leave empty to disable recording. Recording requires an explicitly configured source.
     """
 
     def play_mode(self):
         """Adjust the configuration for interactive playback and policy inference.
 
-        Play scripts call this method after the configuration is fully initialized (i.e. after
-        :meth:`__post_init__`) unless the user requests the training configuration as-is.
-        The base implementation applies defaults that are useful for most tasks:
-
-        * caps the number of environments at 50 to keep the scene lightweight, and
-        * disables observation noise.
-
-        Override this method in a task configuration to customize playback behavior. Call
-        ``super().play_mode()`` to keep the shared defaults.
+        The base implementation caps the scene at 50 environments and disables
+        observation noise. Task configurations may override this method and should
+        call ``super().play_mode()`` to retain these defaults.
         """
-        # make a smaller scene for play
         self.scene.num_envs = min(self.scene.num_envs, 50)
-        # disable observation noise
         self.observation_noise_model = None

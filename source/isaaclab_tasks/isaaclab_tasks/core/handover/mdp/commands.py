@@ -14,7 +14,6 @@ import torch
 
 import isaaclab.utils.math as math_utils
 from isaaclab.managers import CommandTerm
-from isaaclab.markers import VisualizationMarkers
 
 from isaaclab_tasks.core.reorient.utils import EpisodeErrorRecorder
 
@@ -88,7 +87,7 @@ class HandoverCommand(CommandTerm):
     def _set_debug_vis_impl(self, debug_vis: bool) -> None:
         if debug_vis:
             if not hasattr(self, "_goal_visualizer"):
-                self._goal_visualizer = VisualizationMarkers(self.cfg.goal_visualizer_cfg)
+                self._goal_visualizer = self.cfg.goal_visualizer_cfg.class_type(self.cfg.goal_visualizer_cfg)
             self._goal_visualizer.set_visibility(True)
         elif hasattr(self, "_goal_visualizer"):
             self._goal_visualizer.set_visibility(False)

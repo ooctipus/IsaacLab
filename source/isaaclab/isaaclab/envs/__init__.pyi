@@ -21,7 +21,6 @@ __all__ = [
     "multi_agent_to_single_agent",
     "multi_agent_with_one_agent",
     "VideoRecorderCfg",
-    "ViewerCfg",
     "DataGenConfig",
     "SubTaskConfig",
     "SubTaskConstraintType",
@@ -31,7 +30,7 @@ __all__ = [
 ]
 
 from . import mdp, ui
-from .common import VecEnvObs, VecEnvStepReturn, ViewerCfg
+from .common import VecEnvObs, VecEnvStepReturn
 from .utils.video_recorder_cfg import VideoRecorderCfg
 from .direct_marl_env import DirectMARLEnv
 from .direct_marl_env_cfg import DirectMARLEnvCfg

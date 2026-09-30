@@ -12,13 +12,11 @@ from gymnasium import spaces
 import isaaclab.sim as sim_utils
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 from isaaclab.envs import DirectRLEnvCfg
-from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import CameraCfg
-from isaaclab.sim import SimulationCfg
 from isaaclab.utils.configclass import configclass
-from isaaclab.visualizers import VisualizerCfg
 
 from isaaclab_tasks.utils import PresetCfg
+from isaaclab_tasks.utils.presets import MultiBackendRendererCfg, MultiBackendSceneCfg, MultiBackendSimulationCfg
 
 from isaaclab_assets.robots.cartpole import CARTPOLE_CFG
 
@@ -33,6 +31,22 @@ def get_tiled_camera_cfg(data_type: str, width: int = 100, height: int = 100) ->
         ),
         width=width,
         height=height,
+        renderer_cfg=MultiBackendRendererCfg(),
+    )
+
+
+@configclass
+class CartpoleCameraSceneCfg(MultiBackendSceneCfg):
+    """Assets for the Cartpole camera showcase."""
+
+    robot: ArticulationCfg = CARTPOLE_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+    camera: CameraCfg = get_tiled_camera_cfg("rgb")
+    light = AssetBaseCfg(
+        prim_path="/World/Light",
+        spawn=sim_utils.DistantLightCfg(intensity=2000.0, color=(1.0, 1.0, 1.0)),
+        init_state=AssetBaseCfg.InitialStateCfg(
+            rot=(-0.14644663035869598, -0.3535534143447876, -0.3535534143447876, 0.8535533547401428)
+        ),
     )
 
 
@@ -40,8 +54,8 @@ def get_tiled_camera_cfg(data_type: str, width: int = 100, height: int = 100) ->
 class CartpoleCameraEnvCfg(DirectRLEnvCfg):
     """Base cartpole camera cfg for the observation/action-space showcase.
 
-    Each showcase variant below overrides :attr:`observation_space`, :attr:`action_space`,
-    and :attr:`tiled_camera` to demonstrate a specific space layout.
+    Each showcase variant below overrides :attr:`observation_space` and :attr:`action_space`
+    to demonstrate a specific space layout.
     """
 
     # env
@@ -50,27 +64,22 @@ class CartpoleCameraEnvCfg(DirectRLEnvCfg):
     action_scale = 100.0  # [N]
 
     # simulation
-    sim: SimulationCfg = SimulationCfg(dt=1 / 120, render_interval=decimation)
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(dt=1 / 120, render_interval=decimation)
 
-    # robot
-    robot_cfg: ArticulationCfg = CARTPOLE_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-    light_cfg: AssetBaseCfg = AssetBaseCfg(prim_path="/World/Light", spawn=sim_utils.DistantLightCfg(intensity=2000.0))
-    light_cfg.init_state.rot = (-0.14644663035869598, -0.3535534143447876, -0.3535534143447876, 0.8535533547401428)
     cart_dof_name = "slider_to_cart"
     pole_dof_name = "cart_to_pole"
 
     # camera
-    tiled_camera: CameraCfg = get_tiled_camera_cfg("rgb")
     write_image_to_file = False
     frame_stack = 1
 
     # spaces
     action_space = 1
     state_space = 0
-    observation_space = [tiled_camera.height, tiled_camera.width, 3]
+    observation_space = [100, 100, 3]
 
     # scene
-    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=512, env_spacing=20.0, replicate_physics=True)
+    scene: CartpoleCameraSceneCfg = CartpoleCameraSceneCfg(num_envs=512, env_spacing=20.0)
 
     # reset
     max_cart_pos = 3.0  # the cart is reset if it exceeds that position [m]
@@ -85,9 +94,6 @@ class CartpoleCameraEnvCfg(DirectRLEnvCfg):
     rew_scale_pole_pos = -1.0
     rew_scale_cart_vel = -0.01
     rew_scale_pole_vel = -0.005
-
-    def __post_init__(self):
-        self.sim.default_visualizer_cfg = VisualizerCfg(eye=(20.0, 20.0, 20.0))
 
 
 ###
@@ -115,13 +121,8 @@ class BoxBoxEnvCfg(CartpoleCameraEnvCfg):
         ===  ===
     """
 
-    # camera
-    tiled_camera: CameraCfg = get_tiled_camera_cfg("rgb")
-
     # spaces
-    observation_space = spaces.Box(
-        low=float("-inf"), high=float("inf"), shape=(tiled_camera.height, tiled_camera.width, 3)
-    )  # or for simplicity: [height, width, 3]
+    observation_space = spaces.Box(low=float("-inf"), high=float("inf"), shape=(100, 100, 3))
     action_space = spaces.Box(low=-1.0, high=1.0, shape=(1,))  # or for simplicity: 1 or [1]
 
 
@@ -147,13 +148,8 @@ class BoxDiscreteEnvCfg(CartpoleCameraEnvCfg):
         ===  ===
     """
 
-    # camera
-    tiled_camera: CameraCfg = get_tiled_camera_cfg("rgb")
-
     # spaces
-    observation_space = spaces.Box(
-        low=float("-inf"), high=float("inf"), shape=(tiled_camera.height, tiled_camera.width, 3)
-    )  # or for simplicity: [height, width, 3]
+    observation_space = spaces.Box(low=float("-inf"), high=float("inf"), shape=(100, 100, 3))
     action_space = spaces.Discrete(3)  # or for simplicity: {3}
 
 
@@ -186,13 +182,8 @@ class BoxMultiDiscreteEnvCfg(CartpoleCameraEnvCfg):
         ===  ===
     """
 
-    # camera
-    tiled_camera: CameraCfg = get_tiled_camera_cfg("rgb")
-
     # spaces
-    observation_space = spaces.Box(
-        low=float("-inf"), high=float("inf"), shape=(tiled_camera.height, tiled_camera.width, 3)
-    )  # or for simplicity: [height, width, 3]
+    observation_space = spaces.Box(low=float("-inf"), high=float("inf"), shape=(100, 100, 3))
     action_space = spaces.MultiDiscrete([3, 2])  # or for simplicity: [{3}, {2}]
 
 
@@ -222,16 +213,11 @@ class DictBoxEnvCfg(CartpoleCameraEnvCfg):
         ===  ===
     """
 
-    # camera
-    tiled_camera: CameraCfg = get_tiled_camera_cfg("rgb")
-
     # spaces
     observation_space = spaces.Dict(
         {
             "joint-velocities": spaces.Box(low=float("-inf"), high=float("inf"), shape=(2,)),
-            "camera": spaces.Box(
-                low=float("-inf"), high=float("inf"), shape=(tiled_camera.height, tiled_camera.width, 3)
-            ),
+            "camera": spaces.Box(low=float("-inf"), high=float("inf"), shape=(100, 100, 3)),
         }
     )  # or for simplicity: {"joint-velocities": 2, "camera": [height, width, 3]}
     action_space = spaces.Box(low=-1.0, high=1.0, shape=(1,))  # or for simplicity: 1 or [1]
@@ -260,16 +246,11 @@ class DictDiscreteEnvCfg(CartpoleCameraEnvCfg):
         ===  ===
     """
 
-    # camera
-    tiled_camera: CameraCfg = get_tiled_camera_cfg("rgb")
-
     # spaces
     observation_space = spaces.Dict(
         {
             "joint-velocities": spaces.Box(low=float("-inf"), high=float("inf"), shape=(2,)),
-            "camera": spaces.Box(
-                low=float("-inf"), high=float("inf"), shape=(tiled_camera.height, tiled_camera.width, 3)
-            ),
+            "camera": spaces.Box(low=float("-inf"), high=float("inf"), shape=(100, 100, 3)),
         }
     )  # or for simplicity: {"joint-velocities": 2, "camera": [height, width, 3]}
     action_space = spaces.Discrete(3)  # or for simplicity: {3}
@@ -305,16 +286,11 @@ class DictMultiDiscreteEnvCfg(CartpoleCameraEnvCfg):
         ===  ===
     """
 
-    # camera
-    tiled_camera: CameraCfg = get_tiled_camera_cfg("rgb")
-
     # spaces
     observation_space = spaces.Dict(
         {
             "joint-velocities": spaces.Box(low=float("-inf"), high=float("inf"), shape=(2,)),
-            "camera": spaces.Box(
-                low=float("-inf"), high=float("inf"), shape=(tiled_camera.height, tiled_camera.width, 3)
-            ),
+            "camera": spaces.Box(low=float("-inf"), high=float("inf"), shape=(100, 100, 3)),
         }
     )  # or for simplicity: {"joint-velocities": 2, "camera": [height, width, 3]}
     action_space = spaces.MultiDiscrete([3, 2])  # or for simplicity: [{3}, {2}]
@@ -346,13 +322,10 @@ class TupleBoxEnvCfg(CartpoleCameraEnvCfg):
         ===  ===
     """
 
-    # camera
-    tiled_camera: CameraCfg = get_tiled_camera_cfg("rgb")
-
     # spaces
     observation_space = spaces.Tuple(
         (
-            spaces.Box(low=float("-inf"), high=float("inf"), shape=(tiled_camera.height, tiled_camera.width, 3)),
+            spaces.Box(low=float("-inf"), high=float("inf"), shape=(100, 100, 3)),
             spaces.Box(low=float("-inf"), high=float("inf"), shape=(2,)),
         )
     )  # or for simplicity: ([height, width, 3], 2)
@@ -382,13 +355,10 @@ class TupleDiscreteEnvCfg(CartpoleCameraEnvCfg):
         ===  ===
     """
 
-    # camera
-    tiled_camera: CameraCfg = get_tiled_camera_cfg("rgb")
-
     # spaces
     observation_space = spaces.Tuple(
         (
-            spaces.Box(low=float("-inf"), high=float("inf"), shape=(tiled_camera.height, tiled_camera.width, 3)),
+            spaces.Box(low=float("-inf"), high=float("inf"), shape=(100, 100, 3)),
             spaces.Box(low=float("-inf"), high=float("inf"), shape=(2,)),
         )
     )  # or for simplicity: ([height, width, 3], 2)
@@ -425,13 +395,10 @@ class TupleMultiDiscreteEnvCfg(CartpoleCameraEnvCfg):
         ===  ===
     """
 
-    # camera
-    tiled_camera: CameraCfg = get_tiled_camera_cfg("rgb")
-
     # spaces
     observation_space = spaces.Tuple(
         (
-            spaces.Box(low=float("-inf"), high=float("inf"), shape=(tiled_camera.height, tiled_camera.width, 3)),
+            spaces.Box(low=float("-inf"), high=float("inf"), shape=(100, 100, 3)),
             spaces.Box(low=float("-inf"), high=float("inf"), shape=(2,)),
         )
     )  # or for simplicity: ([height, width, 3], 2)

@@ -6,17 +6,20 @@
 from __future__ import annotations
 
 from dataclasses import MISSING
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Literal
 
 from isaaclab.sim import SpawnerCfg
 from isaaclab.utils.configclass import configclass
+
+if TYPE_CHECKING:
+    from .asset import Asset
 
 
 @configclass
 class AssetBaseCfg:
     """The base configuration class for an asset's parameters.
 
-    Please see the :class:`AssetBase` class for more information on the asset class.
+    See :class:`Asset` and :class:`AssetBase` for the authoring-only and runtime-view lifecycles.
     """
 
     @configclass
@@ -26,9 +29,8 @@ class AssetBaseCfg:
         This defines the default initial state of the asset when it is spawned into the simulation, as
         well as the default state when the simulation is reset.
 
-        After parsing the initial state, the asset class stores this information in the :attr:`data`
-        attribute of the asset class. This can then be accessed by the user to modify the state of the asset
-        during the simulation, for example, at resets.
+        Runtime-view asset classes also store this information in their :attr:`~AssetBase.data` attribute
+        so users can modify the state during simulation, for example at resets.
         """
 
         # root position
@@ -39,21 +41,11 @@ class AssetBaseCfg:
         Defaults to (0.0, 0.0, 0.0, 1.0).
         """
 
-    class_type: type | str | None = None
-    """The associated asset class. Defaults to None, which means that the asset will be spawned
-    but cannot be interacted with via the asset class.
+    class_type: type[Asset] | str = "{DIR}.asset:Asset"
+    """The associated asset class. Defaults to :class:`isaaclab.assets.Asset`, which authors the
+    asset without creating a runtime simulation view.
 
-    The class should inherit from :class:`isaaclab.assets.asset_base.AssetBase`.
-    """
-
-    cloning_contexts: tuple[str | type, ...] | None = None
-    """Cloning contexts for this asset. Defaults to None.
-
-    Entries are ``"module:ContextClass"`` references (or classes). If None, planning
-    routes the asset to the active physics manager's clone context. An empty tuple
-    requests no explicit physics context.
-    :class:`~isaaclab.cloner.UsdReplicateContext` is still added automatically when ``spawn``
-    is set and Kit is available; listing it explicitly forces USD replication even without Kit.
+    Physics-backed implementations should inherit from :class:`isaaclab.assets.AssetBase`.
     """
 
     prim_path: str = MISSING
@@ -98,17 +90,3 @@ class AssetBaseCfg:
     When ``None`` (the default), shape checks follow Python's ``__debug__``
     flag — enabled in normal mode, disabled with ``python -O``.
     """
-
-    def _post_spawn(self, stage: Any) -> None:
-        """Hook invoked by :class:`~isaaclab.assets.AssetBase` after the asset's prims are
-        spawned and verified to exist on the stage.
-
-        The default implementation is a no-op. Subclasses that need to author additional
-        USD schemas tied to this asset (for example, :class:`~isaaclab.assets.ArticulationCfg`
-        which authors ``NewtonActuator`` prims from its ``actuators`` mapping) should
-        override this method.
-
-        Args:
-            stage: The USD stage on which the asset was spawned.
-        """
-        pass

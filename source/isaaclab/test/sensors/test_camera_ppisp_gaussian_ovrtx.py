@@ -77,11 +77,10 @@ _SKIP_MISSING_OVRTX = pytest.mark.skipif(
 
 if not _MISSING_MODULES:
     from isaaclab_newton.physics.mjwarp_manager_cfg import MJWarpSolverCfg  # noqa: E402
-    from isaaclab_newton.physics.newton_manager_cfg import NewtonCfg  # noqa: E402
     from isaaclab_ov.renderers import OVRTXRendererCfg  # noqa: E402
 else:
     MJWarpSolverCfg = None
-    NewtonCfg = None
+    NewtonSolverCfg = None
     OVRTXRendererCfg = None
 
 SIM_DT = 1.0 / 60.0
@@ -103,7 +102,7 @@ _XFAIL_OVRTX_GAUSSIAN_PPISP = pytest.mark.xfail(
 def _ovrtx_sim_cfg(device: str) -> SimulationCfg:
     return SimulationCfg(
         dt=SIM_DT,
-        physics=NewtonCfg(solver_cfg=MJWarpSolverCfg(), num_substeps=1),
+        physics=MJWarpSolverCfg(num_substeps=1),
         device=device,
     )
 

@@ -269,13 +269,14 @@ def test_startup_bundle_reuses_run_identity(tmp_path):
             ),
             "first_step": StartupPhase(total_time_s=4.1, top_functions=[]),
         },
-        config=StartupConfig(top_n=30, whitelist="startup_whitelist.yaml"),
+        config=StartupConfig(measurement_mode="cprofile", top_n=30, whitelist="startup_whitelist.yaml"),
     )
     path = os.path.join(tmp_path, "startup.json")
     write_bundle_file(bundle, path)
     with open(path) as f:
         data = json.load(f)
     assert data["run"]["num_envs"] is None
+    assert data["config"]["measurement_mode"] == "cprofile"
     assert data["phases"]["app_launch"]["top_functions"][0]["calls"] == 4312
 
 

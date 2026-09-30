@@ -5,14 +5,20 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import isaaclab_teleop.camera_feed as camera_feed
 import pytest
 import torch
-from isaaclab_teleop import IsaacTeleopCfg, XrCameraFeedCfg, XrCameraFeedLayoutCfg, XrCameraFeedSession
-from packaging import version
+from isaaclab_teleop import (
+    IsaacTeleopCfg,
+    TeleopPipelineCfg,
+    XrCameraFeedCfg,
+    XrCameraFeedLayoutCfg,
+    XrCameraFeedSession,
+)
 
 from isaaclab.sensors import CameraCfg
 
@@ -27,6 +33,9 @@ class _FakeImage:
 
     def data_ptr(self):
         return self._data_ptr
+
+    def is_contiguous(self):
+        return True
 
 
 class _FakeBatch:
@@ -58,20 +67,6 @@ class _FakeCamera:
             self.output["rgba"].torch = _FakeBatch(self.image_on_update)
 
 
-class _FakeImageSource:
-    def __init__(self, image=None):
-        self.image = image
-        self.expected_shapes = []
-        self.closed = False
-
-    def get_image(self, expected_shape):
-        self.expected_shapes.append(expected_shape)
-        return self.image
-
-    def close(self):
-        self.closed = True
-
-
 class _FakePanel:
     def __init__(self, descriptor, width, height):
         self.descriptor = descriptor
@@ -101,32 +96,14 @@ class _FakeSubscription:
 
 
 class _FakePresenter:
-    def __init__(self, source_images=None):
+    def __init__(self):
         self.panels = []
         self.subscription = None
-        self.staged = []
-        self.prepare_calls = []
-        self.source_images = source_images or {}
-        self.sources = []
-        self.source_cfgs = []
-
-    def create_image_source(self, name, _camera, cfg=None):
-        source = _FakeImageSource(self.source_images.get(name))
-        self.sources.append(source)
-        self.source_cfgs.append(cfg)
-        return source
-
-    def prepare_upload_image(self, name, image, previous_source=None, previous_upload=None):
-        self.prepare_calls.append((name, image, previous_source, previous_upload))
-        return image
 
     def create_panel(self, descriptor, width, height):
         panel = _FakePanel(descriptor, width, height)
         self.panels.append(panel)
         return panel
-
-    def stage_upload_image(self, image, upload_image):
-        self.staged.append((image, upload_image))
 
     def subscribe_to_frame_updates(self, callback):
         self.subscription = _FakeSubscription(callback)
@@ -162,10 +139,10 @@ def _teleop_env_cfg(
     )
 
 
-def _manager(monkeypatch, cfgs, images, layout=None, source_images=None):
+def _manager(monkeypatch, cfgs, images, layout=None):
     cameras = {name: _FakeCamera(image) for name, image in images.items()}
     monkeypatch.setattr(camera_feed, "_camera_type", lambda: _FakeCamera)
-    presenter = _FakePresenter(source_images)
+    presenter = _FakePresenter()
     env = SimpleNamespace(scene=SimpleNamespace(sensors=cameras))
     manager = camera_feed._XrCameraFeedManager(env, cfgs, layout or XrCameraFeedLayoutCfg(), presenter)
     return manager, presenter, cameras
@@ -228,73 +205,13 @@ def test_empty_camera_feed_selection_skips_pip(monkeypatch):
     assert vars(env_cfg.scene) == {"num_envs": 1}
 
 
-@pytest.mark.parametrize(
-    ("isaac_sim_version", "expected_ray_reconstruction", "requires_responsive_denoising"),
-    [
-        pytest.param("6.0.0", False, False, id="pre-responsive-denoising"),
-        pytest.param("6.1.0", True, True, id="responsive-denoising"),
-    ],
-)
-def test_existing_camera_uses_effective_feed_render_policy(
-    monkeypatch,
-    isaac_sim_version,
-    expected_ray_reconstruction,
-    requires_responsive_denoising,
-):
-    selected = _camera_cfg()
-    requested = XrCameraFeedCfg(
-        camera_name="robot_pov_cam",
-        enable_dlss_ray_reconstruction=True,
-        dlss_exec_mode="quality",
-    )
-    env_cfg = _teleop_env_cfg([requested], camera=selected)
-    monkeypatch.setattr(camera_feed, "_load_kit_scene_ui_presenter", _FakePresenter)
-    monkeypatch.setattr(camera_feed, "get_isaac_sim_version", lambda: version.parse(isaac_sim_version))
-
-    session = XrCameraFeedSession.prepare(env_cfg, enabled=True, camera_rendering_enabled=True)
-
-    assert session.enabled
-    assert env_cfg.scene.robot_pov_cam is selected
-    assert session.requires_responsive_denoising is requires_responsive_denoising
-    assert session._cfgs[0] is not requested
-    assert session._cfgs[0].enable_dlss_ray_reconstruction is expected_ray_reconstruction
-    assert session._cfgs[0].dlss_exec_mode == "quality"
-    assert requested.enable_dlss_ray_reconstruction is True
-
-
-@pytest.mark.parametrize(
-    ("field_name", "value", "expected_error"),
-    [
-        pytest.param("enable_dlss_ray_reconstruction", 1, TypeError, id="non-bool-ray-reconstruction"),
-        pytest.param("dlss_exec_mode", "ultra", ValueError, id="unknown-dlss-mode"),
-    ],
-)
-def test_existing_camera_rejects_invalid_feed_render_policy_before_version_query(
-    monkeypatch,
-    field_name,
-    value,
-    expected_error,
-):
-    requested = XrCameraFeedCfg(camera_name="robot_pov_cam")
-    setattr(requested, field_name, value)
-    env_cfg = _teleop_env_cfg([requested], camera=_camera_cfg())
-    get_isaac_sim_version = Mock()
-    monkeypatch.setattr(camera_feed, "_load_kit_scene_ui_presenter", _FakePresenter)
-    monkeypatch.setattr(camera_feed, "get_isaac_sim_version", get_isaac_sim_version)
-
-    with pytest.raises(expected_error, match=field_name):
-        XrCameraFeedSession.prepare(env_cfg, enabled=True, camera_rendering_enabled=True)
-
-    get_isaac_sim_version.assert_not_called()
-
-
 def test_session_refresh_publishes_buffer_refreshed_by_env_reset():
     events = []
-    session = XrCameraFeedSession([], None, None, requires_responsive_denoising=False)
+    session = XrCameraFeedSession([], None, None)
 
     class _Manager:
-        def refresh(self, *, publish=True):
-            events.append("publish" if publish else "request")
+        def refresh(self):
+            events.append("publish")
 
     session._manager = _Manager()
     session._bound = True
@@ -393,25 +310,20 @@ def test_manager_publishes_on_kit_frame_and_closes(monkeypatch):
     image = _FakeImage()
     manager, presenter, _ = _manager(monkeypatch, [cfg], {"robot_pov_cam": image})
 
-    assert presenter.prepare_calls == []
     presenter.subscription.publish()
     manager.close()
 
     assert presenter.panels[0].uploads == [image]
-    assert presenter.prepare_calls == [("robot_pov_cam", image, image, image)]
-    assert presenter.sources[0].expected_shapes == [image.shape, image.shape]
-    assert presenter.sources[0].closed
     assert presenter.subscription.closed
     assert presenter.panels[0].closed
 
 
-def test_manager_uses_camera_buffer_when_image_source_is_unavailable(monkeypatch):
+def test_manager_uploads_public_camera_buffer_directly(monkeypatch):
     cfg = XrCameraFeedCfg(camera_name="robot_pov_cam", max_update_hz=0.0)
     image = _FakeImage(device="cpu")
     camera = _FakeCamera(image)
     monkeypatch.setattr(camera_feed, "_camera_type", lambda: _FakeCamera)
     presenter = _FakePresenter()
-    presenter.create_image_source = Mock(return_value=None)
     env = SimpleNamespace(scene=SimpleNamespace(sensors={"robot_pov_cam": camera}))
     manager = camera_feed._XrCameraFeedManager(env, [cfg], XrCameraFeedLayoutCfg(), presenter)
 
@@ -419,26 +331,7 @@ def test_manager_uses_camera_buffer_when_image_source_is_unavailable(monkeypatch
     manager.close()
 
     assert presenter.panels[0].uploads == [image]
-    assert presenter.staged == [(image, image)]
-
-
-def test_manager_prefers_feed_owned_gpu_frame(monkeypatch):
-    cfg = XrCameraFeedCfg(camera_name="robot_pov_cam", max_update_hz=0.0)
-    fallback = _FakeImage(device="cpu", data_ptr=100)
-    direct = _FakeImage(device="cuda:0", data_ptr=200)
-    manager, presenter, cameras = _manager(
-        monkeypatch,
-        [cfg],
-        {"robot_pov_cam": fallback},
-        source_images={"robot_pov_cam": direct},
-    )
-
-    presenter.subscription.publish()
-    manager.close()
-
-    assert presenter.panels[0].uploads == [direct]
-    assert presenter.staged == [(direct, direct)]
-    assert cameras["robot_pov_cam"].data_reads == 1
+    assert camera.data_reads == 2
 
 
 def test_manager_refresh_rebinds_reset_camera_output(monkeypatch):
@@ -454,40 +347,18 @@ def test_manager_refresh_rebinds_reset_camera_output(monkeypatch):
     assert presenter.panels[0].uploads == [after]
 
 
-def test_manager_rebinds_source_when_camera_instance_changes(monkeypatch):
-    cfg = XrCameraFeedCfg(
-        camera_name="robot_pov_cam",
-        enable_dlss_ray_reconstruction=True,
-        dlss_exec_mode="quality",
-        max_update_hz=0.0,
-    )
-    before = _FakeImage(data_ptr=100)
-    after = _FakeImage(data_ptr=200)
-    manager, presenter, cameras = _manager(monkeypatch, [cfg], {"robot_pov_cam": before})
-    old_source = presenter.sources[0]
-    cameras["robot_pov_cam"] = _FakeCamera(after)
-
-    manager.refresh()
-
-    assert old_source.closed
-    assert len(presenter.sources) == 2
-    assert presenter.source_cfgs == [cfg, cfg]
-    assert presenter.sources[1].expected_shapes == [after.shape]
-    assert presenter.panels[0].uploads == [after]
-    manager.close()
-
-
-def test_manager_can_refresh_reset_camera_without_publishing(monkeypatch):
+def test_manager_rebinds_camera_when_instance_changes(monkeypatch):
     cfg = XrCameraFeedCfg(camera_name="robot_pov_cam", max_update_hz=0.0)
     before = _FakeImage(data_ptr=100)
     after = _FakeImage(data_ptr=200)
     manager, presenter, cameras = _manager(monkeypatch, [cfg], {"robot_pov_cam": before})
-    cameras["robot_pov_cam"].image_on_update = after
+    replacement = cameras["robot_pov_cam"] = _FakeCamera(after)
 
-    manager.refresh(publish=False)
+    manager.refresh()
 
-    assert cameras["robot_pov_cam"].update_calls == [(0.0, True)]
-    assert presenter.panels[0].uploads == []
+    assert manager._feeds[0].camera is replacement
+    assert presenter.panels[0].uploads == [after]
+    manager.close()
 
 
 def test_manager_recreates_panel_when_resolution_changes(monkeypatch):
@@ -525,7 +396,30 @@ def test_public_api_exports_camera_feed_types():
         assert not hasattr(isaaclab_teleop, removed_name)
 
 
+def test_camera_feed_uses_only_public_rgba_buffers():
+    core_source = Path(camera_feed.__file__).read_text(encoding="utf-8")
+    scene_ui_source = Path(camera_feed.__file__).with_name("camera_feed_kit_scene_ui.py").read_text(encoding="utf-8")
+    cfg_source = Path(camera_feed.__file__).with_name("isaac_teleop_cfg.py").read_text(encoding="utf-8")
+
+    assert "camera.data.output" in core_source
+    assert "feed.panel.upload(image)" in core_source
+    for forbidden in (
+        "_render_data",
+        "RenderProduct",
+        "get_current_stage",
+        "omni.replicator",
+        "AnnotatorRegistry",
+        "create_image_source",
+        "prepare_upload_image",
+        "stage_upload_image",
+        "requires_responsive_denoising",
+        "enable_dlss_ray_reconstruction",
+        "dlss_exec_mode",
+    ):
+        assert forbidden not in core_source + scene_ui_source + cfg_source
+
+
 def test_isaac_teleop_default_has_no_camera_feeds():
-    cfg = IsaacTeleopCfg(pipeline_builder=lambda: None)
+    cfg = IsaacTeleopCfg(pipeline_cfg=TeleopPipelineCfg(class_type=lambda _cfg: None))
 
     assert cfg.xr_camera_feeds == []

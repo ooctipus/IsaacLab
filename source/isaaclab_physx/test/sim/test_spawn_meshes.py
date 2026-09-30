@@ -14,6 +14,7 @@ simulation_app = AppLauncher(headless=True).app
 
 
 import pytest
+from isaaclab_physx.physics import PhysxCfg
 from isaaclab_physx.sim.schemas.schemas_cfg import PhysxDeformableBodyPropertiesCfg
 from isaaclab_physx.sim.spawners.materials.physics_materials_cfg import PhysxDeformableBodyMaterialCfg
 
@@ -31,7 +32,7 @@ def sim():
     # Simulation time-step
     dt = 0.1
     # Load kit helper
-    sim = SimulationContext(SimulationCfg(dt=dt))
+    sim = SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=dt))
     # Wait for spawning
     sim_utils.update_stage()
     yield sim

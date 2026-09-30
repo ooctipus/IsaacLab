@@ -113,12 +113,14 @@ class BenchmarkRuntimeRequest:
 
 @dataclass(frozen=True)
 class BenchmarkStartupRequest:
-    """Request a startup profiling benchmark.
+    """Request a startup timing or profiling benchmark.
 
     Args:
         task: Registered Gym task identifier.
         num_envs: Number of parallel environments.
         seed: Environment seed.
+        profile: Whether to enable dense cProfile attribution. This instruments
+            the reported wall time.
         top_n: Number of top cProfile functions retained per phase.
         whitelist_config: Optional YAML whitelist for phase-specific functions.
         presets: Typed preset names applied to the task configuration.
@@ -130,6 +132,7 @@ class BenchmarkStartupRequest:
     task: str
     num_envs: int | None = None
     seed: int | None = None
+    profile: bool = False
     top_n: int | None = None
     whitelist_config: Path | None = None
     presets: tuple[str, ...] = field(default_factory=tuple)
@@ -313,7 +316,7 @@ def run_runtime_benchmark(request: BenchmarkRuntimeRequest) -> BenchmarkResult[R
 
 
 def run_startup_benchmark(request: BenchmarkStartupRequest) -> BenchmarkResult[StartupBundle]:
-    """Run a startup profiling benchmark.
+    """Run a startup timing or profiling benchmark.
 
     Args:
         request: Startup benchmark request.

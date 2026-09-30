@@ -15,19 +15,7 @@ from isaaclab.utils.configclass import configclass
 from .newton_manager_cfg import NewtonSolverCfg
 
 if TYPE_CHECKING:
-    from newton.solvers import SolverKamino
-
     from isaaclab_newton.physics import NewtonManager
-
-
-def _non_none_kwargs(cfg: Any) -> dict[str, Any]:
-    """Return ``cfg.to_dict()`` entries with ``None`` values omitted."""
-    return {key: value for key, value in cfg.to_dict().items() if value is not None}
-
-
-def _cfg_to_dict(cfg: Any) -> dict[str, Any]:
-    """Return a configclass mapping with a type-checker-friendly interface."""
-    return cfg.to_dict()
 
 
 @configclass
@@ -71,7 +59,7 @@ class KaminoPADMMCfg:
     """Frequency of penalty updates. Zero disables updates."""
 
     penalty_update_method: Literal["fixed", "balanced"] = "fixed"
-    """Penalty update method."""
+    """Penalty update method. Balanced updates require sparse Jacobian and dynamics computation."""
 
     linear_solver_tolerance: float = 0.0
     """Absolute tolerance for the iterative linear solver. Zero leaves it unchanged."""
@@ -241,9 +229,6 @@ class _KaminoSolverCfgBase(NewtonSolverCfg):
     class_type: type[NewtonManager] | str = "{DIR}.kamino_manager:NewtonKaminoManager"
     """Manager class for the Kamino solver."""
 
-    solver_type: str = "kamino"
-    """Solver type. Can be "kamino"."""
-
     integrator: Literal["euler", "moreau"] = "moreau"
     """Integrator type."""
 
@@ -327,70 +312,6 @@ class _KaminoSolverCfgBase(NewtonSolverCfg):
     This field is applied by :class:`NewtonKaminoManager` and is not forwarded to Newton.
     """
 
-    def _get_dynamics_solver_config(self) -> tuple[Literal["padmm", "dvi"], dict[str, Any]]:
-        """Return the selected Newton solver name and its configuration keyword arguments."""
-        raise NotImplementedError
-
-    def to_solver_config(self) -> SolverKamino.Config:
-        """Build a :class:`SolverKamino.Config` from this configuration.
-
-        Returns:
-            A ``SolverKamino.Config`` instance ready for solver construction.
-        """
-        from newton._src.solvers.kamino.config import (
-            CollisionDetectorConfig,
-            ConstrainedDynamicsConfig,
-            ConstraintStabilizationConfig,
-            DVISolverConfig,
-            ForwardKinematicsSolverConfig,
-            MaterialManagerConfig,
-            PADMMSolverConfig,
-        )
-        from newton.solvers import SolverKamino
-
-        # Kamino Manager will set the automatic value before calling this method.
-        # This is a fallback to true if that mechanism was bypassed.
-        use_fk_solver = self.use_fk_solver
-        if use_fk_solver is None:
-            use_fk_solver = True
-
-        collision_detector = None
-        if self.use_collision_detector:
-            collision_detector = CollisionDetectorConfig(**_non_none_kwargs(self.collision_detector))
-
-        # Initialize all solver configs with default values.
-        solver_config_types = {
-            "padmm": PADMMSolverConfig,
-            "dvi": DVISolverConfig,
-        }
-        solver_configs = {name: config_type() for name, config_type in solver_config_types.items()}
-
-        # Overwrite the selected dynamics solver's config with the user-provided config.
-        dynamics_solver, active_solver_kwargs = self._get_dynamics_solver_config()
-        solver_configs[dynamics_solver] = solver_config_types[dynamics_solver](**active_solver_kwargs)
-
-        # Build the final solver config.
-        config = SolverKamino.Config(
-            dynamics_solver=dynamics_solver,
-            integrator=self.integrator,
-            use_collision_detector=self.use_collision_detector,
-            use_fk_solver=use_fk_solver,
-            sparse_jacobian=self.sparse_jacobian,
-            sparse_dynamics=self.sparse_dynamics,
-            rotation_correction=self.rotation_correction,
-            angular_velocity_damping=self.angular_velocity_damping,
-            collect_solver_info=self.collect_solver_info,
-            compute_solution_metrics=self.compute_solution_metrics,
-            collision_detector=collision_detector,
-            fk=ForwardKinematicsSolverConfig(**_cfg_to_dict(self.fk)),
-            constraints=ConstraintStabilizationConfig(**_cfg_to_dict(self.constraints)),
-            dynamics=None if self.dynamics is None else ConstrainedDynamicsConfig(**_cfg_to_dict(self.dynamics)),
-            materials=MaterialManagerConfig(**_cfg_to_dict(self.materials)),
-            **solver_configs,
-        )
-        config.validate()
-        return config
-
 
 @configclass
 class KaminoPADMMSolverCfg(_KaminoSolverCfgBase):
@@ -399,10 +320,6 @@ class KaminoPADMMSolverCfg(_KaminoSolverCfgBase):
     dynamics_solver_cfg: KaminoPADMMCfg = field(default_factory=KaminoPADMMCfg)
     """P-ADMM forward-dynamics solver parameters."""
 
-    def _get_dynamics_solver_config(self) -> tuple[Literal["padmm"], dict[str, Any]]:
-        """Return P-ADMM and its configuration keyword arguments."""
-        return "padmm", _cfg_to_dict(self.dynamics_solver_cfg)
-
 
 @configclass
 class KaminoDVISolverCfg(_KaminoSolverCfgBase):
@@ -410,7 +327,3 @@ class KaminoDVISolverCfg(_KaminoSolverCfgBase):
 
     dynamics_solver_cfg: KaminoDVICfg = field(default_factory=KaminoDVICfg)
     """DVI forward-dynamics solver parameters."""
-
-    def _get_dynamics_solver_config(self) -> tuple[Literal["dvi"], dict[str, Any]]:
-        """Return DVI and its configuration keyword arguments."""
-        return "dvi", _cfg_to_dict(self.dynamics_solver_cfg)

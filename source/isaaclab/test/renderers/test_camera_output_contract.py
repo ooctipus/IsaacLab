@@ -5,7 +5,9 @@
 
 """Tests for the renderer→camera output contract."""
 
-import warnings
+import gc
+import inspect
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -13,9 +15,14 @@ import warp as wp
 
 pytest.importorskip("isaaclab_physx")
 
-from isaaclab.sensors.camera import CameraCfg, TiledCameraCfg
+from isaaclab_newton.renderers import NewtonWarpRendererCfg
+from isaaclab_physx.renderers import IsaacRtxRendererCfg
+
+from isaaclab.scene_data import SceneDataFormat, SceneDataPublication
+from isaaclab.sensors.camera import Camera, CameraCfg
 from isaaclab.sensors.camera.camera_data import CameraData, RenderBufferKind, RenderBufferSpec
-from isaaclab.sim import PinholeCameraCfg
+from isaaclab.sim import PinholeCameraCfg, SimulationContext
+from isaaclab.utils.warp import ProxyArray
 
 pytestmark = [pytest.mark.integration, pytest.mark.rendering]
 
@@ -25,95 +32,6 @@ _SPAWN = PinholeCameraCfg(
     horizontal_aperture=20.955,
     clipping_range=(0.1, 1.0e5),
 )
-
-
-@pytest.mark.parametrize(
-    "field_name,deprecated_value",
-    [
-        ("colorize_semantic_segmentation", False),
-        ("colorize_instance_segmentation", False),
-        ("colorize_instance_id_segmentation", False),
-        ("semantic_filter", ["class"]),
-        ("semantic_segmentation_mapping", {"class:cube": (1, 2, 3, 4)}),
-        ("depth_clipping_behavior", "max"),
-    ],
-)
-def test_camera_cfg_forwards_deprecated_fields_to_renderer_cfg(field_name, deprecated_value):
-    """Deprecated CameraCfg field is forwarded to renderer_cfg with a warning."""
-    kwargs = {
-        "height": 64,
-        "width": 64,
-        "prim_path": "/World/Camera",
-        "spawn": _SPAWN,
-        "data_types": ["rgb"],
-        field_name: deprecated_value,
-    }
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        cfg = CameraCfg(**kwargs)
-
-    deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-    assert any(f"CameraCfg.{field_name}" in str(w.message) for w in deprecation_warnings)
-    assert getattr(cfg.renderer_cfg, field_name) == deprecated_value
-
-
-def test_camera_cfg_default_does_not_warn_or_forward():
-    """Default-valued deprecated fields stay silent."""
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        cfg = CameraCfg(
-            height=64,
-            width=64,
-            prim_path="/World/Camera",
-            spawn=_SPAWN,
-            data_types=["rgb"],
-        )
-
-    deprecation_warnings = [
-        w for w in caught if issubclass(w.category, DeprecationWarning) and "CameraCfg." in str(w.message)
-    ]
-    assert deprecation_warnings == []
-    assert cfg.renderer_cfg.colorize_semantic_segmentation is True
-
-
-def test_camera_cfg_post_construction_mutation_is_silent_no_op():
-    """Mutating a deprecated field after construction does not propagate to renderer_cfg."""
-    cfg = CameraCfg(
-        height=64,
-        width=64,
-        prim_path="/World/Camera",
-        spawn=_SPAWN,
-        data_types=["rgb"],
-    )
-    assert cfg.renderer_cfg.colorize_semantic_segmentation is True
-    cfg.colorize_semantic_segmentation = False
-    assert cfg.renderer_cfg.colorize_semantic_segmentation is True
-
-
-def test_tiled_camera_cfg_does_not_forward_deprecated_fields():
-    """TiledCameraCfg skips CameraCfg's per-field forwarder."""
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        cfg = TiledCameraCfg(
-            height=64,
-            width=64,
-            prim_path="/World/Camera",
-            spawn=_SPAWN,
-            data_types=["rgb"],
-            colorize_semantic_segmentation=False,
-        )
-
-    tiled_warnings = [
-        w for w in caught if issubclass(w.category, DeprecationWarning) and "TiledCameraCfg" in str(w.message)
-    ]
-    assert tiled_warnings
-
-    field_warnings = [
-        w for w in caught if issubclass(w.category, DeprecationWarning) and "CameraCfg.colorize_" in str(w.message)
-    ]
-    assert field_warnings == []
-
-    assert cfg.renderer_cfg.colorize_semantic_segmentation is True
 
 
 def test_newton_warp_supported_output_types_key_set():
@@ -175,13 +93,47 @@ def test_newton_warp_wraps_requested_rgb_hdr_output():
     from isaaclab.utils.warp.proxy_array import ProxyArray
 
     fake_sensor = SimpleNamespace(model=SimpleNamespace(world_count=2, device="cpu"))
-    render_data = RenderData(fake_sensor, SimpleNamespace(cfg=SimpleNamespace(width=4, height=3, isp_cfg=None)))
+    render_data = RenderData(
+        fake_sensor,
+        SimpleNamespace(
+            cfg=CameraCfg(
+                width=4,
+                height=3,
+                prim_path="/World/Camera",
+                spawn=_SPAWN,
+                renderer_cfg=NewtonWarpRendererCfg(),
+            )
+        ),
+    )
     hdr_proxy = ProxyArray(wp.zeros((2, 3, 4, 3), dtype=wp.float32, device="cpu"))
 
     render_data.set_outputs({str(RenderBufferKind.RGB_HDR): hdr_proxy})
 
     assert render_data.outputs.hdr_color_image is not None
     assert render_data.get_output(RenderBufferKind.RGB_HDR) is render_data.outputs.hdr_color_image
+
+
+def test_newton_warp_rejects_an_unknown_output_at_binding() -> None:
+    """Direct renderer callers cannot regain Camera's rejected-output fallback."""
+    pytest.importorskip("isaaclab_newton")
+    pytest.importorskip("newton")
+    from isaaclab_newton.renderers.newton_warp_renderer import RenderData
+
+    render_data = RenderData(
+        SimpleNamespace(model=SimpleNamespace(world_count=1, device="cpu")),
+        SimpleNamespace(
+            cfg=CameraCfg(
+                width=4,
+                height=3,
+                prim_path="/World/Camera",
+                spawn=_SPAWN,
+                renderer_cfg=NewtonWarpRendererCfg(),
+            )
+        ),
+    )
+
+    with pytest.raises(ValueError, match="does not support output 'unknown'"):
+        render_data.set_outputs({"unknown": object()})
 
 
 def _make_camera_cfg(data_types: list[str]) -> CameraCfg:
@@ -191,6 +143,7 @@ def _make_camera_cfg(data_types: list[str]) -> CameraCfg:
         prim_path="/World/Camera",
         spawn=_SPAWN,
         data_types=data_types,
+        renderer_cfg=IsaacRtxRendererCfg(),
     )
 
 
@@ -276,3 +229,202 @@ def test_camera_data_allocate_raises_on_unknown_name():
         )
     assert "not_a_real_type" in str(exc_info.value)
     assert "RenderBufferKind" in str(exc_info.value)
+
+
+##
+# Camera renderer lifecycle.
+##
+
+
+def test_renderers_initialize_once_after_the_clone_plan_completes():
+    """The complete pre-clone renderer set initializes once before camera sensors use it."""
+    from isaaclab.renderers.base_renderer import BaseRenderer
+
+    events: list[str] = []
+
+    class _Backend(BaseRenderer):
+        def initialize(self) -> None:
+            events.append("initialize")
+
+        def supported_output_types(self):
+            return {}
+
+        def create_render_data(self, _spec) -> object:
+            events.append("create_render_data")
+            return object()
+
+        def set_outputs(self, *_args) -> None:
+            pass
+
+        def update(self, *_args) -> None:
+            pass
+
+        def render(self, _render_data) -> None:
+            pass
+
+        def read_output(self, *_args) -> None:
+            pass
+
+        def cleanup(self, _render_data) -> None:
+            pass
+
+    ctx = object.__new__(SimulationContext)
+    ctx._renderer_entries = []
+    ctx._renderers_initialized = False
+    ctx._clone_plan = SimpleNamespace(is_complete=False)
+    cfg = IsaacRtxRendererCfg()
+    cfg.class_type = lambda _cfg: _Backend()
+    first = ctx.get_renderer(cfg)
+    second = ctx.get_renderer(cfg)
+
+    ctx._clone_plan = SimpleNamespace(is_complete=True)
+    ctx._initialize_renderers()
+    ctx._initialize_renderers()
+
+    assert first is not second
+    assert events == ["initialize", "initialize"]
+    late_cfg = NewtonWarpRendererCfg()
+    late_cfg.class_type = lambda _cfg: _Backend()
+    with pytest.raises(RuntimeError, match="before the clone plan completes"):
+        ctx.get_renderer(late_cfg)
+
+
+def test_renderer_initialization_rejects_an_incomplete_clone_plan():
+    """Renderer initialization cannot race cloning or recover through a camera-local drain."""
+    ctx = object.__new__(SimulationContext)
+    ctx._renderer_entries = [SimpleNamespace(initialize=lambda: None)]
+    ctx._renderers_initialized = False
+    ctx._clone_plan = SimpleNamespace(is_complete=False)
+
+    with pytest.raises(RuntimeError, match="completed clone plan"):
+        ctx._initialize_renderers()
+
+
+@pytest.mark.parametrize(("pose_follows_physics", "pose_event"), [(True, "poses"), (False, "frame")])
+def test_camera_updates_scene_camera_and_output_in_order(pose_follows_physics, pose_event):
+    """Only body-attached cameras refresh their SDP pose during a renderer exchange."""
+    from isaaclab.sensors.camera import Camera
+
+    events = []
+
+    class _Renderer:
+        def update(self, render_data, intrinsics):
+            events.append(("update", render_data, intrinsics))
+
+        def render(self, render_data):
+            events.append(("render", render_data))
+
+        def read_output(self, render_data, camera_data):
+            events.append(("read", render_data, camera_data))
+
+    render_data = object()
+    camera_data = SimpleNamespace(intrinsic_matrices=object())
+    camera = SimpleNamespace(
+        _renderer=_Renderer(),
+        _render_data=render_data,
+        _data=camera_data,
+        _pose_follows_physics=pose_follows_physics,
+        cfg=SimpleNamespace(update_latest_camera_pose=True),
+        _env_mask_has_any=lambda _mask: True,
+        _update_poses=lambda **_kwargs: events.append("poses"),
+        _update_camera_state=lambda **_kwargs: events.append("frame"),
+    )
+
+    Camera._update_buffers_impl(camera, object())
+
+    assert events == [
+        pose_event,
+        ("update", render_data, camera_data.intrinsic_matrices),
+        ("render", render_data),
+        ("read", render_data, camera_data),
+    ]
+
+
+def test_camera_full_pose_refresh_publishes_named_sdp_data():
+    """A full camera pose refresh publishes native OpenGL transforms through named SDP data."""
+    positions = wp.array([[1.0, 2.0, 3.0]], dtype=wp.vec3f, device="cpu")
+    orientations = wp.array([[0.0, 0.0, 0.0, 1.0]], dtype=wp.quatf, device="cpu")
+    publication = SceneDataPublication(SceneDataFormat.Vec3_Quat(), False)
+    camera = SimpleNamespace(
+        _view=SimpleNamespace(
+            get_world_poses=lambda _indices: (ProxyArray(positions), ProxyArray(orientations)),
+        ),
+        _render_data=object(),
+        _render_pose_publication=publication,
+        _resolve_env_ids_wp=lambda _env_ids: None,
+        _update_camera_state=lambda **_kwargs: None,
+    )
+
+    Camera._update_poses(camera, env_mask=object())
+
+    assert publication.data.positions.ptr == positions.ptr
+    assert publication.data.orientations.ptr == orientations.ptr
+    assert publication.dirty
+
+
+@pytest.mark.parametrize("from_view", [False, True])
+def test_camera_pose_setters_refresh_named_sdp_publication(from_view):
+    """Both explicit camera pose setters refresh the named SDP publication immediately."""
+    events = []
+
+    class _Writer:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def set_poses(self, *_args):
+            events.append("write")
+
+    camera = SimpleNamespace(
+        _device="cpu",
+        _view=SimpleNamespace(count=1, xform_world_space_writer=_Writer),
+        _resolve_env_ids_wp=lambda _env_ids: None,
+        _update_poses=lambda **_kwargs: events.append("publish"),
+        cfg=SimpleNamespace(update_latest_camera_pose=False),
+    )
+    camera.set_world_poses = Camera.set_world_poses.__get__(camera)
+
+    if from_view:
+        Camera.set_world_poses_from_view(camera, [[1.0, 0.0, 0.0]], [[0.0, 0.0, 0.0]])
+    else:
+        camera.set_world_poses([[1.0, 2.0, 3.0]], [[0.0, 0.0, 0.0, 1.0]], convention="opengl")
+
+    assert events == ["write", "publish"]
+
+
+def test_camera_cannot_be_built_without_a_simulation(monkeypatch: pytest.MonkeyPatch):
+    """A camera registers physics callbacks, so there is no 'built before the simulation' path.
+
+    This is why ``Camera.__init__`` describes itself to its backend unconditionally: the branch
+    that used to guard against a missing simulation could never be taken.
+    """
+    from isaaclab.sensors.camera import Camera
+
+    monkeypatch.setattr("isaaclab.sim.SimulationContext.instance", staticmethod(lambda: None))
+    unraisable = []
+    monkeypatch.setattr(sys, "unraisablehook", unraisable.append)
+
+    with pytest.raises(RuntimeError, match="requires an active SimulationContext"):
+        Camera(
+            CameraCfg(
+                prim_path="/World/Cam",
+                height=8,
+                width=8,
+                data_types=["rgb"],
+                spawn=_SPAWN,
+                renderer_cfg=IsaacRtxRendererCfg(),
+            )
+        )
+    gc.collect()
+
+    assert unraisable == []
+
+
+def test_camera_never_fetches_planned_prims_from_stage():
+    """Architecture gate: planned camera handles are retained before initialization."""
+    from isaaclab.sensors.camera import Camera
+
+    source = inspect.getsource(Camera)
+    assert all(discovery not in source for discovery in ("GetPrimAtPath", "PrimRange", "Traverse"))

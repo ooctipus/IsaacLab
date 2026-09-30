@@ -12,13 +12,9 @@ from typing import TYPE_CHECKING, Any
 import torch
 import warp as wp
 
-from pxr import UsdPhysics
-
-import isaaclab.sim as sim_utils
 from isaaclab.sensors.ray_caster.base_ray_caster import BaseRayCaster
 from isaaclab.sensors.ray_caster.kernels import copy_mesh_transforms_to_table_kernel
-
-from isaaclab_physx.physics import PhysxManager
+from isaaclab.sim.simulation_context import SimulationContext
 
 if TYPE_CHECKING:
     from isaaclab.sensors.ray_caster.ray_caster_cfg import RayCasterCfg
@@ -26,21 +22,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _has_rigid_body_api(prim) -> bool:
-    return bool(prim.HasAPI(UsdPhysics.RigidBodyAPI))
-
-
-def _physx_body_glob(body_expr: str) -> str:
-    """Convert internal env regex/template expressions to PhysX glob syntax."""
-    return sim_utils.path_expr_to_glob(body_expr.replace("{}", "*"))
-
-
 class _PhysXRayCasterMixin:
     """PhysX pose tracking for ray-caster sensors.
 
-    PhysX can provide live rigid-body transforms after physics is ready. Static
-    non-physics prims are cached once at initialization; they are intentionally
-    not polled through USD during sensor updates.
+    PhysX provides live transforms for plan-bound rigid bodies after physics is ready.
+    Fixed frames retain the world poses declared by the same plan.
     """
 
     @property
@@ -49,57 +35,46 @@ class _PhysXRayCasterMixin:
         return self._view_count
 
     def _initialize_pose_tracking(self: Any) -> None:
-        """Track the sensor frame through its PhysX rigid-body ancestor, else cache static poses."""
-        # One clone-plan-/stage-aware resolution yields the sensor frame(s) and their
-        # multi-instance destination expressions; the rigid-body view is the frame's ancestor.
-        matches = sim_utils.resolve_matching_prims_from_source(self.cfg.prim_path)
-        # Base classes read ``self._view.count``; the sensor doubles as its own view.
+        """Bind exact planned sensor frames to PhysX bodies or fixed world poses."""
+        plan = SimulationContext.instance().get_clone_plan()
+        if plan is None or not plan.is_complete:
+            raise RuntimeError(f"RayCaster at {self.cfg.prim_path!r} requires a completed clone plan.")
+        frames = plan.match_frames(self.cfg.prim_path)
         self._view = self
-        prims = [prim for prim, _ in matches]
-        sensor_prim, sensor_expr = matches[0]
-        body = sim_utils.get_first_matching_ancestor_prim(sensor_prim.GetPath(), predicate=_has_rigid_body_api)
-        if body is None:
-            # No rigid-body ancestor: nothing spans envs, so cache every concrete env frame.
-            self._initialize_static_pose_tracking(sim_utils.find_matching_prims(self.cfg.prim_path))
+        if all(frame.body_path is None for frame in frames):
+            self._initialize_static_pose_tracking([frame.pose for frame in frames])
             return
+        if any(frame.body_path is None for frame in frames):
+            raise ValueError(f"RayCaster expression {self.cfg.prim_path!r} mixes fixed and rigid-body frames.")
+        by_body = {frame.body_path: frame for frame in frames}
+        if len(by_body) != len(frames):
+            raise ValueError(f"RayCaster expression {self.cfg.prim_path!r} resolves multiple frames on one body.")
 
-        # The body view is ``sensor_expr`` with the sensor-relative suffix trimmed off.
-        sensor_path, body_path = sensor_prim.GetPath(), body.GetPath()
-        relative = sensor_path.MakeRelativePath(body_path).pathString
-        body_expr = sensor_expr if sensor_path == body_path else sensor_expr[: -(len(relative) + 1)]
-
-        physics_sim_view = PhysxManager.get_physics_sim_view()
+        physics_sim_view = self._physics_manager.get_physics_sim_view()
         if physics_sim_view is None:
             raise RuntimeError("PhysX simulation view is not initialized.")
-        self._physx_body_view = physics_sim_view.create_rigid_body_view(_physx_body_glob(body_expr))
+        self._physx_body_view = physics_sim_view.create_rigid_body_view(list(by_body))
         self._view_count = self._physx_body_view.count
-
-        # Sensor-to-body offset per resolved frame; a lone frame broadcasts across all envs.
-        offset_pos, offset_quat = [], []
-        for prim in prims:
-            prim_body = sim_utils.get_first_matching_ancestor_prim(prim.GetPath(), predicate=_has_rigid_body_api)
-            pos, quat = sim_utils.resolve_prim_pose(prim, prim_body)
-            offset_pos.append(pos)
-            offset_quat.append(quat)
-        if len(offset_pos) == 1 and self._view_count > 1:
-            offset_pos = offset_pos * self._view_count
-            offset_quat = offset_quat * self._view_count
-        self._offset_pos_wp = wp.array(offset_pos[: self._view_count], dtype=wp.vec3f, device=self._device)
+        if self._view_count != len(by_body):
+            raise ValueError("PhysX RayCaster body view does not match the clone plan.")
+        try:
+            ordered = [by_body[path] for path in self._physx_body_view.prim_paths]
+        except KeyError as exc:
+            raise ValueError(f"PhysX returned undeclared RayCaster body {exc.args[0]!r}.") from exc
+        self._offset_pos_wp = wp.array([frame.pose[:3] for frame in ordered], dtype=wp.vec3f, device=self._device)
         self._offset_quat_contiguous = torch.tensor(
-            offset_quat[: self._view_count], dtype=torch.float32, device=self._device
+            [frame.pose[3:] for frame in ordered], dtype=torch.float32, device=self._device
         )
         self._offset_quat_wp = wp.from_torch(self._offset_quat_contiguous, dtype=wp.quatf)
 
-    def _initialize_static_pose_tracking(self: Any, prims) -> None:
-        """Cache authored poses for non-physics sensor frames."""
-        poses = []
-        for prim in prims:
-            pos, quat = sim_utils.resolve_prim_pose(prim)
-            poses.append((*pos, *quat))
+    def _initialize_static_pose_tracking(self: Any, poses) -> None:
+        """Cache planned world poses for non-physics sensor frames."""
+        if len(poses) == 1 and self._num_envs > 1:
+            poses *= self._num_envs
         self._static_view_transforms_torch = torch.tensor(poses, dtype=torch.float32, device=self._device).contiguous()
         self._static_view_transforms_wp = wp.from_torch(self._static_view_transforms_torch).view(wp.transformf)
         self._physx_body_view = None
-        self._view_count = len(prims)
+        self._view_count = len(poses)
         self._offset_pos_wp = wp.zeros(self._view_count, dtype=wp.vec3f, device=self._device)
         identity_quat = torch.zeros(self._view_count, 4, device=self._device)
         identity_quat[:, 3] = 1.0
@@ -130,10 +105,13 @@ class _PhysXRayCasterMixin:
             target_prim_paths = [target_prim_paths]
         if not target_prim_paths:
             raise RuntimeError(f"No tracked target bodies resolved from: {target_prim_paths}")
-        physics_sim_view = PhysxManager.get_physics_sim_view()
+        physics_sim_view = self._physics_manager.get_physics_sim_view()
         if physics_sim_view is None:
             raise RuntimeError("PhysX simulation view is not initialized.")
-        return physics_sim_view.create_rigid_body_view([_physx_body_glob(path) for path in target_prim_paths])
+        view = physics_sim_view.create_rigid_body_view(target_prim_paths)
+        if list(view.prim_paths) != target_prim_paths:
+            raise ValueError("PhysX tracked ray-cast target view does not match the clone plan.")
+        return view
 
     def _update_mesh_transforms(self: Any) -> None:
         """Refresh dynamic multi-mesh targets directly from PhysX views."""

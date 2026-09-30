@@ -10,7 +10,7 @@ from __future__ import annotations
 import sys
 from contextlib import contextmanager
 from types import ModuleType, SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from isaaclab.actuators import ActuatorCollection
 from isaaclab.benchmark.asset_suites.types import AssetBenchmarkTargets
@@ -18,6 +18,14 @@ from isaaclab.benchmark.asset_suites.types import AssetBenchmarkTargets
 from isaaclab_physx.assets.articulation.actuator_control import PhysxActuatorControl
 
 args = SimpleNamespace(no_shape_checks=False)
+
+
+def _mock_physics_manager():
+    physics_view = MagicMock()
+    physics_view.get_gravity.return_value = (0.0, 0.0, -9.81)
+    manager = MagicMock()
+    manager.get_physics_sim_view.return_value = physics_view
+    return manager
 
 
 def _initialize_mock_asset(asset) -> None:
@@ -75,6 +83,7 @@ def _load_runtime_symbols() -> None:
 
 
 def create_test_articulation(
+    physics_manager,
     num_instances: int = 2,
     num_joints: int = 6,
     num_bodies: int = 7,
@@ -117,8 +126,8 @@ def create_test_articulation(
     object.__setattr__(articulation, "_check_shapes", not args.no_shape_checks)
     object.__setattr__(articulation, "_sim_cfg", SimpleNamespace(use_newton_actuators=False))
 
-    # Create ArticulationData instance (SimulationManager already mocked at module level)
-    data = ArticulationData(mock_view, device)
+    object.__setattr__(articulation, "_physics_manager", physics_manager)
+    data = ArticulationData(mock_view, device, physics_manager)
     object.__setattr__(articulation, "_data", data)
 
     # Create mock wrench composers (pass articulation which has num_instances, num_bodies, device properties)
@@ -195,6 +204,7 @@ def create_test_articulation(
 # =============================================================================
 # Input Generators (Torch-only for PhysX backend)
 def create_test_rigid_object(
+    physics_manager,
     num_instances: int = 2,
     num_bodies: int = 1,
     device: str = "cuda:0",
@@ -219,8 +229,8 @@ def create_test_rigid_object(
     object.__setattr__(rigid_object, "_root_view", mock_view)
     object.__setattr__(rigid_object, "_device", device)
 
-    # Create RigidObjectData instance (mocks already set up at module level)
-    data = RigidObjectData(mock_view, device)
+    object.__setattr__(rigid_object, "_physics_manager", physics_manager)
+    data = RigidObjectData(mock_view, device, physics_manager)
     object.__setattr__(rigid_object, "_data", data)
 
     # Call _create_buffers to set up all internal buffers and wrench composers
@@ -232,6 +242,7 @@ def create_test_rigid_object(
 # =============================================================================
 # Input Generators (Torch-only for PhysX backend)
 def create_test_collection(
+    physics_manager,
     num_instances: int = 2,
     num_bodies: int = 4,
     device: str = "cuda:0",
@@ -262,8 +273,8 @@ def create_test_collection(
     object.__setattr__(collection, "_device", device)
     object.__setattr__(collection, "_body_names_list", object_names)
 
-    # Create RigidObjectCollectionData instance
-    data = RigidObjectCollectionData(mock_view, num_bodies, device)
+    object.__setattr__(collection, "_physics_manager", physics_manager)
+    data = RigidObjectCollectionData(mock_view, num_bodies, device, physics_manager)
     data.object_names = object_names
     object.__setattr__(collection, "_data", data)
 
@@ -279,7 +290,6 @@ def create_test_collection(
 
 def _refresh_articulation_data(data, _config) -> None:
     data._sim_timestamp += 1.0
-    data._fk_timestamp = data._sim_timestamp
 
 
 def _refresh_rigid_object_data(mock_view, data, config) -> None:
@@ -332,7 +342,7 @@ def _configure_articulation_view(mock_view, config) -> None:
     mock_view.get_gravity_compensation_forces = lambda: gravity_forces
 
 
-def _create_data_target(component, config):
+def _create_data_target(component, config, physics_manager):
     if component == "articulation":
         mock_view = MockArticulationViewWarp(
             count=config.num_instances,
@@ -342,17 +352,17 @@ def _create_data_target(component, config):
         )
         mock_view.set_random_mock_data()
         _configure_articulation_view(mock_view, config)
-        data = ArticulationData(mock_view, config.device)
+        data = ArticulationData(mock_view, config.device, physics_manager)
         data._apply_ordering_maps_after_resolve()
         return data, lambda cfg, _mock_view=mock_view: _refresh_articulation_data(data, cfg)
     if component == "rigid_object":
         mock_view = MockRigidBodyViewWarp(count=config.num_instances, device=config.device)
         mock_view.set_random_mock_data()
-        data = RigidObjectData(mock_view, config.device)
+        data = RigidObjectData(mock_view, config.device, physics_manager)
         return data, lambda cfg: _refresh_rigid_object_data(mock_view, data, cfg)
     mock_view = MockRigidBodyViewWarp(count=config.num_instances * config.num_bodies, device=config.device)
     mock_view.set_random_mock_data()
-    data = RigidObjectCollectionData(mock_view, config.num_bodies, config.device)
+    data = RigidObjectCollectionData(mock_view, config.num_bodies, config.device, physics_manager)
     return data, lambda cfg: _refresh_collection_data(mock_view, data, cfg)
 
 
@@ -361,31 +371,18 @@ def open_asset_targets(adapter, request, method_config, data_config):
     """Open the selected mocked PhysX asset target."""
     _load_runtime_symbols()
     args.no_shape_checks = not request.check_shapes
-    physics_view = MagicMock()
-    physics_view.get_gravity.return_value = (0.0, 0.0, -9.81)
-    with patch.object(PhysxManager, "get_physics_sim_view", return_value=physics_view):
-        if adapter.component == "articulation":
-            target, _, _ = create_test_articulation(
-                num_instances=method_config.num_instances,
-                num_bodies=method_config.num_bodies,
-                num_joints=method_config.num_joints,
-                device=method_config.device,
-            )
-        elif adapter.component == "rigid_object":
-            target, _, _ = create_test_rigid_object(
-                num_instances=method_config.num_instances,
-                num_bodies=method_config.num_bodies,
-                device=method_config.device,
-            )
-        else:
-            target, _ = create_test_collection(
-                num_instances=method_config.num_instances,
-                num_bodies=method_config.num_bodies,
-                device=method_config.device,
-            )
-        data, refresh_data = _create_data_target(adapter.component, data_config)
-        yield AssetBenchmarkTargets(
-            method_target=target,
-            data_target=data,
-            refresh_data=refresh_data,
-        )
+    physics_manager = _mock_physics_manager()
+    factory = {
+        "articulation": create_test_articulation,
+        "rigid_object": create_test_rigid_object,
+        "rigid_object_collection": create_test_collection,
+    }[adapter.component]
+    target = factory(
+        physics_manager=physics_manager,
+        num_instances=method_config.num_instances,
+        num_bodies=method_config.num_bodies,
+        device=method_config.device,
+        **({"num_joints": method_config.num_joints} if adapter.component == "articulation" else {}),
+    )[0]
+    data, refresh_data = _create_data_target(adapter.component, data_config, physics_manager)
+    yield AssetBenchmarkTargets(method_target=target, data_target=data, refresh_data=refresh_data)

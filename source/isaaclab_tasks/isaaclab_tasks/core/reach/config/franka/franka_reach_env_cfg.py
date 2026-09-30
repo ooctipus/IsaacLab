@@ -10,7 +10,7 @@ import math
 from isaaclab_newton.envs.mdp.actions.newton_ik_actions_cfg import NewtonInverseKinematicsActionCfg
 from isaaclab_newton.ik.newton_ik_objectives_cfg import NewtonIKJointLimitObjectiveCfg, NewtonIKPoseObjectiveCfg
 from isaaclab_newton.ik.newton_ik_solver_cfg import NewtonIKSolverCfg
-from isaaclab_newton.physics import NewtonCfg
+from isaaclab_newton.physics import NewtonSolverCfg
 
 import isaaclab.envs.mdp as mdp
 from isaaclab.controllers.differential_ik_cfg import DifferentialIKControllerCfg
@@ -86,7 +86,7 @@ class FrankaReachEnvCfg(ReachEnvCfg):
         """Validate the selected controller and physics backend."""
 
         if isinstance(self.actions.arm_action, NewtonInverseKinematicsActionCfg) and not isinstance(
-            self.sim.physics, NewtonCfg
+            self.sim.physics, NewtonSolverCfg
         ):
             raise ValueError("The 'newton_ik' action preset requires a Newton physics preset.")
 

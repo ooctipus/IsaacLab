@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 from .newton_visualizer_cfg import NewtonGLVisualizerCfg, NewtonRTXVisualizerCfg, NewtonVisualizerCfg
 
 if TYPE_CHECKING:
-    from .newton_visualizer import NewtonGLVisualizer, NewtonRTXVisualizer, NewtonVisualizer
+    from .newton_visualizer import NewtonGLVisualizer, NewtonRTXVisualizer
 
 __all__ = [
     # Base config (shared fields, not directly instantiable as a visualizer)
@@ -31,19 +31,10 @@ __all__ = [
 
 
 def __getattr__(name: str):
-    if name in ("NewtonVisualizer", "NewtonGLVisualizer", "NewtonRTXVisualizer"):
-        from .newton_visualizer import NewtonGLVisualizer, NewtonRTXVisualizer, NewtonVisualizer
+    if name in ("NewtonGLVisualizer", "NewtonRTXVisualizer"):
+        from .newton_visualizer import NewtonGLVisualizer, NewtonRTXVisualizer
 
         if name == "NewtonGLVisualizer":
             return NewtonGLVisualizer
-        if name == "NewtonRTXVisualizer":
-            return NewtonRTXVisualizer
-        import warnings
-
-        warnings.warn(
-            "NewtonVisualizer is deprecated and will be removed in a future release. Use NewtonGLVisualizer instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return NewtonGLVisualizer
+        return NewtonRTXVisualizer
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

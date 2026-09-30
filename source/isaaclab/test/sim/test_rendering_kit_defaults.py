@@ -93,6 +93,12 @@ def test_base_kit_omits_high_fidelity_defaults():
     assert not present, f"{_BASE_KIT} unexpectedly defines high-fidelity RTX defaults: {present}"
 
 
+def test_headless_rendering_disables_viewport_hud():
+    """Headless rendering does not subscribe invisible viewport HUD observers."""
+    content = _read_kit("isaaclab.python.headless.rendering.kit")
+    assert _kit_value(content, "app.viewport.forceHideFps") == "true"
+
+
 def test_rendering_kits_agree_on_rtx_defaults():
     """Both rendering kits define identical values for every shared RTX default."""
     primary, secondary = _RENDERING_KIT

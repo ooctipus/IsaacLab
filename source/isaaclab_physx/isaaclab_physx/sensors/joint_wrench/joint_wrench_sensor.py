@@ -14,12 +14,9 @@ from typing import TYPE_CHECKING
 import numpy as np
 import warp as wp
 
-from pxr import Usd, UsdPhysics
-
 from isaaclab.sensors.joint_wrench import BaseJointWrenchSensor
-from isaaclab.sim.utils.queries import path_expr_to_glob, resolve_matching_prims_from_source
-
-from isaaclab_physx.physics import PhysxManager as SimulationManager
+from isaaclab.sim.simulation_context import SimulationContext
+from isaaclab.sim.utils.queries import path_expr_to_glob
 
 from .joint_wrench_sensor_data import JointWrenchSensorData
 from .kernels import joint_wrench_reset_kernel, joint_wrench_split_kernel
@@ -27,6 +24,7 @@ from .kernels import joint_wrench_reset_kernel, joint_wrench_split_kernel
 if TYPE_CHECKING:
     import omni.physics.tensors as physx
 
+    from isaaclab.cloner.clone_plan import ArticulationLayout
     from isaaclab.sensors.joint_wrench import JointWrenchSensorCfg
 
 logger = logging.getLogger(__name__)
@@ -123,17 +121,17 @@ class JointWrenchSensor(BaseJointWrenchSensor):
         """PHYSICS_READY callback: builds the articulation view and allocates buffers."""
         super()._initialize_impl()
 
-        def has_articulation_root_api(prim) -> bool:
-            return bool(prim.HasAPI(UsdPhysics.ArticulationRootAPI))
+        self._physics_sim_view = self._physics_manager.get_physics_sim_view()
 
-        resolve_kwargs = {"predicate": has_articulation_root_api, "expected_num_matches": 1}
-        _, root_prim_path_expr = resolve_matching_prims_from_source(self.cfg.prim_path, **resolve_kwargs)[0]
-        self._root_view = SimulationManager.views.get((SimulationManager, root_prim_path_expr))
+        plan = SimulationContext.instance().get_clone_plan()
+        if plan is None or not plan.is_complete:
+            raise RuntimeError(f"Joint wrench sensor at {self.cfg.prim_path!r} requires a completed clone plan.")
+        articulation = plan.match_articulation(self.cfg.prim_path)
+        root_prim_path_expr = articulation.view_path
+        self._root_view = self._physics_manager._articulation_views.get(root_prim_path_expr)
         if self._root_view is None:
-            self._root_view = SimulationManager.views[SimulationManager, root_prim_path_expr] = (
-                SimulationManager.get_physics_sim_view().create_articulation_view(
-                    path_expr_to_glob(root_prim_path_expr)
-                )
+            self._root_view = self._physics_manager._articulation_views[root_prim_path_expr] = (
+                self._physics_sim_view.create_articulation_view(path_expr_to_glob(root_prim_path_expr))
             )
         if self._root_view._backend is None:
             raise RuntimeError(f"Failed to create articulation view at: {root_prim_path_expr}. Check PhysX logs.")
@@ -143,45 +141,23 @@ class JointWrenchSensor(BaseJointWrenchSensor):
             raise RuntimeError(f"Joint wrench sensor matched zero bodies at '{self.cfg.prim_path}'.")
 
         self._data._body_names = list(self._root_view.shared_metatype.link_names)
-        self._create_joint_frame_buffers()
+        self._create_joint_frame_buffers(articulation)
         self._data.create_buffers(num_envs=self._num_envs, num_bodies=self._num_bodies, device=self._device)
         self._use_recorded_launch = wp.get_device(self._device).is_cuda
 
         logger.info(f"Joint wrench sensor initialized: {self._num_envs} envs, {self._num_bodies} bodies")
 
-    def _create_joint_frame_buffers(self) -> None:
+    def _create_joint_frame_buffers(self, articulation: ArticulationLayout) -> None:
         """Create child-side joint frame transforms indexed by PhysX link order."""
         joint_pos_b = np.zeros((self._num_bodies, 3), dtype=np.float32)
         joint_quat_b = np.zeros((self._num_bodies, 4), dtype=np.float32)
         joint_quat_b[:, 3] = 1.0
-
-        first_env_matching_prim = resolve_matching_prims_from_source(self.cfg.prim_path)[0][0]
-        link_name_to_index = {name: index for index, name in enumerate(self._data._body_names)}
-
-        for prim in Usd.PrimRange(first_env_matching_prim):
-            joint = UsdPhysics.Joint(prim)
-            if not joint or joint.GetJointEnabledAttr().Get() is False:
-                continue
-            body1_targets = joint.GetBody1Rel().GetTargets()
-            if len(body1_targets) == 0:
-                continue
-            body_index = link_name_to_index.get(body1_targets[0].name)
-            if body_index is None:
-                continue
-
-            local_pos1 = joint.GetLocalPos1Attr().Get()
-            if local_pos1 is not None:
-                joint_pos_b[body_index] = (float(local_pos1[0]), float(local_pos1[1]), float(local_pos1[2]))
-
-            local_rot1 = joint.GetLocalRot1Attr().Get()
-            if local_rot1 is not None:
-                local_rot1_imag = local_rot1.GetImaginary()
-                joint_quat_b[body_index] = (
-                    float(local_rot1_imag[0]),
-                    float(local_rot1_imag[1]),
-                    float(local_rot1_imag[2]),
-                    float(local_rot1.GetReal()),
-                )
+        joints = {joint.child_path: joint for joint in articulation.joints}
+        for body_index, child_path in enumerate(self._root_view.link_paths[0]):
+            joint = joints.get(child_path)
+            if joint is not None:
+                joint_pos_b[body_index] = joint.pose[:3]
+                joint_quat_b[body_index] = joint.pose[3:]
 
         self._joint_pos_b = wp.array(joint_pos_b, dtype=wp.vec3f, device=self._device)
         self._joint_quat_b = wp.array(joint_quat_b, dtype=wp.quatf, device=self._device)

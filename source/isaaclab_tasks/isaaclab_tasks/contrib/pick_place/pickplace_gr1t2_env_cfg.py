@@ -17,7 +17,6 @@ from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
-from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import ContactSensorCfg
 from isaaclab.sim.spawners.from_files.from_files_cfg import GroundPlaneCfg, UsdFileCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR, retrieve_file_path
@@ -28,12 +27,14 @@ from . import mdp
 
 from isaaclab_assets.robots.fourier import GR1T2_HIGH_PD_CFG  # isort: skip
 from isaaclab_teleop.haptic_feedback import GloveHapticFeedbackCfg  # isort: skip
-from isaaclab_teleop.isaac_teleop_cfg import IsaacTeleopCfg, XrCameraFeedCfg  # isort: skip
+from isaaclab_teleop.isaac_teleop_cfg import IsaacTeleopCfg, TeleopPipelineCfg, XrCameraFeedCfg  # isort: skip
 from isaaclab_teleop.xr_cfg import XrCfg  # isort: skip
 from isaaclab_tasks.contrib.robot_pov_camera_cfg import robot_pov_camera_cfg  # isort: skip
 
+from isaaclab_tasks.utils.presets import MultiBackendSceneCfg, MultiBackendSimulationCfg
 
-def _build_gr1t2_pickplace_pipeline():
+
+def _build_gr1t2_pickplace_pipeline(_cfg: TeleopPipelineCfg):
     """Build an IsaacTeleop retargeting pipeline for GR1T2 pick-place teleoperation.
 
     Creates two Se3AbsRetargeters for left and right wrist pose tracking and
@@ -260,8 +261,7 @@ def _build_gr1t2_pickplace_pipeline():
         }
     )
 
-    pipeline = OutputCombiner({"action": connected_reorderer.output("output")})
-    return pipeline, [left_dex, right_dex]
+    return OutputCombiner({"action": connected_reorderer.output("output")})
 
 
 ##
@@ -275,7 +275,7 @@ _STEERING_WHEEL_BODY = "{ENV_REGEX_NS}/Object/Geometry/sm_steeringwheel_a01_01"
 
 
 @configclass
-class ObjectTableSceneCfg(InteractiveSceneCfg):
+class ObjectTableSceneCfg(MultiBackendSceneCfg):
     """Configuration for the GR1T2 Pick Place Base Scene."""
 
     # Table
@@ -345,12 +345,14 @@ class ObjectTableSceneCfg(InteractiveSceneCfg):
         update_period=0.0,
         history_length=3,
     )
+    left_hand_contact.visualizer_cfg.prim_path = "/Visuals/ContactSensor/left_hand"
     right_hand_contact = ContactSensorCfg(
         prim_path="{ENV_REGEX_NS}/Robot/[^/]*R_(index|middle|ring|pinky|thumb)[^/]*_link",
         filter_prim_paths_expr=[_STEERING_WHEEL_BODY],
         update_period=0.0,
         history_length=3,
     )
+    right_hand_contact.visualizer_cfg.prim_path = "/Visuals/ContactSensor/right_hand"
 
     # Ground plane
     ground = AssetBaseCfg(
@@ -584,6 +586,7 @@ class EventCfg:
 class PickPlaceGR1T2EnvCfg(ManagerBasedRLEnvCfg):
     """Configuration for the GR1T2 environment."""
 
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg()
     # Scene settings
     scene: PickPlaceGR1T2SceneCfg = PickPlaceGR1T2SceneCfg(num_envs=1, env_spacing=2.5, replicate_physics=True)
     # Basic settings
@@ -660,19 +663,16 @@ class PickPlaceGR1T2EnvCfg(ManagerBasedRLEnvCfg):
         self.actions.upper_body_ik.controller.urdf_output_dir = self.temp_urdf_dir
 
         # IsaacTeleop-based teleoperation pipeline.
-        self.xr = XrCfg(
+        self.scene.xr_anchor = XrCfg(
             anchor_pos=(0.0, 0.0, 0.0),
             anchor_rot=(0.0, 0.0, 0.0, 1.0),
         )
         self.isaac_teleop = IsaacTeleopCfg(
-            pipeline_builder=lambda: _build_gr1t2_pickplace_pipeline()[0],
+            pipeline_cfg=TeleopPipelineCfg(class_type=_build_gr1t2_pickplace_pipeline),
             sim_device=self.sim.device,
-            xr_cfg=self.xr,
             xr_camera_feeds=[
                 XrCameraFeedCfg(
                     camera_name="robot_pov_cam",
-                    enable_dlss_ray_reconstruction=True,
-                    dlss_exec_mode="quality",
                     offset_m=(0.0, -0.15),
                     max_update_hz=0.0,
                 )

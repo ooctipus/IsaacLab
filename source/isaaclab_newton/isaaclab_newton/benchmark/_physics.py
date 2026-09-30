@@ -5,10 +5,10 @@
 
 """Exact Newton solver selection for micro-benchmark entrypoints."""
 
-from isaaclab_newton.physics import KaminoPADMMSolverCfg, MJWarpSolverCfg, NewtonCfg
+from isaaclab_newton.physics import KaminoPADMMSolverCfg, MJWarpSolverCfg, NewtonSolverCfg
 
 
-def create_microbenchmark_physics_cfg(physics_variant: str) -> NewtonCfg:
+def create_microbenchmark_physics_cfg(physics_variant: str) -> NewtonSolverCfg:
     """Create the exact Newton physics configuration selected by the CLI.
 
     Args:
@@ -29,4 +29,4 @@ def create_microbenchmark_physics_cfg(physics_variant: str) -> NewtonCfg:
     except KeyError as exc:
         available = ", ".join(solver_types)
         raise ValueError(f"Unsupported Newton physics variant '{physics_variant}'. Available: {available}.") from exc
-    return NewtonCfg(solver_cfg=solver_type())
+    return solver_type()

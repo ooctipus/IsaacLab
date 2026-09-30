@@ -20,6 +20,7 @@ simulation_app = AppLauncher(headless=True).app
 import pytest
 import torch
 import warp as wp
+from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import RigidObject, RigidObjectCfg
@@ -66,7 +67,10 @@ def test_global_force_invariant_under_rotation(device):
     The acceleration (delta_v per phase) should be the same in both phases because the
     force is in the global frame and should not rotate with the body.
     """
-    with build_simulation_context(device=device, gravity_enabled=False, auto_add_lighting=True) as sim:
+    with build_simulation_context(
+        sim_cfg=sim_utils.SimulationCfg(physics=PhysxCfg(), gravity=(0.0, 0.0, 0.0)),
+        device=device,
+    ) as sim:
         sim._app_control_on_stop_handle = None
         cube_object, _ = generate_cubes_scene(num_cubes=1, device=device)
 
@@ -141,7 +145,10 @@ def test_local_force_follows_rotation(device):
     A local +X force is applied. After 100 steps the body is rotated 180deg about Z.
     Since local +X is now world -X, the force should decelerate the body back towards zero velocity.
     """
-    with build_simulation_context(device=device, gravity_enabled=False, auto_add_lighting=True) as sim:
+    with build_simulation_context(
+        sim_cfg=sim_utils.SimulationCfg(physics=PhysxCfg(), gravity=(0.0, 0.0, 0.0)),
+        device=device,
+    ) as sim:
         sim._app_control_on_stop_handle = None
         cube_object, _ = generate_cubes_scene(num_cubes=1, device=device)
 
@@ -200,7 +207,10 @@ def test_global_force_at_offset_generates_torque(device):
     - Linear acceleration in +X
     - Angular acceleration about -Z (from cross product: (0,1,0) × (10,0,0) = (0,0,-10))
     """
-    with build_simulation_context(device=device, gravity_enabled=False, auto_add_lighting=True) as sim:
+    with build_simulation_context(
+        sim_cfg=sim_utils.SimulationCfg(physics=PhysxCfg(), gravity=(0.0, 0.0, 0.0)),
+        device=device,
+    ) as sim:
         sim._app_control_on_stop_handle = None
         cube_object, _ = generate_cubes_scene(num_cubes=1, device=device)
 
@@ -251,7 +261,10 @@ def test_global_torque_invariant_under_rotation(device):
     The angular acceleration (delta_omega per phase) about Z should be the same in both phases
     because the torque is in the global frame.
     """
-    with build_simulation_context(device=device, gravity_enabled=False, auto_add_lighting=True) as sim:
+    with build_simulation_context(
+        sim_cfg=sim_utils.SimulationCfg(physics=PhysxCfg(), gravity=(0.0, 0.0, 0.0)),
+        device=device,
+    ) as sim:
         sim._app_control_on_stop_handle = None
         cube_object, _ = generate_cubes_scene(num_cubes=1, device=device)
 
@@ -320,7 +333,10 @@ def test_global_force_torque_after_translation(device):
       correction = -cross((0,0,0), (0,10,0)) = (0,0,0)
       net torque = (0,0,10) → rotation about +Z.
     """
-    with build_simulation_context(device=device, gravity_enabled=False, auto_add_lighting=True) as sim:
+    with build_simulation_context(
+        sim_cfg=sim_utils.SimulationCfg(physics=PhysxCfg(), gravity=(0.0, 0.0, 0.0)),
+        device=device,
+    ) as sim:
         sim._app_control_on_stop_handle = None
         cube_object, _ = generate_cubes_scene(num_cubes=1, height=1.0, device=device)
 
@@ -424,7 +440,10 @@ def test_global_force_torque_reverses_on_opposite_side(device):
       net torque_z = cross(P - link_pos, F)_z = cross((-1,0,0), (0,10,0))_z = -10
       → negative Z angular velocity
     """
-    with build_simulation_context(device=device, gravity_enabled=False, auto_add_lighting=True) as sim:
+    with build_simulation_context(
+        sim_cfg=sim_utils.SimulationCfg(physics=PhysxCfg(), gravity=(0.0, 0.0, 0.0)),
+        device=device,
+    ) as sim:
         sim._app_control_on_stop_handle = None
         cube_object, _ = generate_cubes_scene(num_cubes=1, height=1.0, device=device)
 
@@ -501,7 +520,10 @@ def test_global_force_no_position_no_torque(device):
     A body at (2, 0, 1) with global F=(0, 10, 0) and no positions should experience
     only linear acceleration, no rotation. The force is applied at the body's CoM.
     """
-    with build_simulation_context(device=device, gravity_enabled=False, auto_add_lighting=True) as sim:
+    with build_simulation_context(
+        sim_cfg=sim_utils.SimulationCfg(physics=PhysxCfg(), gravity=(0.0, 0.0, 0.0)),
+        device=device,
+    ) as sim:
         sim._app_control_on_stop_handle = None
         cube_object, _ = generate_cubes_scene(num_cubes=1, height=1.0, device=device)
 
@@ -560,7 +582,10 @@ def test_multi_cube_different_torques_from_same_force(device):
     Cube 1: torque_z = cross((-1,0,0), (0,10,0))_z = -10 → omega_z < 0
     Both have same linear acceleration in +Y.
     """
-    with build_simulation_context(device=device, gravity_enabled=False, auto_add_lighting=True) as sim:
+    with build_simulation_context(
+        sim_cfg=sim_utils.SimulationCfg(physics=PhysxCfg(), gravity=(0.0, 0.0, 0.0)),
+        device=device,
+    ) as sim:
         sim._app_control_on_stop_handle = None
         cube_object, _ = generate_cubes_scene(num_cubes=2, height=1.0, device=device)
 
@@ -641,7 +666,10 @@ def test_global_force_torque_far_from_origin(device):
 
     Both cubes should produce the same angular and linear velocities.
     """
-    with build_simulation_context(device=device, gravity_enabled=False, auto_add_lighting=True) as sim:
+    with build_simulation_context(
+        sim_cfg=sim_utils.SimulationCfg(physics=PhysxCfg(), gravity=(0.0, 0.0, 0.0)),
+        device=device,
+    ) as sim:
         sim._app_control_on_stop_handle = None
         cube_object, _ = generate_cubes_scene(num_cubes=2, height=1.0, device=device)
 
@@ -737,7 +765,8 @@ def test_global_force_no_position_no_rotation_large_offset(device):
     Before the fix, this would produce torque proportional to 2000 and cause rotation.
     """
     with build_simulation_context(
-        device=device, add_ground_plane=False, auto_add_lighting=True, gravity_enabled=False
+        sim_cfg=sim_utils.SimulationCfg(physics=PhysxCfg(), gravity=(0.0, 0.0, 0.0)),
+        device=device,
     ) as sim:
         sim._app_control_on_stop_handle = None
         cube_object, _ = generate_cubes_scene(num_cubes=1, height=1.0, device=device)
@@ -794,7 +823,8 @@ def test_global_force_at_com_position_no_rotation_large_offset(device):
     serving as a control test alongside test_global_force_no_position_no_rotation_large_offset.
     """
     with build_simulation_context(
-        device=device, add_ground_plane=False, auto_add_lighting=True, gravity_enabled=False
+        sim_cfg=sim_utils.SimulationCfg(physics=PhysxCfg(), gravity=(0.0, 0.0, 0.0)),
+        device=device,
     ) as sim:
         sim._app_control_on_stop_handle = None
         cube_object, _ = generate_cubes_scene(num_cubes=1, height=1.0, device=device)

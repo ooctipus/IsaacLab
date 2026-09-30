@@ -289,10 +289,8 @@ def build_instance_id_to_labels_and_semantics(
     ]
     for index, (stable_id, semantic_id) in enumerate(stable_id_semantic_id_map):
         pixel_ids.append(index + _NUM_RESERVED_IDS)
-        # Fall back to UNLABELLED when a stable/semantic ID is missing from its map (defensive; the producer
-        # only emits pixel IDs >= 2 for labelled prims, so both lookups are expected to hit).
-        prim_paths.append(stable_id_to_path.get(stable_id, _RESERVED_INSTANCE_LABELS[UNLABELLED_ID]))
-        semantics.append(semantic_id_to_labels.get(semantic_id, _RESERVED_SEMANTIC_LABELS[UNLABELLED_ID]))
+        prim_paths.append(stable_id_to_path[stable_id])
+        semantics.append(semantic_id_to_labels[semantic_id])
 
     keys = _color_keys_for_ids(pixel_ids, device) if colorize else pixel_ids
     id_to_labels = {key: prim_paths[idx] for idx, key in enumerate(keys)}

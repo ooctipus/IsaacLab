@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import pytest
 import torch
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg, NewtonManager
+from isaaclab_newton.physics import MJWarpSolverCfg
 from isaaclab_newton.renderers import NewtonWarpRendererCfg
 from isaaclab_newton.sensors import (
     LegacyMultiMeshRayCaster,
@@ -21,7 +21,6 @@ from isaaclab_newton.sensors import (
     NewtonRaycastSensor,
     NewtonRaycastSensorCfg,
 )
-from newton import ShapeFlags
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import RigidObject, RigidObjectCfg
@@ -107,8 +106,7 @@ def sim(request):
     sim_cfg = SimulationCfg(
         dt=1.0 / 100.0,
         gravity=(0.0, 0.0, 0.0),
-        physics=NewtonCfg(
-            solver_cfg=MJWarpSolverCfg(),
+        physics=MJWarpSolverCfg(
             use_cuda_graph=request.param,
         ),
     )
@@ -129,9 +127,6 @@ def test_rays_hit_ground_plane(sim, global_world_only):
     scene_cfg = RaycastTestSceneCfg(num_envs=2)
     scene_cfg.raycast.global_world_only = global_world_only
     scene = InteractiveScene(scene_cfg)
-    expected_bvh_flags = ShapeFlags.VISIBLE | ShapeFlags.COLLIDE_SHAPES
-    assert NewtonManager._sensor_bvh_shape_flags == expected_bvh_flags
-    assert NewtonManager._builder.default_bvh_cfg.shape_flags == expected_bvh_flags
     sim.reset()
     sensor = _step_and_read(sim, scene)
 
@@ -147,7 +142,8 @@ def test_rays_hit_ground_plane(sim, global_world_only):
 
 def test_generic_ray_caster_uses_newton_scene_bvh(sim):
     """The backend-dispatching ray caster selects the Newton BVH implementation."""
-    scene = InteractiveScene(GenericRaycastTestSceneCfg(num_envs=1))
+    scene_cfg = GenericRaycastTestSceneCfg(num_envs=1)
+    scene = InteractiveScene(scene_cfg)
     sim.reset()
     sensor = _step_and_read(sim, scene)
 
@@ -199,7 +195,8 @@ def test_legacy_multi_mesh_tracks_ad_hoc_regex_target(sim):
 
 def test_bvh_refit_tracks_moving_geometry(sim):
     """Sliding a box under the sensor changes the hits, proving the BVH refits live."""
-    scene = InteractiveScene(RaycastTestSceneCfg(num_envs=1))
+    scene_cfg = RaycastTestSceneCfg(num_envs=1)
+    scene = InteractiveScene(scene_cfg)
     sim.reset()
     sensor = _step_and_read(sim, scene)
     torch.testing.assert_close(
@@ -272,10 +269,16 @@ class RaycastCameraSceneCfg(RaycastTestSceneCfg):
     )
 
 
-def test_renderer_and_raycast_share_newton_manager_graph(sim):
-    """Tiled-camera and ray-cast updates share the Newton manager graph."""
-    scene = InteractiveScene(RaycastCameraSceneCfg(num_envs=1))
+def test_renderer_and_raycast_share_newton_resource(sim):
+    """Tiled-camera and ray-cast tasks register before rendering on one Newton resource."""
+    scene_cfg = RaycastCameraSceneCfg(num_envs=1)
+    scene = InteractiveScene(scene_cfg)
     sim.reset()
+
+    task_names = sorted(sim._physics_manager._newton._sensor_tasks)
+    assert any(name.startswith("newton_raycast:") for name in task_names)
+    assert any(name.startswith("newton_warp_render:") for name in task_names)
+
     sim.step()
     scene.update(sim.get_physics_dt())
 
@@ -284,7 +287,4 @@ def test_renderer_and_raycast_share_newton_manager_graph(sim):
     assert abs(depth[0, 24, 32].item() - RAY_START_HEIGHT) < 5e-3
     torch.testing.assert_close(distances, torch.full_like(distances, RAY_START_HEIGHT), atol=1e-3, rtol=0)
 
-    task_names = sorted(NewtonManager._sensor_tasks)
-    assert any(name.startswith("newton_raycast:") for name in task_names)
-    assert any(name.startswith("newton_warp_render:") for name in task_names)
-    assert (NewtonManager._sensor_graph is not None) == sim.cfg.physics.use_cuda_graph
+    assert not hasattr(sim._physics_manager, "_sensor_graph")

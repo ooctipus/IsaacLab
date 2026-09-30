@@ -11,35 +11,11 @@ from typing import TYPE_CHECKING
 
 import torch
 import warp as wp
-from newton import Model, ModelBuilder
+from newton import Model
 from newton.selection import ArticulationView
-
-from pxr import Usd, UsdGeom, UsdShade
 
 if TYPE_CHECKING:
     from isaaclab.renderers.base_renderer import VisualMaterialBatch
-
-
-def import_builder_visual_material_paths(builder: ModelBuilder, stage: Usd.Stage) -> None:
-    """Record each shape's effective material binding."""
-    builder.add_custom_attribute(
-        ModelBuilder.CustomAttribute(
-            name="visual_material_path",
-            namespace="isaaclab",
-            dtype=str,
-            frequency=Model.AttributeFrequency.SHAPE,
-            default="",
-        )
-    )
-    paths = builder.custom_attributes["isaaclab:visual_material_path"].values
-    for shape_index, shape_path in enumerate(builder.shape_label):
-        shape_prim = stage.GetPrimAtPath(shape_path)
-        imageable = UsdGeom.Imageable(shape_prim)
-        if not shape_prim.IsValid() or (imageable and imageable.ComputePurpose() == UsdGeom.Tokens.guide):
-            continue
-        _material, relationship = UsdShade.MaterialBindingAPI(shape_prim).ComputeBoundMaterial()
-        if relationship and (targets := relationship.GetTargets()):
-            paths[shape_index] = targets[0].pathString
 
 
 @wp.func

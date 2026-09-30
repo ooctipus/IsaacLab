@@ -21,9 +21,11 @@ simulation_app = app_launcher.app
 """Rest everything follows."""
 
 
+from isaaclab_physx.physics import PhysxCfg
+
 import isaaclab.sim as sim_utils
 from isaaclab.assets import AssetBaseCfg
-from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
+from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils.configclass import configclass
 
 pytestmark = pytest.mark.integration
@@ -54,11 +56,11 @@ def run_simulator(
 @pytest.mark.isaacsim_ci
 def test_non_headless_launch():
     # Initialize the simulation context
-    sim_cfg = sim_utils.SimulationCfg(dt=0.005)
+    sim_cfg = sim_utils.SimulationCfg(physics=PhysxCfg(), dt=0.005)
     sim = sim_utils.SimulationContext(sim_cfg)
     # design scene
     scene_cfg = SensorsSceneCfg(num_envs=1, env_spacing=2.0)
-    scene = InteractiveScene(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
     print(scene)
     # Play the simulator
     sim.reset()

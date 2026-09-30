@@ -16,6 +16,7 @@ import math
 import warnings
 
 import pytest
+from isaaclab_physx.physics import PhysxCfg
 from isaaclab_physx.sim.schemas import (
     ArticulationRootPropertiesCfg as ArticulationRootDeprecatedAliasCfg,
 )
@@ -56,7 +57,7 @@ def setup_simulation():
     # Simulation time-step
     dt = 0.1
     # Load kit helper
-    sim = SimulationContext(SimulationCfg(dt=dt))
+    sim = SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=dt))
     # Set some default values for test
     arti_cfg = schemas.ArticulationRootPropertiesCfg(
         enabled_self_collisions=False,

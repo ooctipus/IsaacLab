@@ -15,9 +15,10 @@ simulation_app = AppLauncher(headless=True, enable_cameras=True).app
 """Rest everything follows."""
 
 import pytest
+from isaaclab_physx.physics import PhysxCfg
 from isaaclab_physx.renderers import IsaacRtxRendererCfg
 
-from isaaclab.sim import build_simulation_context
+from isaaclab.sim import SimulationCfg, build_simulation_context
 
 _CONTRACT_DIR = Path(__file__).resolve().parents[3] / "isaaclab" / "test" / "renderers"
 if str(_CONTRACT_DIR) not in sys.path:
@@ -35,10 +36,11 @@ pytestmark = [pytest.mark.integration, pytest.mark.rendering, pytest.mark.isaacs
 @pytest.mark.parametrize("device", ["cuda:0", "cpu"])
 def test_kinematic_rigid_object_scale_and_pose_are_rendered(device: str, with_articulation: bool) -> None:
     """Kinematic PhysX transforms and root scale must reach Isaac RTX."""
+    sim_cfg = SimulationCfg(device=device, gravity=(0.0, 0.0, 0.0), physics=PhysxCfg())
     run_rigid_object_scale_and_pose_rendering_contract(
         RigidObjectRenderingBackend(
             name="isaac_rtx",
-            simulation_context_factory=lambda: build_simulation_context(device=device, gravity_enabled=False),
+            simulation_context_factory=lambda: build_simulation_context(sim_cfg),
             renderer_cfg=IsaacRtxRendererCfg(),
             with_articulation=with_articulation,
         )

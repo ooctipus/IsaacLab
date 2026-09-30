@@ -6,16 +6,11 @@
 """USD schema authoring for Newton-native actuators.
 
 :func:`define_actuator_properties` translates IsaacLab actuator configs
-into ``NewtonActuator`` USD prims. Both the Newton ``ModelBuilder.add_usd``
-path and the PhysX adapter's
-:meth:`~isaaclab.actuators.newton.adapter.NewtonActuatorAdapter.from_usd`
-read the same authored prims, ensuring both backends construct
-:class:`~newton.actuators.Actuator` instances with matching parameters.
+into ``NewtonActuator`` USD prims. Newton imports them with its model builder;
+PhysX records the declarations from exact clone-plan sources before replication.
 
-This module lives on the schema side so that authoring is a regular
-``define_*_properties`` step in the spawner pipeline, alongside
-:func:`define_articulation_root_properties` and friends, rather than a
-side effect of asset construction.
+This module owns the regular ``define_*_properties`` authoring step; the common articulation
+construction boundary invokes it after spawning and before clone replication.
 """
 
 from __future__ import annotations
@@ -130,7 +125,7 @@ def resolve_per_dof(
 def define_actuator_properties(
     prim_path: str,
     actuator_cfgs: dict[str, Any],
-    stage: Any | None = None,
+    stage: Usd.Stage,
 ) -> None:
     """Author ``NewtonActuator`` USD prims under an articulation root.
 
@@ -153,27 +148,24 @@ def define_actuator_properties(
       :class:`~isaaclab.actuators.ActuatorNetLSTMCfg` →
       ``NewtonNeuralControlAPI`` (+ ``NewtonDCMotorClampingAPI``)
 
-    No-ops (returns immediately) when:
-
-    * the active :class:`~isaaclab.sim.SimulationContext` was configured
-      with ``use_newton_actuators=False`` (or no context is active), or
-    * *prim_path* does not resolve to a valid prim on the stage.
+    No-ops when the active :class:`~isaaclab.sim.SimulationContext` was configured with
+    ``use_newton_actuators=False`` (or no context is active). Otherwise, the active clone plan must
+    own *prim_path* and every populated prototype it names is authored.
 
     Must be called **after** the articulation is spawned (joint prims
     exist on stage) and **before** the cloner / ``ModelBuilder.add_usd``
     reads the stage.
 
     Args:
-        prim_path: Root prim path of the articulation (e.g.
-            ``"/World/Env_0/Robot"``). May contain a regex pattern; the
-            first matching prim is used.
+        prim_path: Root prim path expression of the articulation (e.g.
+            ``"/World/envs/env_[^/]+/Robot"``).
         actuator_cfgs: Mapping of group name to
             :class:`~isaaclab.actuators.ActuatorBaseCfg`.
-        stage: USD stage to author on. When ``None``, the current stage
-            is used.
+        stage: USD stage holding the clone-plan prototypes.
 
     Raises:
-        ValueError: If Newton-native execution is enabled and an explicit actuator config is unsupported.
+        RuntimeError: If Newton actuator authoring is enabled without an active clone plan or the
+            plan does not own *prim_path*.
     """
     from isaaclab.sim import SimulationContext  # noqa: PLC0415
 
@@ -182,18 +174,18 @@ def define_actuator_properties(
     if sim_cfg is None or not getattr(sim_cfg, "use_newton_actuators", False):
         return
 
-    from isaaclab.sim.utils.queries import find_first_matching_prim  # noqa: PLC0415
-    from isaaclab.sim.utils.stage import get_current_stage  # noqa: PLC0415
+    from isaaclab import cloner  # noqa: PLC0415
 
-    if stage is None:
-        stage = get_current_stage()
-
-    first_prim = find_first_matching_prim(prim_path)
-    if first_prim is None:
-        return
-    articulation_prim_path = str(first_prim.GetPath())
-
-    _author_actuator_prims(stage, articulation_prim_path, actuator_cfgs)
+    # A heterogeneous asset has one prototype per variant, each cloned into its own
+    # environments, so every populated prototype the plan names is authored.
+    plan = sim_ctx.get_clone_plan()
+    if plan is None:
+        raise RuntimeError("Newton actuator authoring requires an active clone plan.")
+    rows = tuple(cloner.query.iter_sources(plan, prim_path))
+    if not rows:
+        raise RuntimeError(f"Articulation at {prim_path!r} is not covered by the active clone plan.")
+    for _root, _template, source_prim_path, _env_ids in rows:
+        _author_actuator_prims(stage, source_prim_path, actuator_cfgs)
 
 
 def _author_actuator_prims(

@@ -352,8 +352,6 @@ class ActuatorStateResetBase:
     def _build_and_warm(self, *, use_newton_actuators: bool):
         ctx = build_simulation_context(
             device="cuda:0",
-            gravity_enabled=True,
-            add_ground_plane=True,
             sim_cfg=self._make_sim_cfg(use_newton_actuators),
         )
         sim = ctx.__enter__()

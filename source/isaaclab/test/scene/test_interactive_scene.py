@@ -17,12 +17,12 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 import torch
+from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
 from isaaclab import cloner
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg, RigidObjectCollectionCfg
-from isaaclab.cloner import CloneCfg
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
 from isaaclab.sensors import ContactSensorCfg
 from isaaclab.sim import build_simulation_context
@@ -36,6 +36,7 @@ pytestmark = pytest.mark.integration
 class MySceneCfg(InteractiveSceneCfg):
     """Example scene configuration."""
 
+    ground = AssetBaseCfg(prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg())
     # articulation
     robot = ArticulationCfg(
         prim_path="{ENV_REGEX_NS}/Robot",
@@ -61,11 +62,21 @@ class MySceneCfg(InteractiveSceneCfg):
     )
 
 
+@configclass
+class DebugMarkerSceneCfg(InteractiveSceneCfg):
+    """Scene with one sensor-owned debug-marker family."""
+
+    contact = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Body", debug_vis=True)
+
+
 @pytest.fixture
 def setup_scene(request):
     """Create simulation context with the specified device."""
     device = request.getfixturevalue("device")
-    with build_simulation_context(device=device, auto_add_lighting=True, add_ground_plane=True) as sim:
+    with build_simulation_context(
+        sim_cfg=sim_utils.SimulationCfg(physics=PhysxCfg()),
+        device=device,
+    ) as sim:
         sim._app_control_on_stop_handle = None
 
         def make_scene(num_envs: int, env_spacing: float = 1.0):
@@ -192,49 +203,96 @@ def test_scene_publishes_plan_before_replicate(monkeypatch: pytest.MonkeyPatch):
 
     def fake_replicate(plan, *, replicate_physics=True):
         captured.append((plan, replicate_physics, sim_utils.SimulationContext.instance().get_clone_plan()))
+        return plan
 
     monkeypatch.setattr(replicate_session_module, "replicate", fake_replicate)
 
-    with build_simulation_context(device="cpu", auto_add_lighting=False, add_ground_plane=False) as sim:
+    with build_simulation_context(
+        sim_cfg=sim_utils.SimulationCfg(physics=PhysxCfg()),
+        device="cpu",
+    ) as sim:
         sim._app_control_on_stop_handle = None
-        InteractiveScene(MySceneCfg(num_envs=4, env_spacing=1.0))
+        scene = InteractiveScene(MySceneCfg(num_envs=4, env_spacing=1.0))
+        root_layer_identifier = scene.stage.GetRootLayer().identifier
 
     assert len(captured) == 1
     plan, replicate_physics, published = captured[0]
     assert published is plan
-    assert plan.sources == ("/World/envs/env_0",)
-    assert plan.destinations == ("/World/envs/env_{}",)
-    assert plan.clone_mask.shape == (1, 4)
+    assert plan.sources == (
+        "/World/envs/env_0/Robot",
+        "/World/envs/env_0/RigidObj",
+        "/World/defaultGroundPlane",
+    )
+    assert plan.destinations == (
+        "/World/envs/env_{}/Robot",
+        "/World/envs/env_{}/RigidObj",
+        "/World/defaultGroundPlane",
+    )
+    assert plan.clone_mask.shape == (3, 4)
+    assert plan.root_layer_identifier == root_layer_identifier
     assert replicate_physics is True
 
 
-def test_empty_scene_leaves_clone_lifecycle_to_caller():
-    """An empty scene authors one prototype and leaves its replication to the direct task."""
-    with build_simulation_context(device="cpu", auto_add_lighting=False, add_ground_plane=False) as sim:
+def test_scene_collects_enabled_nested_debug_markers():
+    """A scene participant's enabled markers join its flat clone manifest."""
+    scene = object.__new__(InteractiveScene)
+    scene.cfg = DebugMarkerSceneCfg(num_envs=2, env_spacing=1.0)
+    scene._env_fmt = scene.cfg.clone_cfg.clone_template
+
+    cfgs, _ = scene._collect_asset_cfgs()
+    plan = cloner.make_clone_plan(cfgs, num_clones=scene.cfg.num_envs, env_spacing=scene.cfg.env_spacing)
+
+    marker_cfgs = (
+        scene.cfg.contact.visualizer_cfg,
+        scene.cfg.contact.normal_force_visualizer_cfg,
+        scene.cfg.contact.friction_force_visualizer_cfg,
+    )
+    assert all(id(cfg) in plan.cfg_rows for cfg in marker_cfgs)
+
+    scene.cfg.contact.debug_vis = False
+    cfgs, _ = scene._collect_asset_cfgs()
+    planned_ids = {id(cfg) for cfg in cfgs}
+    assert all(id(cfg) not in planned_ids for cfg in marker_cfgs)
+
+
+def test_empty_scene_owns_clone_lifecycle():
+    """Even an empty InteractiveScene publishes its one plan and authors every environment root."""
+    with build_simulation_context(
+        sim_cfg=sim_utils.SimulationCfg(physics=PhysxCfg()),
+        device="cpu",
+    ) as sim:
         sim._app_control_on_stop_handle = None
         scene = InteractiveScene(InteractiveSceneCfg(num_envs=4, env_spacing=1.0))
 
-        assert sim.get_clone_plan() is None
+        plan = sim.get_clone_plan()
+        assert plan is not None
+        assert plan.sources == ()
         env_template = scene.cfg.clone_cfg.clone_template
         grid_positions = cloner.grid_transforms(4, 1.0)[0]
         torch.testing.assert_close(scene.env_origins, torch.from_numpy(grid_positions))
-        env_0 = scene.stage.GetPrimAtPath(env_template.format(0))
-        np.testing.assert_allclose(sim_utils.resolve_prim_pose(env_0)[0], grid_positions[0])
-        assert all(not scene.stage.GetPrimAtPath(env_template.format(i)).IsValid() for i in range(1, 4))
+        assert all(scene.stage.GetPrimAtPath(env_template.format(i)).IsValid() for i in range(4))
 
+
+def test_clone_plan_from_env_0_supports_standalone_composition():
+    """A tool without InteractiveScene may explicitly publish, construct, and replicate one plan."""
+    with build_simulation_context(
+        sim_cfg=sim_utils.SimulationCfg(physics=PhysxCfg()),
+        device="cpu",
+    ) as sim:
+        sim._app_control_on_stop_handle = None
+        clone_cfg = cloner.CloneCfg()
+        env_template = clone_cfg.clone_template
         cube_cfg = RigidObjectCfg(
             prim_path=f"{env_template.format('[^/]+')}/Cube",
             spawn=sim_utils.CuboidCfg(size=(0.1, 0.1, 0.1)),
-            cloning_contexts=(cloner.UsdReplicateContext,),
         )
-        positions = grid_positions + np.asarray((0.25, 0.5, 0.75), dtype=np.float32)
-        plan = cloner.clone_plan_from_env_0(scene.cfg.clone_cfg, (cube_cfg,), 4, 1.0, positions=positions)
+        positions = cloner.grid_transforms(4, 1.0)[0] + np.asarray((0.25, 0.5, 0.75), dtype=np.float32)
+        plan = cloner.clone_plan_from_env_0(clone_cfg, (cube_cfg,), 4, 1.0, positions=positions)
         cube_cfg.class_type(cube_cfg)
-        cloner.replicate(plan)
+        plan = cloner.replicate(plan)
 
         assert sim.get_clone_plan() is plan
-        assert all(scene.stage.GetPrimAtPath(f"{env_template.format(i)}/Cube").IsValid() for i in range(4))
-        torch.testing.assert_close(scene.env_origins, torch.from_numpy(positions))
+        np.testing.assert_allclose(plan.positions, positions)
 
 
 @pytest.mark.parametrize("device", ["cuda:0"])
@@ -287,8 +345,8 @@ def test_replicate_physics_flag_controls_physx_replicator(device, replicate_phys
     assert torch.isfinite(scene["robot"].data.joint_pos.torch).all()
 
 
-def test_collect_asset_cfgs_resolves_env_regex_macros_and_declares_globals():
-    """The composition root separates cloneable configs from shared prim roots."""
+def test_collect_asset_cfgs_flattens_collections_at_the_composition_root():
+    """InteractiveScene gives the cloner a flat, explicit cfg manifest."""
     scene = object.__new__(InteractiveScene)
     cube_cfg = RigidObjectCfg(
         prim_path="{ENV_REGEX_NS}/Cube",
@@ -302,32 +360,24 @@ def test_collect_asset_cfgs_resolves_env_regex_macros_and_declares_globals():
     )
     scene.cfg = SimpleNamespace(
         num_envs=2,
+        clone_cfg=cloner.CloneCfg(),
         objects=RigidObjectCollectionCfg(rigid_objects={"cube": cube_cfg, "shape": shape_cfg}),
         ground=AssetBaseCfg(prim_path="/World/Ground", spawn=sim_utils.GroundPlaneCfg()),
     )
-    scene.cloner_cfg = CloneCfg()
-    scene._env_fmt = scene.cloner_cfg.clone_template
+    scene._env_fmt = scene.cfg.clone_cfg.clone_template
 
-    cfgs, global_paths, _ = scene._collect_asset_cfgs()
+    cfgs, valid_set = scene._collect_asset_cfgs()
 
     prim_paths = sorted(c.prim_path for c in cfgs)
-    assert prim_paths == ["/World/envs/env_[^/]+/Cube", "/World/envs/env_[^/]+/Shape"]
-    assert global_paths == ("/World/Ground",)
+    assert prim_paths == ["/World/Ground", "{ENV_REGEX_NS}/Cube", "{ENV_REGEX_NS}/Shape"]
+    assert valid_set is None
 
 
-def test_collect_asset_cfgs_excludes_entities_without_spawners():
-    """Only configs that can author clone sources reach make_clone_plan."""
-
-    scene = object.__new__(InteractiveScene)
-    sensor = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot")
-    scene.cfg = SimpleNamespace(num_envs=1, sensor=sensor)
-    scene.cloner_cfg = CloneCfg()
-    scene._env_fmt = scene.cloner_cfg.clone_template
-
-    cfgs, global_paths, _ = scene._collect_asset_cfgs()
-
-    assert cfgs == []
-    assert global_paths == ()
+def test_asset_cfgs_do_not_override_backend_clone_dispatch():
+    """Clone backends belong to the simulation registry, not individual assets."""
+    scene_cfg = MySceneCfg(num_envs=2, env_spacing=1.0)
+    assert "cloning_contexts" not in scene_cfg.rigid_obj.__dataclass_fields__
+    assert "cloning_contexts" not in scene_cfg.robot.__dataclass_fields__
 
 
 def assert_state_equal(s1: dict, s2: dict, path=""):

@@ -15,39 +15,11 @@ from typing import Any
 import torch
 import warp as wp
 
-from pxr import UsdPhysics
-
-import isaaclab.sim as sim_utils
 from isaaclab.sensors.ray_caster.base_ray_caster import BaseRayCaster
 from isaaclab.sensors.ray_caster.kernels import copy_mesh_transforms_to_table_kernel
-
-from isaaclab_ov.physics import OvPhysxManager
+from isaaclab.sim.simulation_context import SimulationContext
 
 logger = logging.getLogger(__name__)
-
-
-def _find_physics_ancestor(prim):
-    """Return the nearest ancestor of ``prim`` that carries ``UsdPhysics.RigidBodyAPI``.
-
-    Walks upward from ``prim`` itself. Returns ``None`` if no ancestor in the
-    USD hierarchy applies the API.
-    """
-    ancestor = prim
-    while ancestor and ancestor.IsValid() and ancestor.GetPath().pathString != "/":
-        if ancestor.HasAPI(UsdPhysics.RigidBodyAPI):
-            return ancestor
-        ancestor = ancestor.GetParent()
-    return None
-
-
-def _ovphysx_body_glob(body_expr: str) -> str:
-    """Convert internal env regex/template expressions to ovphysx glob syntax.
-
-    The ovphysx wheel's ``create_tensor_binding`` ``pattern=`` argument is an
-    fnmatch glob, so ``{}`` template placeholders and ``.*`` regex segments
-    both map to ``*``.
-    """
-    return sim_utils.path_expr_to_glob(body_expr.replace("{}", "*"))
 
 
 class _OvPhysxRayCasterMixin:
@@ -56,11 +28,8 @@ class _OvPhysxRayCasterMixin:
     Lives as a multiple-inheritance mixin on top of the four
     :class:`~isaaclab.sensors.ray_caster.Base*` classes. Provides backend-
     specific pose tracking via the ovphysx ``RIGID_BODY_POSE`` tensor binding
-    when the sensor prim has a rigid-body ancestor, or a one-time USD pose
-    snapshot for non-physics sensor frames.
-
-    All backend-specific surface is centralized here so the four concrete
-    sensor classes can be 14-line composition modules.
+    when the planned sensor frame has a rigid-body binding, or its planned
+    world pose for a fixed frame.
     """
 
     @property
@@ -69,29 +38,24 @@ class _OvPhysxRayCasterMixin:
         return self._view_count
 
     def _initialize_pose_tracking(self: Any) -> None:
-        """Resolve sensor prims to either a live ovphysx binding or a static snapshot."""
+        """Bind exact planned sensor frames to OVPhysX bodies or fixed world poses."""
         from isaaclab_ov import tensor_types as TT  # noqa: PLC0415
 
-        # Generic base-class hooks read ``self._view.count``; point that
-        # adapter at the sensor itself rather than constructing a separate
-        # view object (matches the PhysX trick).
+        plan = SimulationContext.instance().get_clone_plan()
+        if plan is None or not plan.is_complete:
+            raise RuntimeError(f"RayCaster at {self.cfg.prim_path!r} requires a completed clone plan.")
+        frames = plan.match_frames(self.cfg.prim_path)
         self._view = self
+        if all(frame.body_path is None for frame in frames):
+            self._initialize_static_pose_tracking([frame.pose for frame in frames])
+            return
+        if any(frame.body_path is None for frame in frames):
+            raise ValueError(f"RayCaster expression {self.cfg.prim_path!r} mixes fixed and rigid-body frames.")
+        by_body = {frame.body_path: frame for frame in frames}
+        if len(by_body) != len(frames):
+            raise ValueError(f"RayCaster expression {self.cfg.prim_path!r} resolves multiple frames on one body.")
 
-        try:
-            body_expr, fixed_pos_b, fixed_quat_b = self._resolve_rigid_body_ancestor_expr()
-        except RuntimeError:
-            prims = sim_utils.find_matching_prims(self.cfg.prim_path)
-            if len(prims) == 0:
-                raise
-            body = _find_physics_ancestor(prims[0])
-            if body is None:
-                self._initialize_static_pose_tracking(prims)
-                return
-            raise
-
-        body_glob = _ovphysx_body_glob(body_expr)
-
-        physx = OvPhysxManager.get_physx_instance()
+        physx = self._physics_manager.get_physx_instance()
         if physx is None:
             raise RuntimeError(
                 "OvPhysxManager has no PhysX instance yet -- sensor was constructed before "
@@ -99,13 +63,15 @@ class _OvPhysxRayCasterMixin:
             )
 
         self._ovphysx_body_view = physx.create_tensor_binding(
-            pattern=body_glob,
+            prim_paths=list(by_body),
             tensor_type=TT.RIGID_BODY_POSE,
         )
         if self._ovphysx_body_view.shape[0] == 0:
-            raise RuntimeError(f"OVPhysX RIGID_BODY_POSE binding for pattern {body_glob!r} matched zero bodies.")
+            raise RuntimeError(f"OVPhysX RIGID_BODY_POSE binding for {tuple(by_body)!r} matched zero bodies.")
 
         self._view_count = int(self._ovphysx_body_view.shape[0])
+        if self._view_count != len(by_body):
+            raise ValueError("OVPhysX RayCaster body binding does not match the clone plan.")
         self._pose_buf = wp.zeros(self._ovphysx_body_view.shape, dtype=wp.float32, device=self._device)
         # Zero-copy reinterpret of the ``(N, 7)`` float32 staging buffer as
         # ``(N,)`` ``wp.transformf``. Cached so per-step
@@ -118,33 +84,25 @@ class _OvPhysxRayCasterMixin:
             copy=False,
         )
 
-        if fixed_pos_b is None or fixed_quat_b is None:
-            fixed_pos_b = (0.0, 0.0, 0.0)
-            fixed_quat_b = (0.0, 0.0, 0.0, 1.0)
-        offset_pos = [fixed_pos_b] * self._view_count
-        offset_quat = [fixed_quat_b] * self._view_count
-        self._offset_pos_wp = wp.array(offset_pos[: self._view_count], dtype=wp.vec3f, device=self._device)
+        try:
+            ordered = [by_body[path] for path in self._ovphysx_body_view.prim_paths]
+        except KeyError as exc:
+            raise ValueError(f"OVPhysX returned undeclared RayCaster body {exc.args[0]!r}.") from exc
+        self._offset_pos_wp = wp.array([frame.pose[:3] for frame in ordered], dtype=wp.vec3f, device=self._device)
         self._offset_quat_contiguous = torch.tensor(
-            offset_quat[: self._view_count], dtype=torch.float32, device=self._device
+            [frame.pose[3:] for frame in ordered], dtype=torch.float32, device=self._device
         )
         self._offset_quat_wp = wp.from_torch(self._offset_quat_contiguous, dtype=wp.quatf)
         self._mesh_view_bufs = {}
 
-    def _initialize_static_pose_tracking(self: Any, prims) -> None:
-        """Cache authored USD poses for non-physics sensor frames.
-
-        Used when the sensor prim has no rigid-body ancestor (e.g. an Xform
-        marker under ``/World``). The cached poses are returned every frame
-        unchanged -- static prims don't move.
-        """
-        poses = []
-        for prim in prims:
-            pos, quat = sim_utils.resolve_prim_pose(prim)
-            poses.append((*pos, *quat))
+    def _initialize_static_pose_tracking(self: Any, poses) -> None:
+        """Cache planned world poses for non-physics sensor frames."""
+        if len(poses) == 1 and self._num_envs > 1:
+            poses *= self._num_envs
         self._static_view_transforms_torch = torch.tensor(poses, dtype=torch.float32, device=self._device).contiguous()
         self._static_view_transforms_wp = wp.from_torch(self._static_view_transforms_torch).view(wp.transformf)
         self._ovphysx_body_view = None
-        self._view_count = len(prims)
+        self._view_count = len(poses)
         self._offset_pos_wp = wp.zeros(self._view_count, dtype=wp.vec3f, device=self._device)
         identity_quat = torch.zeros(self._view_count, 4, device=self._device)
         identity_quat[:, 3] = 1.0
@@ -178,13 +136,7 @@ class _OvPhysxRayCasterMixin:
         return SimpleNamespace(torch=transforms_t[:, 0:3]), SimpleNamespace(torch=transforms_t[:, 3:7])
 
     def _create_tracked_target_view(self: Any, target_prim_paths: str | list[str]):
-        """Create an ovphysx RIGID_BODY_POSE binding for dynamic multi-mesh targets.
-
-        v1 limitation: target paths must dedup to a single env-wildcard
-        pattern. Multi-pattern targets raise ``NotImplementedError`` -- the
-        same limit the OVPhysX ``ContactSensor`` already documents for
-        ``track_pose``.
-        """
+        """Create an OVPhysX pose binding for exact planned target bodies."""
         from isaaclab_ov import tensor_types as TT  # noqa: PLC0415
 
         if isinstance(target_prim_paths, str):
@@ -192,21 +144,16 @@ class _OvPhysxRayCasterMixin:
         if not target_prim_paths:
             raise RuntimeError(f"No tracked target bodies resolved from: {target_prim_paths}")
 
-        patterns = sorted({_ovphysx_body_glob(path) for path in target_prim_paths})
-        if len(patterns) > 1:
-            raise NotImplementedError(
-                f"OvPhysxRayCaster v1 supports a single body-type pattern for dynamic targets; "
-                f"resolved {len(patterns)} patterns: {patterns}. Multi-pattern targets require "
-                "per-pattern bindings and an interleaved-read kernel that does not exist yet."
-            )
-
-        physx = OvPhysxManager.get_physx_instance()
+        physx = self._physics_manager.get_physx_instance()
         if physx is None:
             raise RuntimeError(
                 "OvPhysxManager has no PhysX instance yet -- multi-mesh target view requested "
                 "before PhysicsEvent.PHYSICS_READY."
             )
-        return physx.create_tensor_binding(pattern=patterns[0], tensor_type=TT.RIGID_BODY_POSE)
+        view = physx.create_tensor_binding(prim_paths=target_prim_paths, tensor_type=TT.RIGID_BODY_POSE)
+        if list(view.prim_paths) != target_prim_paths:
+            raise ValueError("OVPhysX tracked ray-cast target binding does not match the clone plan.")
+        return view
 
     def _update_mesh_transforms(self: Any) -> None:
         """Refresh dynamic multi-mesh target poses from their ovphysx bindings."""

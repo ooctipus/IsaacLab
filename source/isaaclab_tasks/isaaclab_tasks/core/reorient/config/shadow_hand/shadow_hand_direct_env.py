@@ -31,7 +31,7 @@ class ShadowHandDirectEnv(ReorientDirectEnv):
     def __init__(self, cfg: ShadowHandEnvCfg, render_mode: str | None = None, **kwargs):
         super().__init__(cfg, render_mode, **kwargs)
         self.actuated_tendon_indices, self.tendon_lower_limits, self.tendon_upper_limits = resolve_actuated_tendons(
-            self.hand,
+            self.scene["robot"],
             cfg.actuated_tendon_names,
             self.num_envs,
             self.device,
@@ -49,7 +49,7 @@ class ShadowHandDirectEnv(ReorientDirectEnv):
         tendon_targets = unscale_transform(
             self.actions[:, num_joint_actions:], self.tendon_lower_limits, self.tendon_upper_limits
         )
-        self.hand.set_fixed_tendon_position_target_index(
+        self.scene["robot"].set_fixed_tendon_position_target_index(
             target=saturate(tendon_targets, self.tendon_lower_limits, self.tendon_upper_limits),
             fixed_tendon_ids=self.actuated_tendon_indices,
         )

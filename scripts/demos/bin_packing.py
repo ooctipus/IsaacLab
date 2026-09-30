@@ -25,29 +25,28 @@ velocity, and mass noise, teleporting out-of-bounds objects back in.
 
 .. code-block:: bash
 
-    # Usage with default PhysX physics and default kit visualizer.
+    # Usage with default PhysX physics and no visualizer.
     uv run python scripts/demos/bin_packing.py
 
 """
 
 from __future__ import annotations
 
-"""Parse CLI first so we can decide whether to launch Isaac Sim Kit."""
-
 import argparse
 from typing import TYPE_CHECKING
 
 from isaaclab.app import add_launcher_args, launch_simulation
+
+from isaaclab_tasks.utils import preset, resolve_config, setup_preset_cli
+from isaaclab_tasks.utils.presets import MultiBackendSceneCfg, MultiBackendSimulationCfg
 
 parser = argparse.ArgumentParser(
     description="Demo of heterogeneous bin-packing layouts through the cloner API",
     conflict_handler="resolve",
 )
 parser.add_argument("--num_envs", type=int, default=16, help="Number of environments to spawn.")
-parser.add_argument("--physics", default="isaacsim_physx", choices=["isaacsim_physx"], help="Physics backend.")
 add_launcher_args(parser)
-parser.set_defaults(visualizer=["kit"])
-args_cli = parser.parse_args()
+args_cli, config_overrides = setup_preset_cli(parser)
 
 import math
 from dataclasses import MISSING
@@ -63,18 +62,31 @@ import isaaclab.utils.math as math_utils
 # Pre-defined configs
 ##
 from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
-from isaaclab.cloner import CloneCfg, InclusionSet, sequential
-from isaaclab.physics import PhysicsCfg
-from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.cloner import CloneCfg, InclusionSet
 from isaaclab.sim import schemas
 from isaaclab.utils import Timer
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.configclass import configclass
 
+from isaaclab_physx.physics import PhysxCfg  # isort: skip
+
 if TYPE_CHECKING:
     from pxr import Usd
 
     from isaaclab.scene import InteractiveScene
+
+
+@configclass
+class DemoCfg:
+    """Bin-packing demo configuration."""
+
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(
+        dt=0.005,
+        device=args_cli.device,
+        physics=preset(default=PhysxCfg(), isaacsim_physx=PhysxCfg()),
+    )
+    scene: BinPackingSceneCfg = MISSING
+
 
 ##
 # Scene Configuration
@@ -219,7 +231,7 @@ class RandomSubsetSet(InclusionSet):
 
 
 @configclass
-class BinPackingSceneCfg(InteractiveSceneCfg):
+class BinPackingSceneCfg(MultiBackendSceneCfg):
     """Bin-packing scene with per-environment heterogeneous grocery layouts.
 
     Besides the world-shared ground plane and light and the storage bin, the
@@ -287,7 +299,6 @@ class BinPackingSceneCfg(InteractiveSceneCfg):
                 for _ in range(NUM_LAYOUTS - 1)
             ),
         ],
-        clone_strategy=sequential,
     )
 
 
@@ -305,7 +316,7 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene) -> 
         None: The simulator side-effects are applied through ``scene`` and ``sim``.
     """
     device = scene.device
-    physics_sim_view = sim.physics_manager.get_physics_sim_view()
+    physics_sim_view = sim.physics_sim_view
     root_view = physics_sim_view.create_rigid_body_view("/World/envs/env_*/Groceries/Grocery_*")
     if root_view.count == 0:
         raise RuntimeError("The flat grocery view matched no rigid bodies.")
@@ -390,19 +401,21 @@ def main():
     Returns:
         None: The function drives the simulation for its side-effects.
     """
-    with launch_simulation(cfg=PhysicsCfg(), launcher_args=args_cli) as physics_cfg:
+    cfg = resolve_config(
+        DemoCfg(scene=BinPackingSceneCfg(num_envs=args_cli.num_envs, env_spacing=1.0, replicate_physics=True)),
+        config_overrides,
+    )
+    with launch_simulation(cfg, args_cli):
         # Load kit helper
-        sim_cfg = sim_utils.SimulationCfg(dt=0.005, device=args_cli.device, physics=physics_cfg)
-        sim = sim_utils.SimulationContext(sim_cfg)
+        sim = sim_utils.SimulationContext(cfg.sim)
         # Set main camera
         sim.set_camera_view((4.0, 0.0, 4.0), (0.0, 0.0, 0.0))
 
         # Design scene
-        scene_cfg = BinPackingSceneCfg(num_envs=args_cli.num_envs, env_spacing=1.0, replicate_physics=True)
-        layouts = [combination.assets for combination in scene_cfg.clone_cfg.clone_combinations]
+        layouts = [combination.assets for combination in cfg.scene.clone_cfg.clone_combinations]
         print(f"[INFO] Drawn bin layouts (objects per layout): {[len(layout) for layout in layouts]}")
         with Timer("[INFO] Time to create scene: "):
-            scene = scene_cfg.class_type(scene_cfg)
+            scene = cfg.scene.class_type(cfg.scene)
 
         # Play the simulator
         sim.reset()

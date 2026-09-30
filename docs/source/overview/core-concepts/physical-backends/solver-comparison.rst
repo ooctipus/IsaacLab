@@ -92,7 +92,7 @@ Contact Detection and Resolution
 won't get the same protection on MJWarp/Kamino at large ``dt`` — Newton's
 CCD is convex GJK/EPA, not the swept-shape CCD PhysX uses. The mitigation
 on Newton is shorter ``dt`` or higher
-:attr:`~isaaclab_newton.physics.NewtonCfg.num_substeps`.
+:attr:`~isaaclab_newton.physics.NewtonSolverCfg.num_substeps`.
 
 
 Restitution and Bounce
@@ -222,11 +222,11 @@ Substepping and Timestep
       - PhysX runs at the simulation ``dt``. No external substep counter;
         internal substepping is per-actor.
     * - MJWarp
-      - Top-level :attr:`~isaaclab_newton.physics.NewtonCfg.num_substeps`
+      - :attr:`~isaaclab_newton.physics.NewtonSolverCfg.num_substeps`
         controls how many solver substeps run per Isaac Lab step. Effective
         solver ``dt`` is ``SimulationCfg.dt / num_substeps``.
     * - Kamino
-      - Same :attr:`~isaaclab_newton.physics.NewtonCfg.num_substeps` knob.
+      - Same :attr:`~isaaclab_newton.physics.NewtonSolverCfg.num_substeps` knob.
         Validated Kamino task presets typically use 1–2 substeps; expect to
         raise this for contact-heavy tasks.
 

@@ -7,48 +7,47 @@
 
 .. code-block:: bash
 
-    # Usage with default PhysX physics and default kit visualizer.
+    # Usage with default PhysX physics and no visualizer.
     uv run python scripts/demos/bipeds.py
 
     # Usage with Newton visualizer and default PhysX physics.
-    uv run python scripts/demos/bipeds.py --visualizer newton
+    uv run python scripts/demos/bipeds.py visualizer=newton_gl
 
-    # Usage with Newton (MJWarp) physics and default kit visualizer.
-    uv run python scripts/demos/bipeds.py --physics newton_mjwarp
+    # Usage with Newton (MJWarp) physics and no visualizer.
+    uv run python scripts/demos/bipeds.py physics=newton_mjwarp
 
     # Usage with Newton visualizer and Newton (MJWarp) physics.
-    uv run python scripts/demos/bipeds.py --visualizer newton --physics newton_mjwarp
+    uv run python scripts/demos/bipeds.py visualizer=newton_gl physics=newton_mjwarp
 
 """
-
-"""Parse CLI first so we can decide whether to launch Isaac Sim Kit."""
 
 import argparse
 from typing import TYPE_CHECKING
 
 from isaaclab.app import add_launcher_args, launch_simulation
 
+from isaaclab_tasks.utils import preset, resolve_config, setup_preset_cli
+from isaaclab_tasks.utils.presets import MultiBackendCameraCfg, MultiBackendSimulationCfg
+
 parser = argparse.ArgumentParser(
     description="This script demonstrates how to simulate bipedal robots.",
     conflict_handler="resolve",
 )
-parser.add_argument(
-    "--physics", default="isaacsim_physx", choices=["isaacsim_physx", "newton_mjwarp"], help="Physics backend."
-)
 add_launcher_args(parser)
-parser.set_defaults(visualizer=["kit"])
-args_cli = parser.parse_args()
+args_cli, config_overrides = setup_preset_cli(parser)
 
-import torch
 
 import isaaclab.sim as sim_utils
+from isaaclab.assets import ArticulationCfg, AssetBaseCfg
+from isaaclab.cloner import ReplicateSession
 
 ##
 # Pre-defined configs
 ##
-from isaaclab.physics import PhysicsCfg
+from isaaclab.utils.configclass import configclass
 
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg  # isort:skip
+from isaaclab_newton.physics import MJWarpSolverCfg  # isort:skip
+from isaaclab_physx.physics import PhysxCfg  # isort:skip
 from isaaclab_assets.robots.cassie import CASSIE_CFG  # isort:skip
 from isaaclab_assets.robots.unitree import G1_CFG, H1_CFG  # isort:skip
 
@@ -56,50 +55,52 @@ if TYPE_CHECKING:
     from isaaclab.assets import Articulation
 
 
-def design_scene(sim: "sim_utils.SimulationContext") -> tuple[list, torch.Tensor]:
-    """Designs the scene."""
-    # Ground-plane
-    cfg = sim_utils.GroundPlaneCfg()
-    cfg.func("/World/defaultGroundPlane", cfg)
-    # Lights
-    cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
-    cfg.func("/World/Light", cfg)
+@configclass
+class DemoCfg:
+    """Biped demo configuration."""
 
-    # Define origins
-    origins = torch.tensor(
-        [
-            [0.0, -1.0, 0.0],
-            [0.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-        ]
-    ).to(device=sim.device)
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(
+        dt=0.005,
+        device=args_cli.device,
+        physics=preset(
+            default=PhysxCfg(),
+            isaacsim_physx=PhysxCfg(),
+            newton_mjwarp=MJWarpSolverCfg(
+                njmax=70,
+                nconmax=70,
+                ls_iterations=40,
+                cone="elliptic",
+                impratio=100,
+                integrator="implicitfast",
+                num_substeps=2,
+            ),
+        ),
+    )
+    camera: MultiBackendCameraCfg = MultiBackendCameraCfg()
+    ground: AssetBaseCfg = AssetBaseCfg(prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg())
+    light: AssetBaseCfg = AssetBaseCfg(
+        prim_path="/World/Light",
+        spawn=sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75)),
+    )
+    cassie: ArticulationCfg = CASSIE_CFG.replace(prim_path="/World/Cassie")
+    cassie.init_state.pos = (0.0, -1.0, cassie.init_state.pos[2])
+    h1: ArticulationCfg = H1_CFG.replace(prim_path="/World/H1")
+    g1: ArticulationCfg = G1_CFG.replace(prim_path="/World/G1")
+    g1.init_state.pos = (0.0, 1.0, g1.init_state.pos[2])
 
-    # Robots
-    cassie_cfg = CASSIE_CFG.replace(prim_path="/World/Cassie")
-    cassie = cassie_cfg.class_type(cassie_cfg)
-    h1_cfg = H1_CFG.replace(prim_path="/World/H1")
-    h1 = h1_cfg.class_type(h1_cfg)
-    g1_cfg = G1_CFG.replace(prim_path="/World/G1")
-    g1 = g1_cfg.class_type(g1_cfg)
-    robots = [cassie, h1, g1]
 
-    return robots, origins
-
-
-def run_simulator(sim: "sim_utils.SimulationContext", robots: list["Articulation"], origins: torch.Tensor):
+def run_simulator(sim: "sim_utils.SimulationContext", robots: list["Articulation"]):
     """Runs the simulation loop."""
     # Define simulation stepping
     sim_dt = sim.get_physics_dt()
-    sim_time = 0.0
     count = 0
     # Step while a visualizer window is still open (or none exist, e.g. headless); works for kit and newton.
     while sim.is_headless_or_exist_active_visualizer():
         # reset
         if count % 200 == 0:
             # reset counters
-            sim_time = 0.0
             count = 0
-            for index, robot in enumerate(robots):
+            for robot in robots:
                 # reset dof state
                 joint_pos, joint_vel = (
                     robot.data.default_joint_pos.torch,
@@ -108,7 +109,6 @@ def run_simulator(sim: "sim_utils.SimulationContext", robots: list["Articulation
                 robot.write_joint_position_to_sim_index(position=joint_pos)
                 robot.write_joint_velocity_to_sim_index(velocity=joint_vel)
                 root_pose = robot.data.default_root_pose.torch.clone()
-                root_pose[:, :3] += origins[index]
                 robot.write_root_pose_to_sim_index(root_pose=root_pose)
                 root_vel = robot.data.default_root_vel.torch.clone()
                 robot.write_root_velocity_to_sim_index(root_velocity=root_vel)
@@ -122,7 +122,6 @@ def run_simulator(sim: "sim_utils.SimulationContext", robots: list["Articulation
         # perform step
         sim.step()
         # update sim-time
-        sim_time += sim_dt
         count += 1
         # update buffers
         for robot in robots:
@@ -131,25 +130,23 @@ def run_simulator(sim: "sim_utils.SimulationContext", robots: list["Articulation
 
 def main():
     """Main function."""
-    with launch_simulation(cfg=PhysicsCfg(), launcher_args=args_cli) as physics_cfg:
-        # The default newton mjwarp solver configuration needs to be tuned for these bipeds.
-        if isinstance(physics_cfg, NewtonCfg) and isinstance(physics_cfg.solver_cfg, MJWarpSolverCfg):
-            physics_cfg.solver_cfg.njmax = 70
-            physics_cfg.solver_cfg.nconmax = 70
-            physics_cfg.solver_cfg.ls_iterations = 40
-            physics_cfg.solver_cfg.cone = "elliptic"
-            physics_cfg.solver_cfg.impratio = 100
-            physics_cfg.solver_cfg.ls_parallel = False
-            physics_cfg.solver_cfg.integrator = "implicitfast"
-            physics_cfg.num_substeps = 2
+    cfg = resolve_config(DemoCfg(), config_overrides)
+    with launch_simulation(cfg, args_cli):
         # Load kit helper
-        sim_cfg = sim_utils.SimulationCfg(dt=0.005, device=args_cli.device, physics=physics_cfg)
-        sim = sim_utils.SimulationContext(sim_cfg)
+        sim = sim_utils.SimulationContext(cfg.sim)
         # Set main camera
         sim.set_camera_view(eye=[3.0, 0.0, 2.25], target=[0.0, 0.0, 1.0])
 
-        # design scene
-        robots, origins = design_scene(sim)
+        asset_cfgs = tuple(
+            asset_cfg
+            for asset_cfg in (cfg.ground, cfg.light, cfg.cassie, cfg.h1, cfg.g1, cfg.camera)
+            if asset_cfg is not None
+        )
+        with ReplicateSession(asset_cfgs, 1, 0.0):
+            _camera = cfg.camera.class_type(cfg.camera) if cfg.camera is not None else None
+            cfg.ground.class_type(cfg.ground)
+            cfg.light.class_type(cfg.light)
+            robots = [robot_cfg.class_type(robot_cfg) for robot_cfg in (cfg.cassie, cfg.h1, cfg.g1)]
 
         # Play the simulator
         sim.reset()
@@ -158,7 +155,7 @@ def main():
         print("[INFO]: Setup complete...")
 
         # Run the simulator
-        run_simulator(sim, robots, origins)
+        run_simulator(sim, robots)
 
 
 if __name__ == "__main__":

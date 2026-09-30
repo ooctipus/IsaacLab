@@ -177,11 +177,11 @@ from isaaclab_physx.renderers import IsaacRtxRendererGlobalSettingsCfg
 from isaaclab_physx.renderers.isaac_rtx_renderer_utils import (
     apply_isaac_rtx_global_settings,
 )
+from isaaclab_teleop import remove_camera_configs
 
 import omni.ui as ui
 
 from isaaclab.devices import Se3Keyboard, Se3KeyboardCfg, Se3SpaceMouse, Se3SpaceMouseCfg
-from isaaclab.devices.openxr import remove_camera_configs
 from isaaclab.devices.teleop_device_factory import create_teleop_device
 from isaaclab.envs import DirectRLEnvCfg, ManagerBasedRLEnvCfg
 from isaaclab.envs.mdp.recorders.recorders_cfg import ActionStateRecorderManagerCfg
@@ -452,6 +452,7 @@ def setup_teleop_device(callbacks: dict[str, Callable], use_isaac_teleop: bool =
 
             teleop_interface = create_isaac_teleop_device(
                 env_cfg.isaac_teleop,
+                env_cfg.scene.xr_anchor,
                 sim_device=args_cli.device,
                 callbacks=callbacks,
                 cloudxr_env_file=_resolve_cloudxr_env(args_cli.cloudxr_env, args_cli.xr),
@@ -835,12 +836,6 @@ def main() -> None:
         enabled=args_cli.xr and use_isaac_teleop,
         camera_rendering_enabled=not args_cli.disable_external_cameras,
     )
-    if camera_feed_session.requires_responsive_denoising:
-        apply_isaac_rtx_global_settings(
-            IsaacRtxRendererGlobalSettingsCfg(
-                carb_settings={"/rtx/dldenoiser/responsiveDenoising": True},
-            )
-        )
 
     # With --xr, rate limiting is achieved via OpenXR and the XR visualization
     # manager is installed. Without --xr (including standalone IsaacTeleop I/O),

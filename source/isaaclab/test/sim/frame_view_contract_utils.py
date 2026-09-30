@@ -429,12 +429,6 @@ def test_return_types_are_torcharray(device, view_factory):
             f"get_local_scales(indices) must be ProxyArray, got {type(local_scales_idx).__name__}"
         )
 
-        scales_full = bundle.view.get_scales()
-        assert isinstance(scales_full, ProxyArray), f"get_scales() must be ProxyArray, got {type(scales_full).__name__}"
-        scales_idx = bundle.view.get_scales(indices)
-        assert isinstance(scales_idx, ProxyArray), (
-            f"get_scales(indices) must be ProxyArray, got {type(scales_idx).__name__}"
-        )
     finally:
         bundle.teardown()
 

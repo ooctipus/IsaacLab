@@ -7,42 +7,8 @@ from __future__ import annotations
 
 import importlib
 import logging
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from isaaclab.renderers.renderer_cfg import RendererCfg
 
 logger = logging.getLogger(__name__)
-
-
-def get_default_renderer_cfg() -> RendererCfg:
-    """Return the default :class:`~isaaclab.renderers.renderer_cfg.RendererCfg` for cameras.
-
-    Lazily imports :mod:`isaaclab_physx.renderers` and returns a new
-    :class:`~isaaclab_physx.renderers.IsaacRtxRendererCfg` instance.
-
-    Returns:
-        A new default Isaac RTX renderer configuration.
-
-    Raises:
-        ImportError: If :mod:`isaaclab_physx.renderers` cannot be imported or does not
-            expose ``IsaacRtxRendererCfg``.
-    """
-    try:
-        renderers_mod = importlib.import_module("isaaclab_physx.renderers")
-    except ImportError as e:
-        raise ImportError(
-            "The default camera renderer configuration requires the optional 'isaaclab_physx' "
-            "package (import 'isaaclab_physx.renderers'). Install isaaclab_physx or set "
-            "CameraCfg.renderer_cfg explicitly."
-        ) from e
-    try:
-        default_cls = renderers_mod.IsaacRtxRendererCfg
-    except AttributeError as e:
-        raise ImportError(
-            "Module 'isaaclab_physx.renderers' is available but does not define 'IsaacRtxRendererCfg'."
-        ) from e
-    return default_cls()
 
 
 class FactoryBase:
@@ -71,26 +37,11 @@ class FactoryBase:
 
     @classmethod
     def _get_backend(cls, *args, **kwargs) -> str:
-        """Return active backend name for this factory.
-
-        Falls back to ``"newton"`` when no simulation context is initialized yet.
-        """
+        """Return the active simulation's physics backend name."""
         # Import lazily to avoid import cycles at module load time.
         from isaaclab.sim.simulation_context import SimulationContext
 
-        sim_context = SimulationContext.instance()
-        if sim_context is None:
-            return "newton"
-
-        manager_name = sim_context.physics_manager.__name__.lower()
-        if manager_name.startswith("newton"):
-            return "newton"
-        if manager_name.startswith("ovphysx"):
-            return "ovphysx"
-        if manager_name.startswith("physx"):
-            return "physx"
-        else:
-            raise ValueError(f"Unknown physics manager: {manager_name}")
+        return SimulationContext.instance().physics_backend
 
     @classmethod
     def _get_package_name(cls, backend: str) -> str:

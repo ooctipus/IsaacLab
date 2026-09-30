@@ -20,19 +20,17 @@ class NewtonFeatherstoneManager(NewtonManager):
     Always uses Newton's :class:`CollisionPipeline` for contact handling.
     """
 
-    @classmethod
-    def _create_solver(cls, model: Model, solver_cfg: FeatherstoneSolverCfg) -> SolverFeatherstone:
+    def _create_solver(self, model: Model, solver_cfg: FeatherstoneSolverCfg) -> SolverFeatherstone:
         """Construct the configured Featherstone solver."""
-        return SolverFeatherstone(model, **cls._filter_solver_kwargs(SolverFeatherstone, solver_cfg))
+        return SolverFeatherstone(model, **self._filter_solver_kwargs(SolverFeatherstone, solver_cfg))
 
-    @classmethod
-    def _build_solver(cls, model: Model, solver_cfg: FeatherstoneSolverCfg) -> None:
+    def _build_solver(self, model: Model, solver_cfg: FeatherstoneSolverCfg) -> None:
         """Construct :class:`SolverFeatherstone` and populate the base-class slots.
 
         Featherstone always uses Newton's :class:`CollisionPipeline` and steps
         with separate input/output states, so the flags are fixed.
         """
-        NewtonManager._solver = cls._create_solver(model, solver_cfg)
-        NewtonManager._use_single_state = False
-        NewtonManager._needs_collision_pipeline = True
-        NewtonManager._supports_rigid_body_force_input = True
+        self._solver = self._create_solver(model, solver_cfg)
+        self._use_single_state = False
+        self._needs_collision_pipeline = True
+        self._newton._supports_rigid_body_force_input = True

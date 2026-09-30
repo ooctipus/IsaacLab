@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import ast
+import functools
 import importlib.util
 import os
 import re
@@ -22,7 +23,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[4]
 SCRIPT_ROOTS = (ROOT / "scripts" / "demos", ROOT / "scripts" / "tutorials")
 # ``scripts/tools`` is not a root because most of its scripts are not simulator launches. The asset
-# converters are: they build a SimulationContext to preview the converted asset.
+# converters are: they launch the runtime needed by their importer.
 EXTRA_SCRIPTS = (
     ROOT / "scripts" / "tools" / "convert_urdf.py",
     ROOT / "scripts" / "tools" / "convert_mjcf.py",
@@ -61,7 +62,8 @@ class ScriptSpec:
     """Static launch contract for one standalone script."""
 
     path: Path
-    options: dict[str, tuple[str, ...]]
+    flags: frozenset[str]
+    preset_options: dict[str, tuple[str, ...]]
     args: tuple[str, ...]
     readiness_pattern: str | None
     startup_timeout: float | None
@@ -69,7 +71,6 @@ class ScriptSpec:
     fixed_physics_backend: str | None
     visualizers: tuple[str, ...]
     case_skip_reasons: dict[tuple[str, str, str], str]
-    visualizer_option: str
     required_modules: tuple[str, ...]
 
     @property
@@ -78,19 +79,14 @@ class ScriptSpec:
         return self.path.relative_to(ROOT).as_posix()
 
     @property
-    def physics_backends(self) -> tuple[tuple[str | None, str], ...]:
+    def physics_backends(self) -> tuple[str, ...]:
         """Return the script's declared physics backend selections."""
-        for option in ("--physics", "--backend"):
-            if choices := self.options.get(option):
-                return tuple((option, choice) for choice in choices)
-        return ((None, self.fixed_physics_backend or "isaacsim_physx"),)
+        return self.preset_options.get("physics", (self.fixed_physics_backend or "isaacsim_physx",))
 
     @property
-    def rendering_backends(self) -> tuple[tuple[str | None, str], ...]:
+    def rendering_backends(self) -> tuple[str, ...]:
         """Return the script's declared rendering backend selections."""
-        if choices := self.options.get("--renderer"):
-            return tuple(("--renderer", choice) for choice in choices)
-        return ((None, "default"),)
+        return self.preset_options.get("renderer", ("default",))
 
 
 @dataclass(frozen=True)
@@ -98,9 +94,7 @@ class LaunchCase:
     """One script, physics backend, renderer, and visualizer combination."""
 
     spec: ScriptSpec
-    physics_option: str | None
     physics_backend: str
-    renderer_option: str | None
     renderer_backend: str
     visualizer: str
 
@@ -114,18 +108,34 @@ class LaunchCase:
     def skip_reason(self) -> str | None:
         """Return the static reason this launch combination cannot run."""
         key = (self.physics_backend, self.renderer_backend, self.visualizer)
-        return self.spec.skip_reason or self.spec.case_skip_reasons.get(key)
+        reason = self.spec.skip_reason or self.spec.case_skip_reasons.get(key)
+        selected = {self.physics_backend, self.renderer_backend, self.visualizer}
+        if (
+            reason is None
+            and {"ovphysx", "ovrtx"}.intersection(selected)
+            and {
+                "kit",
+                "isaacsim_physx",
+                "isaacsim_rtx",
+            }.intersection(selected)
+        ):
+            return "OvPhysX/OVRTX cannot share a process with Kit/Isaac Sim"
+        return reason
 
     def command(self) -> list[str]:
         """Build the repository launcher command for this case."""
         command = [str(ROOT / "isaaclab.sh"), "-p", self.spec.relative_path, *self.spec.args]
-        if "--num_envs" in self.spec.options and "--num_envs" not in self.spec.args:
+        if "--num_envs" in self.spec.flags and "--num_envs" not in self.spec.args:
             command.extend(("--num_envs", str(DEFAULT_BATCHED_NUM_ENVS)))
-        if self.physics_option is not None:
-            command.extend((self.physics_option, self.physics_backend))
-        if self.renderer_option is not None:
-            command.extend((self.renderer_option, self.renderer_backend))
-        command.extend((self.spec.visualizer_option, self.visualizer))
+        if self.physics_backend in self.spec.preset_options.get("physics", ()):
+            command.append(f"physics={self.physics_backend}")
+        if self.renderer_backend in self.spec.preset_options.get("renderer", ()):
+            command.append(f"renderer={self.renderer_backend}")
+        if self.visualizer == "none":
+            if self.spec.preset_options:
+                command.append("sim.visualizer_cfgs=[]")
+        else:
+            command.append(f"visualizer={self.visualizer}")
         return command
 
 
@@ -157,22 +167,6 @@ OVERRIDES = {
         args=("--num_task", "2"),
         readiness_pattern=r"Composed \d+ task scenes into \d+ environments",
     ),
-    "scripts/demos/deformables.py": ScriptOverride(
-        case_skip_reasons={
-            (
-                "isaacsim_physx",
-                "default",
-                "newton_gl",
-            ): "Newton visualizer requires the Newton VBD physics backend",
-            (
-                "isaacsim_physx",
-                "default",
-                "newton_rtx",
-            ): "Newton visualizer requires the Newton VBD physics backend",
-            ("isaacsim_physx", "default", "rerun"): "Rerun cannot import PhysX deformable attributes",
-            ("isaacsim_physx", "default", "viser"): "Viser cannot import PhysX deformable attributes",
-        }
-    ),
     "scripts/demos/mpm/newton_mpm_granular.py": ScriptOverride(
         args=("--max_steps", "20"),
         readiness_pattern=r"Newton granular MPM demo ready",
@@ -182,7 +176,6 @@ OVERRIDES = {
         args=("--max_steps", "2", "--voxel_size", "0.2"),
         readiness_pattern=r"Newton two-way MPM demo ready",
         fixed_physics_backend="newton_coupler",
-        visualizers=("newton_gl",),
         required_modules=("isaaclab_contrib",),
     ),
     "scripts/demos/mpm/snowball_smash.py": ScriptOverride(
@@ -199,39 +192,29 @@ OVERRIDES = {
     "scripts/demos/newton_viewer_block_and_tackle.py": ScriptOverride(
         args=("--max_steps", "20"),
         fixed_physics_backend="newton_vbd",
-        visualizers=("newton_gl",),
         required_modules=("isaaclab_contrib",),
     ),
     "scripts/demos/newton_viewer_dominoes.py": ScriptOverride(
         args=("--max_steps", "20"),
         fixed_physics_backend="newton_xpbd",
-        visualizers=("newton_gl",),
     ),
     "scripts/demos/sensors/cameras.py": ScriptOverride(args=("--num_envs", "1"), startup_timeout=900.0),
     "scripts/demos/sensors/multi_mesh_raycaster.py": ScriptOverride(
         args=("--flat_ground",),
         startup_timeout=600.0,
-        case_skip_reasons={
-            ("newton_mjwarp", "default", "kit"): "Kit viewport fails with the Newton multi-mesh raycaster"
-        },
     ),
-    "scripts/demos/sensors/newton_raycast_heightfield.py": ScriptOverride(
-        fixed_physics_backend="newton_mjwarp", visualizers=("none", "newton_gl", "rerun", "viser")
-    ),
-    "scripts/demos/sensors/newton_raycast_moving_geometry.py": ScriptOverride(
-        fixed_physics_backend="newton_mjwarp", visualizers=("none", "newton_gl", "rerun", "viser")
-    ),
+    "scripts/demos/sensors/newton_raycast_heightfield.py": ScriptOverride(fixed_physics_backend="newton_mjwarp"),
+    "scripts/demos/sensors/newton_raycast_moving_geometry.py": ScriptOverride(fixed_physics_backend="newton_mjwarp"),
     "scripts/demos/pick_and_place.py": ScriptOverride(
         readiness_pattern=r"Gym action space|Press the 'A' key", visualizers=("kit",)
     ),
     "scripts/demos/sensors/ppisp_camera.py": ScriptOverride(
-        args=("--max_steps", "3", "--warmup_steps", "1", "--image_width", "64", "--image_height", "64"),
+        args=("--max_steps", "3", "--image_width", "64", "--image_height", "64", "warmup_steps=1"),
         startup_timeout=600.0,
-        visualizers=("none",),
     ),
     "scripts/demos/sensors/ppisp_camera_ovrtx.py": ScriptOverride(
         args=("--max_steps", "3", "--warmup_steps", "1"),
-        visualizers=("none",),
+        fixed_physics_backend="newton_mjwarp",
         required_modules=("ovrtx",),
     ),
     # Readiness fires once conversion succeeds, so the preview runs inside the soak.
@@ -247,13 +230,7 @@ OVERRIDES = {
         args=(_NEWTON_MJCF, str(Path(tempfile.gettempdir()) / "isaaclab_converter_smoke" / "mjcf")),
         readiness_pattern=r"Generated USD file:",
     ),
-    "scripts/tutorials/00_sim/create_empty.py": ScriptOverride(visualizers=("none", "kit")),
-    "scripts/tutorials/00_sim/launch_app.py": ScriptOverride(visualizers=("none", "kit")),
-    "scripts/tutorials/00_sim/log_time.py": ScriptOverride(visualizers=("none", "kit")),
-    "scripts/tutorials/00_sim/spawn_prims.py": ScriptOverride(visualizers=("none", "kit")),
-    "scripts/tutorials/01_assets/run_surface_gripper.py": ScriptOverride(
-        args=("--device", "cpu"), visualizers=("none", "kit")
-    ),
+    "scripts/tutorials/01_assets/run_surface_gripper.py": ScriptOverride(args=("--device", "cpu")),
     "scripts/tutorials/03_envs/create_cartpole_base_env.py": ScriptOverride(readiness_pattern=r"Resetting environment"),
     "scripts/tutorials/03_envs/create_cube_base_env.py": ScriptOverride(readiness_pattern=r"Mean position error"),
     "scripts/tutorials/03_envs/create_quadruped_base_env.py": ScriptOverride(
@@ -263,19 +240,14 @@ OVERRIDES = {
         skip_reason="requires a user-supplied TorchScript checkpoint"
     ),
     "scripts/tutorials/03_envs/run_cartpole_rl_env.py": ScriptOverride(readiness_pattern=r"Resetting environment"),
-    "scripts/tutorials/04_sensors/add_sensors_on_robot.py": ScriptOverride(args=("--enable_cameras",)),
-    "scripts/tutorials/04_sensors/run_ray_caster.py": ScriptOverride(visualizers=("none", "kit")),
-    "scripts/tutorials/04_sensors/run_ray_caster_camera.py": ScriptOverride(visualizers=("none", "kit")),
-    "scripts/tutorials/04_sensors/run_usd_camera.py": ScriptOverride(visualizers=("none", "kit")),
     "scripts/tutorials/07_visualizers/run_tiled_camera_visualizer.py": ScriptOverride(
-        readiness_pattern=r"Gym action space",
-        visualizers=("kit", "newton_gl"),
+        readiness_pattern=r"Gym action space"
     ),
 }
 
 
 def discover_specs() -> list[ScriptSpec]:
-    """Discover the executable demo, tutorial, and tool scripts and their literal CLI choices."""
+    """Discover executable scripts and their declarative preset choices."""
     specs = []
     for group in (*(sorted(root.rglob("*.py")) for root in SCRIPT_ROOTS), EXTRA_SCRIPTS):
         for path in group:
@@ -288,19 +260,16 @@ def discover_specs() -> list[ScriptSpec]:
             readiness_pattern = override.readiness_pattern
             if readiness_pattern is None and re.search(DEFAULT_READINESS_PATTERN, source):
                 readiness_pattern = DEFAULT_READINESS_PATTERN
-            options = _literal_cli_options(tree)
-            visualizer_option = "--viz" if "--viz" in options and "--visualizer" not in options else "--visualizer"
-            declared_visualizers = options.get(visualizer_option, ())
+            preset_options = _preset_options(tree)
             if override.visualizers is not None:
                 visualizers = override.visualizers
-            elif declared_visualizers:
-                visualizers = declared_visualizers
             else:
-                visualizers = VISUALIZERS
+                visualizers = tuple(dict.fromkeys(("none", *preset_options.get("visualizer", ()))))
             specs.append(
                 ScriptSpec(
                     path=path,
-                    options=options,
+                    flags=_literal_cli_flags(tree),
+                    preset_options=preset_options,
                     args=override.args,
                     readiness_pattern=readiness_pattern,
                     startup_timeout=override.startup_timeout,
@@ -308,7 +277,6 @@ def discover_specs() -> list[ScriptSpec]:
                     fixed_physics_backend=override.fixed_physics_backend,
                     visualizers=visualizers,
                     case_skip_reasons=override.case_skip_reasons,
-                    visualizer_option=visualizer_option,
                     required_modules=override.required_modules,
                 )
             )
@@ -320,15 +288,13 @@ def build_cases(specs: list[ScriptSpec]) -> list[LaunchCase]:
     return [
         LaunchCase(
             spec=spec,
-            physics_option=physics_option,
             physics_backend=physics_backend,
-            renderer_option=renderer_option,
             renderer_backend=renderer_backend,
             visualizer=visualizer,
         )
         for spec in specs
-        for physics_option, physics_backend in spec.physics_backends
-        for renderer_option, renderer_backend in spec.rendering_backends
+        for physics_backend in spec.physics_backends
+        for renderer_backend in spec.rendering_backends
         for visualizer in spec.visualizers
     ]
 
@@ -362,7 +328,9 @@ def select_runtime_group(cases: list[LaunchCase], runtime_group: str) -> list[La
         case
         for case in cases
         if (
-            case.physics_backend == "isaacsim_physx" or case.renderer_backend == "isaac_rtx" or case.visualizer == "kit"
+            case.physics_backend == "isaacsim_physx"
+            or case.renderer_backend == "isaacsim_rtx"
+            or case.visualizer == "kit"
         )
         == (runtime_group == "kit")
     ]
@@ -372,7 +340,7 @@ def backend_is_available(backend: str) -> bool:
     """Return whether the package implementing a selected backend is importable."""
     if backend == "default":
         return True
-    if backend == "isaac_rtx":
+    if backend == "isaacsim_rtx":
         return importlib.util.find_spec("isaacsim") is not None or (ROOT / "_isaac_sim").exists()
     if backend in {"physx", "isaacsim_physx"}:
         package = "isaaclab_physx"
@@ -396,10 +364,10 @@ def visualizer_is_available(visualizer: str) -> bool:
         return importlib.util.find_spec("isaacsim") is not None or (ROOT / "_isaac_sim").exists()
     if importlib.util.find_spec("isaaclab_visualizers") is None:
         return False
-    if visualizer in {"newton", "newton_gl", "newton_rtx"}:
-        if importlib.util.find_spec("isaaclab_newton") is None:
-            return False
-        return visualizer != "newton_rtx" or importlib.util.find_spec("ovrtx") is not None
+    if visualizer == "newton_gl":
+        return importlib.util.find_spec("isaaclab_newton") is not None
+    if visualizer == "newton_rtx":
+        return True
     return importlib.util.find_spec(visualizer) is not None
 
 
@@ -541,9 +509,9 @@ def _has_main_guard(tree: ast.AST) -> bool:
     return False
 
 
-def _literal_cli_options(tree: ast.AST) -> dict[str, tuple[str, ...]]:
-    """Collect literal ``argparse.add_argument`` options and choices from an AST."""
-    options = {}
+def _literal_cli_flags(tree: ast.AST) -> frozenset[str]:
+    """Collect literal ``argparse.add_argument`` flags from an AST."""
+    flags = set()
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
             continue
@@ -556,14 +524,180 @@ def _literal_cli_options(tree: ast.AST) -> dict[str, tuple[str, ...]]:
             or not option.value.startswith("--")
         ):
             continue
-        choices: tuple[str, ...] = ()
-        for keyword in node.keywords:
-            if keyword.arg != "choices" or not isinstance(keyword.value, (ast.List, ast.Tuple)):
+        flags.add(option.value)
+    return frozenset(flags)
+
+
+def _has_planned_newton_rtx_camera(tree: ast.AST) -> bool:
+    """Return whether the script constructs a compatible camera inside its clone lifecycle."""
+
+    def name(node: ast.AST) -> str | None:
+        return node.id if isinstance(node, ast.Name) else node.attr if isinstance(node, ast.Attribute) else None
+
+    def exact_construction(node: ast.AST) -> bool:
+        return (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "class_type"
+            and len(node.args) == 1
+            and not node.keywords
+            and ast.dump(node.func.value) == ast.dump(node.args[0])
+        )
+
+    sessions = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.With, ast.AsyncWith))
+        and any(
+            isinstance(item.context_expr, ast.Call) and name(item.context_expr.func) == "ReplicateSession"
+            for item in node.items
+        )
+    ]
+    constructions = {
+        ast.unparse(call.args[0]) for session in sessions for call in ast.walk(session) if exact_construction(call)
+    }
+    if not constructions:
+        return False
+
+    camera_fields = set()
+    shared_scene = False
+    for class_node in (node for node in ast.walk(tree) if isinstance(node, ast.ClassDef)):
+        shared_scene |= any(name(base) == "MultiBackendSceneCfg" for base in class_node.bases)
+        for statement in class_node.body:
+            value = statement.value if isinstance(statement, (ast.Assign, ast.AnnAssign)) else None
+            if not isinstance(value, ast.Call) or name(value.func) != "MultiBackendCameraCfg":
                 continue
-            literal_choices = [element.value for element in keyword.value.elts if isinstance(element, ast.Constant)]
-            choices = tuple(str(choice) for choice in literal_choices)
-        options[option.value] = choices
-    return options
+            targets = statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+            camera_fields.update(name(target) for target in targets if name(target) is not None)
+    if any(expression.rsplit(".", 1)[-1] in camera_fields for expression in constructions):
+        return True
+
+    scene_constructed = any(
+        expression.rsplit(".", 1)[-1] == "scene" or expression.endswith("scene_cfg") for expression in constructions
+    )
+    if shared_scene and scene_constructed:
+        return True
+
+    def compatible_camera(node: ast.AST) -> bool:
+        if not isinstance(node, ast.Call) or name(node.func) != "CameraCfg":
+            return False
+        keywords = {keyword.arg: keyword.value for keyword in node.keywords}
+        path = keywords.get("prim_path")
+        renderer = keywords.get("renderer_cfg")
+        return (
+            isinstance(path, ast.Constant)
+            and path.value == "{ENV_REGEX_NS}/Camera"
+            and isinstance(renderer, ast.Call)
+            and name(renderer.func) == "MultiBackendRendererCfg"
+        )
+
+    custom_camera = any(
+        isinstance(node, ast.keyword) and node.arg == "newton_rtx" and compatible_camera(node.value)
+        for node in ast.walk(tree)
+    )
+    return custom_camera and scene_constructed
+
+
+def _preset_options(tree: ast.AST) -> dict[str, tuple[str, ...]]:
+    """Collect typed alternatives from inline and named ``PresetCfg`` declarations."""
+
+    def name(node: ast.AST) -> str | None:
+        return node.id if isinstance(node, ast.Name) else node.attr if isinstance(node, ast.Attribute) else None
+
+    preset_classes = {**_canonical_preset_classes(), **_declared_preset_classes(tree)}
+
+    def alternatives(value: ast.AST) -> tuple[str, ...]:
+        if not isinstance(value, ast.Call):
+            return ()
+        if name(value.func) == "preset":
+            return tuple(keyword.arg for keyword in value.keywords if keyword.arg not in {None, "default"})
+        return preset_classes.get(name(value.func), ())
+
+    targets = {"physics": "physics", "renderer": "renderer", "visualizer_cfgs": "visualizer"}
+    options: dict[str, list[str]] = {target: [] for target in targets.values()}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            for target, names in _canonical_cfg_options().get(name(node.func), {}).items():
+                options[target].extend(names)
+            pairs = ((keyword.arg, keyword.value) for keyword in node.keywords)
+        elif isinstance(node, ast.Assign):
+            pairs = ((name(target), node.value) for target in node.targets)
+        elif isinstance(node, ast.AnnAssign):
+            pairs = ((name(node.target), node.value),)
+        else:
+            continue
+        for field_name, value in pairs:
+            if target := targets.get(field_name):
+                options[target].extend(alternatives(value))
+    if not _has_planned_newton_rtx_camera(tree):
+        options["visualizer"] = [name for name in options["visualizer"] if name != "newton_rtx"]
+    return {target: tuple(dict.fromkeys(names)) for target, names in options.items() if names}
+
+
+def _declared_preset_classes(tree: ast.AST) -> dict[str, tuple[str, ...]]:
+    """Return named ``PresetCfg`` alternatives declared in one module."""
+
+    def name(node: ast.AST) -> str | None:
+        return node.id if isinstance(node, ast.Name) else node.attr if isinstance(node, ast.Attribute) else None
+
+    preset_classes = {}
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef) or not any(name(base) == "PresetCfg" for base in node.bases):
+            continue
+        fields = []
+        for statement in node.body:
+            targets = (
+                statement.targets
+                if isinstance(statement, ast.Assign)
+                else [statement.target]
+                if isinstance(statement, ast.AnnAssign)
+                else []
+            )
+            fields.extend(
+                field_name
+                for target in targets
+                if (field_name := name(target)) is not None
+                and field_name != "default"
+                and not field_name.startswith("_")
+            )
+        preset_classes[node.name] = tuple(dict.fromkeys(fields))
+    return preset_classes
+
+
+@functools.cache
+def _canonical_presets_tree() -> ast.Module:
+    """Parse the canonical shared preset module once."""
+    path = ROOT / "source" / "isaaclab_tasks" / "isaaclab_tasks" / "utils" / "presets.py"
+    return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+
+
+@functools.cache
+def _canonical_preset_classes() -> dict[str, tuple[str, ...]]:
+    """Read shared preset alternatives from their canonical data-only module."""
+    return _declared_preset_classes(_canonical_presets_tree())
+
+
+@functools.cache
+def _canonical_cfg_options() -> dict[str, dict[str, tuple[str, ...]]]:
+    """Return typed preset fields inherited through canonical config roots."""
+    targets = {"physics": "physics", "renderer": "renderer", "visualizer_cfgs": "visualizer"}
+    preset_classes = _canonical_preset_classes()
+    result = {}
+    for node in _canonical_presets_tree().body:
+        if not isinstance(node, ast.ClassDef):
+            continue
+        options = {}
+        for statement in node.body:
+            if not isinstance(statement, ast.AnnAssign) or not isinstance(statement.target, ast.Name):
+                continue
+            target = targets.get(statement.target.id)
+            value = statement.value
+            if target and isinstance(value, ast.Call) and isinstance(value.func, ast.Name):
+                if alternatives := preset_classes.get(value.func.id):
+                    options[target] = alternatives
+        if options:
+            result[node.name] = options
+    return result
 
 
 def _terminate_process_group(process: subprocess.Popen) -> None:

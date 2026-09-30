@@ -182,6 +182,10 @@ class DigitLocoManipCommands:
             yaw=(-math.pi / 2.0 - 0.1, -math.pi / 2.0 + 0.1),
         ),
     )
+    left_ee_pose.goal_pose_visualizer_cfg.prim_path = "/Visuals/Command/left_goal_pose"
+    left_ee_pose.current_pose_visualizer_cfg.prim_path = "/Visuals/Command/left_body_pose"
+    right_ee_pose.goal_pose_visualizer_cfg.prim_path = "/Visuals/Command/right_goal_pose"
+    right_ee_pose.current_pose_visualizer_cfg.prim_path = "/Visuals/Command/right_body_pose"
 
 
 @configclass
@@ -233,11 +237,3 @@ class DigitLocoManipEnvCfg(DigitRoughEnvCfg):
         self.observations.policy.height_scan = None
         # Remove terrain curriculum.
         self.curriculum.terrain_levels = None
-
-    def play_mode(self) -> None:
-        # play-mode overrides of parent
-        super().play_mode()
-
-        # Remove random pushing.
-        self.events.base_external_force_torque = None
-        self.events.push_robot = None

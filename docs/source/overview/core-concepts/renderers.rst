@@ -81,24 +81,16 @@ Prims outside the environment hierarchies remain in the shared background partit
 Environment-owned ``PointInstancer`` markers can carry one matching scene-partition
 token per instance; markers without that ownership information remain shared.
 
-.. warning::
-
-   Kit RTX sizes each partition from the bounding boxes of the prims it contains and never
-   refreshes the bounding box of an animated ``UsdGeom.BasisCurves`` prim, so cables can be
-   culled once they deform beyond their initial extent. See
-   :ref:`known-issues-animated-curve-scene-partition` for the workaround.
-
 Architecture Overview
 ---------------------
 
 The renderer system consists of:
 
 1. **BaseRenderer** — Abstract base class defining the rendering lifecycle and interface
-2. **RendererCfg** — Base configuration; each backend extends it with backend-specific options and declares
-   its implementation in ``class_type``
+2. **RendererCfg** — Base configuration; each backend extends it with backend-specific options
 3. **Concrete implementations** — Backend-specific renderers in extension packages
-4. **RenderContext** — A management class for instantiating and accessing renderer instances using a **RendererCfg**.
-   After instantiation, a config can then be used to acquire the instance of the renderer as needed.
+4. **SimulationContext** — The composition root that constructs a renderer as
+   ``renderer_cfg.class_type(renderer_cfg)`` for each camera configuration
 
 .. code-block:: python
 
@@ -106,11 +98,8 @@ The renderer system consists of:
    from isaaclab.renderers import BaseRenderer
    from isaaclab_newton.renderers import NewtonWarpRendererCfg
 
-   # Create a Newton Warp renderer (no Isaac Sim required)
    sim_ctx = sim_utils.SimulationContext.instance()
-   # RenderContext.get_renderer constructs cfg.class_type(cfg)
-   # or return an existing renderer with a matching config
-   renderer: BaseRenderer = sim_ctx.render_context.get_renderer(NewtonWarpRendererCfg())
+   renderer: BaseRenderer = sim_ctx.get_renderer(NewtonWarpRendererCfg())
    assert isinstance(renderer, BaseRenderer)
 
 For the RTX renderer (requires Isaac Sim):
@@ -121,11 +110,8 @@ For the RTX renderer (requires Isaac Sim):
    from isaaclab.renderers import BaseRenderer
    from isaaclab_physx.renderers import IsaacRtxRendererCfg
 
-   # Create an RTX renderer
    sim_ctx = sim_utils.SimulationContext.instance()
-   # RenderContext.get_renderer constructs cfg.class_type(cfg)
-   # or return an existing renderer with a matching config
-   renderer: BaseRenderer = sim_ctx.render_context.get_renderer(IsaacRtxRendererCfg())
+   renderer: BaseRenderer = sim_ctx.get_renderer(IsaacRtxRendererCfg())
 
 For RTX renderer settings, see
 :doc:`/source/how-to/configure_rendering`.
@@ -133,13 +119,15 @@ For RTX renderer settings, see
 Core concepts
 -------------
 
-- **Use the RenderContext**: Always acquire renderers via the RenderContext with a renderer-specific config class
-  (e.g. ``sim_ctx.render_context.get_renderer(IsaacRtxRendererCfg())``). Do not import or instantiate concrete backend classes
-  (e.g. ``IsaacRtxRenderer``, ``OVRTXRenderer``) directly—their names and package locations are
-  implementation details and may change without notice.
+- **Simulation ownership**: Camera renderers belong directly to
+  :class:`~isaaclab.sim.SimulationContext`. ``get_renderer(cfg)`` constructs exactly
+  ``cfg.class_type(cfg)`` on every call, so each camera owns its mutable renderer state. Native
+  backend resources are shared separately through the simulation's backend registry when their
+  configs request the same backend class. Construction happens during scene creation and
+  initialization happens after cloning.
 
 - **Lightweight config imports**: Importing a renderer configuration class does not pull in backend-specific
-  dependencies. ``class_type`` is resolved lazily when the renderer is constructed, and construction may fail
+  dependencies. The backend is lazily loaded when the renderer is instantiated, and instantiation may fail
   if the backend is not installed.
 
   .. code-block:: python
@@ -151,7 +139,7 @@ Core concepts
 
      # Lazily loads ovrtx when instantiated; may fail if isaaclab_ov / ovrtx is not installed
      sim_ctx = sim_utils.SimulationContext.instance()
-     renderer: BaseRenderer = sim_ctx.render_context.get_renderer(OVRTXRendererCfg())
+     renderer: BaseRenderer = sim_ctx.get_renderer(OVRTXRendererCfg())
 
 Installing the OVRTX renderer
 ------------------------------

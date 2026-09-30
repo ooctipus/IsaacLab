@@ -7,50 +7,12 @@
 
 from __future__ import annotations
 
-import logging
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
 from isaaclab.physics import PhysicsCfg
 from isaaclab.utils.configclass import configclass
 
 from isaaclab_newton.physics.newton_collision_cfg import NewtonCollisionPipelineCfg
-
-if TYPE_CHECKING:
-    from isaaclab_newton.physics import NewtonManager
-
-logger = logging.getLogger(__name__)
-
-
-@configclass
-class NewtonSolverCfg:
-    """Configuration for Newton solver-related parameters.
-
-    These parameters are used to configure the Newton solver. For more information, see the `Newton documentation`_.
-
-    Subclasses set :attr:`class_type` to their matching :class:`NewtonManager`
-    subclass; :class:`NewtonCfg` propagates that to its own
-    :attr:`NewtonCfg.class_type` in :meth:`NewtonCfg.__post_init__` so that
-    ``SimulationContext`` resolves the correct manager via the existing
-    dispatch path.
-
-    .. _Newton documentation: https://newton.readthedocs.io/en/latest/
-    """
-
-    class_type: type[NewtonManager] | str = "{DIR}.newton_manager:NewtonManager"
-    """Manager class for this solver.
-
-    Default points at the abstract :class:`NewtonManager`; concrete subclasses
-    override it.
-    """
-
-    solver_type: str = "None"
-    """Solver type metadata (deprecated).
-
-    .. deprecated::
-        Manager dispatch is now driven by :attr:`class_type`; this field is
-        retained as metadata for logging and debugging only.  Do not branch on
-        ``solver_type`` in new code.
-    """
 
 
 @configclass
@@ -121,25 +83,17 @@ class NewtonShapeCfg:
 
 
 @configclass
-class NewtonCfg(PhysicsCfg):
-    """Configuration for Newton physics manager.
+class NewtonSolverCfg(PhysicsCfg):
+    """Shared configuration for concrete Newton physics solvers.
 
-    This configuration includes Newton-specific simulation settings and solver configuration.
+    Concrete subclasses declare their matching manager through :attr:`class_type`
+    and are passed directly as :attr:`SimulationCfg.physics`.
 
-    The active :class:`NewtonManager` subclass is determined by
-    :attr:`solver_cfg.class_type`, which :meth:`__post_init__` propagates to
-    :attr:`class_type` so that ``SimulationContext`` resolves the right
-    manager subclass automatically.  User code keeps the existing two-level
-    shape ``NewtonCfg(solver_cfg=...)`` and does not need to set
-    :attr:`class_type` explicitly.
+    .. _Newton documentation: https://newton.readthedocs.io/en/latest/
     """
 
-    class_type: type[NewtonManager] | str | None = None
-    """The class type of the :class:`NewtonManager`.
-
-    Auto-set in :meth:`__post_init__` from :attr:`solver_cfg.class_type`.
-    Users normally do not set this directly.
-    """
+    backend: str = "newton"
+    """Canonical physics backend identity."""
 
     num_substeps: int = 1
     """Number of substeps to use for the solver."""
@@ -176,9 +130,6 @@ class NewtonCfg(PhysicsCfg):
     error during solver initialization for unsupported solvers rather than
     silently running them without the requested guarantee.
     """
-
-    solver_cfg: NewtonSolverCfg | None = None
-    """Solver configuration. If None (default), MJWarpSolverCfg is used by default."""
 
     soft_contact_cfg: NewtonSoftContactCfg | None = None
     """Global soft-contact parameters applied after model finalization.
@@ -220,15 +171,6 @@ class NewtonCfg(PhysicsCfg):
     :class:`NewtonShapeCfg` for the declared fields.
     """
 
-    load_visual_shapes: bool | None = None
-    """Whether Newton replication imports visual-only geometry from USD.
-
-    ``None`` imports it only when a viewer, an offscreen ``rgb_array`` capture, or a
-    camera sensor is active, so headless training does not pay the USD parse time and
-    memory for shapes nothing draws. Set to ``True`` to always import it, which is
-    needed when a ray-cast sensor must hit geometry that carries no collider.
-    """
-
     bvh_constructor_geometry: Literal["lbvh", "sah", "cubql"] = "cubql"
     """BVH construction algorithm for mesh geometry colliders.
 
@@ -260,30 +202,3 @@ class NewtonCfg(PhysicsCfg):
     :attr:`ModelBuilder.BvhConfig`. See :attr:`bvh_constructor_geometry` for the
     ``"lbvh"`` / ``"sah"`` / ``"cubql"`` trade-off.
     """
-
-    def __post_init__(self):
-        # NewtonCfg.class_type is auto-derived from solver_cfg.class_type.
-        # Refuse a user-set value: setting both is ambiguous and was
-        # previously silently overwritten.
-        if self.class_type is not None:
-            raise TypeError("Cannot manually set NewtonCfg.class_type; it is auto-derived from solver_cfg.class_type.")
-        if self.deterministic_mode not in ("not_guaranteed", "run_to_run", "gpu_to_gpu"):
-            raise ValueError(
-                "NewtonCfg.deterministic_mode must be 'not_guaranteed', 'run_to_run', or 'gpu_to_gpu', "
-                f"got {self.deterministic_mode!r}."
-            )
-        if self.solver_cfg is None:
-            from isaaclab_newton.physics.mjwarp_manager_cfg import MJWarpSolverCfg
-
-            self.solver_cfg = MJWarpSolverCfg()
-
-        self.class_type = self.solver_cfg.class_type
-
-        # Mid-tick re-collide is silently disabled when collision_decimation >= num_substeps.
-        if self.collision_decimation > 0 and self.collision_decimation >= self.num_substeps:
-            logger.warning(
-                "NewtonCfg.collision_decimation=%d is >= num_substeps=%d; mid-tick re-collide is disabled. "
-                "Set 0 < collision_decimation < num_substeps to enable.",
-                self.collision_decimation,
-                self.num_substeps,
-            )

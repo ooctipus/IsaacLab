@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-from isaaclab_teleop import ControllerHapticFeedbackCfg, IsaacTeleopCfg, XrCfg
+from isaaclab_teleop import ControllerHapticFeedbackCfg, IsaacTeleopCfg, TeleopPipelineCfg, XrCfg
 
 import isaaclab.envs.mdp as base_mdp
 import isaaclab.sim as sim_utils
@@ -13,7 +13,6 @@ from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
-from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import ContactSensorCfg
 from isaaclab.sim.spawners.from_files.from_files_cfg import GroundPlaneCfg, UsdFileCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
@@ -28,8 +27,10 @@ from isaaclab_tasks.contrib.locomanip_pick_place.configs.pink_controller_cfg imp
     G1_UPPER_BODY_IK_ACTION_CFG,
 )
 
+from isaaclab_tasks.utils.presets import MultiBackendSceneCfg, MultiBackendSimulationCfg
 
-def _build_g1_upper_body_pipeline():
+
+def _build_g1_upper_body_pipeline(_cfg: TeleopPipelineCfg):
     """Build an IsaacTeleop retargeting pipeline for G1 upper body teleoperation.
 
     Creates two Se3AbsRetargeters for left and right wrist pose tracking
@@ -38,10 +39,8 @@ def _build_g1_upper_body_pipeline():
     via TensorReorderer.
 
     Returns:
-        Tuple of (OutputCombiner, list): the pipeline with a single "action"
-        output containing the flattened 28D action tensor
-        [left_wrist(7), right_wrist(7), hand_joints(14)], and the list of
-        retargeter instances [left_se3, right_se3] for tuning UI.
+        Pipeline with a single 28D ``"action"`` output containing
+        ``[left_wrist(7), right_wrist(7), hand_joints(14)]``.
     """
     from isaacteleop.retargeters import (
         Se3AbsRetargeter,
@@ -222,15 +221,14 @@ def _build_g1_upper_body_pipeline():
         }
     )
 
-    pipeline = OutputCombiner({"action": connected_reorderer.output("output")})
-    return pipeline, [left_se3, right_se3]
+    return OutputCombiner({"action": connected_reorderer.output("output")})
 
 
 ##
 # Scene definition
 ##
 @configclass
-class FixedBaseUpperBodyIKG1SceneCfg(InteractiveSceneCfg):
+class FixedBaseUpperBodyIKG1SceneCfg(MultiBackendSceneCfg):
     """Scene configuration for fixed base upper body IK environment with G1 robot.
 
     This configuration sets up the G1 humanoid robot with fixed pelvis and legs,
@@ -269,11 +267,13 @@ class FixedBaseUpperBodyIKG1SceneCfg(InteractiveSceneCfg):
         update_period=0.0,
         history_length=3,
     )
+    left_hand_contact.visualizer_cfg.prim_path = "/Visuals/ContactSensor/left_hand"
     right_hand_contact = ContactSensorCfg(
         prim_path="{ENV_REGEX_NS}/Robot/right_hand_[^/]*_link",
         update_period=0.0,
         history_length=3,
     )
+    right_hand_contact.visualizer_cfg.prim_path = "/Visuals/ContactSensor/right_hand"
 
     # Ground plane
     ground = AssetBaseCfg(
@@ -372,6 +372,7 @@ class FixedBaseUpperBodyIKG1EnvCfg(ManagerBasedRLEnvCfg):
     controlled using upper body IK.
     """
 
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg()
     # Scene settings
     scene: FixedBaseUpperBodyIKG1SceneCfg = FixedBaseUpperBodyIKG1SceneCfg(
         num_envs=1, env_spacing=2.5, replicate_physics=True
@@ -402,16 +403,13 @@ class FixedBaseUpperBodyIKG1EnvCfg(ManagerBasedRLEnvCfg):
         self.actions.upper_body_ik.controller.urdf_path = urdf_omniverse_path
 
         # IsaacTeleop-based teleoperation pipeline (resolved lazily at runtime).
-        self.xr = XrCfg(
+        self.scene.xr_anchor = XrCfg(
             anchor_pos=(0.0, 0.0, -0.30),
             anchor_rot=(0.0, 0.0, 0.0, 1.0),
         )
-
         self.isaac_teleop = IsaacTeleopCfg(
-            pipeline_builder=lambda: _build_g1_upper_body_pipeline()[0],
-            # retargeters_to_tune=lambda: _build_g1_upper_body_pipeline()[1],
+            pipeline_cfg=TeleopPipelineCfg(class_type=_build_g1_upper_body_pipeline),
             sim_device=self.sim.device,
-            xr_cfg=self.xr,
         )
 
         # Enable contact reporting on the robot so the per-hand ContactSensors

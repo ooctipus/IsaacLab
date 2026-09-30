@@ -127,13 +127,13 @@ class ContactSensorCfg(SensorBaseCfg):
     """
 
     normal_force_visualizer_cfg: VisualizationMarkersCfg = BLUE_ARROW_X_MARKER_CFG.replace(
-        prim_path="/Visuals/ContactSensor"
+        prim_path="/Visuals/ContactSensorNormalForce"
     )
     """Configuration for net normal-force arrows."""
     cast("UsdFileCfg", normal_force_visualizer_cfg.markers["arrow"]).scale = (0.04, 0.04, 0.2)
 
     friction_force_visualizer_cfg: VisualizationMarkersCfg = RED_ARROW_X_MARKER_CFG.replace(
-        prim_path="/Visuals/ContactSensor"
+        prim_path="/Visuals/ContactSensorFrictionForce"
     )
     """Configuration for net friction-force arrows."""
     cast("UsdFileCfg", friction_force_visualizer_cfg.markers["arrow"]).scale = (0.04, 0.04, 0.2)

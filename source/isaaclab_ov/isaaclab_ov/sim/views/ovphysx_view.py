@@ -242,7 +242,7 @@ class OvPhysxView:
             exclusive with ``prim_paths``.
         device: Simulation device (e.g. ``"cuda:0"`` or ``"cpu"``). State bindings are
             read/written on this device; CPU-only property bindings always use ``"cpu"``.
-        prim_paths: An explicit list of fnmatch globs for the fused multi-prim binding
+        prim_paths: An explicit list of exact paths for the fused multi-prim binding
             form (``create_tensor_binding(prim_paths=[...])``). Mutually exclusive with
             ``pattern``.
         key_aliases: Optional mapping ``requested_type -> created_type`` so a binding can
@@ -302,7 +302,7 @@ class OvPhysxView:
         if pattern is not None and not pattern:
             raise ValueError("'pattern' must be a non-empty glob string.")
         if prim_paths is not None and not prim_paths:
-            raise ValueError("'prim_paths' must contain at least one glob.")
+            raise ValueError("'prim_paths' must contain at least one exact path.")
         if tensor_types is not None and not eager:
             raise ValueError("'tensor_types' is only honored with eager=True; pass eager=True or omit it.")
         self._physx = physx
@@ -780,7 +780,3 @@ class OvPhysxView:
 
     def __repr__(self) -> str:
         return f"OvPhysxView({self._target_repr()}, device={self._device!r}, instantiated={len(self._bindings)})"
-
-
-# Backward-compatible module-level alias for the error base class.
-OvPhysxViewError = OvPhysxView.OvPhysxViewError

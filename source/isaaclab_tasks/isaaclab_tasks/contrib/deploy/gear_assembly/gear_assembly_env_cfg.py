@@ -18,16 +18,14 @@ from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
-from isaaclab.scene import InteractiveSceneCfg
-from isaaclab.sim.simulation_cfg import SimulationCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.configclass import configclass
 from isaaclab.utils.noise import UniformNoiseCfg
-from isaaclab.visualizers import VisualizerCfg
 
 import isaaclab_tasks.contrib.deploy.mdp as mdp
 import isaaclab_tasks.contrib.deploy.mdp.terminations as gear_assembly_terminations
 from isaaclab_tasks.contrib.deploy.mdp.noise_models import ResetSampledConstantNoiseModelCfg
+from isaaclab_tasks.utils.presets import MultiBackendSceneCfg, MultiBackendSimulationCfg
 
 # Get the directory where this configuration file is located
 CONFIG_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -39,7 +37,7 @@ ASSETS_DIR = os.path.join(CONFIG_DIR, "assets")
 
 
 @configclass
-class GearAssemblySceneCfg(InteractiveSceneCfg):
+class GearAssemblySceneCfg(MultiBackendSceneCfg):
     """Configuration for the scene with a robotic arm."""
 
     # Disable scene replication to allow USD-level randomization
@@ -303,7 +301,7 @@ class GearAssemblyEnvCfg(ManagerBasedRLEnvCfg):
     rewards: RewardsCfg = RewardsCfg()
     terminations: TerminationsCfg = TerminationsCfg()
     events: EventCfg = EventCfg()
-    sim: SimulationCfg = SimulationCfg(
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(
         physics=PhysxCfg(  # Important to prevent collisionStackSize buffer overflow in contact-rich environments.
             gpu_collision_stack_size=2**30, gpu_max_rigid_contact_count=2**23, gpu_max_rigid_patch_count=2**23
         ),
@@ -313,7 +311,6 @@ class GearAssemblyEnvCfg(ManagerBasedRLEnvCfg):
         """Post initialization."""
         # general settings
         self.episode_length_s = 6.66
-        self.sim.default_visualizer_cfg = VisualizerCfg(eye=(3.5, 3.5, 3.5))
         # simulation settings
         self.decimation = 4
         self.sim.render_interval = self.decimation

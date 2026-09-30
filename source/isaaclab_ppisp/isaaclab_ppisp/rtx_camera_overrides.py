@@ -79,18 +79,15 @@ def apply_rtx_exposure_overrides(stage: Any, prim_paths: list[str]) -> None:
             return float(value)
         return value
 
+    layer = stage.GetRootLayer()
     for prim_path in prim_paths:
-        prim = stage.GetPrimAtPath(prim_path)
-        if not prim or not prim.IsValid():
-            continue
-        current = prim.GetMetadata("apiSchemas") or Sdf.TokenListOp()
+        prim = Sdf.CreatePrimInLayer(layer, prim_path)
+        current = prim.GetInfo("apiSchemas") if prim.HasInfo("apiSchemas") else Sdf.TokenListOp()
         existing = list(current.prependedItems) + list(current.explicitItems) + list(current.appendedItems)
-        missing = [s for s in _PPISP_CAMERA_API_SCHEMAS if s not in existing]
-        if missing:
-            merged = Sdf.TokenListOp.Create(prependedItems=[*missing, *existing])
-            prim.SetMetadata("apiSchemas", merged)
+        missing = [schema for schema in _PPISP_CAMERA_API_SCHEMAS if schema not in existing]
+        prim.SetInfo("apiSchemas", Sdf.TokenListOp.Create(prependedItems=[*missing, *existing]))
         for attr_name, sdf_type_name, value in _NEUTRAL_CAMERA_EXPOSURE:
-            attr = prim.GetAttribute(attr_name)
-            if not attr:
-                attr = prim.CreateAttribute(attr_name, sdf_value_types[sdf_type_name], custom=False)
-            attr.Set(coerce(value, sdf_type_name))
+            attr = prim.attributes.get(attr_name) or Sdf.AttributeSpec(
+                prim, attr_name, sdf_value_types[sdf_type_name], custom=False
+            )
+            attr.default = coerce(value, sdf_type_name)

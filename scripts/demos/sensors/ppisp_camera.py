@@ -11,11 +11,11 @@ the Newton Warp or Isaac RTX renderer.
 
     # Run a finite smoke with the default Newton Warp renderer and save comparison images.
     uv run python scripts/demos/sensors/ppisp_camera.py \
-        --input_scene /path/to/scene.usd --renderer newton_renderer --visualizer none --max_steps 60
+        --input_scene /path/to/scene.usd renderer=newton_renderer --max_steps 60
 
     # Run the same saved-image workflow with Isaac RTX.
     uv run python scripts/demos/sensors/ppisp_camera.py \
-        --input_scene /path/to/scene.usd --renderer isaac_rtx --visualizer none --max_steps 60
+        --input_scene /path/to/scene.usd renderer=isaacsim_rtx physics=isaacsim_physx --max_steps 60
 
 """
 
@@ -23,10 +23,13 @@ the Newton Warp or Isaac RTX renderer.
 
 import argparse
 import os
-from typing import Any
+import tempfile
 
-from isaaclab.app import AppLauncher
+from isaaclab.app import add_launcher_args, launch_simulation
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
+
+from isaaclab_tasks.utils import preset, resolve_config, setup_preset_cli
+from isaaclab_tasks.utils.presets import MultiBackendSimulationCfg
 
 # add argparse arguments
 DEFAULT_INPUT_SCENE = f"{ISAAC_NUCLEUS_DIR}/Samples/Scene_ParticleField/valiant_auto.usdz"
@@ -64,20 +67,6 @@ parser.add_argument(
     default=None,
     help="Output image height. Defaults to preserving the selected USD RenderProduct aspect ratio.",
 )
-parser.add_argument("--disable_fabric", action="store_true", help="Disable Fabric API and use USD instead.")
-parser.add_argument(
-    "--renderer",
-    type=str,
-    choices=["newton_renderer", "isaac_rtx"],
-    default="newton_renderer",
-    help="Camera renderer backend to use. Newton Warp is the default for this PPISP smoke.",
-)
-parser.add_argument(
-    "--warmup_steps",
-    type=int,
-    default=None,
-    help="Simulation/render steps to run before saving images. Defaults to 32 for Isaac RTX and 0 for Newton.",
-)
 parser.add_argument("--max_steps", type=int, default=120, help="Maximum simulation steps before exiting.")
 parser.add_argument("--save_interval", type=int, default=20, help="Interval, in steps, for saving comparison images.")
 parser.add_argument(
@@ -92,12 +81,10 @@ parser.add_argument(
     default=None,
     help="Directory to write comparison images. Defaults to scripts/demos/sensors/output/ppisp_camera.",
 )
-# append AppLauncher cli args
-AppLauncher.add_app_launcher_args(parser)
-# enable cameras by default; the QA workflow validates saved camera outputs and does not require a visualizer.
+add_launcher_args(parser)
+# The QA workflow validates saved camera outputs and does not require a visualizer.
 parser.set_defaults(enable_cameras=True)
-# parse the arguments
-args_cli = parser.parse_args()
+args_cli, config_overrides = setup_preset_cli(parser)
 if "://" not in args_cli.input_scene:
     args_cli.input_scene = os.path.abspath(os.path.expanduser(args_cli.input_scene))
     if not os.path.exists(args_cli.input_scene):
@@ -108,24 +95,18 @@ if args_cli.image_width < 1:
     parser.error("--image_width must be at least 1.")
 if args_cli.image_height is not None and args_cli.image_height < 1:
     parser.error("--image_height must be at least 1.")
-if args_cli.warmup_steps is None:
-    args_cli.warmup_steps = 32 if args_cli.renderer == "isaac_rtx" else 0
-if args_cli.warmup_steps < 0:
-    parser.error("--warmup_steps must be non-negative.")
 if args_cli.max_steps < 1:
     parser.error("--max_steps must be at least 1.")
 if args_cli.save_interval < 1:
     parser.error("--save_interval must be at least 1.")
 
-# launch omniverse app
-app_launcher = AppLauncher(args_cli)
-simulation_app = app_launcher.app
-
-"""Rest everything follows."""
-
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from isaaclab_newton.physics import MJWarpSolverCfg
+from isaaclab_newton.renderers import NewtonWarpRendererCfg
+from isaaclab_physx.physics import PhysxCfg
+from isaaclab_physx.renderers import IsaacRtxRendererCfg
 from isaaclab_ppisp._demo_utils import (
     find_ppisp_camera_bindings,
     format_available_ppisp_cameras,
@@ -137,14 +118,18 @@ from pxr import Usd, UsdGeom
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
-from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
+from isaaclab.renderers import RendererCfg
+from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import Camera, CameraCfg
 from isaaclab.utils.configclass import configclass
 
 
 @configclass
 class PpispCameraSceneCfg(InteractiveSceneCfg):
-    """Minimal scene cfg that references the input USD under each env."""
+    """Minimal scene cfg that references the input USD under each env.
+
+    The resolved root config fills in the input scene URL and both cameras before cloning.
+    """
 
     env_spacing: float = 20.0
 
@@ -152,6 +137,9 @@ class PpispCameraSceneCfg(InteractiveSceneCfg):
         prim_path="{ENV_REGEX_NS}/Scene",
         spawn=sim_utils.UsdFileCfg(usd_path=""),
     )
+
+    ppisp_camera: CameraCfg | None = None
+    baseline_camera: CameraCfg | None = None
 
     anchor = RigidObjectCfg(
         prim_path="{ENV_REGEX_NS}/Anchor",
@@ -167,33 +155,26 @@ class PpispCameraSceneCfg(InteractiveSceneCfg):
     )
 
 
-def make_renderer_cfg() -> Any:
-    """Create the selected camera renderer cfg."""
-    if args_cli.renderer == "newton_renderer":
-        from isaaclab_newton.renderers import NewtonWarpRendererCfg
+@configclass
+class DemoCfg:
+    """PPISP camera demo configuration."""
 
-        return NewtonWarpRendererCfg()
-    else:
-        from isaaclab_physx.renderers import IsaacRtxRendererCfg
-
-        return IsaacRtxRendererCfg()
-
-
-def make_sim_cfg() -> sim_utils.SimulationCfg:
-    """Create the simulation cfg matching the selected renderer."""
-    physics_cfg = None
-    if args_cli.renderer == "newton_renderer":
-        from isaaclab_newton.physics.mjwarp_manager_cfg import MJWarpSolverCfg
-        from isaaclab_newton.physics.newton_manager_cfg import NewtonCfg
-
-        physics_cfg = NewtonCfg(solver_cfg=MJWarpSolverCfg(), num_substeps=1)
-
-    return sim_utils.SimulationCfg(
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(
         dt=0.005,
         device=args_cli.device,
-        physics=physics_cfg,
-        use_fabric=not args_cli.disable_fabric,
+        physics=preset(
+            default=MJWarpSolverCfg(num_substeps=1),
+            newton_mjwarp=MJWarpSolverCfg(num_substeps=1),
+            isaacsim_physx=PhysxCfg(),
+        ),
     )
+    renderer = preset(
+        default=NewtonWarpRendererCfg(),
+        newton_renderer=NewtonWarpRendererCfg(),
+        isaacsim_rtx=IsaacRtxRendererCfg(),
+    )
+    warmup_steps = preset(default=0, newton_renderer=0, isaacsim_rtx=32)
+    scene: PpispCameraSceneCfg = PpispCameraSceneCfg(num_envs=args_cli.num_envs, env_spacing=args_cli.env_spacing)
 
 
 def resolve_source_camera_binding(source_stage: Usd.Stage) -> tuple[str, Usd.Prim | None, Usd.Prim]:
@@ -253,14 +234,20 @@ def source_camera_path_to_default_rel_path(source_stage: Usd.Stage, source_camer
     return source_camera_prim_path[len(default_prefix) :]
 
 
-def source_camera_path_to_env_regex(source_stage: Usd.Stage, source_camera_prim_path: str) -> str:
-    """Map a source camera path to the duplicated-env camera regex."""
+def source_camera_path_to_env_path(source_stage: Usd.Stage, source_camera_prim_path: str) -> str:
+    """Map a source camera path to its path under each duplicated env."""
     camera_rel_path = source_camera_path_to_default_rel_path(source_stage, source_camera_prim_path)
-    return f"/World/envs/env_.*/Scene/{camera_rel_path}"
+    return f"{{ENV_REGEX_NS}}/Scene/{camera_rel_path}"
 
 
-def bake_source_camera_pose_to_envs(source_stage: Usd.Stage, source_camera_prim_path: str) -> None:
-    """Bake the selected USD camera pose at ``camera_time_code`` into duplicated env camera prims."""
+def bake_camera_pose_into_scene_copy(source_stage: Usd.Stage, source_camera_prim_path: str, prepared_path: str) -> str:
+    """Write a layer referencing the input scene with the selected camera pose baked in.
+
+    The Newton renderer reads the camera at the default time code, so the pose at
+    ``--camera_time_code`` is baked into a static transform. The edit is authored on the asset
+    instead of on the duplicated env prims: a camera's pose relative to its parent is the same in
+    every env, and the camera has to exist before the scene is cloned for the cloner to replicate it.
+    """
     default_prim = source_stage.GetDefaultPrim()
     if not default_prim:
         raise RuntimeError("Input scene must have a defaultPrim so it can be referenced under each env.")
@@ -269,43 +256,34 @@ def bake_source_camera_pose_to_envs(source_stage: Usd.Stage, source_camera_prim_
     if not source_camera_prim or not source_camera_prim.IsValid():
         raise RuntimeError(f"Camera prim not found: {source_camera_prim_path}")
 
-    time_code = Usd.TimeCode(args_cli.camera_time_code)
-    source_cache = UsdGeom.XformCache(time_code)
-    source_default_world = source_cache.GetLocalToWorldTransform(default_prim)
-    source_camera_world = source_cache.GetLocalToWorldTransform(source_camera_prim)
-    source_camera_in_default = source_camera_world * source_default_world.GetInverse()
-
-    stage = sim_utils.get_current_stage()
-    target_cache = UsdGeom.XformCache(Usd.TimeCode.Default())
-    camera_rel_path = source_camera_path_to_default_rel_path(source_stage, source_camera_prim_path)
-    authored_count = 0
-    for env_id in range(args_cli.num_envs):
-        scene_path = f"/World/envs/env_{env_id}/Scene"
-        target_camera_path = f"{scene_path}/{camera_rel_path}"
-        scene_prim = stage.GetPrimAtPath(scene_path)
-        target_camera_prim = stage.GetPrimAtPath(target_camera_path)
-        if not scene_prim or not scene_prim.IsValid():
-            raise RuntimeError(f"Duplicated scene prim not found: {scene_path}")
-        if not target_camera_prim or not target_camera_prim.IsValid():
-            raise RuntimeError(f"Duplicated camera prim not found: {target_camera_path}")
-
-        target_scene_world = target_cache.GetLocalToWorldTransform(scene_prim)
-        target_parent_world = target_cache.GetLocalToWorldTransform(target_camera_prim.GetParent())
-        target_camera_world = source_camera_in_default * target_scene_world
-        target_camera_local = target_camera_world * target_parent_world.GetInverse()
-        target_camera_local.Orthonormalize()
-
-        xformable = UsdGeom.Xformable(target_camera_prim)
-        xformable.ClearXformOpOrder()
-        xform_op = xformable.AddTransformOp(UsdGeom.XformOp.PrecisionDouble, "ppispCameraPose")
-        xform_op.Set(target_camera_local, Usd.TimeCode.Default())
-        xformable.SetXformOpOrder([xform_op])
-        authored_count += 1
-
-    print(
-        f"[INFO] Baked camera pose at USD time {args_cli.camera_time_code:g} into {authored_count} env camera(s).",
-        flush=True,
+    baked_cache = UsdGeom.XformCache(Usd.TimeCode(args_cli.camera_time_code))
+    camera_in_default = (
+        baked_cache.GetLocalToWorldTransform(source_camera_prim)
+        * baked_cache.GetLocalToWorldTransform(default_prim).GetInverse()
     )
+    default_cache = UsdGeom.XformCache(Usd.TimeCode.Default())
+    parent_in_default = (
+        default_cache.GetLocalToWorldTransform(source_camera_prim.GetParent())
+        * default_cache.GetLocalToWorldTransform(default_prim).GetInverse()
+    )
+    camera_local = camera_in_default * parent_in_default.GetInverse()
+    camera_local.Orthonormalize()
+
+    stage = Usd.Stage.CreateNew(prepared_path)
+    root_prim = stage.OverridePrim(default_prim.GetPath())
+    root_prim.GetReferences().AddReference(os.path.abspath(args_cli.input_scene))
+    stage.SetDefaultPrim(root_prim)
+
+    camera_rel_path = source_camera_path_to_default_rel_path(source_stage, source_camera_prim_path)
+    xformable = UsdGeom.Xformable(stage.OverridePrim(root_prim.GetPath().AppendPath(camera_rel_path)))
+    xformable.ClearXformOpOrder()
+    xform_op = xformable.AddTransformOp(UsdGeom.XformOp.PrecisionDouble, "ppispCameraPose")
+    xform_op.Set(camera_local, Usd.TimeCode.Default())
+    xformable.SetXformOpOrder([xform_op])
+    stage.Save()
+
+    print(f"[INFO] Baked camera pose at USD time {args_cli.camera_time_code:g} into {prepared_path}.", flush=True)
+    return prepared_path
 
 
 def get_render_product_resolution(render_product_prim: Usd.Prim | None) -> tuple[int, int] | None:
@@ -340,9 +318,6 @@ def resolve_image_shape(render_product_prim: Usd.Prim | None) -> tuple[int, int]
 def make_ppisp_cfg(camera_prim: Usd.Prim, num_ppisp_bindings: int) -> PpispCfg:
     """Parse the selected source PPISP camera into an explicit cfg for duplicated envs."""
     ppisp_cfg = ppisp_cfg_from_usd_camera(camera_prim)
-    # The duplicated stage can remap source camera paths; keep the parsed inputs
-    # as explicit values instead of resolving the original camera path later.
-    ppisp_cfg.camera_prim_path = None
     if args_cli.ppisp_responsivity is None:
         print(f"[INFO] Using USD-authored PPISP values from {num_ppisp_bindings} PPISP camera(s).", flush=True)
     else:
@@ -354,28 +329,19 @@ def make_ppisp_cfg(camera_prim: Usd.Prim, num_ppisp_bindings: int) -> PpispCfg:
     return ppisp_cfg
 
 
-def create_duplicated_env_scene() -> InteractiveScene:
-    """Create a production-style duplicated-env scene for tiled camera rendering."""
-    scene_cfg = PpispCameraSceneCfg(num_envs=args_cli.num_envs, env_spacing=args_cli.env_spacing)
-    scene_cfg.input_scene.spawn = sim_utils.UsdFileCfg(usd_path=args_cli.input_scene)
-    scene = InteractiveScene(scene_cfg)
-    print(f"[INFO] Referenced input scene into {args_cli.num_envs} env(s).", flush=True)
-    return scene
-
-
-def make_camera(camera_prim_path: str, *, ppisp_cfg: PpispCfg | None, width: int, height: int) -> Camera:
-    """Create a baseline or PPISP camera sensor for the duplicated-env camera batch."""
-    return Camera(
-        CameraCfg(
-            prim_path=camera_prim_path,
-            update_period=0.0,
-            height=height,
-            width=width,
-            data_types=["rgb"],
-            spawn=None,
-            isp_cfg=ppisp_cfg,
-            renderer_cfg=make_renderer_cfg(),
-        )
+def make_camera_cfg(
+    camera_prim_path: str, renderer_cfg: RendererCfg, *, ppisp_cfg: PpispCfg | None, width: int, height: int
+) -> CameraCfg:
+    """Describe a baseline or PPISP camera sensor for the duplicated-env camera batch."""
+    return CameraCfg(
+        prim_path=camera_prim_path,
+        update_period=0.0,
+        height=height,
+        width=width,
+        data_types=["rgb"],
+        spawn=None,
+        isp_cfg=ppisp_cfg,
+        renderer_cfg=renderer_cfg,
     )
 
 
@@ -440,7 +406,9 @@ def corner_center_ratio(rgb: torch.Tensor) -> float:
     return (corners / center.clamp_min(1.0)).item()
 
 
-def run_simulator(sim: sim_utils.SimulationContext, baseline_camera: Camera, ppisp_camera: Camera) -> None:
+def run_simulator(
+    sim: sim_utils.SimulationContext, baseline_camera: Camera, ppisp_camera: Camera, warmup_steps: int
+) -> None:
     """Run the simulator and periodically save baseline-vs-PPISP images."""
     sim_dt = sim.get_physics_dt()
     output_dir = args_cli.output_dir
@@ -448,24 +416,24 @@ def run_simulator(sim: sim_utils.SimulationContext, baseline_camera: Camera, ppi
         output_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "output", "ppisp_camera")
     os.makedirs(output_dir, exist_ok=True)
 
-    if args_cli.warmup_steps > 0:
-        print(f"[INFO] Running {args_cli.warmup_steps} warmup step(s) before saving images.", flush=True)
-    for _ in range(args_cli.warmup_steps):
+    if warmup_steps > 0:
+        print(f"[INFO] Running {warmup_steps} warmup step(s) before saving images.", flush=True)
+    for _ in range(warmup_steps):
         sim.step()
         baseline_camera.update(sim_dt)
         ppisp_camera.update(sim_dt)
 
     count = 0
     reported_shape = False
-    while simulation_app.is_running():
+    while sim.is_headless_or_exist_active_visualizer():
         sim.step()
         baseline_camera.update(sim_dt)
         ppisp_camera.update(sim_dt)
         count += 1
 
         if count % args_cli.save_interval == 0:
-            baseline = baseline_camera.data.output["rgb"][..., :3]
-            ppisp = ppisp_camera.data.output["rgb"][..., :3]
+            baseline = baseline_camera.data.output["rgb"].torch[..., :3]
+            ppisp = ppisp_camera.data.output["rgb"].torch[..., :3]
             diff = (ppisp.float() - baseline.float()).abs() / 255.0
             if not reported_shape:
                 print(f"[INFO] camera batch rgb shape={tuple(ppisp.shape)}", flush=True)
@@ -526,33 +494,39 @@ def run_simulator(sim: sim_utils.SimulationContext, baseline_camera: Camera, ppi
 
 def main() -> None:
     """Main function."""
+    cfg = resolve_config(DemoCfg(), config_overrides)
     source_stage = Usd.Stage.Open(args_cli.input_scene)
     if source_stage is None:
         raise RuntimeError(f"Failed to open input scene: {args_cli.input_scene}")
     source_camera_prim_path, render_product_prim, ppisp_camera_prim = resolve_source_camera_binding(source_stage)
     ppisp_cfg = make_ppisp_cfg(ppisp_camera_prim, len(find_ppisp_camera_bindings(source_stage)))
-    camera_prim_path = source_camera_path_to_env_regex(source_stage, source_camera_prim_path)
+    camera_prim_path = source_camera_path_to_env_path(source_stage, source_camera_prim_path)
     width, height = resolve_image_shape(render_product_prim)
 
-    sim_utils.create_new_stage()
-    sim_cfg = make_sim_cfg()
-    sim = sim_utils.SimulationContext(sim_cfg)
-    sim.set_camera_view(eye=[2.5, 2.5, 2.5], target=[0.0, 0.0, 0.0])
-
-    scene = create_duplicated_env_scene()
-    if args_cli.renderer == "newton_renderer":
-        bake_source_camera_pose_to_envs(source_stage, source_camera_prim_path)
-    baseline_camera = make_camera(camera_prim_path, ppisp_cfg=None, width=width, height=height)
-    ppisp_camera = make_camera(camera_prim_path, ppisp_cfg=ppisp_cfg, width=width, height=height)
-    print(f"[INFO] Duplicated-env camera regex: {camera_prim_path}", flush=True)
-    print(f"[INFO] Rendering {width}x{height} from source camera {source_camera_prim_path}.", flush=True)
-
-    sim.reset()
-    print("[INFO]: Setup complete. Saving comparison images during simulation.", flush=True)
-    run_simulator(sim, baseline_camera, ppisp_camera)
-    del scene
+    # The baked scene is referenced for the whole run, so it outlives the simulation.
+    with tempfile.TemporaryDirectory(prefix="isaaclab-ppisp-") as prepared_dir:
+        input_scene = bake_camera_pose_into_scene_copy(
+            source_stage, source_camera_prim_path, os.path.join(prepared_dir, "prepared_scene.usda")
+        )
+        cfg.scene.input_scene.spawn = sim_utils.UsdFileCfg(usd_path=input_scene)
+        cfg.scene.ppisp_camera = make_camera_cfg(
+            camera_prim_path, cfg.renderer, ppisp_cfg=ppisp_cfg, width=width, height=height
+        )
+        cfg.scene.baseline_camera = make_camera_cfg(
+            camera_prim_path, cfg.renderer, ppisp_cfg=None, width=width, height=height
+        )
+        with launch_simulation(cfg.sim, args_cli):
+            sim_utils.create_new_stage()
+            sim = sim_utils.SimulationContext(cfg.sim)
+            sim.set_camera_view(eye=[2.5, 2.5, 2.5], target=[0.0, 0.0, 0.0])
+            scene = cfg.scene.class_type(cfg.scene)
+            print(f"[INFO] Referenced input scene into {args_cli.num_envs} env(s).", flush=True)
+            print(f"[INFO] Duplicated-env camera path: {camera_prim_path}", flush=True)
+            print(f"[INFO] Rendering {width}x{height} from source camera {source_camera_prim_path}.", flush=True)
+            sim.reset()
+            print("[INFO]: Setup complete. Saving comparison images during simulation.", flush=True)
+            run_simulator(sim, scene["baseline_camera"], scene["ppisp_camera"], cfg.warmup_steps)
 
 
 if __name__ == "__main__":
     main()
-    simulation_app.close()

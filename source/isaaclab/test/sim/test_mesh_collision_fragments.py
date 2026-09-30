@@ -13,6 +13,7 @@ simulation_app = AppLauncher(headless=True).app
 """Rest everything follows."""
 
 import pytest
+from isaaclab_physx.physics import PhysxCfg
 
 from pxr import UsdGeom, UsdPhysics
 
@@ -69,7 +70,7 @@ def test_usd_mesh_collision_fragment_writes_approximation_token():
     from isaaclab.sim.schemas import UsdPhysicsMeshCollisionCfg, apply_mesh_collision_properties
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     _make_xform(stage, "/World/M0")
     apply_mesh_collision_properties(
@@ -91,7 +92,7 @@ def test_physx_convex_hull_fragment_writes_namespace():
     from isaaclab.sim.schemas import apply_namespaced
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     prim = _make_xform(stage, "/World/M1")
     UsdPhysics.MeshCollisionAPI.Apply(prim)
@@ -108,7 +109,7 @@ def test_physx_convex_decomposition_fragment_writes_namespace():
     from isaaclab.sim.schemas import apply_namespaced
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     prim = _make_xform(stage, "/World/M2")
     UsdPhysics.MeshCollisionAPI.Apply(prim)
@@ -123,7 +124,7 @@ def test_physx_triangle_mesh_fragment_writes_namespace():
     from isaaclab.sim.schemas import apply_namespaced
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     prim = _make_xform(stage, "/World/M3")
     UsdPhysics.MeshCollisionAPI.Apply(prim)
@@ -137,7 +138,7 @@ def test_physx_triangle_mesh_simplification_fragment_writes_namespace():
     from isaaclab.sim.schemas import apply_namespaced
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     prim = _make_xform(stage, "/World/M4")
     UsdPhysics.MeshCollisionAPI.Apply(prim)
@@ -152,7 +153,7 @@ def test_physx_sdf_mesh_fragment_writes_namespace():
     from isaaclab.sim.schemas import apply_namespaced
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     prim = _make_xform(stage, "/World/M5")
     UsdPhysics.MeshCollisionAPI.Apply(prim)
@@ -172,7 +173,7 @@ def test_newton_mesh_collision_fragment_writes_namespace():
     from isaaclab.sim.schemas import apply_namespaced
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     prim = _make_xform(stage, "/World/M6")
     UsdPhysics.MeshCollisionAPI.Apply(prim)
@@ -187,7 +188,7 @@ def test_newton_sdf_collision_fragment_writes_namespace():
     from isaaclab.sim.schemas import apply_namespaced
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     prim = _make_xform(stage, "/World/M7")
     UsdPhysics.MeshCollisionAPI.Apply(prim)
@@ -212,7 +213,7 @@ def test_apply_mesh_collision_properties_composes_namespaces():
     from isaaclab.sim.schemas import UsdPhysicsMeshCollisionCfg, apply_mesh_collision_properties
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     _make_xform(stage, "/World/M8")
     apply_mesh_collision_properties(
@@ -238,7 +239,7 @@ def test_apply_mesh_collision_properties_rejects_invalid_token():
     from isaaclab.sim.schemas import UsdPhysicsMeshCollisionCfg, apply_mesh_collision_properties
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     _make_xform(stage, "/World/M9")
     with pytest.raises(ValueError):
@@ -253,7 +254,7 @@ def test_apply_mesh_collision_properties_raises_on_invalid_prim():
     from isaaclab.sim.schemas import UsdPhysicsMeshCollisionCfg, apply_mesh_collision_properties
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     with pytest.raises(ValueError):
         apply_mesh_collision_properties("/World/DoesNotExist", [UsdPhysicsMeshCollisionCfg()], stage)
@@ -263,7 +264,7 @@ def test_apply_mesh_collision_properties_aggregates_fragment_results():
     from isaaclab.sim.schemas import UsdPhysicsMeshCollisionCfg, apply_mesh_collision_properties
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     _make_xform(stage, "/World/Magg")
 
@@ -286,7 +287,7 @@ def test_apply_mesh_collision_properties_accepts_generator():
     from isaaclab.sim.schemas import UsdPhysicsMeshCollisionCfg, apply_mesh_collision_properties
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     _make_xform(stage, "/World/Mgen")
     frags = (f for f in [UsdPhysicsMeshCollisionCfg(), PhysxConvexHullCfg(hull_vertex_limit=48)])
@@ -310,7 +311,7 @@ def test_apply_mesh_collision_writes_namespace_and_implied_token():
     from isaaclab.sim.schemas import apply_mesh_collision
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     prim = _make_xform(stage, "/World/Mfunc")
     UsdPhysics.MeshCollisionAPI.Apply(prim)
@@ -325,7 +326,7 @@ def test_apply_mesh_collision_rejects_invalid_token():
     from isaaclab.sim.schemas import UsdPhysicsMeshCollisionCfg, apply_mesh_collision
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     _make_xform(stage, "/World/Mfunc2")
     with pytest.raises(ValueError):

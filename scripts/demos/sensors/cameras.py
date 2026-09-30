@@ -12,46 +12,31 @@ This script demonstrates the different camera sensors that can be attached to a 
     uv run python scripts/demos/sensors/cameras.py
 
     # Usage in headless mode
-    uv run python scripts/demos/sensors/cameras.py
+    uv run python scripts/demos/sensors/cameras.py sim.visualizer_cfgs=[]
 
 """
 
-"""Launch Isaac Sim Simulator first."""
-
 import argparse
 
-from isaaclab.app import AppLauncher
+from isaaclab.app import add_launcher_args, launch_simulation
+
+from isaaclab_tasks.utils import preset, resolve_config, setup_preset_cli
+from isaaclab_tasks.utils.presets import MultiBackendRendererCfg, MultiBackendSimulationCfg
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Example on using the different camera sensor implementations.")
 parser.add_argument("--num_envs", type=int, default=4, help="Number of environments to spawn.")
-parser.add_argument("--disable_fabric", action="store_true", help="Disable Fabric API and use USD instead.")
-parser.add_argument(
-    "--physics",
-    default="isaacsim_physx",
-    choices=["isaacsim_physx"],
-    help="Physics backend.",
-)
-# append AppLauncher cli args
-AppLauncher.add_app_launcher_args(parser)
-# demos should open Kit visualizer by default
-parser.set_defaults(visualizer=["kit"])
-# parse the arguments
-args_cli = parser.parse_args()
+add_launcher_args(parser)
+args_cli, config_overrides = setup_preset_cli(parser)
 # Camera sensors require the rendering extensions in headless and viewport-free launches.
 args_cli.enable_cameras = True
-
-# launch omniverse app
-app_launcher = AppLauncher(args_cli)
-simulation_app = app_launcher.app
-
-"""Rest everything follows."""
 
 import os
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
@@ -101,15 +86,7 @@ class SensorsSceneCfg(InteractiveSceneCfg):
             focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 1.0e5)
         ),
         offset=CameraCfg.OffsetCfg(pos=(0.510, 0.0, 0.015), rot=(0.5, -0.5, 0.5, -0.5), convention="ros"),
-    )
-    tiled_camera = CameraCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/base/front_cam",
-        update_period=0.1,
-        height=480,
-        width=640,
-        data_types=["rgb", "distance_to_image_plane"],
-        spawn=None,  # the camera is already spawned in the scene
-        offset=CameraCfg.OffsetCfg(pos=(0.510, 0.0, 0.015), rot=(0.5, -0.5, 0.5, -0.5), convention="ros"),
+        renderer_cfg=MultiBackendRendererCfg(),
     )
     raycast_camera = RayCasterCameraCfg(
         prim_path="{ENV_REGEX_NS}/Robot/base",
@@ -124,6 +101,18 @@ class SensorsSceneCfg(InteractiveSceneCfg):
             width=640,
         ),
     )
+
+
+@configclass
+class DemoCfg:
+    """Camera-sensor demo configuration."""
+
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(
+        dt=0.005,
+        device=args_cli.device,
+        physics=preset(default=PhysxCfg(), isaacsim_physx=PhysxCfg()),
+    )
+    scene: SensorsSceneCfg = SensorsSceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0)
 
 
 def save_images_grid(
@@ -190,7 +179,7 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
     os.makedirs(output_dir, exist_ok=True)
 
     # Simulate physics
-    while simulation_app.is_running():
+    while sim.is_headless_or_exist_active_visualizer():
         # Reset
         if count % 500 == 0:
             # reset counter
@@ -236,10 +225,6 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
         print("Received shape of rgb   image: ", scene["camera"].data.output["rgb"].shape)
         print("Received shape of depth image: ", scene["camera"].data.output["distance_to_image_plane"].shape)
         print("-------------------------------")
-        print(scene["tiled_camera"])
-        print("Received shape of rgb   image: ", scene["tiled_camera"].data.output["rgb"].shape)
-        print("Received shape of depth image: ", scene["tiled_camera"].data.output["distance_to_image_plane"].shape)
-        print("-------------------------------")
         print(scene["raycast_camera"])
         print("Received shape of depth: ", scene["raycast_camera"].data.output["distance_to_image_plane"].shape)
         print("Received shape of normals: ", scene["raycast_camera"].data.output["normals"].shape)
@@ -247,36 +232,17 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
         # save every 10th image (for visualization purposes only)
         # note: saving images will slow down the simulation
         if count % 10 == 0:
-            # compare generated RGB images across different cameras
-            rgb_images = [scene["camera"].data.output["rgb"][0, ..., :3], scene["tiled_camera"].data.output["rgb"][0]]
-            save_images_grid(
-                rgb_images,
-                subtitles=["Camera", "TiledCamera"],
-                title="RGB Image: Cam0",
-                filename=os.path.join(output_dir, "rgb", f"{count:04d}.jpg"),
-            )
-
-            # compare generated Depth images across different cameras
+            # compare generated depth images across camera implementations
             depth_images = [
                 scene["camera"].data.output["distance_to_image_plane"][0],
-                scene["tiled_camera"].data.output["distance_to_image_plane"][0, ..., 0],
                 scene["raycast_camera"].data.output["distance_to_image_plane"][0],
             ]
             save_images_grid(
                 depth_images,
                 cmap="turbo",
-                subtitles=["Camera", "TiledCamera", "RaycasterCamera"],
+                subtitles=["Camera", "RaycasterCamera"],
                 title="Depth Image: Cam0",
                 filename=os.path.join(output_dir, "distance_to_camera", f"{count:04d}.jpg"),
-            )
-
-            # save all tiled RGB images
-            tiled_images = scene["tiled_camera"].data.output["rgb"]
-            save_images_grid(
-                tiled_images,
-                subtitles=[f"Cam{i}" for i in range(tiled_images.shape[0])],
-                title="Tiled RGB Image",
-                filename=os.path.join(output_dir, "tiled_rgb", f"{count:04d}.jpg"),
             )
 
             # save all camera RGB images
@@ -291,24 +257,15 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
 
 def main():
     """Main function."""
-    # Initialize the simulation context
-    sim_cfg = sim_utils.SimulationCfg(dt=0.005, device=args_cli.device, use_fabric=not args_cli.disable_fabric)
-    sim = sim_utils.SimulationContext(sim_cfg)
-    # Set main camera
-    sim.set_camera_view(eye=[3.5, 3.5, 3.5], target=[0.0, 0.0, 0.0])
-    # design scene
-    scene_cfg = SensorsSceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0)
-    scene = InteractiveScene(scene_cfg)
-    # Play the simulator
-    sim.reset()
-    # Now we are ready!
-    print("[INFO]: Setup complete...")
-    # Run the simulator
-    run_simulator(sim, scene)
+    cfg = resolve_config(DemoCfg(), config_overrides)
+    with launch_simulation(cfg.sim, args_cli):
+        sim = sim_utils.SimulationContext(cfg.sim)
+        sim.set_camera_view(eye=[3.5, 3.5, 3.5], target=[0.0, 0.0, 0.0])
+        scene = cfg.scene.class_type(cfg.scene)
+        sim.reset()
+        print("[INFO]: Setup complete...")
+        run_simulator(sim, scene)
 
 
 if __name__ == "__main__":
-    # run the main function
     main()
-    # close sim app
-    simulation_app.close()

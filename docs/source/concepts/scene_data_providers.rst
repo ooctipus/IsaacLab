@@ -1,147 +1,93 @@
 Scene Data Provider
 ===================
 
-:class:`~isaaclab.scene_data.SceneDataProvider` bridges physics simulation backends and the
-visualizers/renderers that consume scene data. It exposes a single Warp-native read path for
-body transforms regardless of which physics backend (PhysX or Newton) is active, so renderers
-and visualizers can stay backend-agnostic.
+The :class:`~isaaclab.scene_data.SceneDataProvider` is the data boundary between physics and
+rendering. Physics publishes native pointers, their formats, and dirty latches. A renderer or
+visualizer requests the format it consumes. Neither side imports or calls the other.
 
-Overview
---------
+Data flow
+---------
 
-Isaac Lab supports multiple physics backends (PhysX and Newton) and multiple visualizers
-(Omniverse Kit, Newton, Rerun, Viser). Each combination needs scene data to flow from the
-physics engine into the renderer or visualizer. :class:`SceneDataProvider` owns this flow: the
-physics manager provides a :class:`~isaaclab.scene_data.SceneDataBackend` that wraps its native
-tensor views, and the provider handles format conversion and re-mapping on top of it.
+A :class:`~isaaclab.scene_data.SceneDataBackend` publishes:
+
+* one ``transform_publication``;
+* named ``point_publications``.
+
+Every publication is a :class:`~isaaclab.scene_data.SceneDataPublication` containing only its
+native-format pointer bundle and dirty latch. Flat formats such as
+:class:`~isaaclab.scene_data.SceneDataFormat.Points` obtain their count from the pointer's leading
+dimension. Native padded-body and cable bundles do not publish a second count; their count and
+ordering come from the bound :class:`~isaaclab.cloner.ClonePlan`.
+
+Two native point formats avoid eager physics-side packing:
+
+* :class:`~isaaclab.scene_data.SceneDataFormat.BodyPoints` contains padded deformable-body pointers
+  and the plan binding IDs for their rows. PhysX publishes its native nodal arrays directly;
+  OVPhysX may read into one native staging array when its API requires a destination.
+* :class:`~isaaclab.scene_data.SceneDataFormat.CablePoints` contains Newton body/model pointers and
+  plan-derived cable segment topology. Cable endpoints do not exist as a second physics buffer;
+  SDP derives them only when a consumer requests a point destination.
+
+The provider exposes two request operations:
 
 .. code-block:: python
 
-   from isaaclab.sim import SimulationContext
+   transforms = provider.request_transforms(SceneDataFormat.Transform)
+   particles = provider.request_points(SceneDataFormat.Points, "points")
 
-   # The SimulationContext owns the active provider; consumers fetch it instead of
-   # constructing one directly.
-   provider = SimulationContext.instance().get_scene_data_provider()
+When the requested format is native, the returned object aliases the published pointer. No kernel
+runs and no buffer is allocated. For native point bundles, SDP first validates their pointer and
+binding cardinality against the bound layout. Otherwise, the provider allocates the requested
+output and performs one fused gather, interpolation, coordinate conversion, or host transfer for
+the current dirty generation.
+Repeated requests for the same format and generation return that cached output.
+Physics materializes each publication at its reset, forward, or step boundary. An SDP request only
+reads the published pointer and dirty latch; it never invokes physics or deferred producer work.
 
-Architecture
-------------
+Fabric is another requested format. Kit and Isaac RTX request
+:class:`SceneDataFormat.FabricMatrix44` and :class:`SceneDataFormat.FabricMeshPoints`; the provider
+writes the selected Fabric arrays. The shared USD clone context materializes those destination
+pointers from the completed plan; SDP never attaches, searches, or selects a stage. Cable,
+deformable, and MPM destinations use the same named point-publication contract rather than
+backend-specific synchronization callbacks.
+OVRTX requests :class:`SceneDataFormat.TransposedMatrix44d`, its exact ``omni:xform`` sink layout,
+so its renderer never gathers, casts, or transposes published physics transforms.
 
-The system has three layers:
+Clone-plan topology
+-------------------
 
-1. :class:`~isaaclab.scene_data.SceneDataBackend`: a small interface implemented by each physics
-   manager. It exposes the backend's transform array directly as one of the
-   :class:`~isaaclab.scene_data.SceneDataFormat` Warp structs, plus the per-transform prim paths
-   and total count. There is no per-frame "update" call; the property accessors return live
-   views into the underlying tensor each time they're read.
+Publications do not carry paths, counts, or destination mappings. Physics publishes transforms in
+the clone plan's canonical rigid-body order. A native point bundle carries only the binding IDs and
+source topology needed to interpret its native pointers. Those values are derived from the plan;
+the provider binds the exact completed :class:`~isaaclab.cloner.ClonePlan` once and materializes
+its static counts and point maps. Frame and geometry facts remain one record per prototype with a read-only
+clone-column mask; queries materialize only their selected exact destinations. Full frame expansion
+is reserved for USD/Fabric setup. Consumers therefore obtain transform destinations and point-stream
+bindings before initialization rather than rediscovering geometry by walking the stage.
 
-   - :attr:`SceneDataBackend.transforms`: current transforms as a Warp struct (one of
-     :class:`SceneDataFormat.Vec3_Quat`, :class:`SceneDataFormat.Transform`,
-     :class:`SceneDataFormat.Matrix44`, :class:`SceneDataFormat.Vec3_Matrix33`).
-   - :attr:`SceneDataBackend.transform_count`: number of transforms.
-   - :attr:`SceneDataBackend.transform_paths`: list of USD prim paths, one per transform.
-   - :attr:`SceneDataBackend.points`: flattened deformable nodal positions as
-     :class:`SceneDataFormat.Points` (optional; rigid-only backends return an empty buffer).
-   - :attr:`SceneDataBackend.point_count`: total number of geometry points.
-   - :attr:`SceneDataBackend.geometry_paths`: one USD prim path per deformable body instance.
-   - :attr:`SceneDataBackend.geometry_counts`: unpadded nodal count per geometry entity.
+Environment count comes from the active clone plan. Renderer-visible scene composition must also
+come from that plan; a stage walk is not a substitute for missing clone-plan coverage.
 
-2. :class:`~isaaclab.scene_data.SceneDataProvider`: wraps a backend and offers format conversion
-   plus index re-mapping.
+Backend resources
+-----------------
 
-   - :meth:`SceneDataProvider.get_transforms`: writes the backend's transforms into a
-     consumer-provided :class:`SceneDataFormat` struct, optionally converting format
-     (e.g. ``Vec3_Quat`` to ``Transform``) and applying an index mapping. When the backend
-     format matches the output format and no mapping is provided, the result is a zero-copy
-     passthrough.
-   - :meth:`SceneDataProvider.create_mapping`: builds a remap array from the backend's prim
-     paths to a consumer's desired ordering. Used when a renderer or visualizer wants
-     transforms indexed by its own body list rather than by the physics view order.
-   - :meth:`SceneDataProvider.get_points`: copies backend deformable nodal positions into a
-     consumer buffer, optionally remapping entity slices via
-     :meth:`SceneDataProvider.create_geometry_mapping`.
-   - :meth:`SceneDataProvider.create_geometry_mapping`: maps backend deformable entities to
-     consumer particle offsets in a shadow Newton ``particle_q`` buffer.
-   - :meth:`SceneDataProvider.get_camera_transforms`: discovers per-camera, per-env world
-     transforms from the USD stage.
-   - :attr:`SceneDataProvider.usd_stage`: USD stage handle for stage-walking consumers.
-   - :attr:`SceneDataProvider.num_envs`: environment count inferred from
-     ``/World/envs/env_<id>`` prims.
+The native backend registry on :class:`~isaaclab.sim.SimulationContext` is orthogonal to SDP.
+Consumers derive a stable key from their configs and get or create the corresponding native
+resource. Matching Newton physics and rendering configs therefore share one Newton model and
+state naturally. Dynamic renderer input still passes through an SDP native-format request, which
+returns the same pointer with zero conversion.
 
-3. Backend implementations:
+For a cross-backend renderer, its native rendering resource is built from the clone plan and its
+dynamic transform or point pointers are populated from SDP in the requested format. There is no
+renderer-to-physics dependency and no fallback stage synchronization path.
 
-   - ``PhysxSceneDataBackend`` (internal to :mod:`isaaclab_physx.physics`) wraps PhysX's
-     ``RigidBodyView`` and exposes its transforms as :class:`SceneDataFormat.Transform`. When
-     deformable bodies are present it also exposes flattened simulation nodal positions through
-     :class:`SceneDataFormat.Points`.
-   - ``OvPhysxSceneDataBackend`` (internal to :mod:`isaaclab_ov.physics`) mirrors the PhysX
-     contract for rigid transforms and OVPhysX deformable nodal tensors.
-   - ``NewtonSceneDataBackend`` (internal to :mod:`isaaclab_newton.physics`) wraps the Newton
-     model's ``body_q`` and exposes it as :class:`SceneDataFormat.Transform`.
+Lifecycle
+---------
 
-PhysX backend
--------------
-
-When PhysX is the active physics backend, the provider reads transforms directly from PhysX's
-``RigidBodyView`` (a wildcard-expanded tensor view covering every rigid body across all envs).
-The transforms are returned as :class:`SceneDataFormat.Transform` (Warp ``transformf`` array),
-so consumers that want this format get them zero-copy.
-
-Newton-native consumers (Newton visualizer, Rerun, Viser, Newton Warp renderer, OVRTX renderer)
-also need a Newton ``Model``/``State`` to render against. To provide that,
-:class:`~isaaclab_newton.physics.NewtonManager` builds a **shadow Newton model** from the USD
-stage on first access and updates its ``body_q`` from the PhysX backend each render frame.
-When the scene has PhysX or OVPhysX deformables, the shadow model also allocates
-``particle_q`` render slots for soft/cloth meshes, syncs simulation nodal positions through
-:meth:`SceneDataProvider.get_points` with ``allow_passthrough=False`` into a separate
-sim-sized buffer, and remaps or copies those positions into the render-sized ``particle_q``
-buffer each frame. Volume deformables with mismatched sim and visual vertex counts use a
-barycentric sim-to-visual remap so Newton Warp and OVRTX render the paired visual mesh rather
-than tet simulation topology. The shadow deformable registry exposes render-slot offsets and
-``particles_per_body`` counts for OVRTX point bindings.
-
-This is hidden behind :meth:`NewtonManager.get_model` / :meth:`NewtonManager.get_state`, so
-renderers don't need to know which physics backend is active.
-
-Newton backend
---------------
-
-When Newton is the active physics backend, the backend wraps the Newton model's ``body_q``
-directly. No shadow model or per-frame sync is needed: Newton already owns the authoritative
-model and state, and the provider exposes that state as :class:`SceneDataFormat.Transform`.
-
-Data requirements
-------------------
-
-Visualizers and renderers declare what they need from the scene data path. This is resolved at
-simulation-context construction time and is what triggers the shadow-model build for PhysX:
-
-.. list-table::
-   :header-rows: 1
-
-   * - Component
-     - Requires Newton model
-     - Requires USD stage
-   * - Kit visualizer
-     - No
-     - Yes
-   * - Newton visualizer
-     - Yes
-     - No
-   * - Rerun visualizer
-     - Yes
-     - No
-   * - Viser visualizer
-     - Yes
-     - No
-   * - Isaac RTX renderer
-     - No
-     - Yes
-   * - Newton Warp renderer
-     - Yes
-     - No
-   * - OVRTX renderer
-     - Yes
-     - Yes
+Physics, renderers, and visualizers are constructed explicitly from their configs. They register
+their native resources before cloning, consume the same clone plan during one replication
+lifecycle, and initialize runtime resources only after cloning completes. Each visualizer receives
+the exact shared provider and clone plan at initialization; it does not recover topology from SDP.
 
 See Also
 --------

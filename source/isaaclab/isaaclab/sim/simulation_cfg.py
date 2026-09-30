@@ -11,6 +11,7 @@ configuring the environment instances, viewer settings, and simulation parameter
 
 from __future__ import annotations
 
+from dataclasses import MISSING
 from typing import Literal
 
 from isaaclab.physics import PhysicsCfg
@@ -79,9 +80,6 @@ class SimulationCfg:
     If set to False, the physics engine does not create the scene query manager and the scene query
     functionality will not be available. However, this provides some performance speed-up.
 
-    Note:
-        This flag is overridden to True inside the :class:`SimulationContext` class when running the simulation
-        with the GUI enabled. This is to allow certain GUI features to work properly.
     """
 
     use_newton_actuators: bool = False
@@ -97,12 +95,8 @@ class SimulationCfg:
     are unchanged: the solver applies their drive gains.
     """
 
-    physics: PhysicsCfg | None = None
-    """Physics manager configuration. Default is None (uses PhysxCfg()).
-
-    This configuration determines which physics manager to use. Override with
-    a different config (e.g., NewtonManagerCfg) to use a different physics backend.
-    """
+    physics: PhysicsCfg = MISSING
+    """Concrete physics manager configuration."""
 
     create_stage_in_memory: bool = False
     """If stage is first created in memory. Default is False.
@@ -129,8 +123,8 @@ class SimulationCfg:
     default_visualizer_cfg: VisualizerCfg | None = None
     """Default visualizer camera hint applied to any visualizer that is selected at runtime.
 
-    This is a hint only — it does **not** add a visualizer to :attr:`visualizer_cfgs`.
+    This is a hint only -- it does **not** add a visualizer to :attr:`visualizer_cfgs`.
     Fields such as :attr:`~isaaclab.visualizers.VisualizerCfg.eye` and
     :attr:`~isaaclab.visualizers.VisualizerCfg.lookat` are forwarded to each resolved
-    visualizer unless that visualizer already has an explicitly customised value.
+    visualizer unless that visualizer already has an explicitly customized value.
     """

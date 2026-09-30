@@ -15,6 +15,7 @@ Kit is never actually started here: availability and ``AppLauncher`` are faked, 
 """
 
 import argparse
+from types import SimpleNamespace
 
 import pytest
 
@@ -83,10 +84,12 @@ def test_storage_profile_failure_closes_started_kit(monkeypatch: pytest.MonkeyPa
 
 
 def test_require_kit_launches_kit_for_a_kitless_config(kit_branch_taken):
-    with launch_simulation(cfg=PhysicsCfg(), launcher_args={"require_kit": True}):
+    launcher_args = {"require_kit": True}
+    with launch_simulation(cfg=PhysicsCfg(), launcher_args=launcher_args):
         pass
 
     assert kit_branch_taken == [True]
+    assert launcher_args.get("enable_cameras", False) is False
 
 
 def test_require_kit_reads_from_a_namespace(kit_branch_taken):
@@ -117,10 +120,14 @@ def test_require_kit_rejects_ovrtx_runtime(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_require_kit_false_does_not_suppress_a_kit_config(kit_branch_taken):
-    # '--viz kit' requires Kit on its own; require_kit=False must not override that
-    launcher_args = {"visualizer": ["kit"], "visualizer_explicit": True, "require_kit": False}
+    cfg = SimpleNamespace(
+        physics=PhysicsCfg(),
+        visualizer_cfgs=[SimpleNamespace(visualizer_type="kit", streaming_view=False)],
+    )
 
-    with launch_simulation(cfg=PhysicsCfg(), launcher_args=launcher_args):
+    launcher_args = {"require_kit": False}
+    with launch_simulation(cfg=cfg, launcher_args=launcher_args):
         pass
 
     assert kit_branch_taken == [True]
+    assert launcher_args["enable_cameras"] is True

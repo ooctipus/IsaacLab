@@ -74,7 +74,8 @@ class EventCfg:
         func=mdp.randomize_visual_texture_material,
         mode="prestartup",
         params={
-            "asset_cfg": SceneEntityCfg("robot", body_names=["cart"]),
+            "asset_cfg": SceneEntityCfg("robot"),
+            "visual_prim_path": "cart/visuals",
             "texture_paths": [
                 f"{NVIDIA_NUCLEUS_DIR}/Materials/Base/Wood/Bamboo_Planks/Bamboo_Planks_BaseColor.png",
                 f"{NVIDIA_NUCLEUS_DIR}/Materials/Base/Wood/Cherry/Cherry_BaseColor.png",
@@ -83,7 +84,6 @@ class EventCfg:
                 f"{NVIDIA_NUCLEUS_DIR}/Materials/Base/Wood/Timber_Cladding/Timber_Cladding_BaseColor.png",
                 f"{NVIDIA_NUCLEUS_DIR}/Materials/Base/Wood/Walnut_Planks/Walnut_Planks_BaseColor.png",
             ],
-            "event_name": "cart_texture_randomizer",
             "texture_rotation": (math.pi / 2, math.pi / 2),
         },
     )
@@ -93,7 +93,8 @@ class EventCfg:
         func=mdp.randomize_visual_texture_material,
         mode="reset",
         params={
-            "asset_cfg": SceneEntityCfg("robot", body_names=["pole"]),
+            "asset_cfg": SceneEntityCfg("robot"),
+            "visual_prim_path": "pole/visuals",
             "texture_paths": [
                 f"{NVIDIA_NUCLEUS_DIR}/Materials/Base/Wood/Bamboo_Planks/Bamboo_Planks_BaseColor.png",
                 f"{NVIDIA_NUCLEUS_DIR}/Materials/Base/Wood/Cherry/Cherry_BaseColor.png",
@@ -102,7 +103,6 @@ class EventCfg:
                 f"{NVIDIA_NUCLEUS_DIR}/Materials/Base/Wood/Timber_Cladding/Timber_Cladding_BaseColor.png",
                 f"{NVIDIA_NUCLEUS_DIR}/Materials/Base/Wood/Walnut_Planks/Walnut_Planks_BaseColor.png",
             ],
-            "event_name": "pole_texture_randomizer",
             "texture_rotation": (math.pi / 2, math.pi / 2),
         },
     )
@@ -124,36 +124,6 @@ class EventCfg:
             "asset_cfg": SceneEntityCfg("robot", joint_names=["cart_to_pole"]),
             "position_range": (-0.125 * math.pi, 0.125 * math.pi),
             "velocity_range": (-0.01 * math.pi, 0.01 * math.pi),
-        },
-    )
-
-
-@configclass
-class EventCfgFallback:
-    """Configuration for events that tests the fallback mechanism."""
-
-    # Test fallback when /visuals pattern doesn't match
-    test_fallback_texture_randomizer = EventTerm(
-        func=mdp.randomize_visual_texture_material,
-        mode="reset",
-        params={
-            "asset_cfg": SceneEntityCfg("robot", body_names=["slider"]),
-            "texture_paths": [
-                f"{NVIDIA_NUCLEUS_DIR}/Materials/Base/Wood/Bamboo_Planks/Bamboo_Planks_BaseColor.png",
-                f"{NVIDIA_NUCLEUS_DIR}/Materials/Base/Wood/Cherry/Cherry_BaseColor.png",
-            ],
-            "event_name": "test_fallback_texture_randomizer",
-            "texture_rotation": (0.0, 0.0),
-        },
-    )
-
-    reset_cart_position = EventTerm(
-        func=mdp.reset_joints_by_offset,
-        mode="reset",
-        params={
-            "asset_cfg": SceneEntityCfg("robot", joint_names=["slider_to_cart"]),
-            "position_range": (-1.0, 1.0),
-            "velocity_range": (-0.1, 0.1),
         },
     )
 

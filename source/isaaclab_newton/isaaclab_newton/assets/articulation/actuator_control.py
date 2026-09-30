@@ -22,8 +22,6 @@ from isaaclab.actuators.newton.adapter import NewtonActuatorSelection
 from isaaclab.assets.articulation import ordering_kernels
 from isaaclab.sim.schemas.schemas_actuators import _validate_newton_native_actuator_cfgs
 
-from isaaclab_newton.physics import NewtonManager as SimulationManager
-
 if TYPE_CHECKING:
     from .articulation import Articulation
 
@@ -55,7 +53,7 @@ class NewtonActuatorControl(ArticulationActuatorControl):
         # articulations still rely on it for the solver telemetry fast path.
         self._native_actuator_path_active = True
         articulation._has_newton_actuators = True
-        SimulationManager.activate_newton_actuator_path()
+        articulation._physics_manager.activate_newton_actuator_path()
 
         return {name for name, actuator_cfg in actuator_cfgs.items() if not _is_implicit_actuator_cfg(actuator_cfg)}
 
@@ -64,7 +62,8 @@ class NewtonActuatorControl(ArticulationActuatorControl):
             return None
 
         articulation = self._articulation
-        adapter = SimulationManager._adapter
+        manager = articulation._physics_manager
+        adapter = manager._adapter
         if adapter is not None:
             arti_start = self._joint_dof_offset()
             binding = adapter.bind_articulation(
@@ -113,7 +112,7 @@ class NewtonActuatorControl(ArticulationActuatorControl):
                 device=self.device,
             )
 
-        SimulationManager.register_post_actuator_callback(_post_actuator)
+        manager.register_post_actuator_callback(_post_actuator)
 
         if adapter is None:
             return None
@@ -178,8 +177,9 @@ class NewtonActuatorControl(ArticulationActuatorControl):
         )
 
     def reset_native_actuators(self, env_ids: Sequence[int] | slice) -> None:
-        if self._native_actuator_path_active and SimulationManager._adapter is not None:
-            SimulationManager._adapter.reset(env_ids)
+        manager = self._articulation._physics_manager
+        if self._native_actuator_path_active and manager._adapter is not None:
+            manager._adapter.reset(env_ids)
 
     def _joint_dof_offset(self) -> int:
         """Return the first selected joint DOF's model offset within an environment."""

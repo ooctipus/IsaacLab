@@ -19,19 +19,19 @@ uv run python source/tools/check_instanceable.py <Asset-Path-Instanced> -n 4096
 Output from the above commands:
 
 ```bash
->>> Cloning time (cloner.clone): 0.648198 seconds
+>>> Cloning time (ReplicateSession): 0.648198 seconds
 >>> Setup time (sim.reset): : 5.843589 seconds
 [#clones: 4096, physics: True] Asset: <Asset-Path-Instanced> : 6.491870 seconds
 
->>> Cloning time (cloner.clone): 0.693133 seconds
+>>> Cloning time (ReplicateSession): 0.693133 seconds
 >>> Setup time (sim.reset): 50.860526 seconds
 [#clones: 4096, physics: True] Asset: <Asset-Path> : 51.553743 seconds
 
->>> Cloning time (cloner.clone) : 0.687201 seconds
+>>> Cloning time (ReplicateSession) : 0.687201 seconds
 >>> Setup time (sim.reset) : 6.302215 seconds
 [#clones: 4096, physics: False] Asset: <Asset-Path-Instanced> : 6.989500 seconds
 
->>> Cloning time (cloner.clone) : 0.678150 seconds
+>>> Cloning time (ReplicateSession) : 0.678150 seconds
 >>> Setup time (sim.reset) : 52.854054 seconds
 [#clones: 4096, physics: False] Asset: <Asset-Path> : 53.532287 seconds
 ```
@@ -42,7 +42,7 @@ Output from the above commands:
 
 import argparse
 import contextlib
-import os
+from dataclasses import MISSING
 
 from isaaclab.app import AppLauncher
 
@@ -64,55 +64,59 @@ simulation_app = app_launcher.app
 """Rest everything follows."""
 
 
-from isaaclab.sim.utils import enable_extension
-
-enable_extension("isaacsim.core.cloner")
-
-from isaacsim.core.cloner import GridCloner
+from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
+from isaaclab.assets import AssetBaseCfg
+from isaaclab.cloner import ReplicateSession
 from isaaclab.sim import SimulationCfg, SimulationContext
 from isaaclab.utils import Timer
 from isaaclab.utils.assets import check_file_path
+from isaaclab.utils.configclass import configclass
+
+
+@configclass
+class DirectCfg:
+    sim: SimulationCfg = SimulationCfg(physics=PhysxCfg(), dt=0.01)
+    asset: AssetBaseCfg = MISSING
+    light: AssetBaseCfg = AssetBaseCfg(prim_path="/World/Light", spawn=sim_utils.DistantLightCfg())
+    num_clones: int = 128
+    env_spacing: float = 1.5
+    replicate_physics: bool = False
 
 
 def main():
-    """Spawns the USD asset robot and clones it using Isaac Gym Cloner API."""
+    """Measure plan-owned replication and simulation setup for one USD asset."""
     # check valid file path
     if not check_file_path(args_cli.input):
         raise ValueError(f"Invalid file path: {args_cli.input}")
-    # Load kit helper
-    sim = SimulationContext(SimulationCfg(dt=0.01))
-
-    # get stage handle
-    stage = sim_utils.get_current_stage()
+    cfg = DirectCfg(
+        asset=AssetBaseCfg(
+            prim_path="{ENV_REGEX_NS}/Asset",
+            spawn=sim_utils.UsdFileCfg(usd_path=args_cli.input),
+        ),
+        num_clones=args_cli.num_clones,
+        env_spacing=args_cli.spacing,
+        replicate_physics=args_cli.physics,
+    )
+    sim = SimulationContext(cfg.sim)
 
     # Fabric and PhysX GPU buffers are configured through SimulationCfg/PhysxCfg defaults.
     # enable hydra scene-graph instancing
     # this is needed to visualize the scene when fabric is enabled
     sim.set_setting("/persistent/omnihydra/useSceneGraphInstancing", True)
 
-    # Create interface to clone the scene
-    cloner = GridCloner(spacing=args_cli.spacing, stage=stage)
-    cloner.define_base_env("/World/envs")
-    stage.DefinePrim("/World/envs/env_0", "Xform")
-    # Spawn things into stage
-    sim_utils.create_prim("/World/Light", "DistantLight")
-
-    # Everything under the namespace "/World/envs/env_0" will be cloned
-    sim_utils.create_prim("/World/envs/env_0/Asset", "Xform", usd_path=os.path.abspath(args_cli.input))
-    # Clone the scene
-    num_clones = args_cli.num_clones
-
     # Create a timer to measure the cloning time
-    with Timer(f"[#clones: {num_clones}, physics: {args_cli.physics}] Asset: {args_cli.input}"):
-        # Clone the scene
-        with Timer(">>> Cloning time (cloner.clone)"):
-            cloner.define_base_env("/World/envs")
-            envs_prim_paths = cloner.generate_paths("/World/envs/env", num_paths=num_clones)
-            _ = cloner.clone(
-                source_prim_path="/World/envs/env_0", prim_paths=envs_prim_paths, replicate_physics=args_cli.physics
-            )
+    with Timer(f"[#clones: {cfg.num_clones}, physics: {cfg.replicate_physics}] Asset: {args_cli.input}"):
+        with Timer(">>> Cloning time (ReplicateSession)"):
+            with ReplicateSession(
+                (cfg.light, cfg.asset),
+                cfg.num_clones,
+                cfg.env_spacing,
+                replicate_physics=cfg.replicate_physics,
+            ):
+                for asset_cfg in (cfg.light, cfg.asset):
+                    asset_cfg.class_type(asset_cfg)
         # Play the simulator
         with Timer(">>> Setup time (sim.reset)"):
             sim.reset()

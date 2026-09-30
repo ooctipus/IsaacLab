@@ -5,11 +5,13 @@
 
 """Base class for data generator."""
 
+from __future__ import annotations
+
 import asyncio
 import contextlib
 import copy
 import logging
-from typing import Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
@@ -31,6 +33,9 @@ from isaaclab_mimic.datagen.selection_strategy import make_selection_strategy
 from isaaclab_mimic.datagen.waypoint import MultiWaypoint, Waypoint, WaypointSequence, WaypointTrajectory
 
 from .datagen_info_pool import DataGenInfoPool
+
+if TYPE_CHECKING:
+    from isaaclab_mimic.motion_planners.curobo.curobo_planner import CuroboPlanner
 
 
 @contextlib.asynccontextmanager
@@ -633,7 +638,7 @@ class DataGenerator:
         env_action_queue: asyncio.Queue | None = None,
         pause_subtask: bool = False,
         export_demo: bool = True,
-        motion_planner: Any | None = None,
+        motion_planner: CuroboPlanner | None = None,
     ) -> dict:
         """Attempt to generate a new demonstration.
 
@@ -737,57 +742,45 @@ class DataGenerator:
                                 target_eef_pose = eef_subtask_trajectory[0].pose
                                 target_gripper_action = eef_subtask_trajectory[0].gripper_action
 
-                                # Determine expected object attachment using environment-specific logic (optional)
-                                expected_attached_object = None
-                                if hasattr(self.env, "get_expected_attached_object"):
-                                    expected_attached_object = self.env.get_expected_attached_object(
-                                        eef_name, current_eef_subtask_indices[eef_name], self.env.cfg
-                                    )
+                                expected_attached_object = self.env.get_expected_attached_object(
+                                    eef_name, current_eef_subtask_indices[eef_name], self.env.cfg
+                                )
 
-                                # Plan motion using motion planner with comprehensive world update
-                                # and attachment handling
-                                if motion_planner:
-                                    print(f"\n--- Environment {env_id}: Planning motion to target pose ---")
-                                    print(f"Target pose: {target_eef_pose}")
-                                    print(f"Expected attached object: {expected_attached_object}")
+                                print(f"\n--- Environment {env_id}: Planning motion to target pose ---")
+                                print(f"Target pose: {target_eef_pose}")
+                                print(f"Expected attached object: {expected_attached_object}")
 
-                                    # This call updates the planner's world model and computes the trajectory.
-                                    planning_success = motion_planner.update_world_and_plan_motion(
-                                        target_pose=target_eef_pose,
-                                        expected_attached_object=expected_attached_object,
-                                        env_id=env_id,
-                                        step_size=getattr(motion_planner, "step_size", None),
-                                        enable_retiming=hasattr(motion_planner, "step_size")
-                                        and motion_planner.step_size is not None,
-                                    )
+                                planning_success = motion_planner.update_world_and_plan_motion(
+                                    target_pose=target_eef_pose,
+                                    expected_attached_object=expected_attached_object,
+                                    step_size=motion_planner.step_size,
+                                    enable_retiming=motion_planner.step_size is not None,
+                                )
 
-                                    # If planning succeeds, execute the planner's trajectory first.
-                                    if planning_success:
-                                        print(f"Env {env_id}: Motion planning succeeded")
-                                        # The original subtask trajectory is stored to be executed after the transition.
-                                        next_eef_subtask_trajectories_after_motion[eef_name] = eef_subtask_trajectory
-                                        next_eef_subtask_indices_after_motion[eef_name] = current_eef_subtask_indices[
-                                            eef_name
-                                        ]
-                                        # Mark the current subtask as invalid (-1) until the transition is done.
-                                        current_eef_subtask_indices[eef_name] = -1
+                                if planning_success:
+                                    print(f"Env {env_id}: Motion planning succeeded")
+                                    # The original subtask trajectory is stored to be executed after the transition.
+                                    next_eef_subtask_trajectories_after_motion[eef_name] = eef_subtask_trajectory
+                                    next_eef_subtask_indices_after_motion[eef_name] = current_eef_subtask_indices[
+                                        eef_name
+                                    ]
+                                    # Mark the current subtask as invalid (-1) until the transition is done.
+                                    current_eef_subtask_indices[eef_name] = -1
 
-                                        # Convert the planner's output into a sequence of waypoints to be executed.
-                                        current_eef_subtask_trajectories[eef_name] = (
-                                            self._convert_planned_trajectory_to_waypoints(
-                                                motion_planner, target_gripper_action
-                                            )
+                                    # Convert the planner's output into a sequence of waypoints to be executed.
+                                    current_eef_subtask_trajectories[eef_name] = (
+                                        self._convert_planned_trajectory_to_waypoints(
+                                            motion_planner, target_gripper_action
                                         )
-                                        current_eef_subtask_step_indices[eef_name] = 0
-                                        print(
-                                            f"Generated {len(current_eef_subtask_trajectories[eef_name])} waypoints"
-                                            " from motion plan"
-                                        )
-
-                                    else:
-                                        # If planning fails, abort the data generation trial.
-                                        print(f"Env {env_id}: Motion planning failed for {eef_name}")
-                                        return {"success": False}
+                                    )
+                                    current_eef_subtask_step_indices[eef_name] = 0
+                                    print(
+                                        f"Generated {len(current_eef_subtask_trajectories[eef_name])} waypoints"
+                                        " from motion plan"
+                                    )
+                                else:
+                                    print(f"Env {env_id}: Motion planning failed for {eef_name}")
+                                    return {"success": False}
                             else:
                                 # Without skillgen, transition using simple interpolation.
                                 current_eef_subtask_trajectories[eef_name] = self.merge_eef_subtask_trajectory(
@@ -870,11 +863,6 @@ class DataGenerator:
                                         current_eef_subtask_step_indices[eef_name] = step_ind  # wait here
 
                 waypoint = current_eef_subtask_trajectories[eef_name][step_ind]
-
-                # Update visualization if motion planner is available
-                if motion_planner and motion_planner.visualize_spheres:
-                    current_joints = self.env.scene["robot"].data.joint_pos.torch[env_id]
-                    motion_planner._update_visualization_at_joint_positions(current_joints)
 
                 eef_waypoint_dict[eef_name] = waypoint
             multi_waypoint = MultiWaypoint(eef_waypoint_dict)
@@ -1003,31 +991,24 @@ class DataGenerator:
         return results
 
     def _convert_planned_trajectory_to_waypoints(
-        self, motion_planner: Any, gripper_action: torch.Tensor
+        self, motion_planner: CuroboPlanner, gripper_action: torch.Tensor
     ) -> list[Waypoint]:
         """
         (skillgen) Convert a motion planner's output trajectory into a list of Waypoint objects.
 
         The motion planner provides a sequence of planned 4x4 poses. This method wraps each
-        pose into a `Waypoint`, pairing it with the provided `gripper_action` and an optional
-        per-timestep noise value sourced from the planner config (`motion_noise_scale`).
+        pose into a `Waypoint`, pairing it with the provided `gripper_action` and the
+        planner-configured per-timestep noise value.
 
         Args:
-            motion_planner: Planner instance exposing `get_planned_poses()` and an optional
-                `config.motion_noise_scale` float.
+            motion_planner: Planner instance exposing `get_planned_poses()` and
+                `config.motion_noise_scale`.
             gripper_action: Gripper actuation to associate with each planned pose.
 
         Returns:
             list[Waypoint]: Sequence of waypoints corresponding to the planned trajectory.
         """
-        # Get motion noise scale from the planner's configuration
-        motion_noise_scale = getattr(motion_planner.config, "motion_noise_scale", 0.0)
-
-        waypoints = []
-        planned_poses = motion_planner.get_planned_poses()
-
-        for planned_pose in planned_poses:
-            waypoint = Waypoint(pose=planned_pose, gripper_action=gripper_action, noise=motion_noise_scale)
-            waypoints.append(waypoint)
-
-        return waypoints
+        return [
+            Waypoint(pose=pose, gripper_action=gripper_action, noise=motion_planner.config.motion_noise_scale)
+            for pose in motion_planner.get_planned_poses()
+        ]

@@ -9,7 +9,6 @@
 from __future__ import annotations
 
 import logging
-import re
 import warnings
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
@@ -20,13 +19,10 @@ import warp as wp
 import omni.physics.tensors as physx
 
 from isaaclab.app.settings_manager import get_settings_manager
-from isaaclab.markers import VisualizationMarkers
 from isaaclab.sensors.contact_sensor import BaseContactSensor
 from isaaclab.sensors.contact_sensor.contact_force_marker import ContactForceVisualizer
-from isaaclab.sim.utils.queries import path_expr_to_glob, resolve_matching_prims_from_source, split_path_expr
+from isaaclab.sim.utils.queries import path_expr_to_glob
 from isaaclab.utils.warp import ProxyArray
-
-from isaaclab_physx.physics import PhysxManager as SimulationManager
 
 from .contact_sensor_data import ContactSensorData
 from .kernels import (
@@ -316,28 +312,12 @@ class ContactSensor(BaseContactSensor):
     def _initialize_impl(self):
         super()._initialize_impl()
         # obtain global simulation view
-        self._physics_sim_view = SimulationManager.get_physics_sim_view()
+        self._physics_sim_view = self._physics_manager.get_physics_sim_view()
 
-        # Split the configured prim path into a parent expression and a leaf-name regex.
-        # split on separators only: a trailing ``[^/]`` class holds a ``/`` that is not one
-        *parent_segments, leaf_pattern = split_path_expr(self.cfg.prim_path)
-        parent_expr = "/".join(parent_segments)
-        name_pattern = re.compile(leaf_pattern)
-
-        def has_contact_report(prim) -> bool:
-            return bool(name_pattern.fullmatch(prim.GetName())) and (
-                "PhysxContactReportAPI" in prim.GetAppliedSchemas()
-            )
-
-        # Resolve the asset subtree (clone-plan aware) and collect contact-reporting descendants.
-        resolve_kwargs = {"raise_if_no_matches": False, "traverse_instance_prims": False}
-        body_matches = resolve_matching_prims_from_source(parent_expr, has_contact_report, **resolve_kwargs)
-        body_names = [prim.GetPath().pathString.rsplit("/", 1)[-1] for prim, _ in body_matches]
-        if not body_names:
-            raise RuntimeError(
-                f"Sensor at path '{self.cfg.prim_path}' could not find any bodies with contact reporter API."
-                "\nHINT: Make sure to enable 'activate_contact_sensors' in the corresponding asset spawn configuration."
-            )
+        layout = self._clone_plan
+        planned_bodies = layout.match_contact_bodies(self.cfg.prim_path)
+        body_path_exprs = list(dict.fromkeys(body.view_path for body in planned_bodies))
+        body_names = [path.rsplit("/", 1)[-1] for path in body_path_exprs]
 
         # convert each resolved body expression to PhysX glob form. A list with one pattern per
         # body is required for nested rigid-body hierarchies (child links authored under their
@@ -345,7 +325,7 @@ class ContactSensor(BaseContactSensor):
         # parent-level name alternation cannot address them.
         # note: with a list of patterns, the views order bodies pattern-major:
         #   view_id = body_id * num_envs + env_id
-        body_path_globs = [path_expr_to_glob(expr) for _, expr in body_matches]
+        body_path_globs = [path_expr_to_glob(expr) for expr in body_path_exprs]
         filter_prim_paths_glob = [path_expr_to_glob(expr) for expr in self.cfg.filter_prim_paths_expr]
 
         # create a rigid prim view for the sensor
@@ -621,7 +601,7 @@ class ContactSensor(BaseContactSensor):
         if debug_vis:
             # create markers if necessary for the first time
             if not hasattr(self, "contact_visualizer"):
-                self.contact_visualizer = VisualizationMarkers(self.cfg.visualizer_cfg)
+                self.contact_visualizer = self.cfg.visualizer_cfg.class_type(self.cfg.visualizer_cfg)
                 self.normal_force_visualizer = ContactForceVisualizer(
                     self.cfg.normal_force_visualizer_cfg,
                     self.cfg.force_visualization_scale,

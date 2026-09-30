@@ -14,7 +14,7 @@ import torch
 from isaaclab.envs.mdp.visual_events import _compile_distribution
 from isaaclab.managers import EventTermCfg, ManagerTermBase, SceneEntityCfg
 
-from ...physics.newton_manager import NewtonManager
+from ...cloner import NewtonReplicateContext
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedEnv
@@ -35,7 +35,8 @@ class randomize_visual_shape(ManagerTermBase):
         else:
             ids = asset_cfg.body_ids
         body_names = tuple(asset.body_names[index] for index in ids)
-        self._writer = NewtonManager.create_visual_shape_color_writer(asset, body_names)
+        self._newton_backend = env.sim.get_or_create_backend(NewtonReplicateContext, env.sim, clone_role="scene")
+        self._writer = self._newton_backend.create_visual_shape_color_writer(asset, body_names)
         self._sample = _compile_distribution(channels["color"], env.device)
         self._all_env_ids = torch.arange(env.num_envs, dtype=torch.int32, device=self._writer.device)
 
@@ -50,7 +51,7 @@ class randomize_visual_shape(ManagerTermBase):
         if isinstance(env_ids, slice):
             env_ids = None
         selected = self._all_env_ids if env_ids is None else env_ids.to(device=self._writer.device, dtype=torch.int32)
-        model = NewtonManager.get_model()
+        model = self._newton_backend.get_model()
         if self._writer.model is not model:
             self._writer.rebind(model)
         self._writer(self._sample((len(selected), self._writer.body_count)), selected)

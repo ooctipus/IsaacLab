@@ -19,6 +19,8 @@ def test_kit_visualizer_publishes_fabric_visual_material_writer() -> None:
         if isinstance(node, ast.FunctionDef) and node.name == "visual_material_writer"
     )
     assert any(
-        isinstance(node, ast.Return) and ast.unparse(node.value) == "FabricVisualMaterialWriter"
+        isinstance(node, ast.Return)
+        and ast.unparse(node.value) == "self._clone_ctx.create_fabric_visual_material_writer"
         for node in ast.walk(writer_hook)
     )
+    assert "isaaclab_physx" not in source.read_text()

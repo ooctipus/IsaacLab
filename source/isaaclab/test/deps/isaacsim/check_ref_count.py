@@ -44,6 +44,8 @@ from isaaclab.sim.utils import enable_extension
 
 enable_extension("isaacsim.core.experimental.prims")
 
+from isaaclab_physx.physics import PhysxCfg
+
 from isaacsim.core.experimental.prims import Articulation
 
 import isaaclab.sim.utils.nucleus as nucleus_utils
@@ -109,7 +111,7 @@ def main():
     carb.settings.get_settings().set_bool("/persistent/omnihydra/useSceneGraphInstancing", True)
 
     # Load kit helper
-    sim = SimulationContext(cfg=SimulationCfg(dt=0.005, device="cuda:0"))
+    sim = SimulationContext(cfg=SimulationCfg(physics=PhysxCfg(), dt=0.005, device="cuda:0"))
 
     # Create a dummy tensor for testing
     # Uncommenting the following line will yield a reference count of 1 for the robot (as desired)

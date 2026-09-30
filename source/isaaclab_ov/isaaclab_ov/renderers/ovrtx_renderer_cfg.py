@@ -36,11 +36,9 @@ class OVRTXRendererCfg(RendererCfg):
     """Type identifier for OVRTX renderer."""
 
     temp_usd_dir: str | None = None
-    """Directory for temporary USD debug dumps written during OVRTX stage preparation.
+    """Directory for the ``ovrtx_renderer_stage.usda`` debug dump. Must be writable.
 
-    When set, the renderer writes ``pre_ovrtx_renderer_stage.usda`` (raw stage before
-    partition attributes and export trimming) and ``ovrtx_renderer_stage.usda`` (exported
-    stage plus injected render products) under this directory. Must be writable.
+    The dump contains the exported stage plus the injected render products.
     """
 
     log_level: str = "verbose"

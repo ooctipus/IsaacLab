@@ -18,6 +18,7 @@ from .physx_wrapper import PhysxActuatorWrapper
 
 if TYPE_CHECKING:
     from isaaclab.actuators import ActuatorCollection
+    from isaaclab.cloner.clone_plan import ArticulationLayout
 
 
 class PhysxActuatorRuntime:
@@ -44,16 +45,14 @@ class PhysxActuatorRuntime:
         self,
         collection: ActuatorCollection,
         *,
-        stage: Any,
-        articulation_prim_path: str | None,
+        layout: ArticulationLayout,
         adapt_usd_actuators: bool = True,
     ) -> None:
         """Create and bind the adapter and its pointer-stable host wrapper.
 
         Args:
             collection: Actuator collection under construction.
-            stage: USD stage holding the authored actuator prims.
-            articulation_prim_path: Prim path of the articulation root.
+            layout: Clone-plan declaration for the articulation.
             adapt_usd_actuators: Whether to adapt authored ``NewtonActuator`` prims.
                 Implicit-only articulations author none: the solver applies their
                 drives, and the wrapper alone backs the telemetry fast path.
@@ -73,13 +72,12 @@ class PhysxActuatorRuntime:
         self.wrapper.joint_act = collection.target_command.effort.warp.reshape(-1)
         if not adapt_usd_actuators:
             return
-        self.adapter = NewtonActuatorAdapter.from_usd(
-            stage=stage,
+        self.adapter = NewtonActuatorAdapter.from_layout(
+            layout=layout,
             joint_names=articulation.joint_names,
             num_envs=articulation.num_instances,
             num_joints=articulation.num_joints,
             device=articulation.device,
-            articulation_prim_path=articulation_prim_path,
         )
         self.adapter.finalize(self.wrapper)
 

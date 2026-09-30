@@ -25,24 +25,28 @@ FINGER_SENSORS = [f"{name}_object_s" for name in FINGERTIP_LIST if name != "thum
 class KukaAllegroSceneCfg(lift.SceneCfg):
     """KukaAllegro scene for the Lift and Reorient tasks.
 
-    The ``base_camera`` / ``wrist_camera`` slots are left unset (``None``) for the state task; the
-    camera env config populates them (see ``kuka_allegro_camera_env_cfg``).
+    The ``wrist_camera`` slot is left unset (``None``) for the state task; the camera env config
+    populates it (see ``kuka_allegro_camera_env_cfg``).
     """
 
+    num_envs: int = 4096
+    env_spacing: float = 3.0
+    replicate_physics: bool = True
     robot: ArticulationCfg = KUKA_ALLEGRO_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-    base_camera: CameraCfg | None = None
     wrist_camera: CameraCfg | None = None
 
     def __post_init__(self):
         super().__post_init__()
         for link_name in FINGERTIP_LIST:
+            sensor_cfg = ContactSensorCfg(
+                prim_path="{ENV_REGEX_NS}/Robot/ee_link/" + link_name,
+                filter_prim_paths_expr=["{ENV_REGEX_NS}/Object"],
+            )
+            sensor_cfg.visualizer_cfg.prim_path = f"/Visuals/ContactSensor/{link_name}"
             setattr(
                 self,
                 f"{link_name}_object_s",
-                ContactSensorCfg(
-                    prim_path="{ENV_REGEX_NS}/Robot/ee_link/" + link_name,
-                    filter_prim_paths_expr=["{ENV_REGEX_NS}/Object"],
-                ),
+                sensor_cfg,
             )
 
 
@@ -81,7 +85,7 @@ class KukaAllegroReorientRewardCfg(lift.RewardsCfg):
 
 @configclass
 class KukaAllegroMixinCfg:
-    scene: KukaAllegroSceneCfg = KukaAllegroSceneCfg(num_envs=4096, env_spacing=3, replicate_physics=True)
+    scene: KukaAllegroSceneCfg = KukaAllegroSceneCfg()
     rewards: KukaAllegroReorientRewardCfg = KukaAllegroReorientRewardCfg()
     observations: StateObservationCfg = StateObservationCfg()
     actions: KukaAllegroRelJointPosActionCfg = KukaAllegroRelJointPosActionCfg()
@@ -89,21 +93,22 @@ class KukaAllegroMixinCfg:
     def __post_init__(self: lift.ReorientEnvCfg):
         super().__post_init__()
         self.commands.object_pose.body_name = "palm_link"
-        events = self.events.conditional_reset.params["terms"]
-        events["reset_robot_wrist_joint"].params["asset_cfg"] = SceneEntityCfg("robot", joint_names="iiwa7_joint_7")
-        events["reset_object_to_target"].params["target_cfg"] = SceneEntityCfg("robot", body_names="palm_link")
-        events["reset_object_to_target"].params["pose_range"] = {
+        reset_params = self.events.conditional_reset.params
+        reset_params["terms"]["reset_robot_wrist_joint"].params["asset_cfg"] = SceneEntityCfg(
+            "robot", joint_names="iiwa7_joint_7"
+        )
+        to_target = reset_params["state_dependent_terms"]["reset_object_to_target"].params
+        to_target["target_cfg"] = SceneEntityCfg("robot", body_names="palm_link")
+        to_target["pose_range"] = {
             "x": [0.03, 0.07],
             "y": [-0.04, 0.04],
             "z": [0.02, 0.08],
         }
         # table/ground clearance: everything but the ground-mounted arm base (allegro finger links
         # are also named *_link_N, so exclude exactly iiwa7_link_0)
-        self.events.conditional_reset.params["valid_criteria"][
-            "robot_table_clearance"
-        ].body_names = "(?!iiwa7_link_0$).*"
+        reset_params["valid_criteria"]["robot_table_clearance"].body_names = "(?!iiwa7_link_0$).*"
         # spread the reset bank over the grasp geometry, same bodies as fingers_to_object
-        diversity_feature = self.events.conditional_reset.params.get("diversity_feature")
+        diversity_feature = reset_params.get("diversity_feature")
         if diversity_feature is not None:
             diversity_feature.body_names = ["palm_link", ".*_tip"]
         # finger closing-speed DR: armature sets tau/M.

@@ -33,22 +33,18 @@ from __future__ import annotations
 
 import argparse
 
-from isaaclab.app import AppLauncher
+from isaaclab.app import add_launcher_args, launch_simulation
+
+from isaaclab_tasks.utils import preset, resolve_config, setup_preset_cli
+from isaaclab_tasks.utils.presets import MultiBackendSimulationCfg
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Tutorial on creating a floating cube environment.")
 parser.add_argument("--num_envs", type=int, default=64, help="Number of environments to spawn.")
 
-# append AppLauncher cli args
-AppLauncher.add_app_launcher_args(parser)
-# parse the arguments
-args_cli = parser.parse_args()
-
-# launch omniverse app
-app_launcher = AppLauncher(args_cli)
-simulation_app = app_launcher.app
-
-"""Rest everything follows."""
+# append launcher arguments and parse Hydra-style preset overrides
+add_launcher_args(parser)
+args_cli, config_overrides = setup_preset_cli(parser)
 
 import torch
 
@@ -63,7 +59,10 @@ from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils.configclass import configclass
-from isaaclab.visualizers import VisualizerCfg
+
+from isaaclab_newton.physics import MJWarpSolverCfg  # isort: skip
+from isaaclab_ov.physics import OvPhysxCfg  # isort: skip
+from isaaclab_physx.physics import PhysxCfg  # isort: skip
 
 ##
 # Custom action term
@@ -270,8 +269,7 @@ class EventCfg:
         params={
             "colors": {"r": (0.0, 1.0), "g": (0.0, 1.0), "b": (0.0, 1.0)},
             "asset_cfg": SceneEntityCfg("cube"),
-            "mesh_name": "geometry/mesh",
-            "event_name": "rep_cube_randomize_color",
+            "visual_prim_path": "geometry/mesh",
         },
     )
 
@@ -295,58 +293,53 @@ class CubeEnvCfg(ManagerBasedEnvCfg):
     observations: ObservationsCfg = ObservationsCfg()
     actions: ActionsCfg = ActionsCfg()
     events: EventCfg = EventCfg()
-
-    def __post_init__(self):
-        """Post initialization."""
-        # general settings
-        self.decimation = 2
-        # simulation settings
-        self.sim.dt = 0.01
-        self.sim.physics_material = self.scene.terrain.physics_material
-        self.sim.render_interval = 2  # render interval should be a multiple of decimation
-        self.sim.device = args_cli.device
-        # viewer settings
-        self.sim.default_visualizer_cfg = VisualizerCfg(eye=(5.0, 5.0, 5.0), lookat=(0.0, 0.0, 2.0))
+    decimation = 2
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(
+        dt=0.01,
+        render_interval=decimation,
+        device=args_cli.device,
+        physics=preset(
+            default=PhysxCfg(),
+            isaacsim_physx=PhysxCfg(),
+            ovphysx=OvPhysxCfg(),
+            newton_mjwarp=MJWarpSolverCfg(),
+        ),
+    )
 
 
 def main():
     """Main function."""
+    env_cfg = resolve_config(CubeEnvCfg(), config_overrides)
+    with launch_simulation(env_cfg, args_cli):
+        env = ManagerBasedEnv(cfg=env_cfg)
 
-    # setup base environment
-    env_cfg = CubeEnvCfg()
-    env = ManagerBasedEnv(cfg=env_cfg)
+        # setup target position commands
+        target_position = torch.rand(env.num_envs, 3, device=env.device) * 2
+        target_position[:, 2] += 2.0
+        # offset all targets so that they move to the world origin
+        target_position -= env.scene.env_origins
 
-    # setup target position commands
-    target_position = torch.rand(env.num_envs, 3, device=env.device) * 2
-    target_position[:, 2] += 2.0
-    # offset all targets so that they move to the world origin
-    target_position -= env.scene.env_origins
+        # simulate physics
+        count = 0
+        obs, _ = env.reset()
+        while env.sim.is_headless_or_exist_active_visualizer():
+            with torch.inference_mode():
+                # reset
+                if count % 300 == 0:
+                    count = 0
+                    obs, _ = env.reset()
+                    print("-" * 80)
+                    print("[INFO]: Resetting environment...")
+                # step env
+                obs, _ = env.step(target_position)
+                # print mean squared position error between target and current position
+                error = torch.linalg.norm(obs["policy"] - target_position).mean().item()
+                print(f"[Step: {count:04d}]: Mean position error: {error:.4f}")
+                # update counter
+                count += 1
 
-    # simulate physics
-    count = 0
-    obs, _ = env.reset()
-    while simulation_app.is_running():
-        with torch.inference_mode():
-            # reset
-            if count % 300 == 0:
-                count = 0
-                obs, _ = env.reset()
-                print("-" * 80)
-                print("[INFO]: Resetting environment...")
-            # step env
-            obs, _ = env.step(target_position)
-            # print mean squared position error between target and current position
-            error = torch.linalg.norm(obs["policy"] - target_position).mean().item()
-            print(f"[Step: {count:04d}]: Mean position error: {error:.4f}")
-            # update counter
-            count += 1
-
-    # close the environment
-    env.close()
+        env.close()
 
 
 if __name__ == "__main__":
-    # run the main function
     main()
-    # close sim app
-    simulation_app.close()

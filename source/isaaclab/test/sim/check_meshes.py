@@ -40,6 +40,7 @@ import random
 import numpy as np
 import torch
 import tqdm
+from isaaclab_physx.physics import PhysxCfg
 from isaaclab_physx.sim.schemas import PhysxCollisionCfg
 
 import isaaclab.sim as sim_utils
@@ -142,7 +143,7 @@ def design_scene():
 def main():
     """Main function."""
     # Initialize the simulation context
-    sim_cfg = sim_utils.SimulationCfg(dt=0.01)
+    sim_cfg = sim_utils.SimulationCfg(physics=PhysxCfg(), dt=0.01)
     sim = sim_utils.SimulationContext(sim_cfg)
     # Set main camera
     sim.set_camera_view([8.0, 8.0, 6.0], [0.0, 0.0, 0.0])

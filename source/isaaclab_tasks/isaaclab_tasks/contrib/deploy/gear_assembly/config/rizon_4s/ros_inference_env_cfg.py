@@ -11,6 +11,8 @@ from isaaclab.assets import RigidObjectCfg
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.utils.configclass import configclass
 
+from isaaclab_tasks.utils import preset
+
 from .joint_pos_env_cfg import Rizon4sGearAssemblyEnvCfg
 
 
@@ -27,16 +29,16 @@ class Rizon4sGearAssemblyROSInferenceEnvCfg(Rizon4sGearAssemblyEnvCfg):
     - Exposes variables needed for ROS inference
     - Overrides robot and gear initial poses for fixed/deterministic setup
 
-    In play mode, :meth:`play_mode` additionally disables all randomization
-    so the simulation is identical on every reset.  Useful for comparing
-    simulated and real-world policy behavior at a known pose.
+    The ``play`` domain preset disables all randomization so the simulation is
+    identical on every reset. This is useful for comparing simulated and
+    real-world policy behavior at a known pose.
 
     To debug a specific real-world scenario, edit the constants below to match
     the physical setup, then run::
 
         ./isaaclab.sh play --rl_library rsl_rl \\
             --task IsaacContrib-Deploy-GearAssembly-Rizon4s-Grav-ROS-Inference \\
-            --num_envs 1 --checkpoint <path_to_model.pt>
+            --num_envs 1 --checkpoint <path_to_model.pt> presets=play
 
     Observation overrides (``OBS_SHAFT_POS``, ``OBS_SHAFT_QUAT``) let you
     inject fixed values into the policy's observation tensor regardless of
@@ -146,45 +148,32 @@ class Rizon4sGearAssemblyROSInferenceEnvCfg(Rizon4sGearAssemblyEnvCfg):
             gear_shaft_pos_noise,
             gear_shaft_pos_noise,
         ]
-
-    def play_mode(self):
-        """Disable all randomization for deterministic play/debug at a known pose."""
-        # play-mode overrides of parent
-        super().play_mode()
-
-        self.scene.num_envs = 1
-
-        # ── Fix gear type (no random selection) ───────────────────────────
-        self.events.randomize_gear_type.params["gear_types"] = [self.GEAR_TYPE]
-
-        # ── Override gear base pose ───────────────────────────────────────
-        self.scene.factory_gear_base.init_state = RigidObjectCfg.InitialStateCfg(
-            pos=self.GEAR_BASE_POS,
-            rot=self.GEAR_BASE_ROT,
+        self.scene.num_envs = preset(default=self.scene.num_envs, play=1)
+        self.events.randomize_gear_type.params["gear_types"] = preset(
+            default=self.events.randomize_gear_type.params["gear_types"], play=[self.GEAR_TYPE]
         )
-        for attr in ("factory_gear_small", "factory_gear_medium", "factory_gear_large"):
-            getattr(self.scene, attr).init_state = RigidObjectCfg.InitialStateCfg(
-                pos=self.GEAR_BASE_POS,
-                rot=self.GEAR_BASE_ROT,
+        for attr in ("factory_gear_base", "factory_gear_small", "factory_gear_medium", "factory_gear_large"):
+            asset = getattr(self.scene, attr)
+            asset.init_state = preset(
+                default=asset.init_state,
+                play=RigidObjectCfg.InitialStateCfg(pos=self.GEAR_BASE_POS, rot=self.GEAR_BASE_ROT),
             )
-
-        # ── Zero out all pose randomization ───────────────────────────────
-        self.events.randomize_gears_and_base_pose.params["pose_range"] = {
-            "x": [0.0, 0.0],
-            "y": [0.0, 0.0],
-            "z": [0.0, 0.0],
-            "roll": [0.0, 0.0],
-            "pitch": [0.0, 0.0],
-            "yaw": [0.0, 0.0],
-        }
-        self.events.randomize_gears_and_base_pose.params["gear_pos_range"] = {
-            "x": [0.0, 0.0],
-            "y": [0.0, 0.0],
-            "z": [self.GEAR_Z_OFFSET, self.GEAR_Z_OFFSET],
-        }
-
-        # ── Observation overrides (replace terms with constant functions) ─
+        pose_params = self.events.randomize_gears_and_base_pose.params
+        pose_params["pose_range"] = preset(
+            default=pose_params["pose_range"],
+            play={axis: [0.0, 0.0] for axis in ("x", "y", "z", "roll", "pitch", "yaw")},
+        )
+        pose_params["gear_pos_range"] = preset(
+            default=pose_params["gear_pos_range"],
+            play={"x": [0.0, 0.0], "y": [0.0, 0.0], "z": [self.GEAR_Z_OFFSET, self.GEAR_Z_OFFSET]},
+        )
         if self.OBS_SHAFT_POS is not None:
-            self.observations.policy.gear_shaft_pos = ObsTerm(func=constant_obs, params={"value": self.OBS_SHAFT_POS})
+            self.observations.policy.gear_shaft_pos = preset(
+                default=self.observations.policy.gear_shaft_pos,
+                play=ObsTerm(func=constant_obs, params={"value": self.OBS_SHAFT_POS}),
+            )
         if self.OBS_SHAFT_QUAT is not None:
-            self.observations.policy.gear_shaft_quat = ObsTerm(func=constant_obs, params={"value": self.OBS_SHAFT_QUAT})
+            self.observations.policy.gear_shaft_quat = preset(
+                default=self.observations.policy.gear_shaft_quat,
+                play=ObsTerm(func=constant_obs, params={"value": self.OBS_SHAFT_QUAT}),
+            )

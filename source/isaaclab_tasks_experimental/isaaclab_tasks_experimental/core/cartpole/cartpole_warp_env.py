@@ -11,8 +11,6 @@ import warp as wp
 from isaaclab_experimental.envs import DirectRLEnvWarp
 from isaaclab_experimental.utils.warp.utils import wrap_to_pi
 
-from isaaclab import cloner
-
 if TYPE_CHECKING:
     from isaaclab_tasks.core.cartpole.cartpole_direct_env_cfg import CartpoleEnvCfg
 
@@ -193,19 +191,19 @@ class CartpoleWarpEnv(DirectRLEnvWarp):
         super().__init__(cfg, render_mode, **kwargs)
 
         # Get the indices (develop API: find_joints returns (indices, names))
-        self._cart_dof_idx, _ = self.cartpole.find_joints(self.cfg.cart_dof_name)
-        self._pole_dof_idx, _ = self.cartpole.find_joints(self.cfg.pole_dof_name)
+        self._cart_dof_idx, _ = self.scene["robot"].find_joints(self.cfg.cart_dof_name)
+        self._pole_dof_idx, _ = self.scene["robot"].find_joints(self.cfg.pole_dof_name)
 
         self.action_scale = self.cfg.action_scale
 
         # Simulation bindings
         # Note: these are direct memory views into the Newton simulation data, they should not be modified directly
-        self.joint_pos = self.cartpole.data.joint_pos.warp
-        self.joint_vel = self.cartpole.data.joint_vel.warp
+        self.joint_pos = self.scene["robot"].data.joint_pos.warp
+        self.joint_vel = self.scene["robot"].data.joint_vel.warp
 
         # Buffers
         self.observations = wp.zeros((self.num_envs), dtype=wp.vec4f, device=self.device)
-        self.actions = wp.zeros((self.num_envs, self.cartpole.num_joints), dtype=wp.float32, device=self.device)
+        self.actions = wp.zeros((self.num_envs, self.scene["robot"].num_joints), dtype=wp.float32, device=self.device)
         self.rewards = wp.zeros((self.num_envs), dtype=wp.float32, device=self.device)
         self.states = wp.zeros((self.num_envs), dtype=wp.uint32, device=self.device)
 
@@ -228,20 +226,6 @@ class CartpoleWarpEnv(DirectRLEnvWarp):
         self.torch_reset_time_outs = wp.to_torch(self.reset_time_outs)
         self.torch_episode_length_buf = self.episode_length_buf  # already a torch tensor via wp.to_torch
 
-    def _setup_scene(self) -> None:
-        asset_cfgs = self.cfg.robot_cfg, self.cfg.ground_cfg, self.cfg.light_cfg
-        plan = cloner.clone_plan_from_env_0(
-            self.cfg.scene.clone_cfg, asset_cfgs, self.cfg.scene.num_envs, self.cfg.scene.env_spacing
-        )
-        for cfg in (self.cfg.ground_cfg, self.cfg.light_cfg):
-            cfg.spawn.func(cfg.spawn.spawn_path, cfg.spawn, cfg.init_state.pos, cfg.init_state.rot)
-        self.cartpole = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
-        self.scene.articulations["cartpole"] = self.cartpole
-        cloner.replicate(plan, replicate_physics=self.cfg.scene.replicate_physics)
-        # we need to explicitly filter collisions for CPU simulation
-        if self.device == "cpu":
-            self.scene.filter_collisions()
-
     def _pre_physics_step(self, actions: wp.array) -> None:
         wp.launch(
             update_actions,
@@ -255,7 +239,7 @@ class CartpoleWarpEnv(DirectRLEnvWarp):
         )
 
     def _apply_action(self) -> None:
-        self.cartpole.set_joint_effort_target_mask(target=self.actions)
+        self.scene["robot"].set_joint_effort_target_mask(target=self.actions)
 
     def _get_observations(self) -> dict:
         wp.launch(
@@ -264,8 +248,8 @@ class CartpoleWarpEnv(DirectRLEnvWarp):
             inputs=[
                 self.joint_pos,
                 self.joint_vel,
-                self.cartpole.data.default_joint_pos.warp,
-                self.cartpole.data.default_joint_vel.warp,
+                self.scene["robot"].data.default_joint_pos.warp,
+                self.scene["robot"].data.default_joint_vel.warp,
                 self._cart_dof_idx[0],
                 self._pole_dof_idx[0],
                 self.observations,
@@ -319,12 +303,12 @@ class CartpoleWarpEnv(DirectRLEnvWarp):
             reset,
             dim=self.num_envs,
             inputs=[
-                self.cartpole.data.default_joint_pos.warp,
-                self.cartpole.data.default_joint_vel.warp,
+                self.scene["robot"].data.default_joint_pos.warp,
+                self.scene["robot"].data.default_joint_vel.warp,
                 self.joint_pos,
                 self.joint_vel,
-                self.cartpole.data.soft_joint_pos_limits.warp,
-                self.cartpole.data.soft_joint_vel_limits.warp,
+                self.scene["robot"].data.soft_joint_pos_limits.warp,
+                self.scene["robot"].data.soft_joint_vel_limits.warp,
                 self._cart_dof_idx[0],
                 self._pole_dof_idx[0],
                 self.cfg.initial_cart_position_range,

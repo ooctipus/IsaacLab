@@ -14,38 +14,32 @@ We add the following sensors on the quadruped robot, ANYmal-C (ANYbotics):
 
 .. code-block:: bash
 
-    # Usage
-    uv run python scripts/tutorials/04_sensors/add_sensors_on_robot.py --viz kit
+    uv run python scripts/tutorials/04_sensors/add_sensors_on_robot.py visualizer=kit
 
 """
 
-"""Launch Isaac Sim Simulator first."""
-
 import argparse
 
-from isaaclab.app import AppLauncher
+from isaaclab_physx.physics import PhysxCfg
+
+import isaaclab.sim as sim_utils
+from isaaclab.app import add_launcher_args, launch_simulation
+from isaaclab.utils.configclass import configclass
+
+from isaaclab_tasks.utils import resolve_config, setup_preset_cli
+from isaaclab_tasks.utils.presets import MultiBackendRendererCfg, MultiBackendSimulationCfg
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Tutorial on adding sensors on a robot.")
 parser.add_argument("--num_envs", type=int, default=2, help="Number of environments to spawn.")
-# append AppLauncher cli args
-AppLauncher.add_app_launcher_args(parser)
-# parse the arguments
-args_cli = parser.parse_args()
-
-# launch omniverse app
-app_launcher = AppLauncher(args_cli)
-simulation_app = app_launcher.app
-
-"""Rest everything follows."""
+add_launcher_args(parser)
+args_cli, config_overrides = setup_preset_cli(parser)
 
 import torch
 
-import isaaclab.sim as sim_utils
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
 from isaaclab.sensors import CameraCfg, ContactSensorCfg, RayCasterCfg, patterns
-from isaaclab.utils.configclass import configclass
 
 ##
 # Pre-defined configs
@@ -79,6 +73,7 @@ class SensorsSceneCfg(InteractiveSceneCfg):
             focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 1.0e5)
         ),
         offset=CameraCfg.OffsetCfg(pos=(0.510, 0.0, 0.015), rot=(0.5, -0.5, 0.5, -0.5), convention="ros"),
+        renderer_cfg=MultiBackendRendererCfg(),
     )
     height_scanner = RayCasterCfg(
         prim_path="{ENV_REGEX_NS}/Robot/base",
@@ -94,6 +89,14 @@ class SensorsSceneCfg(InteractiveSceneCfg):
     )
 
 
+@configclass
+class TutorialCfg:
+    """Complete direct tutorial configuration."""
+
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(dt=0.005, device=args_cli.device, physics=PhysxCfg())
+    scene: SensorsSceneCfg = SensorsSceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0)
+
+
 def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
     """Run the simulator."""
     # Define simulation stepping
@@ -102,7 +105,7 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
     count = 0
 
     # Simulate physics
-    while simulation_app.is_running():
+    while sim.is_headless_or_exist_active_visualizer():
         # Reset
         if count % 500 == 0:
             # reset counter
@@ -160,25 +163,15 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
 
 def main():
     """Main function."""
-
-    # Initialize the simulation context
-    sim_cfg = sim_utils.SimulationCfg(dt=0.005, device=args_cli.device)
-    sim = sim_utils.SimulationContext(sim_cfg)
-    # Set main camera
-    sim.set_camera_view(eye=[3.5, 3.5, 3.5], target=[0.0, 0.0, 0.0])
-    # Design scene
-    scene_cfg = SensorsSceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0)
-    scene = InteractiveScene(scene_cfg)
-    # Play the simulator
-    sim.reset()
-    # Now we are ready!
-    print("[INFO]: Setup complete...")
-    # Run the simulator
-    run_simulator(sim, scene)
+    cfg = resolve_config(TutorialCfg(), config_overrides)
+    with launch_simulation(cfg, args_cli):
+        sim = sim_utils.SimulationContext(cfg.sim)
+        sim.set_camera_view(eye=[3.5, 3.5, 3.5], target=[0.0, 0.0, 0.0])
+        scene = cfg.scene.class_type(cfg.scene)
+        sim.reset()
+        print("[INFO]: Setup complete...")
+        run_simulator(sim, scene)
 
 
 if __name__ == "__main__":
-    # run the main function
     main()
-    # close sim app
-    simulation_app.close()

@@ -37,13 +37,14 @@ import time
 
 import torch
 import warp as wp
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg, NewtonManager
+from isaaclab_newton.cloner import NewtonReplicateContext
+from isaaclab_newton.physics import MJWarpSolverCfg
 from isaaclab_newton.sensors import LegacyRayCaster, NewtonRaycastSensorCfg
 
 import isaaclab.sim as sim_utils
 import isaaclab.terrains as terrain_gen
 from isaaclab.assets import RigidObjectCfg
-from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
+from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import RayCasterCfg
 from isaaclab.sensors.ray_caster.patterns import GridPatternCfg
 from isaaclab.terrains import TerrainGeneratorCfg, TerrainImporterCfg
@@ -118,10 +119,12 @@ def _time_calls(fn, num_iterations: int, warmup: int, device: str) -> float:
 
 
 def main():
-    with launch_simulation(cfg=NewtonCfg(solver_cfg=MJWarpSolverCfg()), launcher_args=args_cli) as physics_cfg:
+    with launch_simulation(cfg=MJWarpSolverCfg(), launcher_args=args_cli) as physics_cfg:
         sim_cfg = sim_utils.SimulationCfg(dt=1 / 200, device=args_cli.device, physics=physics_cfg)
         sim = sim_utils.SimulationContext(sim_cfg)
-        scene = InteractiveScene(_make_scene_cfg(args_cli.num_envs))
+        resource = sim.get_or_create_backend(NewtonReplicateContext, sim)
+        scene_cfg = _make_scene_cfg(args_cli.num_envs)
+        scene = scene_cfg.class_type(scene_cfg)
         sim.reset()
         sim.step()
         scene.update(sim.get_physics_dt())
@@ -154,12 +157,12 @@ def main():
             newton_raycast._update_buffers_impl(newton_raycast._ALL_ENV_MASK)
 
         def run_bvh_with_refit():
-            NewtonManager._mark_sensor_state_dirty()
+            resource._sensor_state_dirty = True
             newton_raycast._update_buffers_impl(newton_raycast._ALL_ENV_MASK)
 
         def run_refit_only():
-            NewtonManager._mark_sensor_state_dirty()
-            NewtonManager._update_sensor_tasks()
+            resource._sensor_state_dirty = True
+            resource._update_sensor_tasks()
 
         results = {
             "LegacyRayCaster (warp mesh)": run_warp_mesh,
@@ -170,7 +173,7 @@ def main():
 
         print(
             f"\nnum_envs={args_cli.num_envs}, rays/env={num_rays}, total rays={total_rays},"
-            f" shapes in BVH={NewtonManager.get_model().bvh_shape_count_enabled},"
+            f" shapes in BVH={resource.get_model().bvh_shape_count_enabled},"
             f" iterations={args_cli.num_iterations}, device={device}"
         )
         print(f"{'benchmark':<40} {'ms/call':>10} {'Mrays/s':>10}")

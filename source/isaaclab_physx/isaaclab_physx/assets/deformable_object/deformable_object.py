@@ -14,15 +14,11 @@ import numpy as np
 import torch
 import warp as wp
 
-from pxr import UsdShade
-
 import isaaclab.sim as sim_utils
 import isaaclab.utils.math as math_utils
 from isaaclab.assets.asset_base import AssetBase
-from isaaclab.markers import VisualizationMarkers
+from isaaclab.cloner import UsdReplicateContext
 from isaaclab.utils.warp import ProxyArray
-
-from isaaclab_physx.physics import PhysxManager as SimulationManager
 
 from .deformable_object_data import DeformableObjectData
 from .kernels import (
@@ -80,6 +76,8 @@ class DeformableObject(AssetBase):
             cfg: A configuration instance.
         """
         super().__init__(cfg)
+        sim = sim_utils.SimulationContext.instance()
+        sim.get_or_create_backend(UsdReplicateContext, sim.stage, clone_role="scene")
         # Register custom vec6f type for nodal state validation.
         self._DTYPE_TO_TORCH_TRAILING_DIMS = {**self._DTYPE_TO_TORCH_TRAILING_DIMS, vec6f: (6,)}
         # initialize deformable type to None, should be set to either surface or volume on initialization
@@ -579,66 +577,19 @@ class DeformableObject(AssetBase):
 
     def _initialize_impl(self):
         # obtain global simulation view
-        self._physics_sim_view = SimulationManager.get_physics_sim_view()
-
-        def has_deformable_body_api(prim) -> bool:
-            return "OmniPhysicsDeformableBodyAPI" in prim.GetAppliedSchemas()
-
-        prim_path = self.cfg.prim_path
-        asset_prim, root_expr = sim_utils.resolve_matching_prims_from_source(prim_path)[0]
-        walk_root = asset_prim.GetPath().pathString
-        resolve_kwargs = {"predicate": has_deformable_body_api, "expected_num_matches": 1}
-        root_prim, root_prim_path_expr = sim_utils.resolve_matching_prims_from_source(prim_path, **resolve_kwargs)[0]
-
-        # find deformable material prims
-        material_prim = None
-        # obtain material prim from the root prim
-        # note: here we assume that all the root prims have their material prims at similar paths
-        #   and we only need to find the first one. This may not be the case for all scenarios.
-        #   However, the checks in that case get cumbersome and are not included here.
-        if root_prim.HasAPI(UsdShade.MaterialBindingAPI):
-            # check the materials that are bound with the purpose 'physics'
-            material_paths = UsdShade.MaterialBindingAPI(root_prim).GetDirectBindingRel("physics").GetTargets()
-            # iterate through targets and find the deformable body material
-            if len(material_paths) > 0:
-                for mat_path in material_paths:
-                    mat_prim = root_prim.GetStage().GetPrimAtPath(mat_path)
-                    if "OmniPhysicsDeformableMaterialAPI" in mat_prim.GetAppliedSchemas():
-                        material_prim = mat_prim
-                        # determine deformable material type
-                        if "PhysxSurfaceDeformableMaterialAPI" in mat_prim.GetAppliedSchemas():
-                            self._deformable_type = "surface"
-                        elif "PhysxDeformableMaterialAPI" in mat_prim.GetAppliedSchemas():
-                            self._deformable_type = "volume"
-                        break
-
-        if material_prim is None:
+        self._physics_sim_view = self._physics_manager.get_physics_sim_view()
+        layout = sim_utils.SimulationContext.instance().get_clone_plan()
+        deformable = layout.match_deformable_subtrees(self.cfg.prim_path)[0]
+        self._deformable_type = deformable.deformable_type
+        root_prim_path_expr = deformable.view_path
+        material_prim_path_expr = deformable.material_view_path
+        if material_prim_path_expr is None:
             logger.warning(
-                f"Failed to find a deformable material binding for '{root_prim.GetPath().pathString}'."
+                f"Failed to find a deformable material binding for '{deformable.root_path}'."
                 " The material properties will be set to default values and are not modifiable "
                 "at runtime. If you want to modify the material properties, please ensure that the material is "
                 "bound to the deformable body."
             )
-
-        # fall back to prim hierarchy heuristic when material type detection was inconclusive
-        if self._deformable_type is None:
-            # volume deformables must have a tetmesh in the hierarchy
-            has_tetmesh = (
-                len(sim_utils.get_all_matching_child_prims(root_prim.GetPath(), lambda p: p.GetTypeName() == "TetMesh"))
-                > 0
-            )
-            if has_tetmesh:
-                self._deformable_type = "volume"
-            else:
-                # surface deformables must have a mesh in the hierarchy
-                has_mesh = (
-                    len(
-                        sim_utils.get_all_matching_child_prims(root_prim.GetPath(), lambda p: p.GetTypeName() == "Mesh")
-                    )
-                    > 0
-                )
-                if has_mesh:
-                    self._deformable_type = "surface"
 
         # -- object view
         if self._deformable_type == "surface":
@@ -652,11 +603,7 @@ class DeformableObject(AssetBase):
                 sim_utils.path_expr_to_glob(root_prim_path_expr)
             )
         else:
-            raise RuntimeError(
-                f"Failed to determine deformable material type for '{root_prim.GetPath().pathString}'."
-                " Please ensure that the material has either 'PhysxSurfaceDeformableMaterialAPI' or "
-                "'PhysxDeformableMaterialAPI' applied, or that a valid tetmesh is found under the root prim."
-            )
+            raise RuntimeError(f"Unsupported planned deformable type: {self._deformable_type!r}.")
 
         # Return if the asset is not found
         if self._root_physx_view._backend is None:
@@ -665,17 +612,7 @@ class DeformableObject(AssetBase):
         if not self._root_physx_view.check():
             logger.warning(f"Deformable body view is not valid for: {self.cfg.prim_path}. Please check PhysX logs.")
 
-        # resolve material path back into regex expression
-        if material_prim is not None:
-            # -- material prim expression
-            material_prim_path = material_prim.GetPath().pathString
-            # check if the material prim is under the template prim
-            # if not then we are assuming that the single material prim is used for all the deformable bodies
-            if walk_root in material_prim_path:
-                material_prim_path_expr = root_expr + material_prim_path[len(walk_root) :]
-            else:
-                material_prim_path_expr = material_prim_path
-            # -- material view
+        if material_prim_path_expr is not None:
             self._material_physx_view = self._physics_sim_view.create_deformable_material_view(
                 sim_utils.path_expr_to_glob(material_prim_path_expr)
             )
@@ -765,7 +702,7 @@ class DeformableObject(AssetBase):
         # note: parent only deals with callbacks. not their visibility
         if debug_vis:
             if not hasattr(self, "target_visualizer"):
-                self.target_visualizer = VisualizationMarkers(self.cfg.visualizer_cfg)
+                self.target_visualizer = self.cfg.visualizer_cfg.class_type(self.cfg.visualizer_cfg)
             # set their visibility to true
             self.target_visualizer.set_visibility(True)
         else:

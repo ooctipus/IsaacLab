@@ -8,40 +8,42 @@
 .. code-block:: bash
 
     # Usage
-    uv run python scripts/tutorials/01_assets/run_surface_gripper.py --device=cpu
+    uv run python scripts/tutorials/01_assets/run_surface_gripper.py --device=cpu visualizer=kit
 
 When running this script make sure the --device flag is set to cpu. This is because the surface gripper is
 currently only supported on the CPU.
 """
 
-"""Launch Isaac Sim Simulator first."""
+from __future__ import annotations
 
 import argparse
+from typing import TYPE_CHECKING
 
-from isaaclab.app import AppLauncher
+from isaaclab_physx.assets import SurfaceGripperCfg
+from isaaclab_physx.physics import PhysxCfg
+
+import isaaclab.sim as sim_utils
+from isaaclab.app import add_launcher_args, launch_simulation
+
+from isaaclab_tasks.utils import resolve_config, setup_preset_cli
+from isaaclab_tasks.utils.presets import MultiBackendSimulationCfg
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Tutorial on spawning and interacting with a Surface Gripper.")
-# append AppLauncher cli args
-AppLauncher.add_app_launcher_args(parser)
-# tutorials should open Kit visualizer by default
-parser.set_defaults(visualizer=["kit"])
-# parse the arguments
-args_cli = parser.parse_args()
-
-# launch omniverse app
-app_launcher = AppLauncher(args_cli)
-simulation_app = app_launcher.app
-
-"""Rest everything follows."""
+add_launcher_args(parser)
+args_cli, config_overrides = setup_preset_cli(parser)
 
 import torch
 import warp as wp
-from isaaclab_physx.assets import SurfaceGripper, SurfaceGripperCfg
 
-import isaaclab.sim as sim_utils
-from isaaclab.assets import Articulation
-from isaaclab.sim import SimulationContext
+from isaaclab.assets import ArticulationCfg, AssetBaseCfg
+from isaaclab.cloner import ReplicateSession
+from isaaclab.utils.configclass import configclass
+
+if TYPE_CHECKING:
+    from isaaclab_physx.assets import SurfaceGripper
+
+    from isaaclab.assets import Articulation
 
 ##
 # Pre-defined configs
@@ -49,44 +51,26 @@ from isaaclab.sim import SimulationContext
 from isaaclab_assets import PICK_AND_PLACE_CFG  # isort:skip
 
 
-def design_scene():
-    """Designs the scene."""
-    # Ground-plane
-    cfg = sim_utils.GroundPlaneCfg()
-    cfg.func("/World/defaultGroundPlane", cfg)
-    # Lights
-    cfg = sim_utils.DomeLightCfg(intensity=3000.0, color=(0.75, 0.75, 0.75))
-    cfg.func("/World/Light", cfg)
+@configclass
+class TutorialCfg:
+    """Surface-gripper tutorial configuration."""
 
-    # Create separate groups called "Origin1", "Origin2"
-    # Each group will have a robot in it
-    origins = [[2.75, 0.0, 0.0], [-2.75, 0.0, 0.0]]
-    # Origin 1
-    sim_utils.create_prim("/World/Origin1", "Xform", translation=origins[0])
-    # Origin 2
-    sim_utils.create_prim("/World/Origin2", "Xform", translation=origins[1])
-
-    # Articulation: First we define the robot config
-    pick_and_place_robot_cfg = PICK_AND_PLACE_CFG.copy()
-    pick_and_place_robot_cfg.prim_path = "/World/Origin.*/Robot"
-    pick_and_place_robot = Articulation(cfg=pick_and_place_robot_cfg)
-
-    # Surface Gripper: Next we define the surface gripper config
-    surface_gripper_cfg = SurfaceGripperCfg()
-    # We need to tell the View which prim to use for the surface gripper
-    surface_gripper_cfg.prim_path = "/World/Origin.*/Robot/picker_head/SurfaceGripper"
-    # We can then set different parameters for the surface gripper, note that if these parameters are not set,
-    # the View will try to read them from the prim.
-    surface_gripper_cfg.max_grip_distance = 0.1  # [m] (Maximum distance at which the gripper can grasp an object)
-    surface_gripper_cfg.shear_force_limit = 500.0  # [N] (Force limit in the direction perpendicular direction)
-    surface_gripper_cfg.coaxial_force_limit = 500.0  # [N] (Force limit in the direction of the gripper's axis)
-    surface_gripper_cfg.retry_interval = 0.1  # seconds (Time the gripper will stay in a grasping state)
-    # We can now spawn the surface gripper
-    surface_gripper = SurfaceGripper(cfg=surface_gripper_cfg)
-
-    # return the scene information
-    scene_entities = {"pick_and_place_robot": pick_and_place_robot, "surface_gripper": surface_gripper}
-    return scene_entities, origins
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(device=args_cli.device, physics=PhysxCfg())
+    num_envs: int = 2
+    env_spacing: float = 5.5
+    ground: AssetBaseCfg = AssetBaseCfg(prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg())
+    light: AssetBaseCfg = AssetBaseCfg(
+        prim_path="/World/Light",
+        spawn=sim_utils.DomeLightCfg(intensity=3000.0, color=(0.75, 0.75, 0.75)),
+    )
+    robot: ArticulationCfg = PICK_AND_PLACE_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+    surface_gripper: SurfaceGripperCfg = SurfaceGripperCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/picker_head/SurfaceGripper",
+        max_grip_distance=0.1,
+        shear_force_limit=500.0,
+        coaxial_force_limit=500.0,
+        retry_interval=0.1,
+    )
 
 
 def run_simulator(
@@ -101,7 +85,7 @@ def run_simulator(
     sim_dt = sim.get_physics_dt()
     count = 0
     # Simulation loop
-    while simulation_app.is_running():
+    while sim.is_headless_or_exist_active_visualizer():
         # Reset
         if count % 500 == 0:
             # reset counter
@@ -168,24 +152,22 @@ def run_simulator(
 
 def main():
     """Main function."""
-    # Load kit helper
-    sim_cfg = sim_utils.SimulationCfg(device=args_cli.device)
-    sim = SimulationContext(sim_cfg)
-    # Set main camera
-    sim.set_camera_view([2.75, 7.5, 10.0], [2.75, 0.0, 0.0])
-    # Design scene
-    scene_entities, scene_origins = design_scene()
-    scene_origins = torch.tensor(scene_origins, device=sim.device)
-    # Play the simulator
-    sim.reset()
-    # Now we are ready!
-    print("[INFO]: Setup complete...")
-    # Run the simulator
-    run_simulator(sim, scene_entities, scene_origins)
+    cfg = resolve_config(TutorialCfg(), config_overrides)
+    with launch_simulation(cfg, args_cli):
+        sim = sim_utils.SimulationContext(cfg.sim)
+        sim.set_camera_view([2.75, 7.5, 10.0], [2.75, 0.0, 0.0])
+        with ReplicateSession((cfg.ground, cfg.light, cfg.robot, cfg.surface_gripper), cfg.num_envs, cfg.env_spacing):
+            cfg.ground.class_type(cfg.ground)
+            cfg.light.class_type(cfg.light)
+            scene_entities = {
+                "pick_and_place_robot": cfg.robot.class_type(cfg.robot),
+                "surface_gripper": cfg.surface_gripper.class_type(cfg.surface_gripper),
+            }
+        scene_origins = sim.get_clone_plan().positions
+        sim.reset()
+        print("[INFO]: Setup complete...")
+        run_simulator(sim, scene_entities, scene_origins)
 
 
 if __name__ == "__main__":
-    # run the main function
     main()
-    # close sim app
-    simulation_app.close()

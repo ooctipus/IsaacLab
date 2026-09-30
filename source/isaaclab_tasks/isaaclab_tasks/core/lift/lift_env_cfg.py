@@ -5,7 +5,7 @@
 
 from dataclasses import MISSING
 
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg, NewtonCollisionPipelineCfg, NewtonShapeCfg
+from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCollisionPipelineCfg, NewtonShapeCfg
 from isaaclab_ov.physics import OvPhysxCfg
 from isaaclab_physx.physics import PhysxCfg
 
@@ -19,15 +19,15 @@ from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.markers import VisualizationMarkersCfg
+from isaaclab.markers.config import RAY_CASTER_MARKER_CFG
 from isaaclab.physics import PhysxAutoCfg
-from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim import MeshCapsuleCfg, MeshConeCfg, MeshCuboidCfg, MeshSphereCfg, RigidBodyMaterialCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.configclass import configclass
 from isaaclab.utils.noise import UniformNoiseCfg as Unoise
-from isaaclab.visualizers import VisualizerCfg
 
 from isaaclab_tasks.utils import PresetCfg
+from isaaclab_tasks.utils.presets import MultiBackendSceneCfg, MultiBackendSimulationCfg
 
 from . import mdp
 from .adr_curriculum import CurriculumCfg
@@ -45,6 +45,9 @@ OBJECT_PHYSICS = {
     "physics_material": RigidBodyMaterialCfg(static_friction=0.5),
     "collision_props": sim_utils.CollisionPropertiesCfg(contact_offset=0.002),
 }
+
+POINT_CLOUD_MARKER_CFG = RAY_CASTER_MARKER_CFG.replace(prim_path="/Visuals/ObservationPointCloud")
+POINT_CLOUD_MARKER_CFG.markers["hit"].radius = 0.0025
 
 
 @configclass
@@ -94,8 +97,15 @@ class ObjectCfg(PresetCfg):
 
 
 @configclass
-class SceneCfg(InteractiveSceneCfg):
+class SceneCfg(MultiBackendSceneCfg):
     """Lift Scene for multi-objects Lifting"""
+
+    geometry_prim_paths: tuple[str, ...] = ("{ENV_REGEX_NS}/Robot", "{ENV_REGEX_NS}/Object")
+
+    command_goal_marker: VisualizationMarkersCfg | None = None
+    command_current_marker: VisualizationMarkersCfg | None = None
+    success_marker: VisualizationMarkersCfg | None = None
+    object_point_cloud_marker: VisualizationMarkersCfg | None = None
 
     # robot
     robot: ArticulationCfg = MISSING
@@ -150,7 +160,7 @@ class CommandsCfg:
             yaw=(0.0, 0.0),
         ),
         success_vis_asset_name="table",
-        success_visualizer_cfg=VisualizationMarkersCfg(
+        success_marker_cfg=VisualizationMarkersCfg(
             prim_path="/Visuals/SuccessMarkers",
             markers={
                 "failure": TABLE_SPAWN_CFG.replace(
@@ -217,7 +227,7 @@ class ObservationsCfg:
             func=mdp.object_point_cloud_b,
             noise=Unoise(n_min=-0.0, n_max=0.0),
             clip=(-2.0, 2.0),  # clamp between -2 m to 2 m
-            params={"num_points": 64, "flatten": True},
+            params={"num_points": 64, "flatten": True, "visualizer_cfg": POINT_CLOUD_MARKER_CFG},
         )
 
         def __post_init__(self):
@@ -363,10 +373,9 @@ class EventCfg:
                         "asset_cfg": SceneEntityCfg("object"),
                     },
                 ),
-                # spawn-in-hand curriculum: a small share of episodes starts with the
-                # object at the gripper (uniform random orientation, small body-frame
-                # offset); interpenetrating draws are rejected by object_robot_clearance.
-                # Must stay LAST: it reads the gripper pose after the robot reset terms.
+            },
+            # These terms read reconciled state and write owned asset data consumed directly by criteria.
+            "state_dependent_terms": {
                 "reset_object_to_target": EventTerm(
                     func="isaaclab_tasks.core.lift.mdp.events:reset_to_target",
                     mode="reset",
@@ -495,20 +504,18 @@ class PhysicsCfg(PresetCfg):
         gpu_max_rigid_patch_count=4 * 5 * 2**15,
         gpu_found_lost_pairs_capacity=2**26,
     )
-    newton_mjwarp = NewtonCfg(
-        solver_cfg=MJWarpSolverCfg(
-            solver="newton",
-            integrator="implicitfast",
-            njmax=300,
-            nconmax=200,
-            impratio=1.0,
-            cone="pyramidal",
-            update_data_interval=2,
-            iterations=100,
-            ls_iterations=15,
-            use_mujoco_contacts=False,
-            ccd_iterations=35,
-        ),
+    newton_mjwarp = MJWarpSolverCfg(
+        solver="newton",
+        integrator="implicitfast",
+        njmax=300,
+        nconmax=200,
+        impratio=1.0,
+        cone="pyramidal",
+        update_data_interval=2,
+        iterations=100,
+        ls_iterations=15,
+        use_mujoco_contacts=False,
+        ccd_iterations=35,
         collision_cfg=NewtonCollisionPipelineCfg(rigid_contact_max=4000000),
         default_shape_cfg=NewtonShapeCfg(),
         num_substeps=2,
@@ -522,6 +529,7 @@ class PhysicsCfg(PresetCfg):
 class ReorientEnvCfg(ManagerBasedRLEnvCfg):
     """Lift reorientation task definition, also the base definition for derivative Lift task and evaluation task"""
 
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg()
     # Scene settings
     scene: SceneCfg = SceneCfg(num_envs=4096, env_spacing=3, replicate_physics=True)
     # Basic settings
@@ -534,34 +542,12 @@ class ReorientEnvCfg(ManagerBasedRLEnvCfg):
     events: EventCfg = EventCfg()
     curriculum: CurriculumCfg | None = CurriculumCfg()
 
-    def validate_config(self):
-        """Check for invalid preset combinations after resolution."""
-
-        warp_supported = {
-            "rgb",
-            "depth",
-            "distance_to_camera",
-            "distance_to_image_plane",
-            "normals",
-            "semantic_segmentation",
-            "instance_segmentation",
-        }
-        for cam_attr in ("base_camera", "wrist_camera"):
-            cam = getattr(self.scene, cam_attr, None)
-            if cam is None:
-                continue
-            renderer_type = getattr(getattr(cam, "renderer_cfg", None), "renderer_type", None)
-            if renderer_type == "newton_warp":
-                unsupported = set(cam.data_types) - warp_supported
-                if unsupported:
-                    raise ValueError(
-                        f"Warp renderer only supports data types {sorted(warp_supported)}, "
-                        f"but '{cam_attr}' is configured with unsupported types: {sorted(unsupported)}. "
-                        "Choose a compatible preset, e.g. presets=newton_renderer,rgb128."
-                    )
-
     def __post_init__(self):
         """Post initialization."""
+        self.scene.command_goal_marker = self.commands.object_pose.goal_pose_visualizer_cfg
+        self.scene.command_current_marker = self.commands.object_pose.curr_pose_visualizer_cfg
+        self.scene.success_marker = self.commands.object_pose.success_marker_cfg
+        self.scene.object_point_cloud_marker = self.observations.perception.object_point_cloud.params["visualizer_cfg"]
         # general settings
         self.decimation = 4  # 30 Hz
 
@@ -574,25 +560,6 @@ class ReorientEnvCfg(ManagerBasedRLEnvCfg):
         self.sim.dt = 1 / 120
         self.sim.render_interval = self.decimation
         self.sim.physics = PhysicsCfg()
-        self.sim.default_visualizer_cfg = VisualizerCfg(eye=(-2.25, 0.0, 0.75), lookat=(0.0, 0.0, 0.45))
-
-    def play_mode(self):
-        # play-mode overrides of parent
-        super().play_mode()
-
-        self.commands.object_pose.debug_vis = True
-        # the bank shapes what a policy trains on; at play it only has to supply starts for the
-        # handful of environments the parent left, so it is harvested small and taken as it comes
-        # rather than making the viewer wait through an oversampled prefill and its spread pass
-        reset_params = self.events.conditional_reset.params
-        reset_params["buffer_size_per_group"] = 32
-        reset_params["oversample_factor"] = 1.0
-        reset_params["diversity_feature"] = None
-        if self.curriculum is not None:
-            self.curriculum.adr.params["init_difficulty"] = self.curriculum.adr.params["max_difficulty"]
-            self.curriculum.adr.params["promotion_only"] = True
-            # the parent turned observation corruption off, which leaves the noise terms nothing to scale
-            self.curriculum.disable_observation_noise_terms()
 
 
 class LiftEnvCfg(ReorientEnvCfg):
@@ -604,9 +571,3 @@ class LiftEnvCfg(ReorientEnvCfg):
         self.commands.object_pose.position_only = True
         if self.curriculum is not None:
             self.rewards.success.params["rot_std"] = None  # make success reward not consider orientation
-
-    def play_mode(self):
-        # play-mode overrides of parent
-        super().play_mode()
-
-        self.commands.object_pose.position_only = True

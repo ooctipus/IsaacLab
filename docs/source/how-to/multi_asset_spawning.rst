@@ -78,7 +78,7 @@ For configuration-based assets, assign :class:`~sim.spawners.wrappers.MultiAsset
 
 The ``assets_cfg`` list defines the prototypes available to the clone plan. Variant assignment is controlled by
 :attr:`~cloner.CloneCfg.clone_strategy`; the default :func:`~cloner.sequential` strategy assigns combinations in
-round-robin order. To sample combinations randomly instead, set the strategy before constructing the scene:
+balanced contiguous blocks. To sample combinations randomly instead, set the strategy before constructing the scene:
 
 .. code-block:: python
 

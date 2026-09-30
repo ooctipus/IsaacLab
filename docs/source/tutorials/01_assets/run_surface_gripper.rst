@@ -53,16 +53,15 @@ The available parameters are:
 - ``coaxial_force_limit``: The maximum force the gripper can exert in the direction of the gripper's axis.
 - ``retry_interval``: The time the gripper will stay in a grasping state.
 
-As seen in the previous tutorial, we can spawn the articulation into the scene in a similar fashion by creating
-an instance of the :class:`assets.Articulation` class by passing the configuration object to its constructor. The same
-principle applies to the surface gripper. By passing the configuration object to the :class:`assets.SurfaceGripper`
-constructor, the surface gripper is created and can be added to the scene. In practice, the object will only be
-initialized when the play button is pressed.
+The complete scene is declarative: :class:`TutorialCfg` owns the clone count and spacing alongside the ground,
+light, robot, and gripper configurations. The ``{ENV_REGEX_NS}`` paths identify the robot and gripper as
+per-environment assets. A :class:`cloner.ReplicateSession` derives one clone plan from this configuration, and the
+robot and gripper are constructed from their standard ``class_type`` inside that lifecycle. Their runtime handles are
+initialized when the simulation is reset.
 
 .. literalinclude:: ../../../../scripts/tutorials/01_assets/run_surface_gripper.py
    :language: python
-   :start-at: # Create separate groups called "Origin1", "Origin2"
-   :end-at: surface_gripper = SurfaceGripper(cfg=surface_gripper_cfg)
+   :pyobject: TutorialCfg
 
 
 Running the simulation loop

@@ -6,12 +6,11 @@ Camera
 ======
 
 Camera sensors in Isaac Lab are renderer-backed sensors: each :class:`~sensors.Camera` instance
-is coupled to a **renderer** that produces the image data. If multiple cameras use the same renderer
-type, only one renderer is instantiated and shared between them. The renderer and camera are intentionally
-isolated from each other — the camera defines *what* to capture (pose, resolution, field of view,
-data types), while the renderer defines *how* to render it (RTX ray-tracing, Newton Warp rasterizer,
-etc.). This separation allows the same camera configuration to run across different physics and
-rendering backends without code changes.
+owns a **renderer** that produces its image data. Renderer instances are intentionally isolated from
+each other — the camera defines *what* to capture (pose, resolution, field of view, data types), while
+the renderer defines *how* to render it (RTX ray-tracing, Newton Warp rasterizer, etc.). Native backend
+resources may still be shared through the simulation's backend registry. This separation allows the
+same camera configuration to run across different physics and rendering backends without code changes.
 
 For an overview of the available renderer backends and how to choose between them, see
 :ref:`overview_renderers`.
@@ -25,9 +24,8 @@ these scaling challenges by batching all cameras into a single render pass.
 Renderer Backends
 -----------------
 
-The renderer used by a camera is configured via the ``renderer_cfg`` field on
-:class:`~sensors.CameraCfg`. The default is :class:`~isaaclab_physx.renderers.IsaacRtxRendererCfg`
-(NVIDIA RTX, requires Isaac Sim).
+The renderer used by a camera is configured explicitly via the required ``renderer_cfg`` field on
+:class:`~sensors.CameraCfg`.
 
 .. list-table::
    :header-rows: 1
@@ -35,7 +33,7 @@ The renderer used by a camera is configured via the ``renderer_cfg`` field on
 
    * - ``renderer_cfg``
      - Requires Isaac Sim?
-   * - ``IsaacRtxRendererCfg`` *(default)*
+   * - ``IsaacRtxRendererCfg``
      - Yes
    * - ``NewtonWarpRendererCfg``
      - No (kit-less)
@@ -76,13 +74,13 @@ The renderer is specified via ``renderer_cfg`` on :class:`~sensors.CameraCfg`. T
 renderer configurations are fully decoupled: you can swap renderers without changing any other camera
 parameters.
 
-**Default (RTX, requires Isaac Sim):**
+**Isaac RTX renderer (requires Isaac Sim):**
 
 .. code-block:: python
 
     from isaaclab.sensors import CameraCfg
+    from isaaclab_physx.renderers import IsaacRtxRendererCfg
     import isaaclab.sim as sim_utils
-    # IsaacRtxRendererCfg is the default, no explicit import needed
 
     tiled_camera: CameraCfg = CameraCfg(
         prim_path="/World/envs/env_.*/Camera",
@@ -93,7 +91,7 @@ parameters.
         ),
         width=80,
         height=80,
-        # renderer_cfg defaults to IsaacRtxRendererCfg()
+        renderer_cfg=IsaacRtxRendererCfg(),
     )
 
 **Newton Warp renderer (kit-less, no Isaac Sim required):**
@@ -324,16 +322,12 @@ static PPISP inputs still provide responsivity, vignetting, and CRF.
 Configuration
 ^^^^^^^^^^^^^
 
-:attr:`~sensors.CameraCfg.isp_cfg` accepts three forms:
+:attr:`~sensors.CameraCfg.isp_cfg` accepts two forms:
 
 * ``None`` (default) — ISP disabled.
 * :class:`~isaaclab_ppisp.PpispCfg` — explicit PPISP coefficients
   (:attr:`~isaaclab_ppisp.PpispCfg.inputs`) and, optionally, controller
-  weights. Use :attr:`~isaaclab_ppisp.PpispCfg.camera_prim_path` to import
-  static coefficients and camera-authored controller weights from a USD camera
-  already on the stage.
-* :class:`~sensors.CameraISPMode` — auto-discover ISP camera attributes on the
-  stage (see below).
+  weights.
 
 The cfg applies once per Camera sensor batch. Static PPISP inputs are scalar
 coefficients shared by every cloned view in a tiled batch. When controller
@@ -343,41 +337,31 @@ shared by the batch.
 
 .. code-block:: python
 
-   from isaaclab.sensors.camera import CameraCfg, CameraISPMode
-   from isaaclab_ppisp import PpispCfg
+   from isaaclab.sensors.camera import CameraCfg
+   from isaaclab_ppisp import PpispCfg, ppisp_cfg_from_usd_camera
+   from isaaclab_tasks.utils.presets import MultiBackendRendererCfg
+   from pxr import Usd
 
    # default — ISP disabled
-   cfg = CameraCfg(...)
+   cfg = CameraCfg(..., renderer_cfg=MultiBackendRendererCfg())
 
    # explicit coefficients
-   cfg = CameraCfg(..., isp_cfg=PpispCfg(inputs={"exposureOffset": 1.5}))
+   cfg = CameraCfg(
+       ..., renderer_cfg=MultiBackendRendererCfg(), isp_cfg=PpispCfg(inputs={"exposureOffset": 1.5})
+   )
 
-   # import coefficients from a USD camera path
-   cfg = CameraCfg(..., isp_cfg=PpispCfg(camera_prim_path="/World/Camera_ppisp"))
+   # Import an asset camera into explicit configuration before cloning.
+   source_stage = Usd.Stage.Open("scene.usda")
+   source_camera = source_stage.GetPrimAtPath("/World/Camera_ppisp")
+   cfg = CameraCfg(
+       ..., renderer_cfg=MultiBackendRendererCfg(), isp_cfg=ppisp_cfg_from_usd_camera(source_camera)
+   )
 
-   # auto-discover from the stage
-   cfg = CameraCfg(..., isp_cfg=CameraISPMode.AUTO_ANY)
-
-Auto-discovery
-^^^^^^^^^^^^^^
-
-Auto-discovery is opt-in via :class:`~sensors.CameraISPMode`. Discovery runs
-once at camera construction using the first matched camera prim in the Camera
-sensor batch:
-
-1. Check the first matched camera prim for ``ppisp:*`` attributes.
-2. ``AUTO_ANY`` only, or when no camera path is available: fall back to the
-   first camera anywhere on the stage with ``ppisp:*`` attributes.
-3. Otherwise the ISP stays disabled for the whole Camera sensor batch.
-
-In practice this means: if the stage carries a ``ParticleField3DGaussianSplat``
-together with a camera that authors ``ppisp:*`` attributes, the Camera sensor
-picks up the matching ISP automatically, including controller weights when
-authored, and no Python-side coefficient authoring is required.
-
-``AUTO_CAMERA`` runs only the camera-local discovery steps — useful when the
-stage carries multiple PPISP cameras and you want the Camera sensor batch to use
-the attributes authored on its first matched camera prim.
+Renderer backends consume only this explicit configuration; they never inspect
+the runtime stage for PPISP attributes. When a source asset authors ``ppisp:*``
+attributes, parse its selected camera with
+:func:`~isaaclab_ppisp.ppisp_cfg_from_usd_camera` while composing the scene cfg,
+before the clone lifecycle begins.
 
 Renderer support
 ^^^^^^^^^^^^^^^^
@@ -543,6 +527,7 @@ a solid color by setting :attr:`~sensors.CameraCfg.background_color` on :class:`
 .. code-block:: python
 
     from isaaclab.sensors import CameraCfg
+    from isaaclab_physx.renderers import IsaacRtxRendererCfg
     import isaaclab.sim as sim_utils
 
     tiled_camera = CameraCfg(
@@ -555,6 +540,7 @@ a solid color by setting :attr:`~sensors.CameraCfg.background_color` on :class:`
         width=80,
         height=80,
         background_color=(0.0, 0.0, 0.0),  # black background
+        renderer_cfg=IsaacRtxRendererCfg(),
     )
 
 The color is a 3-tuple of normalized RGB floats in ``[0, 1]``. Setting it to ``None`` (the

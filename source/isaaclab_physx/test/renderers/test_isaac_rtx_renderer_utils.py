@@ -32,19 +32,12 @@ import pytest  # noqa: E402
 
 # test-specific timeout overrides for _STREAMING_WAIT_TIMEOUT_S
 STREAMING_TIMEOUT_S = 0.1
-STREAMING_TIMEOUT_SHORT_S = 0.01
 
 # simulated per-update sleep to advance wall-clock time inside the wait loop
 MOCK_UPDATE_SLEEP_S = 0.02
 
 # how many app.update() iterations before the mock becomes idle
 MOCK_ITERATIONS_BEFORE_IDLE = 3
-
-
-@pytest.fixture(autouse=True)
-def _reset_globals(monkeypatch):
-    """Restore module-level state so tests are isolated."""
-    monkeypatch.setattr(rtx_utils, "_last_render_update_key", (0, -1, -1))
 
 
 @pytest.fixture()
@@ -100,9 +93,10 @@ class TestGetStageStreamingBusy:
         mock_omni_usd.get_context.return_value = mock_ctx
         assert rtx_utils._get_stage_streaming_busy() is False
 
-    def test_returns_false_when_no_context(self, mock_omni_usd):
+    def test_rejects_missing_context(self, mock_omni_usd):
         mock_omni_usd.get_context.return_value = None
-        assert rtx_utils._get_stage_streaming_busy() is False
+        with pytest.raises(RuntimeError, match="active USD context"):
+            rtx_utils._get_stage_streaming_busy()
 
 
 # ---------------------------------------------------------------------------
@@ -148,32 +142,17 @@ class TestWaitForStreamingComplete:
         assert mock_app.update.call_count == MOCK_ITERATIONS_BEFORE_IDLE + 1
 
     def test_respects_timeout(self, monkeypatch, mock_omni_kit_app):
-        """Exits wait loop on timeout if busy never clears."""
+        """A requested frame fails when its scene never finishes streaming."""
         monkeypatch.setattr(rtx_utils, "_STREAMING_WAIT_TIMEOUT_S", STREAMING_TIMEOUT_S)
         mock_app = MagicMock()
         mock_app.update.side_effect = lambda: time.sleep(MOCK_UPDATE_SLEEP_S)
         mock_omni_kit_app.get_app.return_value = mock_app
 
         with patch.object(rtx_utils, "_get_stage_streaming_busy", return_value=True):
-            rtx_utils._wait_for_streaming_complete()
+            with pytest.raises(TimeoutError, match="RTX streaming did not complete"):
+                rtx_utils._wait_for_streaming_complete()
 
         assert mock_app.update.call_count > 0
-
-    def test_timeout_logs_warning(self, monkeypatch, mock_omni_kit_app):
-        """Logs warning when timeout is reached while still busy."""
-        monkeypatch.setattr(rtx_utils, "_STREAMING_WAIT_TIMEOUT_S", STREAMING_TIMEOUT_SHORT_S)
-        mock_app = MagicMock()
-        mock_omni_kit_app.get_app.return_value = mock_app
-        mock_logger = MagicMock()
-
-        with (
-            patch.object(rtx_utils, "_get_stage_streaming_busy", return_value=True),
-            patch.object(rtx_utils, "logger", mock_logger),
-        ):
-            rtx_utils._wait_for_streaming_complete()
-
-        mock_logger.warning.assert_called_once()
-        assert "RTX streaming did not complete within" in mock_logger.warning.call_args[0][0]
 
     def test_logs_info_on_non_trivial_completion(self, mock_omni_kit_app):
         """Logs completion info when streaming finishes after delay."""
@@ -208,29 +187,14 @@ class TestWaitForStreamingComplete:
 
 
 class TestEnsureIsaacRtxRenderUpdate:
-    """Tests for :func:`ensure_isaac_rtx_render_update`.
-
-    Covers dedup logic, visualizer-skip behaviour, and the first-call-for-sim
-    guard that prevents annotator buffers from never being populated.
-    """
+    """Tests for :func:`ensure_isaac_rtx_render_update`."""
 
     @pytest.fixture()
     def mock_sim(self):
         """A minimal mock of :class:`SimulationContext`."""
         sim = MagicMock()
-        sim._physics_step_count = 0
-        sim._render_generation = 0
-        sim.render_generation = 0
         sim.is_rendering = True
-        sim.visualizers = []
         return sim
-
-    @pytest.fixture()
-    def pumping_visualizer(self):
-        """A visualizer that claims to pump ``app.update()``."""
-        viz = MagicMock()
-        viz.pumps_app_update.return_value = True
-        return viz
 
     @pytest.fixture()
     def mock_sim_context(self, monkeypatch):
@@ -239,84 +203,65 @@ class TestEnsureIsaacRtxRenderUpdate:
         monkeypatch.setattr(rtx_utils, "sim_utils", types.SimpleNamespace(SimulationContext=sim_context))
         return sim_context
 
-    def test_first_call_with_visualizer_still_pumps(
-        self, mock_sim, mock_sim_context, pumping_visualizer, mock_omni_kit_app
-    ):
-        """Regression: first call for a new sim must pump even with a visualizer.
-
-        Without the fix (commit 2e8ace7), a visualizer returning
-        ``pumps_app_update() == True`` caused the function to skip
-        ``app.update()`` on the very first call.  The visualizer had not
-        pumped yet (``sim.render()`` was never called), so annotator
-        buffers were never populated and cameras hung waiting for data.
-        """
-        mock_sim.visualizers = [pumping_visualizer]
+    def test_active_renderer_pumps(self, mock_sim, mock_sim_context, mock_omni_kit_app):
+        """A camera frame request pumps Kit and brackets it with simulation pause settings."""
         mock_app = MagicMock()
         mock_omni_kit_app.get_app.return_value = mock_app
         mock_sim_context.instance.return_value = mock_sim
 
-        with (
-            patch.object(rtx_utils, "_get_stage_streaming_busy", return_value=False),
-        ):
+        with patch.object(rtx_utils, "_get_stage_streaming_busy", return_value=False):
             rtx_utils.ensure_isaac_rtx_render_update()
 
         mock_app.update.assert_called_once()
+        assert [item.args for item in mock_sim.set_setting.call_args_list] == [
+            ("/app/player/playSimulations", False),
+            ("/app/player/playSimulations", True),
+        ]
 
-    def test_second_call_with_visualizer_skips_pump(
-        self, mock_sim, mock_sim_context, pumping_visualizer, mock_omni_kit_app
-    ):
-        """After the first call, a visualizer that pumps causes the skip."""
-        mock_sim.visualizers = [pumping_visualizer]
-        mock_app = MagicMock()
-        mock_omni_kit_app.get_app.return_value = mock_app
-        mock_sim_context.instance.return_value = mock_sim
-
-        with (
-            patch.object(rtx_utils, "_get_stage_streaming_busy", return_value=False),
-        ):
-            rtx_utils.ensure_isaac_rtx_render_update()
-            mock_app.update.assert_called_once()
-            mock_app.update.reset_mock()
-
-            mock_sim._physics_step_count = 1
-            rtx_utils.ensure_isaac_rtx_render_update()
-
-        mock_app.update.assert_not_called()
-
-    def test_no_sim_is_noop(self, mock_sim_context, mock_omni_kit_app):
-        """No-op when SimulationContext.instance() returns None."""
+    def test_no_sim_is_rejected(self, mock_sim_context, mock_omni_kit_app):
+        """A frame request requires the renderer's composition root."""
         mock_app = MagicMock()
         mock_omni_kit_app.get_app.return_value = mock_app
         mock_sim_context.instance.return_value = None
 
-        rtx_utils.ensure_isaac_rtx_render_update()
-
-        mock_app.update.assert_not_called()
-
-    def test_dedup_same_step(self, mock_sim, mock_sim_context, mock_omni_kit_app):
-        """Second call in the same physics step is a no-op (dedup)."""
-        mock_app = MagicMock()
-        mock_omni_kit_app.get_app.return_value = mock_app
-        mock_sim_context.instance.return_value = mock_sim
-
-        with (
-            patch.object(rtx_utils, "_get_stage_streaming_busy", return_value=False),
-        ):
-            rtx_utils.ensure_isaac_rtx_render_update()
-            mock_app.update.assert_called_once()
-            mock_app.update.reset_mock()
-
+        with pytest.raises(RuntimeError, match="active rendering SimulationContext"):
             rtx_utils.ensure_isaac_rtx_render_update()
 
         mock_app.update.assert_not_called()
 
-    def test_not_rendering_skips(self, mock_sim, mock_sim_context, mock_omni_kit_app):
-        """No ``app.update()`` when rendering is disabled."""
+    def test_inactive_rendering_is_rejected(self, mock_sim, mock_sim_context, mock_omni_kit_app):
+        """A selected RTX renderer cannot silently drop a requested frame."""
         mock_sim.is_rendering = False
         mock_app = MagicMock()
         mock_omni_kit_app.get_app.return_value = mock_app
         mock_sim_context.instance.return_value = mock_sim
 
-        rtx_utils.ensure_isaac_rtx_render_update()
+        with pytest.raises(RuntimeError, match="active rendering SimulationContext"):
+            rtx_utils.ensure_isaac_rtx_render_update()
 
         mock_app.update.assert_not_called()
+
+    def test_streaming_failure_restores_simulation_playback(self, mock_sim, mock_sim_context, mock_omni_kit_app):
+        """A failed frame does not leave Kit simulation playback disabled."""
+        mock_omni_kit_app.get_app.return_value = MagicMock()
+        mock_sim_context.instance.return_value = mock_sim
+
+        with (
+            patch.object(rtx_utils, "_get_stage_streaming_busy", return_value=True),
+            patch.object(rtx_utils, "_wait_for_streaming_complete", side_effect=TimeoutError("busy")),
+            pytest.raises(TimeoutError, match="busy"),
+        ):
+            rtx_utils.ensure_isaac_rtx_render_update()
+
+        assert [item.args for item in mock_sim.set_setting.call_args_list] == [
+            ("/app/player/playSimulations", False),
+            ("/app/player/playSimulations", True),
+        ]
+
+
+def test_hydra_attach_requires_an_active_usd_context(mock_omni_usd):
+    """Selecting Isaac RTX fails at initialization when Hydra has no stage context."""
+    mock_omni_usd.get_context.return_value = None
+
+    with pytest.raises(RuntimeError, match="active USD context"):
+        rtx_utils.ensure_rtx_hydra_engine_attached()

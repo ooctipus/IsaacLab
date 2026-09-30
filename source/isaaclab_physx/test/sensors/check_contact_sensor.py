@@ -34,13 +34,13 @@ simulation_app = app_launcher.app
 
 """Rest everything follows."""
 
-import numpy as np
 import torch
+from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
-from isaaclab import cloner as lab_cloner
-from isaaclab.assets import Articulation
-from isaaclab.sensors.contact_sensor import ContactSensor, ContactSensorCfg
+from isaaclab import cloner
+from isaaclab.assets import AssetBaseCfg
+from isaaclab.sensors.contact_sensor import ContactSensorCfg
 from isaaclab.sim import SimulationCfg, SimulationContext
 from isaaclab.utils.timer import Timer
 
@@ -48,21 +48,6 @@ from isaaclab.utils.timer import Timer
 # Pre-defined configs
 ##
 from isaaclab_assets.robots.anymal import ANYMAL_C_CFG  # isort:skip
-
-
-"""
-Helpers
-"""
-
-
-def design_scene():
-    """Add prims to the scene."""
-    # Ground-plane
-    cfg = sim_utils.GroundPlaneCfg()
-    cfg.func("/World/defaultGroundPlane", cfg)
-    # Lights
-    cfg = sim_utils.DomeLightCfg(intensity=2000)
-    cfg.func("/World/Light/DomeLight", cfg, translation=(-4.5, 3.5, 10.0))
 
 
 """
@@ -74,7 +59,7 @@ def main():
     """Spawns the ANYmal robot and clones it using Isaac Sim Cloner API."""
 
     # Load kit helper
-    sim = SimulationContext(SimulationCfg(dt=0.005))
+    sim = SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.005))
     # Set main camera
     sim.set_camera_view([2.5, 2.5, 2.5], [0.0, 0.0, 0.0])
 
@@ -82,23 +67,19 @@ def main():
     # this is needed to visualize the scene when flatcache is enabled
     sim.set_setting("/persistent/omnihydra/useSceneGraphInstancing", True)
 
-    # Create environment clones using Lab's cloner utilities
     num_envs = args_cli.num_robots
-    env_fmt = "/World/envs/env_{}"
-    env_ids = np.arange(num_envs, dtype=np.int64)
-    env_origins, _ = lab_cloner.grid_transforms(num_envs, spacing=2.0)
-    # Everything under the namespace "/World/envs/env_0" will be cloned
-    sim.stage.DefinePrim("/World/envs/env_0", "Xform")
-    # Clone the scene
-    envs_prim_paths = [f"/World/envs/env_{i}" for i in range(num_envs)]
-    lab_cloner.usd_replicate(sim.stage, [env_fmt.format(0)], [env_fmt], env_ids, positions=env_origins)
-    # Design props
-    design_scene()
-    # Spawn things into the scene
+    ground_cfg = AssetBaseCfg(
+        prim_path="/World/defaultGroundPlane",
+        spawn=sim_utils.GroundPlaneCfg(),
+        collision_group=-1,
+    )
+    light_cfg = AssetBaseCfg(
+        prim_path="/World/Light/DomeLight",
+        spawn=sim_utils.DomeLightCfg(intensity=2000),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(-4.5, 3.5, 10.0)),
+    )
     robot_cfg = ANYMAL_C_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
     robot_cfg.spawn.activate_contact_sensors = True
-    robot = Articulation(cfg=robot_cfg)
-    # Contact sensor
     contact_sensor_cfg = ContactSensorCfg(
         prim_path="{ENV_REGEX_NS}/Robot/[^/]*_FOOT",
         track_air_time=True,
@@ -107,11 +88,28 @@ def main():
         debug_vis=False,  # not args_cli.headless,
         filter_prim_paths_expr=["/World/defaultGroundPlane/GroundPlane/CollisionPlane"],
     )
-    contact_sensor = ContactSensor(cfg=contact_sensor_cfg)
+    with cloner.ReplicateSession(
+        [ground_cfg, light_cfg, robot_cfg, contact_sensor_cfg],
+        num_clones=num_envs,
+        env_spacing=2.0,
+    ):
+        ground_cfg.spawn.func(ground_cfg.prim_path, ground_cfg.spawn)
+        light_cfg.spawn.func(
+            light_cfg.prim_path,
+            light_cfg.spawn,
+            translation=light_cfg.init_state.pos,
+            orientation=light_cfg.init_state.rot,
+        )
+        robot = robot_cfg.class_type(robot_cfg)
+        contact_sensor = contact_sensor_cfg.class_type(contact_sensor_cfg)
+
     # filter collisions within each environment instance
-    physics_scene_path = sim.cfg.physics_prim_path
-    lab_cloner.filter_collisions(
-        sim.stage, physics_scene_path, "/World/collisions", envs_prim_paths, global_paths=["/World/defaultGroundPlane"]
+    cloner.filter_collisions(
+        sim.stage,
+        sim.cfg.physics_prim_path,
+        "/World/collisions",
+        cloner.query.env_root_paths(sim.get_clone_plan()),
+        global_paths=[ground_cfg.prim_path],
     )
 
     # Play the simulator

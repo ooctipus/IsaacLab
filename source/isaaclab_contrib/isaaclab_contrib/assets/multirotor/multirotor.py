@@ -308,7 +308,7 @@ class Multirotor(Articulation):
         super()._initialize_impl()
 
         # Replace data container with MultirotorData
-        self._data = MultirotorData(self.root_view, self.device)
+        self._data = MultirotorData(self.root_view, self.device, self._physics_manager)
 
         # Create thruster buffers with correct size (SINGLE PHASE)
         self._create_thruster_buffers()

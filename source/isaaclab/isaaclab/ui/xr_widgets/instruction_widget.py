@@ -10,11 +10,7 @@ import functools
 import textwrap
 from typing import TYPE_CHECKING, Any
 
-import omni.kit.commands
 import omni.ui as ui
-import omni.usd
-
-import isaaclab.sim as sim_utils
 
 if TYPE_CHECKING:
     from typing import TypeAlias
@@ -152,14 +148,13 @@ def show_instruction(
         min_width (float): Minimum widget width used for wrapping.
         font_size (float): Font size of the rendered text.
         text_color (int): RGBA color encoded as a 32-bit integer.
-        target_prim_path (str): Prim path where the widget prim will be created/copied.
+        target_prim_path (str): Identifier used to update or hide this widget.
 
     Returns:
         UiContainer | None: The container that owns the instruction widget, or ``None`` if creation failed.
     """
 
     try:
-        import carb
         from omni.kit.scene_view.xr import XRSceneView
         from omni.kit.scene_view.xr_utils import SpatialSource, UiContainer, WidgetComponent
     except Exception as e:
@@ -193,65 +188,9 @@ def show_instruction(
         widget_args=[wrapped_text, {"font_size": font_size, "color": text_color}, width],
     )
 
-    # Copy source to target_prim_path so the widget has a controlled transform. Prefer CopyFabricPrim
-    # when Fabric is on (preserves transform for XR); else CopyPrim. Clear target on Fabric first so
-    # CopyFabricPrim creates at target_prim_path (it otherwise uses get_stage_next_free_path).
-    copy_succeeded = False
-    if prim_path_source:
-        try:
-            use_fabric = carb.settings.get_settings().get_as_bool("/app/useFabricSceneDelegate")
-        except Exception:
-            use_fabric = False
-        if use_fabric:
-            try:
-                import usdrt
-
-                rt_stage = usdrt.Usd.Stage.Attach(omni.usd.get_context().get_stage_id())
-                if rt_stage.GetPrimAtPath(usdrt.Sdf.Path(target_prim_path)):
-                    omni.kit.commands.execute("DeleteFabricPrims", paths=[target_prim_path])
-                success, _ = omni.kit.commands.execute(
-                    "CopyFabricPrim",
-                    path_from=prim_path_source,
-                    path_to=target_prim_path,
-                    exclusive_select=False,
-                )
-                copy_succeeded = success
-            except Exception:
-                pass
-        if not copy_succeeded:
-            # Obtain stage handle
-            stage = sim_utils.get_current_stage()
-            # Clean up existing widget
-            existing = stage.GetPrimAtPath(target_prim_path)
-            if existing and existing.IsValid():
-                sim_utils.delete_prim(target_prim_path)
-
-            success, _ = omni.kit.commands.execute(
-                "CopyPrim",
-                path_from=prim_path_source,
-                path_to=target_prim_path,
-                exclusive_select=False,
-                copy_to_introducing_layer=False,
-            )
-            copy_succeeded = success
-
     space_stack = []
-    if copy_succeeded:
-        space_stack.append(SpatialSource.new_prim_path_source(target_prim_path))
-
-    # Unselect the copied instruction prim so it is not left in selection (CopyFabricPrim/CopyPrim
-    # select it). Otherwise on env reset the manipulator can receive invalid prim paths and raise
-    # "Accessed invalid null prim". Only unselect our path so the user's selection is preserved.
-    if copy_succeeded:
-        try:
-            sel = omni.usd.get_context().get_selection()
-            for source_type in (
-                omni.usd.Selection.SourceType.FABRIC,
-                omni.usd.Selection.SourceType.USD,
-            ):
-                sel.set_prim_path_selected(target_prim_path, False, False, False, True, source_type)
-        except Exception:
-            pass
+    if prim_path_source:
+        space_stack.append(SpatialSource.new_prim_path_source(prim_path_source))
 
     space_stack.extend(
         [

@@ -6,20 +6,27 @@
 from __future__ import annotations
 
 import math
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 import torch
+import warp as wp
 
 newton = pytest.importorskip("newton")
 
 from isaaclab_newton.assets.mpm_object import MPMObject, MPMObjectCfg
-from isaaclab_newton.assets.mpm_object.mpm_object import MPMObjectRegistryEntry, add_mpm_entry_to_builder
-from isaaclab_newton.physics import MPMSolverCfg, NewtonCfg, NewtonMPMManager
+from isaaclab_newton.assets.mpm_object.mpm_object import MPMObjectRegistryEntry, _planned_worlds
+from isaaclab_newton.physics import MPMSolverCfg
+from isaaclab_newton.sim.schemas import NewtonDeformableBodyPropertiesCfg
+from isaaclab_newton.sim.spawners.materials import NewtonSurfaceDeformableBodyMaterialCfg
 from isaaclab_newton.sim.spawners.mpm import MPMGridCfg, MPMParticleMaterialCfg, MPMPointsCfg
 
-from isaaclab.assets import RigidObjectCfg
-from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
+import isaaclab.sim as sim_utils
+from isaaclab import cloner
+from isaaclab.assets import DeformableObjectCfg, RigidObjectCfg
+from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.scene_data import SceneDataFormat
 from isaaclab.sim import SimulationCfg, build_simulation_context
 from isaaclab.utils.configclass import configclass
 
@@ -46,7 +53,6 @@ def test_mpm_object_cfg_resolves_asset_class():
 
 def test_mpm_grid_emission_records_constant_offsets_per_env():
     builder = newton.ModelBuilder()
-    NewtonMPMManager._register_builder_attributes(builder)
 
     cfg = MPMObjectCfg(
         prim_path="{ENV_REGEX_NS}/Sand",
@@ -61,8 +67,8 @@ def test_mpm_grid_emission_records_constant_offsets_per_env():
     )
     entry = MPMObjectRegistryEntry(cfg)
 
-    add_mpm_entry_to_builder(builder, entry, 0, [0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0])
-    add_mpm_entry_to_builder(builder, entry, 1, [1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0])
+    entry.add_to_builder(builder, 0, [0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0])
+    entry.add_to_builder(builder, 1, [1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0])
 
     assert entry.particles_per_object == 1
     assert entry.particle_offsets == [0, 1]
@@ -71,7 +77,6 @@ def test_mpm_grid_emission_records_constant_offsets_per_env():
 
 def test_mpm_points_emission_records_constant_offsets_per_env():
     builder = newton.ModelBuilder()
-    NewtonMPMManager._register_builder_attributes(builder)
 
     cfg = MPMObjectCfg(
         prim_path="{ENV_REGEX_NS}/Fluid",
@@ -85,12 +90,87 @@ def test_mpm_points_emission_records_constant_offsets_per_env():
     )
     entry = MPMObjectRegistryEntry(cfg)
 
-    add_mpm_entry_to_builder(builder, entry, 0, [0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0])
-    add_mpm_entry_to_builder(builder, entry, 1, [0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0])
+    entry.add_to_builder(builder, 0, [0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0])
+    entry.add_to_builder(builder, 1, [0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0])
 
     assert entry.particles_per_object == 3
     assert entry.particle_offsets == [0, 3]
     assert builder.particle_count == 6
+
+
+def test_mpm_worlds_follow_partial_clone_plan_rows(monkeypatch):
+    """Builder worlds use the plan's env ids and omit worlds the asset does not occupy."""
+    from isaaclab import cloner
+    from isaaclab.sim import SimulationContext
+
+    plan = cloner.ClonePlan(
+        sources=("/World/envs/env_4/Sand",),
+        destinations=("/World/envs/env_{}/Sand",),
+        clone_mask=torch.tensor(((False, True, False, True),)),
+        env_ids=torch.tensor((2, 4, 8, 9)),
+    )
+    monkeypatch.setattr(SimulationContext, "_instance", SimpleNamespace(get_clone_plan=lambda: plan))
+
+    assert _planned_worlds("/World/envs/env_[^/]+/Sand") == (1, 3)
+
+
+def test_mpm_builder_emits_only_worlds_covered_by_its_plan_rows():
+    builder = newton.ModelBuilder()
+    cfg = MPMObjectCfg(
+        prim_path="{ENV_REGEX_NS}/Fluid",
+        spawn=MPMPointsCfg(positions=((0.0, 0.0, 0.0),), mass=0.01, radius=0.02),
+    )
+    entry = MPMObjectRegistryEntry(
+        cfg,
+        planned_worlds=(1, 3),
+    )
+
+    for world in range(4):
+        entry.add_to_builder(builder, world, [float(world), 0.0, 0.0], [0.0, 0.0, 0.0, 1.0])
+
+    assert entry.particle_offsets == [0, 1]
+    assert entry.particles_per_object == 1
+    assert builder.particle_count == 2
+
+
+def test_mixed_deformable_mpm_builder_follows_direct_cfg_plan_order():
+    """Reversed asset construction still produces the direct cfg's zero-copy point order."""
+
+    @configclass
+    class DirectCfg:
+        num_envs: int = 2
+        env_spacing: float = 0.5
+        cloth: DeformableObjectCfg = DeformableObjectCfg(
+            prim_path="{ENV_REGEX_NS}/Cloth",
+            spawn=sim_utils.MeshRectangleCfg(
+                size=(0.1, 0.1),
+                resolution=(2, 2),
+                deformable_props=NewtonDeformableBodyPropertiesCfg(),
+                physics_material=NewtonSurfaceDeformableBodyMaterialCfg(density=0.02, particle_radius=0.005),
+            ),
+        )
+        media: MPMObjectCfg = MPMObjectCfg(
+            prim_path="{ENV_REGEX_NS}/Sand",
+            spawn=MPMPointsCfg(positions=((0.0, 0.0, 0.0),), mass=0.01, radius=0.02),
+        )
+
+    cfg = DirectCfg()
+    sim_cfg = SimulationCfg(physics=MPMSolverCfg(max_iterations=2), device="cuda:0")
+    with build_simulation_context(sim_cfg=sim_cfg) as sim:
+        with cloner.ReplicateSession((cfg.cloth, cfg.media), cfg.num_envs, cfg.env_spacing):
+            media = cfg.media.class_type(cfg.media)
+            cloth = cfg.cloth.class_type(cfg.cloth)
+
+        layout = sim.get_clone_plan()
+        bindings = {binding.path: (binding.source_offset, binding.source_count) for binding in layout.point_bindings()}
+        cloth_layouts = tuple(entry for entry in layout.deformables if "/Cloth" in entry.root_path)
+        media_layouts = tuple(entry for entry in layout.point_clouds if "/Sand" in entry.path)
+
+        assert [bindings[entry.vis_mesh_path][0] for entry in cloth_layouts] == cloth._registry_entry.particle_offsets
+        assert [bindings[entry.path][0] for entry in media_layouts] == media._registry_entry.particle_offsets
+        assert sim._physics_manager._newton._builder.particle_count == sum(
+            binding.source_count for binding in layout.point_bindings()
+        )
 
 
 def test_mpm_object_initializes_from_interactive_scene():
@@ -111,18 +191,22 @@ def test_mpm_object_initializes_from_interactive_scene():
         dt=1.0 / 120.0,
         device="cuda:0",
         gravity=(0.0, 0.0, -9.81),
-        physics=NewtonCfg(solver_cfg=MPMSolverCfg(max_iterations=2, voxel_size=0.05), use_cuda_graph=False),
+        physics=MPMSolverCfg(max_iterations=2, voxel_size=0.05, use_cuda_graph=False),
     )
 
+    scene_cfg = MPMSceneCfg(num_envs=2, env_spacing=1.0)
     with build_simulation_context(sim_cfg=sim_cfg) as sim:
-        scene = InteractiveScene(MPMSceneCfg(num_envs=2, env_spacing=1.0))
+        scene = scene_cfg.class_type(scene_cfg)
         sim.reset()
 
         media = scene["media"]
         assert media.num_instances == 2
         assert media.particles_per_object == 1
         assert media.data.particle_pos_w.torch.shape == (2, 1, 3)
-        assert not NewtonMPMManager._particle_visual_prims
+        assert {binding.path for binding in sim.get_clone_plan().point_bindings()} == {
+            "/World/envs/env_0/Sand",
+            "/World/envs/env_1/Sand",
+        }
 
         default_state = media.data.default_particle_state_w.torch.clone()
         shifted_state = default_state[0:1].clone()
@@ -165,11 +249,12 @@ def test_mpm_solver_refreshes_kinematic_rigid_body_transforms():
         dt=1.0 / 60.0,
         device="cuda:0",
         gravity=(0.0, 0.0, -9.81),
-        physics=NewtonCfg(solver_cfg=MPMSolverCfg(max_iterations=2, voxel_size=0.05), use_cuda_graph=False),
+        physics=MPMSolverCfg(max_iterations=2, voxel_size=0.05, use_cuda_graph=False),
     )
 
+    scene_cfg = MPMSceneCfg(num_envs=1, env_spacing=0.0)
     with build_simulation_context(sim_cfg=sim_cfg) as sim:
-        scene = InteractiveScene(MPMSceneCfg(num_envs=1, env_spacing=0.0))
+        scene = scene_cfg.class_type(scene_cfg)
         sim.reset()
 
         collider = scene["collider"]
@@ -182,14 +267,15 @@ def test_mpm_solver_refreshes_kinematic_rigid_body_transforms():
         collider.write_root_link_pose_to_sim_index(root_pose=root_pose)
         sim.step(render=False)
 
-        body_labels = list(NewtonMPMManager.get_model().body_label)
+        manager = sim._physics_manager
+        body_labels = list(manager.get_model().body_label)
         body_idx = body_labels.index("/World/envs/env_0/KinematicBox")
-        body_q = NewtonMPMManager.get_state_0().body_q.numpy()[body_idx]
+        body_q = manager.get_state_0().body_q.numpy()[body_idx]
 
         np.testing.assert_allclose(body_q, root_pose.detach().cpu().numpy()[0], rtol=1.0e-5, atol=1.0e-6)
 
 
-def test_mpm_object_creates_usd_points_without_kit_visualizer(monkeypatch):
+def test_mpm_object_binds_plan_owned_points_without_a_visualizer():
     @configclass
     class MPMSceneCfg(InteractiveSceneCfg):
         media = MPMObjectCfg(
@@ -206,40 +292,39 @@ def test_mpm_object_creates_usd_points_without_kit_visualizer(monkeypatch):
         dt=1.0 / 120.0,
         device="cuda:0",
         gravity=(0.0, 0.0, -9.81),
-        physics=NewtonCfg(solver_cfg=MPMSolverCfg(max_iterations=2, voxel_size=0.05), use_cuda_graph=False),
+        physics=MPMSolverCfg(max_iterations=2, voxel_size=0.05, use_cuda_graph=False),
     )
 
+    scene_cfg = MPMSceneCfg(num_envs=2, env_spacing=1.0)
     with build_simulation_context(sim_cfg=sim_cfg) as sim:
-        monkeypatch.setattr(sim, "resolve_visualizer_types", lambda: ["newton"])
-        scene = InteractiveScene(MPMSceneCfg(num_envs=2, env_spacing=1.0))
+        scene = scene_cfg.class_type(scene_cfg)
 
         from pxr import UsdGeom  # noqa: PLC0415
 
+        assert {binding.path for binding in sim.get_clone_plan().point_bindings()} == {
+            "/World/envs/env_0/Sand",
+            "/World/envs/env_1/Sand",
+        }
+        source_points = UsdGeom.Points(scene.stage.GetPrimAtPath("/World/envs/env_0/Sand"))
+        assert source_points
+        assert len(source_points.GetPointsAttr().Get()) == 8
         sim.reset()
 
         media = scene["media"]
-        records = NewtonMPMManager._particle_visual_prims
-        assert len(records) == media.num_instances
+        manager = sim._physics_manager
+        provider = sim.get_scene_data_provider()
+        assert provider.request_points(SceneDataFormat.Points).points is manager.get_state_0().particle_q
+        bindings = {
+            binding.path: (binding.source_offset, binding.source_count)
+            for binding in sim.get_clone_plan().point_bindings()
+        }
 
-        expected_paths = [f"/World/envs/env_{env_idx}/Sand/Particles" for env_idx in range(media.num_instances)]
-        assert list(records) == expected_paths
-
-        for env_idx, prim_path in enumerate(expected_paths):
-            record = records[prim_path]
-            assert record.offset == media._recorded_particle_offsets[env_idx]
-            assert record.count == media.particles_per_object
-            assert record.sync_frequency == 1
-
-            points_prim = media.stage.GetPrimAtPath(prim_path)
-            assert points_prim.IsValid()
-            points = UsdGeom.Points(points_prim)
-            assert points.GetResetXformStack()
-            assert len(points.GetPointsAttr().Get()) == media.particles_per_object
-            assert len(points.GetWidthsAttr().Get()) == media.particles_per_object
-            assert tuple(points.GetDisplayColorAttr().Get()[0]) == pytest.approx((0.1, 0.2, 0.3))
+        for env_idx, offset in enumerate(media._recorded_particle_offsets):
+            prim_path = f"/World/envs/env_{env_idx}/Sand"
+            assert bindings[prim_path] == (offset, media.particles_per_object)
 
 
-def test_mpm_usd_points_follow_particle_state(monkeypatch):
+def test_mpm_point_publication_follows_particle_state():
     @configclass
     class MPMSceneCfg(InteractiveSceneCfg):
         media = MPMObjectCfg(
@@ -256,28 +341,33 @@ def test_mpm_usd_points_follow_particle_state(monkeypatch):
         dt=1.0 / 60.0,
         device="cuda:0",
         gravity=(0.0, 0.0, -9.81),
-        physics=NewtonCfg(solver_cfg=MPMSolverCfg(max_iterations=2, voxel_size=0.05), use_cuda_graph=False),
+        physics=MPMSolverCfg(max_iterations=2, voxel_size=0.05, use_cuda_graph=False),
     )
 
+    scene_cfg = MPMSceneCfg(num_envs=1, env_spacing=0.0)
     with build_simulation_context(sim_cfg=sim_cfg) as sim:
-        monkeypatch.setattr(sim, "resolve_visualizer_types", lambda: ["newton"])
-        scene = InteractiveScene(MPMSceneCfg(num_envs=1, env_spacing=0.0))
+        scene = scene_cfg.class_type(scene_cfg)
         sim.reset()
 
-        from pxr import UsdGeom  # noqa: PLC0415
-
         media = scene["media"]
-        prim_path = next(iter(NewtonMPMManager._particle_visual_prims))
-        points = UsdGeom.Points(media.stage.GetPrimAtPath(prim_path))
-        points_before = np.asarray(points.GetPointsAttr().Get(), dtype=np.float32)
+        manager = sim._physics_manager
+        provider = sim.get_scene_data_provider()
+        binding = sim.get_clone_plan().point_bindings()[0]
+        offset, count = binding.source_offset, binding.source_count
+        published = provider.request_points(SceneDataFormat.Points)
+        assert published.points is manager.get_state_0().particle_q
+        generation_before = provider.point_generation()
+        points_before = wp.to_torch(published.points)[offset : offset + count].clone()
 
         for _ in range(3):
             sim.step(render=False)
             scene.update(sim.get_physics_dt())
-            sim.render()
 
-        points_after = np.asarray(points.GetPointsAttr().Get(), dtype=np.float32)
-        particle_pos = media.data.particle_pos_w.torch.detach().cpu().numpy()[0]
+        published_after = provider.request_points(SceneDataFormat.Points)
+        assert published_after is published
+        assert provider.point_generation() > generation_before
+        points_after = wp.to_torch(published_after.points)[offset : offset + count]
+        particle_pos = media.data.particle_pos_w.torch[0]
 
-        assert np.max(np.abs(points_after - points_before)) > 0.0
-        np.testing.assert_allclose(points_after, particle_pos, rtol=1.0e-5, atol=1.0e-6)
+        assert torch.max(torch.abs(points_after - points_before)) > 0.0
+        torch.testing.assert_close(points_after, particle_pos, rtol=1.0e-5, atol=1.0e-6)

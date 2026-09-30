@@ -9,16 +9,17 @@ These tests verify the REPLACE-only preset system without depending on
 external environment configurations.
 """
 
-import warnings
+import ast
+from pathlib import Path
 
 import pytest
 
 from isaaclab.utils.configclass import configclass
+from isaaclab.utils.string import ResolvableString
 
 from isaaclab_tasks.utils import hydra as hydra_mod
 from isaaclab_tasks.utils.hydra import (
     PresetCfg,
-    _format_unknown_presets_error,
     apply_overrides,
     collect_presets,
     parse_overrides,
@@ -39,7 +40,7 @@ class PhysxCfg:
 
 
 @configclass
-class NewtonCfg:
+class NewtonSolverCfg:
     backend: str = "newton"
     dt: float = 0.002
     substeps: int = 4
@@ -90,7 +91,7 @@ class SampleAgentCfg:
 @configclass
 class SimBackendCfg(PresetCfg):
     default: PhysxCfg = PhysxCfg()
-    newton_mjwarp: NewtonCfg = NewtonCfg()
+    newton_mjwarp: NewtonSolverCfg = NewtonSolverCfg()
 
 
 @configclass
@@ -126,7 +127,7 @@ class RootAgentCfg(PresetCfg):
     fast: SampleAgentCfg = SampleAgentCfg(max_iterations=100, learning_rate=1e-3)
 
 
-# -- Nested PresetCfg-inside-PresetCfg (mirrors scene.base_camera pattern) --
+# -- Nested PresetCfg-inside-PresetCfg (mirrors scene.camera pattern) --
 
 
 @configclass
@@ -343,93 +344,15 @@ def test_collect_presets_class_style():
     assert "backend" in presets
     assert set(presets["backend"].keys()) == {"default", "newton_mjwarp"}
     assert isinstance(presets["backend"]["default"], PhysxCfg)
-    assert isinstance(presets["backend"]["newton_mjwarp"], NewtonCfg)
-
-
-def test_legacy_newton_attribute_alias_warns():
-    """Python access to the legacy ``newton`` preset aliases to ``newton_mjwarp`` during deprecation."""
-    cfg = SimBackendCfg()
-    with pytest.warns(FutureWarning, match="Preset 'newton' is deprecated"):
-        assert cfg.newton is cfg.newton_mjwarp
-
-
-def test_legacy_kamino_attribute_alias_warns():
-    """Python access to the legacy ``kamino`` preset aliases to ``newton_kamino`` during deprecation."""
-
-    @configclass
-    class _SolverPresetsCfg(PresetCfg):
-        default: PhysxCfg = PhysxCfg()
-        newton_kamino: NewtonCfg = NewtonCfg()
-
-    cfg = _SolverPresetsCfg()
-    with pytest.warns(FutureWarning, match="Preset 'kamino' is deprecated"):
-        assert cfg.kamino is cfg.newton_kamino
-
-
-@pytest.mark.parametrize(
-    "legacy_name,canonical_name",
-    [
-        ("ovrtx_renderer", "ovrtx"),
-        ("isaacsim_rtx_renderer", "isaacsim_rtx"),
-    ],
-)
-def test_legacy_renderer_suffix_attribute_alias_warns(legacy_name, canonical_name):
-    """The suffixed renderer preset names alias to their ``_renderer``-less fields during deprecation."""
-
-    @configclass
-    class _RendererPresetsCfg(PresetCfg):
-        default: PhysxCfg = PhysxCfg()
-        ovrtx: PhysxCfg = PhysxCfg()
-        isaacsim_rtx: PhysxCfg = PhysxCfg()
-
-    cfg = _RendererPresetsCfg()
-    with pytest.warns(FutureWarning, match=f"Preset '{legacy_name}' is deprecated"):
-        assert getattr(cfg, legacy_name) is getattr(cfg, canonical_name)
-
-
-def test_legacy_alias_suppressed_when_legacy_name_is_real_field():
-    """An env that legitimately defines ``newton`` should not warn or be remapped."""
-
-    @configclass
-    class _ShadowingCfg(PresetCfg):
-        default: PhysxCfg = PhysxCfg()
-        newton: PhysxCfg = PhysxCfg()
-        newton_mjwarp: NewtonCfg = NewtonCfg()
-
-    cfg = _ShadowingCfg()
-    with warnings.catch_warnings():
-        warnings.simplefilter("error", FutureWarning)
-        assert cfg.newton is not cfg.newton_mjwarp
-        assert isinstance(cfg.newton, PhysxCfg)
+    assert isinstance(presets["backend"]["newton_mjwarp"], NewtonSolverCfg)
 
 
 def test_presetcfg_attribute_error_for_unknown_attribute():
-    """Plain missing attributes should raise ``AttributeError`` (not warn or alias)."""
+    """Missing preset attributes should raise ``AttributeError``."""
     cfg = SimBackendCfg()
     assert not hasattr(cfg, "completely_unknown")
     with pytest.raises(AttributeError, match="completely_unknown"):
         _ = cfg.completely_unknown
-
-
-def test_format_unknown_presets_error_calls_out_legacy_aliases():
-    """The unknown-preset error should explicitly mention the rename for legacy aliases."""
-    msg = _format_unknown_presets_error({"newton", "typo"}, {"fast": ["env"]})
-    assert "newton' was renamed to 'newton_mjwarp'" in msg
-    assert "typo" in msg
-
-
-def test_user_stacklevel_warning_origin_is_outside_hydra_module():
-    """``_normalize_preset_name`` warnings should not be attributed to hydra.py itself."""
-    presets_arg = {"env": {"backend": {"default": None, "newton_mjwarp": None}}, "agent": {}}
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always", FutureWarning)
-        parse_overrides(["presets=newton"], presets_arg)
-    deprecations = [w for w in caught if issubclass(w.category, FutureWarning)]
-    assert deprecations, "expected a FutureWarning from the legacy alias"
-    assert deprecations[0].filename != hydra_mod.__file__, (
-        f"warning was attributed to hydra.py ({deprecations[0].filename}); _user_stacklevel should "
-        f"point outside the module"
-    )
 
 
 def test_collect_presets_root_level():
@@ -490,7 +413,7 @@ def test_presetcfg_cli_selection(class_presets):
     env_cfg, agent_cfg, presets = class_presets
     hydra_cfg = {"env": env_cfg.to_dict(), "agent": agent_cfg.to_dict()}
     apply_overrides(env_cfg, agent_cfg, hydra_cfg, [], [("env", "backend", "newton_mjwarp")], [], presets)
-    assert isinstance(env_cfg.backend, NewtonCfg)
+    assert isinstance(env_cfg.backend, NewtonSolverCfg)
     assert env_cfg.backend.dt == 0.002
 
 
@@ -508,7 +431,7 @@ def test_presetcfg_path_selection_others_default(class_presets):
     env_cfg, agent_cfg, presets = class_presets
     hydra_cfg = {"env": env_cfg.to_dict(), "agent": agent_cfg.to_dict()}
     apply_overrides(env_cfg, agent_cfg, hydra_cfg, [], [("env", "backend", "newton_mjwarp")], [], presets)
-    assert isinstance(env_cfg.backend, NewtonCfg)
+    assert isinstance(env_cfg.backend, NewtonSolverCfg)
     assert isinstance(env_cfg.observations, NoiselessObservationsCfg)
     assert isinstance(agent_cfg.policy, SmallPolicyCfg)
 
@@ -871,32 +794,6 @@ def test_go2_rough_newton_mjwarp_armature_preset():
     assert env_cfg.scene.robot.actuators["base_legs"].armature == 0.0
 
 
-def test_go2_rough_legacy_newton_alias_resolves_to_newton_mjwarp():
-    """Real-config alias path: ``presets=newton`` against an actual env cfg resolves to newton_mjwarp."""
-    from isaaclab_tasks.core.velocity.config.go2.rough_env_cfg import UnitreeGo2RoughEnvCfg
-
-    with pytest.warns(FutureWarning, match="Preset 'newton' is deprecated"):
-        env_cfg, _ = _apply(UnitreeGo2RoughEnvCfg(), global_presets=["newton"])
-    assert env_cfg.scene.robot.actuators["base_legs"].armature == 0.02
-
-
-def test_velocity_events_newton_mjwarp_keeps_base_com_randomization():
-    """MJWarp velocity configs should retain base center-of-mass randomization."""
-    from isaaclab_tasks.core.velocity import mdp
-    from isaaclab_tasks.core.velocity.velocity_env_cfg import EventsCfg
-
-    events = resolve_presets(EventsCfg(), {"newton_mjwarp"})
-
-    assert events.base_com is not None
-    assert events.base_com.func is mdp.randomize_rigid_body_com
-    assert events.base_com.mode == "startup"
-    assert events.base_com.params["com_range"] == {
-        "x": (-0.05, 0.05),
-        "y": (-0.05, 0.05),
-        "z": (-0.01, 0.01),
-    }
-
-
 # =============================================================================
 # Tests: PresetCfg inside deeply nested dicts (e.g., event term params)
 # =============================================================================
@@ -1197,16 +1094,15 @@ def test_apply_overrides_conflicting_globals_raises():
 def test_apply_overrides_aliased_globals_no_conflict():
     """Two global presets resolving to equal values do not raise.
 
-    Mirrors the Lift ObjectCfg pattern where ``newton_mjwarp = cube`` creates
-    separate but equal dataclass instances after @configclass processing.
+    Mirrors the Lift ObjectCfg pattern where ``newton_mjwarp = cube`` names
+    the same declarative alternative.
     """
 
     @configclass
     class SharedCfg:
         value: int = 42
 
-    cube_val = SharedCfg()
-    mjwarp_val = SharedCfg()
+    cube_val = mjwarp_val = SharedCfg()
 
     @configclass
     class AliasedPresetCfg(PresetCfg):
@@ -1221,11 +1117,75 @@ def test_apply_overrides_aliased_globals_no_conflict():
     env_cfg = AliasedEnvCfg()
     agent_cfg = PresetCfgAgentCfg()
     presets = {"env": collect_presets(env_cfg), "agent": collect_presets(agent_cfg)}
-    assert presets["env"]["mode"]["cube"] is not presets["env"]["mode"]["newton_mjwarp"]
-    assert presets["env"]["mode"]["cube"] == presets["env"]["mode"]["newton_mjwarp"]
+    assert presets["env"]["mode"]["cube"] is presets["env"]["mode"]["newton_mjwarp"]
     hydra_cfg = {"env": env_cfg.to_dict(), "agent": agent_cfg.to_dict()}
     apply_overrides(env_cfg, agent_cfg, hydra_cfg, ["cube", "newton_mjwarp"], [], [], presets)
     assert env_cfg.mode == SharedCfg()
+
+
+def test_preset_choices_copy_and_wrap_only_the_selected_branch():
+    """Raw choice graphs stay shared while each resolved branch is isolated."""
+
+    class CountedCopy:
+        count = 0
+
+        def __deepcopy__(self, memo):
+            CountedCopy.count += 1
+            return CountedCopy()
+
+    @configclass
+    class BranchCfg:
+        payload: CountedCopy = CountedCopy()
+        class_type: type | str = "builtins:list"
+
+    selected = BranchCfg()
+    inactive = BranchCfg()
+    selected.class_type = inactive.class_type = "builtins:dict"
+
+    @configclass
+    class ChoiceCfg(PresetCfg):
+        default: BranchCfg = selected
+        unused: BranchCfg = inactive
+
+    @configclass
+    class EnvCfg:
+        choices: dict[str, ChoiceCfg] = {"mode": ChoiceCfg()}
+
+    CountedCopy.count = 0
+    raw_a, raw_b = EnvCfg(), EnvCfg()
+
+    assert raw_a.choices["mode"] is raw_b.choices["mode"]
+    assert CountedCopy.count == 0
+    assert type(inactive.class_type) is str
+
+    resolved_a = resolve_presets(raw_a)
+    resolved_b = resolve_presets(raw_b)
+
+    assert CountedCopy.count == 2
+    assert resolved_a.choices["mode"] is not resolved_b.choices["mode"]
+    assert resolved_a.choices["mode"].payload is not selected.payload
+    assert isinstance(resolved_a.choices["mode"].class_type, ResolvableString)
+    assert type(inactive.class_type) is str
+
+
+def test_preset_cfgs_are_data_only():
+    """Preset choices must not hide construction or mutation in methods."""
+    task_source = Path(hydra_mod.__file__).parents[1]
+    offenders = []
+    for path in task_source.rglob("*.py"):
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            bases = {base.id if isinstance(base, ast.Name) else getattr(base, "attr", "") for base in node.bases}
+            if "PresetCfg" in bases:
+                offenders.extend(
+                    f"{path.relative_to(task_source)}:{child.lineno}"
+                    for child in node.body
+                    if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+                )
+
+    assert offenders == []
 
 
 # =============================================================================
@@ -1238,54 +1198,6 @@ def test_parse_overrides_multiple_global_presets():
     presets = {"env": {"backend": {"default": None, "newton_mjwarp": None}}, "agent": {}}
     global_p, _, _, _ = parse_overrides(["presets=fast,newton_mjwarp,debug"], presets)
     assert global_p == ["fast", "newton_mjwarp", "debug"]
-
-
-def test_parse_overrides_maps_legacy_newton_preset_to_newton_mjwarp():
-    """Legacy ``newton`` preset selections resolve to ``newton_mjwarp`` when available."""
-    presets = {"env": {"backend": {"default": None, "newton_mjwarp": None}}, "agent": {}}
-    legacy_name = "newton"
-
-    global_p, sel, _, _ = parse_overrides(["presets=fast," + legacy_name, f"env.backend={legacy_name}"], presets)
-
-    assert global_p == ["fast", "newton_mjwarp"]
-    assert sel == [("env", "backend", "newton_mjwarp")]
-
-
-def test_parse_overrides_maps_legacy_kamino_preset_to_newton_kamino():
-    """Legacy ``kamino`` preset selections resolve to ``newton_kamino`` when available."""
-    presets = {"env": {"solver": {"default": None, "newton_kamino": None}}, "agent": {}}
-    legacy_name = "kamino"
-
-    global_p, sel, _, _ = parse_overrides(["presets=" + legacy_name, f"env.solver={legacy_name}"], presets)
-
-    assert global_p == ["newton_kamino"]
-    assert sel == [("env", "solver", "newton_kamino")]
-
-
-def test_apply_overrides_resolves_legacy_alias_in_global_and_path_selection(class_presets):
-    """``apply_overrides`` resolves legacy names supplied directly (bypassing ``parse_overrides``)."""
-    env_cfg, agent_cfg, presets = class_presets
-    hydra_cfg = {"env": env_cfg.to_dict(), "agent": agent_cfg.to_dict()}
-    with pytest.warns(FutureWarning, match="Preset 'newton' is deprecated"):
-        apply_overrides(
-            env_cfg,
-            agent_cfg,
-            hydra_cfg,
-            global_presets=["newton"],
-            preset_sel=[("env", "backend", "newton")],
-            preset_scalar=[],
-            presets=presets,
-        )
-    assert isinstance(env_cfg.backend, NewtonCfg)
-
-
-def test_apply_overrides_legacy_and_current_alias_do_not_conflict(class_presets):
-    """``presets=newton,newton_mjwarp`` (legacy + current) resolves to one preset, not a conflict."""
-    env_cfg, agent_cfg, presets = class_presets
-    hydra_cfg = {"env": env_cfg.to_dict(), "agent": agent_cfg.to_dict()}
-    with pytest.warns(FutureWarning, match="Preset 'newton' is deprecated"):
-        apply_overrides(env_cfg, agent_cfg, hydra_cfg, ["newton", "newton_mjwarp"], [], [], presets)
-    assert isinstance(env_cfg.backend, NewtonCfg)
 
 
 def test_parse_overrides_no_equals_treated_as_global_scalar():
@@ -1352,19 +1264,19 @@ def test_scalar_override_within_preset_path(class_presets):
         [("env.backend.dt", "0.001")],
         presets,
     )
-    assert isinstance(env_cfg.backend, NewtonCfg)
+    assert isinstance(env_cfg.backend, NewtonSolverCfg)
     assert env_cfg.backend.dt == 0.001
     assert env_cfg.backend.substeps == 4
 
 
 def test_scalar_override_kamino_solver_config():
     """Concrete Kamino solver fields can be overridden through Hydra scalar paths."""
-    from isaaclab_newton.physics import KaminoPADMMSolverCfg, NewtonCfg
+    from isaaclab_newton.physics import KaminoPADMMSolverCfg, MJWarpSolverCfg, NewtonSolverCfg
 
     @configclass
     class KaminoPhysicsPreset(PresetCfg):
-        default: NewtonCfg = NewtonCfg()
-        newton_kamino: NewtonCfg = NewtonCfg(solver_cfg=KaminoPADMMSolverCfg(sparse_jacobian=True))
+        default: NewtonSolverCfg = MJWarpSolverCfg()
+        newton_kamino: NewtonSolverCfg = KaminoPADMMSolverCfg(sparse_jacobian=True)
 
     @configclass
     class KaminoEnvCfg:
@@ -1380,11 +1292,11 @@ def test_scalar_override_kamino_solver_config():
         hydra_cfg,
         ["newton_kamino"],
         [],
-        [("env.physics.solver_cfg.dynamics_solver_cfg.max_iterations", "25")],
+        [("env.physics.dynamics_solver_cfg.max_iterations", "25")],
         presets,
     )
-    assert isinstance(env_cfg.physics.solver_cfg, KaminoPADMMSolverCfg)
-    assert env_cfg.physics.solver_cfg.dynamics_solver_cfg.max_iterations == 25
+    assert isinstance(env_cfg.physics, KaminoPADMMSolverCfg)
+    assert env_cfg.physics.dynamics_solver_cfg.max_iterations == 25
 
 
 # =============================================================================
@@ -1494,10 +1406,12 @@ def test_resolve_presets_errors_on_cyclic_preset_at_root():
 
 
 # =============================================================================
-# Tests: typed-selector validation (physics=/renderer= must hit their type)
+# Tests: typed-selector validation (each selector must hit its type)
 # =============================================================================
 
 from isaaclab.physics import PhysicsCfg as _RealPhysicsCfg  # noqa: E402
+from isaaclab.renderers.renderer_cfg import RendererCfg as _RealRendererCfg  # noqa: E402
+from isaaclab.visualizers.visualizer_cfg import VisualizerCfg as _RealVisualizerCfg  # noqa: E402
 
 from isaaclab_tasks.utils.preset_target import PresetTarget  # noqa: E402
 
@@ -1512,6 +1426,18 @@ class _NewtonPhysicsCfg(_RealPhysicsCfg):
 @configclass
 class _PhysxPhysicsCfg(_RealPhysicsCfg):
     dt: float = 0.005
+
+
+@configclass
+class _TestVisualizerCfg(_RealVisualizerCfg):
+    class_type: str = "mock"
+    visualizer_type: str = "test"
+
+
+@configclass
+class _TestRendererCfg(_RealRendererCfg):
+    class_type: str = "mock"
+    renderer_type: str = "test"
 
 
 def test_validate_typed_presets_passes_when_selector_hits_its_type():
@@ -1555,6 +1481,235 @@ def test_resolve_active_presets_records_physics_hit_for_selector():
     hydra_mod._validate_typed_presets({PresetTarget.PHYSICS: {"newton_mjwarp"}}, typed_hits)
 
 
+def test_register_task_resolves_typed_visualizer_selector(monkeypatch):
+    """``visualizer=rerun`` replaces a VisualizerCfg preset and validates its type."""
+    import sys
+
+    import isaaclab_tasks.utils.parse_cfg as parse_cfg
+
+    @configclass
+    class VisualizerPresetCfg(PresetCfg):
+        default: _TestVisualizerCfg = _TestVisualizerCfg(visualizer_type="kit")
+        rerun: _TestVisualizerCfg = _TestVisualizerCfg(visualizer_type="rerun")
+
+    @configclass
+    class EnvWithVisualizerCfg:
+        visualizer: VisualizerPresetCfg = VisualizerPresetCfg()
+
+    monkeypatch.setattr(parse_cfg, "load_cfg_from_registry", lambda *_args: EnvWithVisualizerCfg())
+    monkeypatch.setattr(sys, "argv", ["train.py", "visualizer=rerun"])
+
+    env_cfg, _, hydra_args = hydra_mod.register_task("Typed-Visualizer-Test", "")
+
+    assert isinstance(env_cfg.visualizer, _TestVisualizerCfg)
+    assert env_cfg.visualizer.visualizer_type == "rerun"
+    assert hydra_args == []
+
+
+def test_resolve_config_applies_all_selectors_and_dotted_scalar():
+    """The public root resolver handles every selector and scalar in one pass."""
+    from isaaclab_tasks.utils import resolve_config
+
+    @configclass
+    class PhysicsPresetCfg(PresetCfg):
+        default: _PhysxPhysicsCfg = _PhysxPhysicsCfg()
+        newton_mjwarp: _NewtonPhysicsCfg = _NewtonPhysicsCfg()
+
+    @configclass
+    class RendererPresetCfg(PresetCfg):
+        default: _TestRendererCfg = _TestRendererCfg(renderer_type="isaacsim_rtx")
+        newton_renderer: _TestRendererCfg = _TestRendererCfg(renderer_type="newton")
+
+    @configclass
+    class VisualizerPresetCfg(PresetCfg):
+        default: _TestVisualizerCfg = _TestVisualizerCfg(visualizer_type="kit")
+        rerun: _TestVisualizerCfg = _TestVisualizerCfg(visualizer_type="rerun")
+
+    @configclass
+    class ModePresetCfg(PresetCfg):
+        default: SampleEnvCfg = SampleEnvCfg()
+        fast: SampleEnvCfg = SampleEnvCfg(decimation=2)
+
+    @configclass
+    class RootCfg:
+        physics: PhysicsPresetCfg = PhysicsPresetCfg()
+        renderer: RendererPresetCfg = RendererPresetCfg()
+        visualizer: VisualizerPresetCfg = VisualizerPresetCfg()
+        mode: ModePresetCfg = ModePresetCfg()
+
+    cfg = resolve_config(
+        RootCfg(),
+        [
+            "physics=newton_mjwarp",
+            "renderer=newton_renderer",
+            "visualizer=rerun",
+            "presets=fast",
+            "mode.sim_dt=0.001",
+        ],
+    )
+
+    assert isinstance(cfg.physics, _NewtonPhysicsCfg)
+    assert cfg.renderer.renderer_type == "newton"
+    assert cfg.visualizer.visualizer_type == "rerun"
+    assert cfg.mode.decimation == 2
+    assert cfg.mode.sim_dt == 0.001
+
+
+def test_resolve_config_dotted_literal_replaces_a_preset_node():
+    """A literal empty list disables configured visualizers without inventing a null preset."""
+    from isaaclab_tasks.utils import resolve_config
+
+    @configclass
+    class VisualizerPresetCfg(PresetCfg):
+        default: _TestVisualizerCfg = _TestVisualizerCfg(visualizer_type="kit")
+        rerun: _TestVisualizerCfg = _TestVisualizerCfg(visualizer_type="rerun")
+
+    @configclass
+    class SimCfg:
+        visualizer_cfgs: VisualizerPresetCfg = VisualizerPresetCfg()
+
+    @configclass
+    class RootCfg:
+        sim: SimCfg = SimCfg()
+
+    cfg = resolve_config(RootCfg(), ["sim.visualizer_cfgs=[]"])
+
+    assert cfg.sim.visualizer_cfgs == []
+
+
+def test_validate_typed_visualizer_raises_when_name_only_hits_another_type():
+    """A visualizer selector cannot be satisfied by an unrelated preset with the same name."""
+    with pytest.raises(ValueError, match="visualizer=rerun"):
+        hydra_mod._validate_typed_presets(
+            {PresetTarget.VISUALIZER: {"rerun"}},
+            typed_hits={"rerun": {PresetTarget.PHYSICS}},
+        )
+
+
+@pytest.mark.parametrize(
+    ("args", "expected_type", "expected_name"),
+    [
+        ([], list, None),
+        (["visualizer=kit"], "KitVisualizerCfg", "kit"),
+        (["visualizer=newton_gl"], "NewtonGLVisualizerCfg", "newton_gl"),
+        (["visualizer=newton_rtx"], "NewtonRTXVisualizerCfg", "newton_rtx"),
+        (["visualizer=rerun"], "RerunVisualizerCfg", "rerun"),
+        (["visualizer=viser"], "ViserVisualizerCfg", "viser"),
+        (["--visualizer=newton_gl"], "NewtonGLVisualizerCfg", "newton_gl"),
+    ],
+)
+def test_multi_backend_visualizer_selector(args: list[str], expected_type: type | str, expected_name: str | None):
+    """The canonical task simulation config defaults empty and exposes every typed visualizer."""
+    from isaaclab_tasks.utils.presets import MultiBackendSimulationCfg
+
+    visualizer_cfgs = hydra_mod.resolve_config(MultiBackendSimulationCfg(), args).visualizer_cfgs
+
+    assert type(visualizer_cfgs) is expected_type or type(visualizer_cfgs).__name__ == expected_type
+    assert expected_name is None or visualizer_cfgs.visualizer_type == expected_name
+    if expected_name == "newton_rtx":
+        assert visualizer_cfgs.streaming_camera == "{ENV_REGEX_NS}/Camera"
+
+
+def test_newton_rtx_broadcast_selects_its_camera_and_independent_renderer():
+    """One visualizer name activates the planned camera while renderer remains independently typed."""
+    from isaaclab_tasks.utils.presets import MultiBackendSceneCfg, MultiBackendSimulationCfg
+
+    @configclass
+    class RootCfg:
+        sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg()
+        scene: MultiBackendSceneCfg = MultiBackendSceneCfg(num_envs=2, env_spacing=1.0)
+
+    assert hydra_mod.resolve_config(RootCfg(), []).scene.camera is None
+    cfg = hydra_mod.resolve_config(RootCfg(), ["visualizer=newton_rtx", "renderer=ovrtx"])
+
+    assert cfg.sim.visualizer_cfgs.visualizer_type == "newton_rtx"
+    assert cfg.scene.camera.prim_path == cfg.sim.visualizer_cfgs.streaming_camera
+    assert cfg.scene.camera.renderer_cfg.renderer_type == "ovrtx"
+    assert (cfg.scene.camera.width, cfg.scene.camera.height) == (64, 64)
+
+
+def test_every_registered_task_newton_rtx_camera_is_plan_owned():
+    """Every task resolves exactly one canonical scene camera for the Newton RTX visualizer."""
+    import gymnasium as gym
+
+    from isaaclab.sensors import CameraCfg
+
+    import isaaclab_tasks  # noqa: F401
+    from isaaclab_tasks.utils.parse_cfg import load_cfg_from_registry
+
+    failures = []
+    for task_id in sorted(spec.id for spec in gym.registry.values() if "Isaac" in spec.id):
+        cfg = hydra_mod.resolve_config(
+            load_cfg_from_registry(task_id, "env_cfg_entry_point"), ["visualizer=newton_rtx"]
+        )
+        camera_path = cfg.sim.visualizer_cfgs.streaming_camera
+        matches = [
+            name
+            for name, value in vars(cfg.scene).items()
+            if isinstance(value, CameraCfg) and value.prim_path == camera_path
+        ]
+        if matches != ["camera"]:
+            failures.append(f"{task_id}: {matches}")
+
+    assert failures == []
+
+
+def test_task_composition_roots_forbid_core_simulation_cfg_defaults():
+    """Every task root owns a simulation config whose visualizer choices come from task presets."""
+    task_source = Path(__file__).parents[2] / "isaaclab_tasks"
+    direct_env_bases = {"ManagerBasedEnvCfg", "ManagerBasedRLEnvCfg", "DirectRLEnvCfg", "DirectMARLEnvCfg"}
+    missing_sim: list[str] = []
+    forbidden_core_cfg: list[str] = []
+    forbidden_scene_roots: list[str] = []
+    root_count = 0
+
+    for path in sorted(task_source.rglob("*.py")):
+        tree = ast.parse(path.read_text(), filename=str(path))
+        relative_path = path.relative_to(task_source)
+        if path.name != "presets.py":
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and node.module in {"isaaclab.sim", "isaaclab.sim.simulation_cfg"}:
+                    if any(alias.name == "SimulationCfg" for alias in node.names):
+                        forbidden_core_cfg.append(f"{relative_path}:{node.lineno}")
+                if isinstance(node, ast.ImportFrom) and node.module == "isaaclab.scene":
+                    if any(alias.name == "InteractiveSceneCfg" for alias in node.names):
+                        forbidden_scene_roots.append(f"{relative_path}:{node.lineno}:import")
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                    if node.func.attr == "SimulationCfg":
+                        forbidden_core_cfg.append(f"{relative_path}:{node.lineno}")
+                if isinstance(node, (ast.Assign, ast.AnnAssign)):
+                    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                    if any(
+                        isinstance(target, ast.Attribute) and target.attr == "visualizer_cfgs" for target in targets
+                    ):
+                        forbidden_core_cfg.append(f"{relative_path}:{node.lineno}")
+
+        for node in tree.body:
+            if not isinstance(node, ast.ClassDef):
+                continue
+            base_names = {
+                base.id if isinstance(base, ast.Name) else base.attr if isinstance(base, ast.Attribute) else ""
+                for base in node.bases
+            }
+            if path.name != "presets.py" and "InteractiveSceneCfg" in base_names:
+                forbidden_scene_roots.append(f"{relative_path}:{node.lineno}:{node.name}")
+            if not base_names.intersection(direct_env_bases):
+                continue
+            root_count += 1
+            if not any(
+                isinstance(statement, ast.AnnAssign)
+                and isinstance(statement.target, ast.Name)
+                and statement.target.id == "sim"
+                for statement in node.body
+            ):
+                missing_sim.append(f"{relative_path}:{node.lineno}:{node.name}")
+
+    assert root_count > 0
+    assert forbidden_core_cfg == []
+    assert forbidden_scene_roots == []
+    assert missing_sim == []
+
+
 def test_resolve_active_presets_no_physics_hit_for_scalar_preset():
     """A name resolving only to a scalar records no typed hit, so a physics= selector raises."""
 
@@ -1581,13 +1736,8 @@ def test_resolve_active_presets_no_physics_hit_for_scalar_preset():
         hydra_mod._validate_typed_presets({PresetTarget.PHYSICS: {"newton_mjwarp"}}, typed_hits)
 
 
-# =============================================================================
-# Tests: play-mode overrides
-# =============================================================================
-
-
 def test_register_task_play_mode_applies_play_mode(monkeypatch):
-    """``register_task(play_mode=True)`` applies the env cfg's play-mode overrides after loading."""
+    """``register_task(play_mode=True)`` applies the environment's playback overrides."""
     import sys
 
     import gymnasium as gym

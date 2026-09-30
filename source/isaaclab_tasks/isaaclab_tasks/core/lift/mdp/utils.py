@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import logging
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING
@@ -13,17 +12,15 @@ from typing import TYPE_CHECKING
 import numpy as np
 import torch
 
-import isaaclab.sim as sim_utils
-from isaaclab import cloner
+from isaaclab.sim import SimulationContext
 
 if TYPE_CHECKING:
     import trimesh
 
     from isaaclab.envs import ManagerBasedEnv
 
-# ---- module-scope caches ----
-_PRIM_SAMPLE_CACHE: dict[tuple[str, int], np.ndarray] = {}  # (prim_hash, num_points) -> (N,3) in root frame
-_FINAL_SAMPLE_CACHE: dict[str, np.ndarray] = {}  # env_hash -> (num_points,3) in root frame
+_PRIM_SAMPLE_CACHE: dict[tuple[str, tuple[float, ...], int], np.ndarray] = {}
+_FINAL_SAMPLE_CACHE: dict[tuple[tuple[tuple[str, tuple[float, ...], int], ...], int], np.ndarray] = {}
 
 
 def clear_pointcloud_caches():
@@ -32,200 +29,69 @@ def clear_pointcloud_caches():
 
 
 def sample_object_point_cloud(num_envs: int, num_points: int, prim_path: str, device: str = "cpu") -> torch.Tensor:
-    """
-    Samples point clouds for each environment instance by collecting points
-    from all matching USD prims under `prim_path`, then downsamples to
-    exactly `num_points` per env using farthest-point sampling.
-
-    Caching is in-memory within this module:
-      - per-prim raw samples:   _PRIM_SAMPLE_CACHE[(prim_hash, num_points)]
-      - final downsampled env:  _FINAL_SAMPLE_CACHE[env_hash]
-
-    Returns:
-        torch.Tensor: Shape (num_envs, num_points, 3) on `device`.
-    """
-    import trimesh
+    """Sample each object's plan-declared geometry into ``[num_envs, num_points, 3]``."""
     from trimesh.sample import sample_surface
 
-    from pxr import UsdGeom
+    points = np.zeros((num_envs, num_points, 3), dtype=np.float32)
+    plan = _clone_plan()
+    env_ids = np.asarray(plan._env_ids_cpu)
+    for target, geometries, clone_mask in plan.match_geometry_prototypes(prim_path):
+        _body_path, geometries = _body_geometry_prototypes(target, geometries, clone_mask)
+        keys = tuple((geometry.source_path, geometry.frame.pose, num_points) for geometry in geometries)
+        samples_np = _FINAL_SAMPLE_CACHE.get((keys, num_points))
+        if samples_np is None:
+            per_geometry = []
+            for geometry, key in zip(geometries, keys, strict=True):
+                samples = _PRIM_SAMPLE_CACHE.get(key)
+                if samples is None:
+                    mesh = _geometry_mesh(geometry, geometry.frame)
+                    candidates, _ = sample_surface(mesh, num_points * 2, face_weight=mesh.area_faces)
+                    candidates = torch.from_numpy(candidates.astype(np.float32)).to(device)
+                    samples = candidates[farthest_point_sampling(candidates, num_points)].cpu().numpy()
+                    _PRIM_SAMPLE_CACHE[key] = samples
+                per_geometry.append(samples)
+            combined = torch.from_numpy(np.concatenate(per_geometry)).to(device)
+            samples = combined if len(per_geometry) == 1 else combined[farthest_point_sampling(combined, num_points)]
+            samples_np = samples.cpu().numpy()
+            _FINAL_SAMPLE_CACHE[(keys, num_points)] = samples_np
+        points[env_ids[clone_mask]] = samples_np
 
-    points = torch.zeros((num_envs, num_points, 3), dtype=torch.float32, device=device)
-    xform_cache = UsdGeom.XformCache()
-    # Obtain stage handle
-    stage = sim_utils.get_current_stage()
-
-    sample_targets: list[tuple[str, tuple[int, ...]]] = []
-    clone_plan = sim_utils.SimulationContext.instance().get_clone_plan()
-    for _, _, source_path, env_ids in cloner.query.iter_sources(clone_plan, prim_path):
-        sample_targets.append((source_path, env_ids))
-
-    for obj_path, env_ids in sample_targets:
-        # Gather prims
-        prims = sim_utils.get_all_matching_child_prims(
-            obj_path, predicate=lambda p: p.GetTypeName() in ("Mesh", "Cube", "Sphere", "Cylinder", "Capsule", "Cone")
-        )
-        if not prims:
-            raise KeyError(f"No valid prims under {obj_path}")
-
-        object_prim = stage.GetPrimAtPath(obj_path)
-        world_root = xform_cache.GetLocalToWorldTransform(object_prim)
-
-        # hash each child prim by its rel transform + geometry
-        prim_hashes = []
-        for prim in prims:
-            prim_type = prim.GetTypeName()
-            hasher = hashlib.sha256()
-
-            rel = world_root.GetInverse() * xform_cache.GetLocalToWorldTransform(prim)  # prim -> root
-            mat_np = np.array([[rel[r][c] for c in range(4)] for r in range(4)], dtype=np.float32)
-            hasher.update(mat_np.tobytes())
-
-            if prim_type == "Mesh":
-                mesh = UsdGeom.Mesh(prim)
-                verts = np.asarray(mesh.GetPointsAttr().Get(), dtype=np.float32)
-                hasher.update(verts.tobytes())
-            else:
-                if prim_type == "Cube":
-                    size = UsdGeom.Cube(prim).GetSizeAttr().Get()
-                    hasher.update(np.float32(size).tobytes())
-                elif prim_type == "Sphere":
-                    r = UsdGeom.Sphere(prim).GetRadiusAttr().Get()
-                    hasher.update(np.float32(r).tobytes())
-                elif prim_type == "Cylinder":
-                    c = UsdGeom.Cylinder(prim)
-                    hasher.update(np.float32(c.GetRadiusAttr().Get()).tobytes())
-                    hasher.update(np.float32(c.GetHeightAttr().Get()).tobytes())
-                elif prim_type == "Capsule":
-                    c = UsdGeom.Capsule(prim)
-                    hasher.update(np.float32(c.GetRadiusAttr().Get()).tobytes())
-                    hasher.update(np.float32(c.GetHeightAttr().Get()).tobytes())
-                elif prim_type == "Cone":
-                    c = UsdGeom.Cone(prim)
-                    hasher.update(np.float32(c.GetRadiusAttr().Get()).tobytes())
-                    hasher.update(np.float32(c.GetHeightAttr().Get()).tobytes())
-
-            prim_hashes.append(hasher.hexdigest())
-
-        # scale on root (default to 1 if missing)
-        attr = object_prim.GetAttribute("xformOp:scale")
-        scale_val = attr.Get() if attr else None
-        if scale_val is None:
-            base_scale = torch.ones(3, dtype=torch.float32, device=device)
-        else:
-            base_scale = torch.tensor(scale_val, dtype=torch.float32, device=device)
-
-        # env-level cache key (includes num_points)
-        env_key = "_".join(sorted(prim_hashes)) + f"_{num_points}"
-        env_hash = hashlib.sha256(env_key.encode()).hexdigest()
-
-        # load from env-level in-memory cache
-        if env_hash in _FINAL_SAMPLE_CACHE:
-            arr = _FINAL_SAMPLE_CACHE[env_hash]  # (num_points,3) in root frame
-            scaled_samples = torch.from_numpy(arr).to(device) * base_scale.unsqueeze(0)
-            for env_id in env_ids:
-                points[env_id] = scaled_samples
-            continue
-
-        # otherwise build per-prim samples (with per-prim cache)
-        all_samples_np: list[np.ndarray] = []
-        for prim, ph in zip(prims, prim_hashes):
-            key = (ph, num_points)
-            if key in _PRIM_SAMPLE_CACHE:
-                samples = _PRIM_SAMPLE_CACHE[key]
-            else:
-                prim_type = prim.GetTypeName()
-                if prim_type == "Mesh":
-                    mesh = UsdGeom.Mesh(prim)
-                    verts = np.asarray(mesh.GetPointsAttr().Get(), dtype=np.float32)
-                    faces = _triangulate_faces(prim)
-                    mesh_tm = trimesh.Trimesh(vertices=verts, faces=faces, process=False)
-                else:
-                    mesh_tm = create_primitive_mesh(prim)
-
-                face_weights = mesh_tm.area_faces
-                samples_np, _ = sample_surface(mesh_tm, num_points * 2, face_weight=face_weights)
-
-                # FPS to num_points on chosen device
-                tensor_pts = torch.from_numpy(samples_np.astype(np.float32)).to(device)
-                prim_idxs = farthest_point_sampling(tensor_pts, num_points)
-                local_pts = tensor_pts[prim_idxs]
-
-                # prim -> root transform
-                rel = xform_cache.GetLocalToWorldTransform(prim) * world_root.GetInverse()
-                mat_np = np.array([[rel[r][c] for c in range(4)] for r in range(4)], dtype=np.float32)
-                mat_t = torch.from_numpy(mat_np).to(device)
-
-                ones = torch.ones((num_points, 1), device=device)
-                pts_h = torch.cat([local_pts, ones], dim=1)
-                root_h = pts_h @ mat_t
-                samples = root_h[:, :3].detach().cpu().numpy()
-
-                if prim_type == "Cone":
-                    samples[:, 2] -= UsdGeom.Cone(prim).GetHeightAttr().Get() / 2
-
-                _PRIM_SAMPLE_CACHE[key] = samples  # cache in root frame @ num_points
-
-            all_samples_np.append(samples)
-
-        # combine & env-level FPS (if needed)
-        if len(all_samples_np) == 1:
-            samples_final = torch.from_numpy(all_samples_np[0]).to(device)
-        else:
-            combined = torch.from_numpy(np.concatenate(all_samples_np, axis=0)).to(device)
-            idxs = farthest_point_sampling(combined, num_points)
-            samples_final = combined[idxs]
-
-        # store env-level cache in root frame (CPU)
-        _FINAL_SAMPLE_CACHE[env_hash] = samples_final.detach().cpu().numpy()
-
-        # apply root scale and write out
-        scaled_samples = samples_final * base_scale.unsqueeze(0)
-        for env_id in env_ids:
-            points[env_id] = scaled_samples
-
-    return points
+    return torch.from_numpy(points).to(device)
 
 
-def _triangulate_faces(prim) -> np.ndarray:
-    """Convert a USD Mesh prim into triangulated face indices (N, 3)."""
-    from pxr import UsdGeom
-
-    mesh = UsdGeom.Mesh(prim)
-    counts = mesh.GetFaceVertexCountsAttr().Get()
-    indices = mesh.GetFaceVertexIndicesAttr().Get()
-    faces = []
-    it = iter(indices)
-    for cnt in counts:
-        poly = [next(it) for _ in range(cnt)]
-        for k in range(1, cnt - 1):
-            faces.append([poly[0], poly[k], poly[k + 1]])
-    return np.asarray(faces, dtype=np.int64)
+def _clone_plan():
+    """Return the active completed clone plan."""
+    sim = SimulationContext.instance()
+    plan = None if sim is None else sim.get_clone_plan()
+    if plan is None or not plan.is_complete:
+        raise RuntimeError("Lift geometry requires a completed clone plan.")
+    return plan
 
 
-def create_primitive_mesh(prim):
-    """Create a trimesh mesh from a USD primitive (Cube, Sphere, Cylinder, etc.)."""
+def _geometry_mesh(geometry, frame):
+    """Return one planned geometry transformed into its owning rigid-body frame."""
     import trimesh
 
-    from pxr import UsdGeom
+    mesh = trimesh.Trimesh(vertices=geometry.vertices.copy(), faces=geometry.faces, process=False)
+    x, y, z, w = frame.pose[3:]
+    transform = trimesh.transformations.quaternion_matrix([w, x, y, z])
+    transform[:3, 3] = frame.pose[:3]
+    mesh.apply_transform(transform)
+    return mesh
 
-    prim_type = prim.GetTypeName()
-    if prim_type == "Cube":
-        size = UsdGeom.Cube(prim).GetSizeAttr().Get()
-        return trimesh.creation.box(extents=(size, size, size))
-    elif prim_type == "Sphere":
-        r = UsdGeom.Sphere(prim).GetRadiusAttr().Get()
-        return trimesh.creation.icosphere(subdivisions=3, radius=r)
-    elif prim_type == "Cylinder":
-        c = UsdGeom.Cylinder(prim)
-        return trimesh.creation.cylinder(radius=c.GetRadiusAttr().Get(), height=c.GetHeightAttr().Get())
-    elif prim_type == "Capsule":
-        c = UsdGeom.Capsule(prim)
-        return trimesh.creation.capsule(radius=c.GetRadiusAttr().Get(), height=c.GetHeightAttr().Get())
-    elif prim_type == "Cone":  # Cone
-        c = UsdGeom.Cone(prim)
-        return trimesh.creation.cone(radius=c.GetRadiusAttr().Get(), height=c.GetHeightAttr().Get())
-    else:
-        raise KeyError(f"{prim_type} is not a valid primitive mesh type")
+
+def _body_geometry_prototypes(target, geometries, clone_mask):
+    """Return one target prototype's body path and geometry shared by every selected clone."""
+    if clone_mask is None:
+        raise RuntimeError(f"Object target {target.path!r} is not environment-scoped.")
+    body_paths = {geometry.frame.body_path for geometry in geometries if geometry.frame.body_path is not None}
+    if len(body_paths) != 1:
+        raise RuntimeError(f"Planned object {target.path!r} contains {len(body_paths)} geometry-owning bodies.")
+    body_path = body_paths.pop()
+    geometries = tuple(geometry for geometry in geometries if geometry.frame.body_path == body_path)
+    if any(geometry.clone_mask is None or np.any(clone_mask & ~geometry.clone_mask) for geometry in geometries):
+        raise RuntimeError(f"Planned object {target.path!r} has clone-dependent body geometry.")
+    return body_path, geometries
 
 
 def farthest_point_sampling(
@@ -276,67 +142,57 @@ def farthest_point_sampling(
     return sampled_idx
 
 
-def collect_collision_meshes(root_prim, owner_frame_fn: Callable) -> dict[int, trimesh.Trimesh]:
-    """Collect collision meshes under ``root_prim``, grouped in caller-selected frames."""
+def _merge_body_geometries(geometries, body_path: str):
+    """Merge plan-declared collision geometry in one rigid-body frame."""
     import trimesh
 
-    from pxr import UsdPhysics
-
-    from isaaclab.utils.mesh import PRIMITIVE_MESH_TYPES, create_trimesh_from_geom_mesh, create_trimesh_from_geom_shape
-
-    mesh_types = PRIMITIVE_MESH_TYPES + ["Mesh"]
-    mesh_prims = sim_utils.get_all_matching_child_prims(
-        root_prim.GetPath(),
-        lambda prim: prim.GetTypeName() in mesh_types and prim.HasAPI(UsdPhysics.CollisionAPI),
-    )
-
-    meshes_by_owner: dict[int, list[trimesh.Trimesh]] = {}
-    for prim in mesh_prims:
-        owner_frame = owner_frame_fn(prim)
-        if owner_frame is None:
-            continue
-        owner, frame_prim = owner_frame
-        mesh = (
-            create_trimesh_from_geom_mesh(prim)
-            if prim.GetTypeName() == "Mesh"
-            else create_trimesh_from_geom_shape(prim)
-        )
-        mesh.apply_scale(sim_utils.resolve_prim_scale(prim))
-        position, quat_xyzw = sim_utils.resolve_prim_pose(prim, frame_prim)
-        transform = trimesh.transformations.quaternion_matrix([quat_xyzw[3], quat_xyzw[0], quat_xyzw[1], quat_xyzw[2]])
-        transform[:3, 3] = position
-        mesh.apply_transform(transform)
-        meshes_by_owner.setdefault(owner, []).append(mesh)
-
-    return {
-        owner: trimesh.util.concatenate(meshes) if len(meshes) > 1 else meshes[0]
-        for owner, meshes in meshes_by_owner.items()
-    }
+    meshes = [
+        _geometry_mesh(geometry, geometry.frame)
+        for geometry in geometries
+        if geometry.collision and geometry.frame.body_path == body_path
+    ]
+    if not meshes:
+        raise RuntimeError(f"Planned rigid body {body_path!r} has no requested collision geometry.")
+    return trimesh.util.concatenate(meshes) if len(meshes) > 1 else meshes[0]
 
 
 def collect_body_collision_meshes(robot, body_names: str | list[str]) -> tuple[dict[int, trimesh.Trimesh], list[str]]:
-    """Extract the selected bodies' collision meshes from the env_0 clone, baked body-local.
-
-    Returns ``(body_meshes, body_names)`` where ``body_meshes`` maps a body index to one
-    merged :class:`trimesh.Trimesh` in that body's frame.
-    """
+    """Return selected robot collision meshes from the immutable clone-plan geometry."""
     body_ids, names = robot.find_bodies(body_names)
-    body_id_of = dict(zip(names, body_ids))
-    robot_prim = sim_utils.find_matching_prims(robot.cfg.prim_path)[0]
+    plan = _clone_plan()
+    articulation = plan.match_articulation(robot.cfg.prim_path)
+    bodies = {body.name: body for body in articulation.bodies}
+    collision_views = {geometry.frame.body_view_path for geometry in plan.geometry_prototypes if geometry.collision}
+    try:
+        meshes = {
+            body_id: _merge_body_geometries(plan.match_geometry_targets(bodies[name].path)[0][1], bodies[name].path)
+            for body_id, name in zip(body_ids, names, strict=True)
+            if bodies[name].view_path in collision_views
+        }
+    except KeyError as exc:
+        raise RuntimeError(f"Robot body {exc.args[0]!r} is absent from the clone plan.") from exc
+    if not meshes:
+        raise RuntimeError(f"Selected robot bodies {names!r} have no planned collision geometry.")
+    return meshes, names
 
-    def body_frame(prim):
-        # links nest in converted assets: the nearest selected-body ancestor owns the collider
-        node = prim.GetParent()
-        while node.IsValid() and node.GetName() not in body_id_of:
-            node = node.GetParent()
-        if not node.IsValid():
-            return None
-        return body_id_of[node.GetName()], node
 
-    body_meshes = collect_collision_meshes(robot_prim, body_frame)
-    if not body_meshes:
-        raise RuntimeError(f"no collision meshes found under '{robot.cfg.prim_path}' for bodies {names}.")
-    return body_meshes, names
+def collect_rigid_object_collision_meshes(num_envs: int, prim_path: str) -> tuple[list[trimesh.Trimesh], np.ndarray]:
+    """Return unique planned object collision meshes and each environment's mesh index."""
+    plan = _clone_plan()
+    meshes = []
+    mesh_by_source: dict[tuple[tuple[str, tuple[float, ...]], ...], int] = {}
+    env_mesh = np.full(num_envs, -1, dtype=np.int32)
+    env_ids = np.asarray(plan._env_ids_cpu)
+    for target, geometries, clone_mask in plan.match_geometry_prototypes(prim_path):
+        body_path, geometries = _body_geometry_prototypes(target, geometries, clone_mask)
+        key = tuple((geometry.source_path, geometry.frame.pose) for geometry in geometries if geometry.collision)
+        if key not in mesh_by_source:
+            mesh_by_source[key] = len(meshes)
+            meshes.append(_merge_body_geometries(geometries, body_path))
+        env_mesh[env_ids[clone_mask]] = mesh_by_source[key]
+    if (env_mesh < 0).any():
+        raise RuntimeError(f"Object expression {prim_path!r} does not cover every environment in the clone plan.")
+    return meshes, env_mesh
 
 
 def get_reset_state(

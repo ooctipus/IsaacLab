@@ -11,10 +11,12 @@ from dataclasses import MISSING
 
 from isaaclab.envs.mdp.actions.actions_cfg import DifferentialInverseKinematicsActionCfg
 from isaaclab.managers import CommandTermCfg, EventTermCfg
+from isaaclab.markers import VisualizationMarkersCfg
 from isaaclab.utils.configclass import configclass
 
 from ...keyboards.keyboard_schema import KEY_ACTUATION_FRACTION
 from .typing_commands import LetterTypingCommand
+from .typing_vis import TYPING_VISUALIZER_CFG
 
 
 @configclass
@@ -61,7 +63,7 @@ class LetterTypingCommandCfg(CommandTermCfg):
         """Height [m] above the target key at which the jaw tip is placed on reset."""
 
         ik_iters: int | tuple[int, int] = MISSING
-        """Damped-least-squares iterations per reset solve (the lazy data layer refreshes FK and the Jacobian
+        """Damped-least-squares iterations per reset solve (``sim.forward()`` refreshes FK and the Jacobian
         after each joint write, so no physics step is taken). The first ~60% of the iterations position the tip;
         the rest also drive the approach pitch.
 
@@ -210,8 +212,8 @@ class LetterTypingCommandCfg(CommandTermCfg):
     string for slots without a drawable glyph). Resolved once at the config layer; required only for
     the visualization."""
 
-    visualizer_prim_path: str = "/Visuals/TypingCommand"
-    """Prim path for the typing command's debug-visualization markers."""
+    visualizer_cfg: VisualizationMarkersCfg = TYPING_VISUALIZER_CFG
+    """Marker configuration for the typing command banner."""
 
     viz_pixel_size: float = 0.0045
     """Pixel pitch [m] of the LED dot-matrix letters (each dot is drawn slightly smaller)."""
@@ -224,12 +226,6 @@ class LetterTypingCommandCfg(CommandTermCfg):
 
     viz_banner_height: float = 0.25
     """Height [m] of the letter banner above the keyboard's key centroid."""
-
-    viz_key_marker_radius: float = 0.009
-    """Radius [m] of the next-key halo marker."""
-
-    viz_key_marker_height: float = 0.003
-    """Height [m] (thickness) of the next-key halo marker."""
 
     viz_key_marker_lift: float = 0.003
     """Height [m] the next-key halo hovers above the key it marks. Kept small (well under the key

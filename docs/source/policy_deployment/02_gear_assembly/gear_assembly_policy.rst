@@ -913,7 +913,7 @@ PhysX Collision Stack Overflow
 
     # In GearAssemblyEnvCfg class
     sim: SimulationCfg = SimulationCfg(
-        physx=PhysxCfg(
+        physics=PhysxCfg(
             gpu_collision_stack_size=2**31,  # Increase this value if you see overflow errors
             gpu_max_rigid_contact_count=2**23,
             gpu_max_rigid_patch_count=2**23,
@@ -1005,10 +1005,8 @@ Deterministic Debugging (Play Environment)
 
 Playing the ``IsaacContrib-Deploy-GearAssembly-Rizon4s-Grav-ROS-Inference`` environment
 provides a fully deterministic setup for debugging policy behavior against a specific
-real-world scenario. The ``play_mode`` method of
-``Rizon4sGearAssemblyROSInferenceEnvCfg`` is applied automatically by the play command:
-all randomization is disabled and observation noise is turned off, so the simulation is
-identical on every reset.
+real-world scenario. Select its ``play`` domain preset to disable randomization and use the
+configured fixed poses, making every reset identical.
 
 To use it, run the standard play command:
 
@@ -1021,7 +1019,8 @@ To use it, run the standard play command:
           uv run isaaclab play --rl_library rsl_rl \
               --task IsaacContrib-Deploy-GearAssembly-Rizon4s-Grav-ROS-Inference \
               --num_envs 1 \
-              --checkpoint <path_to_model.pt>
+              --checkpoint <path_to_model.pt> \
+              presets=play
 
    .. tab-item:: isaaclab.sh / isaaclab.bat
 
@@ -1030,7 +1029,8 @@ To use it, run the standard play command:
           ./isaaclab.sh play --rl_library rsl_rl \
               --task IsaacContrib-Deploy-GearAssembly-Rizon4s-Grav-ROS-Inference \
               --num_envs 1 \
-              --checkpoint <path_to_model.pt>
+              --checkpoint <path_to_model.pt> \
+              presets=play
 
 To match a specific real-world setup, edit the play-mode constants at the top of the
 ``Rizon4sGearAssemblyROSInferenceEnvCfg`` class in
@@ -1051,8 +1051,8 @@ To match a specific real-world setup, edit the play-mode constants at the top of
         OBS_SHAFT_QUAT: tuple | None = None  # e.g. (0.0, 0.0, -0.70711, 0.70711)
 
 When ``OBS_SHAFT_POS`` or ``OBS_SHAFT_QUAT`` are set (not ``None``), the
-play command automatically overwrites the corresponding portions of the
-policy's observation tensor every step, regardless of simulation state.  This
+``play`` preset replaces the corresponding portions of the policy's observation
+tensor every step, regardless of simulation state. This
 lets you test what the policy does when given a specific observation (e.g. a
 pose captured from the real robot).
 

@@ -25,13 +25,13 @@ class CabinetDirectEnv(DirectRLEnv):
     def __init__(self, cfg: CabinetDirectEnvCfg, render_mode: str | None = None, **kwargs):
         super().__init__(cfg, render_mode, **kwargs)
 
-        self.arm_joint_ids, _ = self._robot.find_joints(self.cfg.arm_joint_names)
-        self.finger_joint_ids, _ = self._robot.find_joints(self.cfg.finger_joint_names)
-        self.ee_body_idx = self._robot.find_bodies(self.cfg.ee_body_name)[0][0]
-        self.left_finger_body_idx = self._robot.find_bodies(self.cfg.left_finger_body_name)[0][0]
-        self.right_finger_body_idx = self._robot.find_bodies(self.cfg.right_finger_body_name)[0][0]
-        self.drawer_handle_body_idx = self._cabinet.find_bodies(self.cfg.drawer_handle_body_name)[0][0]
-        self.drawer_joint_idx = self._cabinet.find_joints(self.cfg.drawer_joint_name)[0][0]
+        self.arm_joint_ids, _ = self.scene["robot"].find_joints(self.cfg.arm_joint_names)
+        self.finger_joint_ids, _ = self.scene["robot"].find_joints(self.cfg.finger_joint_names)
+        self.ee_body_idx = self.scene["robot"].find_bodies(self.cfg.ee_body_name)[0][0]
+        self.left_finger_body_idx = self.scene["robot"].find_bodies(self.cfg.left_finger_body_name)[0][0]
+        self.right_finger_body_idx = self.scene["robot"].find_bodies(self.cfg.right_finger_body_name)[0][0]
+        self.drawer_handle_body_idx = self.scene["cabinet"].find_bodies(self.cfg.drawer_handle_body_name)[0][0]
+        self.drawer_joint_idx = self.scene["cabinet"].find_joints(self.cfg.drawer_joint_name)[0][0]
 
         expected_action_space = len(self.arm_joint_ids) + 1
         if self.cfg.action_space != expected_action_space:
@@ -39,7 +39,7 @@ class CabinetDirectEnv(DirectRLEnv):
                 f"{type(self.cfg).__name__} declares action_space={self.cfg.action_space}, but its configured arm"
                 f" joints and binary gripper require action_space={expected_action_space}."
             )
-        expected_observation_space = 2 * self._robot.num_joints + 2 + 3 + expected_action_space
+        expected_observation_space = 2 * self.scene["robot"].num_joints + 2 + 3 + expected_action_space
         if self.cfg.observation_space != expected_observation_space:
             raise ValueError(
                 f"{type(self.cfg).__name__} declares observation_space={self.cfg.observation_space}, but the"
@@ -58,13 +58,6 @@ class CabinetDirectEnv(DirectRLEnv):
         self.drawer_handle_pos_offset = _repeat(self.cfg.drawer_handle_pos_offset)
         self.drawer_handle_rot_offset = _repeat(self.cfg.drawer_handle_rot_offset)
 
-        self.ee_pos_w = torch.zeros((self.num_envs, 3), device=self.device)
-        self.ee_quat_w = torch.zeros((self.num_envs, 4), device=self.device)
-        self.left_finger_pos_w = torch.zeros((self.num_envs, 3), device=self.device)
-        self.right_finger_pos_w = torch.zeros((self.num_envs, 3), device=self.device)
-        self.drawer_handle_pos_w = torch.zeros((self.num_envs, 3), device=self.device)
-        self.drawer_handle_quat_w = torch.zeros((self.num_envs, 4), device=self.device)
-
         self._episode_succeeded = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         self._best_drawer_pos = torch.zeros(self.num_envs, device=self.device)
         self._episode_reward_sums = {
@@ -82,16 +75,12 @@ class CabinetDirectEnv(DirectRLEnv):
             )
         }
 
-    def _setup_scene(self) -> None:
-        self._robot = self.scene["robot"]
-        self._cabinet = self.scene["cabinet"]
-
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
         self.previous_actions[:] = self.actions
         self.actions[:] = actions
 
         self.arm_joint_targets[:] = (
-            self._robot.data.default_joint_pos.torch[:, self.arm_joint_ids]
+            self.scene["robot"].data.default_joint_pos.torch[:, self.arm_joint_ids]
             + self.cfg.arm_action_scale * self.actions[:, : len(self.arm_joint_ids)]
         )
         self.finger_joint_targets[:] = torch.where(
@@ -101,11 +90,11 @@ class CabinetDirectEnv(DirectRLEnv):
         )
 
     def _apply_action(self) -> None:
-        self._robot.set_joint_position_target_index(
+        self.scene["robot"].set_joint_position_target_index(
             target=self.arm_joint_targets,
             joint_ids=self.arm_joint_ids,
         )
-        self._robot.set_joint_position_target_index(
+        self.scene["robot"].set_joint_position_target_index(
             target=self.finger_joint_targets,
             joint_ids=self.finger_joint_ids,
         )
@@ -116,9 +105,7 @@ class CabinetDirectEnv(DirectRLEnv):
         return terminated, time_out
 
     def _get_rewards(self) -> torch.Tensor:
-        self._compute_intermediate_values()
-
-        drawer_pos = self._cabinet.data.joint_pos.torch[:, self.drawer_joint_idx]
+        drawer_pos = self.scene["cabinet"].data.joint_pos.torch[:, self.drawer_joint_idx]
         self._episode_succeeded |= drawer_pos > self.cfg.success_drawer_pos_threshold
         self._best_drawer_pos = torch.maximum(self._best_drawer_pos, drawer_pos)
 
@@ -149,7 +136,7 @@ class CabinetDirectEnv(DirectRLEnv):
             2.0 * self.cfg.approach_gripper_handle_offset - left_finger_distance - right_finger_distance
         )
 
-        finger_joint_pos = self._robot.data.joint_pos.torch[:, self.finger_joint_ids]
+        finger_joint_pos = self.scene["robot"].data.joint_pos.torch[:, self.finger_joint_ids]
         grasp_handle = (distance <= self.cfg.grasp_handle_threshold) * torch.sum(
             self.cfg.gripper_open_command - finger_joint_pos,
             dim=-1,
@@ -162,7 +149,7 @@ class CabinetDirectEnv(DirectRLEnv):
         )
 
         action_rate = torch.sum(torch.square(self.actions - self.previous_actions), dim=-1)
-        joint_vel = torch.sum(torch.square(self._robot.data.joint_vel.torch), dim=-1)
+        joint_vel = torch.sum(torch.square(self.scene["robot"].data.joint_vel.torch), dim=-1)
 
         reward_terms = {
             "approach_ee_handle": self.cfg.approach_ee_handle_reward_scale * approach_ee_handle,
@@ -199,18 +186,17 @@ class CabinetDirectEnv(DirectRLEnv):
         self.previous_actions[env_ids] = 0.0
         self._episode_succeeded[env_ids] = False
         self._best_drawer_pos[env_ids] = 0.0
-        self._compute_intermediate_values(env_ids)
 
     def _get_observations(self) -> dict[str, torch.Tensor]:
-        robot_joint_pos = self._robot.data.joint_pos.torch - self._robot.data.default_joint_pos.torch
-        robot_joint_vel = self._robot.data.joint_vel.torch - self._robot.data.default_joint_vel.torch
+        robot_joint_pos = self.scene["robot"].data.joint_pos.torch - self.scene["robot"].data.default_joint_pos.torch
+        robot_joint_vel = self.scene["robot"].data.joint_vel.torch - self.scene["robot"].data.default_joint_vel.torch
         drawer_joint_pos = (
-            self._cabinet.data.joint_pos.torch[:, self.drawer_joint_idx]
-            - self._cabinet.data.default_joint_pos.torch[:, self.drawer_joint_idx]
+            self.scene["cabinet"].data.joint_pos.torch[:, self.drawer_joint_idx]
+            - self.scene["cabinet"].data.default_joint_pos.torch[:, self.drawer_joint_idx]
         ).unsqueeze(-1)
         drawer_joint_vel = (
-            self._cabinet.data.joint_vel.torch[:, self.drawer_joint_idx]
-            - self._cabinet.data.default_joint_vel.torch[:, self.drawer_joint_idx]
+            self.scene["cabinet"].data.joint_vel.torch[:, self.drawer_joint_idx]
+            - self.scene["cabinet"].data.default_joint_vel.torch[:, self.drawer_joint_idx]
         ).unsqueeze(-1)
         relative_ee_drawer_distance = self.drawer_handle_pos_w - self.ee_pos_w
 
@@ -227,39 +213,36 @@ class CabinetDirectEnv(DirectRLEnv):
         )
         return {"policy": observation}
 
-    def _compute_intermediate_values(self, env_ids: Sequence[int] | None = None) -> None:
-        if env_ids is None:
-            env_ids = slice(None)
-
-        ee_body_pos = self._robot.data.body_pos_w.torch[env_ids, self.ee_body_idx]
-        ee_body_quat = self._robot.data.body_quat_w.torch[env_ids, self.ee_body_idx]
-        self.ee_pos_w[env_ids], self.ee_quat_w[env_ids] = combine_frame_transforms(
+    def _refresh_task_state(self) -> None:
+        ee_body_pos = self.scene["robot"].data.body_pos_w.torch[:, self.ee_body_idx]
+        ee_body_quat = self.scene["robot"].data.body_quat_w.torch[:, self.ee_body_idx]
+        self.ee_pos_w, self.ee_quat_w = combine_frame_transforms(
             ee_body_pos,
             ee_body_quat,
-            self.ee_pos_offset[env_ids],
+            self.ee_pos_offset,
         )
 
-        left_finger_body_pos = self._robot.data.body_pos_w.torch[env_ids, self.left_finger_body_idx]
-        left_finger_body_quat = self._robot.data.body_quat_w.torch[env_ids, self.left_finger_body_idx]
-        self.left_finger_pos_w[env_ids], _ = combine_frame_transforms(
+        left_finger_body_pos = self.scene["robot"].data.body_pos_w.torch[:, self.left_finger_body_idx]
+        left_finger_body_quat = self.scene["robot"].data.body_quat_w.torch[:, self.left_finger_body_idx]
+        self.left_finger_pos_w, _ = combine_frame_transforms(
             left_finger_body_pos,
             left_finger_body_quat,
-            self.finger_pos_offset[env_ids],
+            self.finger_pos_offset,
         )
 
-        right_finger_body_pos = self._robot.data.body_pos_w.torch[env_ids, self.right_finger_body_idx]
-        right_finger_body_quat = self._robot.data.body_quat_w.torch[env_ids, self.right_finger_body_idx]
-        self.right_finger_pos_w[env_ids], _ = combine_frame_transforms(
+        right_finger_body_pos = self.scene["robot"].data.body_pos_w.torch[:, self.right_finger_body_idx]
+        right_finger_body_quat = self.scene["robot"].data.body_quat_w.torch[:, self.right_finger_body_idx]
+        self.right_finger_pos_w, _ = combine_frame_transforms(
             right_finger_body_pos,
             right_finger_body_quat,
-            self.finger_pos_offset[env_ids],
+            self.finger_pos_offset,
         )
 
-        drawer_handle_body_pos = self._cabinet.data.body_pos_w.torch[env_ids, self.drawer_handle_body_idx]
-        drawer_handle_body_quat = self._cabinet.data.body_quat_w.torch[env_ids, self.drawer_handle_body_idx]
-        self.drawer_handle_pos_w[env_ids], self.drawer_handle_quat_w[env_ids] = combine_frame_transforms(
+        drawer_handle_body_pos = self.scene["cabinet"].data.body_pos_w.torch[:, self.drawer_handle_body_idx]
+        drawer_handle_body_quat = self.scene["cabinet"].data.body_quat_w.torch[:, self.drawer_handle_body_idx]
+        self.drawer_handle_pos_w, self.drawer_handle_quat_w = combine_frame_transforms(
             drawer_handle_body_pos,
             drawer_handle_body_quat,
-            self.drawer_handle_pos_offset[env_ids],
-            self.drawer_handle_rot_offset[env_ids],
+            self.drawer_handle_pos_offset,
+            self.drawer_handle_rot_offset,
         )

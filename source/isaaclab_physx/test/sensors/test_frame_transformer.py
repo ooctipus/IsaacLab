@@ -19,6 +19,7 @@ import pytest
 import scipy.spatial.transform as tf
 import torch
 import warp as wp
+from isaaclab_physx.physics import PhysxCfg
 from isaaclab_physx.sensors.frame_transformer import frame_transformer as frame_transformer_module
 from isaaclab_physx.sensors.frame_transformer.frame_transformer import FrameTransformer
 from isaaclab_physx.sensors.frame_transformer.frame_transformer_data import FrameTransformerData
@@ -81,7 +82,7 @@ class MySceneCfg(InteractiveSceneCfg):
 def sim(request):
     """Create a simulation context, on CPU unless a device is passed via indirect parametrization."""
     device = getattr(request, "param", "cpu")
-    sim_cfg = sim_utils.SimulationCfg(device=device, dt=0.005)
+    sim_cfg = sim_utils.SimulationCfg(physics=PhysxCfg(), device=device, dt=0.005)
     with sim_utils.build_simulation_context(sim_cfg=sim_cfg) as sim:
         sim._app_control_on_stop_handle = None
         # Set main camera

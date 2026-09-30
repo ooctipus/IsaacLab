@@ -96,6 +96,7 @@ class _FakeNewtonArticulation:
         # shape counts are always exposed in backend order by the Newton asset
         self.backend_num_shapes_per_body = list(_NUM_SHAPES_PER_BACKEND_BODY)
         self._root_view = _FakeNewtonRootView()
+        self._physics_manager = _FakeNewtonManager()
         joint_properties = torch.zeros((_NUM_ENVS, 2))
         self.data = SimpleNamespace(
             joint_friction_coeff=SimpleNamespace(torch=joint_properties.clone()),
@@ -204,10 +205,7 @@ def test_newton_material_randomization_automatically_converts_public_body_ids_to
 ):
     """Newton automatically converts public body selections to backend shape ranges."""
     newton_assets_module = pytest.importorskip("isaaclab_newton.assets")
-    newton_manager_module = pytest.importorskip("isaaclab_newton.physics.newton_manager")
-
     monkeypatch.setattr(newton_assets_module, "Articulation", _FakeNewtonArticulation)
-    monkeypatch.setattr(newton_manager_module, "NewtonManager", _FakeNewtonManager)
     _FakeNewtonManager.notifications.clear()
     asset = _FakeNewtonArticulation(body_ordering)
     asset_cfg = SimpleNamespace(body_ids=[1])
@@ -252,7 +250,7 @@ def test_newton_joint_parameter_randomization_writes_static_and_viscous_friction
     )
     env = SimpleNamespace(
         scene=_FakeScene(robot=asset),
-        sim=SimpleNamespace(physics_manager=type("NewtonManager", (), {})),
+        sim=SimpleNamespace(physics_backend="newton"),
     )
 
     term = events_module.randomize_joint_parameters(cfg, env)

@@ -3,10 +3,10 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg, NewtonCollisionPipelineCfg
+from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCollisionPipelineCfg
 from isaaclab_physx.physics import PhysxCfg
 
-from isaaclab.envs import ManagerBasedRLEnvCfg, ViewerCfg
+from isaaclab.envs import ManagerBasedRLEnvCfg
 from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
@@ -25,8 +25,8 @@ from isaaclab_tasks.contrib.nist.factory_presets import (
 )
 from isaaclab_tasks.contrib.nist.factory_scenes_cfg import FactorySceneCfg
 from isaaclab_tasks.contrib.nist.reset_env_cfg import ACCUMULATOR_RESET
-from isaaclab_tasks.contrib.nist.utils import SamplerCfg, UniformSamplingStrategyCfg
 from isaaclab_tasks.utils import PresetCfg, preset
+from isaaclab_tasks.utils.presets import MultiBackendSimulationCfg
 
 _FRANKA_END_EFFECTOR = "panda_fingertip_centered"
 
@@ -252,18 +252,15 @@ class FactoryPhysicsCfg(PresetCfg):
         gpu_max_num_partitions=1,
         gpu_found_lost_pairs_capacity=2**22,
     )
-    newton_mjwarp = NewtonCfg(
-        solver_cfg=MJWarpSolverCfg(
-            solver="newton",
-            integrator="implicitfast",
-            njmax=1500,
-            nconmax=400,
-            impratio=1.0,
-            cone="pyramidal",
-            update_data_interval=2,
-            ls_parallel=False,
-            use_mujoco_contacts=False,
-        ),
+    newton_mjwarp = MJWarpSolverCfg(
+        solver="newton",
+        integrator="implicitfast",
+        njmax=1500,
+        nconmax=400,
+        impratio=1.0,
+        cone="pyramidal",
+        update_data_interval=2,
+        use_mujoco_contacts=False,
         collision_cfg=NewtonCollisionPipelineCfg(
             broad_phase="sap",
             max_triangle_pairs=60_000_000,
@@ -299,13 +296,13 @@ class FactoryActionsCfg:
 class FactoryEnvCfg(ManagerBasedRLEnvCfg):
     """Configuration for the Franka Factory environment."""
 
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg()
     scene: FactorySceneCfg = FactorySceneCfg()
     observations: FactoryObservationsCfg = FactoryObservationsCfg()
     events: FactoryEventCfg = FactoryEventCfg()
     terminations: FactoryTerminationsCfg = FactoryTerminationsCfg()
     rewards: FactoryRewardsCfg = FactoryRewardsCfg()
     curriculum: FactoryCurriculumsCfg = FactoryCurriculumsCfg()
-    viewer: ViewerCfg = ViewerCfg(eye=(0.0, 0.8, 0.4), lookat=(0.0, 0.0, 0.4))
     actions: FactoryActionsCfg = FactoryActionsCfg()
 
     # Post initialization
@@ -321,37 +318,3 @@ class FactoryEnvCfg(ManagerBasedRLEnvCfg):
 
         self.sim.physics_material.static_friction = 0.5
         self.sim.physics_material.dynamic_friction = 0.5
-
-    def play_mode(self) -> None:
-        """Narrow the reset curriculum for evaluation.
-
-        Training samples a curriculum over several reset strategies and a large bank of
-        stored states; a policy is instead scored on one strategy, drawn uniformly, so the
-        number reflects the task rather than whatever the curriculum currently favors.
-
-        Called by :func:`~isaaclab_tasks.utils.hydra.register_task` after preset resolution,
-        so it edits the already-resolved terms.
-        """
-        # Training starts at zero gravity and lets the ADR curriculum ramp it to -9.81 as the
-        # difficulty rises. Evaluation is scored at full gravity, so both terms come off and the
-        # sim keeps its configured value.
-        self.events.variable_gravity = None
-        self.curriculum.gravity_adr = None
-
-        # ``play`` reads the training default when ``--num_envs`` is omitted, and the training
-        # default is sized for throughput, not for watching a policy.
-        self.scene.num_envs = 128
-
-        uniform = SamplerCfg(strategies=[UniformSamplingStrategyCfg(weight=1.0)], eps=0.0)
-
-        reset = self.events.reset_strategies.params
-
-        if "state_table_size" in reset:
-            reset["state_table_size"] = 512
-        if "sampling" in reset:
-            reset["sampling"] = uniform
-
-        scene_reset = reset.get("reset_term", self.events.reset_strategies)
-        choice = scene_reset.params["terms"]["reset_strategies"].params
-        choice["terms"] = {"grasp_asset_in_air": choice["terms"]["grasp_asset_in_air"]}
-        choice["sampling"] = uniform

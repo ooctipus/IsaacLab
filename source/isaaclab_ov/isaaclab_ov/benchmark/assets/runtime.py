@@ -9,10 +9,18 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 from isaaclab.benchmark.asset_suites.types import AssetBenchmarkTargets
 
 args = SimpleNamespace(no_shape_checks=False)
+
+
+def _mock_physics_manager():
+    manager = MagicMock()
+    manager.get_gravity.return_value = (0.0, 0.0, -9.81)
+    manager.get_physics_dt.return_value = 0.01
+    return manager
 
 
 def _load_runtime_symbols() -> None:
@@ -26,6 +34,7 @@ def _load_runtime_symbols() -> None:
 
 
 def create_test_articulation(
+    physics_manager,
     num_instances: int = 2,
     num_joints: int = 6,
     num_bodies: int = 7,
@@ -73,7 +82,8 @@ def create_test_articulation(
     object.__setattr__(articulation, "_fixed_tendon_names", [])
     object.__setattr__(articulation, "_spatial_tendon_names", [])
 
-    data = ArticulationData(mock_view, device)
+    object.__setattr__(articulation, "_physics_manager", physics_manager)
+    data = ArticulationData(mock_view, device, physics_manager)
     data._apply_ordering_maps_after_resolve()
     object.__setattr__(articulation, "_data", data)
     object.__setattr__(articulation, "_has_implicit_actuators", False)
@@ -91,6 +101,7 @@ def create_test_articulation(
 
 
 def create_test_rigid_object(
+    physics_manager,
     num_instances: int = 2,
     num_bodies: int = 1,
     device: str = "cuda:0",
@@ -125,7 +136,8 @@ def create_test_rigid_object(
     object.__setattr__(rigid_object, "_num_bodies", 1)
     object.__setattr__(rigid_object, "_body_names", ["base_link"])
 
-    data = RigidObjectData(mock_view, device, check_shapes=not args.no_shape_checks)
+    object.__setattr__(rigid_object, "_physics_manager", physics_manager)
+    data = RigidObjectData(mock_view, device, physics_manager, check_shapes=not args.no_shape_checks)
     object.__setattr__(rigid_object, "_data", data)
     rigid_object._create_buffers()
 
@@ -133,6 +145,7 @@ def create_test_rigid_object(
 
 
 def create_test_collection(
+    physics_manager,
     num_instances: int = 2,
     num_bodies: int = 3,
     device: str = "cuda:0",
@@ -168,20 +181,19 @@ def create_test_collection(
     object.__setattr__(collection, "_body_names_list", object_names)
     object.__setattr__(collection, "_object_names", object_names)
 
-    data = RigidObjectCollectionData(mock_view, num_bodies, device)
+    object.__setattr__(collection, "_physics_manager", physics_manager)
+    data = RigidObjectCollectionData(mock_view, num_bodies, device, physics_manager)
     object.__setattr__(collection, "_data", data)
     collection._create_buffers()
 
     return collection, mock_view
 
 
-def _refresh_data(data, component: str) -> None:
+def _refresh_data(data) -> None:
     data._sim_timestamp += 1.0
-    if component == "articulation":
-        data._fk_timestamp = data._sim_timestamp
 
 
-def _create_data_target(component, config):
+def _create_data_target(component, config, physics_manager):
     binding_kwargs = {
         "num_instances": config.num_instances,
         "num_joints": config.num_joints if component == "articulation" else 0,
@@ -195,19 +207,19 @@ def _create_data_target(component, config):
     if component == "articulation":
         from isaaclab_ov.assets.articulation.articulation_data import ArticulationData
 
-        data = ArticulationData(mock_view, config.device)
+        data = ArticulationData(mock_view, config.device, physics_manager)
         data._apply_ordering_maps_after_resolve()
     elif component == "rigid_object":
         from isaaclab_ov.assets.rigid_object.rigid_object_data import RigidObjectData
 
-        data = RigidObjectData(mock_view, config.device, check_shapes=not args.no_shape_checks)
+        data = RigidObjectData(mock_view, config.device, physics_manager, check_shapes=not args.no_shape_checks)
     else:
         from isaaclab_ov.assets.rigid_object_collection.rigid_object_collection_data import (
             RigidObjectCollectionData,
         )
 
-        data = RigidObjectCollectionData(mock_view, config.num_bodies, config.device)
-    return data, lambda _config: _refresh_data(data, component)
+        data = RigidObjectCollectionData(mock_view, config.num_bodies, config.device, physics_manager)
+    return data, lambda _config: _refresh_data(data)
 
 
 @contextmanager
@@ -215,26 +227,20 @@ def open_asset_targets(adapter, request, method_config, data_config):
     """Open the selected kitless Omniverse PhysX mock target."""
     _load_runtime_symbols()
     args.no_shape_checks = not request.check_shapes
-    if adapter.component == "articulation":
-        target, _ = create_test_articulation(
-            num_instances=method_config.num_instances,
-            num_bodies=method_config.num_bodies,
-            num_joints=method_config.num_joints,
-            device=method_config.device,
-        )
-    elif adapter.component == "rigid_object":
-        target, _ = create_test_rigid_object(
-            num_instances=method_config.num_instances,
-            num_bodies=method_config.num_bodies,
-            device=method_config.device,
-        )
-    else:
-        target, _ = create_test_collection(
-            num_instances=method_config.num_instances,
-            num_bodies=method_config.num_bodies,
-            device=method_config.device,
-        )
-    data, refresh_data = _create_data_target(adapter.component, data_config)
+    physics_manager = _mock_physics_manager()
+    factory = {
+        "articulation": create_test_articulation,
+        "rigid_object": create_test_rigid_object,
+        "rigid_object_collection": create_test_collection,
+    }[adapter.component]
+    target, _ = factory(
+        physics_manager=physics_manager,
+        num_instances=method_config.num_instances,
+        num_bodies=method_config.num_bodies,
+        device=method_config.device,
+        **({"num_joints": method_config.num_joints} if adapter.component == "articulation" else {}),
+    )
+    data, refresh_data = _create_data_target(adapter.component, data_config, physics_manager)
     yield AssetBenchmarkTargets(
         method_target=target,
         data_target=data,

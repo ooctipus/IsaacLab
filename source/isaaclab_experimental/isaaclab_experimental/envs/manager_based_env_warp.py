@@ -34,7 +34,6 @@ from isaaclab.sim.utils import use_stage
 from isaaclab.utils.seed import configure_seed
 from isaaclab.utils.timer import Timer
 
-from isaaclab_experimental.envs.interactive_scene_warp import InteractiveSceneWarp as InteractiveScene
 from isaaclab_experimental.utils.manager_call_switch import ManagerCallMode, ManagerCallSwitch
 from isaaclab_experimental.utils.warp import resolve_1d_mask
 
@@ -90,23 +89,30 @@ class ManagerBasedEnvWarp:
         self._manager_call_switch = ManagerCallSwitch(cfg_source, max_modes=max_modes)
         self._apply_manager_term_cfg_profile()
 
-        # set the seed for the environment
-        if self.cfg.seed is not None:
-            self.cfg.seed = self.seed(self.cfg.seed)
-        else:
-            logger.warning("Seed not set for the environment. The environment creation may not be deterministic.")
-
         # create a simulation context to control the simulator
         if SimulationContext.instance() is None:
             # the type-annotation is required to avoid a type-checking error
             # since it gets confused with Isaac Sim's SimulationContext class
             self.sim: SimulationContext = SimulationContext(self.cfg.sim)
+            created_sim = True
         else:
             # simulation context should only be created before the environment
             # when in extension mode
             # if not builtins.ISAAC_LAUNCHED_FROM_TERMINAL:
             #     raise RuntimeError("Simulation context already exists. Cannot create a new one.")
             self.sim: SimulationContext = SimulationContext.instance()
+            created_sim = False
+
+        # seed Replicator after the SimulationContext stage exists but before task scene construction
+        try:
+            if self.cfg.seed is not None:
+                self.cfg.seed = self.seed(self.cfg.seed)
+            else:
+                logger.warning("Seed not set for the environment. The environment creation may not be deterministic.")
+        except Exception:
+            if created_sim:
+                self.sim.clear_instance()
+            raise
 
         # make sure torch is running on the correct device
         if "cuda" in self.device:
@@ -138,8 +144,8 @@ class ManagerBasedEnvWarp:
         with Timer("[INFO]: Time taken for scene creation", "scene_creation"):
             # set the stage context for scene creation steps which use the stage
             with use_stage(self.sim.stage):
-                self.scene = InteractiveScene(self.cfg.scene)
-                # attach_stage_to_usd_context()
+                scene_cfg = self.cfg.scene
+                self.scene = scene_cfg.class_type(scene_cfg)
         print("[INFO]: Scene manager: ", self.scene)
 
         # Shared per-env Warp RNG state (accessible to all managers/terms via `env`).
@@ -577,15 +583,14 @@ class ManagerBasedEnvWarp:
         Returns:
             The seed used for random generator.
         """
-        # set seed for replicator
+        seed = configure_seed(seed)
         try:
             import omni.replicator.core as rep
 
             rep.set_global_seed(seed)
         except ModuleNotFoundError:
             pass
-        # set seed for torch and other libraries
-        return configure_seed(seed)
+        return seed
 
     def close(self):
         """Cleanup for the environment."""

@@ -7,47 +7,58 @@
 
 .. code-block:: bash
 
-    # Usage with default PhysX physics and default kit visualizer.
+    # Usage with default PhysX physics and no visualizer.
     uv run python scripts/demos/markers.py
 
 """
 
-"""Parse CLI first so we can decide whether to launch Isaac Sim Kit."""
-
 import argparse
-from typing import TYPE_CHECKING
 
 from isaaclab.app import add_launcher_args, launch_simulation
+
+from isaaclab_tasks.utils import preset, resolve_config, setup_preset_cli
+from isaaclab_tasks.utils.presets import MultiBackendCameraCfg, MultiBackendSimulationCfg
 
 # add argparse arguments
 parser = argparse.ArgumentParser(
     description="This script demonstrates different types of markers.",
     conflict_handler="resolve",
 )
-parser.add_argument("--physics", default="isaacsim_physx", choices=["isaacsim_physx"], help="Physics backend.")
 add_launcher_args(parser)
-parser.set_defaults(visualizer=["kit"])
-args_cli = parser.parse_args()
+args_cli, config_overrides = setup_preset_cli(parser)
 
 import torch
 
 import isaaclab.sim as sim_utils
+from isaaclab import cloner
+from isaaclab.assets import AssetBaseCfg
 
 ##
 # Pre-defined configs
 ##
 from isaaclab.markers.visualization_markers_cfg import VisualizationMarkersCfg
-from isaaclab.physics import PhysicsCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
+from isaaclab.utils.configclass import configclass
 from isaaclab.utils.math import quat_from_angle_axis
 
-if TYPE_CHECKING:
-    from isaaclab.markers import VisualizationMarkers
+from isaaclab_physx.physics import PhysxCfg  # isort: skip
 
 
-def define_markers() -> "VisualizationMarkers":
-    """Define markers with various different shapes."""
-    marker_cfg = VisualizationMarkersCfg(
+@configclass
+class DemoCfg:
+    """Marker demo configuration."""
+
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(
+        dt=0.01,
+        device=args_cli.device,
+        physics=preset(default=PhysxCfg(), isaacsim_physx=PhysxCfg()),
+    )
+    camera: MultiBackendCameraCfg = MultiBackendCameraCfg()
+    light: AssetBaseCfg = AssetBaseCfg(
+        prim_path="/World/Light",
+        spawn=sim_utils.DomeLightCfg(intensity=3000.0, color=(0.75, 0.75, 0.75)),
+    )
+    markers: VisualizationMarkersCfg = VisualizationMarkersCfg(
         prim_path="/Visuals/myMarkers",
         markers={
             "frame": sim_utils.UsdFileCfg(
@@ -93,25 +104,22 @@ def define_markers() -> "VisualizationMarkers":
             ),
         },
     )
-    return marker_cfg.class_type(marker_cfg)
 
 
 def main():
     """Main function."""
-    with launch_simulation(cfg=PhysicsCfg(), launcher_args=args_cli) as physics_cfg:
+    cfg = resolve_config(DemoCfg(), config_overrides)
+    with launch_simulation(cfg, args_cli):
         # Load kit helper
-        sim_cfg = sim_utils.SimulationCfg(dt=0.01, device=args_cli.device, physics=physics_cfg)
-        sim = sim_utils.SimulationContext(sim_cfg)
+        sim = sim_utils.SimulationContext(cfg.sim)
         # Set main camera
         sim.set_camera_view([0.0, 18.0, 12.0], [0.0, 3.0, 0.0])
 
-        # Spawn things into stage
-        # Lights
-        cfg = sim_utils.DomeLightCfg(intensity=3000.0, color=(0.75, 0.75, 0.75))
-        cfg.func("/World/Light", cfg)
-
-        # create markers
-        my_visualizer = define_markers()
+        asset_cfgs = tuple(asset_cfg for asset_cfg in (cfg.light, cfg.markers, cfg.camera) if asset_cfg is not None)
+        with cloner.ReplicateSession(asset_cfgs, num_clones=1, env_spacing=0.0):
+            _camera = cfg.camera.class_type(cfg.camera) if cfg.camera is not None else None
+            cfg.light.class_type(cfg.light)
+            my_visualizer = cfg.markers.class_type(cfg.markers)
 
         # define a grid of positions where the markers should be placed
         num_markers_per_type = 5

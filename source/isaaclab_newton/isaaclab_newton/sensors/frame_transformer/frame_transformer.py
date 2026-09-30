@@ -13,8 +13,6 @@ import warp as wp
 from isaaclab.sensors.frame_transformer.base_frame_transformer import BaseFrameTransformer
 from isaaclab.sim.utils.queries import split_path_expr
 
-from isaaclab_newton.physics import NewtonManager
-
 from .frame_transformer_data import FrameTransformerData
 from .frame_transformer_kernels import compose_target_world_kernel, copy_from_newton_kernel
 
@@ -47,7 +45,7 @@ class FrameTransformer(BaseFrameTransformer):
     def __init__(self, cfg: FrameTransformerCfg):
         """Initializes the frame transformer.
 
-        Registers site requests via :meth:`NewtonManager.cl_register_site` for
+        Registers site requests via :meth:`self._physics_manager._newton.cl_register_site` for
         the source frame, each target frame, and a shared world-origin reference.
         Sites are injected into prototype builders by ``newton_replicate`` before
         replication, so they end up correctly in each world.
@@ -66,11 +64,11 @@ class FrameTransformer(BaseFrameTransformer):
         self._source_frame_body_name: str = split_path_expr(cfg.prim_path)[-1]
 
         # Register world-origin reference site
-        self._world_origin_label = NewtonManager.cl_register_site(None, wp.transform())
+        self._world_origin_label = self._physics_manager._newton.cl_register_site(None, wp.transform())
 
         # Register source site
         source_offset = wp.transform(cfg.source_frame_offset.pos, cfg.source_frame_offset.rot)
-        self._source_label = NewtonManager.cl_register_site(cfg.prim_path, source_offset)
+        self._source_label = self._physics_manager._newton.cl_register_site(cfg.prim_path, source_offset)
 
         # Register target sites
         self._target_labels: list[str] = []
@@ -79,7 +77,7 @@ class FrameTransformer(BaseFrameTransformer):
 
         for target_frame in cfg.target_frames:
             target_offset = wp.transform(target_frame.offset.pos, target_frame.offset.rot)
-            label = NewtonManager.cl_register_site(target_frame.prim_path, target_offset)
+            label = self._physics_manager._newton.cl_register_site(target_frame.prim_path, target_offset)
 
             self._target_labels.append(label)
             body_name = split_path_expr(target_frame.prim_path)[-1]
@@ -124,7 +122,7 @@ class FrameTransformer(BaseFrameTransformer):
         super()._initialize_impl()
 
         num_envs = self._num_envs
-        site_map = NewtonManager._cl_site_index_map
+        site_map = self._physics_manager._newton._cl_site_index_map
 
         # Resolve and validate per-env site indices
         assert self._world_origin_label in site_map
@@ -143,7 +141,7 @@ class FrameTransformer(BaseFrameTransformer):
             source_indices,
             target_per_world,
             self._target_frame_body_names,
-            NewtonManager._builder.shape_label,
+            self._physics_manager._newton._builder.shape_label,
             world_origin_idx,
             num_envs,
         )
@@ -155,10 +153,10 @@ class FrameTransformer(BaseFrameTransformer):
         self._data._target_frame_names = expanded_names
 
         # Create SensorFrameTransform via NewtonManager
-        self._sensor_index = NewtonManager.add_frame_transform_sensor(shapes_list, references_list)
+        self._sensor_index = self._physics_manager.add_frame_transform_sensor(shapes_list, references_list)
 
         # Store reference to Newton sensor's flat transforms array
-        sensor = NewtonManager._newton_frame_transform_sensors[self._sensor_index]
+        sensor = self._physics_manager._newton_frame_transform_sensors[self._sensor_index]
         self._newton_transforms = sensor.transforms
         self._stride = 1 + self._num_targets
 
@@ -186,7 +184,7 @@ class FrameTransformer(BaseFrameTransformer):
             source_prim_path: Config prim path used in error messages.
             target_labels: Site labels for each target frame (in order).
             target_prim_paths: Config prim paths used in error messages.
-            site_map: ``NewtonManager._cl_site_index_map``.
+            site_map: ``self._physics_manager._newton._cl_site_index_map``.
             num_envs: Expected number of environments.
 
         Returns:
@@ -201,7 +199,7 @@ class FrameTransformer(BaseFrameTransformer):
         """
         assert source_label in site_map, (
             f"FrameTransformer source '{source_prim_path}' (site label '{source_label}') "
-            "not found in NewtonManager._cl_site_index_map."
+            "not found in self._physics_manager._newton._cl_site_index_map."
         )
         _, source_per_world = site_map[source_label]
         if len(source_per_world) != num_envs:
@@ -222,7 +220,7 @@ class FrameTransformer(BaseFrameTransformer):
         for tgt_idx, label in enumerate(target_labels):
             assert label in site_map, (
                 f"FrameTransformer target '{target_prim_paths[tgt_idx]}' (site label '{label}') "
-                "not found in NewtonManager._cl_site_index_map."
+                "not found in self._physics_manager._newton._cl_site_index_map."
             )
             _, per_world = site_map[label]
             if len(per_world) != num_envs:
@@ -335,7 +333,7 @@ class FrameTransformer(BaseFrameTransformer):
         """Clears references to the native sensor and re-registers sites.
 
         Re-registering here ensures sites survive a non-teardown stop/reinit cycle.
-        During ``NewtonManager.close()``, Newton state is cleared after ``STOP`` so
+        During ``self._physics_manager.close()``, Newton state is cleared after ``STOP`` so
         stale registrations from old sensors cannot leak into the next context.
         """
         super()._invalidate_initialize_callback(event)
@@ -343,13 +341,13 @@ class FrameTransformer(BaseFrameTransformer):
         self._sensor_index = None
 
         # Re-register sites so a subsequent start_simulation picks them up.
-        self._world_origin_label = NewtonManager.cl_register_site(None, wp.transform())
+        self._world_origin_label = self._physics_manager._newton.cl_register_site(None, wp.transform())
 
         source_offset = wp.transform(self.cfg.source_frame_offset.pos, self.cfg.source_frame_offset.rot)
-        self._source_label = NewtonManager.cl_register_site(self.cfg.prim_path, source_offset)
+        self._source_label = self._physics_manager._newton.cl_register_site(self.cfg.prim_path, source_offset)
 
         self._target_labels = []
         for target_frame in self.cfg.target_frames:
             target_offset = wp.transform(target_frame.offset.pos, target_frame.offset.rot)
-            label = NewtonManager.cl_register_site(target_frame.prim_path, target_offset)
+            label = self._physics_manager._newton.cl_register_site(target_frame.prim_path, target_offset)
             self._target_labels.append(label)

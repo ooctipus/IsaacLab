@@ -18,6 +18,7 @@ import random
 import tempfile
 
 import pytest
+from isaaclab_physx.physics import PhysxCfg
 
 from pxr import UsdGeom, UsdPhysics
 
@@ -67,7 +68,7 @@ def sim():
     # Simulation time-step
     dt = 0.01
     # Load kit helper
-    sim = SimulationContext(SimulationCfg(dt=dt))
+    sim = SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=dt))
     yield sim
     # stop simulation
     sim.stop()

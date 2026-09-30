@@ -28,6 +28,7 @@ from isaaclab_tasks.contrib.lift.config.openarm.joint_pos_env_cfg import OpenArm
 from isaaclab_tasks.core.cabinet.cabinet_env_cfg import LIGHT_CFG, PLANE_CFG
 from isaaclab_tasks.core.cabinet.config.franka.joint_pos_env_cfg import FrankaCabinetEnvCfg
 from isaaclab_tasks.core.reach.config.ur_10.joint_pos_env_cfg import UR10ReachEnvCfg
+from isaaclab_tasks.utils.presets import MultiBackendSimulationCfg
 
 from . import mdp
 from .selection_utils import SceneEntitySelectionCfg
@@ -466,6 +467,7 @@ class CurriculumCfg:
 class MultitaskManipulationEnvCfg(ManagerBasedRLEnvCfg):
     """Manager-based heterogeneous manipulation training environment."""
 
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg()
     scene: InteractiveSceneCfg = _make_scene_cfg()
     observations: ObservationsCfg = ObservationsCfg()
     actions: ActionsCfg = ActionsCfg()
@@ -477,6 +479,10 @@ class MultitaskManipulationEnvCfg(ManagerBasedRLEnvCfg):
 
     def __post_init__(self):
         """Configure a common PhysX control clock for all three tasks."""
+        self.scene.lift_goal_marker = self.commands.lift_pose.goal_pose_visualizer_cfg
+        self.scene.lift_current_marker = self.commands.lift_pose.current_pose_visualizer_cfg
+        self.scene.reach_goal_marker = self.commands.reach_pose.goal_pose_visualizer_cfg
+        self.scene.reach_current_marker = self.commands.reach_pose.current_pose_visualizer_cfg
         self.decimation = 2
         self.episode_length_s = 12.0
         self.sim.dt = 1.0 / 120.0

@@ -10,26 +10,22 @@ needs to know about that category in one place:
 
 * ``label`` -- the Hydra-style selector key (e.g. ``"physics"`` for
   ``physics=NAME``) and ``self.value``.
-* ``base_classes`` -- cfg base classes matched directly by
-  :meth:`PresetTarget.matches`. A target may also recognize documented
-  container shapes. Empty for :attr:`PresetTarget.DOMAIN`, which is the
-  catch-all whose membership is "no typed target matched".
-* ``legacy_aliases`` -- deprecated-name to canonical-name table for this
-  target, aggregated for hydra's resolver via :meth:`all_legacy_aliases`.
-
+* ``base_classes`` -- the cfg base classes whose subclass instances belong to
+  this bucket. Help-time bucketing in :mod:`isaaclab_tasks.utils.preset_cli`
+  routes variants by ``isinstance`` against these. Empty for
+  :attr:`PresetTarget.DOMAIN`, which is the catch-all whose membership is
+  "no typed target matched".
 Adding a new typed target = appending one enum member with its label, base
-classes, and (optional) legacy alias map. Extend :meth:`matches` only when the
-target also accepts a non-subclass container shape.
+classes. The CLI layer needs no other wiring.
 """
 
 from __future__ import annotations
 
 import enum
-import functools
 
 from isaaclab.physics import PhysicsCfg
 from isaaclab.renderers.renderer_cfg import RendererCfg
-from isaaclab.sim import SimulationCfg
+from isaaclab.visualizers.visualizer_cfg import VisualizerCfg
 
 
 class PresetTarget(enum.Enum):
@@ -41,48 +37,27 @@ class PresetTarget(enum.Enum):
     match any typed target falls into :attr:`DOMAIN` and shows up under the
     ``presets:`` catch-all in ``--help``.
 
-    To opt into the typed ``physics`` / ``renderer`` help-text listing, a
-    backend's cfg class must subclass :class:`~isaaclab.physics.PhysicsCfg` or
-    :class:`~isaaclab.renderers.renderer_cfg.RendererCfg` respectively. Physics
-    presets may also wrap a physics config in a complete
-    :class:`~isaaclab.sim.SimulationCfg` when backend selection must change
-    simulation-wide settings such as the time step.
-    A variant that matches neither typed target still **resolves correctly at
-    runtime** -- hydra applies the selected name across every matching
-    ``PresetCfg`` field regardless of class; the typed bucketing only governs
-    which header it appears under in ``--help``.
+    To opt into a typed help-text listing, a cfg class must subclass the
+    corresponding physics, renderer, or visualizer base class. A variant whose
+    class does *not* subclass a typed base still **resolves
+    correctly at runtime** -- hydra applies the selected name across every
+    matching ``PresetCfg`` field regardless of class; the typed bucketing only
+    governs which header it appears under in ``--help``.
 
-    Adding a new target = appending one enum member. Extend :meth:`matches`
-    only when the target also accepts a non-subclass container shape.
+    Adding a new target = appending one enum member.
     """
 
-    # Members. Tuple values are (label, base_classes, legacy_aliases); the
+    # Members. Tuple values are (label, base_classes); the
     # enum metaclass collects the whole namespace before constructing members,
     # so ``__new__`` below unpacks each tuple regardless of declaration order.
-    PHYSICS = ("physics", (PhysicsCfg,), {"newton": "newton_mjwarp", "kamino": "newton_kamino"})
-    """Physics backends -- ``physics=NAME`` selector.
+    PHYSICS = ("physics", (PhysicsCfg,))
+    """Physics backends -- ``physics=NAME`` selector."""
 
-    Legacy aliases ``newton`` -> ``newton_mjwarp`` and ``kamino`` -> ``newton_kamino``
-    exist because Newton-backend solver presets were renamed to use the
-    ``newton_`` prefix so they group together in autocomplete and read
-    distinctly from backend / package / visualizer names that also contain the
-    word ``newton``. Hydra's resolver (see
-    :func:`~isaaclab_tasks.utils.hydra._normalize_preset_name`) consults these
-    and emits a :class:`FutureWarning`; the aliases will be removed in a
-    future release.
-    """
+    RENDERER = ("renderer", (RendererCfg,))
+    """Camera-sensor renderers -- ``renderer=NAME`` selector."""
 
-    RENDERER = ("renderer", (RendererCfg,), {"ovrtx_renderer": "ovrtx", "isaacsim_rtx_renderer": "isaacsim_rtx"})
-    """Camera-sensor renderers -- ``renderer=NAME`` selector.
-
-    Legacy aliases ``ovrtx_renderer`` -> ``ovrtx`` and
-    ``isaacsim_rtx_renderer`` -> ``isaacsim_rtx`` exist because the renderer
-    presets dropped their redundant ``_renderer`` suffix (the ``renderer=``
-    selector already names the category). Hydra's resolver (see
-    :func:`~isaaclab_tasks.utils.hydra._normalize_preset_name`) consults these
-    and emits a :class:`FutureWarning`; the aliases will be removed in a
-    future release.
-    """
+    VISUALIZER = ("visualizer", (VisualizerCfg,))
+    """Interactive visualizers -- ``visualizer=NAME`` selector."""
 
     DOMAIN = ("presets",)
     """Free-form env-specific presets -- ``presets=NAME[,...]`` selector (catch-all).
@@ -99,59 +74,20 @@ class PresetTarget(enum.Enum):
         cls,
         label: str,
         base_classes: tuple[type, ...] = (),
-        legacy_aliases: dict[str, str] | None = None,
     ):
-        """Construct a member from its ``(label, base_classes, legacy_aliases)`` tuple.
+        """Construct a member from its ``(label, base_classes)`` tuple.
 
         Args:
             label: Hydra-style selector key (e.g. ``"physics"`` is recognized
                 as the ``physics=NAME`` token and becomes ``self.value``).
-            base_classes: Cfg base classes matched directly by :meth:`matches`.
-                A target may also define additional container-shape matching.
-                Defaults to ``()`` (no typed routing).
-            legacy_aliases: Optional deprecated-to-canonical map for this
-                target; copied so members cannot alias each other's tables.
-
+            base_classes: Cfg base classes whose instances route to this
+                target via :func:`isinstance`. Defaults to ``()`` (no typed
+                routing).
         Returns:
-            A new enum member with ``_value_`` set to *label*, plus
-            ``base_classes`` and ``legacy_aliases`` attributes.
+            A new enum member with ``_value_`` set to *label* and its
+            ``base_classes`` attribute.
         """
         obj = object.__new__(cls)
         obj._value_ = label
         obj.base_classes = tuple(base_classes)
-        obj.legacy_aliases = dict(legacy_aliases) if legacy_aliases else {}
         return obj
-
-    def matches(self, cfg: object) -> bool:
-        """Return whether a preset value belongs to this typed target.
-
-        A physics preset may contain a complete simulation configuration when
-        backend-specific settings extend beyond the physics config itself.
-
-        Args:
-            cfg: Preset alternative to classify.
-
-        Returns:
-            Whether the alternative belongs to this target.
-        """
-        if isinstance(cfg, self.base_classes):
-            return True
-        return self is PresetTarget.PHYSICS and isinstance(cfg, SimulationCfg) and isinstance(cfg.physics, PhysicsCfg)
-
-    @classmethod
-    @functools.cache
-    def all_legacy_aliases(cls) -> dict[str, str]:
-        """Flat ``{deprecated: canonical}`` view across every target.
-
-        Resolver-layer code (in :mod:`isaaclab_tasks.utils.hydra`) needs a
-        target-agnostic lookup -- the ``presets=...`` token is target-agnostic
-        on the wire. Cached because per-member tables are immutable after
-        class construction, so the merged view never changes; this keeps
-        each lookup O(1) instead of rebuilding on every membership test or
-        ``[]`` access. Callers must not mutate the returned dict.
-
-        Returns:
-            Mapping of every legacy alias to its canonical replacement,
-            aggregated across all members.
-        """
-        return {name: rep for target in cls for name, rep in target.legacy_aliases.items()}

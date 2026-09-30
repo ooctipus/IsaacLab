@@ -79,26 +79,7 @@ cuRobo provides the motion planning capabilities for SkillGen. This installation
 
 
 
-Step 3: Install Rerun
-^^^^^^^^^^^^^^^^^^^^^
-
-For trajectory visualization during development:
-
-.. code:: bash
-
-   pip install rerun-sdk==0.23
-
-.. note::
-
-   **Rerun Visualization Setup:**
-
-   * Rerun is optional but highly recommended for debugging and validating planned trajectories during development
-   * Enable trajectory visualization by setting ``visualize_plan = True`` in the cuRobo planner configuration
-   * When enabled, cuRobo planner interface will stream planned end-effector trajectories, waypoints, and collision data to Rerun for interactive inspection
-   * Visualization helps identify planning issues, collision problems, and trajectory smoothness before full dataset generation
-   * Can also run headless to reduce Isaac Sim visualization overhead while still visualizing and debugging end-effector trajectories with Rerun
-
-Step 4: Verify Installation
+Step 3: Verify Installation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Test that cuRobo works with Isaac Lab:
@@ -370,7 +351,7 @@ Once satisfied with small-scale results, generate a full training dataset:
 
 .. note::
 
-   * Run headless for faster generation. Rerun visualization can be enabled by setting ``visualize_plan = True`` in the cuRobo planner configuration while keeping Isaac Sim visualizers disabled.
+   * Run headless for faster generation.
    * Adjust ``--num_envs`` based on your GPU memory (start with 1, increase gradually). The performance gain is not very significant when num_envs is greater than 1. A value of 5 seems to be a sweet spot for most GPUs to balance performance and memory usage between cuRobo instances and simulation environments.
    * Generation time: ~90 to 120 minutes for one environment with visualizers disabled for 1000 demonstrations on a RTX 6000 Ada GPU. Time depends on the GPU, the number of environments, and the success rate of the demonstrations (which depends on quality of the annotated dataset).
    * cuRobo planner interface and configurations are described in :ref:`cuRobo-interface-features`.
@@ -610,7 +591,7 @@ This section summarizes the cuRobo planner interface and features. The SkillGen 
 Base Motion Planner (Extensible)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-* Location: ``isaaclab_mimic/motion_planners/base_motion_planner.py``
+* Location: ``isaaclab_mimic/motion_planners/motion_planner_base.py``
 * Purpose: Uniform interface for all motion planners used by SkillGen
 * Extensibility: New planners can be added by subclassing and implementing the same API; SkillGen consumes the API without code changes
 
@@ -626,7 +607,8 @@ cuRobo Planner (GPU, collision-aware)
 
 * World synchronization:
 
-  * Updates robot state, attached objects, and collision spheres from the Isaac Lab scene each trial
+  * Builds collision meshes once from the geometry declared by the environment's clone plan
+  * Updates the exact cfg-declared dynamic obstacle poses from Isaac Lab state each trial
   * Dynamic attach/detach of objects during grasp/place
 
 * Collision representation:
@@ -664,7 +646,9 @@ These tests can also serve as a reference for how to use cuRobo as a standalone 
 
 .. note::
 
-   For detailed cuRobo config creation and parameters, please see the file ``isaaclab_mimic/motion_planners/curobo/curobo_planner_config.py``.
+   Define ``CuroboPlannerCfg`` on the direct environment cfg before constructing the environment.
+   Its parameters and clone-plan collision declarations are in
+   ``isaaclab_mimic/motion_planners/curobo/curobo_planner_cfg.py``.
 
 Generation Pipeline Integration
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -684,23 +668,10 @@ When ``--use_skillgen`` is enabled in ``generate_dataset.py``, the following pip
    - Plan a collision-aware transition with cuRobo to the subtask's first waypoint (world sync, optional attach/detach), execute the planned waypoints, then resume the subtask trajectory
 
 4. **Execute with constraints**:
-   - Execute waypoints step-by-step across end-effectors while enforcing subtask constraints (sequential, coordination with synchronous steps); optionally update planner visualization if enabled
+   - Execute waypoints step-by-step across end-effectors while enforcing subtask constraints (sequential, coordination with synchronous steps)
 
 5. **Record and export**:
    - Accumulate states/observations/actions, set the episode success flag, and export the episode (the outer pipeline filters/consumes successes)
-
-Visualization and Debugging
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-Users can visualize the planned trajectories and debug for collisions using Rerun-based plan visualizer. This can be enabled by setting ``visualize_plan = True`` in the cuRobo planner configuration. Note that rerun needs to be installed to visualize the planned trajectories. Refer to Step 3 in :ref:`skillgen-installation` for installation instructions.
-
-.. figure:: https://download.isaacsim.omniverse.nvidia.com/isaaclab/images/rerun_cube_stack.gif
-   :width: 80%
-   :align: center
-   :alt: Rerun visualization of planned trajectories and collisions
-   :figclass: align-center
-
-   Rerun integration: planned trajectories with collision spheres.
 
 .. note::
 

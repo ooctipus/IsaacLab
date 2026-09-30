@@ -5,34 +5,85 @@
 
 from __future__ import annotations
 
-import logging
-import re
-from collections import deque
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import warp as wp
 
-import isaaclab.sim as sim_utils
+from isaaclab.utils.warp.fabric import _decompose_transformation_matrix
 
-from .scene_data_backend import SceneDataBackend, SceneDataFormat
-
-logger = logging.getLogger(__name__)
+from .geometry_points import (
+    body_points_to_fabric_mesh_points_kernel,
+    body_points_to_mesh_points_kernel,
+    body_points_to_points_kernel,
+    cable_points_to_fabric_mesh_points_kernel,
+    cable_points_to_points_kernel,
+)
+from .scene_data_backend import SceneDataBackend, SceneDataFormat, SceneDataPublication
 
 if TYPE_CHECKING:
-    from pxr import Usd
+    from isaaclab.cloner.clone_plan import ClonePlan
 
-REQUIRES_STAGE_AND_MODEL: dict[str, tuple[bool, bool]] = {
-    "kit": (True, False),
-    "newton_gl": (False, True),
-    "newton": (False, True),
-    "newton_rtx": (False, True),
-    "rerun": (False, True),
-    "viser": (False, True),
-    "isaac_rtx": (True, False),
-    "newton_warp": (False, True),
-    "ovrtx": (True, True),
-}
+    IndexedFabricArrayMat44d = Any
+else:
+    IndexedFabricArrayMat44d = wp.indexedfabricarray(dtype=wp.mat44d)
+
+
+def _data_arrays(data: Any) -> tuple[Any, ...]:
+    """Return every non-null pointer field in a published Warp struct."""
+    return tuple(getattr(data, name) for name in data._cls.vars if getattr(data, name) is not None)
+
+
+def _data_count(data: Any) -> int:
+    """Return the common leading dimension of a publication's pointers."""
+    if getattr(data, "_cls", type(data)) is SceneDataFormat.IndexedTransform:
+        if data.transforms is None or data.source_indices is None:
+            return 0
+        _data_device(data)
+        return int(data.source_indices.shape[0])
+    arrays = _data_arrays(data)
+    if not arrays:
+        return 0
+    counts = {int(array.shape[0]) for array in arrays}
+    if len(counts) != 1:
+        raise RuntimeError("SDP publication fields must have one element count.")
+    return counts.pop()
+
+
+def _data_device(data: Any):
+    devices = [array.device for array in _data_arrays(data)]
+    if not devices or any(str(device) != str(devices[0]) for device in devices[1:]):
+        raise RuntimeError("SDP publication fields must expose pointers on one device.")
+    return devices[0]
+
+
+def _point_device(data: Any):
+    """Return the common device of one native point pointer bundle."""
+    if isinstance(data, SceneDataFormat.BodyPoints):
+        arrays = (*data.points, *data.binding_ids)
+    elif isinstance(data, SceneDataFormat.CablePoints):
+        arrays = tuple(
+            getattr(data, name)
+            for name in (
+                "body_q",
+                "shape_body",
+                "shape_transform",
+                "shape_scale",
+                "shape_ids",
+                "shape_offsets",
+                "segment_counts",
+                "binding_ids",
+            )
+        )
+    else:
+        return _data_device(data)
+    if not arrays or any(array is None for array in arrays):
+        raise RuntimeError("SDP native point publication has missing pointers.")
+    devices = {str(array.device) for array in arrays}
+    if len(devices) != 1:
+        raise RuntimeError("SDP native point publication pointers must share one device.")
+    return arrays[0].device
 
 
 class SceneDataProvider:
@@ -42,633 +93,787 @@ class SceneDataProvider:
         Args:
             backend: The simulation backend that supplies raw transform data.
         """
-        self.backend = backend
-        self._num_envs_cache: int | None = None
-        self._interactive_scene: Any | None = None
+        self._backend = backend
+        self._generations: dict[tuple[str, str | None], int] = {("transforms", None): 0}
+        self._fabric_generation = 0
+        self._transform_publications: dict[str, SceneDataPublication] = {}
+        self._cache: dict[tuple[str, str | None, Any], tuple[int, Any]] = {}
+        self._prepare_fabric_output: Callable[[Any, str | None], Any | None] | None = None
+        self._host_transform_staging: dict[str | None, SceneDataFormat.TransposedMatrix44d] = {}
+        self._point_maps: dict[str, tuple[Any, ...]] = {}
+        self._point_source_counts: dict[str, int] = {}
+        self._point_device_maps: dict[tuple[str, str], tuple[wp.array, ...]] = {}
+        self._host_point_staging: dict[tuple[str, Any], wp.array] = {}
 
-    def set_interactive_scene(self, scene: Any) -> None:
-        """Attach the active interactive scene for scene-owned sensor discovery."""
-        self._interactive_scene = scene
+    def _bind_point_plan(self, plan: ClonePlan) -> None:
+        """Bind the final plan's static native-to-drawable point maps once."""
+        for name in plan.point_stream_names:
+            bindings = plan.point_bindings(name)
+            self._point_source_counts[name] = sum(binding.source_count for binding in bindings)
+            mapping_offsets = np.full(len(bindings), -1, dtype=np.int32)
+            templates: dict[tuple[int, int], int] = {}
+            index_templates = []
+            weight_templates = []
+            mapping_count = 0
+            for binding_index, binding in enumerate(bindings):
+                if binding.source_indices is None:
+                    continue
+                key = (id(binding.source_indices), id(binding.weights))
+                mapping_offset = templates.get(key)
+                if mapping_offset is None:
+                    mapping_offset = templates[key] = mapping_count
+                    index_templates.append(binding.source_indices)
+                    weight_templates.append(binding.weights)
+                    mapping_count += binding.output_count
+                mapping_offsets[binding_index] = mapping_offset
+            self._point_maps[name] = (
+                np.repeat(np.arange(len(bindings), dtype=np.int32), [binding.output_count for binding in bindings]),
+                np.asarray([binding.source_offset for binding in bindings], dtype=np.int32),
+                np.asarray([binding.source_count for binding in bindings], dtype=np.int32),
+                np.asarray([binding.output_offset for binding in bindings], dtype=np.int32),
+                np.asarray([binding.output_count for binding in bindings], dtype=np.int32),
+                mapping_offsets,
+                np.concatenate(index_templates) if index_templates else np.empty((0, 4), dtype=np.int32),
+                np.concatenate(weight_templates) if weight_templates else np.empty((0, 4), dtype=np.float32),
+            )
 
-    def get_interactive_scene(self) -> Any | None:
-        """Return the registered interactive scene, if available."""
-        return self._interactive_scene
+    def register_transforms(self, name: str, publication: SceneDataPublication) -> None:
+        """Register one named transform publication."""
+        current = self._transform_publications.get(name)
+        if current is not None and current is not publication:
+            raise ValueError(f"Transform publication {name!r} is already registered.")
+        self._transform_publications[name] = publication
+        self._generations.setdefault(("transforms", name), 0)
 
-    def get_camera_sensors(self) -> dict[str, Any]:
-        """Return Isaac Lab camera sensors keyed by scene sensor name."""
-        if self._interactive_scene is None:
-            return {}
-        try:
-            from isaaclab.sensors.camera import Camera
-        except ImportError:
-            return {}
-        return {
-            name: sensor
-            for name, sensor in getattr(self._interactive_scene, "sensors", {}).items()
-            if isinstance(sensor, Camera)
-        }
+    def unregister_transforms(self, name: str, publication: SceneDataPublication) -> None:
+        """Remove a named transform publication when ``publication`` still owns it."""
+        if self._transform_publications.get(name) is publication:
+            del self._transform_publications[name]
+            self._generations.pop(("transforms", name), None)
+            self._host_transform_staging.pop(name, None)
+            self._cache = {key: value for key, value in self._cache.items() if key[:2] != ("transforms", name)}
 
-    def get_contact_sensors(self) -> dict[str, Any]:
-        """Return Isaac Lab contact sensors keyed by scene sensor name."""
-        if self._interactive_scene is None:
-            return {}
-        from isaaclab.sensors.contact_sensor import BaseContactSensor
+    def request_transforms(
+        self,
+        output_format: Any,
+        name: str | None = None,
+    ) -> Any | None:
+        """Return transforms in ``output_format``, converting once per dirty generation.
 
-        return {
-            name: sensor
-            for name, sensor in getattr(self._interactive_scene, "sensors", {}).items()
-            if isinstance(sensor, BaseContactSensor)
-        }
+        The provider owns converted buffers. Repeated requests for the same format return the same
+        current pointer. A native-format request aliases the publisher and launches no conversion.
 
-    @property
-    def transform_count(self) -> int:
-        """Number of transforms available from the sim backend."""
-        return self.backend.transform_count
+        Args:
+            output_format: Requested :class:`SceneDataFormat` struct type.
+            name: Named transform publication, or ``None`` for the physics scene.
 
-    @property
-    def usd_stage(self) -> Usd.Stage | None:
-        """Pixar :class:`Usd.Stage` for visualizers and renderers that walk USD.
+        Returns:
+            Provider-owned output, or ``None`` when the backend publishes no transforms.
 
-        Resolves to :attr:`isaaclab.sim.SimulationContext.stage`, falling back to
-        ``omni.usd.get_context().get_stage()`` when the simulation context has no
-        cached stage. Returns ``None`` on Newton-only headless runs without a USD
-        stage.
+        Raises:
+            RuntimeError: If no conversion exists or a non-empty destination was not prepared.
         """
-        from isaaclab.sim import SimulationContext
-
-        sim = SimulationContext.instance()
-        stage = getattr(sim, "stage", None) if sim is not None else None
-        if stage is not None:
-            return stage
-        try:
-            import omni.usd
-
-            return omni.usd.get_context().get_stage()
-        except Exception:
+        publication = self._backend.transform_publication if name is None else self._transform_publications[name]
+        count = _data_count(publication.data)
+        if not count:
             return None
 
-    def get_usd_stage(self) -> Usd.Stage | None:
-        """Return the USD stage for callers using the older method-style API."""
-        return self.usd_stage
-
-    @property
-    def num_envs(self) -> int:
-        """Number of environments discovered from ``/World/envs/env_<id>`` prims.
-
-        Cached on first call. Returns ``0`` when no USD stage is available or when
-        no ``/World/envs/env_<id>`` prims exist.
-        """
-        if self._num_envs_cache is not None:
-            return self._num_envs_cache
-        self._num_envs_cache = _discover_num_envs(self.usd_stage)
-        return self._num_envs_cache
-
-    def get_camera_transforms(self) -> dict[str, Any] | None:
-        """Per-camera, per-environment world transforms discovered from USD.
-
-        Returns:
-            Dictionary with keys ``order`` (list of template prim paths using
-            ``env_%d``), ``positions`` and ``orientations`` (per-camera, per-env
-            lists, with ``None`` for absent envs), and ``num_envs``. Returns
-            ``None`` when no USD stage is available.
-        """
-        return _walk_camera_prims(self.usd_stage)
-
-    def get_transforms(
-        self,
-        output: SceneDataFormat.Vec3_Quat
-        | SceneDataFormat.Transform
-        | SceneDataFormat.Matrix44
-        | SceneDataFormat.Vec3_Matrix33,
-        mapping: wp.array(dtype=wp.int32) | None = None,
-        allow_passthrough: bool = True,
-    ) -> bool:
-        """Convert sim backend transforms into the requested output format.
-
-        When the backend's native format matches ``output``, data is either passed
-        through by reference (``allow_passthrough=True``) or deep-copied. Otherwise a
-        Warp conversion kernel is launched to transform the data, applying ``mapping``
-        to reorder the output if provided.
-
-        Args:
-            output: A pre-allocated :class:`SceneDataFormat` struct that determines the
-                target format. Uninitialized (``None``) fields are allocated automatically
-                when a conversion kernel is needed.
-            mapping: Optional index remapping array produced by
-                :meth:`create_mapping`. When ``None``, input and output indices are
-                identical.
-            allow_passthrough: If ``True`` and the formats already match, the output
-                struct's fields are set to reference the input arrays directly
-                (zero-copy). If ``False``, the data is always copied.
-
-        Returns:
-            ``True`` if the conversion succeeded, ``False`` if no suitable conversion
-            kernel exists for the input/output format pair.
-        """
-        input = self.backend.transforms
-
-        if mapping is None and type(input) is type(output):
-            if allow_passthrough:
-                for field_name in input._cls.vars:
-                    setattr(output, field_name, getattr(input, field_name))
+        generation = self._refresh_generation(("transforms", name), publication)
+        key = ("transforms", name, output_format)
+        cached = self._cache.get(key)
+        if cached is not None and cached[0] == generation:
+            return cached[1]
+        input = publication.data
+        output = cached[1] if cached is not None else None
+        if getattr(input, "_cls", type(input)) is not output_format and output_format is SceneDataFormat.FabricMatrix44:
+            if self._prepare_fabric_output is None:
+                raise RuntimeError("Fabric transform destinations were not prepared before initialization.")
+            output = self._prepare_fabric_output(output_format, name)
+            if output is None:
+                if name is None:
+                    return None
+                raise RuntimeError(f"Fabric transform destinations for {name!r} were not prepared.")
+        if getattr(input, "_cls", type(input)) is output_format:
+            output = input
+        else:
+            if output is None:
+                output = output_format()
+            if input._cls is SceneDataFormat.Transform and output_format is SceneDataFormat.IndexedTransform:
+                output.transforms = input.transforms
+                if output.source_indices is None:
+                    output.source_indices = wp.array(np.arange(count, dtype=np.int32), device=input.transforms.device)
             else:
-                self.init_output(output)
-                for field_name in input._cls.vars:
-                    wp.copy(getattr(output, field_name), getattr(input, field_name))
-            return True
+                self._init_output(output, count, input)
+                self._convert_transforms(input, output, count, name)
+        self._cache[key] = (generation, output)
+        if output_format is SceneDataFormat.FabricMatrix44:
+            self._fabric_generation += 1
+        return output
 
-        conversion_kernel_name = f"convert_{input._cls.__name__}_to_{output._cls.__name__}"
+    def transform_generation(self, name: str | None = None) -> int:
+        """Generation of a transform publication requested from this provider."""
+        return self._generations.get(("transforms", name), 0)
 
-        if conversion_kernel := getattr(ConversionKernels, conversion_kernel_name, None):
-            self.init_output(output)
-            wp.launch(kernel=conversion_kernel, dim=self.transform_count, inputs=[input, mapping], outputs=[output])
-            return True
+    def point_generation(self, name: str = "points") -> int:
+        """Generation of a named point publication requested from this provider."""
+        return self._generations.get(("points", name), 0)
 
-        return False
+    def _refresh_generation(self, key: tuple[str, str | None], publication: SceneDataPublication) -> int:
+        """Consume a dirty latch and return its provider-owned generation."""
+        generation = self._generations.get(key, 0)
+        if publication.dirty:
+            if key[0] == "points" or key[1] is None:
+                self._backend._materialize(publication)
+            generation += 1
+            self._generations[key] = generation
+            publication.dirty = False
+        return generation
 
-    def init_output(
+    def _convert_transforms(
         self,
-        output: SceneDataFormat.Vec3_Quat
-        | SceneDataFormat.Transform
-        | SceneDataFormat.Matrix44
-        | SceneDataFormat.Vec3_Matrix33,
-    ):
-        """Allocate any uninitialized fields in ``output`` with empty Warp arrays.
+        input,
+        output,
+        count: int,
+        name: str | None = None,
+    ) -> None:
+        if isinstance(output, SceneDataFormat.HostTransposedMatrix44d):
+            if input._cls is SceneDataFormat.TransposedMatrix44d:
+                matrices = input.matrices
+            else:
+                staging = self._host_transform_staging.get(name)
+                if staging is None:
+                    staging = self._host_transform_staging[name] = SceneDataFormat.TransposedMatrix44d()
+                    self._init_output(staging, count, input)
+                matrices = staging.matrices
+                kernel_name = f"convert_{input._cls.__name__}_to_TransposedMatrix44d"
+                kernel = getattr(ConversionKernels, kernel_name, None)
+                if kernel is None:
+                    raise RuntimeError(f"SceneDataProvider has no {kernel_name} conversion.")
+                wp.launch(
+                    kernel=kernel,
+                    dim=count,
+                    inputs=[input],
+                    outputs=[staging],
+                    device=staging.matrices.device,
+                )
+            output.matrices = matrices.numpy().reshape(-1, 4, 4)
+            return
+        if isinstance(output, SceneDataFormat.FabricMatrix44):
+            kernel_name = f"convert_{input._cls.__name__}_to_FabricMatrix44"
+            if input._cls is SceneDataFormat.Vec3_Quat:
+                if output.source_indices.shape[0] != count:
+                    raise RuntimeError(
+                        f"Fabric transform destination has {output.source_indices.shape[0]} entries; expected {count}."
+                    )
+                wp.launch(
+                    ConversionKernels.convert_Vec3_Quat_to_FabricMatrix44,
+                    dim=count,
+                    inputs=[input.positions, input.orientations, output.matrices, output.local_matrices],
+                    device=output.source_indices.device,
+                )
+                wp.synchronize_stream(output.source_indices.device)
+                return
+            elif input._cls is SceneDataFormat.Transform:
+                kernel = ConversionKernels.convert_Transform_to_FabricMatrix44
+                inputs = [input.transforms, output.source_indices, output.matrices]
+            elif input._cls is SceneDataFormat.IndexedTransform:
+                kernel = ConversionKernels.convert_IndexedTransform_to_FabricMatrix44
+                inputs = [input.transforms, input.source_indices, output.source_indices, output.matrices]
+            else:
+                raise RuntimeError(f"SceneDataProvider has no {kernel_name} conversion.")
+            wp.launch(
+                kernel,
+                dim=output.source_indices.shape[0],
+                inputs=inputs,
+                outputs=[output.local_matrices],
+                device=output.source_indices.device,
+            )
+            wp.synchronize_stream(output.source_indices.device)
+            return
+        kernel_name = f"convert_{input._cls.__name__}_to_{output._cls.__name__}"
+        kernel = getattr(ConversionKernels, kernel_name, None)
+        if kernel is None:
+            raise RuntimeError(f"SceneDataProvider has no {kernel_name} conversion.")
+        wp.launch(
+            kernel=kernel,
+            dim=count,
+            inputs=[input],
+            outputs=[output],
+            device=_data_device(output),
+        )
 
-        Only fields that are currently ``None`` are allocated; already-initialized
-        fields are left untouched.
+    def _bind_fabric_outputs(
+        self,
+        prepare: Callable[[Any, str | None], Any | None],
+    ) -> None:
+        """Bind format pointers materialized by the clone backend."""
+        self._prepare_fabric_output = prepare
 
-        Args:
-            output: A :class:`SceneDataFormat` struct whose ``None``-valued fields
-                will be replaced with empty arrays of length :attr:`transform_count`.
-        """
+    def _init_output(self, output: Any, count: int, input: Any) -> None:
+        """Allocate converted Warp fields on the publisher's device."""
+        if not hasattr(output, "_cls"):
+            return
+        device = _data_device(input)
         for field_name, field_value in output._cls.vars.items():
             if getattr(output, field_name) is None:
-                setattr(output, field_name, wp.empty(self.transform_count, dtype=field_value.type.dtype))
+                setattr(output, field_name, wp.empty(count, dtype=field_value.type.dtype, device=device))
 
-    def create_mapping(self, paths: list[str | None]) -> wp.array(dtype=wp.int32) | None:
-        """Create an index mapping from sim backend transforms to desired output ordering.
-
-        For each transform in the sim backend, the resulting array stores the index into
-        ``paths`` where that transform should be written. Transforms whose path does not
-        appear in ``paths`` (or maps to ``None``) receive an index of ``-1`` and are
-        skipped during conversion.
-
-        Args:
-            paths: Desired output ordering expressed as prim paths. Use ``None`` for
-                slots that should not receive any transform.
-
-        Returns:
-            A Warp int32 array of length :attr:`transform_count` containing the
-            remapped indices, or ``None`` if the sim backend provides no transform
-            paths or if no mapping is needed.
-        """
-        if input_paths := self.backend.transform_paths:
-            # The map keeps resolution linear in the number of paths. For duplicate
-            # paths the first occurrence wins, matching ``list.index``.
-            path_to_out: dict[str | None, int] = {}
-            for out_idx, out_path in enumerate(paths):
-                if out_path not in path_to_out:
-                    path_to_out[out_path] = out_idx
-            mapping = [path_to_out.get(path, -1) for path in input_paths]
-            if not np.array_equal(mapping, np.arange(len(input_paths))):
-                return wp.array(mapping, dtype=wp.int32)
-        return None
-
-    def create_geometry_mapping(
+    def request_points(
         self,
-        paths: list[str | None],
-        particle_offsets: list[int],
-    ) -> wp.array(dtype=wp.int32) | None:
-        """Create a mapping from backend geometry entities to consumer particle offsets.
-
-        For each geometry entity in the sim backend, the resulting array stores the
-        destination particle offset in the consumer buffer. Entities whose path does not
-        appear in ``paths`` receive ``-1`` and are skipped during copy.
+        output_format: Any,
+        name: str = "points",
+    ) -> Any | None:
+        """Return geometry points in ``output_format`` once per dirty generation.
 
         Args:
-            paths: Desired consumer entity paths in particle-offset order.
-            particle_offsets: Particle offset in the consumer buffer for each ``paths`` entry.
+            output_format: Requested :class:`SceneDataFormat` struct type.
+            name: Published point-stream name.
 
         Returns:
-            A Warp int32 array of length ``len(geometry_paths)`` containing destination
-            particle offsets, or ``None`` when no geometry is available or every entity
-            maps identically in order.
+            Provider-owned output, or ``None`` when no points or Fabric destination exist.
+
+        Raises:
+            RuntimeError: If no conversion exists or a non-empty destination was not prepared.
         """
-        input_paths = self.backend.geometry_paths
-        input_counts = self.backend.geometry_counts
-        if not input_paths or not input_counts:
-            return None
+        publication = self._backend.point_publications[name]
+        input = publication.data
+        input_format = getattr(input, "_cls", type(input))
+        native_bundle = isinstance(input, (SceneDataFormat.BodyPoints, SceneDataFormat.CablePoints))
+        if native_bundle:
+            ready = bool(input.points) if isinstance(input, SceneDataFormat.BodyPoints) else input.body_q is not None
+            if not ready:
+                return None
+            if name not in self._point_maps:
+                raise RuntimeError(f"Plan-owned point mapping for {name!r} was not prepared before initialization.")
+            count = self._point_source_counts[name]
+            self._validate_point_bundle(input, name)
+        else:
+            count = _data_count(input)
+            if not count:
+                return None
+        if output_format in (SceneDataFormat.FabricMeshPoints, SceneDataFormat.HostMeshPoints) or native_bundle:
+            if name not in self._point_maps:
+                raise RuntimeError(f"Plan-owned point mapping for {name!r} was not prepared before initialization.")
+            if not native_bundle and count != self._point_source_counts[name]:
+                raise RuntimeError(
+                    f"Point publication {name!r} has {count} native points; the clone plan requires "
+                    f"{self._point_source_counts[name]}."
+                )
 
-        path_to_offset = {
-            path: offset for path, offset in zip(paths, particle_offsets, strict=True) if path is not None
-        }
-        mapping = [-1] * len(input_paths)
-        identity = True
-        flat_offset = 0
-        for index, path in enumerate(input_paths):
-            dest_offset = path_to_offset.get(path, -1)
-            mapping[index] = dest_offset
-            if dest_offset != flat_offset:
-                identity = False
-            flat_offset += int(input_counts[index])
+        generation = self._refresh_generation(("points", name), publication)
+        key = ("points", name, output_format)
+        cached = self._cache.get(key)
+        if cached is not None and cached[0] == generation:
+            return cached[1]
+        output = cached[1] if cached is not None else None
+        if output_format is SceneDataFormat.FabricMeshPoints and input_format is not output_format:
+            if self._prepare_fabric_output is None:
+                raise RuntimeError(f"Fabric point destinations for {name!r} were not prepared before initialization.")
+            output = self._prepare_fabric_output(output_format, name)
+            if output is None:
+                raise RuntimeError(f"Fabric point destinations for {name!r} were not prepared before initialization.")
+        if input_format is output_format:
+            output = input
+        else:
+            if output is None:
+                output = output_format()
+            self._convert_points(input, output, count, name)
+        self._cache[key] = (generation, output)
+        return output
 
-        if identity and all(value >= 0 for value in mapping):
-            return None
-        return wp.array(mapping, dtype=wp.int32)
+    def _validate_point_bundle(self, input: Any, name: str) -> None:
+        """Validate native pointer-bundle cardinality against the plan without moving data."""
+        _point_device(input)
+        binding_count = len(self._point_maps[name][1])
+        if isinstance(input, SceneDataFormat.BodyPoints):
+            if (
+                len(input.points) != len(input.binding_ids)
+                or sum(points.shape[0] for points in input.points) != binding_count
+            ):
+                raise RuntimeError(f"BodyPoints publication {name!r} does not cover its {binding_count} plan bindings.")
+            if any(
+                len(points.shape) != 2 or points.shape[0] != ids.shape[0]
+                for points, ids in zip(input.points, input.binding_ids, strict=True)
+            ):
+                raise RuntimeError(f"BodyPoints publication {name!r} has incompatible pointer and binding shapes.")
+        elif any(
+            array.shape[0] != binding_count for array in (input.shape_offsets, input.segment_counts, input.binding_ids)
+        ):
+            raise RuntimeError(f"CablePoints publication {name!r} does not cover its {binding_count} plan bindings.")
 
-    def get_points(
-        self,
-        output: SceneDataFormat.Points,
-        mapping: wp.array(dtype=wp.int32) | None = None,
-        allow_passthrough: bool = True,
-    ) -> bool:
-        """Copy sim backend geometry points into ``output``.
+    def _device_point_map(self, name: str, device: Any) -> tuple[wp.array, ...]:
+        """Upload one plan-owned gather map once for a publication device."""
+        key = (name, str(device))
+        if key not in self._point_device_maps:
+            (
+                bindings,
+                source_offsets,
+                source_counts,
+                output_offsets,
+                output_counts,
+                mapping_offsets,
+                indices,
+                weights,
+            ) = self._point_maps[name]
+            self._point_device_maps[key] = (
+                wp.array(bindings, dtype=wp.int32, device=device),
+                wp.array(source_offsets, dtype=wp.int32, device=device),
+                wp.array(source_counts, dtype=wp.int32, device=device),
+                wp.array(output_offsets, dtype=wp.int32, device=device),
+                wp.array(output_counts, dtype=wp.int32, device=device),
+                wp.array(mapping_offsets, dtype=wp.int32, device=device),
+                wp.array(indices, dtype=wp.int32, device=device),
+                wp.array(weights, dtype=wp.float32, device=device),
+            )
+        return self._point_device_maps[key]
 
-        Args:
-            output: Pre-allocated :class:`SceneDataFormat.Points` buffer (typically aliased
-                to shadow ``particle_q``).
-            mapping: Optional destination particle-offset array from
-                :meth:`create_geometry_mapping`.
-            allow_passthrough: When ``True`` and no mapping is needed, alias ``output.points``
-                directly to the backend buffer.
+    def _convert_points(self, input, output, count: int, name: str) -> None:
+        if isinstance(input, (SceneDataFormat.BodyPoints, SceneDataFormat.CablePoints)):
+            self._convert_point_bundle(input, output, count, name)
+            return
+        if isinstance(output, SceneDataFormat.HostPoints):
+            if input._cls is not SceneDataFormat.Points:
+                raise RuntimeError(f"SceneDataProvider has no convert_{input._cls.__name__}_to_HostPoints conversion.")
+            output.points = input.points.numpy().reshape(-1, 3)
+            return
+        if isinstance(output, SceneDataFormat.HostMeshPoints):
+            if input._cls is not SceneDataFormat.Points:
+                raise RuntimeError(
+                    f"SceneDataProvider has no convert_{input._cls.__name__}_to_HostMeshPoints conversion."
+                )
+            bindings, source_offsets, _, output_offsets, _, mapping_offsets, indices, weights = self._device_point_map(
+                name, input.points.device
+            )
+            key = (name, SceneDataFormat.HostMeshPoints)
+            staging = self._host_point_staging.get(key)
+            if staging is None:
+                staging = self._host_point_staging[key] = wp.empty(
+                    bindings.shape[0], dtype=wp.vec3f, device=input.points.device
+                )
+            wp.launch(
+                ConversionKernels.convert_Points_to_HostMeshPoints,
+                dim=bindings.shape[0],
+                inputs=[
+                    input.points,
+                    bindings,
+                    source_offsets,
+                    output_offsets,
+                    mapping_offsets,
+                    indices,
+                    weights,
+                ],
+                outputs=[staging],
+                device=input.points.device,
+            )
+            output.points = staging.numpy().reshape(-1, 3)
+            return
+        if isinstance(output, SceneDataFormat.FabricMeshPoints):
+            kernel_name = f"convert_{input._cls.__name__}_to_FabricMeshPoints"
+            if input._cls is not SceneDataFormat.Points:
+                raise RuntimeError(f"SceneDataProvider has no {kernel_name} conversion.")
+            bindings, source_offsets, _, output_offsets, _, mapping_offsets, indices, weights = self._device_point_map(
+                name, input.points.device
+            )
+            wp.launch(
+                ConversionKernels.convert_Points_to_FabricMeshPoints,
+                dim=bindings.shape[0],
+                inputs=[
+                    input.points,
+                    output.world_matrices,
+                    output.binding_slots,
+                    bindings,
+                    source_offsets,
+                    output_offsets,
+                    mapping_offsets,
+                    indices,
+                    weights,
+                ],
+                outputs=[output.points],
+                device=input.points.device,
+            )
+            wp.synchronize_stream(input.points.device)
+            return
+        kernel_name = f"convert_{input._cls.__name__}_to_{output._cls.__name__}"
+        kernel = getattr(ConversionKernels, kernel_name, None)
+        if kernel is None:
+            raise RuntimeError(f"SceneDataProvider has no {kernel_name} conversion.")
+        self._init_output(output, count, input)
+        wp.launch(kernel, dim=count, inputs=[input], outputs=[output], device=_data_device(input))
 
-        Returns:
-            ``True`` when points were copied or passed through, ``False`` when the backend
-            exposes no geometry.
-        """
-        if self.point_count == 0:
-            return False
+    def _convert_point_bundle(self, input, output, count: int, name: str) -> None:
+        """Convert a native body or cable pointer bundle directly into one requested destination."""
+        device = _point_device(input)
+        (
+            bindings,
+            source_offsets,
+            source_counts,
+            output_offsets,
+            output_counts,
+            mapping_offsets,
+            indices,
+            weights,
+        ) = self._device_point_map(name, device)
 
-        input_points = self.backend.points
-        if input_points.points is None:
-            return False
-
-        if mapping is None and allow_passthrough:
-            output.points = input_points.points
-            return True
-
-        if output.points is None:
-            output.points = wp.empty(self.point_count, dtype=wp.vec3f)
-
-        entity_counts = self.backend.geometry_counts
-        if not entity_counts:
-            wp.copy(output.points, input_points.points)
-            return True
-
-        from isaaclab.scene_data.geometry_points import scatter_geometry_points
-
-        scatter_geometry_points(
-            input_points.points,
-            output.points,
-            entity_counts,
-            mapping,
-            device=str(output.points.device),
+        if getattr(output, "_cls", type(output)) is SceneDataFormat.Points:
+            if output.points is None:
+                output.points = wp.empty(count, dtype=wp.vec3f, device=device)
+            self._convert_point_bundle_to_flat(input, output.points, source_offsets, source_counts)
+            return
+        if isinstance(output, (SceneDataFormat.HostPoints, SceneDataFormat.HostMeshPoints)):
+            mesh = isinstance(output, SceneDataFormat.HostMeshPoints)
+            size = bindings.shape[0] if mesh else count
+            key = (name, type(output))
+            staging = self._host_point_staging.get(key)
+            if staging is None:
+                staging = self._host_point_staging[key] = wp.empty(size, dtype=wp.vec3f, device=device)
+            if mesh and isinstance(input, SceneDataFormat.BodyPoints):
+                for points, binding_ids in zip(input.points, input.binding_ids, strict=True):
+                    wp.launch(
+                        body_points_to_mesh_points_kernel,
+                        dim=points.shape[0],
+                        inputs=[
+                            points,
+                            binding_ids,
+                            output_offsets,
+                            output_counts,
+                            mapping_offsets,
+                            indices,
+                            weights,
+                        ],
+                        outputs=[staging],
+                        device=device,
+                    )
+            else:
+                offsets = output_offsets if mesh else source_offsets
+                self._convert_point_bundle_to_flat(input, staging, offsets, source_counts)
+            output.points = staging.numpy().reshape(-1, 3)
+            return
+        if isinstance(output, SceneDataFormat.FabricMeshPoints):
+            if isinstance(input, SceneDataFormat.BodyPoints):
+                for points, binding_ids in zip(input.points, input.binding_ids, strict=True):
+                    wp.launch(
+                        body_points_to_fabric_mesh_points_kernel,
+                        dim=points.shape[0],
+                        inputs=[
+                            points,
+                            binding_ids,
+                            output.world_matrices,
+                            output.binding_slots,
+                            output_counts,
+                            mapping_offsets,
+                            indices,
+                            weights,
+                        ],
+                        outputs=[output.points],
+                        device=device,
+                    )
+            else:
+                wp.launch(
+                    cable_points_to_fabric_mesh_points_kernel,
+                    dim=input.segment_counts.shape[0],
+                    inputs=[
+                        input.shape_offsets,
+                        input.segment_counts,
+                        input.binding_ids,
+                        input.shape_ids,
+                        input.shape_body,
+                        input.body_q,
+                        input.shape_transform,
+                        input.shape_scale,
+                        output.world_matrices,
+                        output.binding_slots,
+                    ],
+                    outputs=[output.points],
+                    device=device,
+                )
+            wp.synchronize_stream(device)
+            return
+        raise RuntimeError(
+            f"SceneDataProvider has no convert_{type(input).__name__}_to_{type(output).__name__} conversion."
         )
-        return True
 
-    @property
-    def point_count(self) -> int:
-        """Number of geometry points available from the sim backend."""
-        return self.backend.point_count
+    def _convert_point_bundle_to_flat(
+        self,
+        input: SceneDataFormat.BodyPoints | SceneDataFormat.CablePoints,
+        output: wp.array,
+        offsets: wp.array,
+        source_counts: wp.array,
+    ) -> None:
+        """Gather one native bundle directly into a requested flat output."""
+        device = _point_device(input)
+        if isinstance(input, SceneDataFormat.BodyPoints):
+            for points, binding_ids in zip(input.points, input.binding_ids, strict=True):
+                wp.launch(
+                    body_points_to_points_kernel,
+                    dim=points.shape[0],
+                    inputs=[points, binding_ids, offsets, source_counts],
+                    outputs=[output],
+                    device=device,
+                )
+        else:
+            wp.launch(
+                cable_points_to_points_kernel,
+                dim=input.segment_counts.shape[0],
+                inputs=[
+                    input.shape_offsets,
+                    input.segment_counts,
+                    input.binding_ids,
+                    offsets,
+                    input.shape_ids,
+                    input.shape_body,
+                    input.body_q,
+                    input.shape_transform,
+                    input.shape_scale,
+                ],
+                outputs=[output],
+                device=device,
+            )
 
 
 class ConversionKernels:
-    @wp.func
-    def get_output_index(tid: wp.int32, mapping: wp.array(dtype=wp.int32)) -> wp.int32:
-        if not mapping.shape[0]:
-            return tid
-        if tid < mapping.shape[0]:
-            return mapping[tid]
-        return wp.int32(-1)
-
     @wp.kernel
-    def convert_Vec3_Quat_to_Vec3_Quat(
-        input: SceneDataFormat.Vec3_Quat, mapping: wp.array(dtype=wp.int32), output: SceneDataFormat.Vec3_Quat
+    def convert_IndexedTransform_to_Vec3_Quat(
+        input: SceneDataFormat.IndexedTransform, output: SceneDataFormat.Vec3_Quat
     ):
-        """Pass-through Vec3/Quat"""
+        """Gather native transforms into canonical Vec3/Quat arrays."""
         tid = wp.tid()
-        idx = ConversionKernels.get_output_index(tid, mapping)
-        if idx > -1:
-            output.positions[idx] = input.positions[tid]
-            output.orientations[idx] = input.orientations[tid]
+        transform = input.transforms[input.source_indices[tid]]
+        output.positions[tid] = wp.transform_get_translation(transform)
+        output.orientations[tid] = wp.transform_get_rotation(transform)
 
     @wp.kernel
-    def convert_Vec3_Quat_to_Vec3_Matrix33(
-        input: SceneDataFormat.Vec3_Quat, mapping: wp.array(dtype=wp.int32), output: SceneDataFormat.Vec3_Matrix33
+    def convert_IndexedTransform_to_Vec3_Matrix33(
+        input: SceneDataFormat.IndexedTransform, output: SceneDataFormat.Vec3_Matrix33
     ):
+        """Gather native transforms into canonical Vec3/Matrix33 arrays."""
+        tid = wp.tid()
+        transform = input.transforms[input.source_indices[tid]]
+        output.positions[tid] = wp.transform_get_translation(transform)
+        output.orientations[tid] = wp.quat_to_matrix(wp.transform_get_rotation(transform))
+
+    @wp.kernel
+    def convert_IndexedTransform_to_Transform(
+        input: SceneDataFormat.IndexedTransform, output: SceneDataFormat.Transform
+    ):
+        """Gather native transforms into canonical packed transforms."""
+        tid = wp.tid()
+        output.transforms[tid] = input.transforms[input.source_indices[tid]]
+
+    @wp.kernel
+    def convert_IndexedTransform_to_TransposedMatrix44d(
+        input: SceneDataFormat.IndexedTransform, output: SceneDataFormat.TransposedMatrix44d
+    ):
+        """Gather native transforms into canonical transposed matrices."""
+        tid = wp.tid()
+        transform = input.transforms[input.source_indices[tid]]
+        output.matrices[tid] = wp.transpose(wp.mat44d(wp.transform_to_matrix(transform)))
+
+    @wp.kernel
+    def convert_Vec3_Quat_to_Vec3_Matrix33(input: SceneDataFormat.Vec3_Quat, output: SceneDataFormat.Vec3_Matrix33):
         """Convert Vec3/Quat to Vec3/Matrix33"""
         tid = wp.tid()
-        idx = ConversionKernels.get_output_index(tid, mapping)
-        if idx > -1:
-            output.positions[idx] = input.positions[tid]
-            output.orientations[idx] = wp.quat_to_matrix(input.orientations[tid])
+        output.positions[tid] = input.positions[tid]
+        output.orientations[tid] = wp.quat_to_matrix(input.orientations[tid])
 
     @wp.kernel
-    def convert_Vec3_Quat_to_Transform(
-        input: SceneDataFormat.Vec3_Quat, mapping: wp.array(dtype=wp.int32), output: SceneDataFormat.Transform
-    ):
+    def convert_Vec3_Quat_to_Transform(input: SceneDataFormat.Vec3_Quat, output: SceneDataFormat.Transform):
         """Convert Vec3/Quat to Transform"""
         tid = wp.tid()
-        idx = ConversionKernels.get_output_index(tid, mapping)
-        if idx > -1:
-            output.transforms[idx] = wp.transformf(input.positions[tid], input.orientations[tid])
+        output.transforms[tid] = wp.transformf(input.positions[tid], input.orientations[tid])
 
     @wp.kernel
-    def convert_Vec3_Quat_to_Matrix44(
-        input: SceneDataFormat.Vec3_Quat, mapping: wp.array(dtype=wp.int32), output: SceneDataFormat.Matrix44
+    def convert_Vec3_Quat_to_TransposedMatrix44d(
+        input: SceneDataFormat.Vec3_Quat,
+        output: SceneDataFormat.TransposedMatrix44d,
     ):
-        """Convert Vec3/Quat to Matrix44"""
+        """Convert Vec3/Quat to transposed double-precision Matrix44."""
         tid = wp.tid()
-        idx = ConversionKernels.get_output_index(tid, mapping)
-        if idx > -1:
-            output.matrices[idx] = wp.transform_to_matrix(wp.transformf(input.positions[tid], input.orientations[tid]))
+        matrix = wp.transform_to_matrix(wp.transformf(input.positions[tid], input.orientations[tid]))
+        output.matrices[tid] = wp.transpose(wp.mat44d(matrix))
 
     @wp.kernel
-    def convert_Vec3_Matrix33_to_Vec3_Quat(
-        input: SceneDataFormat.Vec3_Matrix33, mapping: wp.array(dtype=wp.int32), output: SceneDataFormat.Vec3_Quat
-    ):
+    def convert_Vec3_Matrix33_to_Vec3_Quat(input: SceneDataFormat.Vec3_Matrix33, output: SceneDataFormat.Vec3_Quat):
         """Convert Vec3/Matrix33 to Vec3/Quat"""
         tid = wp.tid()
-        idx = ConversionKernels.get_output_index(tid, mapping)
-        if idx > -1:
-            output.positions[idx] = input.positions[tid]
-            output.orientations[idx] = wp.quat_from_matrix(input.orientations[tid])
+        output.positions[tid] = input.positions[tid]
+        output.orientations[tid] = wp.quat_from_matrix(input.orientations[tid])
 
     @wp.kernel
-    def convert_Vec3_Matrix33_to_Vec3_Matrix33(
-        input: SceneDataFormat.Vec3_Matrix33, mapping: wp.array(dtype=wp.int32), output: SceneDataFormat.Vec3_Matrix33
-    ):
-        """Pass-through Vec3/Matrix33"""
-        tid = wp.tid()
-        idx = ConversionKernels.get_output_index(tid, mapping)
-        if idx > -1:
-            output.positions[idx] = input.positions[tid]
-            output.orientations[idx] = input.orientations[tid]
-
-    @wp.kernel
-    def convert_Vec3_Matrix33_to_Transform(
-        input: SceneDataFormat.Vec3_Matrix33, mapping: wp.array(dtype=wp.int32), output: SceneDataFormat.Transform
-    ):
+    def convert_Vec3_Matrix33_to_Transform(input: SceneDataFormat.Vec3_Matrix33, output: SceneDataFormat.Transform):
         """Convert Vec3/Matrix33 to Transform"""
         tid = wp.tid()
-        idx = ConversionKernels.get_output_index(tid, mapping)
-        if idx > -1:
-            output.transforms[idx] = wp.transformf(input.positions[tid], wp.quat_from_matrix(input.orientations[tid]))
+        output.transforms[tid] = wp.transformf(input.positions[tid], wp.quat_from_matrix(input.orientations[tid]))
 
     @wp.kernel
-    def convert_Vec3_Matrix33_to_Matrix44(
-        input: SceneDataFormat.Vec3_Matrix33, mapping: wp.array(dtype=wp.int32), output: SceneDataFormat.Matrix44
+    def convert_Vec3_Matrix33_to_TransposedMatrix44d(
+        input: SceneDataFormat.Vec3_Matrix33,
+        output: SceneDataFormat.TransposedMatrix44d,
     ):
-        """Convert Vec3/Matrix33 to Matrix44"""
+        """Convert Vec3/Matrix33 to transposed double-precision Matrix44."""
         tid = wp.tid()
-        idx = ConversionKernels.get_output_index(tid, mapping)
-        if idx > -1:
-            transform = wp.transformf(input.positions[tid], wp.quat_from_matrix(input.orientations[tid]))
-            output.matrices[idx] = wp.transform_to_matrix(transform)
+        transform = wp.transformf(input.positions[tid], wp.quat_from_matrix(input.orientations[tid]))
+        output.matrices[tid] = wp.transpose(wp.mat44d(wp.transform_to_matrix(transform)))
 
     @wp.kernel
-    def convert_Transform_to_Vec3_Quat(
-        input: SceneDataFormat.Transform, mapping: wp.array(dtype=wp.int32), output: SceneDataFormat.Vec3_Quat
-    ):
+    def convert_Transform_to_Vec3_Quat(input: SceneDataFormat.Transform, output: SceneDataFormat.Vec3_Quat):
         """Convert Transform to Vec3/Quat"""
         tid = wp.tid()
-        idx = ConversionKernels.get_output_index(tid, mapping)
-        if idx > -1:
-            output.positions[idx] = wp.transform_get_translation(input.transforms[tid])
-            output.orientations[idx] = wp.transform_get_rotation(input.transforms[tid])
+        output.positions[tid] = wp.transform_get_translation(input.transforms[tid])
+        output.orientations[tid] = wp.transform_get_rotation(input.transforms[tid])
 
     @wp.kernel
-    def convert_Transform_to_Vec3_Matrix33(
-        input: SceneDataFormat.Transform, mapping: wp.array(dtype=wp.int32), output: SceneDataFormat.Vec3_Matrix33
-    ):
+    def convert_Transform_to_Vec3_Matrix33(input: SceneDataFormat.Transform, output: SceneDataFormat.Vec3_Matrix33):
         """Convert Transform to Vec3/Matrix33"""
         tid = wp.tid()
-        idx = ConversionKernels.get_output_index(tid, mapping)
-        if idx > -1:
-            output.positions[idx] = wp.transform_get_translation(input.transforms[tid])
-            output.orientations[idx] = wp.quat_to_matrix(wp.transform_get_rotation(input.transforms[tid]))
+        output.positions[tid] = wp.transform_get_translation(input.transforms[tid])
+        output.orientations[tid] = wp.quat_to_matrix(wp.transform_get_rotation(input.transforms[tid]))
 
     @wp.kernel
-    def convert_Transform_to_Transform(
-        input: SceneDataFormat.Transform, mapping: wp.array(dtype=wp.int32), output: SceneDataFormat.Transform
+    def convert_Transform_to_TransposedMatrix44d(
+        input: SceneDataFormat.Transform,
+        output: SceneDataFormat.TransposedMatrix44d,
     ):
-        """Pass-through Transform"""
+        """Convert Transform to transposed double-precision Matrix44."""
         tid = wp.tid()
-        idx = ConversionKernels.get_output_index(tid, mapping)
-        if idx > -1:
-            output.transforms[idx] = input.transforms[tid]
+        output.matrices[tid] = wp.transpose(wp.mat44d(wp.transform_to_matrix(input.transforms[tid])))
 
     @wp.kernel
-    def convert_Transform_to_Matrix44(
-        input: SceneDataFormat.Transform, mapping: wp.array(dtype=wp.int32), output: SceneDataFormat.Matrix44
+    def convert_TransposedMatrix44d_to_Vec3_Quat(
+        input: SceneDataFormat.TransposedMatrix44d,
+        output: SceneDataFormat.Vec3_Quat,
     ):
-        """Convert Transform to Matrix44"""
+        """Convert transposed double-precision Matrix44 to Vec3/Quat."""
         tid = wp.tid()
-        idx = ConversionKernels.get_output_index(tid, mapping)
-        if idx > -1:
-            output.matrices[idx] = wp.transform_to_matrix(input.transforms[tid])
+        transform = wp.transform_from_matrix(wp.mat44f(wp.transpose(input.matrices[tid])))
+        output.positions[tid] = wp.transform_get_translation(transform)
+        output.orientations[tid] = wp.transform_get_rotation(transform)
 
     @wp.kernel
-    def convert_Matrix44_to_Vec3_Quat(
-        input: SceneDataFormat.Matrix44, mapping: wp.array(dtype=wp.int32), output: SceneDataFormat.Vec3_Quat
+    def convert_TransposedMatrix44d_to_Vec3_Matrix33(
+        input: SceneDataFormat.TransposedMatrix44d,
+        output: SceneDataFormat.Vec3_Matrix33,
     ):
-        """Convert Matrix44 to Vec3/Quat"""
+        """Convert transposed double-precision Matrix44 to Vec3/Matrix33."""
         tid = wp.tid()
-        idx = ConversionKernels.get_output_index(tid, mapping)
-        if idx > -1:
-            transform = wp.transform_from_matrix(input.matrices[tid])
-            output.positions[idx] = wp.transform_get_translation(transform)
-            output.orientations[idx] = wp.transform_get_rotation(transform)
+        transform = wp.transform_from_matrix(wp.mat44f(wp.transpose(input.matrices[tid])))
+        output.positions[tid] = wp.transform_get_translation(transform)
+        output.orientations[tid] = wp.quat_to_matrix(wp.transform_get_rotation(transform))
 
     @wp.kernel
-    def convert_Matrix44_to_Vec3_Matrix33(
-        input: SceneDataFormat.Matrix44, mapping: wp.array(dtype=wp.int32), output: SceneDataFormat.Vec3_Matrix33
+    def convert_TransposedMatrix44d_to_Transform(
+        input: SceneDataFormat.TransposedMatrix44d,
+        output: SceneDataFormat.Transform,
     ):
-        """Convert Matrix44 to Vec3/Matrix33"""
+        """Convert transposed double-precision Matrix44 to Transform."""
         tid = wp.tid()
-        idx = ConversionKernels.get_output_index(tid, mapping)
-        if idx > -1:
-            transform = wp.transform_from_matrix(input.matrices[tid])
-            output.positions[idx] = wp.transform_get_translation(transform)
-            output.orientations[idx] = wp.quat_to_matrix(wp.transform_get_rotation(transform))
+        output.transforms[tid] = wp.transform_from_matrix(wp.mat44f(wp.transpose(input.matrices[tid])))
 
-    @wp.kernel
-    def convert_Matrix44_to_Transform(
-        input: SceneDataFormat.Matrix44, mapping: wp.array(dtype=wp.int32), output: SceneDataFormat.Transform
+    @wp.kernel(enable_backward=False)
+    def convert_Vec3_Quat_to_FabricMatrix44(
+        positions: wp.array(dtype=wp.vec3f),
+        orientations: wp.array(dtype=wp.quatf),
+        world_matrices: IndexedFabricArrayMat44d,
+        local_matrices: IndexedFabricArrayMat44d,
     ):
-        """Convert Matrix44 to Transform"""
-        tid = wp.tid()
-        idx = ConversionKernels.get_output_index(tid, mapping)
-        if idx > -1:
-            output.transforms[idx] = wp.transform_from_matrix(input.matrices[tid])
+        """Convert named world poses into plan-owned Fabric local matrices."""
+        i = wp.tid()
+        _position, _orientation, scale = _decompose_transformation_matrix(wp.mat44f(world_matrices[i]))
+        world = wp.transpose(wp.mat44d(wp.transform_compose(positions[i], orientations[i], scale)))
+        local_matrices[i] = world * wp.inverse(world_matrices[i]) * local_matrices[i]
 
-    @wp.kernel
-    def convert_Matrix44_to_Matrix44(
-        input: SceneDataFormat.Matrix44, mapping: wp.array(dtype=wp.int32), output: SceneDataFormat.Matrix44
+    @wp.kernel(enable_backward=False)
+    def convert_Transform_to_FabricMatrix44(
+        transforms: wp.array(dtype=wp.transformf),
+        source_indices: wp.array(dtype=wp.int32),
+        world_matrices: IndexedFabricArrayMat44d,
+        local_matrices: IndexedFabricArrayMat44d,
     ):
-        """Pass-through Matrix44"""
-        tid = wp.tid()
-        idx = ConversionKernels.get_output_index(tid, mapping)
-        if idx > -1:
-            output.matrices[idx] = input.matrices[tid]
+        """Convert world-space transforms to authoritative Fabric local matrices.
 
+        Fabric stores matrices transposed and in double precision. The destination arrays are
+        indexed into exact clone-plan order independently of Fabric selection order.
+        """
+        i = wp.tid()
+        source_index = source_indices[i]
+        world = wp.transpose(wp.mat44d(wp.transform_to_matrix(transforms[source_index])))
+        local_matrices[i] = world * wp.inverse(world_matrices[i]) * local_matrices[i]
 
-_ENV_NAME_RE = re.compile(r"^env_(\d+)$")
-_ENV_PATH_RE = re.compile(r"(?P<root>/World/envs/env_)(?P<id>\d+)(?P<path>/.*)")
+    @wp.kernel(enable_backward=False)
+    def convert_IndexedTransform_to_FabricMatrix44(
+        transforms: wp.array(dtype=wp.transformf),
+        canonical_to_native: wp.array(dtype=wp.int32),
+        source_indices: wp.array(dtype=wp.int32),
+        world_matrices: IndexedFabricArrayMat44d,
+        local_matrices: IndexedFabricArrayMat44d,
+    ):
+        """Gather native transforms directly into clone-plan-indexed Fabric matrices."""
+        i = wp.tid()
+        source_index = canonical_to_native[source_indices[i]]
+        world = wp.transpose(wp.mat44d(wp.transform_to_matrix(transforms[source_index])))
+        local_matrices[i] = world * wp.inverse(world_matrices[i]) * local_matrices[i]
 
-
-def _discover_num_envs(stage: Usd.Stage | None) -> int:
-    """Infer environment count from ``/World/envs/env_<id>`` prim names on ``stage``.
-
-    Args:
-        stage: USD stage to inspect, or ``None``.
-
-    Returns:
-        Number of environments discovered, or ``0`` when ``stage`` is ``None`` or no
-        ``/World/envs/env_<id>`` prims exist.
-    """
-    if stage is None:
-        return 0
-    max_env_id = -1
-    envs_root = stage.GetPrimAtPath("/World/envs")
-    if envs_root.IsValid():
-        for child in envs_root.GetChildren():
-            if match := _ENV_NAME_RE.match(child.GetName()):
-                max_env_id = max(max_env_id, int(match.group(1)))
-    return max_env_id + 1 if max_env_id >= 0 else 0
-
-
-def _walk_camera_prims(stage: Usd.Stage | None) -> dict[str, Any] | None:
-    """Walk ``stage`` and collect per-environment camera transforms.
-
-    Args:
-        stage: USD stage to traverse, or ``None``.
-
-    Returns:
-        Dictionary with keys ``order`` (template prim paths using ``env_%d``),
-        ``positions``, ``orientations`` (per-camera, per-env, with ``None`` for
-        absent envs), and ``num_envs``. Returns ``None`` when ``stage`` is ``None``.
-    """
-    if stage is None:
-        return None
-
-    from pxr import UsdGeom  # noqa: PLC0415
-
-    shared_paths: list[str] = []
-    instances: dict[str, list[tuple[int, str]]] = {}
-    num_envs = -1
-
-    stage_prims = deque([stage.GetPseudoRoot()])
-    while stage_prims:
-        prim = stage_prims.popleft()
-        prim_path = prim.GetPath().pathString
-
-        world_id = 0
-        template_path = prim_path
-        if match := _ENV_PATH_RE.match(prim_path):
-            world_id = int(match.group("id"))
-            template_path = match.group("root") + "%d" + match.group("path")
-            if world_id > num_envs:
-                num_envs = world_id
-
-        imageable = UsdGeom.Imageable(prim)
-        if imageable and imageable.ComputeVisibility() == UsdGeom.Tokens.invisible:
-            continue
-
-        if prim.IsA(UsdGeom.Camera):
-            instances.setdefault(template_path, []).append((world_id, prim_path))
-            if template_path not in shared_paths:
-                shared_paths.append(template_path)
-
-        if hasattr(UsdGeom, "TraverseInstanceProxies"):
-            child_prims = prim.GetFilteredChildren(UsdGeom.TraverseInstanceProxies())
+    @wp.kernel(enable_backward=False)
+    def convert_Points_to_HostMeshPoints(
+        input_points: wp.array(dtype=wp.vec3f),
+        output_bindings: wp.array(dtype=wp.int32),
+        source_offsets: wp.array(dtype=wp.int32),
+        output_offsets: wp.array(dtype=wp.int32),
+        mapping_offsets: wp.array(dtype=wp.int32),
+        source_indices: wp.array2d(dtype=wp.int32),
+        weights: wp.array2d(dtype=wp.float32),
+        output_points: wp.array(dtype=wp.vec3f),
+    ):
+        """Interpolate native simulation nodes into flattened drawable points."""
+        i = wp.tid()
+        binding = output_bindings[i]
+        local = i - output_offsets[binding]
+        mapping = mapping_offsets[binding]
+        if mapping < 0:
+            output_points[i] = input_points[source_offsets[binding] + local]
         else:
-            child_prims = prim.GetChildren()
-        if child_prims:
-            stage_prims.extend(child_prims)
+            row = mapping + local
+            source = source_offsets[binding]
+            output_points[i] = (
+                weights[row, 0] * input_points[source + source_indices[row, 0]]
+                + weights[row, 1] * input_points[source + source_indices[row, 1]]
+                + weights[row, 2] * input_points[source + source_indices[row, 2]]
+                + weights[row, 3] * input_points[source + source_indices[row, 3]]
+            )
 
-    num_envs += 1
-    positions: list[list[list[float] | None]] = []
-    orientations: list[list[list[float] | None]] = []
+    @wp.kernel(enable_backward=False)
+    def convert_Points_to_FabricMeshPoints(
+        input_points: wp.array(dtype=wp.vec3f),
+        world_matrices: wp.fabricarray(dtype=wp.mat44d),
+        binding_slots: wp.array(dtype=wp.int32),
+        output_bindings: wp.array(dtype=wp.int32),
+        source_offsets: wp.array(dtype=wp.int32),
+        output_offsets: wp.array(dtype=wp.int32),
+        mapping_offsets: wp.array(dtype=wp.int32),
+        source_indices: wp.array2d(dtype=wp.int32),
+        weights: wp.array2d(dtype=wp.float32),
+        output_points: wp.fabricarrayarray(dtype=wp.vec3f),
+    ):
+        """Interpolate native nodes directly into plan-bound Fabric mesh point arrays.
 
-    for template_path in shared_paths:
-        per_world_pos: list[list[float] | None] = [None] * num_envs
-        per_world_ori: list[list[float] | None] = [None] * num_envs
-        for world_id, prim_path in instances.get(template_path, []):
-            if world_id < 0 or world_id >= num_envs:
-                continue
-            prim = stage.GetPrimAtPath(prim_path)
-            if not prim.IsValid():
-                continue
-            pos, ori = sim_utils.resolve_prim_pose(prim)
-            per_world_pos[world_id] = [float(pos[0]), float(pos[1]), float(pos[2])]
-            per_world_ori[world_id] = [float(ori[0]), float(ori[1]), float(ori[2]), float(ori[3])]
-        positions.append(per_world_pos)
-        orientations.append(per_world_ori)
-
-    return {"order": shared_paths, "positions": positions, "orientations": orientations, "num_envs": num_envs}
-
-
-############################
-## Example
-
-if __name__ == "__main__":
-
-    class ExampleSceneDataBackend(SceneDataBackend):
-        def __init__(self):
-            self.__transforms = SceneDataFormat.Transform()
-            self.__transforms.transforms = wp.array(np.hstack([np.arange(10).reshape(10, 1)] * 7), dtype=wp.transformf)
-
-        @property
-        def transforms(self) -> SceneDataFormat.Transform:
-            return self.__transforms
-
-        @property
-        def transform_count(self) -> int:
-            return self.__transforms.transforms.shape[0]
-
-        @property
-        def transform_paths(self):
-            return [
-                "/world/shape_01",
-                "/world/shape_02",
-                "/world/shape_03",
-                "/world/shape_04",
-                "/world/shape_05",
-                "/world/shape_06",
-                "/world/shape_07",
-                "/world/shape_08",
-                "/world/shape_09",
-                "/world/shape_10",
-            ]
-
-    sim = ExampleSceneDataBackend()
-    sdp = SceneDataProvider(sim)
-
-    output_data = SceneDataFormat.Vec3_Matrix33()
-    output_data.positions = wp.empty(sdp.transform_count, dtype=wp.vec3f)
-    output_data.orientations = wp.empty(sdp.transform_count, dtype=wp.mat33f)
-
-    print(sim.transforms.transforms)
-    mapping = sdp.create_mapping(
-        [
-            "/world/shape_02",
-            "/world/shape_01",
-            "/world/shape_03",
-            "/world/shape_04",
-            "/world/shape_05",
-            None,
-            None,
-            "/world/shape_10",
-            None,
-            None,
-        ]
-    )
-    print(mapping)
-    if sdp.get_transforms(output_data, mapping):
-        print(output_data.positions)
-    else:
-        print("Failed to get transforms!")
-
-    wp.synchronize()
+        Fabric stores points in local space, so interpolation and world-to-local conversion are
+        fused into this single launch.
+        """
+        i = wp.tid()
+        binding = output_bindings[i]
+        local = i - output_offsets[binding]
+        mapping = mapping_offsets[binding]
+        source = source_offsets[binding]
+        point = wp.vec3f()
+        if mapping < 0:
+            point = input_points[source + local]
+        else:
+            row = mapping + local
+            point = (
+                weights[row, 0] * input_points[source + source_indices[row, 0]]
+                + weights[row, 1] * input_points[source + source_indices[row, 1]]
+                + weights[row, 2] * input_points[source + source_indices[row, 2]]
+                + weights[row, 3] * input_points[source + source_indices[row, 3]]
+            )
+        slot = binding_slots[binding]
+        world_to_local = wp.inverse(wp.transpose(wp.mat44f(world_matrices[slot])))
+        output_points[slot][local] = wp.transform_point(world_to_local, point)

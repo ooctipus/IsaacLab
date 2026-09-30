@@ -20,6 +20,8 @@ import numpy as np
 import pytest
 import torch
 import warp as wp
+from isaaclab_physx.physics import PhysxCfg
+from isaaclab_visualizers.kit.kit_visualization_markers import KitVisualizationMarkers
 from isaaclab_visualizers.kit.kit_visualizer import KitVisualizer
 from isaaclab_visualizers.kit.kit_visualizer_cfg import KitVisualizerCfg
 from isaaclab_visualizers.newton.newton_visualizer_cfg import NewtonGLVisualizerCfg
@@ -27,12 +29,45 @@ from isaaclab_visualizers.rerun.rerun_visualizer_cfg import RerunVisualizerCfg
 from isaaclab_visualizers.viser.viser_visualizer_cfg import ViserVisualizerCfg
 
 import isaaclab.sim as sim_utils
-from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
+from isaaclab import cloner
+from isaaclab.cloner import ClonePlan
+from isaaclab.markers import VisualizationMarkersCfg
 from isaaclab.markers.config import FRAME_MARKER_CFG, POSITION_GOAL_MARKER_CFG
 from isaaclab.sim import SimulationCfg, SimulationContext
 from isaaclab.utils.math import random_orientation
 
 pytestmark = pytest.mark.integration
+
+
+def _bare_visualizer(visualizer_type, cfg):
+    visualizer = object.__new__(visualizer_type)
+    visualizer.cfg = cfg
+    if visualizer_type is KitVisualizer:
+        visualizer._runtime_headless = cfg.headless
+    return visualizer
+
+
+class _FakeNewtonBackend:
+    model = "dummy-model"
+    state = {"state": "ok"}
+    last_provider = None
+
+    def get_model(self):
+        return self.model
+
+    def request_visualization_state(self, provider):
+        self.last_provider = provider
+        return self.state
+
+
+def _activate_visualizer_owner(monkeypatch: pytest.MonkeyPatch) -> _FakeNewtonBackend:
+    backend = _FakeNewtonBackend()
+    context = object.__new__(SimulationContext)
+    context.stage = object()
+    context.cfg = type("Cfg", (), {"device": "cpu"})()
+    context.get_or_create_backend = lambda *args, **kwargs: backend
+    monkeypatch.setattr(SimulationContext, "instance", staticmethod(lambda: context))
+    return backend
 
 
 @pytest.fixture
@@ -43,7 +78,7 @@ def sim():
     # Open a new stage
     sim_utils.create_new_stage()
     # Load kit helper
-    sim_context = SimulationContext(SimulationCfg(dt=dt))
+    sim_context = SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=dt))
     yield sim_context
     # Cleanup
     sim_context._disable_app_control_on_stop_handle = True  # prevent timeout
@@ -53,12 +88,11 @@ def sim():
 
 
 class _FakeMarkerVisualizer:
+    marker_type = newton_markers.NewtonVisualizationMarkers
+
     def __init__(self, *, enable_markers: bool = True, pumps_app_update: bool = False):
         self.cfg = type("Cfg", (), {"enable_markers": enable_markers})()
         self._pumps_app_update = pumps_app_update
-
-    def supports_markers(self):
-        return True
 
     def pumps_app_update(self):
         return self._pumps_app_update
@@ -70,73 +104,89 @@ class _FakeMarkerVisualizer:
         pass
 
 
+def _construct_marker(sim: SimulationContext, cfg: VisualizationMarkersCfg, visualizer=None):
+    """Construct a marker from one explicit plan and visualizer cfg choice."""
+    if visualizer is None:
+        visualizer = _bare_visualizer(KitVisualizer, KitVisualizerCfg())
+    sim._visualizers.append(visualizer)
+    try:
+        with cloner.ReplicateSession((cfg,), 1, 0.0):
+            return cfg.class_type(cfg)
+    finally:
+        sim._visualizers.remove(visualizer)
+
+
+def test_kit_marker_env_filter_uses_the_registered_instancer_directly():
+    """Kit partial visibility updates its exact registered marker and restores prior authorship."""
+
+    class _Attribute:
+        def __init__(self):
+            self.value = None
+            self.cleared = False
+
+        def HasAuthoredValue(self):
+            return False
+
+        def Get(self):
+            return self.value
+
+        def Set(self, value):
+            self.value = value
+
+        def Clear(self):
+            self.cleared = True
+            self.value = None
+
+    attr = _Attribute()
+    marker = object.__new__(KitVisualizationMarkers)
+    marker._count = 4
+    marker._invisible_ids_backup = None
+    marker._instancer_manager = type("Instancer", (), {"GetInvisibleIdsAttr": lambda _self: attr})()
+
+    marker.set_visible_envs({1, 3}, 4)
+    assert list(attr.value) == [0, 2]
+
+    marker.clear_visible_envs()
+    assert attr.cleared
+
+
 def test_instantiation(sim):
-    """Test that the class can be initialized properly."""
+    """Marker construction supports a first update without environment ownership."""
     config = VisualizationMarkersCfg(
         prim_path="/World/Visuals/test",
         markers={
             "test": sim_utils.SphereCfg(radius=1.0),
         },
     )
-    test_marker = VisualizationMarkers(config)
-    print(test_marker)
-    # check number of markers
+    test_marker = _construct_marker(sim, config)
+    test_marker.visualize(translations=np.zeros((1, 3)))
     assert test_marker.num_prototypes == 1
 
 
-@pytest.mark.parametrize(
-    ("has_gui", "rtx_sensors", "xr_enabled", "has_offscreen_render", "visualizers", "expected_backends"),
-    [
-        (True, False, False, False, [], ["kit"]),
-        (False, True, False, False, [], ["kit"]),
-        (False, False, True, False, [], ["kit"]),
-        (False, False, False, True, [], ["kit"]),
-        (False, False, False, False, [], []),
-        (False, False, False, False, [KitVisualizer(KitVisualizerCfg())], ["kit"]),
-        (False, False, False, False, [newton_visualizer.NewtonVisualizer(NewtonGLVisualizerCfg())], ["newton"]),
-        (False, False, False, False, [rerun_visualizer.RerunVisualizer(RerunVisualizerCfg())], ["newton"]),
-        (False, False, False, False, [viser_visualizer.ViserVisualizer(ViserVisualizerCfg())], ["newton"]),
-    ],
-)
-def test_marker_backend_selection(
-    monkeypatch,
-    has_gui: bool,
-    rtx_sensors: bool,
-    xr_enabled: bool,
-    has_offscreen_render: bool,
-    visualizers: list,
-    expected_backends: list[str],
-):
-    """Marker backend selection follows rendering state and active visualizer type.
+def test_unplanned_marker_cfg_is_inert_without_marker_visualizer(sim):
+    """A marker cfg needs no plan entry when no active visualizer can draw it."""
+    config = VisualizationMarkersCfg(
+        prim_path="/World/Visuals/unplanned",
+        markers={"test": sim_utils.SphereCfg(radius=1.0)},
+    )
 
-    Regression coverage for a bug where a non-Kit-pumping visualizer (e.g. ``newton_gl``) alone
-    would still spin up the Kit/USD marker backend (because it also makes ``sim.is_rendering``
-    true), leaving raw USD marker writes undigested by Fabric. That desynced the point-instancer
-    prototype table and crashed the next PhysX GPU step. The ``newton_gl``-only case below
-    (``rtx_sensors``/``xr_enabled``/``has_gui``/``has_offscreen_render`` all False) must select
-    only the ``newton`` backend, never ``kit``.
-    """
-    marker = object.__new__(VisualizationMarkers)
-    marker._backends = []
-    settings = {"/isaaclab/render/rtx_sensors": rtx_sensors, "/isaaclab/xr/enabled": xr_enabled}
-    fake_sim = type(
-        "FakeSim",
-        (),
-        {
-            "has_gui": has_gui,
-            "has_offscreen_render": has_offscreen_render,
-            "visualizers": visualizers,
-            "get_setting": lambda self, key: settings.get(key, False),
-        },
-    )()
+    sim.vis_marker_registry.prepare((), ())
+    marker = config.class_type(config)
+    marker.visualize(translations=np.zeros((2, 3)))
 
-    monkeypatch.setattr(sim_utils.SimulationContext, "instance", staticmethod(lambda: fake_sim))
-    monkeypatch.setattr(VisualizationMarkers, "_ensure_kit_backend", lambda self: self._backends.append("kit"))
-    monkeypatch.setattr(VisualizationMarkers, "_ensure_newton_backend", lambda self: self._backends.append("newton"))
+    assert marker.count == 2
+    assert not sim.stage.GetPrimAtPath(config.prim_path).IsValid()
 
-    marker._ensure_backends_initialized()
 
-    assert marker._backends == expected_backends
+def test_unplanned_marker_cfg_is_rejected_with_marker_visualizer(sim):
+    """Marker-capable visualizers accept only plan-owned marker cfgs."""
+    config = VisualizationMarkersCfg(
+        prim_path="/World/Visuals/unplanned",
+        markers={"test": sim_utils.SphereCfg(radius=1.0)},
+    )
+    sim.vis_marker_registry.prepare((), (newton_markers.NewtonVisualizationMarkers,))
+    with pytest.raises(ValueError, match="not covered by the clone plan"):
+        config.class_type(config)
 
 
 def test_rendering_context_authors_visible_usd_point_instancer(sim):
@@ -159,7 +209,7 @@ def test_rendering_context_authors_visible_usd_point_instancer(sim):
             ),
         },
     )
-    test_marker = VisualizationMarkers(config)
+    test_marker = _construct_marker(sim, config)
     test_marker.visualize(
         translations=torch.tensor([[0.0, 0.0, 0.0], [0.2, 0.0, 0.0]], device=sim.device),
         marker_indices=torch.tensor([0, 1], device=sim.device),
@@ -181,6 +231,7 @@ def test_environment_ids_author_point_instance_scene_partitions(sim):
     from pxr import Sdf, UsdGeom
 
     sim._has_offscreen_render = True
+    sim.set_setting("/isaaclab/render/rtx_sensors", True)
     stage = sim_utils.get_current_stage()
     for env_id in range(2):
         env_prim = stage.DefinePrim(f"/World/envs/env_{env_id}", "Xform")
@@ -190,7 +241,7 @@ def test_environment_ids_author_point_instance_scene_partitions(sim):
         prim_path="/World/Visuals/partitioned_marker",
         markers={"test": sim_utils.SphereCfg(radius=0.1)},
     )
-    test_marker = VisualizationMarkers(config)
+    test_marker = _construct_marker(sim, config)
     test_marker.visualize(
         translations=torch.tensor([[0.0, 0.0, 0.0], [0.2, 0.0, 0.0]], device=sim.device),
         environment_ids=torch.tensor([1, 0], device=sim.device),
@@ -213,7 +264,7 @@ def test_environment_ids_require_active_scene_partitions(sim):
         prim_path="/World/Visuals/unpartitioned_marker",
         markers={"test": sim_utils.SphereCfg(radius=0.1)},
     )
-    test_marker = VisualizationMarkers(config)
+    test_marker = _construct_marker(sim, config)
     test_marker.visualize(
         translations=torch.tensor([[0.0, 0.0, 0.0]], device=sim.device),
         environment_ids=torch.tensor([0], device=sim.device),
@@ -231,7 +282,7 @@ def test_environment_ids_must_match_marker_count(sim):
         prim_path="/World/Visuals/mismatched_partition_marker",
         markers={"test": sim_utils.SphereCfg(radius=0.1)},
     )
-    test_marker = VisualizationMarkers(config)
+    test_marker = _construct_marker(sim, config)
 
     with pytest.raises(ValueError, match="one index per marker"):
         test_marker.visualize(
@@ -252,7 +303,7 @@ def test_first_visualize_defaults_to_first_prototype_when_count_matches_prototyp
             "line": sim_utils.CuboidCfg(size=(0.1, 0.1, 0.1)),
         },
     )
-    test_marker = VisualizationMarkers(config)
+    test_marker = _construct_marker(sim, config)
 
     test_marker.visualize(translations=torch.tensor([[0.0, 0.0, 0.0], [0.2, 0.0, 0.0]], device=sim.device))
 
@@ -265,7 +316,7 @@ def test_usd_marker(sim):
     # create a marker
     config = FRAME_MARKER_CFG.copy()
     config.prim_path = "/World/Visuals/test_frames"
-    test_marker = VisualizationMarkers(config)
+    test_marker = _construct_marker(sim, config)
 
     # play the simulation
     sim.reset()
@@ -291,7 +342,7 @@ def test_multiple_prototypes_marker(sim):
     # create a marker
     config = POSITION_GOAL_MARKER_CFG.copy()
     config.prim_path = "/World/Visuals/test_protos"
-    test_marker = VisualizationMarkers(config)
+    test_marker = _construct_marker(sim, config)
 
     # play the simulation
     sim.reset()
@@ -314,7 +365,7 @@ def test_visualization_skips_updates_when_invisible(sim):
     # create a marker
     config = POSITION_GOAL_MARKER_CFG.copy()
     config.prim_path = "/World/Visuals/test_protos"
-    test_marker = VisualizationMarkers(config)
+    test_marker = _construct_marker(sim, config)
 
     # play the simulation
     sim.reset()
@@ -343,10 +394,9 @@ def test_visualization_skips_updates_when_invisible(sim):
 
 def test_newton_marker_backend_registers_and_updates_state_without_frame_capture(sim):
     """Newton marker backend state should be registered and ready for Newton-family viewers."""
-    sim._visualizers.append(_FakeMarkerVisualizer(pumps_app_update=False))
     config = POSITION_GOAL_MARKER_CFG.copy()
     config.prim_path = "/World/Visuals/newton_marker_state"
-    test_marker = VisualizationMarkers(config)
+    test_marker = _construct_marker(sim, config, _FakeMarkerVisualizer(pumps_app_update=False))
     translations = torch.arange(6, dtype=torch.float32, device=sim.device).reshape(2, 3)
     marker_indices = torch.tensor([0, 0], device=sim.device)
 
@@ -354,7 +404,7 @@ def test_newton_marker_backend_registers_and_updates_state_without_frame_capture
 
     newton_backend = test_marker._backends[0]
     assert isinstance(newton_backend, newton_markers.NewtonVisualizationMarkers)
-    assert sim.vis_marker_registry.get_groups()[newton_backend.group_id] is newton_backend
+    assert newton_backend in sim.vis_marker_registry.get_groups()
     assert torch.equal(newton_backend.translations, translations)
     assert torch.equal(newton_backend.marker_indices, marker_indices.to(dtype=torch.int32))
     assert newton_backend.count == 2
@@ -362,6 +412,7 @@ def test_newton_marker_backend_registers_and_updates_state_without_frame_capture
 
 def test_newton_visualizer_step_renders_markers(monkeypatch: pytest.MonkeyPatch):
     """NewtonVisualizer.step should ask active Newton marker groups to render."""
+    backend = _activate_visualizer_owner(monkeypatch)
     marker_calls = []
 
     class _FakeViewer:
@@ -383,55 +434,47 @@ def test_newton_visualizer_step_renders_markers(monkeypatch: pytest.MonkeyPatch)
         def log_state(self, state):
             self.calls.append(("log_state", state))
 
-        def log_arrows(self, name, starts, ends, colors):
-            pass
-
         def end_frame(self):
             self.calls.append(("end_frame",))
 
-    class _FakeNewtonManager:
-        @staticmethod
-        def get_state(scene_data_provider=None):
-            assert scene_data_provider == "provider"
-            return {"state": "ok"}
-
-        @staticmethod
-        def get_num_envs() -> int:
-            return 4
-
-        @staticmethod
-        def get_contacts():
-            return None
+    class _FakeProvider:
+        num_envs = 4
 
     def _fake_render_markers(viewer, visible_env_ids, num_envs):
         marker_calls.append((viewer, visible_env_ids, num_envs))
 
-    import isaaclab_newton.physics as newton_physics
-
-    monkeypatch.setattr(newton_physics, "NewtonManager", _FakeNewtonManager)
-    # newton_visualizer now imports NewtonManager at module level, so patch the
-    # module-level name directly (not just the origin module attribute).
-    monkeypatch.setattr(newton_visualizer, "NewtonManager", _FakeNewtonManager)
     monkeypatch.setattr(newton_visualizer, "render_newton_visualization_markers", _fake_render_markers)
 
     viewer = _FakeViewer()
+    provider = _FakeProvider()
     visualizer = newton_visualizer.NewtonVisualizer(NewtonGLVisualizerCfg(enable_markers=True))
     visualizer._is_initialized = True
     visualizer._is_closed = False
     visualizer._viewer = viewer
-    visualizer._scene_data_provider = "provider"
+    visualizer._scene_data_provider = provider
+    visualizer._clone_plan = ClonePlan(
+        (), (), np.empty((0, 4), dtype=np.bool_), np.arange(4), is_complete=True, _env_ids_cpu=(0, 1, 2, 3)
+    )
     visualizer._resolved_visible_env_ids = [1, 3]
 
     visualizer.step(0.25)
 
     assert viewer.calls == [("begin_frame", pytest.approx(0.25)), ("log_state", {"state": "ok"}), ("end_frame",)]
     assert marker_calls == [(viewer, [1, 3], 4)]
+    assert backend.last_provider is provider
+
+    def _raise_marker_render(*args, **kwargs):
+        raise RuntimeError("marker render failed")
+
+    monkeypatch.setattr(newton_visualizer, "render_newton_visualization_markers", _raise_marker_render)
+    with pytest.raises(RuntimeError, match="marker render failed"):
+        visualizer.step(0.25)
+    assert viewer.calls[-1] == ("end_frame",)
 
 
-def test_viser_visualizer_marker_render_failure_does_not_interrupt_state_updates(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-):
-    """Viser marker failures should be logged without dropping body state frames."""
+def test_viser_visualizer_marker_failure_propagates_after_ending_frame(monkeypatch: pytest.MonkeyPatch):
+    """Viser should close its frame and expose marker rendering failures."""
+    backend = _activate_visualizer_owner(monkeypatch)
     marker_calls = []
 
     class _FakeViewer:
@@ -448,25 +491,7 @@ def test_viser_visualizer_marker_render_failure_does_not_interrupt_state_updates
             self.calls.append(("end_frame",))
 
     class _FakeProvider:
-        num_envs = 4
-        usd_stage = None
-
-        def get_camera_transforms(self):
-            return {}
-
-    class _FakeNewtonManager:
-        @staticmethod
-        def get_model():
-            return "dummy-model"
-
-        @staticmethod
-        def get_state(scene_data_provider=None):
-            assert scene_data_provider is provider
-            return {"state": "ok"}
-
-        @staticmethod
-        def get_num_envs() -> int:
-            return provider.num_envs
+        pass
 
     def _fake_create_viewer(self, record_to_viser: str | None, metadata: dict | None = None):
         self._viewer = viewer
@@ -475,32 +500,46 @@ def test_viser_visualizer_marker_render_failure_does_not_interrupt_state_updates
         marker_calls.append((args, kwargs))
         raise RuntimeError("marker overlay failed")
 
-    import isaaclab_newton.physics as newton_physics
-
     provider = _FakeProvider()
     viewer = _FakeViewer()
-    monkeypatch.setattr(newton_physics, "NewtonManager", _FakeNewtonManager)
     monkeypatch.setattr(viser_visualizer.ViserVisualizer, "_create_viewer", _fake_create_viewer)
     monkeypatch.setattr(viser_visualizer, "render_newton_visualization_markers", _raise_marker_render)
 
     visualizer = viser_visualizer.ViserVisualizer(ViserVisualizerCfg())
-    visualizer.initialize(provider)
+    plan = ClonePlan(
+        (),
+        (),
+        np.empty((0, 4), dtype=np.bool_),
+        env_ids=np.arange(4),
+        is_complete=True,
+        _env_ids_cpu=(0, 1, 2, 3),
+    )
+    visualizer.initialize(provider, plan)
 
-    with caplog.at_level("WARNING"):
+    with pytest.raises(RuntimeError, match="marker overlay failed"):
         visualizer.step(0.25)
 
     assert marker_calls
     assert viewer.calls == [("begin_frame", pytest.approx(0.25)), ("log_state", {"state": "ok"}), ("end_frame",)]
-    assert "Marker rendering failed; continuing body updates" in caplog.text
+    assert backend.last_provider is provider
 
 
 def test_rerun_visualizer_marker_failure_still_ends_frame(monkeypatch: pytest.MonkeyPatch):
     """Rerun should close the frame even if marker rendering raises."""
-    captured = {}
+    backend = _activate_visualizer_owner(monkeypatch)
 
     class _FakeViewer:
         def __init__(self):
             self.calls = []
+
+        def set_model(self, model):
+            pass
+
+        def set_visible_worlds(self, worlds):
+            pass
+
+        def set_world_offsets(self, offsets):
+            pass
 
         def is_paused(self):
             return False
@@ -514,50 +553,37 @@ def test_rerun_visualizer_marker_failure_still_ends_frame(monkeypatch: pytest.Mo
         def end_frame(self):
             self.calls.append(("end_frame",))
 
+        def close(self):
+            pass
+
     class _FakeProvider:
-        def get_metadata(self) -> dict:
-            return {"num_envs": 4}
-
-        def get_newton_state(self):
-            return {"ok": True}
-
-        def get_camera_transforms(self):
-            return {}
-
-    class _FakeNewtonManager:
-        @staticmethod
-        def get_model():
-            return "dummy-model"
-
-        @staticmethod
-        def get_state(scene_data_provider=None):
-            captured["state_provider"] = scene_data_provider
-            return {"ok": True}
-
-        @staticmethod
-        def get_num_envs() -> int:
-            return 4
+        num_envs = 4
 
     def _raise_marker_render(*args, **kwargs):
         raise RuntimeError("marker render failed")
 
-    import isaaclab_newton.physics as newton_physics
-
-    monkeypatch.setattr(newton_physics, "NewtonManager", _FakeNewtonManager)
+    viewer = _FakeViewer()
+    monkeypatch.setattr(rerun_visualizer, "NewtonViewerRerun", lambda **kwargs: viewer)
+    monkeypatch.setattr(rerun_visualizer, "_ensure_rerun_server", lambda **kwargs: ("rerun+http://test", False))
+    monkeypatch.setattr(rerun_visualizer.RerunVisualizer, "_apply_camera_pose", lambda self, pose: None)
     monkeypatch.setattr(rerun_visualizer, "render_newton_visualization_markers", _raise_marker_render)
 
     visualizer = rerun_visualizer.RerunVisualizer(RerunVisualizerCfg())
-    viewer = _FakeViewer()
-    visualizer._is_initialized = True
-    visualizer._is_closed = False
-    visualizer._viewer = viewer
-    visualizer._scene_data_provider = _FakeProvider()
-    visualizer._resolved_visible_env_ids = None
+    provider = _FakeProvider()
+    plan = ClonePlan(
+        (),
+        (),
+        np.empty((0, 4), dtype=np.bool_),
+        env_ids=np.arange(4),
+        is_complete=True,
+        _env_ids_cpu=(0, 1, 2, 3),
+    )
+    visualizer.initialize(provider, plan)
 
     with pytest.raises(RuntimeError, match="marker render failed"):
         visualizer.step(0.25)
 
-    assert captured["state_provider"] is visualizer._scene_data_provider
+    assert backend.last_provider is provider
     assert [call[0] for call in viewer.calls] == ["begin_frame", "log_state", "end_frame"]
 
 
@@ -681,6 +707,7 @@ def _patch_newton_marker_render_deps(
 
     monkeypatch.setattr(newton_markers, "_create_mesh", lambda cfg: _FakeNewtonMarkerMesh())
     monkeypatch.setattr(newton_markers.wp, "array", lambda value, dtype=None: value)
+    monkeypatch.setattr(newton_markers.wp, "from_torch", lambda value, dtype=None: value.detach().cpu().numpy())
     return warp_world_offsets
 
 

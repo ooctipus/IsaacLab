@@ -28,9 +28,6 @@ class MPMSolverCfg(NewtonSolverCfg):
     class_type: type[NewtonManager] | str = "{DIR}.mpm_manager:NewtonMPMManager"
     """Manager class for the implicit MPM solver."""
 
-    solver_type: str = "implicit_mpm"
-    """Solver type. Can be "implicit_mpm"."""
-
     # numerics
     max_iterations: int = 250
     """Maximum number of iterations for the rheology solver."""
@@ -50,12 +47,8 @@ class MPMSolverCfg(NewtonSolverCfg):
     warmstart_mode: Literal["none", "auto", "particles", "grid", "smoothed"] = "auto"
     """Warm-start mode for the rheology solver."""
 
-    collider_velocity_mode: Literal["forward", "backward", "instantaneous", "finite_difference"] = "forward"
-    """Collider velocity computation mode.
-
-    ``"instantaneous"`` is deprecated in favor of ``"forward"``, and
-    ``"finite_difference"`` is deprecated in favor of ``"backward"``.
-    """
+    collider_velocity_mode: Literal["forward", "backward"] = "forward"
+    """Collider velocity computation mode."""
 
     # grid
     voxel_size: float = 0.1

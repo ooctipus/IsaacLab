@@ -91,19 +91,10 @@ def _ovphysx_skip_other_device(request):
 # ---------------------------------------------------------------------------
 
 
-def _ovphysx_sim_context(device: str, **kwargs):
-    """Wrapper around :func:`build_simulation_context` that injects OVPhysX cfg.
-
-    OVPhysX needs ``physics=OvPhysxCfg()`` set on the cfg so the
-    :class:`~isaaclab.sim.SimulationContext` dispatches to OVPhysX rather than
-    PhysX. ``add_ground_plane``, ``auto_add_lighting``, etc. flow through to
-    :func:`build_simulation_context` unchanged.
-    """
-    dt = kwargs.pop("dt", 0.005)
-    gravity_enabled = kwargs.pop("gravity_enabled", True)
-    gravity = (0.0, 0.0, -9.81) if gravity_enabled else (0.0, 0.0, 0.0)
-    sim_cfg = SimulationCfg(physics=OvPhysxCfg(), device=device, dt=dt, gravity=gravity)
-    return build_simulation_context(device=device, sim_cfg=sim_cfg, **kwargs)
+def _ovphysx_sim_context(device: str):
+    """Build an OVPhysX simulation context."""
+    sim_cfg = SimulationCfg(physics=OvPhysxCfg(), device=device, dt=0.005)
+    return build_simulation_context(device=device, sim_cfg=sim_cfg)
 
 
 # ---------------------------------------------------------------------------

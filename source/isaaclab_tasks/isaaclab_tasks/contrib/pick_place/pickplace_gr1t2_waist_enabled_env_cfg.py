@@ -6,11 +6,13 @@
 import tempfile
 
 from isaaclab_teleop.haptic_feedback import GloveHapticFeedbackCfg
-from isaaclab_teleop.isaac_teleop_cfg import IsaacTeleopCfg
+from isaaclab_teleop.isaac_teleop_cfg import IsaacTeleopCfg, TeleopPipelineCfg
 from isaaclab_teleop.xr_cfg import XrCfg
 
 from isaaclab.envs import ManagerBasedRLEnvCfg
 from isaaclab.utils.configclass import configclass
+
+from isaaclab_tasks.utils.presets import MultiBackendSimulationCfg
 
 from .pickplace_gr1t2_env_cfg import (
     ActionsCfg,
@@ -26,6 +28,7 @@ from .pickplace_gr1t2_env_cfg import (
 class PickPlaceGR1T2WaistEnabledEnvCfg(ManagerBasedRLEnvCfg):
     """Configuration for the GR1T2 environment."""
 
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg()
     # Scene settings
     scene: ObjectTableSceneCfg = ObjectTableSceneCfg(num_envs=1, env_spacing=2.5, replicate_physics=True)
     # Basic settings
@@ -62,14 +65,13 @@ class PickPlaceGR1T2WaistEnabledEnvCfg(ManagerBasedRLEnvCfg):
         self.actions.upper_body_ik.controller.urdf_output_dir = self.temp_urdf_dir
 
         # IsaacTeleop-based teleoperation pipeline.
-        self.xr = XrCfg(
+        self.scene.xr_anchor = XrCfg(
             anchor_pos=(0.0, 0.0, 0.0),
             anchor_rot=(0.0, 0.0, 0.0, 1.0),
         )
         self.isaac_teleop = IsaacTeleopCfg(
-            pipeline_builder=lambda: _build_gr1t2_pickplace_pipeline()[0],
+            pipeline_cfg=TeleopPipelineCfg(class_type=_build_gr1t2_pickplace_pipeline),
             sim_device=self.sim.device,
-            xr_cfg=self.xr,
         )
 
         # Per-finger haptic glove feedback: vibrate each finger of the operator's

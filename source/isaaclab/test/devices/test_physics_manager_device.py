@@ -11,36 +11,27 @@ from isaaclab.physics import PhysicsManager
 from isaaclab.physics import physics_manager as physics_manager_module
 
 
-def test_initialize_synchronizes_cuda_before_backend_setup(monkeypatch):
-    """The base manager must synchronize CUDA before backend-specific setup."""
-    calls = []
-    monkeypatch.setattr(physics_manager_module, "set_cuda_device", lambda device: calls.append(("cuda", device)))
-    monkeypatch.setattr(PhysicsManager, "_sim", None)
-    monkeypatch.setattr(PhysicsManager, "_cfg", None)
-    monkeypatch.setattr(PhysicsManager, "_device", "cuda:0")
-
-    class _TestManager(PhysicsManager):
-        @classmethod
-        def initialize(cls, sim_context):
-            super().initialize(sim_context)
-            calls.append(("backend", PhysicsManager._device))
-
-    sim_context = SimpleNamespace(cfg=SimpleNamespace(physics=object(), device="cuda:2"))
-
-    _TestManager.initialize(sim_context)
-
-    assert calls == [("cuda", "cuda:2"), ("backend", "cuda:2")]
-
-
-def test_initialize_does_not_synchronize_cpu_device(monkeypatch):
-    """CPU simulation must not initialize or select CUDA runtimes."""
+def test_bind_context_synchronizes_cuda_device(monkeypatch):
+    """Binding selects the configured CUDA device before backend resources are registered."""
     devices = []
     monkeypatch.setattr(physics_manager_module, "set_cuda_device", devices.append)
-    monkeypatch.setattr(PhysicsManager, "_sim", None)
-    monkeypatch.setattr(PhysicsManager, "_cfg", None)
-    monkeypatch.setattr(PhysicsManager, "_device", "cuda:0")
-    sim_context = SimpleNamespace(cfg=SimpleNamespace(physics=object(), device="cpu"))
 
-    PhysicsManager.initialize(sim_context)
+    sim_context = SimpleNamespace(cfg=SimpleNamespace(physics=object(), device="cuda:2"))
+    manager = SimpleNamespace()
+    PhysicsManager._bind_context(manager, sim_context)
+
+    assert devices == ["cuda:2"]
+    assert manager._device == "cuda:2"
+
+
+def test_bind_context_does_not_synchronize_cpu_device(monkeypatch):
+    """CPU simulation must not initialize or select CUDA runtimes while binding."""
+    devices = []
+    monkeypatch.setattr(physics_manager_module, "set_cuda_device", devices.append)
+    sim_context = SimpleNamespace(cfg=SimpleNamespace(physics=object(), device="cpu"))
+    manager = SimpleNamespace()
+
+    PhysicsManager._bind_context(manager, sim_context)
 
     assert devices == []
+    assert manager._device == "cpu"

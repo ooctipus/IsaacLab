@@ -14,15 +14,13 @@ import numpy as np
 import torch
 import warp as wp
 
+from isaaclab import cloner
 from isaaclab.assets.deformable_object.base_deformable_object import BaseDeformableObject
 from isaaclab.physics import PhysicsEvent
+from isaaclab.sim import SimulationContext
 from isaaclab.utils.warp import ProxyArray
 
-from isaaclab_newton.physics import NewtonManager as SimulationManager
-from isaaclab_newton.sim.spawners.mpm import (
-    create_mpm_particle_visualization,
-    emit_mpm_particles,
-)
+from isaaclab_newton.sim.spawners.mpm import emit_mpm_particles
 
 from .kernels import (
     compute_particle_state_w,
@@ -46,46 +44,36 @@ class MPMObjectRegistryEntry:
     """Particle object registration consumed by Newton builder replication."""
 
     cfg: MPMObjectCfg
+    planned_worlds: tuple[int, ...] | None = None
     particle_offsets: list[int] = field(default_factory=list)
     particles_per_object: int = 0
 
-
-def add_mpm_entry_to_builder(
-    builder,
-    entry: MPMObjectRegistryEntry,
-    env_idx: int,
-    env_position: np.ndarray,
-    env_rotation: np.ndarray,
-) -> None:
-    """Emit one registered MPM object into one Newton builder world."""
-    if env_idx == 0:
-        entry.particle_offsets.clear()
-        entry.particles_per_object = 0
-
-    before_count = builder.particle_count
-    position, orientation = _compose_env_asset_pose(entry.cfg, env_position, env_rotation)
-    emit_mpm_particles(builder, entry.cfg.spawn, position=position, orientation=orientation)
-    delta = builder.particle_count - before_count
-
-    entry.particle_offsets.append(before_count)
-    if env_idx == 0:
-        entry.particles_per_object = delta
-    elif entry.particles_per_object != delta:
-        raise RuntimeError(
-            f"MPM object '{entry.cfg.prim_path}' produced {delta} particles in env {env_idx}, "
-            f"but env 0 produced {entry.particles_per_object}."
-        )
-
-
-def add_registered_mpm_objects_to_builder(
-    builder,
-    world_idx: int,
-    env_position: np.ndarray,
-    env_rotation: np.ndarray,
-) -> None:
-    """Emit all registered MPM objects into one Newton builder world."""
-    for entry in SimulationManager._mpm_object_registry:
-        add_mpm_entry_to_builder(builder, entry, world_idx, env_position, env_rotation)
+    def add_to_builder(
+        self,
+        builder,
+        env_idx: int,
+        env_position: np.ndarray,
+        env_rotation: np.ndarray,
+    ) -> None:
+        """Emit this MPM object into one Newton builder world."""
+        first_world = 0 if self.planned_worlds is None else min(self.planned_worlds)
+        if env_idx == first_world:
+            self.particle_offsets.clear()
+            self.particles_per_object = 0
+        if self.planned_worlds is not None and env_idx not in self.planned_worlds:
+            return
+        before_count = builder.particle_count
+        position, orientation = _compose_env_asset_pose(self.cfg, env_position, env_rotation)
+        emit_mpm_particles(builder, self.cfg.spawn, position=position, orientation=orientation)
+        particle_count = builder.particle_count - before_count
+        self.particle_offsets.append(before_count)
+        if env_idx == first_world:
+            self.particles_per_object = particle_count
+        elif self.particles_per_object != particle_count:
+            raise RuntimeError(
+                f"MPM object '{self.cfg.prim_path}' produced {particle_count} particles in env {env_idx}, "
+                f"but env 0 produced {self.particles_per_object}."
+            )
 
 
 class MPMObject(BaseDeformableObject):
@@ -106,10 +94,12 @@ class MPMObject(BaseDeformableObject):
 
     def __init__(self, cfg: MPMObjectCfg):
         super().__init__(cfg)
-        self._registry_entry = MPMObjectRegistryEntry(self.cfg)
-        SimulationManager._mpm_object_registry.append(self._registry_entry)
-        if add_registered_mpm_objects_to_builder not in SimulationManager._per_world_builder_hooks:
-            SimulationManager._per_world_builder_hooks.append(add_registered_mpm_objects_to_builder)
+        self._registry_entry = MPMObjectRegistryEntry(
+            self.cfg,
+            _planned_worlds(self.cfg.prim_path),
+        )
+        self._physics_manager._newton._mpm_object_registry.append(self._registry_entry)
+        self._physics_manager._newton._per_world_builder_hooks.append(self._registry_entry.add_to_builder)
         self._physics_ready_handle = None
 
     @property
@@ -303,11 +293,12 @@ class MPMObject(BaseDeformableObject):
             particles_per_object=self._particles_per_object,
             num_instances=self._num_instances,
             device=self.device,
+            physics_manager=self._physics_manager,
         )
         self._create_buffers()
         self.update(0.0)
 
-        self._physics_ready_handle = SimulationManager.register_callback(
+        self._physics_ready_handle = self._physics_manager.register_callback(
             lambda _: self._data._create_simulation_bindings(),
             PhysicsEvent.PHYSICS_READY,
             name=f"mpm_object_rebind_{self.cfg.prim_path}",
@@ -317,7 +308,7 @@ class MPMObject(BaseDeformableObject):
         self._ALL_INDICES = wp.array(np.arange(self._num_instances, dtype=np.int32), device=self.device)
         self._ALL_ENV_MASK = wp.ones((self._num_instances,), dtype=wp.bool, device=self.device)
 
-        state = SimulationManager.get_state_0()
+        state = self._physics_manager.get_state_0()
         if state is None or state.particle_q is None or state.particle_qd is None:
             raise RuntimeError("Cannot initialize MPMObject buffers before Newton particle state exists.")
 
@@ -347,35 +338,6 @@ class MPMObject(BaseDeformableObject):
         )
         self._data.default_nodal_state_w = ProxyArray(default_state)
         self._data.default_particle_state_w = self._data.default_nodal_state_w
-        self._create_particle_visualization()
-
-    def _create_particle_visualization(self) -> None:
-        """Create renderer-agnostic ``UsdGeom.Points`` prims for visible particles."""
-        if not self.cfg.spawn.visible:
-            return
-
-        first_offset = self._recorded_particle_offsets[0]
-        radii = (
-            SimulationManager.get_model()
-            .particle_radius[first_offset : first_offset + self._particles_per_object]
-            .numpy()
-        )
-        asset_prim_paths = _resolve_particle_asset_paths(self.cfg.prim_path, self._num_instances)
-        prim_paths = create_mpm_particle_visualization(
-            prim_paths=[f"{path}/Particles" for path in asset_prim_paths],
-            positions=self.data.particle_pos_w.warp.numpy(),
-            widths=2.0 * radii,
-            color=self.cfg.spawn.visual_color,
-            visual_material=self.cfg.spawn.visual_material,
-        )
-        for env_idx, prim_path in enumerate(prim_paths):
-            SimulationManager.register_particle_visual_prim(
-                prim_path,
-                particle_offset=self._recorded_particle_offsets[env_idx],
-                particle_count=self._particles_per_object,
-                sync_frequency=self.cfg.spawn.visual_update_frequency,
-            )
-        logger.info("MPM particle visualization initialized for: %s", self.cfg.prim_path)
 
     def _resolve_env_ids(self, env_ids):
         if env_ids is None or (isinstance(env_ids, slice) and env_ids == slice(None)):
@@ -397,14 +359,14 @@ class MPMObject(BaseDeformableObject):
 
     def _iter_particle_states(self):
         """Yield the Newton states whose particle arrays must receive writes."""
-        state_0 = SimulationManager.get_state_0()
-        state_1 = SimulationManager.get_state_1()
+        state_0 = self._physics_manager.get_state_0()
+        state_1 = self._physics_manager._newton.get_state_1()
         yield state_0
         if state_1 is not None and state_1 is not state_0:
             yield state_1
 
     def _invalidate_caches(self, pos: bool = False, vel: bool = False) -> None:
-        """Invalidate gathered data buffers after a particle write and flag the render sync."""
+        """Invalidate gathered data buffers after a particle write."""
         if pos:
             self._data._particle_pos_w.timestamp = -1.0
             self._data._root_pos_w.timestamp = -1.0
@@ -412,7 +374,6 @@ class MPMObject(BaseDeformableObject):
             self._data._particle_vel_w.timestamp = -1.0
             self._data._root_vel_w.timestamp = -1.0
         self._data._particle_state_w.timestamp = -1.0
-        SimulationManager._mark_particles_dirty()
 
     def _set_debug_vis_impl(self, debug_vis: bool):
         raise NotImplementedError("Debug visualization is not implemented for MPMObject.")
@@ -425,7 +386,7 @@ class MPMObject(BaseDeformableObject):
         if self._physics_ready_handle is not None:
             self._physics_ready_handle.deregister()
             self._physics_ready_handle = None
-        registry = SimulationManager._mpm_object_registry
+        registry = self._physics_manager._newton._mpm_object_registry
         if self._registry_entry in registry:
             registry.remove(self._registry_entry)
 
@@ -443,27 +404,15 @@ def _compose_env_asset_pose(
     return (float(pos[0]), float(pos[1]), float(pos[2])), (float(rot[0]), float(rot[1]), float(rot[2]), float(rot[3]))
 
 
-def _resolve_particle_asset_paths(prim_path: str, num_instances: int) -> list[str]:
-    """Resolve one concrete MPM asset path per Newton world."""
-    import isaaclab.sim as sim_utils  # noqa: PLC0415
-    from isaaclab.cloner import path as cloner_path  # noqa: PLC0415
-    from isaaclab.cloner.query import iter_sources  # noqa: PLC0415
+def _planned_worlds(prim_path: str) -> tuple[int, ...]:
+    """Resolve an asset expression to its occupied clone-plan world columns."""
+    sim = SimulationContext.instance()
+    plan = None if sim is None else sim.get_clone_plan()
+    if plan is None or plan.env_ids is None:
+        raise RuntimeError(f"MPM object '{prim_path}' must be constructed inside a ReplicateSession.")
 
-    sim = sim_utils.SimulationContext.instance()
-    clone_plan = sim.get_clone_plan() if sim is not None else None
-    if clone_plan is not None and clone_plan.env_ids is not None:
-        paths_by_env_id: dict[int, str] = {}
-        for _, template, _, env_ids in iter_sources(clone_plan, prim_path):
-            matched = cloner_path.match(prim_path, template)
-            if matched is not None:
-                paths_by_env_id.update((env_id, f"{template.format(env_id)}{matched.suffix}") for env_id in env_ids)
-        env_ids = [int(env_id) for env_id in clone_plan.env_ids]
-        if len(env_ids) == num_instances and all(env_id in paths_by_env_id for env_id in env_ids):
-            return [paths_by_env_id[env_id] for env_id in env_ids]
-
-    matched_paths = sim_utils.find_matching_prim_paths(prim_path)
-    if len(matched_paths) != num_instances:
-        raise RuntimeError(
-            f"Expected {num_instances} MPM asset prims matching '{prim_path}', found {len(matched_paths)}."
-        )
-    return matched_paths
+    columns = {int(env_id): column for column, env_id in enumerate(plan.env_ids)}
+    worlds = tuple(columns[env_id] for env_id in cloner.query.destination_paths(plan, prim_path))
+    if not worlds:
+        raise RuntimeError(f"ClonePlan does not cover MPM object '{prim_path}'.")
+    return worlds

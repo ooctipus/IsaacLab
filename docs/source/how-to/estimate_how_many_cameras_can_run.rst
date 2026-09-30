@@ -6,9 +6,8 @@ Find How Many/What Cameras You Should Train With
 
 .. currentmodule:: isaaclab
 
-Currently in Isaac Lab, there are several camera types; USD Cameras (standard), Tiled Cameras,
-and Ray Caster cameras. These camera types differ in functionality and performance. The ``benchmark_cameras.py``
-script can be used to understand the difference in cameras types, as well to characterize their relative performance
+Isaac Lab provides renderer-backed ``Camera`` and ``RayCasterCamera`` sensors. The ``benchmark_cameras.py``
+script can compare these paths and characterize their relative performance
 at different parameters such as camera quantity, image dimensions, and data types.
 
 This utility is provided so that one easily can find the camera type/parameters that are the most performant
@@ -53,15 +52,13 @@ automatically determining maximum camera count.
 Compare Performance in Task Environments and Automatically Determine Task Max Camera Count
 ------------------------------------------------------------------------------------------
 
-Currently, tiled cameras are the most performant camera that can handle multiple dynamic objects.
-
-For example, to see how your system could handle 100 tiled cameras in
+For example, to see how your system could handle 100 renderer-backed cameras in
 the cartpole environment, with 2 cameras per environment (so 50 environments total)
 only in RGB mode, run
 
 .. code-block:: bash
 
-   python scripts/benchmarks/benchmark_cameras.py --task Isaac-Cartpole --num_tiled_cameras 100 --task_num_cameras_per_env 2 --tiled_camera_data_types rgb
+   python scripts/benchmarks/benchmark_cameras.py --task Isaac-Cartpole --num_cameras 100 --task_num_cameras_per_env 2 --data_types rgb
 
 If you have pynvml installed, (``python -m pip install pynvml``), you can also
 find the maximum number of cameras that you could run in the specified environment up to
@@ -71,7 +68,7 @@ you can run with cartpole, you could run:
 
 .. code-block:: bash
 
-   python scripts/benchmarks/benchmark_cameras.py --task Isaac-Cartpole --num_tiled_cameras 100 --task_num_cameras_per_env 2 --tiled_camera_data_types rgb --autotune --autotune_max_percentage_util 100 80 50 50
+   python scripts/benchmarks/benchmark_cameras.py --task Isaac-Cartpole --num_cameras 100 --task_num_cameras_per_env 2 --data_types rgb --autotune --autotune_max_percentage_util 100 80 50 50
 
 Autotune may lead to the program crashing, which means that it tried to run too many cameras at once.
 However, the max percentage utilization parameter is meant to prevent this from happening.
@@ -86,11 +83,11 @@ Compare Camera Type and Performance (Without a Specified Task)
 --------------------------------------------------------------
 
 This tool can also asses performance without a task environment.
-For example, to view 100 random objects with 2 standard cameras, one could run
+For example, to view 100 random objects with 2 renderer-backed cameras, run
 
 .. code-block:: bash
 
-   python scripts/benchmarks/benchmark_cameras.py --height 100 --width 100 --num_standard_cameras 2 --standard_camera_data_types instance_segmentation normals --num_objects 100 --experiment_length 100
+   python scripts/benchmarks/benchmark_cameras.py --height 100 --width 100 --num_cameras 2 --data_types instance_segmentation normals --num_objects 100 --experiment_length 100
 
 If your system cannot handle this due to performance reasons, then the process will be killed.
 It's recommended to monitor CPU/RAM utilization and GPU utilization while running this script, to get
@@ -101,7 +98,7 @@ If your system has a hard time handling the desired cameras, you can try the fol
 
    - Switch to headless mode (omit ``--viz``, or pass ``--viz none`` if a config selects visualizers)
    - Ensure you are using the GPU pipeline not CPU!
-   - If you aren't using Tiled Cameras, switch to Tiled Cameras
+   - Compare the renderer-backed and ray-caster paths with ``--camera_type``
    - Decrease camera resolution
    - Decrease how many data_types there are for each camera.
    - Decrease the number of cameras

@@ -14,9 +14,6 @@ import warp as wp
 
 import isaaclab.utils.math as math_utils
 from isaaclab.sensors.imu import BaseImu
-from isaaclab.sim.utils.queries import path_expr_to_glob
-
-from isaaclab_physx.physics import PhysxManager as SimulationManager
 
 from .imu_data import ImuData
 from .kernels import imu_reset_kernel, imu_update_kernel
@@ -127,10 +124,10 @@ class Imu(BaseImu):
           to the target prim, and build the view on the ancestor expression.
         """
         super()._initialize_impl()
-        self._physics_sim_view = SimulationManager.get_physics_sim_view()
+        self._physics_sim_view = self._physics_manager.get_physics_sim_view()
 
         self._rigid_parent_expr, fixed_pos_b, fixed_quat_b = self._resolve_rigid_body_ancestor_expr()
-        self._view = self._physics_sim_view.create_rigid_body_view(path_expr_to_glob(self._rigid_parent_expr))
+        self._view = self._physics_sim_view.create_rigid_body_view(self._rigid_parent_expr)
 
         # Real IMUs always measure gravity, so the accelerometer is biased by -g. The scene value
         # can change at runtime, so it is refreshed on every update instead of snapshotted here.

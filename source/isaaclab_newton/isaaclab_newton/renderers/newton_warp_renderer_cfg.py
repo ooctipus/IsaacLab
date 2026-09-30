@@ -59,9 +59,6 @@ class NewtonWarpRendererCfg(RendererCfg):
       :attr:`~isaaclab_physx.renderers.IsaacRtxRendererCfg.depth_clipping_behavior`.
     """
 
-    create_default_light: bool = True
-    """Create a default directional light source in the scene."""
-
     semantic_filter: str | list[str] = "*:*"
     """A string or list specifying a semantic filter predicate for :attr:`semantic_segmentation` and
     :attr:`instance_segmentation`. Defaults to ``"*:*"`` (all semantic types and labels).
@@ -74,10 +71,10 @@ class NewtonWarpRendererCfg(RendererCfg):
     type, i.e. ``["class"]`` is equivalent to ``"class:*"``.
 
     .. note::
-        Semantic labels are read from the USD stage's :class:`UsdSemantics.LabelsAPI` (authored by
-        :attr:`~isaaclab.sim.spawners.SpawnerCfg.semantic_tags`), resolving labels inherited from
-        ancestor prims. Newton's ray tracer only emits a per-shape index; the semantic/instance
-        mappings are reconstructed on the host from ``model.shape_label`` prim paths.
+        Semantic labels come only from :attr:`~isaaclab.sim.spawners.SpawnerCfg.semantic_tags`
+        retained by the clone plan. Labels embedded in a USD asset but absent from its cfg are
+        unlabelled. Newton's ray tracer only emits a per-shape index; the semantic/instance mappings
+        are reconstructed on the host from ``model.shape_label`` prim paths.
     """
 
     colorize_semantic_segmentation: bool = True

@@ -14,8 +14,7 @@ A few quick showroom scripts to run and checkout:
    scripts use Isaac Sim and default to its PhysX or Kit-backed runtime. A fresh checkout does not
    install that optional dependency group unless the command requests it.
 
-   The canonical Newton visualizers are ``newton_gl`` and the experimental ``newton_rtx``.
-   The deprecated ``newton`` name remains an alias for ``newton_gl``.
+   The Newton visualizers are ``newton_gl`` and the experimental ``newton_rtx``.
 
 .. rst-class:: showroom-demo-list
 
@@ -420,7 +419,7 @@ A few quick showroom scripts to run and checkout:
 
    The demo resolves a curated selection of PhysX task scenes that share a flat
    floor at height zero, folds them into a single scene with
-   :func:`~isaaclab.scene.add`, and clones the combined scene so each
+   one clone combination per task, and clones the combined scene so each
    environment hosts one task's assets. Use ``--num_task`` and ``--num_envs``
    to run a smaller composition.
 

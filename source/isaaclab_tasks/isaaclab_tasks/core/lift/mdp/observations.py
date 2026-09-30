@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from isaaclab.assets import Articulation, CableObject, DeformableObject, RigidObject
     from isaaclab.envs import ManagerBasedRLEnv
     from isaaclab.managers import ObservationTermCfg
+    from isaaclab.markers import VisualizationMarkersCfg
     from isaaclab.sensors import Camera
 
 
@@ -130,12 +131,8 @@ class object_point_cloud_b(ManagerTermBase):
         self.ref_asset: Articulation = env.scene[self.ref_asset_cfg.name]
         # lazy initialize visualizer and point cloud
         if cfg.params.get("visualize", True):
-            from isaaclab.markers import VisualizationMarkers
-            from isaaclab.markers.config import RAY_CASTER_MARKER_CFG
-
-            ray_cfg = RAY_CASTER_MARKER_CFG.replace(prim_path="/Visuals/ObservationPointCloud")
-            ray_cfg.markers["hit"].radius = 0.0025
-            self.visualizer = VisualizationMarkers(ray_cfg)
+            visualizer_cfg = cfg.params["visualizer_cfg"]
+            self.visualizer = visualizer_cfg.class_type(visualizer_cfg)
         from .utils import sample_object_point_cloud
 
         self.points_local = sample_object_point_cloud(
@@ -151,6 +148,7 @@ class object_point_cloud_b(ManagerTermBase):
         num_points: int = 10,
         flatten: bool = False,
         visualize: bool = True,
+        visualizer_cfg: VisualizationMarkersCfg | None = None,
     ):
         """Compute the object point cloud in the reference asset's root frame.
 
@@ -165,6 +163,7 @@ class object_point_cloud_b(ManagerTermBase):
             num_points: Unused at runtime; see note above.
             flatten: If ``True``, return a flattened tensor ``(num_envs, 3 * num_points)``.
             visualize: If ``True``, draw markers for the points.
+            visualizer_cfg: Declarative marker configuration consumed at initialization.
 
         Returns:
             Tensor of shape ``(num_envs, num_points, 3)`` or flattened if requested.
@@ -220,6 +219,10 @@ class vision_camera(ManagerTermBase):
         sensor_cfg: SceneEntityCfg = cfg.params.get("sensor_cfg", SceneEntityCfg("tiled_camera"))
         self.sensor: Camera = env.scene.sensors[sensor_cfg.name]
         self.sensor_type = self.sensor.cfg.data_types[0]
+        _, height, width, channels = self.sensor.output_shapes[self.sensor_type]
+        self._output_shape = (
+            (channels, height, width) if cfg.params.get("normalize", True) else (height, width, channels)
+        )
         self.norm_fn = (
             self._depth_norm
             if self.sensor_type == "distance_to_image_plane" or self.sensor_type == "depth"
@@ -352,3 +355,12 @@ class DeformableSampledPointsInRobotRootFrame(ManagerTermBase):
             root_pos_w.reshape(-1, 3), root_quat_w.reshape(-1, 4), sampled_points_w.reshape(-1, 3)
         )
         return sampled_points_b.view(env.num_envs, -1)
+
+
+def _fingers_contact_force_b_output_shape(
+    _env: object, contact_sensor_names: list[str], **_: object
+) -> tuple[int, ...]:
+    return (3 * len(contact_sensor_names),)
+
+
+fingers_contact_force_b._output_shape = _fingers_contact_force_b_output_shape

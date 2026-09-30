@@ -7,7 +7,7 @@
 import os
 
 from isaaclab_physx.physics import PhysxCfg
-from isaaclab_physx.renderers import IsaacRtxRendererCfg
+from isaaclab_physx.renderers import IsaacRtxRendererCfg, IsaacRtxRendererGlobalSettingsCfg
 
 import isaaclab.sim as sim_utils
 from isaaclab.devices.device_base import DevicesCfg
@@ -19,10 +19,7 @@ from isaaclab.sensors.frame_transformer.frame_transformer_cfg import OffsetCfg
 from isaaclab.utils.configclass import configclass
 
 from isaaclab_tasks.contrib.stack import mdp
-from isaaclab_tasks.utils.presets import (
-    MultiBackendRendererCfg,
-    set_isaac_rtx_global_settings,
-)
+from isaaclab_tasks.utils.presets import MultiBackendRendererCfg
 
 from . import stack_joint_pos_env_cfg
 
@@ -146,27 +143,13 @@ class RmpFlowGalbotRightArmCubeStackEnvCfg(stack_joint_pos_env_cfg.GalbotRightAr
 ##
 @configclass
 class RmpFlowGalbotLeftArmCubeStackVisuomotorEnvCfg(RmpFlowGalbotLeftArmCubeStackEnvCfg):
-    def validate_config(self):
-        """Check for invalid renderer/data-type combinations after preset resolution."""
-
-        warp_supported = {"rgb", "depth", "distance_to_image_plane"}
-        for cam_attr in ("right_wrist_cam", "left_wrist_cam", "ego_cam", "front_cam"):
-            cam = getattr(self.scene, cam_attr, None)
-            if cam is None:
-                continue
-            renderer_type = getattr(getattr(cam, "renderer_cfg", None), "renderer_type", None)
-            if renderer_type == "newton_warp":
-                unsupported = set(cam.data_types) - warp_supported
-                if unsupported:
-                    raise ValueError(
-                        f"Warp renderer only supports data types {sorted(warp_supported)}, "
-                        f"but '{cam_attr}' is configured with unsupported types: {sorted(unsupported)}. "
-                        "Choose a compatible preset, e.g. presets=newton_renderer,rgb128."
-                    )
-
     def __post_init__(self):
         # post init of parent
         super().__post_init__()
+        rtx_renderer_cfg = IsaacRtxRendererCfg(
+            global_settings=IsaacRtxRendererGlobalSettingsCfg(antialiasing_mode="DLAA")
+        )
+        renderer_cfg = MultiBackendRendererCfg(default=rtx_renderer_cfg, isaacsim_rtx=rtx_renderer_cfg)
 
         # Set left and right wrist cameras for VLA policy training
         self.scene.right_wrist_cam = CameraCfg(
@@ -175,7 +158,7 @@ class RmpFlowGalbotLeftArmCubeStackVisuomotorEnvCfg(RmpFlowGalbotLeftArmCubeStac
             height=256,
             width=256,
             data_types=["rgb", "distance_to_image_plane"],
-            renderer_cfg=MultiBackendRendererCfg(default=IsaacRtxRendererCfg(), isaacsim_rtx=IsaacRtxRendererCfg()),
+            renderer_cfg=renderer_cfg,
             spawn=sim_utils.PinholeCameraCfg(
                 focal_length=18.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 1.0e5)
             ),
@@ -188,7 +171,7 @@ class RmpFlowGalbotLeftArmCubeStackVisuomotorEnvCfg(RmpFlowGalbotLeftArmCubeStac
             height=256,
             width=256,
             data_types=["rgb", "distance_to_image_plane"],
-            renderer_cfg=MultiBackendRendererCfg(default=IsaacRtxRendererCfg(), isaacsim_rtx=IsaacRtxRendererCfg()),
+            renderer_cfg=renderer_cfg,
             spawn=sim_utils.PinholeCameraCfg(
                 focal_length=18.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 1.0e5)
             ),
@@ -202,7 +185,7 @@ class RmpFlowGalbotLeftArmCubeStackVisuomotorEnvCfg(RmpFlowGalbotLeftArmCubeStac
             height=256,
             width=256,
             data_types=["rgb", "distance_to_image_plane"],
-            renderer_cfg=MultiBackendRendererCfg(default=IsaacRtxRendererCfg(), isaacsim_rtx=IsaacRtxRendererCfg()),
+            renderer_cfg=renderer_cfg,
             spawn=sim_utils.PinholeCameraCfg(
                 focal_length=18.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 1.0e5)
             ),
@@ -216,7 +199,7 @@ class RmpFlowGalbotLeftArmCubeStackVisuomotorEnvCfg(RmpFlowGalbotLeftArmCubeStac
             height=256,
             width=256,
             data_types=["rgb", "distance_to_image_plane"],
-            renderer_cfg=MultiBackendRendererCfg(default=IsaacRtxRendererCfg(), isaacsim_rtx=IsaacRtxRendererCfg()),
+            renderer_cfg=renderer_cfg,
             spawn=sim_utils.PinholeCameraCfg(
                 focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 1.0e5)
             ),
@@ -263,15 +246,7 @@ class RmpFlowGalbotLeftArmCubeStackVisuomotorEnvCfg(RmpFlowGalbotLeftArmCubeStac
             ],
         )
 
-        # Set settings for camera rendering
         self.num_rerenders_on_reset = 3
-        for camera_cfg in (
-            self.scene.right_wrist_cam,
-            self.scene.left_wrist_cam,
-            self.scene.ego_cam,
-            self.scene.front_cam,
-        ):
-            set_isaac_rtx_global_settings(camera_cfg.renderer_cfg, antialiasing_mode="DLAA")
 
         # List of image observations in policy observations
         self.image_obs_list = ["ego_cam", "left_wrist_cam", "right_wrist_cam"]

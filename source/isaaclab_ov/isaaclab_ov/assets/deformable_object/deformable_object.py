@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import logging
-import re
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
@@ -16,15 +15,11 @@ import numpy as np
 import torch
 import warp as wp
 
-from pxr import UsdShade
-
 import isaaclab.sim as sim_utils
 from isaaclab.assets.deformable_object.base_deformable_object import BaseDeformableObject
-from isaaclab.markers import VisualizationMarkers
 from isaaclab.utils.warp import ProxyArray
 
 from isaaclab_ov import tensor_types as TT
-from isaaclab_ov.physics import OvPhysxManager
 from isaaclab_ov.sim.views.ovphysx_view import OvPhysxView
 
 from .deformable_object_data import DeformableObjectData
@@ -68,7 +63,6 @@ class DeformableObject(BaseDeformableObject):
             cfg: Configuration instance for the deformable object.
         """
         super().__init__(cfg)
-        OvPhysxManager.require_full_stage()
         self._DTYPE_TO_TORCH_TRAILING_DIMS = {**self._DTYPE_TO_TORCH_TRAILING_DIMS, vec6f: (6,)}
         self._deformable_type: str | None = None
         self._root_physx_view: OvPhysxDeformableBodyView | None = None
@@ -322,62 +316,24 @@ class DeformableObject(BaseDeformableObject):
         )
 
     def _initialize_impl(self) -> None:
-        physx_instance = OvPhysxManager.get_physx_instance()
+        physx_instance = self._physics_manager.get_physx_instance()
         if physx_instance is None:
             raise RuntimeError("OvPhysxManager has not been initialized yet.")
         self._ovphysx = physx_instance
-        self._device = OvPhysxManager.get_device()
+        self._device = self._physics_manager.get_device()
         if not wp.get_device(self._device).is_cuda:
             raise RuntimeError(
                 f"OVPhysX deformable tensors require a CUDA simulation device; received {self._device!r}."
             )
 
-        def has_deformable_body_api(prim) -> bool:
-            return "OmniPhysicsDeformableBodyAPI" in prim.GetPrimTypeInfo().GetAppliedAPISchemas()
-
-        asset_prim, root_expr = sim_utils.resolve_matching_prims_from_source(self.cfg.prim_path)[0]
-        walk_root = asset_prim.GetPath().pathString
-        resolve_kwargs = {"predicate": has_deformable_body_api, "expected_num_matches": 1}
-        deformable_prims = sim_utils.resolve_matching_prims_from_source(self.cfg.prim_path, **resolve_kwargs)
-        root_prim, root_path_expr = deformable_prims[0]
-
-        material_prim = None
-        if root_prim.HasAPI(UsdShade.MaterialBindingAPI):
-            material_paths = UsdShade.MaterialBindingAPI(root_prim).GetDirectBindingRel("physics").GetTargets()
-            for material_path in material_paths:
-                candidate = root_prim.GetStage().GetPrimAtPath(material_path)
-                schemas = candidate.GetPrimTypeInfo().GetAppliedAPISchemas()
-                if "OmniPhysicsDeformableMaterialAPI" not in schemas:
-                    continue
-                material_prim = candidate
-                if "PhysxSurfaceDeformableMaterialAPI" in schemas:
-                    self._deformable_type = "surface"
-                elif "PhysxDeformableMaterialAPI" in schemas:
-                    self._deformable_type = "volume"
-                break
-
-        if material_prim is None:
+        layout = sim_utils.SimulationContext.instance().get_clone_plan()
+        deformable = layout.match_deformable_subtrees(self.cfg.prim_path)[0]
+        self._deformable_type = deformable.deformable_type
+        if deformable.material_view_path is None:
             logger.warning(
-                f"Failed to find a deformable material binding for '{root_prim.GetPath().pathString}'. "
+                f"Failed to find a deformable material binding for '{deformable.root_path}'. "
                 "The material properties will use defaults and cannot be modified at runtime."
             )
-
-        if self._deformable_type is None:
-            has_tetmesh = bool(
-                sim_utils.get_all_matching_child_prims(
-                    root_prim.GetPath(), lambda prim: prim.GetTypeName() == "TetMesh"
-                )
-            )
-            if has_tetmesh:
-                self._deformable_type = "volume"
-            else:
-                has_mesh = bool(
-                    sim_utils.get_all_matching_child_prims(
-                        root_prim.GetPath(), lambda prim: prim.GetTypeName() == "Mesh"
-                    )
-                )
-                if has_mesh:
-                    self._deformable_type = "surface"
 
         if self._deformable_type == "volume":
             self._sim_nodal_position_type = TT.DEFORMABLE_SIM_NODAL_POSITION
@@ -408,13 +364,9 @@ class DeformableObject(BaseDeformableObject):
                 self._sim_element_indices_type,
             ]
         else:
-            raise RuntimeError(
-                f"Failed to determine deformable type for '{root_prim.GetPath().pathString}'. "
-                "Ensure that a deformable material is bound or a valid TetMesh or Mesh exists below the body."
-            )
+            raise RuntimeError(f"Unsupported planned deformable type: {self._deformable_type!r}.")
 
-        root_pattern = re.sub(r"\{ENV_REGEX_NS\}", "*", root_path_expr)
-        root_pattern = sim_utils.path_expr_to_glob(root_pattern)
+        root_pattern = sim_utils.path_expr_to_glob(deformable.view_path)
         try:
             self._root_physx_view = OvPhysxDeformableBodyView(
                 physx_instance,
@@ -432,15 +384,8 @@ class DeformableObject(BaseDeformableObject):
                 f"{root_pattern!r}: {error}"
             ) from error
 
-        if material_prim is not None:
-            material_path = material_prim.GetPath().pathString
-            material_path_expr = (
-                root_expr + material_path[len(walk_root) :]
-                if material_prim.GetPath().HasPrefix(asset_prim.GetPath())
-                else material_path
-            )
-            material_pattern = re.sub(r"\{ENV_REGEX_NS\}", "*", material_path_expr)
-            material_pattern = sim_utils.path_expr_to_glob(material_pattern)
+        if deformable.material_view_path is not None:
+            material_pattern = sim_utils.path_expr_to_glob(deformable.material_view_path)
             material_tensor_types = [
                 TT.DEFORMABLE_MATERIAL_DYNAMIC_FRICTION,
                 TT.DEFORMABLE_MATERIAL_YOUNGS_MODULUS,
@@ -566,7 +511,7 @@ class DeformableObject(BaseDeformableObject):
     def _set_debug_vis_impl(self, debug_vis: bool) -> None:
         if debug_vis:
             if not hasattr(self, "target_visualizer"):
-                self.target_visualizer = VisualizationMarkers(self.cfg.visualizer_cfg)
+                self.target_visualizer = self.cfg.visualizer_cfg.class_type(self.cfg.visualizer_cfg)
             self.target_visualizer.set_visibility(True)
         elif hasattr(self, "target_visualizer"):
             self.target_visualizer.set_visibility(False)

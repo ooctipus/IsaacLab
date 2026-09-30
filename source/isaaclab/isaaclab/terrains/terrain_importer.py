@@ -13,8 +13,6 @@ import torch
 import trimesh
 
 import isaaclab.sim as sim_utils
-from isaaclab.markers import VisualizationMarkers
-from isaaclab.markers.config import FRAME_MARKER_CFG
 
 from .utils import create_prim_from_mesh
 
@@ -66,13 +64,21 @@ class TerrainImporter:
             ValueError: If input terrain type is not supported.
             ValueError: If terrain type is 'generator' and no configuration provided for ``terrain_generator``.
             ValueError: If terrain type is 'usd' and no configuration provided for ``usd_path``.
-            ValueError: If terrain type is 'usd' or 'plane' and no configuration provided for ``env_spacing``.
+            RuntimeError: If construction happens outside a clone-plan lifecycle.
         """
         # check that the config is valid
         cfg.validate()
         # store inputs
         self.cfg = cfg
-        self.device = sim_utils.SimulationContext.instance().device  # type: ignore
+        sim = sim_utils.SimulationContext.instance()
+        if sim is None:
+            raise RuntimeError("TerrainImporter requires an active SimulationContext.")
+        plan = sim.get_clone_plan()
+        if plan is None:
+            raise RuntimeError("TerrainImporter must be constructed inside a ReplicateSession.")
+        self.device = sim.device
+        self.stage = sim.stage
+        self._clone_positions = plan.positions
 
         # create buffers for the terrains
         self.terrain_prim_paths = list()
@@ -170,9 +176,7 @@ class TerrainImporter:
         # create a marker if necessary
         if debug_vis:
             if not hasattr(self, "origin_visualizer"):
-                self.origin_visualizer = VisualizationMarkers(
-                    cfg=FRAME_MARKER_CFG.replace(prim_path="/Visuals/TerrainOrigin")
-                )
+                self.origin_visualizer = self.cfg.visualizer_cfg.class_type(self.cfg.visualizer_cfg)
                 if self.terrain_origins is not None:
                     self.origin_visualizer.visualize(self.terrain_origins.reshape(-1, 3))
                 elif self.env_origins is not None:
@@ -223,6 +227,11 @@ class TerrainImporter:
             if "diffuse_color" in material:
                 color = material["diffuse_color"]
             else:
+                # The material carries no diffuse to read, so leave the ground asset's own color
+                # alone rather than overriding it to black: forcing a color here discards the
+                # material the scene asked for, and leaves whatever imports the ground for
+                # rendering disagreeing about what it looks like.
+                color = None
                 logger.warning(
                     "Visual material specified for ground plane but no diffuse color found."
                     " Preserving the ground plane's authored material."
@@ -298,9 +307,7 @@ class TerrainImporter:
         """
         from pxr import Sdf
 
-        from isaaclab.sim.utils.stage import get_current_stage
-
-        prim = get_current_stage().GetPrimAtPath(prim_path)
+        prim = self.stage.GetPrimAtPath(prim_path)
         if not prim.IsValid():
             return
         attr = prim.CreateAttribute("newton:heightfield:resolution", Sdf.ValueTypeNames.Float)
@@ -356,14 +363,10 @@ class TerrainImporter:
             # store the origins
             self.terrain_origins = origins.to(self.device, dtype=torch.float)
             # compute environment origins
-            self.env_origins = self._compute_env_origins_curriculum(self.cfg.num_envs, self.terrain_origins)
+            self.env_origins = self._compute_env_origins_curriculum(len(self._clone_positions), self.terrain_origins)
         else:
             self.terrain_origins = None
-            # check if env spacing is valid
-            if self.cfg.env_spacing is None:
-                raise ValueError("Environment spacing must be specified for configuring grid-like origins.")
-            # compute environment origins
-            self.env_origins = self._compute_env_origins_grid(self.cfg.num_envs, self.cfg.env_spacing)
+            self.env_origins = self._clone_positions
 
     def update_env_origins(self, env_ids: torch.Tensor, move_up: torch.Tensor, move_down: torch.Tensor):
         """Update the environment origins based on the terrain levels."""
@@ -406,13 +409,6 @@ class TerrainImporter:
         env_origins = torch.zeros(num_envs, 3, device=self.device)
         env_origins[:] = origins[self.terrain_levels, self.terrain_types]
         return env_origins
-
-    def _compute_env_origins_grid(self, num_envs: int, env_spacing: float) -> torch.Tensor:
-        """Compute the origins of the environments in a grid based on configured spacing."""
-        from isaaclab.cloner import grid_transforms
-
-        env_origins, _ = grid_transforms(num_envs, env_spacing)
-        return torch.as_tensor(env_origins, device=self.device)
 
     """
     Deprecated.

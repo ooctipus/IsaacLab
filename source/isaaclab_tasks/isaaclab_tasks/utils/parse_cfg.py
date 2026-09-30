@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 import gymnasium as gym
 import yaml
 
-from isaaclab_tasks.utils.hydra import _user_stacklevel, resolve_task_config
+from isaaclab_tasks.utils.hydra import resolve_task_config
 
 if TYPE_CHECKING:
     from isaaclab.envs import DirectRLEnvCfg, ManagerBasedRLEnvCfg
@@ -68,10 +68,7 @@ def load_cfg_from_registry(task_name: str, entry_point_key: str) -> dict | objec
     # gym.register kwargs under the ``deprecated`` key as a dict whose
     # ``alias`` field is the equivalent CLI command, e.g.
     # ``"deprecated": {"alias": "--task=Isaac-Cartpole-Camera-Direct presets=rgb"}``.
-    # FutureWarning (vs DeprecationWarning) matches the existing convention
-    # for end-user-facing IsaacLab deprecations (cfg fields, preset-name
-    # aliases) and is shown by Python's default filter regardless of which
-    # frame the warning is attributed to.
+    # FutureWarning is shown by Python's default filter for end-user-facing deprecations.
     if entry_point_key == "env_cfg_entry_point":
         deprecation = spec.kwargs.get("deprecated") or {}
         new_command = deprecation.get("alias")
@@ -79,7 +76,7 @@ def load_cfg_from_registry(task_name: str, entry_point_key: str) -> dict | objec
             warnings.warn(
                 f"Task '{spec.id}' is deprecated and will be removed in a future release. Use '{new_command}'.",
                 FutureWarning,
-                stacklevel=_user_stacklevel(),
+                stacklevel=2,
             )
     # obtain the configuration entry point
     cfg_entry_point = spec.kwargs.get(entry_point_key)

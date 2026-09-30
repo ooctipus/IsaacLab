@@ -6,18 +6,11 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
 
-import numpy as np
 import torch
 import warp as wp
 
-from isaaclab.utils.warp import convert_to_warp_mesh
-
 from isaaclab_tasks.contrib.nist.utils.rigid_object_hasher import RigidObjectHasher
-
-if TYPE_CHECKING:
-    import trimesh
 
 
 def _gather_farthest_points(points: torch.Tensor, num_samples: int) -> torch.Tensor:
@@ -54,11 +47,8 @@ def _gather_farthest_points(points: torch.Tensor, num_samples: int) -> torch.Ten
     return torch.gather(points, 1, indices.unsqueeze(-1).expand(-1, -1, points.shape[-1]))
 
 
-def _load_mesh_tensors(prim):
-    tm = prim_to_trimesh(prim)
-    verts = torch.from_numpy(tm.vertices.astype("float32"))
-    faces = torch.from_numpy(tm.faces.astype("int64"))
-    return verts, faces
+def _load_mesh_tensors(geometry):
+    return torch.from_numpy(geometry.vertices.copy()), torch.from_numpy(geometry.faces.astype("int64"))
 
 
 @wp.kernel
@@ -189,11 +179,15 @@ def sample_object_point_cloud(
     replicated_env = torch.all(hasher.root_prim_hashes == hasher.root_prim_hashes[0])
     if replicated_env:
         mask_env0 = hasher.collider_prim_env_ids == 0
-        mesh_tensors = [_load_mesh_tensors(p) for p, m in zip(hasher.collider_prims, mask_env0) if m]
+        mesh_tensors = [
+            _load_mesh_tensors(geometry)
+            for geometry, selected in zip(hasher.collider_geometries, mask_env0)
+            if selected
+        ]
         rel_pos = hasher.collider_rel_pos[mask_env0]
         rel_mat = hasher.collider_rel_mat[mask_env0]
     else:
-        mesh_tensors = [_load_mesh_tensors(p) for p in hasher.collider_prims]
+        mesh_tensors = [_load_mesh_tensors(geometry) for geometry in hasher.collider_geometries]
         rel_pos = hasher.collider_rel_pos
         rel_mat = hasher.collider_rel_mat
 
@@ -205,114 +199,19 @@ def sample_object_point_cloud(
 
     if replicated_env:
         merged = _gather_farthest_points(root.reshape(1, -1, 3), num_points)
-        result = merged.expand(num_envs, -1, -1) * hasher.root_prim_scales.to(device).unsqueeze(1)
+        result = merged.expand(num_envs, -1, -1)
     else:
         env_ids = hasher.collider_prim_env_ids.to(device)
         counts = torch.bincount(env_ids, minlength=hasher.num_root)
         max_c = int(counts.max().item())
         buf = torch.zeros((hasher.num_root, max_c * num_points, 3), device=device, dtype=root.dtype)
         placed = torch.zeros_like(counts)
-        for i in range(len(hasher.collider_prims)):
+        for i in range(len(hasher.collider_geometries)):
             r = int(env_ids[i].item())
             start = placed[r].item() * num_points
             buf[r, start : start + num_points] = root[i]
             placed[r] += 1
         merged = _gather_farthest_points(buf, num_points)
-        result = merged * hasher.root_prim_scales.to(device).unsqueeze(1)
+        result = merged
 
     return result
-
-
-def _triangulate_faces(prim) -> np.ndarray:
-    from pxr import UsdGeom
-
-    mesh = UsdGeom.Mesh(prim)
-    counts = mesh.GetFaceVertexCountsAttr().Get()
-    indices = mesh.GetFaceVertexIndicesAttr().Get()
-    faces = []
-    it = iter(indices)
-    for cnt in counts:
-        poly = [next(it) for _ in range(cnt)]
-        for k in range(1, cnt - 1):
-            faces.append([poly[0], poly[k], poly[k + 1]])
-    return np.asarray(faces, dtype=np.int64)
-
-
-def create_primitive_mesh(prim) -> trimesh.Trimesh:
-    import trimesh
-    from trimesh.transformations import rotation_matrix
-
-    from pxr import UsdGeom
-
-    prim_type = prim.GetTypeName()
-    if prim_type == "Cube":
-        size = UsdGeom.Cube(prim).GetSizeAttr().Get()
-        return trimesh.creation.box(extents=(size, size, size))
-    elif prim_type == "Sphere":
-        r = UsdGeom.Sphere(prim).GetRadiusAttr().Get()
-        return trimesh.creation.icosphere(subdivisions=3, radius=r)
-    elif prim_type == "Cylinder":
-        c = UsdGeom.Cylinder(prim)
-        return trimesh.creation.cylinder(radius=c.GetRadiusAttr().Get(), height=c.GetHeightAttr().Get())
-    elif prim_type == "Capsule":
-        c = UsdGeom.Capsule(prim)
-        tri_mesh = trimesh.creation.capsule(radius=c.GetRadiusAttr().Get(), height=c.GetHeightAttr().Get())
-        if c.GetAxisAttr().Get() == "X":
-            R = rotation_matrix(np.radians(-90), [0, 1, 0])
-            tri_mesh.apply_transform(R)
-        elif c.GetAxisAttr().Get() == "Y":
-            R = rotation_matrix(np.radians(90), [1, 0, 0])
-            tri_mesh.apply_transform(R)
-        return tri_mesh
-    elif prim_type == "Cone":
-        c = UsdGeom.Cone(prim)
-        radius = c.GetRadiusAttr().Get()
-        height = c.GetHeightAttr().Get()
-        mesh = trimesh.creation.cone(radius=radius, height=height)
-        mesh.apply_translation((0.0, 0.0, -height / 2.0))
-        return mesh
-    else:
-        raise KeyError(f"{prim_type} is not a valid primitive mesh type")
-
-
-def prim_to_trimesh(prim, relative_to_world=False) -> trimesh.Trimesh:
-    import trimesh
-
-    import omni
-    from pxr import UsdGeom
-
-    if prim.GetTypeName() == "Mesh":
-        mesh = UsdGeom.Mesh(prim)
-        verts = np.asarray(mesh.GetPointsAttr().Get(), dtype=np.float32)
-        faces = _triangulate_faces(prim)
-        mesh_tm = trimesh.Trimesh(vertices=verts, faces=faces, process=False)
-    else:
-        mesh_tm = create_primitive_mesh(prim)
-
-    if relative_to_world:
-        tf = np.array(omni.usd.get_world_transform_matrix(prim)).T
-        mesh_tm.apply_transform(tf)
-
-    return mesh_tm
-
-
-def prim_to_warp_mesh(prim, device, relative_to_world=False) -> wp.Mesh:
-    from pxr import UsdGeom
-
-    if prim.GetTypeName() == "Mesh":
-        mesh_prim = UsdGeom.Mesh(prim)
-        points = np.asarray(mesh_prim.GetPointsAttr().Get(), dtype=np.float32)
-        indices = np.asarray(mesh_prim.GetFaceVertexIndicesAttr().Get(), dtype=np.int32)
-    else:
-        mesh = create_primitive_mesh(prim)
-        points = mesh.vertices.astype(np.float32)
-        indices = mesh.faces.astype(np.int32)
-
-    if relative_to_world:
-        import omni
-
-        tf = np.array(omni.usd.get_world_transform_matrix(prim)).T
-        points = (points @ tf[:3, :3].T) + tf[:3, 3]
-
-    wp_mesh = convert_to_warp_mesh(points, indices, device=device)
-    return wp_mesh

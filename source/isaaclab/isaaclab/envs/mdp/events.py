@@ -14,9 +14,7 @@ the event introduced by the function.
 
 from __future__ import annotations
 
-import logging
 import math
-import re
 from typing import TYPE_CHECKING, Literal
 
 import torch
@@ -24,8 +22,8 @@ import warp as wp
 
 import isaaclab.sim as sim_utils
 import isaaclab.utils.math as math_utils
+from isaaclab import cloner
 from isaaclab.managers import EventTermCfg, ManagerTermBase, SceneEntityCfg
-from isaaclab.utils.version import compare_versions
 
 if TYPE_CHECKING:
     from isaaclab_physx.assets import DeformableObject
@@ -33,9 +31,6 @@ if TYPE_CHECKING:
     from isaaclab.assets import Articulation, RigidObject
     from isaaclab.envs import ManagerBasedEnv
     from isaaclab.terrains import TerrainImporter
-
-# import logger
-logger = logging.getLogger(__name__)
 
 
 def randomize_rigid_body_scale(
@@ -96,8 +91,17 @@ def randomize_rigid_body_scale(
 
     # acquire stage
     stage = env.sim.stage
-    # resolve prim paths for spawning and cloning
-    prim_paths = sim_utils.find_matching_prim_paths(asset.cfg.prim_path)
+    # resolve the clone of each environment through the clone plan: the term scales one prim per
+    # environment, so the env namespace is what the plan owns and the stage cannot be asked for it.
+    plan = env.sim.get_clone_plan()
+    rows = tuple(cloner.query.iter_sources(plan, asset.cfg.prim_path)) if plan is not None else ()
+    if not rows:
+        raise RuntimeError(f"Cannot scale '{asset_cfg.name}': no clone plan row populates '{asset.cfg.prim_path}'.")
+    prim_paths = {
+        env_id: cloner.path.rebase(source_path, source_root, destination.format(env_id))
+        for source_root, destination, source_path, env_ids_in_row in rows
+        for env_id in env_ids_in_row
+    }
 
     # sample scale values
     if isinstance(scale_range, dict):
@@ -121,7 +125,7 @@ def randomize_rigid_body_scale(
     from pxr import Gf, Sdf, UsdGeom, Vt  # noqa: PLC0415
 
     with Sdf.ChangeBlock():
-        for i, env_id in enumerate(env_ids):
+        for i, env_id in enumerate(env_ids.tolist()):
             # path to prim to randomize
             prim_path = prim_paths[env_id] + relative_child_path
             # spawn single instance
@@ -268,14 +272,13 @@ class _RandomizeRigidBodyMaterialNewton:
     def __init__(
         self, cfg: EventTermCfg, env: ManagerBasedEnv, asset: RigidObject | Articulation, asset_cfg: SceneEntityCfg
     ):
-        import isaaclab_newton.physics.newton_manager as newton_manager_module  # noqa: PLC0415
         from isaaclab_newton.assets import Articulation as NewtonArticulation  # noqa: PLC0415
         from newton import ModelFlags  # noqa: PLC0415
         from newton.solvers import SolverKamino  # noqa: PLC0415
 
         self.asset = asset
         self.asset_cfg = asset_cfg
-        self._newton_manager = newton_manager_module.NewtonManager
+        self._newton_manager = asset._physics_manager
         self._notify_shape_properties = ModelFlags.SHAPE_PROPERTIES
         # Kamino deduplicates contact materials globally by (mu, restitution) at build time and
         # shares them across environments, so its in-place material update rejects per-shape /
@@ -420,8 +423,6 @@ class _RandomizeRigidBodyMaterialOvPhysx:
         if isinstance(asset, BaseArticulation):
             self._material_type = ovphysx_tt.SHAPE_FRICTION_AND_RESTITUTION
             if not _is_all_body_selection(asset_cfg.body_ids, asset.num_bodies):
-                from pxr import UsdPhysics  # noqa: PLC0415
-
                 body_ids = [int(body_id) for body_id in asset_cfg.body_ids]
                 if len(body_ids) == 0:
                     self._material_view = None
@@ -429,68 +430,33 @@ class _RandomizeRigidBodyMaterialOvPhysx:
                     return
 
                 selected_body_names = [asset.body_names[body_id] for body_id in body_ids]
-                asset_root_paths = sim_utils.find_matching_prim_paths(asset.cfg.prim_path)
                 articulation_root_paths = asset.root_view.prim_paths
                 if len(articulation_root_paths) != asset.num_instances:
                     raise RuntimeError(
                         "Failed to map OVPhysX articulation material rows to asset instances: "
                         f"expected {asset.num_instances} articulation roots, got {len(articulation_root_paths)}."
                     )
-
-                # With replicated physics, only the source asset may exist as a concrete
-                # USD prim even though the tensor binding contains every environment. Find
-                # the articulation-root suffix in that source asset, then strip the same
-                # suffix from every binding row to recover its concrete asset root.
-                source_pairs = [
-                    (asset_root_path, articulation_root_path)
-                    for asset_root_path in asset_root_paths
-                    for articulation_root_path in articulation_root_paths
-                    if articulation_root_path == asset_root_path
-                    or articulation_root_path.startswith(f"{asset_root_path}/")
-                ]
-                if not source_pairs:
+                plan = env.sim.get_clone_plan()
+                if plan is None or not plan.is_complete:
+                    raise RuntimeError("OVPhysX articulation material randomization requires a completed clone plan.")
+                layout_by_root = {
+                    articulation.root_path: articulation
+                    for articulation in plan.match_articulations(asset.cfg.prim_path)
+                }
+                if set(layout_by_root) != set(articulation_root_paths):
                     raise RuntimeError(
-                        "Failed to find a source asset root containing an OVPhysX articulation root. "
-                        f"Asset roots: {asset_root_paths}; articulation roots: {articulation_root_paths}."
+                        "OVPhysX articulation material roots do not match the clone plan. "
+                        f"Binding: {articulation_root_paths}; plan: {tuple(layout_by_root)}."
                     )
-                source_asset_root, source_articulation_root = max(source_pairs, key=lambda pair: len(pair[0]))
-                articulation_root_suffix = source_articulation_root[len(source_asset_root) :]
-                if articulation_root_suffix:
-                    if not all(path.endswith(articulation_root_suffix) for path in articulation_root_paths):
-                        raise RuntimeError(
-                            "OVPhysX articulation roots do not share the source asset's relative root suffix "
-                            f"'{articulation_root_suffix}': {articulation_root_paths}."
-                        )
-                    instance_root_paths = [path[: -len(articulation_root_suffix)] for path in articulation_root_paths]
-                else:
-                    instance_root_paths = articulation_root_paths
-
-                selected_relative_paths = []
-                for body_name in selected_body_names:
-
-                    def is_selected_rigid_body(prim, expected_name=body_name):
-                        return prim.GetName() == expected_name and prim.HasAPI(UsdPhysics.RigidBodyAPI)
-
-                    source_matches = sim_utils.resolve_matching_prims_from_source(
-                        asset.cfg.prim_path,
-                        predicate=is_selected_rigid_body,
-                        expected_num_matches=1,
-                    )
-                    source_body_path = source_matches[0][0].GetPath().pathString
-                    if not (
-                        source_body_path == source_asset_root or source_body_path.startswith(f"{source_asset_root}/")
-                    ):
-                        raise RuntimeError(
-                            f"OVPhysX body '{body_name}' at '{source_body_path}' is not below source asset root "
-                            f"'{source_asset_root}'."
-                        )
-                    selected_relative_paths.append(source_body_path[len(source_asset_root) :])
-
                 selected_paths = []
-                for instance_root_path in instance_root_paths:
-                    selected_paths.extend(
-                        f"{instance_root_path}{relative_path}" for relative_path in selected_relative_paths
-                    )
+                for root_path in articulation_root_paths:
+                    body_paths = {body.name: body.path for body in layout_by_root[root_path].bodies}
+                    missing = set(selected_body_names).difference(body_paths)
+                    if missing:
+                        raise RuntimeError(
+                            f"OVPhysX articulation at '{root_path}' has no planned bodies named {sorted(missing)}."
+                        )
+                    selected_paths.extend(body_paths[name] for name in selected_body_names)
 
                 self._material_type = ovphysx_tt.RIGID_BODY_SHAPE_FRICTION_AND_RESTITUTION
                 self._material_view = OvPhysxView(
@@ -629,15 +595,15 @@ class randomize_rigid_body_material(ManagerTermBase):
         # ``.link_paths`` — OVPhysX's per-tensor-type bindings dict does not
         # satisfy that contract.  Newton's subclasses (``NewtonMJWarpManager``,
         # ``NewtonKaminoManager``, ...) are caught by the substring branch.
-        manager_name = env.sim.physics_manager.__name__.lower()
-        if manager_name == "ovphysxmanager":
+        backend = env.sim.physics_backend
+        if backend == "ovphysx":
             self._impl = _RandomizeRigidBodyMaterialOvPhysx(cfg, env, self.asset, self.asset_cfg)
-        elif "newton" in manager_name:
+        elif backend == "newton":
             self._impl = _RandomizeRigidBodyMaterialNewton(cfg, env, self.asset, self.asset_cfg)
-        elif "physx" in manager_name:
+        elif backend == "physx":
             self._impl = _RandomizeRigidBodyMaterialPhysx(cfg, env, self.asset, self.asset_cfg)
         else:
-            raise ValueError(f"Unsupported physics manager for randomize_rigid_body_material: {manager_name!r}")
+            raise ValueError(f"Unsupported physics backend for randomize_rigid_body_material: {backend!r}")
 
     def __call__(
         self,
@@ -947,8 +913,7 @@ class randomize_rigid_body_com(ManagerTermBase):
         self.asset: RigidObject | Articulation = env.scene[self.asset_cfg.name]
 
         # detect physics backend
-        manager_name = env.sim.physics_manager.__name__.lower()
-        self._is_newton = "newton" in manager_name
+        self._is_newton = env.sim.physics_backend == "newton"
 
         self.default_com = None
 
@@ -1131,11 +1096,10 @@ class _RandomizeRigidBodyColliderOffsetsNewton:
     """
 
     def __init__(self, asset: RigidObject | Articulation):
-        import isaaclab_newton.physics.newton_manager as newton_manager_module  # noqa: PLC0415
         from newton import ModelFlags  # noqa: PLC0415
 
         self.asset = asset
-        self._newton_manager = newton_manager_module.NewtonManager
+        self._newton_manager = asset._physics_manager
         self._notify_shape_properties = ModelFlags.SHAPE_PROPERTIES
 
         model = self._newton_manager.get_model()
@@ -1245,19 +1209,16 @@ class randomize_rigid_body_collider_offsets(ManagerTermBase):
                 f" '{self.asset_cfg.name}' with type: '{type(self.asset)}'."
             )
 
-        # detect physics backend and instantiate the appropriate implementation.
-        # Check ``ovphysxmanager`` first: it contains the substring ``physx`` so would otherwise
-        # be routed to the PhysX impl, whose ``root_view`` offset accessors do not exist on
-        # OVPhysX's ``OvPhysxView`` (see ``randomize_rigid_body_material``).
-        manager_name = env.sim.physics_manager.__name__.lower()
-        if manager_name == "ovphysxmanager":
+        # detect physics backend and instantiate the appropriate implementation
+        backend = env.sim.physics_backend
+        if backend == "ovphysx":
             self._impl = _RandomizeRigidBodyColliderOffsetsOvPhysx(self.asset)
-        elif "newton" in manager_name:
+        elif "newton" in backend:
             self._impl = _RandomizeRigidBodyColliderOffsetsNewton(self.asset)
-        elif "physx" in manager_name:
+        elif "physx" in backend:
             self._impl = _RandomizeRigidBodyColliderOffsetsPhysx(self.asset)
         else:
-            raise ValueError(f"Unsupported physics manager for randomize_rigid_body_collider_offsets: {manager_name!r}")
+            raise ValueError(f"Unsupported physics backend for randomize_rigid_body_collider_offsets: {backend!r}")
 
     def __call__(
         self,
@@ -1303,15 +1264,12 @@ class randomize_physics_scene_gravity(ManagerTermBase):
         super().__init__(cfg, env)
         self._last_gravity_params: tuple | None = None
 
-        manager_name = env.sim.physics_manager.__name__.lower()
-        if "newton" in manager_name:
-            self._backend = "newton"
+        self._backend = env.sim.physics_backend
+        if self._backend == "newton":
             self._init_newton(cfg, env)
-        elif "ovphysx" in manager_name:
-            self._backend = "ovphysx"
+        elif self._backend == "ovphysx":
             self._init_ovphysx(env)
         else:
-            self._backend = "physx"
             self._init_physx(env)
 
         distribution = cfg.params.get("distribution", "uniform")
@@ -1376,11 +1334,11 @@ class randomize_physics_scene_gravity(ManagerTermBase):
             self._call_physx(env, operation)
 
     def _init_newton(self, cfg: EventTermCfg, env: ManagerBasedEnv):
-        """Cache Newton manager reference and solver notification flag."""
-        import isaaclab_newton.physics.newton_manager as newton_manager_module  # noqa: PLC0415
+        """Bind the registry-owned Newton model and solver notification flag."""
+        from isaaclab_newton.cloner import NewtonReplicateContext  # noqa: PLC0415
         from newton import ModelFlags  # noqa: PLC0415
 
-        self._newton_manager = newton_manager_module.NewtonManager
+        self._newton_resource = env.sim.get_or_create_backend(NewtonReplicateContext, env.sim)
         self._notify_model_properties = ModelFlags.MODEL_PROPERTIES
 
     def _call_newton(
@@ -1390,7 +1348,7 @@ class randomize_physics_scene_gravity(ManagerTermBase):
         operation: str,
     ):
         """Apply per-environment gravity via Newton's per-world gravity array on GPU."""
-        model = self._newton_manager.get_model()
+        model = self._newton_resource.get_model()
         if model is None or model.gravity is None:
             raise RuntimeError("Newton model is not initialized. Cannot randomize gravity.")
 
@@ -1416,7 +1374,7 @@ class randomize_physics_scene_gravity(ManagerTermBase):
         elif operation == "scale":
             gravity[env_ids] *= random_values
 
-        self._newton_manager.add_model_change(self._notify_model_properties)
+        self._newton_resource.add_model_change(self._notify_model_properties)
 
     def _init_physx(self, env: ManagerBasedEnv):
         """Cache the ``carb`` module and PhysX simulation view for scene-wide gravity updates."""
@@ -1441,7 +1399,7 @@ class randomize_physics_scene_gravity(ManagerTermBase):
 
     def _init_ovphysx(self, env: ManagerBasedEnv):
         """Cache the OvPhysX manager for scene-wide gravity updates."""
-        self._ovphysx_manager = env.sim.physics_manager
+        self._ovphysx_manager = env.sim._physics_manager
 
     def _call_ovphysx(self, env: ManagerBasedEnv, operation: str):
         """Sample a single gravity vector and apply it scene-wide through OvStage."""
@@ -1689,8 +1647,7 @@ class randomize_joint_parameters(ManagerTermBase):
         self.asset: Articulation = env.scene[self.asset_cfg.name]
 
         # detect physics backend
-        manager_name = env.sim.physics_manager.__name__.lower()
-        self._backend = "newton" if "newton" in manager_name else "physx"
+        self._backend = env.sim.physics_backend
 
         # cache default values (common to both backends)
         self.default_joint_friction_coeff = self.asset.data.joint_friction_coeff.torch.clone()
@@ -1699,7 +1656,7 @@ class randomize_joint_parameters(ManagerTermBase):
 
         # Newton supports static friction and passive viscous damping but not dynamic friction.
         self.default_viscous_joint_friction_coeff = self.asset.data.joint_viscous_friction_coeff.torch.clone()
-        if self._backend == "physx":
+        if "physx" in self._backend:
             self.default_dynamic_joint_friction_coeff = (self.asset.data.joint_dynamic_friction_coeff.torch).clone()
 
         # check for valid operation
@@ -1921,7 +1878,7 @@ class randomize_fixed_tendon_parameters(ManagerTermBase):
         operation: Literal["add", "scale", "abs"] = "abs",
         distribution: Literal["uniform", "log_uniform", "gaussian"] = "uniform",
     ):
-        _backend = env.sim.physics_manager.__name__.lower()
+        _backend = env.sim.physics_backend
 
         # resolve environment ids
         if env_ids is None:
@@ -1964,7 +1921,7 @@ class randomize_fixed_tendon_parameters(ManagerTermBase):
 
         # limit stiffness
         if limit_stiffness_distribution_params is not None:
-            if _backend == "physx":
+            if "physx" in _backend:
                 limit_stiffness = _randomize_prop_by_op(
                     self.asset.data.fixed_tendon_limit_stiffness.torch.clone(),
                     limit_stiffness_distribution_params,
@@ -1981,7 +1938,7 @@ class randomize_fixed_tendon_parameters(ManagerTermBase):
 
         # position limits
         if lower_limit_distribution_params is not None or upper_limit_distribution_params is not None:
-            if _backend == "physx":
+            if "physx" in _backend:
                 limit = self.asset.data.fixed_tendon_pos_limits.torch.clone()
                 # -- lower limit
                 if lower_limit_distribution_params is not None:
@@ -2019,7 +1976,7 @@ class randomize_fixed_tendon_parameters(ManagerTermBase):
 
         # rest length
         if rest_length_distribution_params is not None:
-            if _backend == "physx":
+            if "physx" in _backend:
                 rest_length = _randomize_prop_by_op(
                     self.asset.data.fixed_tendon_rest_length.torch.clone(),
                     rest_length_distribution_params,
@@ -2035,7 +1992,7 @@ class randomize_fixed_tendon_parameters(ManagerTermBase):
                 raise NotImplementedError("Rest length is not yet implemented with Newton.")
         # offset
         if offset_distribution_params is not None:
-            if _backend == "physx":
+            if "physx" in _backend:
                 offset = _randomize_prop_by_op(
                     self.asset.data.fixed_tendon_offset.torch.clone(),
                     offset_distribution_params,
@@ -2641,11 +2598,9 @@ class randomize_visual_texture_material(ManagerTermBase):
     The function samples random textures from the given texture paths and applies them to the bodies
     of the asset. The textures are projected onto the bodies and rotated by the given angles.
 
-    .. note::
-        The function assumes that the asset follows the prim naming convention as:
-        "{asset_prim_path}/{body_name}/visuals" where the body name is the name of the body to
-        which the texture is applied. This is the default prim ordering when importing assets
-        from the asset converters in Isaac Lab.
+    The ``visual_prim_path`` event parameter declares the target expression relative to the
+    asset's configured prim path. For example, ``"cart/visuals"`` targets
+    ``"{asset_prim_path}/cart/visuals"``.
 
     .. note::
         When randomizing the texture of individual assets, please make sure to set
@@ -2678,99 +2633,37 @@ class randomize_visual_texture_material(ManagerTermBase):
         import omni.replicator.core as rep  # noqa: PLC0415
 
         # read parameters from the configuration
-        asset_cfg: SceneEntityCfg = cfg.params.get("asset_cfg")
+        asset_cfg: SceneEntityCfg = cfg.params["asset_cfg"]
+        visual_prim_path: str = cfg.params["visual_prim_path"]
+        if not visual_prim_path or visual_prim_path.startswith("/"):
+            raise ValueError("'visual_prim_path' must be a non-empty path expression relative to the asset.")
 
         # obtain the asset entity
         asset = env.scene[asset_cfg.name]
 
-        # join all bodies in the asset
-        body_names = asset_cfg.body_names
-        body_names_regex = "|".join(body_names) if isinstance(body_names, list) else body_names
-        body_names_regex = f"(?:{body_names_regex})" if isinstance(body_names_regex, str) else ".*"
+        prim_path = f"{asset.cfg.prim_path}/{visual_prim_path}"
 
-        # create the affected prim path
-        # Check if the pattern with '/visuals' yields results when matching `body_names_regex`.
-        # If not, fall back to a broader pattern without '/visuals'.
-        asset_main_prim_path = asset.cfg.prim_path
-        pattern_with_visuals = f"{asset_main_prim_path}/{body_names_regex}/visuals"
-        # Use sim_utils to check if any prims currently match this pattern
-        matching_prims = sim_utils.resolve_matching_prims_from_source(pattern_with_visuals, raise_if_no_matches=False)
-        if matching_prims:
-            # If matches are found, use the pattern with /visuals
-            prim_path = pattern_with_visuals
-        else:
-            # If no matches found, fall back to the broader pattern without /visuals
-            # This pattern (e.g., /World/envs/env_.*/Table/.*) should match visual prims
-            # whether they end in /visuals or have other structures.
-            prim_path = f"{asset_main_prim_path}/.*"
-            logging.info(
-                f"Pattern '{pattern_with_visuals}' found no prims. Falling back to '{prim_path}' for texture"
-                " randomization."
-            )
+        prims_group = rep.functional.get.prims(path_pattern=prim_path, stage=env.sim.stage)
+        self.texture_rng = rep.rng.ReplicatorRNG()
+        for prim in prims_group:
+            if prim.IsInstanceable():
+                prim.SetInstanceable(False)
 
-        # extract the replicator version
-        version = re.match(r"^(\d+\.\d+\.\d+)", rep.__file__.split("/")[-5][21:]).group(1)
+        # Kit's USD resolver does not resolve the built-in MDL short name for Replicator.
+        import carb.tokens  # noqa: PLC0415
 
-        # use different path for different version of replicator
-        if compare_versions(version, "1.12.4") < 0:
-            texture_paths = cfg.params.get("texture_paths")
-            event_name = cfg.params.get("event_name")
-            texture_rotation = cfg.params.get("texture_rotation", (0.0, 0.0))
-
-            # convert from radians to degrees
-            texture_rotation = tuple(math.degrees(angle) for angle in texture_rotation)
-
-            # Create the omni-graph node for the randomization term
-            def rep_texture_randomization():
-                prims_group = rep.get.prims(path_pattern=prim_path)
-
-                with prims_group:
-                    rep.randomizer.texture(
-                        textures=texture_paths,
-                        project_uvw=True,
-                        texture_rotate=rep.distribution.uniform(*texture_rotation),
-                    )
-                return prims_group.node
-
-            # Register the event to the replicator
-            with rep.trigger.on_custom_event(event_name=event_name):
-                rep_texture_randomization()
-        else:
-            # acquire stage from env simulation context
-            stage = env.sim.stage
-            prims_group = rep.functional.get.prims(path_pattern=prim_path, stage=stage)
-
-            num_prims = len(prims_group)
-            # rng that randomizes the texture and rotation
-            self.texture_rng = rep.rng.ReplicatorRNG()
-
-            # Create the material first and bind it to the prims
-            for i, prim in enumerate(prims_group):
-                # Disable instancble
-                if prim.IsInstanceable():
-                    prim.SetInstanceable(False)
-
-            # Resolve OmniPBR.mdl to an absolute path so that pxr.Ar.GetResolver().Resolve()
-            # returns a valid path. Kit's omni_usd_resolver intentionally returns "" for builtin
-            # MDL short-names (OMNI_USD_RESOLVER_MDL_BUILTIN_BYPASS=1), which causes Replicator
-            # >= 1.13.0 to pass an empty resolved path into UsdMdl.RegistryUtils, raising a
-            # 'rtx::neuraylib::MdlModuleId' is Invalid error.
-            import carb.tokens  # noqa: PLC0415
-
-            omni_pbr_mdl = carb.tokens.get_tokens_interface().resolve("${kit}/mdl/core/Base/OmniPBR.mdl")
-
-            # TODO: Should we specify the value when creating the material?
-            self.material_prims = rep.functional.create_batch.material(
-                mdl=omni_pbr_mdl, bind_prims=prims_group, count=num_prims, project_uvw=True
-            )
+        omni_pbr_mdl = carb.tokens.get_tokens_interface().resolve("${kit}/mdl/core/Base/OmniPBR.mdl")
+        self.material_prims = rep.functional.create_batch.material(
+            mdl=omni_pbr_mdl, bind_prims=prims_group, count=len(prims_group), project_uvw=True
+        )
 
     def __call__(
         self,
         env: ManagerBasedEnv,
         env_ids: torch.Tensor,
-        event_name: str,
         asset_cfg: SceneEntityCfg,
         texture_paths: list[str],
+        visual_prim_path: str,
         texture_rotation: tuple[float, float] = (0.0, 0.0),
     ):
         # note: This triggers the nodes for all the environments.
@@ -2778,31 +2671,12 @@ class randomize_visual_texture_material(ManagerTermBase):
         # we import the module here since we may not always need the replicator
         import omni.replicator.core as rep
 
-        # extract the replicator version
-        version = re.match(r"^(\d+\.\d+\.\d+)", rep.__file__.split("/")[-5][21:]).group(1)
-
-        # use different path for different version of replicator
-        if compare_versions(version, "1.12.4") < 0:
-            rep.utils.send_og_event(event_name)
-        else:
-            # read parameters from the configuration
-            texture_paths = texture_paths if texture_paths else self._cfg.params.get("texture_paths")
-            texture_rotation = (
-                texture_rotation if texture_rotation else self._cfg.params.get("texture_rotation", (0.0, 0.0))
-            )
-
-            # convert from radians to degrees
-            texture_rotation = tuple(math.degrees(angle) for angle in texture_rotation)
-
-            num_prims = len(self.material_prims)
-            random_textures = self.texture_rng.generator.choice(texture_paths, size=num_prims)
-            random_rotations = self.texture_rng.generator.uniform(
-                texture_rotation[0], texture_rotation[1], size=num_prims
-            )
-
-            # modify the material properties
-            rep.functional.modify.attribute(self.material_prims, "diffuse_texture", random_textures)
-            rep.functional.modify.attribute(self.material_prims, "texture_rotate", random_rotations)
+        texture_rotation = tuple(math.degrees(angle) for angle in texture_rotation)
+        num_prims = len(self.material_prims)
+        random_textures = self.texture_rng.generator.choice(texture_paths, size=num_prims)
+        random_rotations = self.texture_rng.generator.uniform(texture_rotation[0], texture_rotation[1], size=num_prims)
+        rep.functional.modify.attribute(self.material_prims, "diffuse_texture", random_textures)
+        rep.functional.modify.attribute(self.material_prims, "texture_rotate", random_rotations)
 
 
 class randomize_visual_color(ManagerTermBase):
@@ -2812,11 +2686,9 @@ class randomize_visual_color(ManagerTermBase):
     The function samples random colors from the given colors and applies them to the bodies
     of the asset.
 
-    The function assumes that the asset follows the prim naming convention as:
-    "{asset_prim_path}/{mesh_name}" where the mesh name is the name of the mesh to
-    which the color is applied. For instance, if the asset has a prim path "/World/asset"
-    and a mesh named "body_0/mesh", the prim path for the mesh would be
-    "/World/asset/body_0/mesh".
+    The ``visual_prim_path`` event parameter declares the target expression relative to the
+    asset's configured prim path. For example, ``"body_0/mesh"`` targets
+    ``"{asset_prim_path}/body_0/mesh"``.
 
     The colors can be specified as a list of tuples of the form ``(r, g, b)`` or as a dictionary
     with the keys ``r``, ``g``, ``b`` and values as tuples of the form ``(low, high)``.
@@ -2843,8 +2715,10 @@ class randomize_visual_color(ManagerTermBase):
         import omni.replicator.core as rep  # noqa: PLC0415
 
         # read parameters from the configuration
-        asset_cfg: SceneEntityCfg = cfg.params.get("asset_cfg")
-        mesh_name: str = cfg.params.get("mesh_name", "")  # type: ignore
+        asset_cfg: SceneEntityCfg = cfg.params["asset_cfg"]
+        visual_prim_path: str = cfg.params["visual_prim_path"]
+        if not visual_prim_path or visual_prim_path.startswith("/"):
+            raise ValueError("'visual_prim_path' must be a non-empty path expression relative to the asset.")
 
         # check to make sure replicate_physics is set to False, else raise error
         # note: We add an explicit check here since texture randomization can happen outside of 'prestartup' mode
@@ -2859,96 +2733,29 @@ class randomize_visual_color(ManagerTermBase):
         # obtain the asset entity
         asset = env.scene[asset_cfg.name]
 
-        # create the affected prim path
-        # note: Never match the articulation root prim. Authoring on the root (the SetInstanceable
-        #   and material binding below) invalidates the PhysX articulation view, crashing a later
-        #   at-play body-name resolution (root_view.shared_metatype becomes None). So we scope to
-        #   descendant visual prims, mirroring randomize_visual_texture_material.
-        if mesh_name:
-            # explicit mesh override
-            if not mesh_name.startswith("/"):
-                mesh_name = "/" + mesh_name
-            mesh_prim_path = f"{asset.cfg.prim_path}{mesh_name}"
-        else:
-            # default: the configured bodies' visual meshes
-            body_names = asset_cfg.body_names
-            body_names_regex = "|".join(body_names) if isinstance(body_names, list) else body_names
-            body_names_regex = f"(?:{body_names_regex})" if isinstance(body_names_regex, str) else ".*"
-            pattern_with_visuals = f"{asset.cfg.prim_path}/{body_names_regex}/visuals"
-            if sim_utils.resolve_matching_prims_from_source(pattern_with_visuals, raise_if_no_matches=False):
-                mesh_prim_path = pattern_with_visuals
-            else:
-                # fall back to any descendant if the asset has no ".../visuals" layout
-                mesh_prim_path = f"{asset.cfg.prim_path}/.*"
-                logging.info(
-                    f"Pattern '{pattern_with_visuals}' found no prims. Falling back to '{mesh_prim_path}'"
-                    " for color randomization."
-                )
-        # TODO: Need to make it work for multiple meshes.
+        mesh_prim_path = f"{asset.cfg.prim_path}/{visual_prim_path}"
 
-        # extract the replicator version
-        version = re.match(r"^(\d+\.\d+\.\d+)", rep.__file__.split("/")[-5][21:]).group(1)
+        prims_group = rep.functional.get.prims(path_pattern=mesh_prim_path, stage=env.sim.stage)
+        self.color_rng = rep.rng.ReplicatorRNG()
+        for prim in prims_group:
+            if prim.IsInstanceable():
+                prim.SetInstanceable(False)
 
-        # use different path for different version of replicator
-        if compare_versions(version, "1.12.4") < 0:
-            colors = cfg.params.get("colors")
-            event_name = cfg.params.get("event_name")
+        # Kit's USD resolver does not resolve the built-in MDL short name for Replicator.
+        import carb.tokens  # noqa: PLC0415
 
-            # parse the colors into replicator format
-            if isinstance(colors, dict):
-                # (r, g, b) - low, high --> (low_r, low_g, low_b) and (high_r, high_g, high_b)
-                color_low = [colors[key][0] for key in ["r", "g", "b"]]
-                color_high = [colors[key][1] for key in ["r", "g", "b"]]
-                colors = rep.distribution.uniform(color_low, color_high)
-            else:
-                colors = list(colors)
-
-            # Create the omni-graph node for the randomization term
-            def rep_color_randomization():
-                prims_group = rep.get.prims(path_pattern=mesh_prim_path)
-                with prims_group:
-                    rep.randomizer.color(colors=colors)
-
-                return prims_group.node
-
-            # Register the event to the replicator
-            with rep.trigger.on_custom_event(event_name=event_name):
-                rep_color_randomization()
-        else:
-            stage = env.sim.stage
-            prims_group = rep.functional.get.prims(path_pattern=mesh_prim_path, stage=stage)
-
-            num_prims = len(prims_group)
-            self.color_rng = rep.rng.ReplicatorRNG()
-
-            # Create the material first and bind it to the prims
-            for i, prim in enumerate(prims_group):
-                # Disable instancble
-                if prim.IsInstanceable():
-                    prim.SetInstanceable(False)
-
-            # Resolve OmniPBR.mdl to an absolute path so that pxr.Ar.GetResolver().Resolve()
-            # returns a valid path. Kit's omni_usd_resolver intentionally returns "" for builtin
-            # MDL short-names (OMNI_USD_RESOLVER_MDL_BUILTIN_BYPASS=1), which causes Replicator
-            # >= 1.13.0 to pass an empty resolved path into UsdMdl.RegistryUtils, raising a
-            # 'rtx::neuraylib::MdlModuleId' is Invalid error.
-            import carb.tokens  # noqa: PLC0415
-
-            omni_pbr_mdl = carb.tokens.get_tokens_interface().resolve("${kit}/mdl/core/Base/OmniPBR.mdl")
-
-            # TODO: Should we specify the value when creating the material?
-            self.material_prims = rep.functional.create_batch.material(
-                mdl=omni_pbr_mdl, bind_prims=prims_group, count=num_prims, project_uvw=True
-            )
+        omni_pbr_mdl = carb.tokens.get_tokens_interface().resolve("${kit}/mdl/core/Base/OmniPBR.mdl")
+        self.material_prims = rep.functional.create_batch.material(
+            mdl=omni_pbr_mdl, bind_prims=prims_group, count=len(prims_group), project_uvw=True
+        )
 
     def __call__(
         self,
         env: ManagerBasedEnv,
         env_ids: torch.Tensor,
-        event_name: str,
         asset_cfg: SceneEntityCfg,
         colors: list[tuple[float, float, float]] | dict[str, tuple[float, float]],
-        mesh_name: str = "",
+        visual_prim_path: str,
     ):
         # note: This triggers the nodes for all the environments.
         #   We need to investigate how to make it happen only for a subset based on env_ids.
@@ -2956,27 +2763,15 @@ class randomize_visual_color(ManagerTermBase):
         # we import the module here since we may not always need the replicator
         import omni.replicator.core as rep
 
-        version = re.match(r"^(\d+\.\d+\.\d+)", rep.__file__.split("/")[-5][21:]).group(1)
-
-        # use different path for different version of replicator
-        if compare_versions(version, "1.12.4") < 0:
-            rep.utils.send_og_event(event_name)
+        # parse the colors into replicator format
+        if isinstance(colors, dict):
+            color_low = [colors[key][0] for key in ["r", "g", "b"]]
+            color_high = [colors[key][1] for key in ["r", "g", "b"]]
+            colors = [color_low, color_high]
         else:
-            colors = colors if colors else self._cfg.params.get("colors")
-
-            # parse the colors into replicator format
-            if isinstance(colors, dict):
-                # (r, g, b) - low, high --> (low_r, low_g, low_b) and (high_r, high_g, high_b)
-                color_low = [colors[key][0] for key in ["r", "g", "b"]]
-                color_high = [colors[key][1] for key in ["r", "g", "b"]]
-                colors = [color_low, color_high]
-            else:
-                colors = list(colors)
-
-            num_prims = len(self.material_prims)
-            random_colors = self.color_rng.generator.uniform(colors[0], colors[1], size=(num_prims, 3))
-
-            rep.functional.modify.attribute(self.material_prims, "diffuse_color_constant", random_colors)
+            colors = list(colors)
+        random_colors = self.color_rng.generator.uniform(colors[0], colors[1], size=(len(self.material_prims), 3))
+        rep.functional.modify.attribute(self.material_prims, "diffuse_color_constant", random_colors)
 
 
 """

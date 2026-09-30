@@ -25,9 +25,10 @@ class VideoRecorderCfg:
 
     * ``"visualizer"``                        – first active recording-capable visualizer.
     * ``"visualizer:kit"``                    – Kit visualizer, interactive viewport camera.
-    * ``"visualizer:newton"``                 – Newton GL visualizer, interactive camera.
-    * ``"visualizer:newton_rtx"``             – Newton OVRTX path-traced interactive camera.
-    * ``"visualizer:newton:streaming_view"``  – Newton GL streaming camera panel (requires
+    * ``"visualizer:newton_gl"``              – Newton GL visualizer, interactive camera.
+    * ``"visualizer:newton_rtx"``             – composite from the planned camera selected by
+      :class:`~isaaclab_visualizers.newton.NewtonRTXVisualizerCfg`.
+    * ``"visualizer:newton_gl:streaming_view"`` – Newton GL streaming camera panel (requires
       ``streaming_view=True`` on :class:`~isaaclab_visualizers.newton.NewtonGLVisualizerCfg`).
     * ``"visualizer:kit:streaming_view"``     – Kit streaming camera panel (requires
       ``streaming_view=True`` on :class:`~isaaclab_visualizers.kit.KitVisualizerCfg`).
@@ -37,8 +38,9 @@ class VideoRecorderCfg:
     * ``"sensor:<name>:segmentation"``        – scene sensor, segmentation colorized.
     * ``"sensor:<name>:normals"``             – scene sensor, surface normals colorized.
 
-    The camera position and resolution are configured on the visualizer cfg
-    (e.g. :class:`~isaaclab_visualizers.kit.KitVisualizerCfg`), not here.
+    Camera position and resolution belong to the source: the visualizer cfg for Kit and Newton GL,
+    or the planned :class:`~isaaclab.sensors.CameraCfg` selected by Newton RTX. They never belong to
+    the recorder.
     """
 
     source: str = "visualizer"
@@ -116,7 +118,7 @@ class VideoRecorderCfg:
     ``video_interval=1000`` keeps only the three most recently recorded clips::
 
         VideoRecorderCfg(
-            source="visualizer:newton",
+            source="visualizer:newton_gl",
             video_interval=1000,
             video_length=200,
             keep_last_n_clips=3,

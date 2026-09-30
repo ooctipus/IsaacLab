@@ -28,38 +28,30 @@ from .kuka_allegro_env_cfg import (
     KukaAllegroSceneCfg,
 )
 
-_SCENE_KWARGS = {"num_envs": 4096, "env_spacing": 3, "replicate_physics": True}
-
 
 @configclass
 class SingleCameraSceneCfg(KukaAllegroSceneCfg):
     """KukaAllegro scene with a single base-mounted camera."""
 
-    base_camera: CameraCfg = BaseTiledCameraCfg()
+    camera: CameraCfg = BaseTiledCameraCfg()
 
 
 @configclass
-class DuoCameraSceneCfg(KukaAllegroSceneCfg):
+class DuoCameraSceneCfg(SingleCameraSceneCfg):
     """KukaAllegro scene with base-mounted and wrist-mounted cameras."""
 
-    base_camera: CameraCfg = BaseTiledCameraCfg()
     wrist_camera: CameraCfg = WristTiledCameraCfg()
-
-
-def _camera_env(base_cls, scene_cls, obs_cls):
-    """Build a camera env config by swapping a camera scene and image observations onto a state env."""
-    return base_cls(scene=scene_cls(**_SCENE_KWARGS), observations=obs_cls())
 
 
 @configclass
 class KukaAllegroReorientCameraEnvCfg(PresetCfg):
-    single_camera = _camera_env(KukaAllegroReorientEnvCfg, SingleCameraSceneCfg, SingleCameraObservationsCfg)
-    duo_camera = _camera_env(KukaAllegroReorientEnvCfg, DuoCameraSceneCfg, DuoCameraObservationsCfg)
+    single_camera = KukaAllegroReorientEnvCfg(scene=SingleCameraSceneCfg(), observations=SingleCameraObservationsCfg())
+    duo_camera = KukaAllegroReorientEnvCfg(scene=DuoCameraSceneCfg(), observations=DuoCameraObservationsCfg())
     default = single_camera
 
 
 @configclass
 class KukaAllegroLiftCameraEnvCfg(PresetCfg):
-    single_camera = _camera_env(KukaAllegroLiftEnvCfg, SingleCameraSceneCfg, SingleCameraObservationsCfg)
-    duo_camera = _camera_env(KukaAllegroLiftEnvCfg, DuoCameraSceneCfg, DuoCameraObservationsCfg)
+    single_camera = KukaAllegroLiftEnvCfg(scene=SingleCameraSceneCfg(), observations=SingleCameraObservationsCfg())
+    duo_camera = KukaAllegroLiftEnvCfg(scene=DuoCameraSceneCfg(), observations=DuoCameraObservationsCfg())
     default = single_camera

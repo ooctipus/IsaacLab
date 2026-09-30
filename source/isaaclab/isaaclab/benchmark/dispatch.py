@@ -158,6 +158,8 @@ def _request_argv(request: BenchmarkRequest) -> list[str]:
         _append_value(argv, "--num_steps", request.num_steps)
         _append_value(argv, "--warmup_steps", request.warmup_steps)
     elif request.workflow == "startup":
+        if request.profile:
+            argv.append("--profile")
         _append_value(argv, "--top_n", request.top_n)
         _append_value(argv, "--whitelist_config", request.whitelist_config)
     elif request.workflow == "training":

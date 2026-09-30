@@ -41,42 +41,46 @@ simulation_app = app_launcher.app
 
 """Rest everything follows."""
 
+from isaaclab_physx.physics import PhysxCfg
+
 import isaaclab.sim as sim_utils
+from isaaclab import cloner
+from isaaclab.assets import AssetBaseCfg
+from isaaclab.utils import configclass
 
 
-def design_scene():
-    """Designs the scene by spawning ground plane, light, objects and meshes from usd files."""
-    # Ground-plane
-    cfg_ground = sim_utils.GroundPlaneCfg()
-    cfg_ground.func("/World/defaultGroundPlane", cfg_ground)
+@configclass
+class TutorialCfg:
+    """Complete declarative input for the direct clone lifecycle."""
 
-    # spawn distant light
-    cfg_light_distant = sim_utils.DistantLightCfg(
-        intensity=3000.0,
-        color=(0.75, 0.75, 0.75),
+    sim: sim_utils.SimulationCfg = sim_utils.SimulationCfg(physics=PhysxCfg(), dt=0.01)
+    ground = AssetBaseCfg(prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg())
+    light = AssetBaseCfg(
+        prim_path="/World/lightDistant",
+        spawn=sim_utils.DistantLightCfg(intensity=3000.0, color=(0.75, 0.75, 0.75)),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(1.0, 0.0, 10.0)),
     )
-    cfg_light_distant.func("/World/lightDistant", cfg_light_distant, translation=(1, 0, 10))
-
-    # spawn a cuboid
-    cfg_cuboid = sim_utils.CuboidCfg(
-        size=[args_cli.size] * 3,
-        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 1.0, 1.0)),
+    cuboid = AssetBaseCfg(
+        prim_path="/World/Object",
+        spawn=sim_utils.CuboidCfg(
+            size=[args_cli.size] * 3,
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 1.0, 1.0)),
+        ),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.0, 0.0, args_cli.size / 2)),
     )
-    # Spawn cuboid, altering translation on the z-axis to scale to its size
-    cfg_cuboid.func("/World/Object", cfg_cuboid, translation=(0.0, 0.0, args_cli.size / 2))
 
 
 def main():
     """Main function."""
-
-    # Initialize the simulation context
-    sim_cfg = sim_utils.SimulationCfg(device=args_cli.device, dt=0.01)
-    sim = sim_utils.SimulationContext(sim_cfg)
+    cfg = TutorialCfg()
+    cfg.sim.device = args_cli.device
+    sim = sim_utils.SimulationContext(cfg.sim)
     # Set main camera
     sim.set_camera_view([2.0, 0.0, 2.5], [-0.5, 0.0, 0.5])
 
-    # Design scene by adding assets to it
-    design_scene()
+    with cloner.ReplicateSession((cfg.ground, cfg.light, cfg.cuboid), num_clones=1, env_spacing=0.0):
+        for asset_cfg in (cfg.ground, cfg.light, cfg.cuboid):
+            asset_cfg.class_type(asset_cfg)
 
     # Play the simulator
     sim.reset()

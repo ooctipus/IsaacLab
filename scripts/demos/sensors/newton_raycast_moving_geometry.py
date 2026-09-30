@@ -8,36 +8,33 @@
 A slowly spinning grid ray-cast sensor hovers above a scene where boxes keep
 falling and a long bar sweeps around kinematically. Every hit tracks the moving
 bodies because the scene BVH is refit each step inside the shared CUDA graph.
-Rays are drawn live in the Newton viewer — red where they hit, gray where they
-miss.
+The sensor publishes its debug visualization through the configured visualizer.
 
 .. code-block:: bash
 
-    ./isaaclab.sh -p scripts/demos/sensors/newton_raycast_moving_geometry.py
+    uv run python scripts/demos/sensors/newton_raycast_moving_geometry.py
 
 """
-
-"""Parse CLI first so we can decide whether to launch Isaac Sim Kit."""
 
 import argparse
 
 from isaaclab.app import add_launcher_args, launch_simulation
+
+from isaaclab_tasks.utils import resolve_config, setup_preset_cli
+from isaaclab_tasks.utils.presets import MultiBackendSimulationCfg
 
 parser = argparse.ArgumentParser(
     description="Newton BVH ray-cast sensor over moving geometry.",
     conflict_handler="resolve",
 )
 add_launcher_args(parser)
-parser.set_defaults(visualizer=["newton"])
-args_cli = parser.parse_args()
+args_cli, config_overrides = setup_preset_cli(parser)
 
 import math
 
-import numpy as np
 import torch
-import warp as wp
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
-from isaaclab_newton.sensors import NewtonRaycastSensor, NewtonRaycastSensorCfg
+from isaaclab_newton.physics import MJWarpSolverCfg
+from isaaclab_newton.sensors import NewtonRaycastSensorCfg
 
 import isaaclab.sim as sim_utils
 import isaaclab.utils.math as math_utils
@@ -107,30 +104,16 @@ class MovingGeometrySceneCfg(InteractiveSceneCfg):
     )
 
 
-def _newton_gl_viewer(sim: sim_utils.SimulationContext):
-    """Return the Newton GL viewer when the newton visualizer is active."""
-    from isaaclab_visualizers.newton import NewtonVisualizer
+@configclass
+class DemoCfg:
+    """Moving-geometry ray-cast demo configuration."""
 
-    for viz in getattr(sim, "_visualizers", []):
-        if isinstance(viz, NewtonVisualizer):
-            return viz._viewer
-    return None
-
-
-def log_ray_lines(viewer, sensor: NewtonRaycastSensor, miss_length: float = 3.0):
-    """Draw the sensor rays in the viewer: red to the hit point, gray for misses."""
-    starts = sensor.ray_starts_w.torch.reshape(-1, 3)
-    directions = sensor.ray_directions_w.torch.reshape(-1, 3)
-    hits = sensor.data.ray_hits_w.torch.reshape(-1, 3)
-    miss = torch.isinf(sensor.data.ray_distances.torch.reshape(-1, 1))
-    ends = torch.where(miss, starts + directions * miss_length, hits)
-    colors = torch.where(
-        miss,
-        torch.tensor([0.5, 0.5, 0.5], device=starts.device),
-        torch.tensor([1.0, 0.15, 0.1], device=starts.device),
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(
+        dt=1 / 100,
+        device=args_cli.device,
+        physics=MJWarpSolverCfg(),
     )
-    to_wp = lambda t: wp.array(t.cpu().numpy().astype(np.float32), dtype=wp.vec3)  # noqa: E731
-    viewer.log_lines("/isaaclab/raycast/rays", to_wp(starts), to_wp(ends), to_wp(colors))
+    scene: MovingGeometrySceneCfg = MovingGeometrySceneCfg(num_envs=1, env_spacing=1.0)
 
 
 def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
@@ -138,9 +121,6 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
     boxes: list[RigidObject] = [scene[f"box_{i}"] for i in range(len(BOX_DROP_POSITIONS))]
     bar: RigidObject = scene["bar"]
     body: RigidObject = scene["body"]
-    sensor: NewtonRaycastSensor = scene["raycast"]
-    viewer = _newton_gl_viewer(sim)
-
     sim_dt = sim.get_physics_dt()
     zero_vel = torch.zeros(1, 6, device=sim.device)
     zero_angle = torch.zeros(1, device=sim.device)
@@ -174,17 +154,15 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
         sim.step()
         count += 1
         scene.update(sim_dt)
-        if viewer is not None:
-            log_ray_lines(viewer, sensor)
 
 
 def main():
     """Main function."""
-    with launch_simulation(cfg=NewtonCfg(solver_cfg=MJWarpSolverCfg()), launcher_args=args_cli) as physics_cfg:
-        sim_cfg = sim_utils.SimulationCfg(dt=1 / 100, device=args_cli.device, physics=physics_cfg)
-        sim = sim_utils.SimulationContext(sim_cfg)
+    cfg = resolve_config(DemoCfg(), config_overrides)
+    with launch_simulation(cfg.sim, args_cli):
+        sim = sim_utils.SimulationContext(cfg.sim)
         sim.set_camera_view(eye=[6.0, 6.0, 4.5], target=[0.0, 0.0, 1.0])
-        scene = InteractiveScene(MovingGeometrySceneCfg(num_envs=1, env_spacing=1.0))
+        scene = cfg.scene.class_type(cfg.scene)
         sim.reset()
         print("[INFO]: Setup complete...")
         run_simulator(sim, scene)

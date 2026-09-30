@@ -38,55 +38,39 @@ simulation_app = SimulationApp(config)
 import logging
 import traceback
 
-import numpy as np
 import torch
-from isaaclab_physx.renderers.kit_viewport_utils import _set_kit_camera_view
+from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
 import isaaclab.terrains as terrain_gen
-from isaaclab import cloner as lab_cloner
-from isaaclab.assets import RigidObject, RigidObjectCfg
-from isaaclab.sensors.pva import Pva, PvaCfg
+from isaaclab import cloner
+from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
+from isaaclab.sensors.pva import PvaCfg
 from isaaclab.sim import SimulationCfg, SimulationContext
 from isaaclab.terrains.config.rough import ROUGH_TERRAINS_CFG
-from isaaclab.terrains.terrain_importer import TerrainImporter
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
+from isaaclab.utils.configclass import configclass
 from isaaclab.utils.timer import Timer
 
 # import logger
 logger = logging.getLogger(__name__)
 
 
-def design_scene(sim: SimulationContext, num_envs: int = 2048) -> RigidObject:
-    """Design the scene."""
-    # Handler for terrains importing
-    terrain_importer_cfg = terrain_gen.TerrainImporterCfg(
+@configclass
+class DirectCfg:
+    sim: SimulationCfg = SimulationCfg(physics=PhysxCfg())
+    num_envs: int = args_cli.num_envs
+    env_spacing: float = 2.0
+    terrain: terrain_gen.TerrainImporterCfg = terrain_gen.TerrainImporterCfg(
         prim_path="/World/ground",
-        terrain_type="generator",
+        terrain_type=args_cli.terrain_type,
         terrain_generator=ROUGH_TERRAINS_CFG,
         usd_path=f"{ISAAC_NUCLEUS_DIR}/Environments/Terrains/rough_plane.usd",
         max_init_terrain_level=None,
-        num_envs=1,
     )
-    _ = TerrainImporter(terrain_importer_cfg)
-    # obtain the current stage
-    stage = sim_utils.get_current_stage()
-    # Create interface to clone the scene
-    # Create environment clones using Lab's cloner utilities
-    env_fmt = "/World/envs/env_{}"
-    env_ids = np.arange(num_envs, dtype=np.int64)
-    env_origins, _ = lab_cloner.grid_transforms(num_envs, spacing=2.0)
-    envs_prim_paths = [f"/World/envs/env_{i}" for i in range(num_envs)]
-    # create source prim
-    stage.DefinePrim(envs_prim_paths[0], "Xform")
-    # clone the env xform
-    lab_cloner.usd_replicate(stage, [env_fmt.format(0)], [env_fmt], env_ids, positions=env_origins)
-    # Define the scene
-    # -- Light
-    cfg = sim_utils.DistantLightCfg(intensity=2000)
-    cfg.func("/World/light", cfg)
-    # -- Balls
-    cfg = RigidObjectCfg(
+    light: AssetBaseCfg = AssetBaseCfg(prim_path="/World/light", spawn=sim_utils.DistantLightCfg(intensity=2000))
+    ball: RigidObjectCfg = RigidObjectCfg(
+        prim_path="{ENV_REGEX_NS}/ball",
         spawn=sim_utils.SphereCfg(
             radius=0.25,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(),
@@ -94,49 +78,36 @@ def design_scene(sim: SimulationContext, num_envs: int = 2048) -> RigidObject:
             collision_props=sim_utils.CollisionPropertiesCfg(),
             visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.0, 1.0)),
         ),
-        prim_path="{ENV_REGEX_NS}/ball",
         init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 5.0)),
     )
-    balls = RigidObject(cfg)
-    # Clone the scene
-    # obtain the current physics scene
-    physics_scene_prim_path = None
-    for prim in stage.Traverse():
-        if "PhysxSceneAPI" in prim.GetAppliedSchemas():
-            physics_scene_prim_path = prim.GetPrimPath()
-            logging.info(f"Physics scene prim path: {physics_scene_prim_path}")
-            break
-    # filter collisions within each environment instance
-    lab_cloner.filter_collisions(
-        stage,
-        physics_scene_prim_path,
-        "/World/collisions",
-        envs_prim_paths,
-    )
-    return balls
+    pva: PvaCfg = PvaCfg(prim_path="{ENV_REGEX_NS}/ball", debug_vis=args_cli.visualize)
+    pva.visualizer_cfg.markers["arrow"].scale = (1.0, 0.2, 0.2)
 
 
 def main():
     """Main function."""
-
-    # Load kit helper
-    sim = SimulationContext(SimulationCfg())
+    cfg = DirectCfg()
+    sim = SimulationContext(cfg.sim)
     # Set main camera
-    _set_kit_camera_view([0.0, 30.0, 25.0], [0.0, 0.0, -2.5], "/OmniverseKit_Persp")
+    sim.set_camera_view([0.0, 30.0, 25.0], [0.0, 0.0, -2.5])
+    with cloner.ReplicateSession(
+        (cfg.terrain, cfg.light, cfg.ball, cfg.pva),
+        num_clones=cfg.num_envs,
+        env_spacing=cfg.env_spacing,
+    ):
+        cfg.terrain.class_type(cfg.terrain)
+        (light_source,) = cloner.query.cfg_source_paths(sim.get_clone_plan(), cfg.light)
+        cfg.light.spawn.func(light_source, cfg.light.spawn)
+        balls = cfg.ball.class_type(cfg.ball)
+        pva = cfg.pva.class_type(cfg.pva)
 
-    # Parameters
-    num_envs = args_cli.num_envs
-    # Design the scene
-    balls = design_scene(sim=sim, num_envs=num_envs)
-
-    # Create a pva sensor
-    pva_cfg = PvaCfg(
-        prim_path="{ENV_REGEX_NS}/ball",
-        debug_vis=args_cli.visualize,
+    cloner.filter_collisions(
+        sim.stage,
+        sim.cfg.physics_prim_path,
+        "/World/collisions",
+        cloner.query.env_root_paths(sim.get_clone_plan()),
+        global_paths=[cfg.terrain.prim_path],
     )
-    # increase scale of the arrows for better visualization
-    pva_cfg.visualizer_cfg.markers["arrow"].scale = (1.0, 0.2, 0.2)
-    pva = Pva(cfg=pva_cfg)
 
     # Play simulator and init the Pva
     sim.reset()
@@ -164,7 +135,9 @@ def main():
         # Reset the scene
         if step_count % 500 == 0:
             # reset ball positions
-            balls.write_root_pose_to_sim(torch.cat([ball_initial_positions, ball_initial_orientations], dim=-1))
+            balls.write_root_pose_to_sim_index(
+                root_pose=torch.cat([ball_initial_positions, ball_initial_orientations], dim=-1)
+            )
             balls.reset()
             # reset the sensor
             pva.reset()
@@ -173,7 +146,7 @@ def main():
         # Step simulation
         sim.step()
         # Update the pva sensor
-        with Timer(f"Pva sensor update with {num_envs}"):
+        with Timer(f"Pva sensor update with {cfg.num_envs}"):
             pva.update(dt=sim.get_physics_dt(), force_recompute=True)
         # Update counter
         step_count += 1

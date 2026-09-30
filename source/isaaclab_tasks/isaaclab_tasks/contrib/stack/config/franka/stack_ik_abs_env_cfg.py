@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-from isaaclab_teleop import IsaacTeleopCfg
+from isaaclab_teleop import IsaacTeleopCfg, TeleopPipelineCfg
 
 from isaaclab.controllers.differential_ik_cfg import DifferentialIKControllerCfg
 from isaaclab.envs.mdp.actions.actions_cfg import DifferentialInverseKinematicsActionCfg
@@ -21,7 +21,7 @@ from . import stack_joint_pos_env_cfg
 from isaaclab_assets.robots.franka import FRANKA_PANDA_HIGH_PD_CFG  # isort: skip
 
 
-def _build_franka_stack_pipeline():
+def _build_franka_stack_pipeline(_cfg: TeleopPipelineCfg):
     """Build a IsaacTeleop retargeting pipeline for Franka cube stacking.
 
     Creates an Se3AbsRetargeter for right-hand pose tracking and a GripperRetargeter
@@ -126,7 +126,6 @@ class FrankaCubeStackEnvCfg(stack_joint_pos_env_cfg.FrankaCubeStackEnvCfg):
 
         # IsaacTeleop-based teleoperation pipeline
         self.isaac_teleop = IsaacTeleopCfg(
-            pipeline_builder=_build_franka_stack_pipeline,
+            pipeline_cfg=TeleopPipelineCfg(class_type=_build_franka_stack_pipeline),
             sim_device=self.sim.device,
-            xr_cfg=self.xr,
         )

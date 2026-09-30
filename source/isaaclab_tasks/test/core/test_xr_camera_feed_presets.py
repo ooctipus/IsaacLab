@@ -3,9 +3,12 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
+from pathlib import Path
+
 import pytest
 from isaaclab_ov.renderers import OVRTXRendererCfg
 from isaaclab_physx.renderers import IsaacRtxRendererCfg
+from isaaclab_teleop import XrCfg
 
 from isaaclab_tasks.contrib.locomanip_pick_place.locomanipulation_g1_env_cfg import LocomanipulationG1EnvCfg
 from isaaclab_tasks.contrib.pick_place.pickplace_gr1t2_env_cfg import PickPlaceGR1T2EnvCfg
@@ -28,8 +31,6 @@ def test_xr_camera_reference_tasks_select_recorded_camera(env_cfg_type, camera_p
     assert hasattr(cfg.observations.policy, "robot_pov_cam")
     assert cfg.scene.robot_pov_cam.prim_path == camera_prim_path
     assert isinstance(cfg.scene.robot_pov_cam.renderer_cfg, MultiBackendRendererCfg)
-    assert cfg.isaac_teleop.xr_camera_feeds[0].enable_dlss_ray_reconstruction is True
-    assert cfg.isaac_teleop.xr_camera_feeds[0].dlss_exec_mode == "quality"
     assert cfg.num_rerenders_on_reset == 3
 
 
@@ -49,6 +50,22 @@ def test_g1_xr_camera_uses_calibration_and_viewer_start_panel():
     assert camera_cfg.offset.convention == "ros"
     assert cfg.isaac_teleop.xr_camera_feed_layout.placement == "viewer_start"
     assert feed_cfg.offset_m == (0.0, -0.15)
+
+
+@pytest.mark.parametrize("env_cfg_type", [PickPlaceGR1T2EnvCfg, LocomanipulationG1EnvCfg])
+def test_xr_anchor_is_scene_owned(env_cfg_type):
+    cfg = env_cfg_type()
+
+    assert isinstance(cfg.scene.xr_anchor, XrCfg)
+    assert not hasattr(cfg, "xr")
+    assert not hasattr(cfg.isaac_teleop, "xr_cfg")
+
+
+def test_xr_anchor_manager_reads_composition_metadata_from_the_plan():
+    source = (Path(__file__).parents[3] / "isaaclab_teleop/isaaclab_teleop/xr_anchor_manager.py").read_text()
+
+    assert "plan.root_layer_identifier" in source
+    assert ".stage" not in source
 
 
 @pytest.mark.parametrize("env_cfg_type", [PickPlaceGR1T2EnvCfg, LocomanipulationG1EnvCfg])

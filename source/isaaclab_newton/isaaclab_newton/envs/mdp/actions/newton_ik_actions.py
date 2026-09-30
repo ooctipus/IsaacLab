@@ -16,14 +16,13 @@ from newton import JointType
 from newton import Model as NewtonModel
 from newton.selection import ArticulationView
 
-import isaaclab.sim as sim_utils
 import isaaclab.utils.string as string_utils
 from isaaclab import cloner
 from isaaclab.assets.articulation.base_articulation import BaseArticulation
 from isaaclab.managers.action_manager import ActionTerm
 
+from isaaclab_newton.cloner import NewtonReplicateContext
 from isaaclab_newton.ik.newton_ik_objectives_cfg import NewtonIKPoseObjectiveCfg
-from isaaclab_newton.physics import NewtonManager
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedEnv
@@ -177,12 +176,13 @@ class NewtonInverseKinematicsAction(ActionTerm):
         # Resolve the controlled asset to its clone-plan source and finalize the
         # single-env prototype builder the cloner already retained -- the same
         # source resolution other Newton consumers use, no bespoke registry.
-        plan = sim_utils.SimulationContext.instance().get_clone_plan()
+        plan = env.sim.get_clone_plan()
         source_path, _, asset_suffix = cloner.query.path_to_source(plan, self._asset.cfg.prim_path)
         # The proto builder is keyed by the bare clone source; the articulation
         # lives at the asset suffix below it (e.g. ".../env_0" + "/Robot").
         self._source_path = source_path + asset_suffix
-        prototype_model = NewtonManager._cl_protos[source_path].finalize(device=NewtonManager.get_model().device)
+        resource = env.sim.get_or_create_backend(NewtonReplicateContext, env.sim)
+        prototype_model = resource._cl_protos[source_path].finalize(device=resource.get_model().device)
         prototype_view = ArticulationView(
             prototype_model,
             self._source_path,

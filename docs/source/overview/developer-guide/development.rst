@@ -158,11 +158,12 @@ The following snippet shows how to write a standalone application:
 
    """Rest everything follows."""
 
-   from isaaclab.sim import SimulationContext
+   from isaaclab.sim import SimulationCfg, SimulationContext
+   from isaaclab_physx.physics import PhysxCfg
 
    if __name__ == "__main__":
       # get simulation context
-      simulation_context = SimulationContext()
+      simulation_context = SimulationContext(SimulationCfg(physics=PhysxCfg()))
       # reset and play simulation
       simulation_context.reset()
       # step simulation

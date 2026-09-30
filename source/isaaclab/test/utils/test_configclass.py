@@ -1059,6 +1059,34 @@ def test_config_double_inheritance():
     assert cfg.i == ["a", "b"]
 
 
+def test_inherited_configclass_copies_constructor_values_once():
+    """An inherited post-init must not stack another mutable-value copy pass."""
+
+    class CountedCopy:
+        count = 0
+
+        def __deepcopy__(self, memo):
+            CountedCopy.count += 1
+            return CountedCopy()
+
+    @configclass
+    class ParentCfg:
+        value: CountedCopy = CountedCopy()
+
+        def __post_init__(self):
+            pass
+
+    @configclass
+    class ChildCfg(ParentCfg):
+        def __post_init__(self):
+            super().__post_init__()
+
+    for cfg in (ChildCfg, lambda: ChildCfg(value=CountedCopy())):
+        CountedCopy.count = 0
+        cfg()
+        assert CountedCopy.count == 1
+
+
 def test_config_with_class_type():
     """Tests that configclass works properly with class type."""
 

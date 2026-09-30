@@ -27,16 +27,19 @@ import pytest
 
 pytest.importorskip("isaacteleop")
 
+from isaaclab_teleop import TeleopPipelineCfg
 from isaacteleop.retargeters import SO101ClutchRetargeter
 from isaacteleop.retargeters.SO101.gripper_retargeter import GRIPPER_ELEMENT_LABEL
 from isaacteleop.retargeting_engine.deviceio_source_nodes import ControllersSource
 
 from isaaclab_tasks.contrib.stack.config.so101.stack_ik_abs_env_cfg import _build_so101_stack_pipeline
 
+_PIPELINE_CFG = TeleopPipelineCfg(class_type=_build_so101_stack_pipeline)
+
 
 def test_so101_pipeline_action_is_8d():
     """The SO-101 pipeline flattens to an 8D action ``[pos_xyz, quat_xyzw, gripper]``."""
-    combiner = _build_so101_stack_pipeline()
+    combiner = _PIPELINE_CFG.class_type(_PIPELINE_CFG)
 
     action_type = combiner.output_types()["action"].types[0]
     assert action_type.shape == (8,), f"expected an 8D action, got shape {action_type.shape}"
@@ -44,7 +47,7 @@ def test_so101_pipeline_action_is_8d():
 
 def test_so101_pipeline_output_order():
     """The action elements resolve to the declared labels in order (not silent 0.0 fillers)."""
-    combiner = _build_so101_stack_pipeline()
+    combiner = _PIPELINE_CFG.class_type(_PIPELINE_CFG)
 
     # Walk the OutputCombiner -> subgraph -> TensorReorderer to read the resolved output order.
     # NOTE: this depends on isaacteleop internals; the width==8 test is the public-API guard.
@@ -84,5 +87,5 @@ def test_clutch_consumes_controller_only():
     assert not hasattr(SO101ClutchRetargeter, "ROBOT_EE_POS_INPUT")
     assert not hasattr(SO101ClutchRetargeter, "ROBOT_BASE_POS_INPUT")
     # The builder still flattens to the 8D action contract.
-    combiner = _build_so101_stack_pipeline()
+    combiner = _PIPELINE_CFG.class_type(_PIPELINE_CFG)
     assert combiner.output_types()["action"].types[0].shape == (8,)

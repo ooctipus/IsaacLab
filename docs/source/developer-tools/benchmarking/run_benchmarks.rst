@@ -61,7 +61,6 @@ From a source installation, run:
        --warmup_steps 50 \
        --num_steps 1000 \
        --seed 42 \
-       --visualizer none \
        --benchmark_formatter schema,summary \
        --output_path ./benchmark_results \
        physics=isaacsim_physx
@@ -99,7 +98,7 @@ same random-action stepping workload.
    .. code-block:: json
 
       {
-        "schema_version": "1.4",
+        "schema_version": "1.5",
         "run": {
           "config": {"physics_backend": "physx", "rendering_backend": "none", "presets": ["physx"]},
           "task": "Isaac-Cartpole-Direct", "seed": 42, "status": "completed", "num_envs": 4096
@@ -134,7 +133,7 @@ same random-action stepping workload.
    .. code-block:: json
 
       {
-        "schema_version": "1.4",
+        "schema_version": "1.5",
         "run": {
           "config": {
             "physics_backend": "physx", "rendering_backend": "isaacsim_rtx",
@@ -334,9 +333,7 @@ Run it
    ./isaaclab.sh benchmark startup \
        --task Isaac-Cartpole-Direct \
        --num_envs 4096 \
-       --top_n 30 \
        --seed 42 \
-       --visualizer none \
        --benchmark_formatter schema,summary \
        --output_path ./benchmark_results/startup \
        physics=isaacsim_physx
@@ -345,8 +342,9 @@ Read the result
 ~~~~~~~~~~~~~~~
 
 A per-phase wall-time summary is printed to the console when the run finishes,
-including the timers that ran during ``env_creation``. The JSON output holds the
-full profile.
+including the timers that ran during ``env_creation``. This default is the
+authoritative unprofiled timing mode; the JSON records
+``config.measurement_mode`` as ``"wall_time"``.
 
 Read the wall time and attributed functions under each entry in ``phases``.
 
@@ -355,7 +353,10 @@ Read the wall time and attributed functions under each entry in ``phases``.
    phases.<phase>.total_time_s
    phases.<phase>.top_functions
 
-Pass ``--whitelist_config scripts/benchmarks/startup_whitelist.yaml`` to select
+Pass ``--profile`` to collect dense cProfile attribution in a separate run. Its
+wall time includes profiler observer cost and the JSON records
+``config.measurement_mode`` as ``"cprofile"``. Pass
+``--whitelist_config scripts/benchmarks/startup_whitelist.yaml`` to select
 stable ``fnmatch`` patterns for specific phases. Whitelist mode ignores
 ``--top_n`` for listed phases. The output still includes unmatched patterns.
 Their own time, cumulative time, and call count are zero. This keeps dashboard
@@ -367,9 +368,10 @@ In-repo functions have no package prefix
 dotted path (``warp._src.context:launch``).
 
 The typed result replaces runtime throughput fields with startup-specific
-``config`` and ``phases`` mappings. Each phase reports wall time and selected
-profile entries. Capture the same provenance plus cache state, process order,
-``top_n``, and whitelist configuration.
+``config`` and ``phases`` mappings. Each phase reports wall time and, in
+``cprofile`` mode, selected profile entries. Capture the same provenance plus
+cache state, process order, measurement mode, ``top_n``, and whitelist
+configuration.
 
 Startup deliberately has no warm-up: cold work is the measurement. Run it in a
 fresh process and control cache state and execution order when comparing runs.
@@ -377,9 +379,9 @@ fresh process and control cache state and execution order when comparing runs.
 What not to infer
 ~~~~~~~~~~~~~~~~~
 
-``cProfile`` is an attribution tool with observer cost. Treat phase wall times
-and function attribution as cold-start diagnostics, not as steady-state
-throughput or an unperturbed timing trace.
+``cProfile`` is an attribution tool with observer cost. Never compare a
+``cprofile`` phase time to a ``wall_time`` baseline. Use the former to locate
+work and the latter for startup performance claims.
 
 Measurement boundaries
 ----------------------
@@ -414,8 +416,7 @@ alone is not enough.
 Rendered workloads
 ------------------
 
-Rendering changes the workload. Use a camera task, camera enablement, renderer,
-and sensor preset explicitly:
+Rendering changes the workload. Use a camera task, renderer, and sensor preset explicitly:
 
 .. code-block:: bash
 
@@ -425,8 +426,6 @@ and sensor preset explicitly:
        --warmup_steps 50 \
        --num_steps 1000 \
        --seed 42 \
-       --enable_cameras \
-       --visualizer none \
        --benchmark_formatter schema,summary \
        --output_path ./benchmark_results/rendered \
        physics=isaacsim_physx renderer=isaacsim_rtx presets=rgb

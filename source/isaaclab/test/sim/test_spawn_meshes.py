@@ -15,6 +15,7 @@ simulation_app = AppLauncher(headless=True).app
 
 import numpy as np
 import pytest
+from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
 from isaaclab.sim import SimulationCfg, SimulationContext
@@ -31,7 +32,7 @@ def sim():
     # Simulation time-step
     dt = 0.1
     # Load kit helper
-    sim = SimulationContext(SimulationCfg(dt=dt))
+    sim = SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=dt))
     # Wait for spawning
     sim_utils.update_stage()
     yield sim

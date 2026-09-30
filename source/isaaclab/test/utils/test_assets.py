@@ -7,7 +7,6 @@ from __future__ import annotations
 
 """Launch Isaac Sim Simulator first."""
 import importlib
-import json
 import logging
 import os
 import sys
@@ -15,7 +14,6 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -348,6 +346,35 @@ def test_find_asset_dependencies_missing_mdl_does_not_log_traceback(tmp_path, ca
     assert "Traceback (most recent call last):" not in caplog.text
 
 
+def test_find_asset_dependencies_skips_bare_mdl_module_identifiers(tmp_path):
+    """Test MDL search-path modules are not mistaken for relative asset files."""
+    usd_path = tmp_path / "asset.usda"
+    usd_path.write_text(
+        """#usda 1.0
+def Scope "Asset"
+{
+    custom asset module = @OmniPBR.mdl@
+    custom asset sibling = @./Sibling.mdl@
+    custom asset parent = @../Shared.mdl@
+    custom asset nested = @Materials/Surface.mdl@
+    custom asset absolute = @/Library/Core.mdl@
+    custom asset remote = @https://example.com/Remote.mdl@
+    custom asset texture = @albedo.png@
+}
+""",
+        encoding="utf-8",
+    )
+
+    assert assets_utils._find_asset_dependencies(str(usd_path)) == {
+        "./Sibling.mdl",
+        "../Shared.mdl",
+        "Materials/Surface.mdl",
+        "/Library/Core.mdl",
+        "https://example.com/Remote.mdl",
+        "albedo.png",
+    }
+
+
 def test_retrieve_git_asset_path_uses_local_repo_path(tmp_path):
     """Test retrieving an asset from a local git asset repository."""
     repo_dir = tmp_path / "newton-assets"
@@ -524,83 +551,72 @@ _REMOTE_URL = "https://example.com/Assets/Isaac/Robots/example.usd"
 def asset_cache(tmp_path, monkeypatch):
     """Isolate the local asset cache: an empty cache directory and no state from other tests."""
     monkeypatch.setattr(assets_utils.tempfile, "gettempdir", lambda: str(tmp_path))
-    monkeypatch.setattr(assets_utils, "_REMOTE_FINGERPRINTS", {})
     monkeypatch.setattr(assets_utils, "_ANNOUNCED_MIRROR_DIRS", set())
     monkeypatch.setattr(assets_utils, "_ANNOUNCED_MIRRORS", set())
     monkeypatch.setattr(assets_utils, "_MIRRORED_URLS", {})
     return tmp_path
 
 
-def _serve(monkeypatch, entries: dict[str, dict | None], payloads: dict[str, bytes] | None = None) -> None:
-    """Fake the asset server: ``entries`` maps a URL to its reported metadata (``None`` = absent)."""
+def _serve(monkeypatch, *available_urls: str) -> None:
+    """Fake an asset server containing ``available_urls``."""
     import omni.client
 
     def fake_stat(url, *args, **kwargs):
-        reported = entries.get(url)
-        if reported is None:
-            return omni.client.Result.ERROR_NOT_FOUND, SimpleNamespace(hash="", version="", size=0, modified_time="")
-        return omni.client.Result.OK, SimpleNamespace(**reported)
-
-    def fake_read_file(url, *args, **kwargs):
-        if payloads is None or url not in payloads:
-            raise AssertionError(f"the server should not have been read for: {url}")
-        return omni.client.Result.OK, {}, payloads[url]
+        result = omni.client.Result.OK if url in available_urls else omni.client.Result.ERROR_NOT_FOUND
+        return result, None
 
     monkeypatch.setattr(omni.client, "stat", fake_stat)
-    monkeypatch.setattr(omni.client, "read_file", fake_read_file)
+    monkeypatch.setattr(
+        omni.client,
+        "read_file",
+        lambda url, *_args, **_kwargs: pytest.fail(f"the server should not have been read for: {url}"),
+    )
 
 
-def _cache_asset(cache_dir, url: str, payload: bytes, fingerprint: dict | None) -> Path:
-    """Write a locally cached copy of ``url``, with its recorded remote revision."""
+def _cache_asset(cache_dir, url: str, payload: bytes) -> Path:
+    """Write a locally cached copy of ``url``."""
     mirrored = Path(assets_utils._mirror_path(url, str(cache_dir)))
     mirrored.parent.mkdir(parents=True, exist_ok=True)
     mirrored.write_bytes(payload)
-    if fingerprint is not None:
-        (mirrored.parent / (mirrored.name + assets_utils._MIRROR_FINGERPRINT_SUFFIX)).write_text(
-            json.dumps(fingerprint), encoding="utf-8"
-        )
     return mirrored
 
 
-def test_read_file_uses_the_local_copy_when_it_matches_the_server(asset_cache, monkeypatch):
-    """Test an unchanged remote asset is read from disk instead of downloaded again."""
-    revision = {"hash": "abc123", "version": "", "size": 12, "modified_time": "2026-07-01 10:00:00"}
-    _cache_asset(asset_cache, _REMOTE_URL, b"cached bytes", revision)
-    # no payload is served, so any read from the server fails the test
-    _serve(monkeypatch, {_REMOTE_URL: revision})
+def test_read_file_uses_the_local_copy_without_contacting_the_server(asset_cache, monkeypatch):
+    """Test a cached remote asset is authoritative until explicitly refreshed."""
+    import omni.client
+
+    _cache_asset(asset_cache, _REMOTE_URL, b"cached bytes")
+    monkeypatch.setattr(omni.client, "stat", lambda *_args, **_kwargs: pytest.fail("unexpected server stat"))
+    monkeypatch.setattr(omni.client, "read_file", lambda *_args, **_kwargs: pytest.fail("unexpected server read"))
 
     assert assets_utils.read_file(_REMOTE_URL).read() == b"cached bytes"
 
 
-def test_read_file_refetches_when_the_server_copy_changed(asset_cache, monkeypatch):
-    """Test a changed remote asset is downloaded again rather than served stale."""
-    stale = {"hash": "abc123", "version": "", "size": 12, "modified_time": "2026-07-01 10:00:00"}
-    current = {"hash": "def456", "version": "", "size": 11, "modified_time": "2026-07-29 10:00:00"}
-    mirrored = _cache_asset(asset_cache, _REMOTE_URL, b"cached bytes", stale)
-    _serve(monkeypatch, {_REMOTE_URL: current}, payloads={_REMOTE_URL: b"fresh bytes"})
+def test_retrieve_file_path_force_download_refreshes_the_local_copy(asset_cache, monkeypatch):
+    """Test an explicit forced download replaces a cached remote asset."""
+    import omni.client
 
-    assert assets_utils.read_file(_REMOTE_URL).read() == b"fresh bytes"
-    # the refreshed copy is cached under the new revision, so the next run reads it from disk
-    assert mirrored.read_bytes() == b"fresh bytes"
-    fingerprint = mirrored.parent / (mirrored.name + assets_utils._MIRROR_FINGERPRINT_SUFFIX)
-    assert json.loads(fingerprint.read_text(encoding="utf-8")) == current
+    mirrored = _cache_asset(asset_cache, _REMOTE_URL, b"cached bytes")
+    _serve(monkeypatch, _REMOTE_URL)
 
+    def fake_copy(url, target_path, behavior):
+        assert url == _REMOTE_URL
+        assert behavior == omni.client.CopyBehavior.OVERWRITE
+        Path(target_path).write_bytes(b"#usda 1.0\n")
+        return omni.client.Result.OK
 
-def test_local_copy_without_a_recorded_revision_is_refetched(asset_cache, monkeypatch):
-    """Test copies left by earlier versions are re-fetched once instead of trusted blindly."""
-    _cache_asset(asset_cache, _REMOTE_URL, b"cached bytes", fingerprint=None)
-    current = {"hash": "def456", "version": "", "size": 11, "modified_time": "2026-07-29 10:00:00"}
-    _serve(monkeypatch, {_REMOTE_URL: current}, payloads={_REMOTE_URL: b"fresh bytes"})
+    monkeypatch.setattr(omni.client, "copy", fake_copy)
+    monkeypatch.setattr(assets_utils, "_find_asset_dependencies", lambda path: set())
 
-    assert assets_utils.read_file(_REMOTE_URL).read() == b"fresh bytes"
+    assert assets_utils.retrieve_file_path(_REMOTE_URL, str(asset_cache), force_download=True) == str(mirrored)
+    assert mirrored.read_bytes() == b"#usda 1.0\n"
 
 
 def test_retrieve_file_path_serializes_cold_cache_population(asset_cache, monkeypatch):
     """Test concurrent ranks reuse the mirror populated by the first rank."""
     import omni.client
 
-    revision = {"hash": "abc123", "version": "", "size": 12, "modified_time": "2026-07-01 10:00:00"}
-    _serve(monkeypatch, {_REMOTE_URL: revision})
+    _serve(monkeypatch, _REMOTE_URL)
     copy_count = 0
     active_copies = 0
     max_active_copies = 0
@@ -639,68 +655,24 @@ def test_retrieve_file_path_serializes_cold_cache_population(asset_cache, monkey
     assert max_active_copies == 1
 
 
-def test_size_and_modification_time_identify_a_revision(asset_cache, monkeypatch):
-    """Test providers that report no hash still get a freshness check.
-
-    The local file provider reports only a size and a modification time, and HTTP hosts
-    behave the same way, so the check cannot rely on a content hash being available.
-    """
-    revision = {"hash": "", "version": "", "size": 12, "modified_time": "2026-07-01 10:00:00"}
-    _cache_asset(asset_cache, _REMOTE_URL, b"cached bytes", revision)
-    _serve(monkeypatch, {_REMOTE_URL: revision})
-    assert assets_utils._usable_mirror(_REMOTE_URL)
-
-    assets_utils._REMOTE_FINGERPRINTS.clear()
-    _serve(monkeypatch, {_REMOTE_URL: {**revision, "modified_time": "2026-07-29 10:00:00"}})
-    assert not assets_utils._usable_mirror(_REMOTE_URL)
-
-
-def test_unreachable_server_falls_back_to_the_local_copy(asset_cache, monkeypatch, caplog):
-    """Test offline runs keep working, with the missing freshness guarantee announced."""
-    revision = {"hash": "abc123", "version": "", "size": 12, "modified_time": "2026-07-01 10:00:00"}
-    _cache_asset(asset_cache, _REMOTE_URL, b"cached bytes", revision)
-    _serve(monkeypatch, {_REMOTE_URL: None})
-
-    with caplog.at_level(logging.WARNING, logger=assets_utils.logger.name):
-        assert assets_utils.read_file(_REMOTE_URL).read() == b"cached bytes"
-
-    assert "did not respond" in caplog.text
-    assert "may be out of date" in caplog.text
-
-
-def test_server_without_revision_metadata_is_announced(asset_cache, monkeypatch, caplog):
-    """Test a provider reporting nothing to compare cannot silently serve a stale copy."""
-    _cache_asset(asset_cache, _REMOTE_URL, b"cached bytes", {"hash": "", "version": "", "size": 0, "modified_time": ""})
-    _serve(monkeypatch, {_REMOTE_URL: {"hash": "", "version": "", "size": 0, "modified_time": ""}})
-
-    with caplog.at_level(logging.WARNING, logger=assets_utils.logger.name):
-        assert assets_utils.read_file(_REMOTE_URL).read() == b"cached bytes"
-
-    assert "no revision metadata" in caplog.text
-
-
 def test_two_hosts_serving_the_same_path_do_not_share_a_local_copy(asset_cache, monkeypatch):
     """Test a cloud and an on-prem server exposing the same layout get separate cache entries.
 
-    The on-prem server is unreachable, the case where an unrelated copy would otherwise be
-    accepted without a freshness check.
+    The on-prem server is unreachable, so an unrelated cloud copy must not be accepted.
     """
-    revision = {"hash": "abc123", "version": "", "size": 12, "modified_time": "2026-07-01 10:00:00"}
     on_prem_url = _REMOTE_URL.replace("example.com", "nucleus.example-lab.com")
-    _cache_asset(asset_cache, _REMOTE_URL, b"cached bytes", revision)
-    _serve(monkeypatch, {_REMOTE_URL: revision, on_prem_url: None})
+    _cache_asset(asset_cache, _REMOTE_URL, b"cached bytes")
+    _serve(monkeypatch)
 
     assert not assets_utils._usable_mirror(on_prem_url)
     assert assets_utils.check_file_path(on_prem_url) == 0
 
 
-def test_using_local_copies_is_announced_once_per_cache_directory(asset_cache, monkeypatch, caplog):
+def test_using_local_copies_is_announced_once_per_cache_directory(asset_cache, caplog):
     """Test the announcement is visible at the default log level without one line per asset."""
-    revision = {"hash": "abc123", "version": "", "size": 12, "modified_time": "2026-07-01 10:00:00"}
     other_url = _REMOTE_URL.replace("example.usd", "other.usd")
-    _cache_asset(asset_cache, _REMOTE_URL, b"cached bytes", revision)
-    _cache_asset(asset_cache, other_url, b"cached bytes", revision)
-    _serve(monkeypatch, {_REMOTE_URL: revision, other_url: revision})
+    _cache_asset(asset_cache, _REMOTE_URL, b"cached bytes")
+    _cache_asset(asset_cache, other_url, b"cached bytes")
 
     with caplog.at_level(logging.INFO, logger=assets_utils.logger.name):
         assets_utils.read_file(_REMOTE_URL)
@@ -766,12 +738,9 @@ def test_unmirror_file_path_recognises_a_copy_reported_with_forward_slashes(asse
     assert assets_utils.unmirror_file_path(mirrored.replace(os.sep, "/")) == url
 
 
-def test_unmirror_file_path_recognises_a_copy_cached_by_an_earlier_run(asset_cache, monkeypatch):
+def test_unmirror_file_path_recognises_a_copy_cached_by_an_earlier_run(asset_cache):
     """Test a warm cache still names its source, since no download happens to record it."""
-    revision = {"hash": "abc123", "version": "", "size": 12, "modified_time": "2026-07-01 10:00:00"}
-    mirrored = _cache_asset(asset_cache, _REMOTE_URL, b"cached bytes", revision)
-    # no payload is served, so the URL is recovered without the asset being downloaded again
-    _serve(monkeypatch, {_REMOTE_URL: revision})
+    mirrored = _cache_asset(asset_cache, _REMOTE_URL, b"cached bytes")
     assets_utils.read_file(_REMOTE_URL)
 
     assert assets_utils.unmirror_file_path(str(mirrored)) == _REMOTE_URL

@@ -73,7 +73,7 @@ def spawn_from_usd(
             case the translation specified in the USD file is used.
         orientation: The orientation in (x, y, z, w) to apply to the prim w.r.t. its parent prim. Defaults to None,
             in which case the orientation specified in the USD file is used.
-        **kwargs: Additional keyword arguments, like ``clone_in_fabric``.
+        **kwargs: Additional keyword arguments.
 
     Returns:
         The prim of the spawned asset.
@@ -115,7 +115,7 @@ def spawn_from_urdf(
             case the translation specified in the generated USD file is used.
         orientation: The orientation in (x, y, z, w) to apply to the prim w.r.t. its parent prim. Defaults to None,
             in which case the orientation specified in the generated USD file is used.
-        **kwargs: Additional keyword arguments, like ``clone_in_fabric``.
+        **kwargs: Additional keyword arguments.
 
     Returns:
         The prim of the spawned asset.
@@ -195,7 +195,7 @@ def spawn_ground_plane(
             case the translation specified in the USD file is used.
         orientation: The orientation in (x, y, z, w) to apply to the prim w.r.t. its parent prim. Defaults to None,
             in which case the orientation specified in the USD file is used.
-        **kwargs: Additional keyword arguments, like ``clone_in_fabric``.
+        **kwargs: Additional keyword arguments.
 
     Returns:
         The prim of the spawned asset.
@@ -513,7 +513,7 @@ def _spawn_from_usd_file(
             case the translation specified in the generated USD file is used.
         orientation: The orientation in (x, y, z, w) to apply to the prim w.r.t. its parent prim. Defaults to None,
             in which case the orientation specified in the generated USD file is used.
-        **kwargs: Additional keyword arguments, like ``clone_in_fabric``.
+        **kwargs: Additional keyword arguments.
 
     Returns:
         The prim of the spawned asset.
@@ -642,7 +642,7 @@ def spawn_from_usd_with_compliant_contact_material(
             case the translation specified in the USD file is used.
         orientation: The orientation in (x, y, z, w) to apply to the prim w.r.t. its parent prim. Defaults to None,
             in which case the orientation specified in the USD file is used.
-        **kwargs: Additional keyword arguments, like ``clone_in_fabric``.
+        **kwargs: Additional keyword arguments.
 
     Returns:
         The prim of the spawned asset with the physics material applied to the specified prims.

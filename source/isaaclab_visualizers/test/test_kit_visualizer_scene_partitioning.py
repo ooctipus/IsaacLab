@@ -5,62 +5,35 @@
 
 """Tests for Kit visualizer scene-partition behavior."""
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-import isaaclab_visualizers.kit.kit_visualizer as kit_visualizer_module
-import pytest
 import torch
 from isaaclab_visualizers.kit.kit_visualization_markers import KitVisualizationMarkers
-from isaaclab_visualizers.kit.kit_visualizer import KitVisualizer
 
 from pxr import Sdf, Usd, UsdGeom
 
-from isaaclab.utils.renderers import ISAAC_RTX_SHOW_ALL_PARTITIONS_BY_DEFAULT_SETTING
 
+def test_kit_visualizer_registers_clone_context_by_type(monkeypatch) -> None:
+    """Kit registers its simulation-owned clone context by backend type."""
+    from isaaclab_visualizers.kit import KitVisualizer, KitVisualizerCfg
 
-@pytest.mark.parametrize(("show_global_view", "expected_partition"), [(True, None), (False, "env_2")])
-def test_viewport_camera_partition_follows_global_view_setting(
-    monkeypatch: pytest.MonkeyPatch, show_global_view: bool, expected_partition: str | None
-) -> None:
-    """Global view should leave the viewport unpartitioned; fallback view should select one environment."""
+    from isaaclab.cloner import UsdReplicateContext
+    from isaaclab.sim import SimulationContext
+
     stage = Usd.Stage.CreateInMemory()
-    env_prim = stage.DefinePrim("/World/envs/env_0", "Xform")
-    env_prim.CreateAttribute("primvars:omni:scenePartition", Sdf.ValueTypeNames.Token).Set("env_0")
-    camera = UsdGeom.Camera.Define(stage, "/OmniverseKit_Persp")
-    camera.GetPrim().CreateAttribute("omni:scenePartition", Sdf.ValueTypeNames.Token).Set("env_0")
+    clone_context = object()
+    simulation = SimpleNamespace(stage=stage, get_or_create_backend=MagicMock(return_value=clone_context))
+    monkeypatch.setattr(SimulationContext, "instance", lambda: simulation)
 
-    visualizer = object.__new__(KitVisualizer)
-    visualizer._controlled_camera_path = "/OmniverseKit_Persp"
-    visualizer._resolved_visible_env_ids = [2]
-    settings = MagicMock()
-    settings.get.return_value = show_global_view
-    monkeypatch.setattr(kit_visualizer_module, "get_settings_manager", lambda: settings)
+    visualizer = KitVisualizer(KitVisualizerCfg())
 
-    visualizer._apply_viewport_camera_scene_partition(stage, num_envs=4)
-
-    settings.get.assert_called_once_with(ISAAC_RTX_SHOW_ALL_PARTITIONS_BY_DEFAULT_SETTING, False)
-    partition_attr = camera.GetPrim().GetAttribute("omni:scenePartition")
-    if expected_partition is None:
-        assert not partition_attr.IsValid()
-    else:
-        assert partition_attr.Get() == expected_partition
-
-
-def test_marker_partition_detection_uses_canonical_environment_root() -> None:
-    """The renderer-authored env_0 root should be the stage-level partition signal."""
-    stage = Usd.Stage.CreateInMemory()
-    env_1 = stage.DefinePrim("/World/envs/env_1", "Xform")
-    env_1.CreateAttribute("primvars:omni:scenePartition", Sdf.ValueTypeNames.Token).Set("env_1")
-    markers = object.__new__(KitVisualizationMarkers)
-    markers.stage = stage
-    markers._environment_ids = (1,)
-
-    assert not markers._scene_partitioning_is_active()
-
-    env_0 = stage.DefinePrim("/World/envs/env_0", "Xform")
-    env_0.CreateAttribute("primvars:omni:scenePartition", Sdf.ValueTypeNames.Token).Set("env_0")
-
-    assert markers._scene_partitioning_is_active()
+    assert visualizer._clone_ctx is clone_context
+    simulation.get_or_create_backend.assert_called_once_with(
+        UsdReplicateContext,
+        stage,
+        clone_role="scene",
+    )
 
 
 def test_marker_environment_ids_are_sticky_until_count_changes() -> None:
@@ -71,6 +44,7 @@ def test_marker_environment_ids_are_sticky_until_count_changes() -> None:
         env_prim.CreateAttribute("primvars:omni:scenePartition", Sdf.ValueTypeNames.Token).Set(f"env_{env_id}")
     instancer = UsdGeom.PointInstancer.Define(stage, "/World/Visuals/markers")
     markers = object.__new__(KitVisualizationMarkers)
+    markers._sim = SimpleNamespace(get_setting=lambda _path: True)
     markers.stage = stage
     markers._instancer_manager = instancer
     markers._environment_ids = None

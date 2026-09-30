@@ -10,7 +10,8 @@ import sys
 import pytest
 
 from isaaclab.app.app_launcher import AppLauncher, _sanitize_sys_argv_for_kit
-from isaaclab.utils.renderers import ISAAC_RTX_SHOW_ALL_PARTITIONS_BY_DEFAULT_SETTING
+
+_ISAAC_RTX_SHOW_ALL_PARTITIONS_BY_DEFAULT_SETTING = "/rtx/scenePartitioning/showAllPartitionsByDefault"
 
 
 def test_sanitize_sys_argv_removes_trailing_pytest_verbosity(monkeypatch):
@@ -41,7 +42,7 @@ def test_sanitize_sys_argv_removes_pytest_marker_pair(monkeypatch):
     assert result == ["test_script.py", "--keep"]
 
 
-def _resolve_devices_and_kit_args(launcher_args: dict, monkeypatch, *, xr: bool = False) -> tuple[dict, list[str]]:
+def _resolve_devices_and_kit_args(launcher_args: dict, monkeypatch) -> tuple[dict, list[str]]:
     """Resolve device settings and Kit arguments without constructing an ``AppLauncher``.
 
     ``_resolve_kit_args`` extends ``sys.argv``, so the caller's argv is isolated.
@@ -50,7 +51,7 @@ def _resolve_devices_and_kit_args(launcher_args: dict, monkeypatch, *, xr: bool 
     launcher = AppLauncher.__new__(AppLauncher)
     launcher.device_id = 0
     launcher._deferred_cuda_device_id = None
-    launcher._xr = xr
+    launcher._xr = False
     AppLauncher._resolve_device_settings(launcher, launcher_args)
     AppLauncher._resolve_kit_args(launcher, launcher_args)
     return launcher_args, launcher._kit_args
@@ -80,35 +81,6 @@ def test_devices_selected_by_cuda_index(launcher_args, expected_renderer_args, m
     assert renderer_args == expected_renderer_args
     assert args["physics_gpu"] == 1
     assert "active_gpu" not in args
-
-
-@pytest.mark.parametrize(
-    ("launcher_args", "expected_renderer_args", "expected_physics_gpu"),
-    [
-        pytest.param(
-            {"device": "cuda:1", "device_explicit": True},
-            ["--/renderer/multiGpu/activeCudaGpus=1,"],
-            1,
-            id="xr-explicit-cuda-device",
-        ),
-        pytest.param({}, [], 0, id="xr-default-cpu-device"),
-    ],
-)
-def test_xr_pins_the_renderer_only_for_a_cuda_device(
-    launcher_args, expected_renderer_args, expected_physics_gpu, monkeypatch
-):
-    """Pin the renderer under XR when a CUDA device is selected, and only then.
-
-    XR streams one stereo swapchain that the CloudXR compositor imports, so the renderer and
-    the compositor have to agree on a device. A bare ``--xr`` resolves to ``cpu``, where there
-    is no simulation GPU to align to, so Kit keeps its own choice -- forcing CUDA 0 there would
-    break hosts whose display is not attached to GPU 0.
-    """
-    args, kit_args = _resolve_devices_and_kit_args(launcher_args, monkeypatch, xr=True)
-
-    renderer_args = [arg for arg in kit_args if arg.startswith("--/renderer/multiGpu/activeCudaGpus=")]
-    assert renderer_args == expected_renderer_args
-    assert args["physics_gpu"] == expected_physics_gpu
 
 
 @pytest.mark.parametrize(
@@ -147,13 +119,12 @@ def test_spectator_view_follows_visual_output_intent(launcher_state, expected_en
     launcher._video_enabled = False
     launcher._livestream = 0
     launcher._xr = False
-    launcher.device = "cpu"
     for name, value in launcher_state.items():
         setattr(launcher, name, value)
 
     launcher._resolve_kit_args({})
 
-    spectator_arg = f"--{ISAAC_RTX_SHOW_ALL_PARTITIONS_BY_DEFAULT_SETTING}=true"
+    spectator_arg = f"--{_ISAAC_RTX_SHOW_ALL_PARTITIONS_BY_DEFAULT_SETTING}=true"
     assert (spectator_arg in launcher._kit_args) is expected_enabled
 
 
@@ -163,11 +134,9 @@ def test_explicit_spectator_setting_overrides_visualizer_default(monkeypatch):
     launcher = AppLauncher.__new__(AppLauncher)
     launcher._cli_visualizer_explicit = True
     launcher._cli_visualizer_types = ["kit"]
-    launcher._xr = False
-    launcher.device = "cpu"
-    explicit_arg = f"--{ISAAC_RTX_SHOW_ALL_PARTITIONS_BY_DEFAULT_SETTING}=false"
+    explicit_arg = f"--{_ISAAC_RTX_SHOW_ALL_PARTITIONS_BY_DEFAULT_SETTING}=false"
 
     launcher._resolve_kit_args({"kit_args": explicit_arg})
 
     assert explicit_arg in launcher._kit_args
-    assert f"--{ISAAC_RTX_SHOW_ALL_PARTITIONS_BY_DEFAULT_SETTING}=true" not in launcher._kit_args
+    assert f"--{_ISAAC_RTX_SHOW_ALL_PARTITIONS_BY_DEFAULT_SETTING}=true" not in launcher._kit_args

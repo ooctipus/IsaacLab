@@ -229,7 +229,7 @@ Use :func:`~isaaclab_teleop.poll_control_events` to read the latest control stat
 
    from isaaclab_teleop import poll_control_events
 
-   with IsaacTeleopDevice(cfg) as device:
+   with IsaacTeleopDevice(cfg, env.cfg.scene.xr_anchor) as device:
        running = False
        while sim_app.is_running():
            action = device.advance()
@@ -260,7 +260,7 @@ If you do not need headset-driven start/stop/reset (e.g. keyboard-only workflows
 .. code-block:: python
 
    IsaacTeleopCfg(
-       pipeline_builder=_build_my_pipeline,
+       pipeline_cfg=TeleopPipelineCfg(class_type=_build_my_pipeline),
        control_channel_uuid=None,   # no opaque data channel created
    )
 
@@ -277,7 +277,7 @@ To use a different channel UUID (e.g. for a separate control protocol), pass any
    MY_UUID = uuid.uuid5(uuid.NAMESPACE_DNS, "my_custom_control").bytes
 
    IsaacTeleopCfg(
-       pipeline_builder=_build_my_pipeline,
+       pipeline_cfg=TeleopPipelineCfg(class_type=_build_my_pipeline),
        control_channel_uuid=MY_UUID,
    )
 
@@ -658,9 +658,9 @@ Teleoperation Environment Reference
 -----------------------------------
 
 The tables below list every built-in Isaac Lab environment that supports teleoperation,
-organized by input method. For closed-loop policy evaluation, the play script automatically
-applies each environment config's ``play_mode`` overrides; pass ``--train_env_cfg`` to
-play the training configuration as-is.
+organized by input method. Play uses the resolved task configuration directly. Select an
+available domain variant with ``presets=NAME`` or pass explicit overrides such as
+``--num_envs`` when evaluation needs different data than training.
 
 Isaac Teleop (XR Headset) Environments
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -898,7 +898,7 @@ Switch Between Controllers and Hand Tracking
 ---------------------------------------------
 
 The retargeting pipeline determines whether an environment uses motion controllers or hand
-tracking. Switching input modes requires changing the ``pipeline_builder`` function in your
+tracking. Switching input modes requires changing the ``pipeline_cfg.class_type`` in your
 environment config. No other environment-level changes are needed as long as the action
 space (``TensorReorderer`` output order) stays the same.
 
@@ -977,13 +977,13 @@ controller grip frame orientation (typically 90 degrees roll for Franka-style gr
 Build a Retargeting Pipeline
 ----------------------------
 
-A pipeline builder is a callable that constructs the retargeting graph and returns an
+A pipeline implementation receives its configuration, constructs the retargeting graph, and returns an
 ``OutputCombiner`` with a single ``"action"`` key. Here is a complete example for a Franka
 manipulator (from ``stack_ik_abs_env_cfg.py``):
 
 .. code-block:: python
 
-   def _build_franka_stack_pipeline():
+   def _build_franka_stack_pipeline(_cfg: TeleopPipelineCfg):
        from isaacteleop.retargeting_engine.deviceio_source_nodes import ControllersSource, HandsSource
        from isaacteleop.retargeting_engine.interface import OutputCombiner, ValueInput
        from isaacteleop.retargeters import (
@@ -1054,27 +1054,24 @@ Register the pipeline in your environment configuration using :class:`~isaaclab_
 
 .. code-block:: python
 
-   from isaaclab_teleop import IsaacTeleopCfg, XrCfg
+   from isaaclab_teleop import IsaacTeleopCfg, TeleopPipelineCfg, XrCfg
 
    @configclass
    class MyTeleopEnvCfg(ManagerBasedRLEnvCfg):
 
-       xr: XrCfg = XrCfg(anchor_pos=(0.5, 0.0, 0.5))
-
        def __post_init__(self):
            super().__post_init__()
 
+           self.scene.xr_anchor = XrCfg(anchor_pos=(0.5, 0.0, 0.5))
            self.isaac_teleop = IsaacTeleopCfg(
-               pipeline_builder=_build_my_pipeline,
+               pipeline_cfg=TeleopPipelineCfg(class_type=_build_my_pipeline),
                sim_device=self.sim.device,
-               xr_cfg=self.xr,
            )
 
 Key ``IsaacTeleopCfg`` fields:
 
-* ``pipeline_builder`` -- callable that returns an ``OutputCombiner`` with an ``"action"`` output.
-* ``retargeters_to_tune`` -- optional callable returning retargeters to expose in the live tuning UI.
-* ``xr_cfg`` -- :class:`~isaaclab_teleop.XrCfg` for anchor configuration (see below).
+* ``pipeline_cfg`` -- data configuration whose ``class_type(cfg)`` returns an ``OutputCombiner``
+  with an ``"action"`` output.
 * ``xr_camera_feeds`` -- ordered selection and per-feed panel settings for existing task cameras.
   The list is empty by default, so tasks opt in to PiP explicitly.
 * ``xr_camera_feed_layout`` -- viewer reference, fixed world pose, and manual, horizontal, vertical,
@@ -1090,12 +1087,10 @@ Key ``IsaacTeleopCfg`` fields:
   instead of having both Python stacks contend for the GIL at the start of
   the step.
 
-.. warning::
-
-   ``pipeline_builder`` and ``retargeters_to_tune`` must be **callables** (functions or lambdas),
-   not pre-built objects. The ``@configclass`` decorator deep-copies mutable attributes, which
-   would break pre-built pipeline graphs.
-
+The :class:`~isaaclab_teleop.XrCfg` belongs on the interactive scene as ``scene.xr_anchor``. It is
+an asset configuration so the clone plan authors the anchor before simulation initialization. Pass
+that same configuration to :class:`~isaaclab_teleop.IsaacTeleopDevice` or
+:func:`~isaaclab_teleop.create_isaac_teleop_device`.
 
 .. _isaac-teleop-cloudxr-profiles:
 
@@ -1334,13 +1329,6 @@ XR camera PiP currently supports exactly one environment. When a task has enable
 startup rejects ``--num_envs`` values other than ``1``; IsaacTeleop XR behavior without PiP is
 unchanged.
 
-The reference feeds request render-product-local DLSS Ray Reconstruction and ``quality`` execution
-mode through :class:`~isaaclab_teleop.XrCameraFeedCfg`. The private PiP adapter authors those two
-attributes only on the selected camera render product. On Isaac Sim 6.1 and newer, Ray
-Reconstruction also requires the process-global responsive-denoising setting, which the session
-enables before environment construction. On earlier versions, selected PiP feeds fall back to
-classic DLSS because responsive denoising is unavailable.
-
 Camera selection
 ~~~~~~~~~~~~~~~~
 
@@ -1348,16 +1336,12 @@ Tasks declare their default selection through ``IsaacTeleopCfg.xr_camera_feeds``
 
 .. code-block:: python
 
-   from isaaclab_teleop import IsaacTeleopCfg, XrCameraFeedCfg
+   from isaaclab_teleop import IsaacTeleopCfg, TeleopPipelineCfg, XrCameraFeedCfg
 
    self.isaac_teleop = IsaacTeleopCfg(
-       pipeline_builder=_build_my_pipeline,
+       pipeline_cfg=TeleopPipelineCfg(class_type=_build_my_pipeline),
        xr_camera_feeds=[
-           XrCameraFeedCfg(
-               camera_name="left_wrist_camera",
-               enable_dlss_ray_reconstruction=True,
-               dlss_exec_mode="quality",
-           ),
+           XrCameraFeedCfg(camera_name="left_wrist_camera"),
            XrCameraFeedCfg(camera_name="overview_camera", enabled=False),
        ],
    )
@@ -1448,9 +1432,9 @@ PiP presentation uses Kit Scene UI and ``SpatialSource`` placement. Kit imports 
 an enabled feed is requested. If the Scene UI modules cannot be imported, the scripts log a warning
 and continue without PiP; task-owned cameras and recording observations remain unchanged. This keeps
 the camera selection configuration usable when a future kitless entry point no longer provides
-Scene UI. Render-product tuning is also best-effort: backends without a compatible render product
-keep the Camera-buffer path, and schema-authoring failures warn while PiP continues. Other
-configuration, camera-buffer, and panel-initialization errors still fail during startup.
+Scene UI. Each panel uploads the selected camera's public RGBA tensor directly; renderer policy stays
+with that camera's renderer configuration. Configuration, camera-buffer, and panel-initialization
+errors fail during startup.
 
 
 .. _isaac-teleop-haptics:
@@ -1699,8 +1683,6 @@ If the built-in retargeters do not cover your use case, you can implement a cust
 
 #. Inherit from ``BaseRetargeter`` and implement ``input_spec()``, ``output_spec()``, and
    ``compute()``.
-#. Optionally add a ``ParameterState`` for parameters that should be live-tunable via the
-   retargeter tuning UI.
 #. Connect to existing source nodes (``HandsSource``, ``ControllersSource``) or create a new
    ``IDeviceIOSource`` subclass for custom input devices.
 
@@ -1725,7 +1707,7 @@ There are two levels of device integration:
 
 **Pipeline configuration only**
    For devices already supported by Isaac Teleop (or whose data is available as hand / controller
-   tracking). Simply update your ``pipeline_builder`` to use the appropriate source nodes and
+   tracking). Update your ``pipeline_cfg.class_type`` to use the appropriate source nodes and
    retargeters for the device's data format.
 
 

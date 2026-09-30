@@ -5,25 +5,20 @@
 
 from __future__ import annotations
 
-from isaaclab_newton.physics import (
-    KaminoPADMMSolverCfg,
-    MJWarpSolverCfg,
-    NewtonCfg,
-)
+from isaaclab_newton.physics import KaminoPADMMSolverCfg, MJWarpSolverCfg, NewtonSolverCfg
 from isaaclab_ov.physics import OvPhysxCfg
 from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
-from isaaclab.assets import ArticulationCfg, AssetBaseCfg
+from isaaclab.assets import AssetBaseCfg
 from isaaclab.envs import DirectRLEnvCfg
 from isaaclab.physics import PhysxAutoCfg
-from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import JointWrenchSensorCfg
-from isaaclab.sim import SimulationCfg
 from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils.configclass import configclass
 
 from isaaclab_tasks.utils import PresetCfg
+from isaaclab_tasks.utils.presets import MultiBackendSceneCfg, MultiBackendSimulationCfg
 
 from isaaclab_assets.robots.ant import ANT_CFG
 
@@ -33,23 +28,46 @@ class AntPhysicsCfg(PresetCfg):
     isaacsim_physx: PhysxCfg = PhysxCfg(bounce_threshold_velocity=0.2)
     ovphysx: OvPhysxCfg = OvPhysxCfg()
     physx: PhysxAutoCfg = PhysxAutoCfg(isaacsim_physx=isaacsim_physx, ovphysx=ovphysx)
-    newton_mjwarp: NewtonCfg = NewtonCfg(
-        solver_cfg=MJWarpSolverCfg(
-            njmax=45,
-            nconmax=25,
-            cone="pyramidal",
-            integrator="implicitfast",
-            impratio=1,
-        ),
+    newton_mjwarp: NewtonSolverCfg = MJWarpSolverCfg(
+        njmax=45,
+        nconmax=25,
+        cone="pyramidal",
+        integrator="implicitfast",
+        impratio=1,
         num_substeps=1,
         debug_mode=False,
     )
-    newton_kamino: NewtonCfg = NewtonCfg(
-        solver_cfg=KaminoPADMMSolverCfg(sparse_jacobian=True),
+    newton_kamino: NewtonSolverCfg = KaminoPADMMSolverCfg(
+        sparse_jacobian=True,
         debug_mode=False,
         use_cuda_graph=True,
     )
     default = newton_mjwarp
+
+
+@configclass
+class AntDirectSceneCfg(MultiBackendSceneCfg):
+    """Ant, terrain, sensor, and light constructed through one clone plan."""
+
+    terrain = TerrainImporterCfg(
+        prim_path="/World/ground",
+        terrain_type="plane",
+        collision_group=-1,
+        physics_material=sim_utils.RigidBodyMaterialCfg(
+            friction_combine_mode="average",
+            restitution_combine_mode="average",
+            static_friction=1.0,
+            dynamic_friction=1.0,
+            restitution=0.0,
+        ),
+        debug_vis=False,
+    )
+    robot = ANT_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+    joint_wrench = JointWrenchSensorCfg(prim_path="{ENV_REGEX_NS}/Robot")
+    light = AssetBaseCfg(
+        prim_path="/World/Light",
+        spawn=sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75)),
+    )
 
 
 @configclass
@@ -65,39 +83,16 @@ class AntEnvCfg(DirectRLEnvCfg):
     state_space = 0
 
     # simulation
-    sim: SimulationCfg = SimulationCfg(dt=1 / 120, render_interval=decimation, physics=AntPhysicsCfg())
-    terrain = TerrainImporterCfg(
-        prim_path="/World/ground",
-        terrain_type="plane",
-        collision_group=-1,
-        physics_material=sim_utils.RigidBodyMaterialCfg(
-            friction_combine_mode="average",
-            restitution_combine_mode="average",
-            static_friction=1.0,
-            dynamic_friction=1.0,
-            restitution=0.0,
-        ),
-        debug_vis=False,
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(
+        dt=1 / 120, render_interval=decimation, physics=AntPhysicsCfg()
     )
-
     # scene
-    scene: InteractiveSceneCfg = InteractiveSceneCfg(
-        num_envs=4096, env_spacing=5.0, replicate_physics=True, clone_in_fabric=True
-    )
+    scene: AntDirectSceneCfg = AntDirectSceneCfg(num_envs=4096, env_spacing=5.0, replicate_physics=True)
 
-    # robot
-    robot: ArticulationCfg = ANT_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
     # effort scale per joint, keyed by joint name expression
     joint_gears: dict[str, float] = {".*": 15.0}
 
-    # sensors
-    joint_wrench: JointWrenchSensorCfg = JointWrenchSensorCfg(prim_path="{ENV_REGEX_NS}/Robot")
     feet_body_names: list[str] = ["front_left_foot", "front_right_foot", "left_back_foot", "right_back_foot"]
-
-    # lights
-    light_cfg: AssetBaseCfg = AssetBaseCfg(
-        prim_path="/World/Light", spawn=sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
-    )
 
     # walk target, relative to the environment origin
     target_pos: tuple[float, float, float] = (1000.0, 0.0, 0.0)

@@ -8,7 +8,6 @@ from __future__ import annotations
 import warp as wp
 from isaaclab_experimental.envs import DirectRLEnvWarp
 
-from isaaclab import cloner
 from isaaclab.envs import DirectRLEnvCfg
 from isaaclab.utils.string import resolve_matching_names_values
 
@@ -439,8 +438,8 @@ class LocomotionWarpEnv(DirectRLEnvWarp):
         self.action_scale = self.cfg.action_scale
         # resolve the gears by joint name, since the joint ordering differs across physics backends.
         # Joints the table does not match keep a unit gear, mirroring the stable LocomotionDirectEnv.
-        joint_gears = [1.0] * self.robot.num_joints
-        joint_ids, _, gears = resolve_matching_names_values(self.cfg.joint_gears, self.robot.joint_names)
+        joint_gears = [1.0] * self.scene["robot"].num_joints
+        joint_ids, _, gears = resolve_matching_names_values(self.cfg.joint_gears, self.scene["robot"].joint_names)
         for joint_id, gear in zip(joint_ids, gears):
             joint_gears[joint_id] = gear
         self.joint_gears = wp.array(joint_gears, dtype=wp.float32, device=self.sim.device)
@@ -449,23 +448,23 @@ class LocomotionWarpEnv(DirectRLEnvWarp):
         self.gear_ratio_scaled = wp.array(
             [gear / largest_gear for gear in joint_gears], dtype=wp.float32, device=self.sim.device
         )
-        self._joint_dof_idx, _ = self.robot.find_joints(".*")
+        self._joint_dof_idx, _ = self.scene["robot"].find_joints(".*")
         # resolve against the sensor's own body list: its ordering is backend-specific and does not
         # necessarily match the articulation's body ordering
-        feet_body_ids, _ = self.joint_wrench.find_bodies(self.cfg.feet_body_names)
+        feet_body_ids, _ = self.scene["joint_wrench"].find_bodies(self.cfg.feet_body_names)
         self.feet_body_ids = wp.array(feet_body_ids, dtype=wp.int32, device=self.sim.device)
 
         # Simulation bindings
         # Note: these are direct memory views into the Newton simulation data, they should not be modified directly
-        self.joint_pos = self.robot.data.joint_pos.warp
-        self.joint_vel = self.robot.data.joint_vel.warp
-        self.root_pose_w = self.robot.data.root_pose_w.warp
-        self.root_vel_w = self.robot.data.root_vel_w.warp
-        self.soft_joint_pos_limits = self.robot.data.soft_joint_pos_limits.warp
-        self.soft_joint_vel_limits = self.robot.data.soft_joint_vel_limits.warp
+        self.joint_pos = self.scene["robot"].data.joint_pos.warp
+        self.joint_vel = self.scene["robot"].data.joint_vel.warp
+        self.root_pose_w = self.scene["robot"].data.root_pose_w.warp
+        self.root_vel_w = self.scene["robot"].data.root_vel_w.warp
+        self.soft_joint_pos_limits = self.scene["robot"].data.soft_joint_pos_limits.warp
+        self.soft_joint_vel_limits = self.scene["robot"].data.soft_joint_vel_limits.warp
 
         # the observation layout must agree with what the observation kernel writes
-        expected_observation_space = 12 + 3 * self.robot.num_joints + 6 * len(feet_body_ids)
+        expected_observation_space = 12 + 3 * self.scene["robot"].num_joints + 6 * len(feet_body_ids)
         if self.cfg.observation_space != expected_observation_space:
             raise ValueError(
                 f"The warp locomotion frontend produces {expected_observation_space} observations, but"
@@ -477,7 +476,9 @@ class LocomotionWarpEnv(DirectRLEnvWarp):
             (self.num_envs, self.cfg.observation_space), dtype=wp.float32, device=self.sim.device
         )
         self.rewards = wp.zeros((self.num_envs), dtype=wp.float32, device=self.sim.device)
-        self.actions = wp.zeros((self.num_envs, self.robot.num_joints), dtype=wp.float32, device=self.sim.device)
+        self.actions = wp.zeros(
+            (self.num_envs, self.scene["robot"].num_joints), dtype=wp.float32, device=self.sim.device
+        )
         self.states = wp.zeros((self.num_envs), dtype=wp.uint32, device=self.sim.device)
         self.potentials = wp.zeros(self.num_envs, dtype=wp.float32, device=self.sim.device)
         self.prev_potentials = wp.zeros_like(self.potentials)
@@ -490,9 +491,13 @@ class LocomotionWarpEnv(DirectRLEnvWarp):
         self.vec_loc = wp.zeros((self.num_envs), dtype=wp.spatial_vectorf, device=self.sim.device)
         self.rpy = wp.zeros((self.num_envs), dtype=wp.vec3f, device=self.sim.device)
         self.angle_to_target = wp.zeros((self.num_envs), dtype=wp.float32, device=self.sim.device)
-        self.dof_pos_scaled = wp.zeros((self.num_envs, self.robot.num_joints), dtype=wp.float32, device=self.sim.device)
+        self.dof_pos_scaled = wp.zeros(
+            (self.num_envs, self.scene["robot"].num_joints), dtype=wp.float32, device=self.sim.device
+        )
         self.env_origins = wp.from_torch(self.scene.env_origins, dtype=wp.vec3f)
-        self.actions_mapped = wp.zeros((self.num_envs, self.robot.num_joints), dtype=wp.float32, device=self.sim.device)
+        self.actions_mapped = wp.zeros(
+            (self.num_envs, self.scene["robot"].num_joints), dtype=wp.float32, device=self.sim.device
+        )
 
         # Initial states and targets
         if self.cfg.seed is None:
@@ -523,32 +528,16 @@ class LocomotionWarpEnv(DirectRLEnvWarp):
         self.torch_reset_time_outs = wp.to_torch(self.reset_time_outs)
         self.torch_episode_length_buf = self.episode_length_buf  # already a torch tensor via wp.to_torch
 
-    def _setup_scene(self) -> None:
-        self.cfg.terrain.num_envs = self.cfg.scene.num_envs
-        self.cfg.terrain.env_spacing = self.cfg.scene.env_spacing
-        asset_cfgs = self.cfg.robot, self.cfg.terrain, self.cfg.joint_wrench, self.cfg.light_cfg
-        plan = cloner.clone_plan_from_env_0(
-            self.cfg.scene.clone_cfg, asset_cfgs, self.cfg.scene.num_envs, self.cfg.scene.env_spacing
-        )
-        cfg = self.cfg.light_cfg
-        cfg.spawn.func(cfg.spawn.spawn_path, cfg.spawn, cfg.init_state.pos, cfg.init_state.rot)
-        self.robot = self.cfg.robot.class_type(self.cfg.robot)
-        self.terrain = self.cfg.terrain.class_type(self.cfg.terrain)
-        self.joint_wrench = self.cfg.joint_wrench.class_type(self.cfg.joint_wrench)
-        self.scene.articulations["robot"] = self.robot
-        self.scene.sensors["joint_wrench"] = self.joint_wrench
-        cloner.replicate(plan, replicate_physics=self.cfg.scene.replicate_physics)
-
     def _pre_physics_step(self, actions: wp.array) -> None:
         self.actions.assign(actions)
         wp.launch(
             update_actions,
-            dim=(self.num_envs, self.robot.num_joints),
+            dim=(self.num_envs, self.scene["robot"].num_joints),
             inputs=[actions, self.actions_mapped, self.joint_gears, self.action_scale],
         )
 
     def _apply_action(self) -> None:
-        self.robot.set_joint_effort_target_mask(target=self.actions_mapped)
+        self.scene["robot"].set_joint_effort_target_mask(target=self.actions_mapped)
 
     def _compute_intermediate_values(self) -> None:
         wp.launch(
@@ -582,7 +571,7 @@ class LocomotionWarpEnv(DirectRLEnvWarp):
         )
         wp.launch(
             scale_dof_pos,
-            dim=(self.num_envs, self.robot.num_joints),
+            dim=(self.num_envs, self.scene["robot"].num_joints),
             inputs=[
                 self.joint_pos,
                 self.soft_joint_pos_limits,
@@ -603,15 +592,15 @@ class LocomotionWarpEnv(DirectRLEnvWarp):
                 self.heading_proj,
                 self.dof_pos_scaled,
                 self.joint_vel,
-                self.joint_wrench.data.force.warp,
-                self.joint_wrench.data.torque.warp,
+                self.scene["joint_wrench"].data.force.warp,
+                self.scene["joint_wrench"].data.torque.warp,
                 self.feet_body_ids,
                 self.actions,
                 self.observations,
                 self.cfg.dof_vel_scale,
                 self.cfg.angular_velocity_scale,
                 self.cfg.contact_force_scale,
-                self.robot.num_joints,
+                self.scene["robot"].num_joints,
             ],
         )
         return {"policy": self.torch_obs_buf}
@@ -671,13 +660,13 @@ class LocomotionWarpEnv(DirectRLEnvWarp):
 
         super()._reset_idx(mask)
 
-        wp.launch(reset_actions, dim=(self.num_envs, self.robot.num_joints), inputs=[self.actions, mask])
+        wp.launch(reset_actions, dim=(self.num_envs, self.scene["robot"].num_joints), inputs=[self.actions, mask])
         wp.launch(
             reset_root,
             dim=self.num_envs,
             inputs=[
-                self.robot.data.default_root_pose.warp,
-                self.robot.data.default_root_vel.warp,
+                self.scene["robot"].data.default_root_pose.warp,
+                self.scene["robot"].data.default_root_vel.warp,
                 self.env_origins,
                 self.step_dt,
                 self.targets,
@@ -692,8 +681,8 @@ class LocomotionWarpEnv(DirectRLEnvWarp):
             reset_joints,
             dim=self.num_envs,
             inputs=[
-                self.robot.data.default_joint_pos.warp,
-                self.robot.data.default_joint_vel.warp,
+                self.scene["robot"].data.default_joint_pos.warp,
+                self.scene["robot"].data.default_joint_vel.warp,
                 self.soft_joint_pos_limits,
                 self.soft_joint_vel_limits,
                 self.joint_pos,
@@ -703,7 +692,7 @@ class LocomotionWarpEnv(DirectRLEnvWarp):
                 self.cfg.initial_joint_pos_range[1],
                 self.cfg.initial_joint_vel_range[0],
                 self.cfg.initial_joint_vel_range[1],
-                self.robot.num_joints,
+                self.scene["robot"].num_joints,
                 mask,
             ],
         )

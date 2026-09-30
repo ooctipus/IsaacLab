@@ -4,25 +4,22 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 import torch
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
+from isaaclab_newton.physics import MJWarpSolverCfg
 from isaaclab_ov.physics import OvPhysxCfg
 from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
-from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
-from isaaclab.assets.articulation import ArticulationCfg
+from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
 from isaaclab.envs import DirectMARLEnvCfg
 from isaaclab.markers import VisualizationMarkersCfg
 from isaaclab.physics import PhysxAutoCfg
-from isaaclab.scene import InteractiveSceneCfg
-from isaaclab.sim import SimulationCfg
 from isaaclab.sim.spawners.materials import RigidBodyMaterialBaseCfg
 from isaaclab.utils import math as math_utils
 from isaaclab.utils.configclass import configclass
-from isaaclab.visualizers import VisualizerCfg
 
 from isaaclab_tasks.core.handover.handover_common import GOAL_MARKER_CFG, OBJECT_RADIUS
 from isaaclab_tasks.utils import PresetCfg
+from isaaclab_tasks.utils.presets import MultiBackendSceneCfg, MultiBackendSimulationCfg
 
 from isaaclab_assets.robots.shadow_hand import (
     FINGERTIP_NAMES,
@@ -125,6 +122,26 @@ BALL_CFG = RigidObjectCfg(
 
 
 @configclass
+class ObjectCfg(PresetCfg):
+    """Backend-specific hand-over ball configuration."""
+
+    physx = BALL_CFG
+    isaacsim_physx = physx
+    ovphysx = physx
+    newton_mjwarp = BALL_CFG.replace(
+        spawn=BALL_CFG.spawn.replace(
+            physics_material=None,
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(
+                kinematic_enabled=False,
+                disable_gravity=False,
+                enable_gyroscopic_forces=True,
+            ),
+        )
+    )
+    default = newton_mjwarp
+
+
+@configclass
 class PhysicsCfg(PresetCfg):
     """Physics-backend preset (PhysX vs Newton/MJWarp).
 
@@ -138,17 +155,15 @@ class PhysicsCfg(PresetCfg):
         gpu_max_rigid_contact_count=2**23,
         gpu_max_rigid_patch_count=2**23,
     )
-    newton_mjwarp = NewtonCfg(
-        solver_cfg=MJWarpSolverCfg(
-            solver="newton",
-            integrator="implicitfast",
-            njmax=200,
-            nconmax=70,
-            impratio=10.0,
-            cone="elliptic",
-            update_data_interval=4,
-            ccd_iterations=50,  # bumped from default 35 for multi-finger contact geometry
-        ),
+    newton_mjwarp = MJWarpSolverCfg(
+        solver="newton",
+        integrator="implicitfast",
+        njmax=200,
+        nconmax=70,
+        impratio=10.0,
+        cone="elliptic",
+        update_data_interval=4,
+        ccd_iterations=50,  # bumped from default 35 for multi-finger contact geometry
         # 4 substeps (vs reorient's 2): sustained ball-palm contact drives a small fraction of
         # envs to NaN at 2.
         num_substeps=4,
@@ -157,6 +172,20 @@ class PhysicsCfg(PresetCfg):
     ovphysx = OvPhysxCfg()
     physx = PhysxAutoCfg(isaacsim_physx=isaacsim_physx, ovphysx=ovphysx)
     default = newton_mjwarp
+
+
+@configclass
+class HandoverSceneCfg(MultiBackendSceneCfg):
+    """Hands, object, and static assets constructed and cloned as one scene."""
+
+    ground = AssetBaseCfg(prim_path="/World/ground", spawn=sim_utils.GroundPlaneCfg())
+    right_robot: RightHandCfg = RightHandCfg()
+    left_robot: LeftHandCfg = LeftHandCfg()
+    object: ObjectCfg = ObjectCfg()
+    goal_object_cfg: VisualizationMarkersCfg = GOAL_MARKER_CFG
+    light = AssetBaseCfg(
+        prim_path="/World/Light", spawn=sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
+    )
 
 
 @configclass
@@ -170,34 +199,19 @@ class HandoverEnvCfg(DirectMARLEnvCfg):
     state_space = 290
 
     # simulation — values mirrored by the manager cfg
-    sim: SimulationCfg = SimulationCfg(
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(
         dt=1 / 120,
         render_interval=decimation,
         physics_material=RigidBodyMaterialBaseCfg(static_friction=1.0, dynamic_friction=1.0),
         physics=PhysicsCfg(),
-        # Frame both hands and the object between them. Without this the visualizer looks at the
-        # origin from its default 4 m away, which renders the pair a few pixels wide.
-        default_visualizer_cfg=VisualizerCfg(eye=(1.15, -1.65, 1.15), lookat=(0.0, -0.5, 0.55), focal_length=35.0),
     )
 
-    # robot
-    right_robot_cfg: RightHandCfg = RightHandCfg()
-    left_robot_cfg: LeftHandCfg = LeftHandCfg()
     actuated_joint_names = JOINT_NAMES
     actuated_tendon_names = TENDON_NAMES
     actuated_tendon_position_limits = TENDON_POSITION_LIMITS
     fingertip_body_names = FINGERTIP_NAMES
-
-    # in-hand object
-    object_cfg: RigidObjectCfg = BALL_CFG
-    ground_cfg: AssetBaseCfg = AssetBaseCfg(prim_path="/World/ground", spawn=sim_utils.GroundPlaneCfg())
-    light_cfg: AssetBaseCfg = AssetBaseCfg(
-        prim_path="/World/Light", spawn=sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
-    )
-    # goal object
-    goal_object_cfg: VisualizationMarkersCfg = GOAL_MARKER_CFG
     # scene
-    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=2048, env_spacing=1.5, replicate_physics=True)
+    scene: HandoverSceneCfg = HandoverSceneCfg(num_envs=2048, env_spacing=1.5, replicate_physics=True)
 
     # reset
     reset_position_noise = 0.01  # range of position at reset

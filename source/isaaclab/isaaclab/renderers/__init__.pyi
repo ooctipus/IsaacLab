@@ -9,11 +9,9 @@ __all__ = [
     "RenderBufferKind",
     "RenderBufferSpec",
     "RendererCfg",
-    "RenderContext",
 ]
 
 from .base_renderer import BaseRenderer
 from .camera_render_spec import CameraRenderSpec
 from .output_contract import RenderBufferKind, RenderBufferSpec
 from .renderer_cfg import RendererCfg
-from .render_context import RenderContext

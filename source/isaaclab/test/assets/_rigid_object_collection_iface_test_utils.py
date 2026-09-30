@@ -28,16 +28,10 @@ try:
     from isaaclab_physx.assets.rigid_object_collection.rigid_object_collection_data import (
         RigidObjectCollectionData as PhysXRigidObjectCollectionData,
     )
-    from isaaclab_physx.physics import PhysxManager as SimulationManager
     from isaaclab_physx.test.fixtures.views import MockRigidBodyViewWarp as PhysXMockRigidBodyViewWarp
 except ImportError:
     pass
 else:
-    # PhysX data classes need gravity even though interface tests do not create a physics scene.
-    _mock_physics_sim_view = MagicMock()
-    _mock_physics_sim_view.get_gravity.return_value = (0.0, 0.0, -9.81)
-    SimulationManager.get_physics_sim_view = MagicMock(return_value=_mock_physics_sim_view)
-
     BACKENDS.append("physx")
 
 try:
@@ -95,8 +89,12 @@ def create_physx_rigid_object_collection(
     object.__setattr__(collection, "_num_instances", num_instances)
     object.__setattr__(collection, "_body_names_list", [f"object_{i}" for i in range(num_bodies)])
 
-    # Create RigidObjectCollectionData instance
-    data = PhysXRigidObjectCollectionData(mock_view, num_bodies, device)
+    physics_sim_view = MagicMock()
+    physics_sim_view.get_gravity.return_value = (0.0, 0.0, -9.81)
+    physics_manager = MagicMock()
+    physics_manager.get_physics_sim_view.return_value = physics_sim_view
+    object.__setattr__(collection, "_physics_manager", physics_manager)
+    data = PhysXRigidObjectCollectionData(mock_view, num_bodies, device, physics_manager)
     object.__setattr__(collection, "_data", data)
     data.body_names = [f"object_{i}" for i in range(num_bodies)]
 
@@ -137,9 +135,6 @@ def create_newton_rigid_object_collection(
     device: str = "cuda:0",
 ):
     """Create a test Newton RigidObjectCollection instance with mocked dependencies."""
-    import isaaclab_newton.assets.rigid_object_collection.rigid_object_collection as newton_coll_module
-    import isaaclab_newton.assets.rigid_object_collection.rigid_object_collection_data as newton_data_module
-
     body_names = [f"object_{i}" for i in range(num_bodies)]
 
     # Create collection-specific mock view with (N, B) root shapes
@@ -152,7 +147,6 @@ def create_newton_rigid_object_collection(
     mock_view.set_random_mock_data()
     mock_view._noop_setters = True
 
-    # Mock NewtonManager (aliased as SimulationManager in Newton modules)
     mock_model = MagicMock()
     mock_model.world_count = num_instances
     mock_model.gravity = wp.array(
@@ -169,17 +163,7 @@ def create_newton_rigid_object_collection(
     mock_manager.get_state_1.return_value = mock_state
     mock_manager.get_control.return_value = mock_control
 
-    # Patch SimulationManager in both data and collection modules
-    original_data_manager = newton_data_module.SimulationManager
-    original_coll_manager = newton_coll_module.SimulationManager
-    newton_data_module.SimulationManager = mock_manager
-    newton_coll_module.SimulationManager = mock_manager
-
-    try:
-        data = NewtonRigidObjectCollectionData(mock_view, num_bodies, device)
-    finally:
-        newton_data_module.SimulationManager = original_data_manager
-        newton_coll_module.SimulationManager = original_coll_manager
+    data = NewtonRigidObjectCollectionData(mock_view, num_bodies, device, mock_manager)
 
     # Create collection shell (bypass __init__)
     collection = object.__new__(NewtonRigidObjectCollection)
@@ -192,6 +176,7 @@ def create_newton_rigid_object_collection(
     object.__setattr__(collection, "_num_bodies", num_bodies)
     object.__setattr__(collection, "_num_instances", num_instances)
     object.__setattr__(collection, "_body_names_list", body_names)
+    object.__setattr__(collection, "_physics_manager", mock_manager)
     object.__setattr__(collection, "_data", data)
     data.body_names = body_names
 
@@ -249,8 +234,10 @@ def create_ovphysx_rigid_object_collection(
     object.__setattr__(collection, "_num_bodies", num_bodies)
     object.__setattr__(collection, "_body_names_list", body_names)
 
-    # Create RigidObjectCollectionData
-    data = OvPhysxRigidObjectCollectionData(mock_bindings.view, num_bodies, device)
+    physics_manager = MagicMock()
+    physics_manager.get_gravity.return_value = (0.0, 0.0, -9.81)
+    object.__setattr__(collection, "_physics_manager", physics_manager)
+    data = OvPhysxRigidObjectCollectionData(mock_bindings.view, num_bodies, device, physics_manager)
     data.num_instances = num_instances
     data.num_bodies = num_bodies
     data._is_primed = True

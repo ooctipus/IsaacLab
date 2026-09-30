@@ -7,72 +7,85 @@
 
 .. code-block:: bash
 
-    # Usage with default PhysX physics and default kit visualizer.
+    # Usage with default PhysX physics and no visualizer.
     uv run python scripts/demos/quadcopter.py
 
     # Usage with Newton visualizer and default PhysX physics.
-    uv run python scripts/demos/quadcopter.py --visualizer newton
+    uv run python scripts/demos/quadcopter.py visualizer=newton_gl
 
-    # Usage with Newton (MJWarp) physics and default kit visualizer.
-    uv run python scripts/demos/quadcopter.py --physics newton_mjwarp
+    # Usage with Newton (MJWarp) physics and no visualizer.
+    uv run python scripts/demos/quadcopter.py physics=newton_mjwarp
 
     # Usage with Newton visualizer and Newton (MJWarp) physics.
-    uv run python scripts/demos/quadcopter.py --visualizer newton --physics newton_mjwarp
+    uv run python scripts/demos/quadcopter.py visualizer=newton_gl physics=newton_mjwarp
 
 """
-
-"""Parse CLI first so we can decide whether to launch Isaac Sim Kit."""
 
 import argparse
 
 from isaaclab.app import add_launcher_args, launch_simulation
 
+from isaaclab_tasks.utils import preset, resolve_config, setup_preset_cli
+from isaaclab_tasks.utils.presets import MultiBackendCameraCfg, MultiBackendSimulationCfg
+
 parser = argparse.ArgumentParser(
     description="This script demonstrates how to simulate a quadcopter.",
     conflict_handler="resolve",
 )
-parser.add_argument(
-    "--physics", default="isaacsim_physx", choices=["isaacsim_physx", "newton_mjwarp"], help="Physics backend."
-)
 add_launcher_args(parser)
-parser.set_defaults(visualizer=["kit"])
-args_cli = parser.parse_args()
+args_cli, config_overrides = setup_preset_cli(parser)
 
 import torch
 
 import isaaclab.sim as sim_utils
+from isaaclab.assets import ArticulationCfg, AssetBaseCfg
+from isaaclab.cloner import ReplicateSession
 
 ##
 # Pre-defined configs
 ##
-from isaaclab.physics import PhysicsCfg
+from isaaclab.utils.configclass import configclass
 
+from isaaclab_newton.physics import MJWarpSolverCfg  # isort:skip
+from isaaclab_physx.physics import PhysxCfg  # isort:skip
 from isaaclab_assets import CRAZYFLIE_CFG  # isort:skip
+
+
+@configclass
+class DemoCfg:
+    """Quadcopter demo configuration."""
+
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(
+        dt=0.005,
+        device=args_cli.device,
+        physics=preset(default=PhysxCfg(), isaacsim_physx=PhysxCfg(), newton_mjwarp=MJWarpSolverCfg()),
+    )
+    camera: MultiBackendCameraCfg = MultiBackendCameraCfg()
+    ground: AssetBaseCfg = AssetBaseCfg(prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg())
+    light: AssetBaseCfg = AssetBaseCfg(
+        prim_path="/World/Light",
+        spawn=sim_utils.DistantLightCfg(intensity=3000.0, color=(0.75, 0.75, 0.75)),
+    )
+    robot: ArticulationCfg = CRAZYFLIE_CFG.replace(prim_path="/World/Crazyflie")
 
 
 def main():
     """Main function."""
-    with launch_simulation(cfg=PhysicsCfg(), launcher_args=args_cli) as physics_cfg:
+    cfg = resolve_config(DemoCfg(), config_overrides)
+    with launch_simulation(cfg, args_cli):
         # Load kit helper
-        sim_cfg = sim_utils.SimulationCfg(dt=0.005, device=args_cli.device, physics=physics_cfg)
-        sim = sim_utils.SimulationContext(sim_cfg)
+        sim = sim_utils.SimulationContext(cfg.sim)
         # Set main camera
         sim.set_camera_view(eye=[0.25, -0.25, 0.7], target=[0.0, 0.0, 0.5])
 
-        # Spawn things into stage
-        # Ground-plane
-        cfg = sim_utils.GroundPlaneCfg()
-        cfg.func("/World/defaultGroundPlane", cfg)
-        # Lights
-        cfg = sim_utils.DistantLightCfg(intensity=3000.0, color=(0.75, 0.75, 0.75))
-        cfg.func("/World/Light", cfg)
-
-        # Robots
-        robot_cfg = CRAZYFLIE_CFG.replace(prim_path="/World/Crazyflie")
-        robot_cfg.spawn.func("/World/Crazyflie", robot_cfg.spawn, translation=robot_cfg.init_state.pos)
-
-        # create handles for the robots
-        robot = robot_cfg.class_type(robot_cfg)
+        asset_cfgs = tuple(
+            asset_cfg for asset_cfg in (cfg.ground, cfg.light, cfg.robot, cfg.camera) if asset_cfg is not None
+        )
+        with ReplicateSession(asset_cfgs, 1, 0.0):
+            _camera = cfg.camera.class_type(cfg.camera) if cfg.camera is not None else None
+            cfg.ground.class_type(cfg.ground)
+            cfg.light.class_type(cfg.light)
+            robot = cfg.robot.class_type(cfg.robot)
 
         # Play the simulator
         sim.reset()
@@ -87,14 +100,12 @@ def main():
 
         # Define simulation stepping
         sim_dt = sim.get_physics_dt()
-        sim_time = 0.0
         count = 0
         # Step while a visualizer window is still open (or none exist, e.g. headless); works for kit and newton.
         while sim.is_headless_or_exist_active_visualizer():
             # reset
             if count % 2000 == 0:
                 # reset counters
-                sim_time = 0.0
                 count = 0
                 # reset dof state
                 joint_pos, joint_vel = robot.data.default_joint_pos.torch, robot.data.default_joint_vel.torch
@@ -120,7 +131,6 @@ def main():
             # perform step
             sim.step()
             # update sim-time
-            sim_time += sim_dt
             count += 1
             # update buffers
             robot.update(sim_dt)

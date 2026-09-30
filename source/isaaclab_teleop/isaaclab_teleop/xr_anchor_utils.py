@@ -13,27 +13,73 @@ import math
 from typing import Any
 
 import numpy as np
+from scipy.spatial.transform import Rotation
 
 logger = logging.getLogger(__name__)
 
+from isaaclab.scene_data import SceneDataFormat
 from isaaclab.sim import SimulationContext
-from isaaclab.sim.utils.stage import get_current_stage, get_current_stage_id
 
 from .xr_cfg import XrAnchorRotationMode
 
 with contextlib.suppress(ModuleNotFoundError):
-    import usdrt
     from pxr import Gf as pxrGf
-    from usdrt import Rt
+
+
+class _PlannedFrameTransform:
+    """Read one plan-declared frame through the simulation's scene-data provider."""
+
+    def __init__(self, prim_path: str):
+        sim = SimulationContext.instance()
+        if sim is None:
+            raise RuntimeError("A planned frame requires an active SimulationContext.")
+        plan = sim.get_clone_plan()
+        if plan is None or not plan.is_complete:
+            raise RuntimeError("A planned frame requires a completed clone plan.")
+        frames = plan.match_frames(prim_path)
+        if len(frames) != 1:
+            raise ValueError(f"Frame expression {prim_path!r} resolved {len(frames)} frames; expected exactly one.")
+
+        self._frame = frames[0]
+        self._provider = sim.get_scene_data_provider()
+        self._body_index: int | None = None
+        if self._frame.body_path is not None:
+            body_paths = tuple(plan.iter_rigid_body_paths())
+            try:
+                self._body_index = body_paths.index(self._frame.body_path)
+            except ValueError as exc:
+                raise RuntimeError(f"Clone plan declares no body {self._frame.body_path!r}.") from exc
+
+        self._local_matrix = np.eye(4, dtype=np.float64)
+        self._local_matrix[:3, :3] = Rotation.from_quat(self._frame.pose[3:]).as_matrix()
+        self._local_matrix[:3, 3] = self._frame.pose[:3]
+
+    def world_matrix(self) -> np.ndarray:
+        """Return the conventional column-vector world matrix for the planned frame."""
+        if self._body_index is None:
+            return self._local_matrix
+        publication = self._provider.request_transforms(SceneDataFormat.HostTransposedMatrix44d)
+        if publication is None or publication.matrices is None:
+            raise RuntimeError(f"Physics published no transform for planned body {self._frame.body_path!r}.")
+        return publication.matrices[self._body_index].T @ self._local_matrix
 
 
 class XrAnchorSynchronizer:
     """Keeps the XR anchor prim aligned with a reference prim according to XR config."""
 
-    def __init__(self, xr_core: Any, xr_cfg: Any, xr_anchor_headset_path: str):
+    def __init__(
+        self,
+        xr_core: Any,
+        xr_cfg: Any,
+        xr_anchor_headset_path: str,
+        anchor_frame: _PlannedFrameTransform | None,
+        anchor_layer_identifier: str,
+    ):
         self._xr_core = xr_core
         self._xr_cfg = xr_cfg
         self._xr_anchor_headset_path = xr_anchor_headset_path
+        self._anchor_frame = anchor_frame
+        self.__anchor_headset_layer_identifier = anchor_layer_identifier
 
         self.__anchor_prim_initial_quat = None
         self.__anchor_prim_initial_height = None
@@ -42,21 +88,8 @@ class XrAnchorSynchronizer:
         self.__anchor_rotation_enabled = True
 
         # Cached anchor world transform (pos, quat_xyzw) set by sync_headset_to_anchor().
-        # Reading back from the prim hierarchy is unreliable when the anchor is a child of a
-        # physics-driven prim (e.g. the pelvis) because Fabric computes the hierarchy world
-        # matrix using the physics-updated parent while the local xform was decomposed against
-        # the USD-level parent, which can diverge.
         self.__cached_world_pos: np.ndarray | None = None
         self.__cached_world_quat_xyzw: np.ndarray | None = None
-
-        # Resolve USD layer identifier of the anchor for updates
-        try:
-            stage = get_current_stage()
-            xr_anchor_headset_prim = stage.GetPrimAtPath(self._xr_anchor_headset_path)
-            prim_stack = xr_anchor_headset_prim.GetPrimStack() if xr_anchor_headset_prim is not None else None
-            self.__anchor_headset_layer_identifier = prim_stack[0].layer.identifier if prim_stack else None
-        except Exception:
-            self.__anchor_headset_layer_identifier = None
 
     def reset(self):
         self.__anchor_prim_initial_quat = None
@@ -76,13 +109,8 @@ class XrAnchorSynchronizer:
         """Return the anchor world transform.
 
         Returns the cached world transform that was computed by the most recent
-        call to :meth:`sync_headset_to_anchor`.  Using the cached value avoids
-        a Fabric/USD layer mismatch: when the XR anchor prim is a child of a
-        physics-driven prim (e.g. the robot pelvis), reading
-        ``GetFabricHierarchyWorldMatrixAttr`` would compose the Fabric-side
-        parent transform (updated by physics) with a local xform that was
-        decomposed against the USD-side parent (which can lag behind),
-        producing an incorrect world matrix that drifts as the robot moves.
+        call to :meth:`sync_headset_to_anchor`. The reference frame itself is
+        resolved from the clone plan and read through the scene-data provider.
 
         Returns:
             A ``(position, quat_xyzw)`` tuple of numpy float64 arrays,
@@ -96,131 +124,73 @@ class XrAnchorSynchronizer:
         """Sync XR anchor pose in USD for both dynamic and static anchoring.
 
         For **dynamic** anchoring (``anchor_prim_path`` is set), the reference
-        prim's world position is read from Fabric and ``anchor_pos`` is added
-        as an offset.  For **static** anchoring (no prim path), ``anchor_pos``
-        is used directly as the world position.
+        prim's world pose is read through the scene-data provider and ``anchor_pos``
+        is added as an offset. For **static** anchoring, ``anchor_pos`` is the world position.
 
         In both cases the function calls ``set_world_transform_matrix`` on the
         XR core so that the rendering anchor and the pipeline's
         ``world_T_anchor`` matrix are guaranteed to agree, and caches the
         world transform for :meth:`get_world_transform`.
         """
-        try:
-            if self._xr_cfg.anchor_prim_path is not None:
-                stage_id = get_current_stage_id()
-                rt_stage = usdrt.Usd.Stage.Attach(stage_id)
-                if rt_stage is None:
-                    return
+        reference_quat = None
+        if self._anchor_frame is not None:
+            reference_matrix = self._anchor_frame.world_matrix()
+            reference_pos = reference_matrix[:3, 3].copy()
+            reference_quat_xyzw = Rotation.from_matrix(reference_matrix[:3, :3]).as_quat()
+            reference_quat = pxrGf.Quatd(reference_quat_xyzw[3], pxrGf.Vec3d(*reference_quat_xyzw[:3]))
+            if self.__anchor_prim_initial_quat is None:
+                self.__anchor_prim_initial_quat = reference_quat
+            if self._xr_cfg.fixed_anchor_height:
+                if self.__anchor_prim_initial_height is None:
+                    self.__anchor_prim_initial_height = reference_pos[2]
+                reference_pos[2] = self.__anchor_prim_initial_height
+            pxr_anchor_pos = pxrGf.Vec3d(*reference_pos) + pxrGf.Vec3d(*self._xr_cfg.anchor_pos)
+        else:
+            pxr_anchor_pos = pxrGf.Vec3d(*self._xr_cfg.anchor_pos)
 
-                rt_prim = rt_stage.GetPrimAtPath(self._xr_cfg.anchor_prim_path)
-                if rt_prim is None:
-                    return
+        x, y, z, w = self._xr_cfg.anchor_rot
+        pxr_cfg_quat = pxrGf.Quatd(w, pxrGf.Vec3d(x, y, z))
+        pxr_anchor_quat = pxr_cfg_quat
 
-                rt_xformable = Rt.Xformable(rt_prim)
-                if rt_xformable is None:
-                    return
+        if reference_quat is not None and self._xr_cfg.anchor_rotation_mode in (
+            XrAnchorRotationMode.FOLLOW_PRIM,
+            XrAnchorRotationMode.FOLLOW_PRIM_SMOOTHED,
+        ):
+            delta_quat = reference_quat * self.__anchor_prim_initial_quat.GetInverse()
+            wq = delta_quat.GetReal()
+            ix, iy, iz = delta_quat.GetImaginary()
+            yaw = math.atan2(2.0 * (wq * iz + ix * iy), 1.0 - 2.0 * (iy * iy + iz * iz))
+            pxr_anchor_quat = pxrGf.Quatd(math.cos(yaw * 0.5), pxrGf.Vec3d(0.0, 0.0, math.sin(yaw * 0.5)))
+            pxr_anchor_quat = pxr_anchor_quat * pxr_cfg_quat
 
-                world_matrix_attr = rt_xformable.GetFabricHierarchyWorldMatrixAttr()
-                if world_matrix_attr is None:
-                    return
+            if self._xr_cfg.anchor_rotation_mode == XrAnchorRotationMode.FOLLOW_PRIM_SMOOTHED:
+                if self.__smoothed_anchor_quat is None:
+                    self.__smoothed_anchor_quat = pxr_anchor_quat
+                else:
+                    dt = SimulationContext.instance().get_rendering_dt()
+                    alpha = 1.0 - math.exp(-dt / max(self._xr_cfg.anchor_rotation_smoothing_time, 1e-6))
+                    self.__smoothed_anchor_quat = pxrGf.Slerp(
+                        min(1.0, max(0.05, alpha)), self.__smoothed_anchor_quat, pxr_anchor_quat
+                    )
+                    pxr_anchor_quat = self.__smoothed_anchor_quat
 
-                rt_matrix = world_matrix_attr.Get()
-                if rt_matrix is None:
-                    return
-                rt_pos = rt_matrix.ExtractTranslation()
-
-                if self.__anchor_prim_initial_quat is None:
-                    self.__anchor_prim_initial_quat = rt_matrix.ExtractRotationQuat()
-
-                if getattr(self._xr_cfg, "fixed_anchor_height", False):
-                    if self.__anchor_prim_initial_height is None:
-                        self.__anchor_prim_initial_height = rt_pos[2]
-                    rt_pos[2] = self.__anchor_prim_initial_height
-
-                pxr_anchor_pos = pxrGf.Vec3d(*rt_pos) + pxrGf.Vec3d(*self._xr_cfg.anchor_pos)
-            else:
-                rt_matrix = None
-                pxr_anchor_pos = pxrGf.Vec3d(*self._xr_cfg.anchor_pos)
-
-            x, y, z, w = self._xr_cfg.anchor_rot
-            pxr_cfg_quat = pxrGf.Quatd(w, pxrGf.Vec3d(x, y, z))
-
-            pxr_anchor_quat = pxr_cfg_quat
-
-            if rt_matrix is not None:
-                if self._xr_cfg.anchor_rotation_mode in (
-                    XrAnchorRotationMode.FOLLOW_PRIM,
-                    XrAnchorRotationMode.FOLLOW_PRIM_SMOOTHED,
-                ):
-                    rt_prim_quat = rt_matrix.ExtractRotationQuat()
-                    rt_delta_quat = rt_prim_quat * self.__anchor_prim_initial_quat.GetInverse()
-                    pxr_delta_quat = pxrGf.Quatd(rt_delta_quat.GetReal(), pxrGf.Vec3d(*rt_delta_quat.GetImaginary()))
-
-                    # yaw-only about Z (right-handed, Z-up)
-                    wq = pxr_delta_quat.GetReal()
-                    ix, iy, iz = pxr_delta_quat.GetImaginary()
-                    yaw = math.atan2(2.0 * (wq * iz + ix * iy), 1.0 - 2.0 * (iy * iy + iz * iz))
-                    cy = math.cos(yaw * 0.5)
-                    sy = math.sin(yaw * 0.5)
-                    pxr_delta_yaw_only_quat = pxrGf.Quatd(cy, pxrGf.Vec3d(0.0, 0.0, sy))
-                    pxr_anchor_quat = pxr_delta_yaw_only_quat * pxr_cfg_quat
-
-                    if self._xr_cfg.anchor_rotation_mode == XrAnchorRotationMode.FOLLOW_PRIM_SMOOTHED:
-                        if self.__smoothed_anchor_quat is None:
-                            self.__smoothed_anchor_quat = pxr_anchor_quat
-                        else:
-                            dt = SimulationContext.instance().get_rendering_dt()
-                            alpha = 1.0 - math.exp(-dt / max(self._xr_cfg.anchor_rotation_smoothing_time, 1e-6))
-                            alpha = min(1.0, max(0.05, alpha))
-                            self.__smoothed_anchor_quat = pxrGf.Slerp(
-                                alpha, self.__smoothed_anchor_quat, pxr_anchor_quat
-                            )
-                            pxr_anchor_quat = self.__smoothed_anchor_quat
-
-                elif self._xr_cfg.anchor_rotation_mode == XrAnchorRotationMode.CUSTOM:
-                    if self._xr_cfg.anchor_rotation_custom_func is not None:
-                        rt_prim_quat = rt_matrix.ExtractRotationQuat()
-                        anchor_prim_pose = np.array(
-                            [
-                                rt_pos[0],
-                                rt_pos[1],
-                                rt_pos[2],
-                                rt_prim_quat.GetImaginary()[0],
-                                rt_prim_quat.GetImaginary()[1],
-                                rt_prim_quat.GetImaginary()[2],
-                                rt_prim_quat.GetReal(),
-                            ],
-                            dtype=np.float64,
-                        )
-                        prev_head = getattr(self, "_previous_headpose", np.zeros(7, dtype=np.float64))
-                        np_array_quat = self._xr_cfg.anchor_rotation_custom_func(prev_head, anchor_prim_pose)
-                        x, y, z, w = np_array_quat
-                        pxr_anchor_quat = pxrGf.Quatd(w, pxrGf.Vec3d(x, y, z))
-
-            pxr_mat = pxrGf.Matrix4d()
-            pxr_mat.SetTranslateOnly(pxr_anchor_pos)
-
-            if self.__anchor_rotation_enabled:
-                pxr_final_quat = pxr_anchor_quat
+        if self.__anchor_rotation_enabled:
+            pxr_final_quat = pxr_anchor_quat
+            self.__last_anchor_quat = pxr_anchor_quat
+        else:
+            if self.__last_anchor_quat is None:
                 self.__last_anchor_quat = pxr_anchor_quat
-            else:
-                if self.__last_anchor_quat is None:
-                    self.__last_anchor_quat = pxr_anchor_quat
-                pxr_final_quat = self.__last_anchor_quat
-                self.__smoothed_anchor_quat = self.__last_anchor_quat
+            pxr_final_quat = self.__last_anchor_quat
+            self.__smoothed_anchor_quat = self.__last_anchor_quat
 
-            pxr_mat.SetRotateOnly(pxr_final_quat)
-
-            self.__cached_world_pos = np.array(
-                [pxr_anchor_pos[0], pxr_anchor_pos[1], pxr_anchor_pos[2]], dtype=np.float64
-            )
-            fq_img = pxr_final_quat.GetImaginary()
-            self.__cached_world_quat_xyzw = np.array(
-                [fq_img[0], fq_img[1], fq_img[2], pxr_final_quat.GetReal()], dtype=np.float64
-            )
-
-            self._xr_core.set_world_transform_matrix(
-                self._xr_anchor_headset_path, pxr_mat, self.__anchor_headset_layer_identifier
-            )
-        except Exception as e:
-            logger.warning(f"XR: Anchor sync failed: {e}")
+        pxr_mat = pxrGf.Matrix4d()
+        pxr_mat.SetTranslateOnly(pxr_anchor_pos)
+        pxr_mat.SetRotateOnly(pxr_final_quat)
+        self.__cached_world_pos = np.asarray(pxr_anchor_pos, dtype=np.float64)
+        fq_img = pxr_final_quat.GetImaginary()
+        self.__cached_world_quat_xyzw = np.array(
+            [fq_img[0], fq_img[1], fq_img[2], pxr_final_quat.GetReal()], dtype=np.float64
+        )
+        self._xr_core.set_world_transform_matrix(
+            self._xr_anchor_headset_path, pxr_mat, self.__anchor_headset_layer_identifier
+        )

@@ -189,6 +189,26 @@ def test_build_instance_id_to_labels_and_semantics_non_colorize_keys_by_id():
     }
 
 
+@pytest.mark.parametrize(
+    ("stable_id_to_path", "semantic_id_to_labels", "missing"),
+    [
+        ({}, {2: {"class": "cone"}}, (1, 0, 0, 0)),
+        ({(1, 0, 0, 0): "/World/Cone"}, {}, 2),
+    ],
+)
+def test_instance_mapping_rejects_incomplete_native_maps(stable_id_to_path, semantic_id_to_labels, missing):
+    """A requested instance mapping cannot silently relabel missing native metadata."""
+    with pytest.raises(KeyError) as exc_info:
+        build_instance_id_to_labels_and_semantics(
+            stable_id_semantic_id_map=[((1, 0, 0, 0), 2)],
+            stable_id_to_path=stable_id_to_path,
+            semantic_id_to_labels=semantic_id_to_labels,
+            colorize=False,
+            device="cpu",
+        )
+    assert exc_info.value.args[0] == missing
+
+
 def test_build_instance_id_to_labels_and_semantics_colorize_keys_by_color():
     """Colorized instance maps are keyed by ``(r, g, b, a)`` tuples; reserved IDs use the fixed reserved colors."""
     if not torch.cuda.is_available():

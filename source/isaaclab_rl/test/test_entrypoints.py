@@ -247,7 +247,7 @@ def test_zero_agent_rejects_invalid_config_before_launch(monkeypatch: pytest.Mon
         def validate(self) -> None:
             raise ValueError("unsupported physics backend")
 
-    args = SimpleNamespace(num_envs=None, device=None, disable_fabric=False, task="Invalid-Task")
+    args = SimpleNamespace(num_envs=None, device=None, task="Invalid-Task")
     monkeypatch.setattr(_simple_agents, "_parse_args", lambda argv, policy: args)
     monkeypatch.setattr(_simple_agents, "resolve_task_config", lambda task, agent: (_InvalidCfg(), None))
     monkeypatch.setattr(

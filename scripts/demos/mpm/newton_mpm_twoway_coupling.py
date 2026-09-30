@@ -12,9 +12,10 @@ impulses back into the rigid-body solver.
 .. code-block:: bash
 
     uv run python scripts/demos/mpm/newton_mpm_twoway_coupling.py
+    uv run python scripts/demos/mpm/newton_mpm_twoway_coupling.py visualizer=rerun
 
-The spheres roll through three V-shaped chutes into the bath. Right-click and
-drag any sphere to apply an interactive force.
+The spheres roll through three V-shaped chutes into the bath. With Newton GL,
+right-click and drag any sphere to apply an interactive force.
 """
 
 from __future__ import annotations
@@ -23,20 +24,25 @@ import argparse
 from collections.abc import Callable
 from functools import partial
 
-from isaaclab_visualizers.newton import NewtonGLVisualizerCfg, NewtonRTXVisualizerCfg
+from isaaclab_visualizers.newton import NewtonGLVisualizerCfg
+from isaaclab_visualizers.rerun import RerunVisualizerCfg
+from isaaclab_visualizers.viser import ViserVisualizerCfg
 
 from pxr import Gf, Usd, UsdGeom
 
 import isaaclab.sim as sim_utils
 from isaaclab.app import add_launcher_args, launch_simulation
+from isaaclab.utils.configclass import configclass
+
+from isaaclab_tasks.utils import preset, resolve_config, setup_preset_cli
+from isaaclab_tasks.utils.presets import MultiBackendRendererCfg, MultiBackendSimulationCfg, MultiBackendVisualizerCfg
 
 parser = argparse.ArgumentParser(description="Newton rigid-sphere and MPM-sand two-way coupling demo.")
 parser.add_argument("--max_steps", type=int, default=-1, help="Stop after this many frames; negative runs forever.")
 parser.add_argument("--voxel_size", type=float, default=0.08, help="MPM grid voxel size [m].")
 parser.add_argument("--rigid_substeps", type=int, default=4, help="Rigid-solver substeps per coupled step.")
 add_launcher_args(parser)
-parser.set_defaults(visualizer=["newton_gl"])
-args_cli = parser.parse_args()
+args_cli, config_overrides = setup_preset_cli(parser)
 
 
 FPS = 100.0
@@ -87,26 +93,9 @@ def _spawn_colored_shape(
     return prim
 
 
-def create_visualizer_cfgs():
-    """Create the demo-specific Newton visualizer configuration."""
-    requested = args_cli.visualizer or []
-    if not {"newton", "newton_gl", "newton_rtx"}.intersection(requested):
-        return []
-
-    cfg_type = NewtonRTXVisualizerCfg if requested == ["newton_rtx"] else NewtonGLVisualizerCfg
-    return [
-        cfg_type(
-            streaming_view=False,
-            show_particles=True,
-            particle_color=PARTICLE_COLOR,
-            update_frequency=1,
-        )
-    ]
-
-
 def create_sim_cfg():
     """Create the proxy-coupled MJWarp and MPM simulation configuration."""
-    from isaaclab_newton.physics import MJWarpSolverCfg, MPMSolverCfg, NewtonCfg
+    from isaaclab_newton.physics import MJWarpSolverCfg, MPMSolverCfg
 
     from isaaclab_contrib.coupling import CouplerEntryCfg, CouplerProxyCfg, CouplerProxyMappingCfg
 
@@ -145,12 +134,18 @@ def create_sim_cfg():
         ],
         iterations=1,
     )
-    return sim_utils.SimulationCfg(
+    return MultiBackendSimulationCfg(
         dt=1.0 / FPS,
         device=args_cli.device,
         gravity=GRAVITY,
-        visualizer_cfgs=create_visualizer_cfgs(),
-        physics=NewtonCfg(solver_cfg=solver_cfg),
+        visualizer_cfgs=MultiBackendVisualizerCfg(
+            newton_gl=NewtonGLVisualizerCfg(
+                streaming_view=False, show_particles=True, particle_color=PARTICLE_COLOR, update_frequency=1
+            ),
+            rerun=RerunVisualizerCfg(show_particles=True),
+            viser=ViserVisualizerCfg(show_particles=True),
+        ),
+        physics=solver_cfg,
     )
 
 
@@ -161,7 +156,7 @@ def create_scene_cfg():
 
     from isaaclab.assets import AssetBaseCfg, RigidObjectCfg, RigidObjectCollectionCfg
     from isaaclab.scene import InteractiveSceneCfg
-    from isaaclab.utils.configclass import configclass
+    from isaaclab.sensors import CameraCfg
 
     def bath_collider(
         prim_path: str,
@@ -282,6 +277,22 @@ def create_scene_cfg():
             ),
         )
 
+        camera = preset(
+            default=None,
+            newton_rtx=CameraCfg(
+                prim_path="{ENV_REGEX_NS}/Camera",
+                offset=CameraCfg.OffsetCfg(
+                    pos=(6.0, -7.0, 5.0),
+                    rot=(0.5323327, 0.1886946, 0.2757109, 0.7778173),
+                    convention="opengl",
+                ),
+                spawn=sim_utils.PinholeCameraCfg(clipping_range=(0.1, 30.0)),
+                width=640,
+                height=480,
+                renderer_cfg=MultiBackendRendererCfg(),
+            ),
+        )
+
     return CoupledSceneCfg(num_envs=1, env_spacing=0.0)
 
 
@@ -299,13 +310,12 @@ def run_simulator(sim, scene) -> None:
 
 def main() -> None:
     """Launch the two-way rigid-MPM coupling demo."""
-    sim_cfg = create_sim_cfg()
-    with launch_simulation(sim_cfg, args_cli):
-        from isaaclab.scene import InteractiveScene
-
+    cfg = resolve_config({"sim": create_sim_cfg(), "scene": create_scene_cfg()}, config_overrides)
+    sim_cfg, scene_cfg = cfg["sim"], cfg["scene"]
+    with launch_simulation(cfg, args_cli):
         sim = sim_utils.SimulationContext(sim_cfg)
         sim.set_camera_view(eye=(6.0, -7.0, 5.0), target=(0.0, 0.4, 1.3))
-        scene = InteractiveScene(create_scene_cfg())
+        scene = scene_cfg.class_type(scene_cfg)
         sim.reset()
         sand = scene["sand"]
         particle_count = sand.num_instances * sand.particles_per_object
@@ -313,7 +323,6 @@ def main() -> None:
             f"[INFO]: Isaac Lab Newton two-way MPM demo ready. Spawned {particle_count} particles.",
             flush=True,
         )
-        print("[INFO]: Right-click and drag any sphere in the Newton viewer.", flush=True)
         run_simulator(sim, scene)
 
 

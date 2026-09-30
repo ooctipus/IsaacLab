@@ -45,7 +45,7 @@ from isaaclab.envs import ManagerBasedRLEnv
 from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, read_file
 
-from isaaclab_tasks.utils import parse_env_cfg
+from isaaclab_tasks.utils import resolve_task_config
 
 
 def main():
@@ -56,17 +56,15 @@ def main():
     policy = torch.jit.load(file, map_location=args_cli.device)
 
     # setup environment
-    env_cfg = parse_env_cfg("Isaac-Velocity-Rough-H1", device=args_cli.device, num_envs=1, overrides=hydra_overrides)
-    env_cfg.play_mode()
+    env_cfg, _ = resolve_task_config("Isaac-Velocity-Rough-H1", None, overrides=(*hydra_overrides, "presets=play"))
+    env_cfg.scene.num_envs = 1
     env_cfg.curriculum = None
     env_cfg.scene.terrain = TerrainImporterCfg(
         prim_path="/World/ground",
         terrain_type="usd",
         usd_path=f"{ISAAC_NUCLEUS_DIR}/Environments/Simple_Warehouse/warehouse.usd",
     )
-    if args_cli.device == "cpu":
-        env_cfg.sim.use_fabric = False
-
+    env_cfg.sim.device = args_cli.device
     # create environment
     env = ManagerBasedRLEnv(cfg=env_cfg)
 

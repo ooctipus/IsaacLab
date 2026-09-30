@@ -14,11 +14,14 @@ simulation_app = AppLauncher(headless=True).app
 
 
 import pytest
+from isaaclab_physx.physics import PhysxCfg
 
 from pxr import UsdPhysics, UsdShade
 
 import isaaclab.sim as sim_utils
 from isaaclab.sim import SimulationCfg, SimulationContext
+from isaaclab.sim.spawners.materials import visual_materials
+from isaaclab.sim.utils import prims
 from isaaclab.utils.assets import NVIDIA_NUCLEUS_DIR
 
 pytestmark = [pytest.mark.integration, pytest.mark.isaacsim_ci]
@@ -29,7 +32,7 @@ def sim():
     """Create a simulation context."""
     sim_utils.create_new_stage()
     dt = 0.1
-    sim = SimulationContext(SimulationCfg(dt=dt))
+    sim = SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=dt))
     sim_utils.update_stage()
     yield sim
     sim.stop()
@@ -46,6 +49,21 @@ def test_spawn_preview_surface(sim):
     assert prim.GetPrimTypeInfo().GetTypeName() == "Shader"
     # Check properties
     assert prim.GetAttribute("inputs:diffuseColor").Get() == cfg.diffuse_color
+
+
+def test_spawn_preview_surface_without_kit(sim, monkeypatch):
+    """Preview surfaces are authored directly through USD when Kit is unavailable."""
+    monkeypatch.setattr(visual_materials, "has_kit", lambda: False)
+    monkeypatch.setattr(prims, "has_kit", lambda: False, raising=False)
+    cfg = sim_utils.PreviewSurfaceCfg(diffuse_color=(0.2, 0.4, 0.6))
+    prim = cfg.func("/Looks/KitlessPreviewSurface", cfg)
+    object_prim = sim_utils.create_prim("/World/Geometry/box", "Cube")
+    sim_utils.bind_visual_material(object_prim.GetPath(), "/Looks/KitlessPreviewSurface")
+    assert prim.IsValid()
+    assert UsdShade.Shader(prim).GetIdAttr().Get() == "UsdPreviewSurface"
+    assert prim.GetAttribute("inputs:diffuseColor").Get() == cfg.diffuse_color
+    binding = UsdShade.MaterialBindingAPI(object_prim).GetDirectBinding()
+    assert binding.GetMaterialPath() == "/Looks/KitlessPreviewSurface"
 
 
 def test_spawn_mdl_material(sim):

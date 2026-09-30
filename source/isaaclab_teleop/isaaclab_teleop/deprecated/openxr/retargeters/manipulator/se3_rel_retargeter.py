@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 import torch
@@ -12,8 +12,11 @@ from scipy.spatial.transform import Rotation
 
 from isaaclab.devices.device_base import DeviceBase
 from isaaclab.devices.retargeter_base import RetargeterBase, RetargeterCfg
-from isaaclab.markers import VisualizationMarkers
+from isaaclab.markers import VisualizationMarkersCfg
 from isaaclab.markers.config import FRAME_MARKER_CFG
+
+_MARKER_CFG = FRAME_MARKER_CFG.replace(prim_path="/Visuals/ee_goal")
+_MARKER_CFG.markers["frame"].scale = (0.1, 0.1, 0.1)
 
 
 class Se3RelRetargeter(RetargeterBase):
@@ -77,9 +80,7 @@ class Se3RelRetargeter(RetargeterBase):
         # Initialize visualization if enabled
         self._enable_visualization = cfg.enable_visualization
         if cfg.enable_visualization:
-            frame_marker_cfg = FRAME_MARKER_CFG.copy()
-            frame_marker_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
-            self._goal_marker = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/ee_goal"))
+            self._goal_marker = cfg.visualizer_cfg.class_type(cfg.visualizer_cfg)
             self._goal_marker.set_visibility(True)
             self._visualization_pos = np.zeros(3)
             self._visualization_rot = np.array([0.0, 0.0, 0.0, 1.0])  # xyzw format
@@ -93,8 +94,7 @@ class Se3RelRetargeter(RetargeterBase):
         """Convert hand joint poses to robot end-effector command.
 
         Args:
-            data: Dictionary mapping tracking targets to joint data dictionaries.
-                The joint names are defined in isaaclab.devices.openxr.common.HAND_JOINT_NAMES
+            data: Dictionary mapping tracking targets to OpenXR joint data dictionaries.
 
         Returns:
             torch.Tensor: 6D tensor containing position (xyz) and rotation vector (rx,ry,rz)
@@ -214,5 +214,6 @@ class Se3RelRetargeterCfg(RetargeterCfg):
     alpha_pos: float = 0.5
     alpha_rot: float = 0.5
     enable_visualization: bool = False
+    visualizer_cfg: VisualizationMarkersCfg = field(default_factory=lambda: _MARKER_CFG.copy())
     bound_hand: DeviceBase.TrackingTarget = DeviceBase.TrackingTarget.HAND_RIGHT
     retargeter_type: type[RetargeterBase] = Se3RelRetargeter

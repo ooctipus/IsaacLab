@@ -5,13 +5,12 @@
 
 from dataclasses import MISSING
 
-from isaaclab.assets.asset_base_cfg import AssetBaseCfg
 from isaaclab.sim.spawners.materials import VisualMaterialCfg as VisualMaterialSpawnerCfg
 from isaaclab.utils.configclass import configclass
 
 
 @configclass
-class VisualMaterialCfg(AssetBaseCfg):
+class VisualMaterialCfg:
     """A runtime-writable material declared like any other scene asset.
 
     An absolute :attr:`prim_path` declares one shared material. For independent per-environment
@@ -20,9 +19,10 @@ class VisualMaterialCfg(AssetBaseCfg):
     """
 
     class_type: type | str = "{DIR}.visual_material:VisualMaterial"
-    cloning_contexts: tuple[str | type, ...] | None = ()
-    spawn: VisualMaterialSpawnerCfg | None = MISSING
-    """Material spawner, or ``None`` to wrap an existing material prim."""
+    prim_path: str = MISSING
+    """Material path, optionally containing the environment namespace macro."""
+    spawn: VisualMaterialSpawnerCfg = MISSING
+    """Material spawner."""
     channels: tuple[str, ...] = ("color",)
     """Numeric shader channels writable at runtime.
 

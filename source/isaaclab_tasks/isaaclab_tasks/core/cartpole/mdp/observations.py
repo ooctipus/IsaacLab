@@ -28,6 +28,14 @@ class CameraImageStack(ManagerTermBase):
         frame_stack = max(1, env.cfg.frame_stack)
         env.cfg.frame_stack = frame_stack
 
+        sensor_cfg: SceneEntityCfg = cfg.params["sensor_cfg"]
+        data_type: str = cfg.params["data_type"]
+        camera: Camera = env.scene.sensors[sensor_cfg.name]
+        _, height, width, channels = camera.output_shapes[data_type]
+        if data_type == "albedo":
+            channels = 3
+        self._output_shape = (channels * frame_stack, height, width)
+
         self._stack = None
         if frame_stack > 1:
             self._stack = CircularBuffer(

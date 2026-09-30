@@ -14,8 +14,6 @@ import torch
 import warp as wp
 from tqdm import tqdm
 
-import isaaclab.sim as sim_utils
-from isaaclab import cloner
 from isaaclab.managers import EventTermCfg, ManagerTermBase, ManagerTermBaseCfg, SceneEntityCfg
 from isaaclab.utils.math import quat_apply, random_orientation, sample_uniform
 
@@ -23,7 +21,7 @@ from isaaclab_tasks.utils.success_monitor import SuccessMonitor, SuccessMonitorC
 
 from .utils import (
     collect_body_collision_meshes,
-    collect_collision_meshes,
+    collect_rigid_object_collision_meshes,
     farthest_point_sampling,
     get_reset_state,
     sample_object_point_cloud,
@@ -108,8 +106,8 @@ def reset_to_target(
     contact-rich starts in the distribution. Interpenetrating draws are expected to be
     rejected by the criteria of the wrapping :class:`conditional_reset`.
 
-    The target body pose is read from the live simulation state, so the term must run after
-    the reset terms that pose the target asset (dict order inside the wrapper).
+    The target body pose is read from live simulation state, so this term belongs in the
+    :class:`conditional_reset` state-dependent phase after the target asset is reconciled.
 
     Args:
         env: The environment.
@@ -148,7 +146,8 @@ def reset_to_target(
 class conditional_reset(ManagerTermBase):
     """Run wrapped reset terms and guarantee the resulting states satisfy a criterion.
 
-    Wraps a dict of ordinary reset event terms. The nested :class:`EventTermCfg` objects are
+    Wraps two phases of ordinary reset event terms with explicit physics reconciliation between them.
+    The nested :class:`EventTermCfg` objects are
     resolved by the event manager's own at-play pass (nested term configs inside ``params``
     are processed recursively), so this term only *calls* them and never resolves functions,
     scene entities, or class terms itself.
@@ -193,6 +192,7 @@ class conditional_reset(ManagerTermBase):
         env: ManagerBasedEnv,
         env_ids: torch.Tensor,
         terms: dict[str, EventTermCfg],
+        state_dependent_terms: dict[str, EventTermCfg],
         valid_criteria: dict[str, ManagerTermBaseCfg],
         buffer_size_per_group: int = 20,
         max_prefill_iters: int | None = None,
@@ -210,6 +210,8 @@ class conditional_reset(ManagerTermBase):
                 reset therefore restores a banked state to every environment.
             terms: Reset event terms to wrap, applied in insertion order during prefill.
                 Resolved by the event manager before the first call.
+            state_dependent_terms: Reset terms applied after explicit physics reconciliation.
+                Their writes must update owned asset data directly, as :func:`reset_to_target` does.
             valid_criteria: Criteria as term configs (e.g. :class:`SlabClearanceCfg`,
                 :class:`MeshClearanceCfg`), each evaluated as
                 ``func(env, env_ids, **params) -> BoolTensor`` over the freshly reset
@@ -240,8 +242,9 @@ class conditional_reset(ManagerTermBase):
         def roll_once(roll_ids: torch.Tensor) -> torch.Tensor:
             for term in terms.values():
                 term.func(env, roll_ids, **term.params)
-            # no explicit refresh needed: state writes invalidate the FK timestamps and the
-            # criteria's kinematic reads recompute on demand
+            env.sim.forward()
+            for term in state_dependent_terms.values():
+                term.func(env, roll_ids, **term.params)
             ok = torch.ones(len(roll_ids), dtype=torch.bool, device=roll_ids.device)
             for criterion in valid_criteria.values():
                 ok &= criterion.func(env, roll_ids, **criterion.params)
@@ -319,6 +322,7 @@ class conditional_reset(ManagerTermBase):
             self._prefilled = True
             # drop the prefill-only terms/criteria so their device memory is freed
             terms.clear()
+            state_dependent_terms.clear()
             valid_criteria.clear()
             # the rolls above perturbed every environment, so the first reset restores a
             # banked state to all of them, not just the requested subset
@@ -633,22 +637,7 @@ class mesh_clearance(ManagerTermBase):
         self._vertices = wp.array(np.concatenate(vertices), dtype=wp.vec3, device=device)
         self._vertex_body = wp.array(vertex_body, dtype=wp.int32, device=device)
 
-        object_meshes = []
-        env_object_mesh = np.zeros(env.num_envs, dtype=np.int32)
-        mesh_by_path: dict[str, int] = {}
-        clone_plan = sim_utils.SimulationContext.instance().get_clone_plan()
-        for _, _, source_path, env_ids in cloner.query.iter_sources(clone_plan, self._object.cfg.prim_path):
-            if source_path not in mesh_by_path:
-                object_prim = sim_utils.get_current_stage().GetPrimAtPath(source_path)
-                object_mesh_by_id = collect_collision_meshes(object_prim, lambda prim: (0, object_prim))
-                if not object_mesh_by_id:
-                    raise RuntimeError(f"no collision meshes found under '{source_path}'.")
-                object_scale = np.asarray(sim_utils.resolve_prim_scale(object_prim), dtype=np.float32)
-                object_mesh = object_mesh_by_id[0]
-                object_mesh.apply_scale(object_scale)
-                mesh_by_path[source_path] = len(object_meshes)
-                object_meshes.append(object_mesh)
-            env_object_mesh[np.asarray(env_ids, dtype=np.int64)] = mesh_by_path[source_path]
+        object_meshes, env_object_mesh = collect_rigid_object_collision_meshes(env.num_envs, self._object.cfg.prim_path)
 
         self._object_meshes = []
         object_mesh_center = []

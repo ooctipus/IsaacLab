@@ -25,6 +25,7 @@ import math
 import pytest
 import torch
 import warp as wp
+from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import RigidObject, RigidObjectCfg
@@ -99,7 +100,10 @@ ROT_45_Z = (0.0, 0.0, math.sin(math.pi / 8), math.cos(math.pi / 8))  # 45deg abo
 @pytest.mark.parametrize("device", ["cuda:0", "cpu"])
 def test_composer_vs_physx_local_force(device):
     """Baseline: local force at identity orientation. Composer and raw PhysX should match exactly."""
-    with build_simulation_context(device=device, gravity_enabled=False, auto_add_lighting=True) as sim:
+    with build_simulation_context(
+        sim_cfg=sim_utils.SimulationCfg(physics=PhysxCfg(), gravity=(0.0, 0.0, 0.0)),
+        device=device,
+    ) as sim:
         sim._app_control_on_stop_handle = None
         cube_composer, cube_raw = generate_dual_cube_scene(num_cubes=1, device=device)
 
@@ -164,7 +168,10 @@ def test_composer_vs_physx_local_force(device):
 @pytest.mark.parametrize("device", ["cuda:0", "cpu"])
 def test_composer_vs_physx_global_force(device):
     """Global force with non-identity rotation (45 deg Z). Rotation matters for frame conversion."""
-    with build_simulation_context(device=device, gravity_enabled=False, auto_add_lighting=True) as sim:
+    with build_simulation_context(
+        sim_cfg=sim_utils.SimulationCfg(physics=PhysxCfg(), gravity=(0.0, 0.0, 0.0)),
+        device=device,
+    ) as sim:
         sim._app_control_on_stop_handle = None
         cube_composer, cube_raw = generate_dual_cube_scene(num_cubes=1, device=device, initial_rot=ROT_45_Z)
 
@@ -236,7 +243,10 @@ def test_composer_vs_physx_global_force(device):
 @pytest.mark.parametrize("device", ["cuda:0", "cpu"])
 def test_composer_vs_physx_local_force_at_position(device):
     """Local force at a local offset. Both paths should produce identical cross-product torque."""
-    with build_simulation_context(device=device, gravity_enabled=False, auto_add_lighting=True) as sim:
+    with build_simulation_context(
+        sim_cfg=sim_utils.SimulationCfg(physics=PhysxCfg(), gravity=(0.0, 0.0, 0.0)),
+        device=device,
+    ) as sim:
         sim._app_control_on_stop_handle = None
         cube_composer, cube_raw = generate_dual_cube_scene(num_cubes=1, device=device)
 
@@ -304,7 +314,10 @@ def test_composer_vs_physx_local_force_at_position(device):
 @pytest.mark.parametrize("device", ["cuda:0", "cpu"])
 def test_composer_vs_physx_global_force_at_position(device):
     """Global force at world position with non-identity rotation. Both rotation AND position correction matter."""
-    with build_simulation_context(device=device, gravity_enabled=False, auto_add_lighting=True) as sim:
+    with build_simulation_context(
+        sim_cfg=sim_utils.SimulationCfg(physics=PhysxCfg(), gravity=(0.0, 0.0, 0.0)),
+        device=device,
+    ) as sim:
         sim._app_control_on_stop_handle = None
         cube_composer, cube_raw = generate_dual_cube_scene(num_cubes=1, device=device, initial_rot=ROT_45_Z)
 
@@ -376,7 +389,10 @@ def test_composer_vs_physx_global_force_at_position(device):
 @pytest.mark.parametrize("device", ["cuda:0", "cpu"])
 def test_composer_vs_physx_local_torque(device):
     """Local torque at identity orientation. Should produce matching angular velocity."""
-    with build_simulation_context(device=device, gravity_enabled=False, auto_add_lighting=True) as sim:
+    with build_simulation_context(
+        sim_cfg=sim_utils.SimulationCfg(physics=PhysxCfg(), gravity=(0.0, 0.0, 0.0)),
+        device=device,
+    ) as sim:
         sim._app_control_on_stop_handle = None
         cube_composer, cube_raw = generate_dual_cube_scene(num_cubes=1, device=device)
 
@@ -441,7 +457,10 @@ def test_composer_vs_physx_local_torque(device):
 @pytest.mark.parametrize("device", ["cuda:0", "cpu"])
 def test_composer_vs_physx_global_torque(device):
     """Global torque with non-identity rotation (45 deg Z). Composer rotates to body frame internally."""
-    with build_simulation_context(device=device, gravity_enabled=False, auto_add_lighting=True) as sim:
+    with build_simulation_context(
+        sim_cfg=sim_utils.SimulationCfg(physics=PhysxCfg(), gravity=(0.0, 0.0, 0.0)),
+        device=device,
+    ) as sim:
         sim._app_control_on_stop_handle = None
         cube_composer, cube_raw = generate_dual_cube_scene(num_cubes=1, device=device, initial_rot=ROT_45_Z)
 
@@ -500,7 +519,10 @@ def test_composer_vs_physx_global_force_multi_env(device):
     Regression: checks that env-indexing and per-body quaternion handling work correctly
     when there is more than one environment.
     """
-    with build_simulation_context(device=device, gravity_enabled=False, auto_add_lighting=True) as sim:
+    with build_simulation_context(
+        sim_cfg=sim_utils.SimulationCfg(physics=PhysxCfg(), gravity=(0.0, 0.0, 0.0)),
+        device=device,
+    ) as sim:
         sim._app_control_on_stop_handle = None
         cube_composer, cube_raw = generate_dual_cube_scene(
             num_cubes=NUM_CUBES_MULTI, device=device, initial_rot=ROT_45_Z
@@ -572,7 +594,10 @@ def test_composer_vs_physx_global_force_with_reset(device):
     Regression: after reset the permanent wrench is cleared. Re-setting it should
     produce correct behavior even though the object state was just reset.
     """
-    with build_simulation_context(device=device, gravity_enabled=False, auto_add_lighting=True) as sim:
+    with build_simulation_context(
+        sim_cfg=sim_utils.SimulationCfg(physics=PhysxCfg(), gravity=(0.0, 0.0, 0.0)),
+        device=device,
+    ) as sim:
         sim._app_control_on_stop_handle = None
         cube_composer, cube_raw = generate_dual_cube_scene(
             num_cubes=NUM_CUBES_MULTI, device=device, initial_rot=ROT_45_Z, spacing=20.0
@@ -708,7 +733,7 @@ def test_composer_vs_physx_payload_scenario(device):
     orientation changes. The composer does a world->body->world round-trip each step;
     this test catches any precision drift from that.
     """
-    with build_simulation_context(device=device, gravity_enabled=True, auto_add_lighting=True) as sim:
+    with build_simulation_context(sim_cfg=sim_utils.SimulationCfg(physics=PhysxCfg()), device=device) as sim:
         sim._app_control_on_stop_handle = None
         cube_composer, cube_raw = generate_dual_cube_scene(
             num_cubes=1, height=0.5, device=device, initial_rot=ROT_45_Z, spacing=20.0
@@ -783,7 +808,10 @@ def test_composer_vs_physx_permanent_global_force_at_position_long_run(device):
     translates and rotates significantly over 100 steps, but not so large that it causes
     numerical instability.
     """
-    with build_simulation_context(device=device, gravity_enabled=False, auto_add_lighting=True) as sim:
+    with build_simulation_context(
+        sim_cfg=sim_utils.SimulationCfg(physics=PhysxCfg(), gravity=(0.0, 0.0, 0.0)),
+        device=device,
+    ) as sim:
         sim._app_control_on_stop_handle = None
         cube_composer, cube_raw = generate_dual_cube_scene(num_cubes=1, device=device, initial_rot=ROT_45_Z)
 

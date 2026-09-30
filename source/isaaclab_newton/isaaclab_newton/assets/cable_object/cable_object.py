@@ -13,14 +13,10 @@ import warp as wp
 from newton import JointType
 from newton.selection import ArticulationView
 
-from pxr import UsdGeom
-
 from isaaclab.assets.cable_object.base_cable_object import BaseCableObject
 from isaaclab.physics import PhysicsEvent
-from isaaclab.sim.utils.queries import has_deformable_curve_api, path_expr_to_glob, resolve_matching_prims_from_source
+from isaaclab.sim.utils.queries import path_expr_to_glob
 from isaaclab.utils.warp import ProxyArray
-
-from isaaclab_newton.physics import NewtonManager as SimulationManager
 
 from .cable_object_data import CableObjectData
 from .kernels import (
@@ -175,22 +171,17 @@ class CableObject(BaseCableObject):
         )
 
     def _initialize_impl(self) -> None:
-        def is_cable_curve(prim) -> bool:
-            return prim.IsA(UsdGeom.BasisCurves) and has_deformable_curve_api(prim)
+        cable = self._physics_manager._sim.get_clone_plan().match_cables(self.cfg.prim_path)[0]
 
-        resolve_kwargs = {"predicate": is_cable_curve, "expected_num_matches": 1}
-        curve_prim, curve_path_expr = resolve_matching_prims_from_source(self.cfg.prim_path, **resolve_kwargs)[0]
-        num_segments = int(UsdGeom.BasisCurves(curve_prim).GetCurveVertexCountsAttr().Get()[0]) - 1
-
-        model = SimulationManager.get_model()
-        articulation_path_expr = f"{curve_path_expr}_articulation"
+        model = self._physics_manager.get_model()
+        articulation_path_expr = f"{cable.view_path}_articulation"
         self._root_view = ArticulationView(
             model,
             path_expr_to_glob(articulation_path_expr),
             verbose=False,
         )
         topology_error = "CableObject requires one standalone, unwelded cable articulation per simulation world."
-        expected_joint_count = num_segments - 1
+        expected_joint_count = cable.segment_count - 1
         joint_types = self.root_view.get_attribute("joint_type", model).numpy()
         valid_topology = (
             self.root_view.count_per_world == 1
@@ -204,8 +195,8 @@ class CableObject(BaseCableObject):
         self._ALL_INDICES = wp.array(list(range(self.num_instances)), dtype=wp.int32, device=self.device)
         self._ALL_ENV_MASK = wp.ones((self.num_instances,), dtype=wp.bool, device=self.device)
 
-        self._data = CableObjectData(self.root_view, self.device)
-        self._physics_ready_handle = SimulationManager.register_callback(
+        self._data = CableObjectData(self.root_view, self.device, self._physics_manager)
+        self._physics_ready_handle = self._physics_manager.register_callback(
             self._rebind,
             PhysicsEvent.PHYSICS_READY,
             name=f"cable_object_rebind_{self.cfg.prim_path}",
@@ -245,15 +236,15 @@ class CableObject(BaseCableObject):
                 device=self.device,
             )
         if use_mask:
-            SimulationManager.invalidate_body_state(env_mask=selector)
+            self._physics_manager.invalidate_body_state(env_mask=selector)
         else:
-            SimulationManager.invalidate_body_state(selector)
+            self._physics_manager.invalidate_body_state(selector)
         self.update(0.0)
 
     def _iter_states(self):
         """Yield active Newton states."""
-        state_0 = SimulationManager.get_state_0()
-        state_1 = SimulationManager.get_state_1()
+        state_0 = self._physics_manager.get_state_0()
+        state_1 = self._physics_manager._newton.get_state_1()
         yield state_0
         if state_1 is not None and state_1 is not state_0:
             yield state_1

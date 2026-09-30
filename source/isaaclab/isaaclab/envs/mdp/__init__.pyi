@@ -222,7 +222,6 @@ from .events import (
     reset_root_state_with_random_orientation,
     reset_scene_to_default,
 )
-from .visual_events import randomize_visual_material, randomize_visual_shape
 from .observations import (
     base_ang_vel,
     base_lin_vel,
@@ -237,8 +236,6 @@ from .observations import (
     image_features,
     imu_ang_vel,
     imu_lin_acc,
-    pva_orientation,
-    pva_projected_gravity,
     joint_effort,
     joint_pos,
     joint_pos_limit_normalized,
@@ -247,6 +244,8 @@ from .observations import (
     joint_vel_rel,
     last_action,
     projected_gravity,
+    pva_orientation,
+    pva_projected_gravity,
     remaining_time_s,
     root_ang_vel_w,
     root_lin_vel_w,
@@ -307,3 +306,4 @@ from .terminations import (
     root_height_below_minimum,
     time_out,
 )
+from .visual_events import randomize_visual_material, randomize_visual_shape

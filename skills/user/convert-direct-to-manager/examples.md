@@ -12,7 +12,7 @@ Important mappings:
 
 | Direct source | Manager-based target |
 | --- | --- |
-| `_setup_scene()` and direct terrain config | `AntSceneCfg` with terrain, robot, sensors, and lights |
+| `AntDirectSceneCfg` declarations | `AntSceneCfg` declarations for terrain, robot, sensors, and lights |
 | `_apply_action()` joint efforts | `ActionsCfg` with `JointEffortActionCfg` |
 | `_get_observations()` tensor concatenation | `ObservationsCfg.PolicyCfg` with ordered `ObsTerm` entries |
 | `_get_rewards()` and reward helpers | `RewardsCfg` with `RewTerm` entries and shared MDP functions/classes |

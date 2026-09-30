@@ -11,19 +11,22 @@ the simulator or OpenGL convention for the camera, we use the robotics or ROS co
 
 .. code-block:: bash
 
-    # Usage with GUI
-    uv run python scripts/tutorials/04_sensors/run_usd_camera.py --viz kit
-
-    # Usage with no visualizer
-    uv run python scripts/tutorials/04_sensors/run_usd_camera.py
+    uv run python scripts/tutorials/04_sensors/run_usd_camera.py visualizer=kit
+    uv run python scripts/tutorials/04_sensors/run_usd_camera.py visualizer=viser
 
 """
 
-"""Launch Isaac Sim Simulator first."""
-
 import argparse
+from dataclasses import MISSING
 
-from isaaclab.app import AppLauncher
+from isaaclab_physx.physics import PhysxCfg
+from isaaclab_physx.renderers import IsaacRtxRendererCfg
+
+import isaaclab.sim as sim_utils
+from isaaclab.app import add_launcher_args, launch_simulation
+
+from isaaclab_tasks.utils import resolve_config, setup_preset_cli
+from isaaclab_tasks.utils.presets import MultiBackendSimulationCfg
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="This script demonstrates how to use the camera sensor.")
@@ -49,46 +52,41 @@ parser.add_argument(
         " The viewport will always initialize with the perspective of camera 0."
     ),
 )
-# append AppLauncher cli args
-AppLauncher.add_app_launcher_args(parser)
-# parse the arguments
-args_cli = parser.parse_args()
-# Camera sensors require the rendering extensions in headless and viewport-free launches.
-args_cli.enable_cameras = True
-
-# launch omniverse app
-app_launcher = AppLauncher(args_cli)
-simulation_app = app_launcher.app
-
-"""Rest everything follows."""
+add_launcher_args(parser)
+args_cli, config_overrides = setup_preset_cli(parser)
 
 import os
 import random
 
 import numpy as np
 import torch
-from isaaclab_physx.renderers import IsaacRtxRendererCfg
 
-import omni.replicator.core as rep
-
-import isaaclab.sim as sim_utils
-from isaaclab.assets import RigidObject, RigidObjectCfg
-from isaaclab.markers import VisualizationMarkers
+from isaaclab import cloner
+from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
+from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
 from isaaclab.markers.config import RAY_CASTER_MARKER_CFG
 from isaaclab.sensors.camera import Camera, CameraCfg
 from isaaclab.sensors.camera.utils import create_pointcloud_from_depth
 from isaaclab.utils import convert_dict_to_backend
+from isaaclab.utils.configclass import configclass
 
 
-def define_sensor() -> Camera:
-    """Defines the camera sensor to add to the scene."""
-    # Setup camera sensor
-    # In contrast to the ray-cast camera, we spawn the prim at these locations.
-    # This means the camera sensor will be attached to these prims.
-    sim_utils.create_prim("/World/Origin_00", "Xform")
-    sim_utils.create_prim("/World/Origin_01", "Xform")
-    camera_cfg = CameraCfg(
-        prim_path="/World/Origin_[^/]+/CameraSensor",
+@configclass
+class TutorialCfg:
+    """Complete direct camera tutorial configuration."""
+
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(device=args_cli.device, physics=PhysxCfg())
+    num_envs: int = 2
+    env_spacing: float = 2.0
+    clone_cfg: cloner.CloneCfg = cloner.CloneCfg()
+    ground: AssetBaseCfg = AssetBaseCfg(prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg())
+    light: AssetBaseCfg = AssetBaseCfg(
+        prim_path="/World/Light",
+        spawn=sim_utils.DistantLightCfg(intensity=3000.0, color=(0.75, 0.75, 0.75)),
+    )
+    objects: list[RigidObjectCfg] = MISSING
+    camera: CameraCfg = CameraCfg(
+        prim_path="{ENV_REGEX_NS}/CameraSensor",
         update_period=0,
         height=480,
         width=640,
@@ -109,35 +107,17 @@ def define_sensor() -> Camera:
             focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 1.0e5)
         ),
     )
-    # Create camera
-    camera = Camera(cfg=camera_cfg)
-
-    return camera
+    pointcloud: VisualizationMarkersCfg = RAY_CASTER_MARKER_CFG.replace(prim_path="/Visuals/CameraPointCloud")
+    pointcloud.markers["hit"].radius = 0.002
 
 
-def design_scene() -> dict:
-    """Design the scene."""
-    # Populate scene
-    # -- Ground-plane
-    cfg = sim_utils.GroundPlaneCfg()
-    cfg.func("/World/defaultGroundPlane", cfg)
-    # -- Lights
-    cfg = sim_utils.DistantLightCfg(intensity=3000.0, color=(0.75, 0.75, 0.75))
-    cfg.func("/World/Light", cfg)
-
-    # Create a dictionary for the scene entities
-    scene_entities = {}
-
-    # Xform to hold objects
-    sim_utils.create_prim("/World/Objects", "Xform")
-    # Random objects
+def random_object_cfgs() -> list[RigidObjectCfg]:
+    """Resolve the randomly shaped objects before the clone lifecycle starts."""
+    objects = []
     for i in range(8):
-        # sample random position
         position = np.random.rand(3) - np.asarray([0.05, 0.05, -1.0])
         position *= np.asarray([1.5, 1.5, 0.5])
-        # sample random color
         color = (random.random(), random.random(), random.random())
-        # choose random prim type
         prim_type = random.choice(["Cube", "Cone", "Cylinder"])
         common_properties = {
             "rigid_props": sim_utils.RigidBodyPropertiesCfg(),
@@ -152,26 +132,19 @@ def design_scene() -> dict:
             shape_cfg = sim_utils.ConeCfg(radius=0.1, height=0.25, **common_properties)
         elif prim_type == "Cylinder":
             shape_cfg = sim_utils.CylinderCfg(radius=0.25, height=0.25, **common_properties)
-        # Rigid Object
-        obj_cfg = RigidObjectCfg(
-            prim_path=f"/World/Objects/Obj_{i:02d}",
-            spawn=shape_cfg,
-            init_state=RigidObjectCfg.InitialStateCfg(pos=position),
+        objects.append(
+            RigidObjectCfg(
+                prim_path=f"/World/Objects/Obj_{i:02d}",
+                spawn=shape_cfg,
+                init_state=RigidObjectCfg.InitialStateCfg(pos=tuple(float(value) for value in position)),
+            )
         )
-        scene_entities[f"rigid_object{i}"] = RigidObject(cfg=obj_cfg)
-
-    # Sensors
-    camera = define_sensor()
-
-    # return the scene information
-    scene_entities["camera"] = camera
-    return scene_entities
+    return objects
 
 
-def run_simulator(sim: sim_utils.SimulationContext, scene_entities: dict):
+def run_simulator(sim: sim_utils.SimulationContext, camera: Camera, pc_markers: VisualizationMarkers):
     """Run the simulator."""
-    # extract entities for simplified notation
-    camera: Camera = scene_entities["camera"]
+    import omni.replicator.core as rep
 
     # Create replicator writer
     output_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "output", "camera")
@@ -200,14 +173,8 @@ def run_simulator(sim: sim_utils.SimulationContext, scene_entities: dict):
     # Index of the camera to use for visualization and saving
     camera_index = args_cli.camera_id
 
-    # Create the markers for the --draw option outside of is_running() loop
-    if sim.get_setting("/isaaclab/has_gui") and args_cli.draw:
-        cfg = RAY_CASTER_MARKER_CFG.replace(prim_path="/Visuals/CameraPointCloud")
-        cfg.markers["hit"].radius = 0.002
-        pc_markers = VisualizationMarkers(cfg)
-
     # Simulate physics
-    while simulation_app.is_running():
+    while sim.is_headless_or_exist_active_visualizer():
         # Step simulation
         sim.step()
         # Update camera data
@@ -274,23 +241,28 @@ def run_simulator(sim: sim_utils.SimulationContext, scene_entities: dict):
 
 def main():
     """Main function."""
-    # Load simulation context
-    sim_cfg = sim_utils.SimulationCfg(device=args_cli.device)
-    sim = sim_utils.SimulationContext(sim_cfg)
-    # Set main camera
-    sim.set_camera_view([2.5, 2.5, 2.5], [0.0, 0.0, 0.0])
-    # Design scene
-    scene_entities = design_scene()
-    # Play simulator
-    sim.reset()
-    # Now we are ready!
-    print("[INFO]: Setup complete...")
-    # Run simulator
-    run_simulator(sim, scene_entities)
+    cfg = resolve_config(TutorialCfg(objects=random_object_cfgs()), config_overrides)
+    with launch_simulation(cfg, args_cli):
+        sim = sim_utils.SimulationContext(cfg.sim)
+        sim.set_camera_view([2.5, 2.5, 2.5], [0.0, 0.0, 0.0])
+        with cloner.ReplicateSession(
+            (cfg.ground, cfg.light, *cfg.objects, cfg.camera, cfg.pointcloud),
+            cfg.num_envs,
+            cfg.env_spacing,
+            clone_strategy=cfg.clone_cfg.clone_strategy,
+            env_template=cfg.clone_cfg.clone_template,
+            replicate_physics=cfg.clone_cfg.replicate_physics,
+        ):
+            cfg.ground.class_type(cfg.ground)
+            cfg.light.class_type(cfg.light)
+            for object_cfg in cfg.objects:
+                object_cfg.class_type(object_cfg)
+            camera = cfg.camera.class_type(cfg.camera)
+            pc_markers = cfg.pointcloud.class_type(cfg.pointcloud)
+        sim.reset()
+        print("[INFO]: Setup complete...")
+        run_simulator(sim, camera, pc_markers)
 
 
 if __name__ == "__main__":
-    # run the main function
     main()
-    # close sim app
-    simulation_app.close()

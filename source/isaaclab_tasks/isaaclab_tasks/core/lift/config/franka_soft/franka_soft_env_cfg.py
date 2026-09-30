@@ -9,9 +9,9 @@ from __future__ import annotations
 
 from isaaclab_newton.physics import (
     MJWarpSolverCfg,
-    NewtonCfg,
     NewtonCollisionPipelineCfg,
     NewtonSoftContactCfg,
+    NewtonSolverCfg,
     VBDSolverCfg,
 )
 from isaaclab_newton.sim.schemas import NewtonDeformableBodyPropertiesCfg
@@ -36,13 +36,11 @@ from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.markers import VisualizationMarkersCfg
 from isaaclab.physics import PhysxAutoCfg
-from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import CameraCfg, FrameTransformerCfg
 from isaaclab.sensors.frame_transformer.frame_transformer_cfg import OffsetCfg
 from isaaclab.sim.spawners.from_files.from_files_cfg import GroundPlaneCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.configclass import configclass
-from isaaclab.visualizers import VisualizerCfg
 
 from isaaclab_contrib.coupling import (
     CouplerEntryCfg,
@@ -51,7 +49,7 @@ from isaaclab_contrib.coupling import (
 )
 
 from isaaclab_tasks.utils import PresetCfg
-from isaaclab_tasks.utils.presets import MultiBackendRendererCfg
+from isaaclab_tasks.utils.presets import MultiBackendRendererCfg, MultiBackendSceneCfg
 
 from ... import mdp
 
@@ -61,6 +59,7 @@ from ... import mdp
 
 from isaaclab_assets.robots.franka import FRANKA_PANDA_MENAGERIE_CFG  # isort:skip
 
+from isaaclab_tasks.utils.presets import MultiBackendSimulationCfg
 
 ##
 # Helpers
@@ -141,41 +140,39 @@ class DeformableCfg(PresetCfg):
 
 @configclass
 class PhysicsCfg(PresetCfg):
-    newton_mjwarp_vbd_proxy: NewtonCfg = NewtonCfg(
-        solver_cfg=CouplerProxyCfg(
-            entries=[
-                CouplerEntryCfg(
-                    name="rigid",
-                    solver_cfg=MJWarpSolverCfg(
-                        cone="elliptic",
-                        ls_iterations=20,
-                        integrator="implicitfast",
-                    ),
-                    bodies=[r"/World/envs/env_[^/]+/Robot"],
+    newton_mjwarp_vbd_proxy: NewtonSolverCfg = CouplerProxyCfg(
+        entries=[
+            CouplerEntryCfg(
+                name="rigid",
+                solver_cfg=MJWarpSolverCfg(
+                    cone="elliptic",
+                    ls_iterations=20,
+                    integrator="implicitfast",
                 ),
-                CouplerEntryCfg(
-                    name="soft",
-                    solver_cfg=VBDSolverCfg(iterations=10, rigid_body_particle_contact_buffer_size=256),
-                    all_particles=True,
-                    include_static_shapes=True,
+                bodies=[r"/World/envs/env_[^/]+/Robot"],
+            ),
+            CouplerEntryCfg(
+                name="soft",
+                solver_cfg=VBDSolverCfg(iterations=10, rigid_body_particle_contact_buffer_size=256),
+                all_particles=True,
+                include_static_shapes=True,
+            ),
+        ],
+        proxies=[
+            CouplerProxyMappingCfg(
+                source="rigid",
+                destination="soft",
+                bodies=[
+                    r"/World/envs/env_[^/]+/Robot/Geometry/.*panda_hand",
+                    r"/World/envs/env_[^/]+/Robot/Geometry/.*panda_(left|right)finger",
+                ],
+                collide_interval=1,
+                collision_pipeline=NewtonCollisionPipelineCfg(
+                    enable_rigid_soft_full_surface_contact=True,
                 ),
-            ],
-            proxies=[
-                CouplerProxyMappingCfg(
-                    source="rigid",
-                    destination="soft",
-                    bodies=[
-                        r"/World/envs/env_[^/]+/Robot/Geometry/.*panda_hand",
-                        r"/World/envs/env_[^/]+/Robot/Geometry/.*panda_(left|right)finger",
-                    ],
-                    collide_interval=1,
-                    collision_pipeline=NewtonCollisionPipelineCfg(
-                        enable_rigid_soft_full_surface_contact=True,
-                    ),
-                )
-            ],
-            iterations=1,
-        ),
+            )
+        ],
+        iterations=1,
         soft_contact_cfg=NewtonSoftContactCfg(
             soft_contact_ke=8.0e3,
             soft_contact_kd=1.0e-2,
@@ -197,7 +194,7 @@ class PhysicsCfg(PresetCfg):
 
 
 @configclass
-class _FrankaSoftSceneCfg(InteractiveSceneCfg):
+class _FrankaSoftSceneCfg(MultiBackendSceneCfg):
     """Scene for the Franka deformable environment."""
 
     robot: ArticulationCfg = FRANKA_PANDA_MENAGERIE_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
@@ -304,7 +301,7 @@ class _FrankaSoftSceneCfg(InteractiveSceneCfg):
 class _FrankaSoftCameraSceneCfg(_FrankaSoftSceneCfg):
     """Franka soft scene with a base camera."""
 
-    base_camera: CameraCfg = FRANKA_CAMERA_CFG
+    camera: CameraCfg = FRANKA_CAMERA_CFG
 
 
 ##
@@ -331,7 +328,7 @@ class CommandsCfg:
         ),
         # the invisible table is drawn by these markers, tinted green once the goal is reached
         success_vis_asset_name="table",
-        success_visualizer_cfg=VisualizationMarkersCfg(
+        success_marker_cfg=VisualizationMarkersCfg(
             prim_path="/Visuals/SuccessMarkers",
             markers={
                 "failure": TABLE_SPAWN_CFG.replace(
@@ -452,7 +449,7 @@ class FrankaCameraObservationsCfg:
         image = ObsTerm(
             func=env_mdp.image,
             params={
-                "sensor_cfg": SceneEntityCfg("base_camera"),
+                "sensor_cfg": SceneEntityCfg("camera"),
                 "data_type": "rgb",
                 "normalize": True,
                 "permute": True,
@@ -629,15 +626,10 @@ class FrankaSoftCameraSceneCfg(PresetCfg):
 
 
 @configclass
-class _FrankaSoftVisualizerCfg(VisualizerCfg):
-    window_width: int = 1920
-    window_height: int = 1080
-
-
-@configclass
 class FrankaSoftEnvCfg(ManagerBasedRLEnvCfg):
     """Manager-based RL environment: Franka Panda lifting a soft beam to a target pose."""
 
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg()
     # Scene settings
     scene: FrankaSoftSceneCfg = FrankaSoftSceneCfg()
     # Basic settings
@@ -660,18 +652,6 @@ class FrankaSoftEnvCfg(ManagerBasedRLEnvCfg):
         self.sim.render_interval = self.decimation
         self.sim.physics = PhysicsCfg()
 
-        self.viewer.eye = (0.75, 0.25, 0.65)
-        self.viewer.lookat = (0.0, 0.75, 0.4)
-        self.sim.default_visualizer_cfg = _FrankaSoftVisualizerCfg(
-            eye=self.viewer.eye,
-            lookat=self.viewer.lookat,
-        )
-
-    def play_mode(self):
-        super().play_mode()
-        if self.curriculum is not None:
-            self.curriculum.gravity = None
-
 
 @configclass
 class FrankaSoftCameraEnvCfg(FrankaSoftEnvCfg):
@@ -682,5 +662,5 @@ class FrankaSoftCameraEnvCfg(FrankaSoftEnvCfg):
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        # Warm up the RTX render product/annotator (Newton skips the PhysX assets_loading render loop).
+        # Warm up the RTX render product and annotator.
         self.num_rerenders_on_reset = 2

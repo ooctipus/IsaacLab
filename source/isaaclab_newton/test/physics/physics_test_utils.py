@@ -16,7 +16,7 @@ from contextlib import contextmanager
 from enum import Enum, auto
 
 import pytest
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
+from isaaclab_newton.physics import MJWarpSolverCfg
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import RigidObjectCfg
@@ -48,8 +48,7 @@ def make_sim_cfg(
         use_mujoco_contacts=use_mujoco_contacts,
     )
 
-    newton_cfg = NewtonCfg(
-        solver_cfg=solver_cfg,
+    newton_cfg = solver_cfg.replace(
         num_substeps=1,
         debug_mode=False,
         use_cuda_graph=False,

@@ -10,8 +10,8 @@ Each test writes real mp4 clips and reads them back to verify content.
 Sources tested:
   "visualizer:kit"        – Kit Replicator viewport (PhysX)
   "visualizer:kit"+Newton – logs error, no clip written
-  "visualizer:newton"     – Newton GL framebuffer (Newton physics)
-  "sensor:tiled_camera"   – tiled camera sensor (PhysX, RTX renderer)
+  "visualizer:newton_gl"     – Newton GL framebuffer (Newton physics)
+  "sensor:camera"         – tiled camera sensor (PhysX, RTX renderer)
   multiple recorders      – Kit viewport + sensor written simultaneously
 
 Setup:
@@ -90,14 +90,14 @@ def _cartpole_cfg(*, num_envs: int = 1):
 
 
 def _cartpole_cfg_newton(*, num_envs: int = 1):
-    from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
+    from isaaclab_newton.physics import MJWarpSolverCfg
 
     from isaaclab_tasks.core.cartpole.cartpole_direct_env_cfg import CartpoleEnvCfg
 
     cfg = CartpoleEnvCfg()
     cfg.seed = _SEED
     cfg.scene.num_envs = num_envs
-    cfg.sim.physics = NewtonCfg(solver_cfg=MJWarpSolverCfg())
+    cfg.sim.physics = MJWarpSolverCfg()
     return cfg
 
 
@@ -134,7 +134,7 @@ def _run_cartpole_camera(env_cfg) -> None:
     sim_utils.create_new_stage()
     env = CartpoleCameraEnv(env_cfg)
     try:
-        assert env.cfg.tiled_camera.renderer_cfg.renderer_type == "isaac_rtx"
+        assert env.cfg.scene.camera.renderer_cfg.renderer_type == "isaac_rtx"
         env.reset()
         # Nonzero action: guarantees clip motion instead of relying on passive pole fall.
         actions = torch.ones(env.num_envs, *env.action_space.shape[1:], device=env.device)
@@ -194,7 +194,7 @@ def test_kit_newton_logs_warning_on_capture(caplog):
 
     Kit Replicator requires cubric to propagate Newton Fabric transforms to RTX.
     Without cubric frames may be black, but the recorder does not hard-block —
-    it logs a warning pointing to 'visualizer:newton' and lets the capture run
+    it logs a warning pointing to 'visualizer:newton_gl' and lets the capture run
     so users with cubric still get frames.
     """
     from isaaclab_visualizers.kit import KitVisualizerCfg
@@ -205,13 +205,13 @@ def test_kit_newton_logs_warning_on_capture(caplog):
         env_cfg.video_recorders = [_recorder_cfg(output_dir, "visualizer:kit")]
         with caplog.at_level(logging.WARNING, logger="isaaclab.envs.utils.video_recorder"):
             _run_cartpole(env_cfg)
-        assert any("source='visualizer:newton'" in r.message for r in caplog.records), (
-            "warning message should suggest visualizer:newton"
+        assert any("source='visualizer:newton_gl'" in r.message for r in caplog.records), (
+            "warning message should suggest visualizer:newton_gl"
         )
 
 
 def test_newton_records_nonblack_clip():
-    """source='visualizer:newton' + Newton physics → non-black mp4 written to disk.
+    """source='visualizer:newton_gl' + Newton physics → non-black mp4 written to disk.
 
     Newton GL renders asynchronously, so motion check is skipped — consecutive
     render_rgb_array() calls may return the same framebuffer.  Non-black confirms
@@ -222,16 +222,16 @@ def test_newton_records_nonblack_clip():
     with tempfile.TemporaryDirectory() as output_dir:
         env_cfg = _cartpole_cfg_newton(num_envs=1)
         env_cfg.sim.visualizer_cfgs = [NewtonGLVisualizerCfg(window_width=320, window_height=240)]
-        env_cfg.video_recorders = [_recorder_cfg(output_dir, "visualizer:newton", prefix="newton")]
+        env_cfg.video_recorders = [_recorder_cfg(output_dir, "visualizer:newton_gl", prefix="newton")]
         _run_cartpole(env_cfg)
         _assert_clip_nonblack(os.path.join(output_dir, "newton_0000.mp4"), "newton")
 
 
 def test_sensor_physx_records_moving_clip():
-    """source='sensor:tiled_camera' + PhysX → non-black, moving sensor mp4."""
+    """source='sensor:camera' + PhysX → non-black, moving sensor mp4."""
     with tempfile.TemporaryDirectory() as output_dir:
         env_cfg = _cartpole_camera_cfg_physx(num_envs=1)
-        env_cfg.video_recorders = [_recorder_cfg(output_dir, "sensor:tiled_camera", prefix="sensor")]
+        env_cfg.video_recorders = [_recorder_cfg(output_dir, "sensor:camera", prefix="sensor")]
         _run_cartpole_camera(env_cfg)
         _assert_clip_has_content(os.path.join(output_dir, "sensor_0000.mp4"), "sensor-physx")
 
@@ -240,7 +240,7 @@ def test_multiple_recorders_simultaneous():
     """Two VideoRecorderCfg entries write independent clips from the same env step loop.
 
     Kit viewport (source='visualizer:kit') and tiled camera sensor
-    (source='sensor:tiled_camera') record simultaneously.  Verifies that both
+    (source='sensor:camera') record simultaneously.  Verifies that both
     clips are created and non-empty.  The sensor clip also receives the full
     non-black + motion check.  The Kit clip is only checked for file existence —
     RTX warms up over many frames and per-clip pixel assertions are unreliable
@@ -254,7 +254,7 @@ def test_multiple_recorders_simultaneous():
         env_cfg.sim.visualizer_cfgs = [KitVisualizerCfg(window_width=320, window_height=240)]
         env_cfg.video_recorders = [
             _recorder_cfg(output_dir, "visualizer:kit", prefix="viewport"),
-            _recorder_cfg(output_dir, "sensor:tiled_camera", prefix="sensor"),
+            _recorder_cfg(output_dir, "sensor:camera", prefix="sensor"),
         ]
         _run_cartpole_camera(env_cfg)
         viewport_path = os.path.join(output_dir, "viewport_0000.mp4")

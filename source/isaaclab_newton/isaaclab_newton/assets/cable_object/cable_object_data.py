@@ -13,10 +13,10 @@ import warp as wp
 from isaaclab.assets.cable_object.base_cable_object_data import BaseCableObjectData
 from isaaclab.utils.warp import ProxyArray
 
-from isaaclab_newton.physics import NewtonManager as SimulationManager
-
 if TYPE_CHECKING:
     from newton.selection import ArticulationView
+
+    from isaaclab_newton.physics import NewtonManager
 
 
 class CableObjectData(BaseCableObjectData):
@@ -25,7 +25,7 @@ class CableObjectData(BaseCableObjectData):
     __backend_name__: str = "newton"
     """The name of the backend for the cable object data."""
 
-    def __init__(self, root_view: ArticulationView, device: str) -> None:
+    def __init__(self, root_view: ArticulationView, device: str, physics_manager: NewtonManager) -> None:
         """Initialize the cable object data.
 
         Args:
@@ -33,6 +33,7 @@ class CableObjectData(BaseCableObjectData):
             device: The device used for processing.
         """
         super().__init__(device)
+        self._physics_manager = physics_manager
         self._root_view: ArticulationView = weakref.proxy(root_view)
         self._create_simulation_bindings()
         self._create_buffers()
@@ -70,8 +71,8 @@ class CableObjectData(BaseCableObjectData):
 
     def _create_simulation_bindings(self) -> None:
         """Create bindings to Newton simulation data."""
-        model = SimulationManager.get_model()
-        state = SimulationManager.get_state_0()
+        model = self._physics_manager.get_model()
+        state = self._physics_manager.get_state_0()
         self._num_instances = self._root_view.count
         self._num_segments = self._root_view.link_count + 1
         self._sim_bind_root_body_ids = self._root_view.get_attribute("joint_parent", model)[:, 0, 0].contiguous()

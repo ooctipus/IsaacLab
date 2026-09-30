@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import re
 import warnings
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
@@ -14,9 +13,8 @@ import numpy as np
 import torch
 import warp as wp
 
-from pxr import UsdPhysics
-
 import isaaclab.sim as sim_utils
+from isaaclab import cloner
 from isaaclab.assets.rigid_object_collection.base_rigid_object_collection import BaseRigidObjectCollection
 from isaaclab.utils.string import resolve_matching_names
 from isaaclab.utils.warp import ProxyArray
@@ -25,7 +23,6 @@ from isaaclab.utils.wrench_composer import WrenchComposer
 from isaaclab_ov import tensor_types as TT
 from isaaclab_ov.assets import kernels as shared_kernels
 from isaaclab_ov.assets.kernels import _body_wrench_to_world, resolve_view_ids_kernel
-from isaaclab_ov.physics import OvPhysxManager
 from isaaclab_ov.sim.views.ovphysx_view import OvPhysxView
 
 from .rigid_object_collection_data import RigidObjectCollectionData
@@ -75,21 +72,24 @@ class RigidObjectCollection(BaseRigidObjectCollection):
         self.cfg = cfg.copy()
         # flag for whether the asset is initialized
         self._is_initialized = False
-        # spawn the rigid objects
-        for rigid_body_cfg in self.cfg.rigid_objects.values():
-            # spawn the asset
+        sim = sim_utils.SimulationContext.instance()
+        if sim is None or (plan := sim.get_clone_plan()) is None:
+            raise RuntimeError("RigidObjectCollection requires an active clone plan.")
+        for source_cfg, rigid_body_cfg in zip(cfg.rigid_objects.values(), self.cfg.rigid_objects.values(), strict=True):
+            rigid_body_cfg.prim_path = cloner.expand_env_regex_ns(rigid_body_cfg.prim_path)
             if rigid_body_cfg.spawn is not None:
-                spawn_path = rigid_body_cfg.spawn.spawn_path or rigid_body_cfg.prim_path
+                source_paths = cloner.query.cfg_source_paths(plan, source_cfg)
+                spawn_path = (
+                    source_paths
+                    if isinstance(rigid_body_cfg.spawn, (sim_utils.MultiAssetSpawnerCfg, sim_utils.MultiUsdFileCfg))
+                    else next(path for path in source_paths if path is not None)
+                )
                 rigid_body_cfg.spawn.func(
                     spawn_path,
                     rigid_body_cfg.spawn,
                     translation=rigid_body_cfg.init_state.pos,
                     orientation=rigid_body_cfg.init_state.rot,
                 )
-            # check that spawn was successful
-            matching_prims = sim_utils.find_matching_prims(rigid_body_cfg.prim_path)
-            if len(matching_prims) == 0:
-                raise RuntimeError(f"Could not find prim with path {rigid_body_cfg.prim_path}.")
         # stores object names
         self._body_names_list: list[str] = []
         # binding manager over the fused multi-prim bindings; created in _initialize_impl
@@ -1090,28 +1090,18 @@ class RigidObjectCollection(BaseRigidObjectCollection):
         Then creates the :class:`RigidObjectCollectionData` container and primes
         the asset-side buffers.
         """
-        physx_instance = OvPhysxManager.get_physx_instance()
+        physx_instance = self._physics_manager.get_physx_instance()
         if physx_instance is None:
             raise RuntimeError("OvPhysxManager has not been initialized yet.")
         self._ovphysx = physx_instance
-        self._device = OvPhysxManager.get_device()
+        self._device = self._physics_manager.get_device()
 
         self._prim_paths: list[str] = []
         self._body_names_list: list[str] = []
 
-        def has_rigid_body_api(prim) -> bool:
-            return bool(prim.HasAPI(UsdPhysics.RigidBodyAPI))
-
-        resolve_kwargs = {"predicate": has_rigid_body_api, "expected_num_matches": 1}
+        layout = sim_utils.SimulationContext.instance().get_clone_plan()
         for name, obj_cfg in self.cfg.rigid_objects.items():
-            # Resolve the rigid body root expression.
-            root_matches = sim_utils.resolve_matching_prims_from_source(obj_cfg.prim_path, **resolve_kwargs)
-            _, root_prim_path_expr = root_matches[0]
-            # IsaacLab paths may use ``.*`` regex or ``{ENV_REGEX_NS}`` placeholder; ovphysx
-            # ``create_tensor_binding`` expects fnmatch globs.
-            pattern = re.sub(r"\{ENV_REGEX_NS\}", "*", root_prim_path_expr)
-            pattern = sim_utils.path_expr_to_glob(pattern)
-            self._prim_paths.append(pattern)
+            self._prim_paths.append(sim_utils.path_expr_to_glob(layout.match_rigid_body(obj_cfg.prim_path).view_path))
             self._body_names_list.append(name)
 
         self._num_bodies = len(self._prim_paths)
@@ -1159,6 +1149,7 @@ class RigidObjectCollection(BaseRigidObjectCollection):
             root_view=self._root_view,
             num_bodies=self._num_bodies,
             device=self._device,
+            physics_manager=self._physics_manager,
         )
 
         self._create_buffers()

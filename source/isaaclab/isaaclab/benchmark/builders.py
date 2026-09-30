@@ -427,7 +427,8 @@ def build_startup_bundle(
     versions: Versions,
     hardware: Hardware,
     phases: dict[str, StartupPhase],
-    top_n: int,
+    profile: bool,
+    top_n: int | None,
     whitelist: str | None,
     extra: dict | None = None,
 ) -> StartupBundle:
@@ -438,8 +439,10 @@ def build_startup_bundle(
             ``max_iterations`` are typically ``None`` for startup profiles).
         versions: Software versions snapshot.
         hardware: Host hardware snapshot.
-        phases: Per-phase timing and cProfile data, keyed by phase name.
-        top_n: Number of top cProfile functions retained per phase.
+        phases: Per-phase timing and optional cProfile data, keyed by phase name.
+        profile: Whether the phase wall times include cProfile instrumentation.
+        top_n: Number of top cProfile functions retained per phase, or ``None``
+            for unprofiled wall timing.
         whitelist: Optional cProfile name-filter pattern; ``None`` means no
             filtering.
         extra: Optional free-form scalar values not covered by the stable
@@ -448,7 +451,7 @@ def build_startup_bundle(
     Returns:
         Populated :class:`~isaaclab.benchmark.schema.StartupBundle`.
     """
-    config = StartupConfig(top_n=top_n, whitelist=whitelist)
+    config = StartupConfig(measurement_mode="cprofile" if profile else "wall_time", top_n=top_n, whitelist=whitelist)
     return StartupBundle(
         run=run,
         versions=versions,

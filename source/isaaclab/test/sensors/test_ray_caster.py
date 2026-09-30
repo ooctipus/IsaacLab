@@ -261,6 +261,8 @@ def test_raycaster_offset_does_not_affect_pos_w():
     Xform local transform, causing data.pos_w to include the 20m offset
     and breaking height-scan observations during training.
     """
+    from isaaclab_physx.physics import PhysxCfg
+
     import isaaclab.sim as sim_utils
     from isaaclab.sensors.ray_caster import RayCaster, RayCasterCfg, patterns
     from isaaclab.terrains.trimesh.utils import make_plane
@@ -287,7 +289,7 @@ def test_raycaster_offset_does_not_affect_pos_w():
     )
 
     dt = 0.01
-    sim = sim_utils.SimulationContext(sim_utils.SimulationCfg(dt=dt))
+    sim = sim_utils.SimulationContext(sim_utils.SimulationCfg(physics=PhysxCfg(), dt=dt))
 
     sensor = RayCaster(cfg)
     sim.reset()

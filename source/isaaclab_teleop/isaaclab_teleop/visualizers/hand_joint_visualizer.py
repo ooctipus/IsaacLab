@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
@@ -15,6 +16,9 @@ import torch
 from ..session_lifecycle import TeleopSessionLifecycle
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from isaaclab.markers import VisualizationMarkersCfg
 
 
 def _extract_world_joint_positions(result: dict, world_T_anchor: np.ndarray) -> torch.Tensor | None:
@@ -64,20 +68,8 @@ class HandJointVisualizer:
     anchor-to-world transform.
     """
 
-    def __init__(self):
-        import isaaclab.sim as sim_utils
-        from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
-
-        marker_cfg = VisualizationMarkersCfg(
-            prim_path="/Visuals/HandJointMarkers",
-            markers={
-                "joint": sim_utils.SphereCfg(
-                    radius=0.005,
-                    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
-                ),
-            },
-        )
-        self._markers = VisualizationMarkers(marker_cfg)
+    def __init__(self, cfg: VisualizationMarkersCfg):
+        self._markers = cfg.class_type(cfg)
         self._markers.set_visibility(True)
         self._logged_error = False
 

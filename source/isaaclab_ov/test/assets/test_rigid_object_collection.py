@@ -39,6 +39,7 @@ from isaaclab_ov.assets import RigidObjectCollection  # noqa: E402
 from isaaclab_ov.physics import OvPhysxCfg  # noqa: E402
 
 import isaaclab.sim as sim_utils  # noqa: E402
+from isaaclab import cloner  # noqa: E402
 from isaaclab.assets import RigidObjectCfg, RigidObjectCollectionCfg  # noqa: E402
 from isaaclab.sim import SimulationCfg, build_simulation_context  # noqa: E402
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR  # noqa: E402
@@ -84,23 +85,11 @@ def _ovphysx_skip_other_device(request):
         )
 
 
-def _ovphysx_sim_context(device: str, **kwargs):
-    """Wrapper around :func:`build_simulation_context` that injects OVPhysX cfg.
-
-    PhysX tests pass ``device=device`` directly and let
-    :func:`build_simulation_context` build a default :class:`SimulationCfg`.
-    OVPhysX needs ``physics=OvPhysxCfg()`` set on the cfg so the manager
-    dispatches to OVPhysX rather than PhysX, so we build the cfg here and
-    pass it through.  ``gravity_enabled`` is consumed locally (it is ignored
-    by ``build_simulation_context`` once a ``sim_cfg`` is provided).
-    ``add_ground_plane``, ``auto_add_lighting``, and other kwargs continue
-    to flow through ``build_simulation_context`` as before.
-    """
-    dt = kwargs.pop("dt", 1.0 / 60.0)
-    gravity_enabled = kwargs.pop("gravity_enabled", True)
+def _ovphysx_sim_context(device: str, *, gravity_enabled: bool = True):
+    """Build an OVPhysX simulation context."""
     gravity = (0.0, 0.0, -9.81) if gravity_enabled else (0.0, 0.0, 0.0)
-    sim_cfg = SimulationCfg(physics=OvPhysxCfg(), device=device, dt=dt, gravity=gravity)
-    return build_simulation_context(device=device, sim_cfg=sim_cfg, **kwargs)
+    sim_cfg = SimulationCfg(physics=OvPhysxCfg(), device=device, dt=1.0 / 60.0, gravity=gravity)
+    return build_simulation_context(device=device, sim_cfg=sim_cfg)
 
 
 def generate_cubes_scene(
@@ -125,11 +114,6 @@ def generate_cubes_scene(
         A tuple containing the rigid object representing the cubes and the origins of the cubes.
 
     """
-    origins = torch.tensor([(i * 3.0, 0, height) for i in range(num_envs)]).to(device)
-    # Create Top-level Xforms, one for each cube
-    for i, origin in enumerate(origins):
-        sim_utils.create_prim(f"/World/Table_{i}", "Xform", translation=origin)
-
     # Resolve spawn configuration
     if has_api:
         spawn_cfg = sim_utils.UsdFileCfg(
@@ -143,21 +127,24 @@ def generate_cubes_scene(
             collision_props=sim_utils.CollisionPropertiesCfg(),
         )
 
-    # create the rigid object configs.  OVPhysX matches prim paths via fnmatch globs (not regex),
-    # so use ``Table_*`` rather than the PhysX ``Table_.*`` form.
+    # create the rigid object configs
     cube_config_dict = {}
     for i in range(num_cubes):
         cube_object_cfg = RigidObjectCfg(
-            prim_path=f"/World/Table_[^/]+/Object_{i}",
+            prim_path=f"{{ENV_REGEX_NS}}/Object_{i}",
             spawn=spawn_cfg,
             init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 3 * i, height)),
         )
         cube_config_dict[f"cube_{i}"] = cube_object_cfg
     # create the rigid object collection
     cube_object_collection_cfg = RigidObjectCollectionCfg(rigid_objects=cube_config_dict)
-    cube_object_colection = RigidObjectCollection(cfg=cube_object_collection_cfg)
+    sim = sim_utils.SimulationContext.instance()
+    with cloner.ReplicateSession(
+        cube_object_collection_cfg.rigid_objects.values(), num_clones=num_envs, env_spacing=3.0
+    ):
+        cube_object_collection = cube_object_collection_cfg.class_type(cube_object_collection_cfg)
 
-    return cube_object_colection, origins
+    return cube_object_collection, sim.get_clone_plan().positions
 
 
 @pytest.mark.parametrize("num_envs", [1, 2])
@@ -165,7 +152,7 @@ def generate_cubes_scene(
 @pytest.mark.parametrize("device", test_devices())
 def test_initialization(num_envs, num_cubes, device):
     """Test initialization for prim with rigid body API at the provided prim path."""
-    with _ovphysx_sim_context(device=device, auto_add_lighting=True) as sim:
+    with _ovphysx_sim_context(device=device) as sim:
         object_collection, _ = generate_cubes_scene(num_envs=num_envs, num_cubes=num_cubes, device=device)
 
         # Check that the framework doesn't hold excessive strong references.
@@ -193,7 +180,7 @@ def test_initialization(num_envs, num_cubes, device):
 @pytest.mark.parametrize("device", test_devices())
 def test_id_conversion(device):
     """Test environment and object index conversion to physics view indices."""
-    with _ovphysx_sim_context(device=device, auto_add_lighting=True) as sim:
+    with _ovphysx_sim_context(device=device) as sim:
         object_collection, _ = generate_cubes_scene(num_envs=2, num_cubes=3, device=device)
 
         # Play sim
@@ -232,7 +219,7 @@ def test_id_conversion(device):
 @pytest.mark.parametrize("device", test_devices())
 def test_initialization_with_kinematic_enabled(num_envs, num_cubes, device):
     """Test that initialization for prim with kinematic flag enabled."""
-    with _ovphysx_sim_context(device=device, auto_add_lighting=True) as sim:
+    with _ovphysx_sim_context(device=device) as sim:
         object_collection, origins = generate_cubes_scene(
             num_envs=num_envs, num_cubes=num_cubes, kinematic_enabled=True, device=device
         )
@@ -267,7 +254,7 @@ def test_initialization_with_kinematic_enabled(num_envs, num_cubes, device):
 @pytest.mark.parametrize("device", test_devices())
 def test_initialization_with_no_rigid_body(num_cubes, device):
     """Test that initialization fails when no rigid body is found at the provided prim path."""
-    with _ovphysx_sim_context(device=device, auto_add_lighting=True) as sim:
+    with _ovphysx_sim_context(device=device) as sim:
         object_collection, _ = generate_cubes_scene(num_cubes=num_cubes, has_api=False, device=device)
 
         # Check that the framework doesn't hold excessive strong references.
@@ -283,7 +270,7 @@ def test_external_force_buffer(device):
     """Test if external force buffer correctly updates in the force value is zero case."""
     num_envs = 2
     num_cubes = 1
-    with _ovphysx_sim_context(device=device, auto_add_lighting=True) as sim:
+    with _ovphysx_sim_context(device=device) as sim:
         object_collection, origins = generate_cubes_scene(num_envs=num_envs, num_cubes=num_cubes, device=device)
         sim.reset()
 
@@ -336,7 +323,7 @@ def test_external_force_buffer(device):
 @pytest.mark.parametrize("device", test_devices())
 def test_external_force_on_single_body(num_envs, num_cubes, device):
     """Test application of external force on the base of the object."""
-    with _ovphysx_sim_context(device=device, auto_add_lighting=True) as sim:
+    with _ovphysx_sim_context(device=device) as sim:
         object_collection, origins = generate_cubes_scene(num_envs=num_envs, num_cubes=num_cubes, device=device)
         sim.reset()
 
@@ -402,7 +389,7 @@ def test_external_force_on_single_body_at_position(num_envs, num_cubes, device):
     one of the objects at 1m in the Y direction, we check that the object rotates around it's X axis.
     For the other object, we do not apply any force and check that it falls down.
     """
-    with _ovphysx_sim_context(device=device, auto_add_lighting=True) as sim:
+    with _ovphysx_sim_context(device=device) as sim:
         object_collection, origins = generate_cubes_scene(num_envs=num_envs, num_cubes=num_cubes, device=device)
         sim.reset()
 
@@ -485,7 +472,7 @@ def test_set_object_state(num_envs, num_cubes, device, gravity_enabled):
         Turn off gravity for this test as we don't want any external forces acting on the object
         to ensure state remains static
     """
-    with _ovphysx_sim_context(device=device, gravity_enabled=gravity_enabled, auto_add_lighting=True) as sim:
+    with _ovphysx_sim_context(device=device, gravity_enabled=gravity_enabled) as sim:
         object_collection, origins = generate_cubes_scene(num_envs=num_envs, num_cubes=num_cubes, device=device)
         sim.reset()
 
@@ -551,7 +538,7 @@ def test_set_object_state(num_envs, num_cubes, device, gravity_enabled):
 @pytest.mark.parametrize("gravity_enabled", [False])
 def test_object_state_properties(num_envs, num_cubes, device, with_offset, gravity_enabled):
     """Test the object_com_state_w and object_link_state_w properties."""
-    with _ovphysx_sim_context(device=device, gravity_enabled=gravity_enabled, auto_add_lighting=True) as sim:
+    with _ovphysx_sim_context(device=device, gravity_enabled=gravity_enabled) as sim:
         cube_object, env_pos = generate_cubes_scene(num_envs=num_envs, num_cubes=num_cubes, height=0.0, device=device)
         env_ids = torch.tensor([x for x in range(num_envs)], dtype=torch.int32)
 
@@ -651,7 +638,7 @@ def test_object_state_properties(num_envs, num_cubes, device, with_offset, gravi
 @pytest.mark.parametrize("gravity_enabled", [False])
 def test_write_object_state(num_envs, num_cubes, device, with_offset, state_location, gravity_enabled):
     """Test the setters for object_state using both the link frame and center of mass as reference frame."""
-    with _ovphysx_sim_context(device=device, gravity_enabled=gravity_enabled, auto_add_lighting=True) as sim:
+    with _ovphysx_sim_context(device=device, gravity_enabled=gravity_enabled) as sim:
         # Create a scene with random cubes
         cube_object, env_pos = generate_cubes_scene(num_envs=num_envs, num_cubes=num_cubes, height=0.0, device=device)
         env_ids = torch.tensor([x for x in range(num_envs)], dtype=torch.int32)
@@ -726,7 +713,7 @@ def test_write_object_state(num_envs, num_cubes, device, with_offset, state_loca
 @pytest.mark.parametrize("device", test_devices())
 def test_reset_object_collection(num_envs, num_cubes, device):
     """Test resetting the state of the rigid object."""
-    with _ovphysx_sim_context(device=device, auto_add_lighting=True) as sim:
+    with _ovphysx_sim_context(device=device) as sim:
         object_collection, _ = generate_cubes_scene(num_envs=num_envs, num_cubes=num_cubes, device=device)
         sim.reset()
 
@@ -768,7 +755,7 @@ def test_set_material_properties(num_envs, num_cubes, device):
     :meth:`~isaaclab_ov.assets.RigidObjectCollection.reshape_data_to_view_3d` and its
     inverse. (The PhysX backend uses ``root_view.get/set_material_properties``.)
     """
-    with _ovphysx_sim_context(device=device, add_ground_plane=True, auto_add_lighting=True) as sim:
+    with _ovphysx_sim_context(device=device) as sim:
         object_collection, _ = generate_cubes_scene(num_envs=num_envs, num_cubes=num_cubes, device=device)
 
         # Play sim
@@ -802,7 +789,7 @@ def test_set_material_properties(num_envs, num_cubes, device):
 @pytest.mark.parametrize("gravity_enabled", [True, False])
 def test_gravity_vec_w(num_envs, num_cubes, device, gravity_enabled):
     """Test that gravity vector direction is set correctly for the rigid object."""
-    with _ovphysx_sim_context(device=device, gravity_enabled=gravity_enabled, auto_add_lighting=True) as sim:
+    with _ovphysx_sim_context(device=device, gravity_enabled=gravity_enabled) as sim:
         object_collection, _ = generate_cubes_scene(num_envs=num_envs, num_cubes=num_cubes, device=device)
 
         # Obtain gravity direction
@@ -840,7 +827,7 @@ def test_write_object_state_functions_data_consistency(
     num_envs, num_cubes, device, with_offset, state_location, gravity_enabled
 ):
     """Test the setters for object_state using both the link frame and center of mass as reference frame."""
-    with _ovphysx_sim_context(device=device, gravity_enabled=gravity_enabled, auto_add_lighting=True) as sim:
+    with _ovphysx_sim_context(device=device, gravity_enabled=gravity_enabled) as sim:
         # Create a scene with random cubes
         cube_object, env_pos = generate_cubes_scene(num_envs=num_envs, num_cubes=num_cubes, height=0.0, device=device)
         env_ids = torch.tensor([x for x in range(num_envs)], dtype=torch.int32)

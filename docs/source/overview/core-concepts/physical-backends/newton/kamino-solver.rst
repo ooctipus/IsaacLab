@@ -4,9 +4,8 @@ Kamino Solver
 =============
 
 Kamino is a Newton solver, not a separate Isaac Lab physics backend. In Isaac Lab,
-Kamino is enabled by selecting a :class:`~isaaclab_newton.physics.NewtonCfg` whose
-``solver_cfg`` is :class:`~isaaclab_newton.physics.KaminoPADMMSolverCfg` or
-:class:`~isaaclab_newton.physics.KaminoDVISolverCfg`.
+Kamino is enabled by selecting a :class:`~isaaclab_newton.physics.KaminoPADMMSolverCfg` or
+:class:`~isaaclab_newton.physics.KaminoDVISolverCfg` directly.
 This is usually exposed as a ``newton_kamino`` physics preset on the task configuration.
 
 Kamino support is currently beta. A task that works with PhysX or with Newton's
@@ -25,13 +24,13 @@ Before adding Kamino, first make sure the task runs with the Newton backend:
 
       .. code-block:: bash
 
-          uv run python scripts/environments/zero_agent.py --task Isaac-Cartpole-Direct --num_envs 128 --viz newton physics=newton_mjwarp
+          uv run python scripts/environments/zero_agent.py --task Isaac-Cartpole-Direct --num_envs 128 --viz newton_gl physics=newton_mjwarp
 
    .. tab-item:: isaaclab.sh / isaaclab.bat
 
       .. code-block:: bash
 
-          ./isaaclab.sh -p scripts/environments/zero_agent.py --task Isaac-Cartpole-Direct --num_envs 128 --viz newton physics=newton_mjwarp
+          ./isaaclab.sh -p scripts/environments/zero_agent.py --task Isaac-Cartpole-Direct --num_envs 128 --viz newton_gl physics=newton_mjwarp
 
 Then run the same task with the Kamino preset if it is available:
 
@@ -41,13 +40,13 @@ Then run the same task with the Kamino preset if it is available:
 
       .. code-block:: bash
 
-          uv run python scripts/environments/zero_agent.py --task Isaac-Cartpole-Direct --num_envs 128 --viz newton physics=newton_kamino
+          uv run python scripts/environments/zero_agent.py --task Isaac-Cartpole-Direct --num_envs 128 --viz newton_gl physics=newton_kamino
 
    .. tab-item:: isaaclab.sh / isaaclab.bat
 
       .. code-block:: bash
 
-          ./isaaclab.sh -p scripts/environments/zero_agent.py --task Isaac-Cartpole-Direct --num_envs 128 --viz newton physics=newton_kamino
+          ./isaaclab.sh -p scripts/environments/zero_agent.py --task Isaac-Cartpole-Direct --num_envs 128 --viz newton_gl physics=newton_kamino
 
 At the time of writing, the ``newton_kamino`` preset is defined for
 ``Isaac-Cartpole-Direct``, ``Isaac-Ant-Direct``, ``Isaac-Cartpole``,
@@ -70,7 +69,6 @@ solver config types used by the presets:
         KaminoDVISolverCfg,
         KaminoPADMMSolverCfg,
         MJWarpSolverCfg,
-        NewtonCfg,
     )
 
 Then add a ``newton_kamino`` entry beside the existing ``default``, ``physx``, and
@@ -84,8 +82,7 @@ Then add a ``newton_kamino`` entry beside the existing ``default``, ``physx``, a
 
 The important pieces are:
 
-* Add a ``newton_kamino`` preset whose value is :class:`~isaaclab_newton.physics.NewtonCfg`.
-* Construct a :class:`~isaaclab_newton.physics.KaminoPADMMSolverCfg` or
+* Add a ``newton_kamino`` preset with a :class:`~isaaclab_newton.physics.KaminoPADMMSolverCfg` or
   :class:`~isaaclab_newton.physics.KaminoDVISolverCfg`.
 * Keep the preset at the same config path used by the task's
   :class:`~isaaclab.sim.SimulationCfg`, for example ``env.sim.physics``.
@@ -107,8 +104,8 @@ Construct the concrete solver configuration directly:
 
     from isaaclab_newton.physics import KaminoDVISolverCfg, KaminoPADMMSolverCfg
 
-    newton_kamino = NewtonCfg(solver_cfg=KaminoPADMMSolverCfg(use_collision_detector=True))
-    newton_kamino_dvi = NewtonCfg(solver_cfg=KaminoDVISolverCfg(integrator="moreau"))
+    newton_kamino = KaminoPADMMSolverCfg(use_collision_detector=True)
+    newton_kamino_dvi = KaminoDVISolverCfg(integrator="moreau")
 
 You can select the preset globally:
 

@@ -3,17 +3,11 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Legacy OpenXR teleoperation devices.
+"""Legacy OpenXR retargeters.
 
 .. deprecated::
-    This package is deprecated. Please migrate to :mod:`isaaclab_teleop` which
-    provides the :class:`~isaaclab_teleop.IsaacTeleopDevice` as a replacement
-    for :class:`OpenXRDevice` and :class:`ManusVive`.
-
-    XR configuration classes (:class:`XrCfg`, :class:`XrAnchorRotationMode`,
-    :func:`remove_camera_configs`) have moved to :mod:`isaaclab_teleop.xr_cfg`.
-    Anchor utilities (:class:`XrAnchorSynchronizer`) have moved to
-    :mod:`isaaclab_teleop.xr_anchor_utils`.
+    Use :mod:`isaaclab_teleop` for device input and retargeting. The legacy
+    OpenXR and Manus/Vive device implementations have been removed.
 """
 
 from isaaclab.utils.module import lazy_export

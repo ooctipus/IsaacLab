@@ -14,16 +14,12 @@ translations, orientations, and scales.
 
 from __future__ import annotations
 
-import logging
-
 import numpy as np
 import torch
 
-import isaaclab.sim as sim_utils
+from isaaclab.sim import SimulationContext
 
 from .visualization_markers_cfg import VisualizationMarkersCfg
-
-logger = logging.getLogger(__name__)
 
 
 class VisualizationMarkers:
@@ -75,7 +71,7 @@ class VisualizationMarkers:
                 },
             )
 
-            marker = VisualizationMarkers(cfg)
+            marker = cfg.class_type(cfg)
             marker_translations = np.random.uniform(-1.0, 1.0, (24, 3))
 
             # This creates 24 markers using the first prototype because marker
@@ -104,16 +100,16 @@ class VisualizationMarkers:
         Raises:
             ValueError: When no markers are provided in the :obj:`cfg`.
         """
-        if len(cfg.markers) == 0:
-            raise ValueError(f"The `cfg.markers` cannot be empty. Received: {cfg.markers}")
-
-        self.cfg = cfg
-        self.prim_path = cfg.prim_path
-        self._count = len(cfg.markers)
+        sim = SimulationContext.instance()
+        if sim is None:
+            raise RuntimeError("VisualizationMarkers requires an active SimulationContext.")
+        self.cfg, self._backends = sim.vis_marker_registry.get(cfg)
+        if len(self.cfg.markers) == 0:
+            raise ValueError(f"The `cfg.markers` cannot be empty. Received: {self.cfg.markers}")
+        self.prim_path = self.cfg.prim_path
+        self._count = len(self.cfg.markers)
         self._is_visible = True
         self._has_visualized = False
-        self._backends: list[object] = []
-        self._ensure_backends_initialized()
 
     def __str__(self) -> str:
         """Return a string representation of the marker group."""
@@ -138,7 +134,6 @@ class VisualizationMarkers:
     def set_visibility(self, visible: bool):
         """Set marker visibility for all initialized backends."""
         self._is_visible = visible
-        self._ensure_backends_initialized()
         for backend in self._backends:
             backend.set_visibility(visible)
 
@@ -205,7 +200,6 @@ class VisualizationMarkers:
             ValueError: When input arrays do not follow the expected shapes.
             ValueError: When the function is called with all None arguments.
         """
-        self._ensure_backends_initialized()
         # If markers are hidden, do not spend time normalizing or dispatching
         # marker state to the active backends.
         if not self.is_visible():
@@ -216,8 +210,19 @@ class VisualizationMarkers:
         norm_scales = self._to_tensor(scales, expected_width=3, name="scales")
         norm_marker_indices = self._to_index_tensor(marker_indices, name="marker_indices")
         norm_environment_ids = self._to_index_tensor(environment_ids, name="environment_ids")
-        target_device = self._resolve_target_device(
-            norm_translations, norm_orientations, norm_scales, norm_marker_indices, norm_environment_ids
+        target_device = next(
+            (
+                value.device
+                for value in (
+                    norm_translations,
+                    norm_orientations,
+                    norm_scales,
+                    norm_marker_indices,
+                    norm_environment_ids,
+                )
+                if value is not None
+            ),
+            torch.device("cpu"),
         )
         if norm_translations is not None:
             norm_translations = norm_translations.to(device=target_device)
@@ -264,64 +269,6 @@ class VisualizationMarkers:
         if num_markers != 0:
             self._count = num_markers
             self._has_visualized = True
-
-    def __del__(self):
-        for backend in getattr(self, "_backends", []):
-            if hasattr(backend, "close"):
-                backend.close()
-
-    def _ensure_backends_initialized(self) -> None:
-        sim = sim_utils.SimulationContext.instance()
-        if sim is None:
-            self._ensure_kit_backend()
-            return
-
-        # Markers need the Kit (USD) backend to appear in any rendered frame: a native GUI window,
-        # RTX sensor rendering, XR, headless offscreen video capture (``has_offscreen_render``), or
-        # a Kit-pumping visualizer. Note that this deliberately does NOT use ``sim.is_rendering``,
-        # which is also true for non-Kit visualizers (e.g. ``newton_gl``) that never pump Kit's
-        # ``app.update()``. Standing up the Kit backend for such a visualizer leaves its raw USD
-        # marker writes undigested by Fabric, which desyncs the point-instancer prototype table
-        # (``FabricManager::initializePointInstancer mismatched prototypes``) and can crash the next
-        # PhysX GPU step.
-        needs_kit_backend = (
-            sim.has_gui
-            or bool(sim.get_setting("/isaaclab/render/rtx_sensors"))
-            or bool(sim.get_setting("/isaaclab/xr/enabled"))
-            or getattr(sim, "has_offscreen_render", False)
-            or any(
-                viz.supports_markers() and viz.pumps_app_update() and viz.cfg.enable_markers for viz in sim.visualizers
-            )
-        )
-        if needs_kit_backend:
-            self._ensure_kit_backend()
-        if any(
-            viz.supports_markers() and not viz.pumps_app_update() and viz.cfg.enable_markers for viz in sim.visualizers
-        ):
-            self._ensure_newton_backend()
-
-    def _ensure_kit_backend(self) -> None:
-        """Create the Kit marker backend if it is not already active."""
-        from isaaclab_visualizers.kit.kit_visualization_markers import KitVisualizationMarkers
-
-        if not any(isinstance(backend, KitVisualizationMarkers) for backend in self._backends):
-            self._backends.append(KitVisualizationMarkers(self.cfg, visible=self._is_visible))
-
-    def _ensure_newton_backend(self) -> None:
-        """Create the Newton-family marker backend if it is not already active."""
-        from isaaclab_visualizers.newton.newton_visualization_markers import NewtonVisualizationMarkers
-
-        if not any(isinstance(backend, NewtonVisualizationMarkers) for backend in self._backends):
-            self._backends.append(NewtonVisualizationMarkers(self.cfg, visible=self._is_visible))
-
-    def _resolve_target_device(self, *values: torch.Tensor | None) -> torch.device:
-        for value in values:
-            if value is not None:
-                return value.device
-        for backend in self._backends:
-            if hasattr(backend, "infer_device"):
-                return backend.infer_device()
-        return torch.device("cpu")
 
     @staticmethod
     def _to_tensor(

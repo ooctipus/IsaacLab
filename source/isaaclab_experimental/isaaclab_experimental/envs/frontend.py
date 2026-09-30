@@ -174,7 +174,7 @@ class WarpFrontend:
         Three steps, each independently testable:
 
         1. :meth:`_require_newton_physics` — hard check that ``cfg.sim.physics``
-           is :class:`~isaaclab_newton.physics.NewtonCfg`.
+           is :class:`~isaaclab_newton.physics.NewtonSolverCfg`.
         2. :meth:`_promote_scene_entity_cfgs` — replace stable
            :class:`~isaaclab.managers.SceneEntityCfg` instances under each
            term's ``params`` with the warp variant (which adds warp-cached
@@ -219,18 +219,18 @@ class WarpFrontend:
 
     @staticmethod
     def _require_newton_physics(cfg: Any, label: str) -> None:
-        """Block unless ``cfg.sim.physics`` is :class:`NewtonCfg`.
+        """Block unless ``cfg.sim.physics`` is :class:`NewtonSolverCfg`.
 
         The warp managers' assets read state through :class:`NewtonManager`, so
         every other physics configuration is incompatible.
         """
-        from isaaclab_newton.physics import NewtonCfg
+        from isaaclab_newton.physics import NewtonSolverCfg
 
         physics = getattr(getattr(cfg, "sim", None), "physics", None)
-        if isinstance(physics, NewtonCfg):
+        if isinstance(physics, NewtonSolverCfg):
             return
         raise FrontendIncompatibleError(
-            f"warp env {label!r}: expected cfg.sim.physics to be NewtonCfg,"
+            f"warp env {label!r}: expected cfg.sim.physics to be NewtonSolverCfg,"
             f" got {type(physics).__name__!r}. Select Newton while composing the task configuration"
             " before constructing the environment."
         )

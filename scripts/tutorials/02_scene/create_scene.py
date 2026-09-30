@@ -34,6 +34,7 @@ simulation_app = app_launcher.app
 """Rest everything follows."""
 
 import torch
+from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
@@ -61,6 +62,14 @@ class CartpoleSceneCfg(InteractiveSceneCfg):
 
     # articulation
     cartpole: ArticulationCfg = CARTPOLE_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+
+
+@configclass
+class TutorialCfg:
+    """Complete direct tutorial configuration."""
+
+    sim: sim_utils.SimulationCfg = sim_utils.SimulationCfg(physics=PhysxCfg(), device=args_cli.device)
+    scene: CartpoleSceneCfg = CartpoleSceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0)
 
 
 def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
@@ -115,13 +124,12 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
 def main():
     """Main function."""
     # Load kit helper
-    sim_cfg = sim_utils.SimulationCfg(device=args_cli.device)
-    sim = SimulationContext(sim_cfg)
+    cfg = TutorialCfg()
+    sim = SimulationContext(cfg.sim)
     # Set main camera
     sim.set_camera_view([2.5, 0.0, 4.0], [0.0, 0.0, 2.0])
     # Design scene
-    scene_cfg = CartpoleSceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0)
-    scene = InteractiveScene(scene_cfg)
+    scene = cfg.scene.class_type(cfg.scene)
     # Play the simulator
     sim.reset()
     # Now we are ready!

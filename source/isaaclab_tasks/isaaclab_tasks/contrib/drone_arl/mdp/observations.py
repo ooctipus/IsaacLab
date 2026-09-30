@@ -24,7 +24,6 @@ if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedEnv, ManagerBasedRLEnv
     from isaaclab.managers import ObservationTermCfg
     from isaaclab.sensors.camera.camera import Camera
-    from isaaclab.sensors.camera.tiled_camera import TiledCamera
     from isaaclab.sensors.ray_caster.multi_mesh_ray_caster_camera import MultiMeshRayCasterCamera
     from isaaclab.sensors.ray_caster.ray_caster_camera import RayCasterCamera
 
@@ -81,8 +80,8 @@ class ImageLatentObservation(ManagerTermBase):
     seamlessly with other observation terms in multi-modal observation spaces.
 
     Attributes:
-        camera_sensor: The camera sensor to extract images from (TiledCamera, Camera,
-            RayCasterCamera, or MultiMeshRayCasterCamera).
+        camera_sensor: The camera sensor to extract images from (Camera, RayCasterCamera,
+            or MultiMeshRayCasterCamera).
         data_type: Type of data to extract from the sensor (e.g., "distance_to_image_plane").
         convert_perspective_to_orthogonal: Whether to convert perspective depth to orthogonal.
         normalize: Whether to normalize images before passing to VAE.
@@ -103,6 +102,7 @@ class ImageLatentObservation(ManagerTermBase):
     """
 
     _model: torch.jit.ScriptModule | None = None
+    _output_shape = (64,)
 
     def __init__(self, cfg: ObservationTermCfg, env: ManagerBasedRLEnv):
         """Initialize the image latent observation term.
@@ -125,7 +125,7 @@ class ImageLatentObservation(ManagerTermBase):
             RuntimeError: If the specified camera sensor is not found in the scene.
         """
         super().__init__(cfg, env)
-        self.camera_sensor: TiledCamera | Camera | RayCasterCamera | MultiMeshRayCasterCamera = env.scene.sensors[
+        self.camera_sensor: Camera | RayCasterCamera | MultiMeshRayCasterCamera = env.scene.sensors[
             cfg.params["sensor_cfg"].name
         ]
         self.data_type: str = cfg.params["data_type"]
@@ -173,8 +173,7 @@ class ImageLatentObservation(ManagerTermBase):
             normalize: Whether to normalize images (unused, already set in __init__).
 
         Returns:
-            torch.Tensor: Latent representations from the VAE model.
-                Shape is determined by the VAE architecture (typically (num_envs, latent_dim)).
+            torch.Tensor: Latent representations from the VAE model, shape (num_envs, 64).
 
         Raises:
             ValueError: If data_type is "distance_to_image_plane" but normalize is False,

@@ -20,6 +20,7 @@ import torch
 pytestmark = pytest.mark.integration
 
 from isaaclab.envs.mdp.observations import stacked_image
+from isaaclab.managers import SceneEntityCfg
 
 NUM_ENVS = 4
 HEIGHT = 8
@@ -29,7 +30,12 @@ CHANNELS = 3
 
 def _make_env(num_envs: int = NUM_ENVS, device: str = "cpu") -> SimpleNamespace:
     """Minimal mock env surface needed by ``stacked_image``."""
-    return SimpleNamespace(num_envs=num_envs, device=device)
+    camera = SimpleNamespace(output_shapes={"rgb": (num_envs, HEIGHT, WIDTH, CHANNELS)})
+    return SimpleNamespace(
+        num_envs=num_envs,
+        device=device,
+        scene=SimpleNamespace(sensors={"tiled_camera": camera}),
+    )
 
 
 def _make_cfg(frame_stack: int) -> SimpleNamespace:
@@ -241,3 +247,36 @@ class TestImageFunctionCloneKwarg:
         cfg = SimpleNamespace(name="tiled_camera")
         out = image(env, sensor_cfg=cfg, data_type="rgb", normalize=False, clone=True)
         assert out.data_ptr() != camera_buf.data_ptr()
+
+
+@pytest.mark.parametrize(
+    "buffer_shape,permute,expected_shape",
+    [
+        ((NUM_ENVS, HEIGHT, WIDTH, 3), False, (HEIGHT, WIDTH, 3)),
+        ((NUM_ENVS, HEIGHT, WIDTH, 3), True, (3, HEIGHT, WIDTH)),
+        ((NUM_ENVS, HEIGHT, WIDTH, 1), False, (HEIGHT, WIDTH, 1)),
+        ((NUM_ENVS, HEIGHT, WIDTH, 4), False, (HEIGHT, WIDTH, 4)),
+    ],
+)
+def test_image_resolves_allocated_shape_without_reading_data(
+    buffer_shape: tuple[int, ...], permute: bool, expected_shape: tuple[int, ...]
+) -> None:
+    """The image term must use renderer metadata without triggering the camera getter."""
+    from isaaclab.envs.mdp.observations import image
+
+    class FakeSensor:
+        output_shapes = {"semantic_segmentation": buffer_shape}
+
+        @property
+        def data(self):
+            raise AssertionError("Shape declaration must not read camera data.")
+
+    env = SimpleNamespace(scene=SimpleNamespace(sensors={"camera": FakeSensor()}))
+    output_shape = image._output_shape(
+        env,
+        sensor_cfg=SceneEntityCfg("camera"),
+        data_type="semantic_segmentation",
+        permute=permute,
+    )
+
+    assert output_shape == expected_shape

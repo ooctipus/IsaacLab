@@ -9,7 +9,6 @@
 
         BaseEnvWindow
         ManagerBasedRLEnvWindow
-        ViewportCameraController
 
 Base Environment UI
 -------------------
@@ -23,12 +22,6 @@ Config Based RL Environment UI
 .. autoclass:: ManagerBasedRLEnvWindow
     :members:
     :show-inheritance:
-
-Viewport Camera Controller
---------------------------
-
-.. autoclass:: ViewportCameraController
-    :members:
 
 Additional Public Classes
 -------------------------

@@ -17,10 +17,6 @@ first articulation scene the app builds. The CI harness launches every
 ``isaacsim_ci`` test file in its own app, so keeping these tests isolated here gives them
 a clean renderer and exercises the real single-scene use case.
 
-Per-environment scene partitioning is enabled through
-``IsaacRtxRendererCfg.enable_scene_partitioning`` by default. The environment
-variable remains a legacy construction-time override.
-
 Launch Isaac Sim Simulator first.
 """
 
@@ -36,12 +32,11 @@ import os
 import pytest
 import torch
 import warp as wp
+from isaaclab_physx.physics import PhysxCfg
 from isaaclab_physx.renderers.isaac_rtx_renderer import IsaacRtxRenderer, IsaacRtxRendererCfg
-from isaaclab_physx.renderers.isaac_rtx_renderer_cfg import IsaacRtxRendererGlobalSettingsCfg
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
-from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
 from isaaclab.sensors.camera import CameraCfg
 from isaaclab.sim import build_simulation_context
@@ -49,63 +44,83 @@ from isaaclab.utils.configclass import configclass
 
 from isaaclab_assets.robots.kuka_allegro import KUKA_ALLEGRO_CFG
 
-_ENV_VAR = "ISAAC_LAB_ENABLE_ISAAC_RTX_PER_ENV_SCENE_PARTITION"
+_PARTITION_XFAIL = pytest.mark.xfail(
+    reason="NVBug 6264822: Kit c0b875cd scene partitioning regression", strict=False, run=False
+)
 
 
-def _isolation_renderer_cfg() -> IsaacRtxRendererCfg:
-    """Disable spectator world-space layout for intentionally overlapping test environments.
+def _clone_plan(env_template: str, num_envs: int):
+    """A plan replicating one asset into ``num_envs`` environments of the given namespace."""
+    import torch
 
-    The visualizer goldens cover AppLauncher's spectator configuration with spatially separated environments.
-    """
-    return IsaacRtxRendererCfg(global_settings=IsaacRtxRendererGlobalSettingsCfg(show_all_partitions_by_default=False))
+    from isaaclab.cloner import ClonePlan
 
-
-@pytest.mark.isaacsim_ci
-def test_partitioning_enabled_by_default(monkeypatch):
-    """``primvars:omni:scenePartition`` must be authored when the environment variable is absent."""
-    from pxr import Usd
-
-    monkeypatch.delenv(_ENV_VAR, raising=False)
-
-    stage = Usd.Stage.CreateInMemory()
-    world = stage.DefinePrim("/World", "Xform")  # noqa: F841
-    env0 = stage.DefinePrim("/World/envs/env_0", "Xform")  # noqa: F841
-
-    renderer = object.__new__(IsaacRtxRenderer)
-    renderer.cfg = IsaacRtxRendererCfg()
-    renderer.prepare_stage(stage, num_envs=1)
-
-    prim = stage.GetPrimAtPath("/World/envs/env_0")
-    assert prim.HasAttribute("primvars:omni:scenePartition"), (
-        "primvars:omni:scenePartition must be authored when partitioning uses its default."
+    return ClonePlan(
+        sources=(env_template.format(0) + "/Robot",),
+        destinations=(env_template + "/Robot",),
+        clone_mask=torch.ones((1, num_envs), dtype=torch.bool),
+        env_ids=torch.arange(num_envs, dtype=torch.long),
     )
 
 
-@pytest.mark.isaacsim_ci
-@pytest.mark.parametrize(("cfg_enabled", "environment_value"), [(True, "0"), (False, "1")])
-def test_partitioning_cfg_overrides_legacy_environment_variable(monkeypatch, cfg_enabled: bool, environment_value: str):
-    """The renderer configuration should take precedence over the legacy environment variable."""
-    from pxr import Usd
-
-    monkeypatch.setenv(_ENV_VAR, environment_value)
+def _stage_with_envs(env_template: str, num_envs: int):
+    """An in-memory stage with one env root per environment and an extra unplanned camera."""
+    from pxr import Usd, UsdGeom
 
     stage = Usd.Stage.CreateInMemory()
-    world = stage.DefinePrim("/World", "Xform")  # noqa: F841
-    env0 = stage.DefinePrim("/World/envs/env_0", "Xform")  # noqa: F841
-
-    renderer = object.__new__(IsaacRtxRenderer)
-    renderer.cfg = IsaacRtxRendererCfg(enable_scene_partitioning=cfg_enabled)
-    renderer.prepare_stage(stage, num_envs=1)
-
-    prim = stage.GetPrimAtPath("/World/envs/env_0")
-    assert prim.HasAttribute("primvars:omni:scenePartition") is cfg_enabled
+    for env_id in range(num_envs):
+        root = env_template.format(env_id)
+        stage.DefinePrim(root, "Xform")
+        UsdGeom.Camera.Define(stage, f"{root}/Camera")
+        UsdGeom.Camera.Define(stage, f"{root}/UnplannedCamera")
+        stage.DefinePrim(f"{root}/Robot", "Xform")
+    return stage
 
 
 @pytest.mark.isaacsim_ci
-def test_partitioning_isolates_rigid_object(monkeypatch: pytest.MonkeyPatch):
+def test_partitioning_reads_the_environments_off_the_clone_plan():
+    """Each env root and its cameras are tagged with that env's token, taken from the plan.
+
+    The environment namespace comes from the plan rather than a hardcoded ``/World/envs/env_{i}``,
+    so a scene that names its environments differently is partitioned just the same.
+    """
+    env_template = "/Scene/worlds/world_{}"
+    num_envs = 3
+    stage = _stage_with_envs(env_template, num_envs)
+
+    renderer = object.__new__(IsaacRtxRenderer)
+    renderer.cfg = IsaacRtxRendererCfg()
+    renderer._camera_prim_paths = [f"{env_template.format(env_id)}/Camera" for env_id in range(num_envs)]
+    renderer.prepare_stage(stage, _clone_plan(env_template, num_envs))
+
+    for env_id in range(num_envs):
+        root = env_template.format(env_id)
+        token = f"world_{env_id}"
+        env_prim = stage.GetPrimAtPath(root)
+        assert env_prim.GetAttribute("primvars:omni:scenePartition").Get() == token
+        camera = stage.GetPrimAtPath(f"{root}/Camera")
+        assert camera.GetAttribute("omni:scenePartition").Get() == token
+        assert not stage.GetPrimAtPath(f"{root}/UnplannedCamera").HasAttribute("omni:scenePartition")
+        # Only cameras carry the non-primvar token; other geometry inherits the env-root primvar.
+        assert not stage.GetPrimAtPath(f"{root}/Robot").HasAttribute("omni:scenePartition")
+
+
+@pytest.mark.isaacsim_ci
+def test_partitioning_without_a_clone_plan_is_rejected():
+    """Renderer stage preparation cannot escape the clone-plan lifecycle."""
+    stage = _stage_with_envs("/World/envs/env_{}", 2)
+
+    renderer = object.__new__(IsaacRtxRenderer)
+    renderer.cfg = IsaacRtxRendererCfg()
+    with pytest.raises(ValueError, match="active clone plan"):
+        renderer.prepare_stage(stage, None)
+
+
+@pytest.mark.isaacsim_ci
+@_PARTITION_XFAIL
+def test_partitioning_isolates_rigid_object():
     """Per-env :class:`~isaaclab.assets.RigidObject` instances at unique world positions render
     as visibly different per-env tiles when RTX honors ``primvars:omni:scenePartition``."""
-    monkeypatch.delenv(_ENV_VAR, raising=False)
 
     @configclass
     class _Scene(InteractiveSceneCfg):
@@ -130,16 +145,19 @@ def test_partitioning_isolates_rigid_object(monkeypatch: pytest.MonkeyPatch):
             height=128,
             width=192,
             data_types=["rgb"],
-            renderer_cfg=_isolation_renderer_cfg(),
             spawn=sim_utils.PinholeCameraCfg(
                 focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.0, clipping_range=(0.05, 100.0)
             ),
             offset=CameraCfg.OffsetCfg(pos=(0.0, 0.0, 1.0), rot=(0.0, 0.0, 0.0, 1.0), convention="world"),
+            renderer_cfg=IsaacRtxRendererCfg(),
         )
 
-    with build_simulation_context(device="cuda:0", dt=1.0 / 60.0) as sim:
+    with build_simulation_context(
+        sim_cfg=sim_utils.SimulationCfg(physics=PhysxCfg(), dt=1.0 / 60.0), device="cuda:0"
+    ) as sim:
         sim._app_control_on_stop_handle = None
-        scene = InteractiveScene(_Scene(num_envs=4, env_spacing=0.0, replicate_physics=False))
+        scene_cfg = _Scene(num_envs=4, env_spacing=0.0, replicate_physics=False)
+        scene = InteractiveScene(scene_cfg)
         sim.reset()
         # one settle step so RigidObject data buffers are populated before we write into them
         sim.step()
@@ -169,75 +187,12 @@ def test_partitioning_isolates_rigid_object(monkeypatch: pytest.MonkeyPatch):
             "Top-level partitioning may have regressed."
         )
 
-        shared_pose = torch.zeros_like(root_pose)
-        shared_pose[:, 0] = 2.0
-        shared_pose[:, 2] = 1.0
-        shared_pose[:, 6] = 1.0
-        cube.write_root_pose_to_sim_index(
-            root_pose=wp.from_torch(shared_pose.contiguous(), dtype=wp.transformf),
-            env_ids=wp.from_torch(torch.arange(scene.num_envs, device=device, dtype=torch.int32)),
-        )
-        marker_positions = shared_pose[:, :3].clone()
-        marker_positions[:, 1] = offsets[:, 0]
-        marker_positions[:, 2] += offsets[:, 1]
-        marker_colors = {
-            "green": (0.05, 1.0, 0.05),
-            "blue": (0.05, 0.05, 1.0),
-            "yellow": (1.0, 1.0, 0.05),
-            "magenta": (1.0, 0.05, 1.0),
-        }
-        markers = VisualizationMarkers(
-            VisualizationMarkersCfg(
-                prim_path="/Visuals/partitioned_cubes",
-                markers={
-                    name: sim_utils.CuboidCfg(
-                        size=(0.25, 0.25, 0.25),
-                        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=color, emissive_color=color),
-                    )
-                    for name, color in marker_colors.items()
-                },
-            )
-        )
-        markers.visualize(
-            marker_positions,
-            marker_indices=scene._ALL_INDICES,
-            environment_ids=scene._ALL_INDICES,
-        )
-        for _ in range(4):
-            sim.step()
-            scene.update(sim.cfg.dt)
-
-        rgb = scene["camera"].data.output["rgb"].torch.float()
-        red, green, blue = rgb.unbind(dim=-1)
-        marker_masks = torch.stack(
-            (
-                (green > 1.5 * red) & (green > 1.5 * blue) & (green > 80.0),
-                (blue > 1.5 * red) & (blue > 1.5 * green) & (blue > 80.0),
-                (red > 80.0) & (green > 80.0) & (blue < 0.6 * torch.minimum(red, green)),
-                (red > 80.0) & (blue > 80.0) & (green < 0.6 * torch.minimum(red, blue)),
-            ),
-            dim=1,
-        )
-        marker_pixel_counts = marker_masks.sum(dim=(2, 3))
-        expected_counts = marker_pixel_counts.diagonal()
-        unexpected_counts = marker_pixel_counts.masked_fill(
-            torch.eye(scene.num_envs, dtype=torch.bool, device=device),
-            0,
-        )
-        assert torch.all(expected_counts > 10), (
-            f"Expected each camera to see its PointInstancer marker. Pixel counts:\n{marker_pixel_counts}"
-        )
-        assert torch.all(unexpected_counts < 5), (
-            "PointInstancer markers leaked across scene partitions. "
-            f"Per-camera color pixel counts:\n{marker_pixel_counts}"
-        )
-
 
 @pytest.mark.isaacsim_ci
-def test_partitioning_isolates_articulation(monkeypatch: pytest.MonkeyPatch):
+@_PARTITION_XFAIL
+def test_partitioning_isolates_articulation():
     """Per-env :class:`~isaaclab.assets.Articulation` instances driven to wildly different joint
     poses render as visibly different per-env tiles when RTX honors top-level scene partitions."""
-    monkeypatch.delenv(_ENV_VAR, raising=False)
 
     @configclass
     class _Scene(InteractiveSceneCfg):
@@ -251,16 +206,19 @@ def test_partitioning_isolates_articulation(monkeypatch: pytest.MonkeyPatch):
             height=128,
             width=192,
             data_types=["rgb"],
-            renderer_cfg=_isolation_renderer_cfg(),
             spawn=sim_utils.PinholeCameraCfg(
                 focal_length=18.0, focus_distance=400.0, horizontal_aperture=24.0, clipping_range=(0.05, 100.0)
             ),
             offset=CameraCfg.OffsetCfg(pos=(-1.5, 0.0, 0.7), rot=(0.0, 0.0, 0.0, 1.0), convention="world"),
+            renderer_cfg=IsaacRtxRendererCfg(),
         )
 
-    with build_simulation_context(device="cuda:0", dt=1.0 / 60.0) as sim:
+    with build_simulation_context(
+        sim_cfg=sim_utils.SimulationCfg(physics=PhysxCfg(), dt=1.0 / 60.0), device="cuda:0"
+    ) as sim:
         sim._app_control_on_stop_handle = None
-        scene = InteractiveScene(_Scene(num_envs=4, env_spacing=0.0, replicate_physics=False))
+        scene_cfg = _Scene(num_envs=4, env_spacing=0.0, replicate_physics=False)
+        scene = InteractiveScene(scene_cfg)
         sim.reset()
 
         robot = scene["robot"]

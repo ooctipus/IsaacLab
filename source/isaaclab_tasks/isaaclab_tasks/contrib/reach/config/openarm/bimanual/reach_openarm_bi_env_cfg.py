@@ -22,10 +22,10 @@ from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
-from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils.configclass import configclass
 from isaaclab.utils.noise import UniformNoiseCfg as Unoise
-from isaaclab.visualizers import VisualizerCfg
+
+from isaaclab_tasks.utils.presets import MultiBackendSceneCfg, MultiBackendSimulationCfg
 
 ##
 # Scene definition
@@ -33,7 +33,7 @@ from isaaclab.visualizers import VisualizerCfg
 
 
 @configclass
-class ReachSceneCfg(InteractiveSceneCfg):
+class ReachSceneCfg(MultiBackendSceneCfg):
     """Configuration for the scene with a robotic arm."""
 
     # world
@@ -91,6 +91,10 @@ class CommandsCfg:
             yaw=(8 * math.pi / 9, 10 * math.pi / 9),
         ),
     )
+    left_ee_pose.goal_pose_visualizer_cfg.prim_path = "/Visuals/Command/left_goal_pose"
+    left_ee_pose.current_pose_visualizer_cfg.prim_path = "/Visuals/Command/left_body_pose"
+    right_ee_pose.goal_pose_visualizer_cfg.prim_path = "/Visuals/Command/right_goal_pose"
+    right_ee_pose.current_pose_visualizer_cfg.prim_path = "/Visuals/Command/right_body_pose"
 
 
 @configclass
@@ -312,6 +316,7 @@ class CurriculumCfg:
 class ReachEnvCfg(ManagerBasedRLEnvCfg):
     """Configuration for the reach end-effector pose tracking environment."""
 
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg()
     # Scene settings
     scene: ReachSceneCfg = ReachSceneCfg(num_envs=4096, env_spacing=2.5)
     # Basic settings
@@ -330,6 +335,5 @@ class ReachEnvCfg(ManagerBasedRLEnvCfg):
         self.decimation = 2
         self.sim.render_interval = self.decimation
         self.episode_length_s = 24.0
-        self.sim.default_visualizer_cfg = VisualizerCfg(eye=(3.5, 3.5, 3.5))
         # simulation settings
         self.sim.dt = 1.0 / 60.0

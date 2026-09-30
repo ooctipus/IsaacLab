@@ -367,7 +367,7 @@ def apply_articulation_root_properties(
     success = not any_skipped
     for root in targets:
         if fix_root_link:
-            root = sim.physics_manager.fix_articulation_root(root, stage)
+            root = sim._fix_articulation_root(root, stage)
         elif fix_root_link is False:
             joint = find_global_fixed_joint_prim(root.GetPath().pathString, stage=stage)
             if joint is not None:

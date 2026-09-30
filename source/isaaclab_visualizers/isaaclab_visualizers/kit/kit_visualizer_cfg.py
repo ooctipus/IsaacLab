@@ -7,12 +7,12 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import typing
 
 from isaaclab.utils.configclass import configclass
 from isaaclab.visualizers.visualizer_cfg import VisualizerCfg
 
-if TYPE_CHECKING:
+if typing.TYPE_CHECKING:
     from .kit_visualizer import KitVisualizer
 
 
@@ -22,13 +22,16 @@ class KitVisualizerCfg(VisualizerCfg):
 
     .. note::
         The streaming camera panel (``streaming_view=True``) requires the
-        ``--enable_cameras`` CLI flag.  Without it, the streaming view is silently
-        skipped and no image panel is created.  Set ``dock_position="RIGHT"`` so
+        ``--enable_cameras`` CLI flag. Initialization fails without camera rendering.
+        Set ``dock_position="RIGHT"`` so
         the panel appears side-by-side with the Viewport instead of as a hidden tab.
     """
 
     class_type: type[KitVisualizer] | str = "{DIR}.kit_visualizer:KitVisualizer"
     """Visualizer implementation class."""
+
+    prim_path: str = "/World/KitViewerCamera"
+    """Global clone-plan path of the camera controlled by the Kit viewport."""
 
     visualizer_type: str = "kit"
     """Type identifier for Kit visualizer."""
@@ -81,13 +84,14 @@ class KitVisualizerCfg(VisualizerCfg):
     """
 
     origin_track_path: str | None = None
-    """Asset tracking path for the viewport camera origin.
+    """Planned rigid-body prim path tracked by the viewport camera.
 
-    Format: ``"<asset_name>"`` to track the asset root, or ``"<asset_name>/<body_name>"``
-    to track a specific body on the asset.  Required when :attr:`origin_type` is ``"asset"``.
+    The path must be covered by the clone plan. It may name an exact published rigid body or an
+    asset root, in which case its first published rigid body is tracked. It may contain
+    ``{ENV_REGEX_NS}``; :attr:`origin_env_index` selects the exact clone. Required when
+    :attr:`origin_type` is ``"asset"``.
 
     Examples::
 
-        origin_track_path = "robot"             # track robot root
-        origin_track_path = "robot/panda_hand"  # track panda_hand body on robot
+        origin_track_path = "{ENV_REGEX_NS}/Robot/panda_hand"
     """

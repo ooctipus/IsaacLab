@@ -44,13 +44,14 @@ For the cart-pole, we use its pre-defined configuration object, which is an inst
 default initial state, actuator models for different joints, and other meta-information. A deeper-dive into how to
 create this configuration object is provided in the :ref:`how-to-write-articulation-config` tutorial.
 
-As seen in the previous tutorial, we can spawn the articulation into the scene in a similar fashion by creating
-an instance of the :class:`assets.Articulation` class by passing the configuration object to its constructor.
+The clone layout, static assets, and cart-pole are all declared on :class:`ArticulationTutorialCfg`. The
+``{ENV_REGEX_NS}`` path makes the cart-pole a per-environment asset. A
+:class:`cloner.ReplicateSession` derives the layout from this complete configuration, and the articulation is
+constructed with ``cfg.cartpole.class_type(cfg.cartpole)`` while that clone lifecycle is active.
 
 .. literalinclude:: ../../../../scripts/tutorials/01_assets/run_articulation.py
    :language: python
-   :start-at: # Create separate groups called "Origin1", "Origin2"
-   :end-at: cartpole = Articulation(cfg=cartpole_cfg)
+   :pyobject: ArticulationTutorialCfg
 
 
 Running the simulation loop

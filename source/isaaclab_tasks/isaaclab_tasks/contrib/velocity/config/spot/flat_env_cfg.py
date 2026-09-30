@@ -3,13 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-from isaaclab_newton.physics import (
-    KaminoPADMMSolverCfg,
-    MJWarpSolverCfg,
-    NewtonCfg,
-    NewtonCollisionPipelineCfg,
-    NewtonShapeCfg,
-)
+from isaaclab_newton.physics import KaminoPADMMSolverCfg, MJWarpSolverCfg, NewtonCollisionPipelineCfg, NewtonShapeCfg
 from isaaclab_physx.physics import PhysxCfg
 from isaaclab_physx.sim.spawners.materials import PhysxRigidBodyMaterialCfg
 
@@ -21,17 +15,16 @@ from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg, SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.physics import PhysxAutoCfg
-from isaaclab.sim import SimulationCfg
 from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR
 from isaaclab.utils.configclass import configclass
 from isaaclab.utils.noise import UniformNoiseCfg as Unoise
-from isaaclab.visualizers import VisualizerCfg
 
 import isaaclab_tasks.contrib.velocity.config.spot.mdp as spot_mdp
 import isaaclab_tasks.core.velocity.mdp as mdp
 from isaaclab_tasks.core.velocity.velocity_env_cfg import LocomotionVelocityRoughEnvCfg
 from isaaclab_tasks.utils import PresetCfg
+from isaaclab_tasks.utils.presets import MultiBackendSimulationCfg
 
 
 @configclass
@@ -39,21 +32,19 @@ class PhysicsCfg(PresetCfg):
     isaacsim_physx = PhysxCfg(gpu_max_rigid_patch_count=10 * 2**15)
     physx = PhysxAutoCfg(isaacsim_physx=isaacsim_physx)
     default = isaacsim_physx
-    newton_mjwarp = NewtonCfg(
-        solver_cfg=MJWarpSolverCfg(
-            njmax=130,
-            nconmax=40,
-            cone="pyramidal",
-            impratio=1,
-            integrator="implicitfast",
-            use_mujoco_contacts=False,
-        ),
+    newton_mjwarp = MJWarpSolverCfg(
+        njmax=130,
+        nconmax=40,
+        cone="pyramidal",
+        impratio=1,
+        integrator="implicitfast",
+        use_mujoco_contacts=False,
         collision_cfg=NewtonCollisionPipelineCfg(max_triangle_pairs=2_500_000),
         num_substeps=2,
         debug_mode=False,
         default_shape_cfg=NewtonShapeCfg(margin=0.01),
     )
-    newton_kamino = NewtonCfg(solver_cfg=KaminoPADMMSolverCfg(max_contacts_per_world=64))
+    newton_kamino = KaminoPADMMSolverCfg(max_contacts_per_world=64)
 
 
 ##
@@ -352,7 +343,7 @@ class SpotTerminationsCfg:
 class SpotFlatEnvCfg(LocomotionVelocityRoughEnvCfg):
     """Configuration for the Spot robot in a flat environment."""
 
-    sim: SimulationCfg = SimulationCfg(physics=PhysicsCfg())
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(physics=PhysicsCfg())
 
     # Basic settings
     observations: SpotObservationsCfg = SpotObservationsCfg()
@@ -411,4 +402,3 @@ class SpotFlatEnvCfg(LocomotionVelocityRoughEnvCfg):
 
         # no height scan
         self.scene.height_scanner = None
-        self.sim.default_visualizer_cfg = VisualizerCfg(eye=(10.5, 10.5, 0.3))

@@ -216,7 +216,7 @@ class SingleCameraObservationsCfg(StateObservationCfg):
             func=mdp.vision_camera,
             noise=Unoise(n_min=-0.0, n_max=0.0),
             clip=(-1.0, 1.0),
-            params={"sensor_cfg": SceneEntityCfg("base_camera")},
+            params={"sensor_cfg": SceneEntityCfg("camera")},
         )
 
     # image groups keep the group default of no history: a stack of frames per step costs more

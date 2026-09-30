@@ -12,15 +12,14 @@ sim-side signal (contact force on a gripper, per-finger grip force on an object,
 The design keeps three concerns pluggable and device-agnostic so a single seam
 serves multiple devices:
 
-* **Signal source** -- how a per-hand vector is read from the environment. Built
-  by :meth:`HapticFeedbackCfg.make_signal_fn`; ready-made factories are
+* **Signal source** -- how a per-hand vector is read from the environment. Ready-made factories are
   :func:`contact_force_magnitude` (one scalar per hand) and
   :func:`per_finger_object_grip` (per-finger force against a target object).
 * **Output port** -- the narrow :class:`HapticFeedbackReceiver` protocol. Its
   payload is a *vector* (length ``num_taxels``): length 1 for a rumble motor, one
   channel per finger for a glove. Kept off the input-only ``DeviceBase``.
 * **Device backend** -- how the vector is rendered. Selected by the concrete
-  :class:`HapticFeedbackCfg` subclass via :meth:`~HapticFeedbackCfg.build_sink`,
+  :class:`HapticFeedbackCfg` through its runtime ``class_type``,
   which wires an ``isaacteleop`` retargeter + ``IHapticDevice`` behind a
   ``HapticSink``. Isaac Lab supplies the signal; ``isaacteleop`` owns the
   mapping curve and the device write.
@@ -193,10 +192,11 @@ class HapticFeedbackCfg:
     ``self.haptic_feedback = ...`` in ``__post_init__``). The teleop scripts
     discover it via ``hasattr(env_cfg, "haptic_feedback")``.
 
-    A subclass supplies the two pluggable pieces: :meth:`make_signal_fn` (how the
-    per-hand vector is read from the environment) and :meth:`build_sink` (how that
-    vector is rendered by an ``isaacteleop`` device).
+    A concrete config selects the runtime implementation through ``class_type``.
     """
+
+    class_type: type[Any] | str | None = None
+    """Runtime haptic-feedback class. Concrete configs must set this field."""
 
     left_sensor_name: str = "left_hand_contact"
     """Scene entity name of the left-hand :class:`~isaaclab.sensors.ContactSensor`."""
@@ -217,30 +217,6 @@ class HapticFeedbackCfg:
     saturation: float = 1.0
     """Upper clamp on the normalized output amplitude in ``[0, 1]``."""
 
-    def make_signal_fn(self) -> SignalFn:
-        """Return the signal source (environment -> per-hand vector) for this config."""
-        raise NotImplementedError
-
-    def build_sink(self, force_inputs: dict[str, Any], tracker_provider: Callable[[], Any]) -> tuple[Any, Any]:
-        """Build the ``isaacteleop`` ``HapticSink`` that renders the cached vectors.
-
-        Args:
-            force_inputs: Per-endpoint graph output nodes, each carrying a
-                ``TactileVector(num_taxels)`` fed from the driver every step.
-            tracker_provider: Callable returning a DeviceIO tracker to reuse for
-                devices that need one (e.g. a controller). Cross-process devices
-                (e.g. a glove) may ignore it.
-
-        Returns:
-            A ``(connected_sink, tracker)`` tuple. ``connected_sink`` is the
-            ``HapticSink.connect(...)`` result for ``TeleopSessionConfig(sinks=[...])``
-            (a subgraph, *not* the sink node). ``tracker`` is the device's DeviceIO
-            tracker (or ``None``); the session uses it to request the device's OpenXR
-            extensions (e.g. a glove's ``XR_NVX1_push_tensor``). It is returned
-            separately because the connected subgraph does not expose the device.
-        """
-        raise NotImplementedError
-
 
 @configclass
 class ControllerHapticFeedbackCfg(HapticFeedbackCfg):
@@ -250,6 +226,7 @@ class ControllerHapticFeedbackCfg(HapticFeedbackCfg):
     rumble via ``ControllerHapticDevice`` + ``TactileVectorToControllerPulse``.
     """
 
+    class_type: type[Any] | str = "{DIR}.haptic_feedback:ControllerHapticFeedback"
     num_taxels: int = 1
     gain: float = 0.05
     """Force-to-amplitude gain [1/N] applied after the deadband. Default maps ~20 N to full scale."""
@@ -260,10 +237,39 @@ class ControllerHapticFeedbackCfg(HapticFeedbackCfg):
     duration_s: float = 0.0
     """Pulse duration [s]. ``0`` selects the shortest supported pulse; refreshed each frame."""
 
+
+@configclass
+class GloveHapticFeedbackCfg(HapticFeedbackCfg):
+    """Haptic feedback rendered as per-finger power on a haptic glove."""
+
+    class_type: type[Any] | str = "{DIR}.haptic_feedback:GloveHapticFeedback"
+    gain: float = 0.1
+    """Force-to-power gain [1/N] applied after the deadband. Default maps ~10 N to full power."""
+    deadband: float = 0.5
+    """Contact force [N] below which no vibration is produced."""
+    smoothing: float = 0.5
+    """EMA new-sample weight in ``[0, 1]`` (1.0 = no smoothing) applied to each finger power."""
+    collection_id: str = "manus_glove_haptic"
+    """Push-tensor collection id pairing Isaac Teleop with the glove plugin process."""
+    finger_order: list[str] = ["thumb", "index", "middle", "ring", "pinky"]
+    """Per-channel finger substrings in glove channel order."""
+
+    def __post_init__(self) -> None:
+        self.num_taxels = len(self.finger_order)
+
+
+class ControllerHapticFeedback:
+    """Construct controller haptic signal and sink behavior from config."""
+
+    def __init__(self, cfg: ControllerHapticFeedbackCfg):
+        self.cfg = cfg
+
     def make_signal_fn(self) -> SignalFn:
-        return contact_force_magnitude(self.left_sensor_name, self.right_sensor_name)
+        """Return the configured environment signal source."""
+        return contact_force_magnitude(self.cfg.left_sensor_name, self.cfg.right_sensor_name)
 
     def build_sink(self, force_inputs: dict[str, Any], tracker_provider: Callable[[], Any]) -> tuple[Any, Any]:
+        """Build the configured controller sink and its tracker."""
         from isaacteleop.haptic_devices.controller import ControllerHapticDevice
         from isaacteleop.retargeters.tactile_retargeters import TactileVectorToControllerPulse
         from isaacteleop.retargeting_engine.deviceio_source_nodes import HapticSink
@@ -272,12 +278,12 @@ class ControllerHapticFeedbackCfg(HapticFeedbackCfg):
         for endpoint, force_output in force_inputs.items():
             pulse = TactileVectorToControllerPulse(
                 f"_haptic_pulse_{endpoint}",
-                num_taxels=self.num_taxels,
-                gain=self.gain,
-                deadband=self.deadband,
-                saturation=self.saturation,
-                frequency_hz=self.frequency_hz,
-                duration_s=self.duration_s,
+                num_taxels=self.cfg.num_taxels,
+                gain=self.cfg.gain,
+                deadband=self.cfg.deadband,
+                saturation=self.cfg.saturation,
+                frequency_hz=self.cfg.frequency_hz,
+                duration_s=self.cfg.duration_s,
             ).connect({TactileVectorToControllerPulse.INPUT_TACTILE: force_output})
             sink_inputs[endpoint] = pulse.output(TactileVectorToControllerPulse.OUTPUT_PULSE)
 
@@ -285,36 +291,18 @@ class ControllerHapticFeedbackCfg(HapticFeedbackCfg):
         return HapticSink("_haptic_sink", device).connect(sink_inputs), device.get_tracker()
 
 
-@configclass
-class GloveHapticFeedbackCfg(HapticFeedbackCfg):
-    """Haptic feedback rendered as per-finger power on a haptic glove.
+class GloveHapticFeedback:
+    """Construct glove haptic signal and sink behavior from config."""
 
-    Renders per-finger grip force against the grasped object as finger vibration
-    via a cross-process ``haptic_glove_device`` + ``TactileVectorToFingerPower``.
-    """
-
-    gain: float = 0.1
-    """Force-to-power gain [1/N] applied after the deadband. Default maps ~10 N to full power."""
-    deadband: float = 0.5
-    """Contact force [N] below which no vibration is produced."""
-    smoothing: float = 0.5
-    """EMA new-sample weight in ``[0, 1]`` (1.0 = no smoothing) applied to each finger power."""
-    collection_id: str = "manus_glove_haptic"
-    """Push-tensor collection id pairing Isaac Teleop with the glove plugin process
-    (the Manus plugin's default). Change it to target a different glove vendor."""
-    finger_order: list[str] = ["thumb", "index", "middle", "ring", "pinky"]
-    """Per-channel finger substrings, in glove channel order, matched against the
-    contact sensor's body names to group each finger's links into one channel.
-    This is the sole source of the finger-channel count (``num_taxels``)."""
-
-    def __post_init__(self) -> None:
-        # finger_order is the single source of truth for the channel count.
-        self.num_taxels = len(self.finger_order)
+    def __init__(self, cfg: GloveHapticFeedbackCfg):
+        self.cfg = cfg
 
     def make_signal_fn(self) -> SignalFn:
-        return per_finger_object_grip(self.left_sensor_name, self.right_sensor_name, self.finger_order)
+        """Return the configured environment signal source."""
+        return per_finger_object_grip(self.cfg.left_sensor_name, self.cfg.right_sensor_name, self.cfg.finger_order)
 
     def build_sink(self, force_inputs: dict[str, Any], tracker_provider: Callable[[], Any]) -> tuple[Any, Any]:
+        """Build the configured glove sink and its tracker."""
         from isaacteleop.haptic_devices.glove import haptic_glove_device
         from isaacteleop.retargeters.tactile_retargeters import TactileVectorToFingerPower
         from isaacteleop.retargeting_engine.deviceio_source_nodes import HapticSink
@@ -323,18 +311,18 @@ class GloveHapticFeedbackCfg(HapticFeedbackCfg):
         for endpoint, force_output in force_inputs.items():
             powers = TactileVectorToFingerPower(
                 f"_haptic_powers_{endpoint}",
-                num_taxels=self.num_taxels,
-                num_fingers=self.num_taxels,
-                gain=self.gain,
-                deadband=self.deadband,
-                saturation=self.saturation,
-                smoothing=self.smoothing,
+                num_taxels=self.cfg.num_taxels,
+                num_fingers=self.cfg.num_taxels,
+                gain=self.cfg.gain,
+                deadband=self.cfg.deadband,
+                saturation=self.cfg.saturation,
+                smoothing=self.cfg.smoothing,
             ).connect({TactileVectorToFingerPower.INPUT_TACTILE: force_output})
             sink_inputs[endpoint] = powers.output(TactileVectorToFingerPower.OUTPUT_POWERS)
 
         # Cross-process device; tracker_provider is unused. Its push-tensor tracker
         # carries the required XR_NVX1_push_tensor / XR_NVX1_tensor_data extensions.
-        device = haptic_glove_device(self.collection_id, num_fingers=self.num_taxels)
+        device = haptic_glove_device(self.cfg.collection_id, num_fingers=self.cfg.num_taxels)
         return HapticSink("_haptic_sink", device).connect(sink_inputs), device.get_tracker()
 
 
@@ -362,7 +350,7 @@ class HapticFeedbackDriver:
         """
         self._env = env
         self._device = device
-        self._signal_fn = cfg.make_signal_fn()
+        self._signal_fn = cfg.class_type(cfg).make_signal_fn()
         self._zero = np.zeros(cfg.num_taxels, dtype=np.float32)
 
     def update(self) -> None:

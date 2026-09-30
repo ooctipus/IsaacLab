@@ -34,7 +34,7 @@ Choosing a Backend
   :class:`~isaaclab_physx.physics.PhysxCfg`.
 * **Newton** — GPU-accelerated, Warp-native, and differentiable. The Newton
   integration ships with the MuJoCo-Warp solver and beta support for the Kamino
-  solver. Selected via :class:`~isaaclab_newton.physics.NewtonCfg`.
+  solver. Selected via a concrete :class:`~isaaclab_newton.physics.NewtonSolverCfg` subclass.
 * **OvPhysX** — a **highly experimental** kit-less PhysX backend that reads
   scene-level parameters from the USD ``PhysicsScene`` prim. Selected via
   :class:`~isaaclab_ov.physics.OvPhysxCfg`. Not recommended for general use yet.
@@ -46,13 +46,13 @@ asset, sensor, and renderer instantiated thereafter:
 
     from isaaclab.sim import SimulationCfg
     from isaaclab_physx.physics import PhysxCfg
-    from isaaclab_newton.physics import NewtonCfg, MJWarpSolverCfg
+    from isaaclab_newton.physics import MJWarpSolverCfg
 
-    # PhysX (default)
+    # PhysX
     sim_cfg = SimulationCfg(physics=PhysxCfg())
 
     # Newton with MuJoCo-Warp
-    sim_cfg = SimulationCfg(physics=NewtonCfg(solver_cfg=MJWarpSolverCfg()))
+    sim_cfg = SimulationCfg(physics=MJWarpSolverCfg())
 
 
 Feature Support Matrix
@@ -127,7 +127,7 @@ per-task support, see each backend's own ``limitations`` page.
       - Yes
     * - Solver configuration source
       - :class:`~isaaclab_physx.physics.PhysxCfg`
-      - :class:`~isaaclab_newton.physics.NewtonCfg` + solver config
+      - Concrete :class:`~isaaclab_newton.physics.NewtonSolverCfg` subclass
       - USD ``PhysicsScene`` + :class:`~isaaclab_ov.physics.OvPhysxCfg`
 
 
@@ -141,7 +141,7 @@ declares all three backends side by side:
 .. code-block:: python
 
     from isaaclab.physics import PhysxAutoCfg
-    from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
+    from isaaclab_newton.physics import MJWarpSolverCfg
     from isaaclab_ov.physics import OvPhysxCfg
     from isaaclab_physx.physics import PhysxCfg
 
@@ -154,7 +154,7 @@ declares all three backends side by side:
             ovphysx=ovphysx,
         )
         default: PhysxCfg = isaacsim_physx
-        newton_mjwarp: NewtonCfg = NewtonCfg(solver_cfg=MJWarpSolverCfg())
+        newton_mjwarp: MJWarpSolverCfg = MJWarpSolverCfg()
 
 With no selector, the task uses concrete Isaac Sim PhysX. Users can select a
 backend with ``physics=<name>``; ``physics=physx`` explicitly opts into automatic

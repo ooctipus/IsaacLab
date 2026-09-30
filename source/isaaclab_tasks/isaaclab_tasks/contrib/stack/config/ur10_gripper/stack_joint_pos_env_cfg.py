@@ -33,6 +33,10 @@ from isaaclab_assets.robots.universal_robots import (  # isort: skip
 ##
 from isaaclab.markers.config import FRAME_MARKER_CFG  # isort: skip
 
+_EE_FRAME_MARKER_CFG = FRAME_MARKER_CFG.copy()
+_EE_FRAME_MARKER_CFG.markers["frame"].scale = (0.1, 0.1, 0.1)
+_EE_FRAME_MARKER_CFG.prim_path = "/Visuals/FrameTransformer"
+
 
 @configclass
 class EventCfgLongSuction:
@@ -80,10 +84,6 @@ class UR10CubeStackEnvCfg(StackEnvCfg):
         disable_gravity=False,
     )
     cube_scale = (1.0, 1.0, 1.0)
-    # Listens to the required transforms
-    marker_cfg = FRAME_MARKER_CFG.copy()
-    marker_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
-    marker_cfg.prim_path = "/Visuals/FrameTransformer"
 
     def validate_config(self):
         # Surface grippers used by these suction robots are PhysX-only.
@@ -172,7 +172,7 @@ class UR10LongSuctionCubeStackEnvCfg(UR10CubeStackEnvCfg):
         self.scene.ee_frame = FrameTransformerCfg(
             prim_path="{ENV_REGEX_NS}/Robot/base_link",
             debug_vis=True,
-            visualizer_cfg=self.marker_cfg,
+            visualizer_cfg=_EE_FRAME_MARKER_CFG.copy(),
             target_frames=[
                 FrameTransformerCfg.FrameCfg(
                     prim_path="{ENV_REGEX_NS}/Robot/ee_link",
@@ -209,7 +209,7 @@ class UR10ShortSuctionCubeStackEnvCfg(UR10CubeStackEnvCfg):
         self.scene.ee_frame = FrameTransformerCfg(
             prim_path="{ENV_REGEX_NS}/Robot/base_link",
             debug_vis=True,
-            visualizer_cfg=self.marker_cfg,
+            visualizer_cfg=_EE_FRAME_MARKER_CFG.copy(),
             target_frames=[
                 FrameTransformerCfg.FrameCfg(
                     prim_path="{ENV_REGEX_NS}/Robot/ee_link",

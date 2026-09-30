@@ -6,46 +6,26 @@
 from __future__ import annotations
 
 import logging
-import re
 from typing import TYPE_CHECKING
 
 import numpy as np
-import trimesh
 import warp as wp
 
-from pxr import Usd, UsdPhysics
-
-import isaaclab.sim as sim_utils
 from isaaclab import cloner
 from isaaclab.sim.simulation_context import SimulationContext
-from isaaclab.utils.mesh import PRIMITIVE_MESH_TYPES, create_trimesh_from_geom_mesh, create_trimesh_from_geom_shape
 from isaaclab.utils.warp import ProxyArray, convert_to_warp_mesh
 from isaaclab.utils.warp import kernels as warp_kernels
 
-from .base_ray_caster import BaseRayCaster
+from .base_ray_caster import BaseRayCaster, _inverse_transform_vertices, _transform_vertices
 from .kernels import copy_mesh_poses_to_table_kernel, fill_ray_hits_distance_inf_kernel
 from .multi_mesh_ray_caster_data import MultiMeshRayCasterData
 
 if TYPE_CHECKING:
-    from isaaclab.cloner import ClonePlan
+    from isaaclab.cloner.clone_plan import ClonePlan, GeometryLayout
 
     from .multi_mesh_ray_caster_cfg import MultiMeshRayCasterCfg
 
 logger = logging.getLogger(__name__)
-
-
-def _matrix_from_quat_xyzw(quat: np.ndarray) -> np.ndarray:
-    """Return a rotation matrix from an ``(x, y, z, w)`` quaternion."""
-    x, y, z, w = quat
-    two_s = 2.0 / np.dot(quat, quat)
-    return np.array(
-        [
-            [1.0 - two_s * (y * y + z * z), two_s * (x * y - z * w), two_s * (x * z + y * w)],
-            [two_s * (x * y + z * w), 1.0 - two_s * (x * x + z * z), two_s * (y * z - x * w)],
-            [two_s * (x * z - y * w), two_s * (y * z + x * w), 1.0 - two_s * (x * x + y * y)],
-        ],
-        dtype=np.float64,
-    )
 
 
 class BaseMultiMeshRayCaster(BaseRayCaster):
@@ -55,9 +35,8 @@ class BaseMultiMeshRayCaster(BaseRayCaster):
     defined in the sensor's local coordinate frame. The sensor can be configured to ray-cast against
     a set of meshes with a given ray pattern.
 
-    The meshes are parsed from the list of primitive paths provided in the configuration. These are then
-    converted to warp meshes and stored in the :attr:`meshes` dictionary. The ray-caster then ray-casts
-    against these warp meshes using the ray pattern provided in the configuration.
+    Mesh geometry declared by the clone plan is converted to Warp meshes and stored in the
+    :attr:`meshes` dictionary. The ray-caster casts the configured ray pattern against those meshes.
 
     Compared to the default RayCaster, the MultiMeshRayCaster provides additional functionality and flexibility as
     an extension of the default RayCaster with the following enhancements:
@@ -147,22 +126,29 @@ class BaseMultiMeshRayCaster(BaseRayCaster):
     """
 
     def _initialize_warp_meshes(self):
-        """Initialize mesh buffers from the ClonePlan when env-scoped, else from the stage."""
-        sim = SimulationContext.instance()
-        plan = sim.get_clone_plan() if sim is not None else None
-        target_records_by_expr = {}
+        """Initialize mesh buffers exclusively from the completed clone plan."""
+        plan = SimulationContext.instance().get_clone_plan()
+        if plan is None or not plan.is_complete or plan.env_ids is None:
+            raise RuntimeError(f"RayCaster at {self.cfg.prim_path!r} requires a completed clone plan.")
+        env_to_index = {int(env_id): index for index, env_id in enumerate(plan.env_ids.tolist())}
+        target_records = []
         dummy_mesh_id: int | None = None
         self._mesh_views = []
 
-        # Build one per-env mesh list for each configured raycast target.
         for target_cfg in self._raycast_targets_cfg:
-            records_per_env, dummy_mesh_id, tracked_target_exprs = self._build_mesh_records(
-                target_cfg, plan, dummy_mesh_id
+            records_per_env, dummy_mesh_id, tracked_body_paths = self._build_mesh_records(
+                target_cfg, plan, env_to_index, dummy_mesh_id
             )
-            self._num_meshes_per_env[target_cfg.prim_expr] = max(len(records) for records in records_per_env)
-            target_records_by_expr[target_cfg.prim_expr] = records_per_env
+            widths = {len(records) for records in records_per_env}
+            if target_cfg.track_mesh_transforms and len(widths) != 1:
+                raise ValueError(
+                    f"Tracked target {target_cfg.prim_expr!r} has different mesh counts across environments."
+                )
+            width = max(widths)
+            self._num_meshes_per_env[target_cfg.prim_expr] = width
+            target_records.append(records_per_env)
             self._mesh_views.append(
-                self._create_tracked_target_view(tracked_target_exprs) if target_cfg.track_mesh_transforms else None
+                self._create_tracked_target_view(tracked_body_paths) if target_cfg.track_mesh_transforms else None
             )
 
         if dummy_mesh_id is None:
@@ -179,8 +165,7 @@ class BaseMultiMeshRayCaster(BaseRayCaster):
         mesh_orientations[..., 3] = 1.0
 
         mesh_offset = 0
-        for target_cfg in self._raycast_targets_cfg:
-            records_per_env = target_records_by_expr[target_cfg.prim_expr]
+        for target_cfg, records_per_env in zip(self._raycast_targets_cfg, target_records):
             target_width = self._num_meshes_per_env[target_cfg.prim_expr]
             for env_id, records in enumerate(records_per_env):
                 if not records:
@@ -200,169 +185,86 @@ class BaseMultiMeshRayCaster(BaseRayCaster):
     def _build_mesh_records(
         self,
         target_cfg: MultiMeshRayCasterCfg.RaycastTargetCfg,
-        plan: ClonePlan | None,
+        plan: ClonePlan,
+        env_to_index: dict[int, int],
         dummy_mesh_id: int | None,
     ):
-        """Build mesh records for the target configuration."""
+        """Build per-environment mesh records from exact planned geometry."""
         records_per_env = [[] for _ in range(self._num_envs)]
-        target_in_plan = False
-        tracked_target_exprs: list[str] = [target_cfg.prim_expr]
-        has_rigid_body_api = lambda p: p.HasAPI(UsdPhysics.RigidBodyAPI)  # noqa: E731
-        # Prefer ClonePlan data for env-scoped targets; destination USD prims may not exist.
-        if plan is not None and target_cfg.track_mesh_transforms:
-            plan_tracked_target_exprs: list[str] = []
-            prim_expr = target_cfg.prim_expr
-            for source_root, destination_template, source_path, env_ids in cloner.query.iter_sources(plan, prim_expr):
-                target_in_plan = True
-
-                # Load meshes from the authored source entry.
-                source_pattern = re.compile(source_path)
-                source_prims = sim_utils.get_all_matching_child_prims(
-                    source_root, lambda prim: source_pattern.fullmatch(prim.GetPath().pathString) is not None
-                )
-                if not source_prims:
-                    raise RuntimeError(f"No ClonePlan source prims matched '{source_path}'.")
-
-                mesh_ids: list[int] = []
-                row_tracked_target_exprs: list[str] = []
-                for source_prim in source_prims:
-                    source_prim_path = str(source_prim.GetPath())
-                    # Use a bounded rigid-body ancestor when the match is below a body; otherwise
-                    # enumerate rigid bodies under the match, including the matched prim itself.
-                    owner_prim = None
-                    rigid_body_records: list[tuple[Usd.Prim, Usd.Prim]]
-                    if not source_prim.HasAPI(UsdPhysics.ArticulationRootAPI):
-                        owner_prim = sim_utils.get_first_matching_ancestor_prim(source_prim_path, has_rigid_body_api)
-                    owner_path = None if owner_prim is None else str(owner_prim.GetPath())
-                    if owner_path and (owner_path == source_root or owner_path.startswith(f"{source_root}/")):
-                        rigid_body_records = [(source_prim, owner_prim)]
-                    else:
-                        rigid_body_records = [
-                            (p, p) for p in sim_utils.get_all_matching_child_prims(source_prim_path, has_rigid_body_api)
-                        ]
-                    if not rigid_body_records:
-                        raise RuntimeError(
-                            f"Cannot track ClonePlan target '{target_cfg.prim_expr}' because source prim "
-                            f"'{source_prim.GetPath()}' has no rigid-body ancestor or descendant."
-                        )
-                    for geometry_prim, owner_prim in rigid_body_records:
-                        mesh_id = self._load_target_prim_warp_mesh(geometry_prim, target_cfg, reference_prim=owner_prim)
-                        dummy_mesh_id = mesh_id if dummy_mesh_id is None else dummy_mesh_id
-                        mesh_ids.append(mesh_id)
-                        owner_path = str(owner_prim.GetPath())
-                        if owner_path == source_root:
-                            owner_suffix = ""
-                        elif owner_path.startswith(source_root + "/"):
-                            owner_suffix = owner_path[len(source_root) :]
-                        else:
-                            raise RuntimeError(
-                                f"Tracked target owner '{owner_path}' is not under ClonePlan source root "
-                                f"'{source_root}'."
-                            )
-                        row_tracked_target_exprs.append(destination_template.format("[^/]+") + owner_suffix)
-
-                if len(row_tracked_target_exprs) > len(plan_tracked_target_exprs):
-                    plan_tracked_target_exprs = row_tracked_target_exprs
-
-                # Geometry is selected by ClonePlan; live pose is supplied by backend body/site views.
-                for env_id in env_ids:
-                    for mesh_id in mesh_ids:
-                        records_per_env[env_id].append((mesh_id, (1.0e9, 1.0e9, 1.0e9), (0.0, 0.0, 0.0, 1.0)))
-
-            if target_in_plan:
-                if not plan_tracked_target_exprs:
-                    raise RuntimeError(
-                        f"No tracked body expressions were resolved for target '{target_cfg.prim_expr}'."
-                    )
-                return records_per_env, dummy_mesh_id, plan_tracked_target_exprs
-
-        # Fall back to authored USD prims for global targets and scenes without ClonePlan data.
-        target_prims = sim_utils.find_matching_prims(target_cfg.prim_expr)
-        if not target_prims:
-            raise RuntimeError(f"Failed to find a prim at path expression: {target_cfg.prim_expr}")
-
-        records = []
-        tracked_target_exprs = []
-        for target_prim in target_prims:
-            reference_prim = target_prim
+        tracked_body_paths = []
+        for target, geometries in plan.match_geometry_targets(target_cfg.prim_expr):
+            env_indices = range(self._num_envs) if target.env_id is None else (env_to_index[target.env_id],)
             if target_cfg.track_mesh_transforms:
-                while reference_prim and reference_prim.IsValid() and str(reference_prim.GetPath()) != "/":
-                    if reference_prim.HasAPI(UsdPhysics.RigidBodyAPI):
-                        break
-                    reference_prim = reference_prim.GetParent()
-                if reference_prim is None or not reference_prim.IsValid() or not has_rigid_body_api(reference_prim):
-                    raise RuntimeError(
-                        f"Cannot track non-physics ray-cast target '{target_cfg.prim_expr}'. "
-                        "Set track_mesh_transforms=False for static targets, or apply RigidBodyAPI to dynamic targets."
+                by_body: dict[str, list[GeometryLayout]] = {}
+                for geometry in geometries:
+                    body_path = geometry.frame.body_path
+                    if body_path is None:
+                        raise ValueError(
+                            f"Tracked ray-cast geometry {geometry.path!r} has no planned rigid-body binding."
+                        )
+                    by_body.setdefault(body_path, []).append(geometry)
+                for body_path, body_geometries in by_body.items():
+                    body_frames = [geometry.frame for geometry in body_geometries]
+                    mesh_id = self._load_planned_mesh(
+                        body_geometries,
+                        [
+                            _transform_vertices(geometry.vertices, frame.pose)
+                            for geometry, frame in zip(body_geometries, body_frames)
+                        ],
+                        body_frames[0].body_view_path,
+                        target_cfg,
                     )
-                tracked_target_exprs.append(str(reference_prim.GetPath()))
+                    for env_index in env_indices:
+                        records_per_env[env_index].append((mesh_id, (1.0e9, 1.0e9, 1.0e9), (0.0, 0.0, 0.0, 1.0)))
+                    tracked_body_paths.append(body_path)
+                    dummy_mesh_id = mesh_id if dummy_mesh_id is None else dummy_mesh_id
+                continue
 
-            mesh_id = self._load_target_prim_warp_mesh(target_prim, target_cfg, reference_prim=reference_prim)
-            dummy_mesh_id = mesh_id if dummy_mesh_id is None else dummy_mesh_id
-            records.append((mesh_id, *sim_utils.resolve_prim_pose(reference_prim)))
-
-        if len(records) == 1:
-            return [list(records) for _ in range(self._num_envs)], dummy_mesh_id, tracked_target_exprs
-
-        # Multiple USD matches are expected to be laid out evenly by environment.
-        if len(records) % self._num_envs != 0:
-            raise RuntimeError(
-                f"Target expression '{target_cfg.prim_expr}' matched {len(records)} mesh records, "
-                f"which cannot be evenly partitioned across {self._num_envs} environments."
+            has_bound_geometry = any(geometry.frame.body_path is not None for geometry in geometries)
+            if target.body_path is not None or has_bound_geometry:
+                raise ValueError(f"Static ray-cast target {target.path!r} contains rigid-body-bound geometry.")
+            mesh_id = self._load_planned_mesh(
+                geometries,
+                [
+                    _inverse_transform_vertices(
+                        _transform_vertices(geometry.vertices, geometry.frame.pose), target.pose
+                    )
+                    for geometry in geometries
+                ],
+                target.source_path,
+                target_cfg,
             )
-        n_meshes = len(records) // self._num_envs
-        records_per_env = [records[env_id * n_meshes : (env_id + 1) * n_meshes] for env_id in range(self._num_envs)]
+            record = (mesh_id, target.pose[:3], target.pose[3:])
+            for env_index in env_indices:
+                records_per_env[env_index].append(record)
+            dummy_mesh_id = mesh_id if dummy_mesh_id is None else dummy_mesh_id
 
-        return records_per_env, dummy_mesh_id, tracked_target_exprs
+        if target_cfg.track_mesh_transforms and len(tracked_body_paths) != len(set(tracked_body_paths)):
+            raise ValueError(f"Tracked target {target_cfg.prim_expr!r} resolves multiple meshes on one rigid body.")
+        return records_per_env, dummy_mesh_id, tracked_body_paths
 
-    def _load_target_prim_warp_mesh(self, target_prim, target_cfg, reference_prim=None) -> int:
-        reference_prim = target_prim if reference_prim is None else reference_prim
-        prim_key = (f"{target_prim.GetPath()}@{reference_prim.GetPath()}", self._device)
+    def _load_planned_mesh(
+        self,
+        geometries: tuple[GeometryLayout, ...] | list[GeometryLayout],
+        vertices: list[np.ndarray],
+        reference: str | None,
+        target_cfg: MultiMeshRayCasterCfg.RaycastTargetCfg,
+    ) -> int:
+        """Create or reuse one Warp mesh from planned geometry."""
+        prim_key = (f"{'|'.join(geometry.source_path for geometry in geometries)}@{reference}", self._device)
         if prim_key in BaseMultiMeshRayCaster.meshes:
             return BaseMultiMeshRayCaster.meshes[prim_key].id
-
-        mesh_prims = sim_utils.get_all_matching_child_prims(
-            target_prim.GetPath(), lambda prim: prim.GetTypeName() in PRIMITIVE_MESH_TYPES + ["Mesh"]
-        )
-        if len(mesh_prims) == 0:
-            raise RuntimeError(
-                f"No mesh prims found at path: {target_prim.GetPath()} with supported types:"
-                f" {PRIMITIVE_MESH_TYPES + ['Mesh']}"
-            )
-
-        trimesh_meshes = []
-        for mesh_prim in mesh_prims:
-            if mesh_prim is None or not mesh_prim.IsValid():
-                raise RuntimeError(f"Invalid mesh prim path: {target_prim}")
-            if mesh_prim.GetTypeName() == "Mesh":
-                mesh = create_trimesh_from_geom_mesh(mesh_prim)
-            else:
-                mesh = create_trimesh_from_geom_shape(mesh_prim)
-            mesh.apply_scale(sim_utils.resolve_prim_scale(mesh_prim))
-            relative_pos, relative_quat = sim_utils.resolve_prim_pose(mesh_prim, reference_prim)
-            relative_pos = np.asarray(relative_pos, dtype=np.float64)
-            relative_quat = np.asarray(relative_quat, dtype=np.float64)
-            transform = np.eye(4)
-            transform[:3, :3] = _matrix_from_quat_xyzw(relative_quat)
-            transform[:3, 3] = relative_pos
-            mesh.apply_transform(transform)
-            trimesh_meshes.append(mesh)
-
-        if len(trimesh_meshes) == 1:
-            trimesh_mesh = trimesh_meshes[0]
-        elif target_cfg.merge_prim_meshes:
-            trimesh_mesh = trimesh.util.concatenate(trimesh_meshes)
-        else:
-            raise RuntimeError(
-                f"Multiple mesh prims found at path: {target_prim.GetPath()} but merging is disabled. Please"
-                " enable `merge_prim_meshes` in the configuration or specify each mesh separately."
-            )
-
-        wp_mesh = convert_to_warp_mesh(trimesh_mesh.vertices, trimesh_mesh.faces, device=self._device)
+        faces, offset = [], 0
+        for geometry in geometries:
+            faces.append(geometry.faces + offset)
+            offset += len(geometry.vertices)
+        points = np.concatenate(vertices)
+        triangles = np.concatenate(faces)
+        wp_mesh = convert_to_warp_mesh(points, triangles, device=self._device)
         BaseMultiMeshRayCaster.meshes[prim_key] = wp_mesh
         logger.info(
-            f"Read '{len(mesh_prims)}' mesh prims under path '{target_prim.GetPath()}' with"
-            f" {len(trimesh_mesh.vertices)} vertices and {len(trimesh_mesh.faces)} faces."
+            f"Loaded {len(geometries)} planned geometries with {len(points)} vertices below"
+            f" ray-cast target {target_cfg.prim_expr!r}."
         )
         return wp_mesh.id
 

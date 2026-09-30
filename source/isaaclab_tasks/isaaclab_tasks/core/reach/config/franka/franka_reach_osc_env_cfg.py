@@ -34,9 +34,7 @@ class FrankaReachEnvCfg(franka_reach_env_cfg.FrankaReachEnvCfg):
             asset_name="robot",
             joint_names=["panda_joint.*"],
             body_name="panda_hand",
-            # If a task frame different from articulation root/base is desired, a RigidObject, e.g., "task_frame",
-            # can be added to the scene and its relative path could provided as task_frame_rel_path
-            # task_frame_rel_path="task_frame",
+            # A task-frame transformer or contact sensor must be declared on the scene and referenced by name.
             controller_cfg=OperationalSpaceControllerCfg(
                 target_types=["pose_abs"],
                 impedance_mode="variable_kp",
@@ -56,10 +54,3 @@ class FrankaReachEnvCfg(franka_reach_env_cfg.FrankaReachEnvCfg):
         # Removing these observations as they are not needed for OSC and we want keep the observation space small
         self.observations.policy.joint_pos = None
         self.observations.policy.joint_vel = None
-
-    def play_mode(self):
-        # play-mode overrides of parent
-        super().play_mode()
-
-        # make a smaller scene for play
-        self.scene.num_envs = 16

@@ -65,8 +65,8 @@ class MPMParticleSpawnerCfg(SpawnerCfg):
     """Base configuration for declarative Newton MPM particle generation.
 
     Particle geometry is emitted directly into Newton during scene replication.
-    The USD spawner creates only a lightweight placeholder prim used by Isaac
-    Lab's scene and cloning machinery.
+    The USD spawner declares the renderer-facing point geometry consumed through
+    the same clone plan.
     """
 
     func: Callable | str = "{DIR}.mpm:spawn_mpm_particles"
@@ -79,9 +79,6 @@ class MPMParticleSpawnerCfg(SpawnerCfg):
 
     visual_material: VisualMaterialCfg | None = None
     """Optional visual-material spawner configuration bound to each particle cloud."""
-
-    visual_update_frequency: int = 1
-    """USD-stage particle visualization update frequency in render frames."""
 
 
 @configclass

@@ -45,7 +45,7 @@ def spawn_sphere(
             this is set to the origin.
         orientation: The orientation in (x, y, z, w) to apply to the prim w.r.t. its parent prim. Defaults to None,
             in which case this is set to identity.
-        **kwargs: Additional keyword arguments, like ``clone_in_fabric``.
+        **kwargs: Additional keyword arguments.
 
     Returns:
         The created prim.
@@ -91,7 +91,7 @@ def spawn_cuboid(
             this is set to the origin.
         orientation: The orientation in (x, y, z, w) to apply to the prim w.r.t. its parent prim. Defaults to None,
             in which case this is set to identity.
-        **kwargs: Additional keyword arguments, like ``clone_in_fabric``.
+        **kwargs: Additional keyword arguments.
 
     Returns:
         The created prim.
@@ -136,7 +136,7 @@ def spawn_cylinder(
             this is set to the origin.
         orientation: The orientation in (x, y, z, w) to apply to the prim w.r.t. its parent prim. Defaults to None,
             in which case this is set to identity.
-        **kwargs: Additional keyword arguments, like ``clone_in_fabric``.
+        **kwargs: Additional keyword arguments.
 
     Returns:
         The created prim.
@@ -178,7 +178,7 @@ def spawn_capsule(
             this is set to the origin.
         orientation: The orientation in (x, y, z, w) to apply to the prim w.r.t. its parent prim. Defaults to None,
             in which case this is set to identity.
-        **kwargs: Additional keyword arguments, like ``clone_in_fabric``.
+        **kwargs: Additional keyword arguments.
 
     Returns:
         The created prim.
@@ -220,7 +220,7 @@ def spawn_cone(
             this is set to the origin.
         orientation: The orientation in (x, y, z, w) to apply to the prim w.r.t. its parent prim. Defaults to None,
             in which case this is set to identity.
-        **kwargs: Additional keyword arguments, like ``clone_in_fabric``.
+        **kwargs: Additional keyword arguments.
 
     Returns:
         The created prim.

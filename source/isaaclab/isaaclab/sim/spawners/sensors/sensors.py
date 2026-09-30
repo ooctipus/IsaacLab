@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from pxr import Gf, Sdf, Usd
 
-from isaaclab.sim.utils import change_prim_property, clone, create_prim, get_current_stage
+from isaaclab.sim.utils import clone, create_prim, get_current_stage
 from isaaclab.utils import to_camel_case
 
 if TYPE_CHECKING:
@@ -133,7 +133,7 @@ def spawn_camera(
             this is set to the origin.
         orientation: The orientation in (x, y, z, w) to apply to the prim w.r.t. its parent prim. Defaults to None,
             in which case this is set to identity.
-        **kwargs: Additional keyword arguments, like ``clone_in_fabric``.
+        **kwargs: Additional keyword arguments.
 
     Returns:
         The created prim.
@@ -144,20 +144,12 @@ def spawn_camera(
     # obtain stage handle
     stage = get_current_stage()
 
-    # spawn camera if it doesn't exist.
-    if not stage.GetPrimAtPath(prim_path).IsValid():
-        create_prim(prim_path, "Camera", translation=translation, orientation=orientation, stage=stage)
-    else:
-        raise ValueError(f"A prim already exists at path: '{prim_path}'.")
+    # spawn camera and retain the exact authored prim
+    prim = create_prim(prim_path, "Camera", translation=translation, orientation=orientation, stage=stage)
 
     # lock camera from viewport (this disables viewport movement for camera)
     if cfg.lock_camera:
-        change_prim_property(
-            prop_path=f"{prim_path}.omni:kit:cameraLock",
-            value=True,
-            stage=stage,
-            type_to_create_if_not_exist=Sdf.ValueTypeNames.Bool,
-        )
+        prim.CreateAttribute("omni:kit:cameraLock", Sdf.ValueTypeNames.Bool).Set(True)
     # decide the custom attributes to add
     if cfg.projection_type == "pinhole":
         attribute_types = CUSTOM_PINHOLE_CAMERA_ATTRIBUTES
@@ -177,11 +169,8 @@ def spawn_camera(
         "visible",
         "semantic_tags",
         "from_intrinsic_matrix",
-        "spawn_path",
         "distortion",
     ]
-    # get camera prim
-    prim = stage.GetPrimAtPath(prim_path)
     # create attributes for the fisheye camera model
     # note: for pinhole those are already part of the USD camera prim
     for attr_name, attr_type in attribute_types.values():
@@ -231,7 +220,7 @@ def spawn_sensor_frame(
             (origin).
         orientation: Local orientation as quaternion (x, y, z, w) w.r.t. the parent prim.
             Defaults to None (identity).
-        **kwargs: Additional keyword arguments, like ``clone_in_fabric``.
+        **kwargs: Additional keyword arguments.
 
     Returns:
         The created USD prim.

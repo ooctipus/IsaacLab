@@ -9,7 +9,6 @@
 from __future__ import annotations
 
 import logging
-import re
 import warnings
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
@@ -21,14 +20,13 @@ from newton import JointTargetMode, JointType, ModelFlags
 from newton.selection import ArticulationView
 from prettytable import PrettyTable
 
-from pxr import UsdPhysics
-
 from isaaclab.actuators import ActuatorCollection
 from isaaclab.actuators.actuator_base_cfg import _is_implicit_actuator_cfg
 from isaaclab.assets.articulation import ordering_kernels
 from isaaclab.assets.articulation.base_articulation import BaseArticulation
 from isaaclab.physics import PhysicsEvent
-from isaaclab.sim.utils.queries import resolve_matching_prims_from_source
+from isaaclab.sim import SimulationContext
+from isaaclab.sim.utils.queries import path_expr_to_glob
 from isaaclab.utils.string import resolve_matching_names, resolve_matching_names_values
 from isaaclab.utils.version import get_isaac_sim_version, has_kit
 from isaaclab.utils.warp import ProxyArray
@@ -36,7 +34,6 @@ from isaaclab.utils.wrench_composer import WrenchComposer
 
 from isaaclab_newton.assets import kernels as shared_kernels
 from isaaclab_newton.assets.articulation import kernels as articulation_kernels
-from isaaclab_newton.physics import NewtonManager as SimulationManager
 
 from .actuator_control import NewtonActuatorControl
 from .articulation_data import ArticulationData
@@ -73,19 +70,14 @@ def _resolve_actuator_gain_values(
 
 def _resolve_articulation_root_prim_path_expr(cfg: ArticulationCfg) -> str:
     """Resolve the articulation root prim expression from the asset configuration."""
-    if cfg.articulation_root_prim_path is not None:
-        return cfg.prim_path + cfg.articulation_root_prim_path
-
-    def has_articulation_root_api(prim) -> bool:
-        return bool(prim.HasAPI(UsdPhysics.ArticulationRootAPI))
-
-    resolve_kwargs = {"predicate": has_articulation_root_api, "expected_num_matches": 1}
-    return resolve_matching_prims_from_source(cfg.prim_path, **resolve_kwargs)[0][1]
+    path_expr = cfg.prim_path + (cfg.articulation_root_prim_path or "")
+    layout = SimulationContext.instance().get_clone_plan()
+    return layout.match_articulation(path_expr).view_path
 
 
-def _configure_builder_joint_target_modes(builder, cfg: ArticulationCfg) -> None:
-    """Resolve configured actuator gains into Newton builder target modes before finalization."""
-    root_prim_path_regex = _resolve_articulation_root_prim_path_expr(cfg)
+def _configure_builder_joint_target_modes(builder, cfg: ArticulationCfg, root_prim_path_expr: str) -> None:
+    """Resolve topology-affecting actuator properties before Newton solver construction."""
+    root_prim_path_regex = path_expr_to_glob(root_prim_path_expr).replace("*", ".*")
     articulation_ids, _ = resolve_matching_names(
         root_prim_path_regex, builder.articulation_label, raise_when_no_match=False
     )
@@ -93,8 +85,7 @@ def _configure_builder_joint_target_modes(builder, cfg: ArticulationCfg) -> None
     for articulation_id in articulation_ids:
         joint_start = builder.articulation_start[articulation_id]
         joint_end = builder.articulation_end[articulation_id]
-        dof_ids: list[int] = []
-        dof_names: list[str] = []
+        dof_ids, dof_names = [], []
         for joint_id in range(joint_start, joint_end):
             if builder.joint_type[joint_id] in (JointType.FREE, JointType.FIXED):
                 continue
@@ -104,13 +95,17 @@ def _configure_builder_joint_target_modes(builder, cfg: ArticulationCfg) -> None
                 if joint_id + 1 < len(builder.joint_qd_start)
                 else len(builder.joint_target_mode)
             )
-            joint_name = builder.joint_label[joint_id].rsplit("/", maxsplit=1)[-1]
-            for axis_index, dof_id in enumerate(range(dof_start, dof_end)):
-                dof_ids.append(dof_id)
-                dof_names.append(joint_name if dof_end - dof_start == 1 else f"{joint_name}:{axis_index}")
+            dof_count = dof_end - dof_start
+            dof_ids.extend(range(dof_start, dof_end))
+            if source_dof_ids is None:
+                joint_name = builder.joint_label[joint_id].rsplit("/", maxsplit=1)[-1]
+                dof_names.extend(joint_name if dof_count == 1 else f"{joint_name}:{i}" for i in range(dof_count))
 
         if source_dof_ids is not None:
             for source_dof_id, dof_id in zip(source_dof_ids, dof_ids, strict=True):
+                builder.joint_target_ke[dof_id] = builder.joint_target_ke[source_dof_id]
+                builder.joint_target_kd[dof_id] = builder.joint_target_kd[source_dof_id]
+                builder.joint_armature[dof_id] = builder.joint_armature[source_dof_id]
                 builder.joint_target_mode[dof_id] = builder.joint_target_mode[source_dof_id]
             continue
 
@@ -121,21 +116,38 @@ def _configure_builder_joint_target_modes(builder, cfg: ArticulationCfg) -> None
             if not matched_indices:
                 continue
             selected_dof_ids = [dof_ids[index] for index in matched_indices]
-            stiffness_values = _resolve_actuator_gain_values(
-                actuator_cfg.stiffness,
-                matched_names,
-                [builder.joint_target_ke[dof_id] for dof_id in selected_dof_ids],
+            implicit = _is_implicit_actuator_cfg(actuator_cfg)
+            stiffness_values = (
+                _resolve_actuator_gain_values(
+                    actuator_cfg.stiffness,
+                    matched_names,
+                    [builder.joint_target_ke[dof_id] for dof_id in selected_dof_ids],
+                )
+                if implicit
+                else [0.0] * len(selected_dof_ids)
             )
-            damping_values = _resolve_actuator_gain_values(
-                actuator_cfg.damping,
-                matched_names,
-                [builder.joint_target_kd[dof_id] for dof_id in selected_dof_ids],
+            damping_values = (
+                _resolve_actuator_gain_values(
+                    actuator_cfg.damping,
+                    matched_names,
+                    [builder.joint_target_kd[dof_id] for dof_id in selected_dof_ids],
+                )
+                if implicit
+                else [0.0] * len(selected_dof_ids)
             )
-            for dof_id, stiffness, damping in zip(selected_dof_ids, stiffness_values, damping_values, strict=True):
+            armature_values = _resolve_actuator_gain_values(
+                actuator_cfg.armature,
+                matched_names,
+                [builder.joint_armature[dof_id] for dof_id in selected_dof_ids],
+            )
+            for dof_id, stiffness, damping, armature in zip(
+                selected_dof_ids, stiffness_values, damping_values, armature_values, strict=True
+            ):
+                builder.joint_target_ke[dof_id] = stiffness
+                builder.joint_target_kd[dof_id] = damping
+                builder.joint_armature[dof_id] = armature
                 builder.joint_target_mode[dof_id] = int(
-                    _target_mode_from_gains(stiffness, damping)
-                    if _is_implicit_actuator_cfg(actuator_cfg)
-                    else JointTargetMode.EFFORT
+                    _target_mode_from_gains(stiffness, damping) if implicit else JointTargetMode.EFFORT
                 )
         source_dof_ids = dof_ids
 
@@ -211,8 +223,6 @@ class Articulation(BaseArticulation):
         Args:
             cfg: A configuration instance.
         """
-        from isaaclab.sim import SimulationContext  # noqa: PLC0415
-
         super().__init__(cfg)
 
         sim_ctx = SimulationContext.instance()
@@ -224,7 +234,7 @@ class Articulation(BaseArticulation):
     def _register_callbacks(self) -> None:
         """Register Newton lifecycle callbacks required before model finalization."""
         super()._register_callbacks()
-        self._model_init_handle = SimulationManager.register_callback(
+        self._model_init_handle = self._physics_manager.register_callback(
             self._configure_joint_target_modes,
             PhysicsEvent.MODEL_INIT,
             name=f"articulation_target_modes_{self.cfg.prim_path}",
@@ -232,9 +242,10 @@ class Articulation(BaseArticulation):
 
     def _configure_joint_target_modes(self, _event) -> None:
         """Apply configured actuator modes to the private Newton model builder."""
-        builder = SimulationManager._builder
+        builder = self._physics_manager._newton._builder
         if builder is not None:
-            _configure_builder_joint_target_modes(builder, self.cfg)
+            root_prim_path = _resolve_articulation_root_prim_path_expr(self.cfg)
+            _configure_builder_joint_target_modes(builder, self.cfg, root_prim_path)
 
     """
     Properties
@@ -369,11 +380,8 @@ class Articulation(BaseArticulation):
             env_ids: Environment indices. If None, then all indices are used.
             env_mask: Environment mask. If None, then all the instances are updated. Shape is (num_instances,).
         """
-        # use ellipses object to skip initial indices.
-        if (env_ids is None) or (env_ids == slice(None)):
+        if env_ids is None or (isinstance(env_ids, slice) and env_ids == slice(None)):
             env_ids = slice(None)
-        # reset actuators, including backend-native actuator state. None selects all
-        # environments; delayed-actuator buffers do not accept a slice.
         self.actuators.reset(None if env_ids == slice(None) else env_ids)
         # reset external wrenches.
         self._instantaneous_wrench_composer.reset(env_ids, env_mask)
@@ -436,13 +444,13 @@ class Articulation(BaseArticulation):
 
         # Compute processed actuator commands (native path is a no-op here) and
         # submit them to the backend through the collection's control adapter.
-        self.actuators.compute(SimulationManager.get_physics_dt())
+        self.actuators.compute(self._physics_manager.get_physics_dt())
         self.actuators.submit_commands()
 
         # Tendon submission is solver-specific: MuJoCo drives tendons through actuator controls
         # outside the articulation view, so the manager owns how a buffered target reaches the solver.
         if self._fixed_tendon_target_dirty:
-            self._fixed_tendon_control.write_data_to_sim(SimulationManager.get_control())
+            self._fixed_tendon_control.write_data_to_sim(self._physics_manager._newton.get_control())
             self._fixed_tendon_target_dirty = False
 
     def update(self, dt: float):
@@ -1533,7 +1541,7 @@ class Articulation(BaseArticulation):
             device=self.device,
         )
 
-        SimulationManager.add_model_change(ModelFlags.JOINT_DOF_PROPERTIES)
+        self._physics_manager.add_model_change(ModelFlags.JOINT_DOF_PROPERTIES)
 
     def _write_joint_float_property_to_sim_mask(
         self,
@@ -1568,7 +1576,7 @@ class Articulation(BaseArticulation):
             device=self.device,
         )
 
-        SimulationManager.add_model_change(ModelFlags.JOINT_DOF_PROPERTIES)
+        self._physics_manager.add_model_change(ModelFlags.JOINT_DOF_PROPERTIES)
 
     def write_joint_stiffness_to_sim_index(
         self,
@@ -1806,7 +1814,7 @@ class Articulation(BaseArticulation):
                 logger.warning(violation_message)
             else:
                 logger.info(violation_message)
-        SimulationManager.add_model_change(ModelFlags.JOINT_DOF_PROPERTIES)
+        self._physics_manager.add_model_change(ModelFlags.JOINT_DOF_PROPERTIES)
 
     def write_joint_position_limit_to_sim_mask(
         self,
@@ -1880,7 +1888,7 @@ class Articulation(BaseArticulation):
                 logger.warning(violation_message)
             else:
                 logger.info(violation_message)
-        SimulationManager.add_model_change(ModelFlags.JOINT_DOF_PROPERTIES)
+        self._physics_manager.add_model_change(ModelFlags.JOINT_DOF_PROPERTIES)
 
     def write_joint_velocity_limit_to_sim_index(
         self,
@@ -2312,7 +2320,7 @@ class Articulation(BaseArticulation):
             device=self.device,
         )
         # tell the physics engine that some of the body properties have been updated
-        SimulationManager.add_model_change(ModelFlags.BODY_INERTIAL_PROPERTIES)
+        self._physics_manager.add_model_change(ModelFlags.BODY_INERTIAL_PROPERTIES)
 
     def set_masses_mask(
         self,
@@ -2360,7 +2368,7 @@ class Articulation(BaseArticulation):
             device=self.device,
         )
         # tell the physics engine that some of the body properties have been updated
-        SimulationManager.add_model_change(ModelFlags.BODY_INERTIAL_PROPERTIES)
+        self._physics_manager.add_model_change(ModelFlags.BODY_INERTIAL_PROPERTIES)
 
     def set_coms_index(
         self,
@@ -2409,7 +2417,7 @@ class Articulation(BaseArticulation):
         )
         self.data._reset_body_com_pose_b_dependents()
         # tell the physics engine that some of the body properties have been updated
-        SimulationManager.add_model_change(ModelFlags.BODY_INERTIAL_PROPERTIES)
+        self._physics_manager.add_model_change(ModelFlags.BODY_INERTIAL_PROPERTIES)
 
     def set_coms_mask(
         self,
@@ -2457,7 +2465,7 @@ class Articulation(BaseArticulation):
         )
         self.data._reset_body_com_pose_b_dependents()
         # tell the physics engine that some of the body properties have been updated
-        SimulationManager.add_model_change(ModelFlags.BODY_INERTIAL_PROPERTIES)
+        self._physics_manager.add_model_change(ModelFlags.BODY_INERTIAL_PROPERTIES)
 
     def set_inertias_index(
         self,
@@ -2507,7 +2515,7 @@ class Articulation(BaseArticulation):
             device=self.device,
         )
         # tell the physics engine that some of the body properties have been updated
-        SimulationManager.add_model_change(ModelFlags.BODY_INERTIAL_PROPERTIES)
+        self._physics_manager.add_model_change(ModelFlags.BODY_INERTIAL_PROPERTIES)
 
     def set_inertias_mask(
         self,
@@ -2555,7 +2563,7 @@ class Articulation(BaseArticulation):
             device=self.device,
         )
         # tell the physics engine that some of the body properties have been updated
-        SimulationManager.add_model_change(ModelFlags.BODY_INERTIAL_PROPERTIES)
+        self._physics_manager.add_model_change(ModelFlags.BODY_INERTIAL_PROPERTIES)
 
     """
     Operations - Tendons.
@@ -3361,20 +3369,24 @@ class Articulation(BaseArticulation):
     """
 
     def _initialize_impl(self):
+        # obtain global simulation view
         root_prim_path_expr = _resolve_articulation_root_prim_path_expr(self.cfg)
         # -- articulation
-        self._root_view = SimulationManager.views[SimulationManager, root_prim_path_expr] = ArticulationView(
-            SimulationManager.get_model(),
-            re.compile(root_prim_path_expr),
-            verbose=False,
-            exclude_joint_types=[JointType.FREE, JointType.FIXED],
-        )
+        views = self._physics_manager._newton._articulation_views
+        self._root_view = views.get(root_prim_path_expr)
+        if self._root_view is None:
+            self._root_view = views[root_prim_path_expr] = ArticulationView(
+                self._physics_manager.get_model(),
+                path_expr_to_glob(root_prim_path_expr),
+                verbose=False,
+                exclude_joint_types=[JointType.FREE, JointType.FIXED],
+            )
 
         # container for data access
-        self._data = ArticulationData(self.root_view, self.device)
+        self._data = ArticulationData(self.root_view, self.device, self._physics_manager)
 
         # Register callback to rebind simulation data after a full reset (model/state recreation).
-        self._physics_ready_handle = SimulationManager.register_callback(
+        self._physics_ready_handle = self._physics_manager.register_callback(
             lambda _: self._data._create_simulation_bindings(),
             PhysicsEvent.PHYSICS_READY,
             name=f"articulation_rebind_{self.cfg.prim_path}",
@@ -3409,7 +3421,7 @@ class Articulation(BaseArticulation):
         # this articulation is gone (registered only for non-identity ordering).
         post_step_callback = getattr(self, "_post_step_callback", None)
         if post_step_callback is not None:
-            SimulationManager.unregister_post_step_callback(post_step_callback)
+            self._physics_manager.unregister_post_step_callback(post_step_callback)
             self._post_step_callback = None
 
     def _create_buffers(self):
@@ -3452,7 +3464,7 @@ class Articulation(BaseArticulation):
         self._post_step_callback = None
         if self.data.has_joint_ordering or self.data.has_body_ordering:
             self._post_step_callback = self._data._refresh_user_order_state
-            SimulationManager.register_post_step_callback(self._post_step_callback)
+            self._physics_manager.register_post_step_callback(self._post_step_callback)
         # tendon names are set in _process_tendons function
 
         # soft joint position limits (recommended not to be too close to limits).
@@ -3539,16 +3551,11 @@ class Articulation(BaseArticulation):
         """Process fixed and spatial tendons."""
         if self._root_view.tendon_count > 0:
             tendon_types = wp.to_torch(
-                self._root_view.get_attribute("mujoco.tendon_type", SimulationManager.get_model())
+                self._root_view.get_attribute("mujoco.tendon_type", self._physics_manager.get_model())
             )
             if tendon_types.sum() > 0:
                 raise NotImplementedError("Spatial tendons are not supported yet.")
-            # ``SimulationManager`` is bound to the base class, so ask the *active* solver's
-            # manager -- only it knows whether this solver transmits to tendons.
-            from isaaclab.sim import SimulationContext  # noqa: PLC0415
-
-            manager = SimulationContext.instance().physics_manager
-            self._fixed_tendon_control = manager.create_fixed_tendon_control(self)
+            self._fixed_tendon_control = self._physics_manager.create_fixed_tendon_control(self)
 
     """
     Internal helpers -- Debugging.

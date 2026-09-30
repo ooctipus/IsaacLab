@@ -28,6 +28,7 @@ import numpy as np
 import pytest
 import torch
 import warp as wp
+from isaaclab_physx.physics import PhysxCfg
 
 from pxr import UsdGeom, UsdPhysics
 
@@ -59,7 +60,7 @@ _DT = 0.01
 def _make_sim_and_ground():
     """Create a blank stage with a flat ground plane at z=0."""
     sim_utils.create_new_stage()
-    sim = sim_utils.SimulationContext(sim_utils.SimulationCfg(dt=_DT))
+    sim = sim_utils.SimulationContext(sim_utils.SimulationCfg(physics=PhysxCfg(), dt=_DT))
     mesh = make_plane(size=(100, 100), height=0.0, center_zero=True)
     create_prim_from_mesh(_GROUND_PATH, mesh)
     sim_utils.update_stage()

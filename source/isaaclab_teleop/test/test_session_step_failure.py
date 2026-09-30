@@ -103,7 +103,7 @@ def _restore_stubs():
 
 _install_stubs()
 
-from isaaclab_teleop.isaac_teleop_cfg import IsaacTeleopCfg  # noqa: E402
+from isaaclab_teleop.isaac_teleop_cfg import IsaacTeleopCfg, TeleopPipelineCfg  # noqa: E402
 from isaaclab_teleop.session_lifecycle import TeleopSessionLifecycle  # noqa: E402
 
 _restore_stubs()
@@ -118,7 +118,7 @@ def _stub_heavy_dependencies():
 
 
 def _make_lifecycle(**kwargs) -> TeleopSessionLifecycle:
-    cfg = IsaacTeleopCfg(pipeline_builder=lambda: None, control_channel_uuid=None)
+    cfg = IsaacTeleopCfg(pipeline_cfg=TeleopPipelineCfg(class_type=lambda _cfg: None), control_channel_uuid=None)
     return TeleopSessionLifecycle(cfg, **kwargs)
 
 

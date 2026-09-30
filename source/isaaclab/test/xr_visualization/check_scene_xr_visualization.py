@@ -37,6 +37,8 @@ simulation_app = app_launcher.app
 import time
 from typing import Any
 
+from isaaclab_physx.physics import PhysxCfg
+
 from pxr import Gf
 
 import isaaclab.sim as sim_utils
@@ -241,12 +243,13 @@ def main():
     """Main function."""
 
     # Initialize the simulation context
-    sim_cfg = sim_utils.SimulationCfg(dt=0.005)
+    sim_cfg = sim_utils.SimulationCfg(physics=PhysxCfg(), dt=0.005)
     sim = sim_utils.SimulationContext(sim_cfg)
     # Set main camera
     sim.set_camera_view(eye=(8, 0, 4), target=(0.0, 0.0, 0.0))
     # design scene
-    scene = InteractiveScene(SimpleSceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0))
+    scene_cfg = SimpleSceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0)
+    scene = scene_cfg.class_type(scene_cfg)
     # Play the simulator
     sim.reset()
     # Now we are ready!

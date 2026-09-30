@@ -12,17 +12,18 @@ simulation_app = AppLauncher(headless=True).app
 
 """Rest everything follows."""
 
-import numpy as np
 import pytest
 import torch
 from flaky import flaky
 
 pytestmark = pytest.mark.arm_ci
 
+from isaaclab_physx.physics import PhysxCfg
+
 import isaaclab.envs.mdp as mdp
 import isaaclab.sim as sim_utils
 from isaaclab import cloner
-from isaaclab.assets import Articulation
+from isaaclab.assets import Articulation, AssetBaseCfg
 from isaaclab.assets.articulation import ArticulationCfg
 from isaaclab.controllers import OperationalSpaceController, OperationalSpaceControllerCfg
 
@@ -34,7 +35,7 @@ from isaaclab.envs.mdp.actions.actions_cfg import OperationalSpaceControllerActi
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import SceneEntityCfg
-from isaaclab.markers import VisualizationMarkers
+from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
 from isaaclab.markers.config import FRAME_MARKER_CFG
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import ContactSensor, ContactSensorCfg
@@ -55,55 +56,109 @@ from isaaclab_assets import FRANKA_PANDA_CFG, G1_29DOF_CFG  # isort:skip
 pytestmark = pytest.mark.integration
 
 
-@pytest.fixture
-def sim():
-    """Create a simulation context for testing."""
-    # Wait for spawning
-    stage = sim_utils.create_new_stage()
-    # Constants
-    num_envs = 16
-    # Load kit helper
-    sim_cfg = sim_utils.SimulationCfg(dt=0.01)
-    sim = sim_utils.SimulationContext(sim_cfg)
-    # TODO: Remove this once we have a better way to handle this.
-    sim._app_control_on_stop_handle = None
+_OSC_ROBOT_CFG = FRANKA_PANDA_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+_OSC_ROBOT_CFG.actuators["panda_shoulder"].stiffness = 0.0
+_OSC_ROBOT_CFG.actuators["panda_shoulder"].damping = 0.0
+_OSC_ROBOT_CFG.actuators["panda_forearm"].stiffness = 0.0
+_OSC_ROBOT_CFG.actuators["panda_forearm"].damping = 0.0
+_OSC_ROBOT_CFG.spawn.rigid_props.disable_gravity = True
+_OSC_GRAVITY_ROBOT_CFG = _OSC_ROBOT_CFG.copy()
+_OSC_GRAVITY_ROBOT_CFG.spawn.rigid_props.disable_gravity = False
 
-    # Create a ground plane
-    cfg = sim_utils.GroundPlaneCfg()
-    cfg.func("/World/GroundPlane", cfg)
+_FRAME_MARKER_CFG = FRAME_MARKER_CFG.copy()
+_FRAME_MARKER_CFG.markers["frame"].scale = (0.1, 0.1, 0.1)
 
-    # Markers
-    frame_marker_cfg = FRAME_MARKER_CFG.copy()
-    frame_marker_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
-    ee_marker = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/ee_current"))
-    goal_marker = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/ee_goal"))
+_CONTACT_OBSTACLE_CFG = sim_utils.CuboidCfg(
+    size=(0.7, 0.7, 0.01),
+    collision_props=sim_utils.CollisionPropertiesCfg(),
+    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0), opacity=0.1),
+    rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
+    activate_contact_sensors=True,
+)
+_CONTACT_OBSTACLES = (
+    AssetBaseCfg(
+        prim_path="{ENV_REGEX_NS}/obstacle1",
+        spawn=_CONTACT_OBSTACLE_CFG,
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.2, 0.0, 0.93), rot=(0.0, -0.1736, 0.0, 0.9848)),
+    ),
+    AssetBaseCfg(
+        prim_path="{ENV_REGEX_NS}/obstacle2",
+        spawn=_CONTACT_OBSTACLE_CFG,
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.2, 0.35, 0.7), rot=(0.707, 0.0, 0.0, 0.707)),
+    ),
+    AssetBaseCfg(
+        prim_path="{ENV_REGEX_NS}/obstacle3",
+        spawn=_CONTACT_OBSTACLE_CFG,
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.55, 0.0, 0.7), rot=(0.0, 0.707, 0.0, 0.707)),
+    ),
+)
+_HYBRID_OBSTACLES = (
+    AssetBaseCfg(
+        prim_path="{ENV_REGEX_NS}/obstacle1",
+        spawn=_CONTACT_OBSTACLE_CFG.replace(size=(1.0, 1.0, 0.01)),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.65, 0.0, 0.7), rot=(0.0, 0.707, 0.0, 0.707)),
+    ),
+)
+_TASK_HYBRID_OBSTACLES = (
+    AssetBaseCfg(
+        prim_path="{ENV_REGEX_NS}/obstacle1",
+        spawn=_CONTACT_OBSTACLE_CFG.replace(size=(2.0, 1.5, 0.01)),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.685, 0.0, 0.3), rot=(0.0, -0.3826834324, 0.0, 0.9238795325)),
+    ),
+)
 
-    light_cfg = sim_utils.DistantLightCfg(intensity=5.0, exposure=10.0)
-    light_cfg.func(
-        "/Light",
-        light_cfg,
-        translation=[0, 0, 1],
+
+@lab_configclass
+class DirectCfg:
+    sim: sim_utils.SimulationCfg = sim_utils.SimulationCfg(physics=PhysxCfg(), dt=0.01)
+    num_envs: int = 16
+    env_spacing: float = 2.0
+    ground: AssetBaseCfg = AssetBaseCfg(prim_path="/World/GroundPlane", spawn=sim_utils.GroundPlaneCfg())
+    light: AssetBaseCfg = AssetBaseCfg(
+        prim_path="/Light",
+        spawn=sim_utils.DistantLightCfg(intensity=5.0, exposure=10.0),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.0, 0.0, 1.0)),
     )
+    robot: ArticulationCfg = _OSC_ROBOT_CFG
+    ee_marker: VisualizationMarkersCfg = _FRAME_MARKER_CFG.replace(prim_path="/Visuals/ee_current")
+    goal_marker: VisualizationMarkersCfg = _FRAME_MARKER_CFG.replace(prim_path="/Visuals/ee_goal")
+    obstacles: tuple[AssetBaseCfg, ...] = ()
+    contact_forces: ContactSensorCfg | None = None
 
-    # Create environment clones using Isaac Lab's cloner utilities
-    env_prim_paths = [f"/World/envs/env_{i}" for i in range(num_envs)]
-    env_fmt = "/World/envs/env_{}"
-    env_ids = np.arange(num_envs, dtype=np.int64)
-    env_origins, _ = cloner.grid_transforms(num_envs, spacing=2.0)
-    # create source prim
-    stage.DefinePrim(env_prim_paths[0], "Xform")
-    # clone the env xform
-    cloner.usd_replicate(stage, [env_fmt.format(0)], [env_fmt], env_ids, positions=env_origins)
 
-    robot_cfg = FRANKA_PANDA_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-    robot_cfg.actuators["panda_shoulder"].stiffness = 0.0
-    robot_cfg.actuators["panda_shoulder"].damping = 0.0
-    robot_cfg.actuators["panda_forearm"].stiffness = 0.0
-    robot_cfg.actuators["panda_forearm"].damping = 0.0
-    robot_cfg.spawn.rigid_props.disable_gravity = True
+_DEFAULT_CFG = DirectCfg()
+_GRAVITY_CFG = DirectCfg(robot=_OSC_GRAVITY_ROBOT_CFG)
+_WRENCH_OPEN_CFG = DirectCfg(
+    obstacles=_CONTACT_OBSTACLES,
+    contact_forces=ContactSensorCfg(prim_path="{ENV_REGEX_NS}/obstacle[^/]*", history_length=50, force_threshold=0.1),
+)
+_WRENCH_CLOSED_CFG = _WRENCH_OPEN_CFG.replace(contact_forces=_WRENCH_OPEN_CFG.contact_forces.replace(history_length=2))
+_HYBRID_CFG = DirectCfg(
+    obstacles=_HYBRID_OBSTACLES,
+    contact_forces=ContactSensorCfg(prim_path="{ENV_REGEX_NS}/obstacle[^/]*", history_length=2, force_threshold=0.1),
+)
+_TASK_HYBRID_CFG = _HYBRID_CFG.replace(obstacles=_TASK_HYBRID_OBSTACLES)
 
-    # Define the ContactSensor
-    contact_forces = None
+
+def _simulation(cfg: DirectCfg):
+    """Build one complete controller test scene from its root configuration."""
+    sim_utils.create_new_stage()
+    sim = sim_utils.SimulationContext(cfg.sim)
+    sim._app_control_on_stop_handle = None
+    asset_cfgs = (cfg.ground, cfg.light, cfg.robot, cfg.ee_marker, cfg.goal_marker, *cfg.obstacles)
+    with cloner.ReplicateSession(asset_cfgs, cfg.num_envs, cfg.env_spacing):
+        for asset_cfg in (cfg.ground, cfg.light, *cfg.obstacles):
+            (source,) = cloner.query.cfg_source_paths(sim.get_clone_plan(), asset_cfg)
+            asset_cfg.spawn.func(
+                source,
+                asset_cfg.spawn,
+                translation=asset_cfg.init_state.pos,
+                orientation=asset_cfg.init_state.rot,
+            )
+        robot = cfg.robot.class_type(cfg.robot)
+        ee_marker = cfg.ee_marker.class_type(cfg.ee_marker)
+        goal_marker = cfg.goal_marker.class_type(cfg.goal_marker)
+        contact_forces = cfg.contact_forces.class_type(cfg.contact_forces) if cfg.contact_forces is not None else None
 
     # Define the target sets
     ee_goal_abs_pos_set_b = torch.tensor(
@@ -215,8 +270,8 @@ def sim():
 
     yield (
         sim,
-        num_envs,
-        robot_cfg,
+        cfg.num_envs,
+        robot,
         ee_marker,
         goal_marker,
         contact_forces,
@@ -238,13 +293,43 @@ def sim():
     sim.clear_instance()
 
 
+@pytest.fixture
+def sim():
+    yield from _simulation(_DEFAULT_CFG.copy())
+
+
+@pytest.fixture
+def sim_gravity():
+    yield from _simulation(_GRAVITY_CFG.copy())
+
+
+@pytest.fixture
+def sim_wrench_open():
+    yield from _simulation(_WRENCH_OPEN_CFG.copy())
+
+
+@pytest.fixture
+def sim_wrench_closed():
+    yield from _simulation(_WRENCH_CLOSED_CFG.copy())
+
+
+@pytest.fixture
+def sim_hybrid():
+    yield from _simulation(_HYBRID_CFG.copy())
+
+
+@pytest.fixture
+def sim_task_hybrid():
+    yield from _simulation(_TASK_HYBRID_CFG.copy())
+
+
 @pytest.mark.isaacsim_ci
 def test_franka_pose_abs_without_inertial_decoupling(sim):
     """Test absolute pose control with fixed impedance and without inertial dynamics decoupling."""
     (
         sim_context,
         num_envs,
-        robot_cfg,
+        robot,
         ee_marker,
         goal_marker,
         contact_forces,
@@ -261,7 +346,6 @@ def test_franka_pose_abs_without_inertial_decoupling(sim):
         frame,
     ) = sim
 
-    robot = Articulation(cfg=robot_cfg)
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["pose_abs"],
         impedance_mode="fixed",
@@ -293,7 +377,7 @@ def test_franka_pose_abs_with_partial_inertial_decoupling(sim):
     (
         sim_context,
         num_envs,
-        robot_cfg,
+        robot,
         ee_marker,
         goal_marker,
         contact_forces,
@@ -310,7 +394,6 @@ def test_franka_pose_abs_with_partial_inertial_decoupling(sim):
         frame,
     ) = sim
 
-    robot = Articulation(cfg=robot_cfg)
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["pose_abs"],
         impedance_mode="fixed",
@@ -339,12 +422,12 @@ def test_franka_pose_abs_with_partial_inertial_decoupling(sim):
 
 
 @pytest.mark.isaacsim_ci
-def test_franka_pose_abs_fixed_impedance_with_gravity_compensation(sim):
+def test_franka_pose_abs_fixed_impedance_with_gravity_compensation(sim_gravity):
     """Test absolute pose control with fixed impedance, gravity compensation, and inertial dynamics decoupling."""
     (
         sim_context,
         num_envs,
-        robot_cfg,
+        robot,
         ee_marker,
         goal_marker,
         contact_forces,
@@ -359,10 +442,7 @@ def test_franka_pose_abs_fixed_impedance_with_gravity_compensation(sim):
         _,
         _,
         frame,
-    ) = sim
-
-    robot_cfg.spawn.rigid_props.disable_gravity = False
-    robot = Articulation(cfg=robot_cfg)
+    ) = sim_gravity
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["pose_abs"],
         impedance_mode="fixed",
@@ -395,7 +475,7 @@ def test_franka_pose_abs(sim):
     (
         sim_context,
         num_envs,
-        robot_cfg,
+        robot,
         ee_marker,
         goal_marker,
         contact_forces,
@@ -412,7 +492,6 @@ def test_franka_pose_abs(sim):
         frame,
     ) = sim
 
-    robot = Articulation(cfg=robot_cfg)
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["pose_abs"],
         impedance_mode="fixed",
@@ -445,7 +524,7 @@ def test_franka_pose_rel(sim):
     (
         sim_context,
         num_envs,
-        robot_cfg,
+        robot,
         ee_marker,
         goal_marker,
         contact_forces,
@@ -462,7 +541,6 @@ def test_franka_pose_rel(sim):
         frame,
     ) = sim
 
-    robot = Articulation(cfg=robot_cfg)
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["pose_rel"],
         impedance_mode="fixed",
@@ -495,7 +573,7 @@ def test_franka_pose_abs_variable_impedance(sim):
     (
         sim_context,
         num_envs,
-        robot_cfg,
+        robot,
         ee_marker,
         goal_marker,
         contact_forces,
@@ -512,7 +590,6 @@ def test_franka_pose_abs_variable_impedance(sim):
         frame,
     ) = sim
 
-    robot = Articulation(cfg=robot_cfg)
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["pose_abs"],
         impedance_mode="variable",
@@ -538,12 +615,12 @@ def test_franka_pose_abs_variable_impedance(sim):
 
 
 @pytest.mark.isaacsim_ci
-def test_franka_wrench_abs_open_loop(sim):
+def test_franka_wrench_abs_open_loop(sim_wrench_open):
     """Test open loop absolute force control."""
     (
         sim_context,
         num_envs,
-        robot_cfg,
+        robot,
         ee_marker,
         goal_marker,
         contact_forces,
@@ -558,43 +635,7 @@ def test_franka_wrench_abs_open_loop(sim):
         _,
         _,
         frame,
-    ) = sim
-
-    robot = Articulation(cfg=robot_cfg)
-
-    obstacle_spawn_cfg = sim_utils.CuboidCfg(
-        size=(0.7, 0.7, 0.01),
-        collision_props=sim_utils.CollisionPropertiesCfg(),
-        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0), opacity=0.1),
-        rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
-        activate_contact_sensors=True,
-    )
-    obstacle_spawn_cfg.func(
-        "/World/envs/env_[^/]+/obstacle1",
-        obstacle_spawn_cfg,
-        translation=(0.2, 0.0, 0.93),
-        orientation=(0.0, -0.1736, 0.0, 0.9848),
-    )
-    obstacle_spawn_cfg.func(
-        "/World/envs/env_[^/]+/obstacle2",
-        obstacle_spawn_cfg,
-        translation=(0.2, 0.35, 0.7),
-        orientation=(0.707, 0.0, 0.0, 0.707),
-    )
-    obstacle_spawn_cfg.func(
-        "/World/envs/env_[^/]+/obstacle3",
-        obstacle_spawn_cfg,
-        translation=(0.55, 0.0, 0.7),
-        orientation=(0.0, 0.707, 0.0, 0.707),
-    )
-    contact_forces_cfg = ContactSensorCfg(
-        prim_path="{ENV_REGEX_NS}/obstacle[^/]*",
-        update_period=0.0,
-        history_length=50,
-        debug_vis=False,
-        force_threshold=0.1,
-    )
-    contact_forces = ContactSensor(contact_forces_cfg)
+    ) = sim_wrench_open
 
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["wrench_abs"],
@@ -619,12 +660,12 @@ def test_franka_wrench_abs_open_loop(sim):
 
 
 @pytest.mark.isaacsim_ci
-def test_franka_wrench_abs_closed_loop(sim):
+def test_franka_wrench_abs_closed_loop(sim_wrench_closed):
     """Test closed loop absolute force control."""
     (
         sim_context,
         num_envs,
-        robot_cfg,
+        robot,
         ee_marker,
         goal_marker,
         contact_forces,
@@ -639,43 +680,7 @@ def test_franka_wrench_abs_closed_loop(sim):
         _,
         _,
         frame,
-    ) = sim
-
-    robot = Articulation(cfg=robot_cfg)
-
-    obstacle_spawn_cfg = sim_utils.CuboidCfg(
-        size=(0.7, 0.7, 0.01),
-        collision_props=sim_utils.CollisionPropertiesCfg(),
-        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0), opacity=0.1),
-        rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
-        activate_contact_sensors=True,
-    )
-    obstacle_spawn_cfg.func(
-        "/World/envs/env_[^/]+/obstacle1",
-        obstacle_spawn_cfg,
-        translation=(0.2, 0.0, 0.93),
-        orientation=(0.0, -0.1736, 0.0, 0.9848),
-    )
-    obstacle_spawn_cfg.func(
-        "/World/envs/env_[^/]+/obstacle2",
-        obstacle_spawn_cfg,
-        translation=(0.2, 0.35, 0.7),
-        orientation=(0.707, 0.0, 0.0, 0.707),
-    )
-    obstacle_spawn_cfg.func(
-        "/World/envs/env_[^/]+/obstacle3",
-        obstacle_spawn_cfg,
-        translation=(0.55, 0.0, 0.7),
-        orientation=(0.0, 0.707, 0.0, 0.707),
-    )
-    contact_forces_cfg = ContactSensorCfg(
-        prim_path="{ENV_REGEX_NS}/obstacle[^/]*",
-        update_period=0.0,
-        history_length=2,
-        debug_vis=False,
-        force_threshold=0.1,
-    )
-    contact_forces = ContactSensor(contact_forces_cfg)
+    ) = sim_wrench_closed
 
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["wrench_abs"],
@@ -708,12 +713,12 @@ def test_franka_wrench_abs_closed_loop(sim):
 
 
 @pytest.mark.isaacsim_ci
-def test_franka_hybrid_decoupled_motion(sim):
+def test_franka_hybrid_decoupled_motion(sim_hybrid):
     """Test hybrid control with fixed impedance and partial inertial dynamics decoupling."""
     (
         sim_context,
         num_envs,
-        robot_cfg,
+        robot,
         ee_marker,
         goal_marker,
         contact_forces,
@@ -728,31 +733,7 @@ def test_franka_hybrid_decoupled_motion(sim):
         _,
         _,
         frame,
-    ) = sim
-
-    robot = Articulation(cfg=robot_cfg)
-
-    obstacle_spawn_cfg = sim_utils.CuboidCfg(
-        size=(1.0, 1.0, 0.01),
-        collision_props=sim_utils.CollisionPropertiesCfg(),
-        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0), opacity=0.1),
-        rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
-        activate_contact_sensors=True,
-    )
-    obstacle_spawn_cfg.func(
-        "/World/envs/env_[^/]+/obstacle1",
-        obstacle_spawn_cfg,
-        translation=(target_hybrid_set_b[0, 0] + 0.05, 0.0, 0.7),
-        orientation=(0.0, 0.707, 0.0, 0.707),
-    )
-    contact_forces_cfg = ContactSensorCfg(
-        prim_path="{ENV_REGEX_NS}/obstacle[^/]*",
-        update_period=0.0,
-        history_length=2,
-        debug_vis=False,
-        force_threshold=0.1,
-    )
-    contact_forces = ContactSensor(contact_forces_cfg)
+    ) = sim_hybrid
 
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["pose_abs", "wrench_abs"],
@@ -785,12 +766,12 @@ def test_franka_hybrid_decoupled_motion(sim):
 
 @pytest.mark.isaacsim_ci
 @flaky(max_runs=3, min_passes=1)
-def test_franka_hybrid_variable_kp_impedance(sim):
+def test_franka_hybrid_variable_kp_impedance(sim_hybrid):
     """Test hybrid control with variable kp impedance and inertial dynamics decoupling."""
     (
         sim_context,
         num_envs,
-        robot_cfg,
+        robot,
         ee_marker,
         goal_marker,
         contact_forces,
@@ -805,31 +786,7 @@ def test_franka_hybrid_variable_kp_impedance(sim):
         target_hybrid_variable_kp_set,
         _,
         frame,
-    ) = sim
-
-    robot = Articulation(cfg=robot_cfg)
-
-    obstacle_spawn_cfg = sim_utils.CuboidCfg(
-        size=(1.0, 1.0, 0.01),
-        collision_props=sim_utils.CollisionPropertiesCfg(),
-        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0), opacity=0.1),
-        rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
-        activate_contact_sensors=True,
-    )
-    obstacle_spawn_cfg.func(
-        "/World/envs/env_[^/]+/obstacle1",
-        obstacle_spawn_cfg,
-        translation=(target_hybrid_set_b[0, 0] + 0.05, 0.0, 0.7),
-        orientation=(0.0, 0.707, 0.0, 0.707),
-    )
-    contact_forces_cfg = ContactSensorCfg(
-        prim_path="{ENV_REGEX_NS}/obstacle[^/]*",
-        update_period=0.0,
-        history_length=2,
-        debug_vis=False,
-        force_threshold=0.1,
-    )
-    contact_forces = ContactSensor(contact_forces_cfg)
+    ) = sim_hybrid
 
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["pose_abs", "wrench_abs"],
@@ -867,7 +824,7 @@ def test_franka_taskframe_pose_abs(sim):
     (
         sim_context,
         num_envs,
-        robot_cfg,
+        robot,
         ee_marker,
         goal_marker,
         contact_forces,
@@ -884,7 +841,6 @@ def test_franka_taskframe_pose_abs(sim):
         frame,
     ) = sim
 
-    robot = Articulation(cfg=robot_cfg)
     frame = "task"
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["pose_abs"],
@@ -918,7 +874,7 @@ def test_franka_taskframe_pose_rel(sim):
     (
         sim_context,
         num_envs,
-        robot_cfg,
+        robot,
         ee_marker,
         goal_marker,
         contact_forces,
@@ -935,7 +891,6 @@ def test_franka_taskframe_pose_rel(sim):
         frame,
     ) = sim
 
-    robot = Articulation(cfg=robot_cfg)
     frame = "task"
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["pose_rel"],
@@ -964,12 +919,12 @@ def test_franka_taskframe_pose_rel(sim):
 
 
 @pytest.mark.isaacsim_ci
-def test_franka_taskframe_hybrid(sim):
+def test_franka_taskframe_hybrid(sim_task_hybrid):
     """Test hybrid control in task frame with fixed impedance and inertial dynamics decoupling."""
     (
         sim_context,
         num_envs,
-        robot_cfg,
+        robot,
         ee_marker,
         goal_marker,
         contact_forces,
@@ -984,32 +939,9 @@ def test_franka_taskframe_hybrid(sim):
         _,
         target_hybrid_set_tilted,
         frame,
-    ) = sim
+    ) = sim_task_hybrid
 
-    robot = Articulation(cfg=robot_cfg)
     frame = "task"
-
-    obstacle_spawn_cfg = sim_utils.CuboidCfg(
-        size=(2.0, 1.5, 0.01),
-        collision_props=sim_utils.CollisionPropertiesCfg(),
-        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0), opacity=0.1),
-        rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
-        activate_contact_sensors=True,
-    )
-    obstacle_spawn_cfg.func(
-        "/World/envs/env_[^/]+/obstacle1",
-        obstacle_spawn_cfg,
-        translation=(target_hybrid_set_tilted[0, 0] + 0.085, 0.0, 0.3),
-        orientation=(0.0, -0.3826834324, 0.0, 0.9238795325),
-    )
-    contact_forces_cfg = ContactSensorCfg(
-        prim_path="{ENV_REGEX_NS}/obstacle[^/]*",
-        update_period=0.0,
-        history_length=2,
-        debug_vis=False,
-        force_threshold=0.1,
-    )
-    contact_forces = ContactSensor(contact_forces_cfg)
 
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["pose_abs", "wrench_abs"],
@@ -1046,7 +978,7 @@ def test_franka_pose_abs_without_inertial_decoupling_with_nullspace_centering(si
     (
         sim_context,
         num_envs,
-        robot_cfg,
+        robot,
         ee_marker,
         goal_marker,
         contact_forces,
@@ -1063,7 +995,6 @@ def test_franka_pose_abs_without_inertial_decoupling_with_nullspace_centering(si
         frame,
     ) = sim
 
-    robot = Articulation(cfg=robot_cfg)
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["pose_abs"],
         impedance_mode="fixed",
@@ -1096,7 +1027,7 @@ def test_franka_pose_abs_with_partial_inertial_decoupling_nullspace_centering(si
     (
         sim_context,
         num_envs,
-        robot_cfg,
+        robot,
         ee_marker,
         goal_marker,
         contact_forces,
@@ -1113,7 +1044,6 @@ def test_franka_pose_abs_with_partial_inertial_decoupling_nullspace_centering(si
         frame,
     ) = sim
 
-    robot = Articulation(cfg=robot_cfg)
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["pose_abs"],
         impedance_mode="fixed",
@@ -1149,7 +1079,7 @@ def test_franka_pose_abs_with_nullspace_centering(sim):
     (
         sim_context,
         num_envs,
-        robot_cfg,
+        robot,
         ee_marker,
         goal_marker,
         contact_forces,
@@ -1166,7 +1096,6 @@ def test_franka_pose_abs_with_nullspace_centering(sim):
         frame,
     ) = sim
 
-    robot = Articulation(cfg=robot_cfg)
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["pose_abs"],
         impedance_mode="fixed",
@@ -1196,12 +1125,12 @@ def test_franka_pose_abs_with_nullspace_centering(sim):
 
 
 @pytest.mark.isaacsim_ci
-def test_franka_taskframe_hybrid_with_nullspace_centering(sim):
+def test_franka_taskframe_hybrid_with_nullspace_centering(sim_task_hybrid):
     """Test hybrid control in task frame with fixed impedance, inertial decoupling and nullspace centering."""
     (
         sim_context,
         num_envs,
-        robot_cfg,
+        robot,
         ee_marker,
         goal_marker,
         contact_forces,
@@ -1216,32 +1145,9 @@ def test_franka_taskframe_hybrid_with_nullspace_centering(sim):
         _,
         target_hybrid_set_tilted,
         frame,
-    ) = sim
+    ) = sim_task_hybrid
 
-    robot = Articulation(cfg=robot_cfg)
     frame = "task"
-
-    obstacle_spawn_cfg = sim_utils.CuboidCfg(
-        size=(2.0, 1.5, 0.01),
-        collision_props=sim_utils.CollisionPropertiesCfg(),
-        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0), opacity=0.1),
-        rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
-        activate_contact_sensors=True,
-    )
-    obstacle_spawn_cfg.func(
-        "/World/envs/env_[^/]+/obstacle1",
-        obstacle_spawn_cfg,
-        translation=(target_hybrid_set_tilted[0, 0] + 0.085, 0.0, 0.3),
-        orientation=(0.0, -0.3826834324, 0.0, 0.9238795325),
-    )
-    contact_forces_cfg = ContactSensorCfg(
-        prim_path="{ENV_REGEX_NS}/obstacle[^/]*",
-        update_period=0.0,
-        history_length=2,
-        debug_vis=False,
-        force_threshold=0.1,
-    )
-    contact_forces = ContactSensor(contact_forces_cfg)
 
     osc_cfg = OperationalSpaceControllerCfg(
         target_types=["pose_abs", "wrench_abs"],
@@ -1333,7 +1239,7 @@ class _FloatingBaseOscEnvCfg(ManagerBasedEnvCfg):
     actions: _FloatingBaseOscActionsCfg = _FloatingBaseOscActionsCfg()
     observations: _FloatingBaseOscObsCfg = _FloatingBaseOscObsCfg()
     decimation: int = 1
-    sim: sim_utils.SimulationCfg = sim_utils.SimulationCfg(dt=0.01)
+    sim: sim_utils.SimulationCfg = sim_utils.SimulationCfg(physics=PhysxCfg(), dt=0.01)
 
 
 @pytest.mark.isaacsim_ci
@@ -1650,7 +1556,7 @@ def _update_states(
         contact_forces.update(sim_dt)  # update contact sensor
         # Calculate the contact force by averaging over last four time steps (i.e., to smoothen) and
         # taking the max of three surfaces as only one should be the contact of interest
-        ee_force_w, _ = torch.max(torch.mean(contact_forces.data.net_normal_forces_w_history.torch, dim=1), dim=1)
+        ee_force_w, _ = torch.max(torch.mean(contact_forces.data.net_forces_w_history.torch, dim=1), dim=1)
 
     # This is a simplification, only for the sake of testing.
     ee_force_b = ee_force_w

@@ -11,18 +11,21 @@ import json
 import logging
 import math
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import astuple, dataclass, field
 from typing import TYPE_CHECKING, Any, NoReturn
 
 import numpy as np
 import warp as wp
-from packaging import version
 
-from pxr import Sdf, Usd, UsdGeom
+from pxr import Sdf
 
 from isaaclab.app.settings_manager import get_settings_manager
+from isaaclab.cloner import UsdReplicateContext
+from isaaclab.cloner.query import env_root_paths
 from isaaclab.renderers import BaseRenderer, RenderBufferKind, RenderBufferSpec
 from isaaclab.renderers.camera_render_spec import CameraRenderSpec
+from isaaclab.scene_data import SceneDataFormat
+from isaaclab.sim import SimulationContext
 from isaaclab.sim.utils import enable_extension
 from isaaclab.utils.version import get_isaac_sim_version
 from isaaclab.utils.warp.kernels import reshape_tiled_image
@@ -34,7 +37,11 @@ from .isaac_rtx_renderer_utils import (
     ensure_isaac_rtx_render_update,
     ensure_rtx_hydra_engine_attached,
 )
-from .visual_material import FabricVisualMaterialWriter
+
+if TYPE_CHECKING:
+    from pxr import Usd
+
+    from isaaclab.cloner import ClonePlan
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +53,7 @@ if TYPE_CHECKING:
     from isaaclab.sensors.camera.camera_data import CameraData
     from isaaclab.utils.warp import ProxyArray
 
-from .isaac_rtx_renderer_cfg import IsaacRtxRendererCfg
+from .isaac_rtx_renderer_cfg import IsaacRtxRendererCfg, IsaacRtxRendererGlobalSettingsCfg
 
 _PPISP_IMPORT_ERROR_MESSAGE = (
     "isaaclab_ppisp is required when CameraCfg.isp_cfg is set. "
@@ -91,7 +98,7 @@ RTX_MINIMAL_RENDER_MODE = "Minimal"
 
 
 def _camera_semantic_filter_predicate(semantic_filter: str | list[str]) -> str:
-    """Build the instance-mapping semantics predicate from :attr:`isaaclab.sensors.camera.CameraCfg.semantic_filter`.
+    """Build the instance-mapping predicate from the renderer's semantic filter.
 
     Replicator's semantic/instance segmentation annotators consume this via the synthetic-data pipeline.
     """
@@ -106,8 +113,8 @@ class IsaacRtxRenderData:
 
     annotators: dict[str, Any]
     render_product: HydraTexture
+    spec: CameraRenderSpec
     output_data: dict[str, ProxyArray] | None = None
-    spec: CameraRenderSpec | None = None
     renderer_info: dict[str, Any] = field(default_factory=dict)
     ppisp_pipeline: PpispPipeline | None = None
     """Post-render PPISP pipeline composed when ``spec.cfg.isp_cfg`` is set."""
@@ -125,46 +132,54 @@ class IsaacRtxRenderer(BaseRenderer):
 
     def __init__(self, cfg: IsaacRtxRendererCfg):
         self.cfg = cfg
-        # Enable Replicator only when the Isaac RTX renderer is selected. Declaring it
-        # in a Kit experience would resolve its bundled omni.warp.core dependency at startup.
-        enable_extension("omni.replicator.core")
-        settings = get_settings_manager()
-        apply_isaac_rtx_global_settings(self.cfg.global_settings, settings)
-        if settings.get("/isaaclab/render/deterministic", False):
-            apply_isaac_rtx_determinism_settings(settings)
-        ensure_rtx_hydra_engine_attached()
-        # ``/isaaclab/render/rtx_sensors`` is owned by ``Camera.__init__`` (must be set pre-``sim.reset()``).
+        sim = SimulationContext.instance()
+        if sim is None:
+            raise RuntimeError("IsaacRtxRenderer requires an active SimulationContext.")
+        self._clone_ctx = sim.get_or_create_backend(UsdReplicateContext, sim.stage, clone_role="scene")
+        runtime = sim.get_or_create_backend(_IsaacRtxRuntime, cfg.global_settings)
+        if runtime._global_settings != astuple(cfg.global_settings):
+            raise ValueError("Isaac RTX global settings must match across cameras because they are process-global.")
+        self._camera_prim_paths: list[str] = []
+
+    def initialize(self) -> None:
+        """Bind the clone-owned Fabric destinations after physics initializes."""
+        sim = SimulationContext.instance()
+        plan = sim.get_clone_plan()
+        if plan is None or not plan.is_complete:
+            raise RuntimeError("IsaacRtxRenderer requires a completed clone plan.")
+        self._scene_data_provider = sim.get_scene_data_provider()
+        self._point_stream_names = plan.point_stream_names
+        self._clone_ctx._prepare_fabric(self._scene_data_provider, sim.cfg.device, plan)
 
     @property
     def visual_material_writer(self):
         """Write material channels directly through Fabric."""
-        return FabricVisualMaterialWriter
+        return self._clone_ctx.create_fabric_visual_material_writer
 
     def prepare_cameras(self, stage: Any, spec: CameraRenderSpec) -> None:
-        """Resolve the camera's PPISP cfg and apply RTX-specific USD overrides.
+        """Normalize the explicit PPISP cfg and apply RTX-specific USD overrides.
 
-        When ``spec.cfg.isp_cfg`` is set, resolves it (sentinel discovery +
-        normalization) via :func:`isaaclab_ppisp.resolve_and_normalize` so
-        :mod:`isaaclab` does not need to know about PPISP. Then pins
-        ``exposure:*`` to neutral and applies ``OmniRtxCameraExposureAPI_1`` so
-        RTX's physical-camera exposure model does not compound on top of the
-        ISP. Without an ISP, the camera prim's authored exposure is left alone.
+        When ``spec.cfg.isp_cfg`` is set, pins ``exposure:*`` to neutral and applies
+        ``OmniRtxCameraExposureAPI_1`` so RTX's physical-camera exposure model does not
+        compound on top of the ISP. Without an ISP, the authored exposure is left alone.
 
         :attr:`~isaaclab.sensors.camera.CameraCfg.background_color` is applied
         per-render-product in :meth:`create_render_data` via USD attributes.
         """
+        self._stage = stage
+        self._camera_prim_paths = list(spec.camera_prim_paths)
+        if "rgb_hdr" in spec.cfg.data_types or spec.cfg.isp_cfg is not None:
+            get_settings_manager().set_bool("/rtx/rtpt/gaussian/skipTonemapping/enabled", False)
         if spec.cfg.isp_cfg is None:
             return
         try:
-            from isaaclab_ppisp import apply_rtx_exposure_overrides, resolve_and_normalize
+            from isaaclab_ppisp import apply_rtx_exposure_overrides, normalize_ppisp_cfg
         except ModuleNotFoundError as exc:
             _raise_missing_ppisp_error(exc)
 
-        camera_prim_path = spec.camera_prim_paths[0] if spec.camera_prim_paths else None
-        spec.cfg.isp_cfg = resolve_and_normalize(spec.cfg.isp_cfg, stage, camera_prim_path)
-        if spec.cfg.isp_cfg is None or not spec.camera_prim_paths:
-            return
-        apply_rtx_exposure_overrides(stage, list(spec.camera_prim_paths))
+        prototypes = list(spec.camera_source_prim_paths)
+        spec.cfg.isp_cfg = normalize_ppisp_cfg(spec.cfg.isp_cfg)
+        apply_rtx_exposure_overrides(stage, prototypes)
 
     def supported_output_types(self) -> dict[RenderBufferKind, RenderBufferSpec]:
         """Publish the per-output Replicator layout this RTX backend writes.
@@ -204,65 +219,54 @@ class IsaacRtxRenderer(BaseRenderer):
 
         return specs
 
-    def prepare_stage(self, stage: Usd.Stage, num_envs: int) -> None:
-        """Author per-env ``omni:scenePartition`` attributes for RTX cull-by-env rendering.
+    def prepare_stage(self, stage: Usd.Stage, plan: ClonePlan) -> None:
+        """Author per-environment RTX scene partitions.
 
-        Authoring is controlled by
-        :attr:`~isaaclab_physx.renderers.IsaacRtxRendererCfg.enable_scene_partitioning`.
-        When disabled, this method is a no-op and writes no
-        ``primvars:omni:scenePartition`` or ``omni:scenePartition`` attributes.
-
-        When enabled, for each ``/World/envs/env_{i}`` root, writes the inheriting primvar
-        ``primvars:omni:scenePartition`` (token ``env_{i}``) on the root and the matching
-        non-primvar ``omni:scenePartition`` token on every :class:`UsdGeom.Camera` descendant.
-        RTX honors primvar inheritance, so the env-root primvar propagates to all descendant
-        geometry and isolates each env's render tile.
+        Writes the inheriting primvar ``primvars:omni:scenePartition`` on each environment root
+        the clone plan describes, and the matching non-primvar
+        ``omni:scenePartition`` token on the plan-owned cameras handed over before cloning. RTX
+        honors primvar inheritance, so the env-root primvar propagates to all descendant geometry
+        and isolates each env's render tile.
         See :meth:`~isaaclab.renderers.base_renderer.BaseRenderer.prepare_stage`."""
 
-        if not self.cfg.enable_scene_partitioning:
-            return
-
-        logger.debug(
-            "Per-environment RTX scene partitioning is enabled. Authoring primvars:omni:scenePartition on %d env(s).",
-            num_envs,
-        )
+        if plan is None:
+            raise ValueError("Isaac RTX stage preparation requires an active clone plan.")
 
         root_layer = stage.GetRootLayer()
-        token_type = Sdf.ValueTypeNames.Token
+        env_paths = env_root_paths(plan)
+        if not env_paths:
+            return
+
+        logger.debug("Authoring RTX scene partitions on %d plan-owned environment(s).", len(env_paths))
+        partitions = {path: path.name for path in map(Sdf.Path, env_paths)}
+        attributes = [
+            (path.AppendProperty("primvars:omni:scenePartition"), token) for path, token in partitions.items()
+        ]
+        for camera_path in map(Sdf.Path, self._camera_prim_paths):
+            token = next(
+                (partitions[prefix] for prefix in reversed(camera_path.GetPrefixes()) if prefix in partitions), None
+            )
+            if token is not None:
+                attributes.append((camera_path.AppendProperty("omni:scenePartition"), token))
+
         with Sdf.ChangeBlock():
-            for env_idx in range(num_envs):
-                env_prim = stage.GetPrimAtPath(f"/World/envs/env_{env_idx}")
-                if not env_prim.IsValid():
-                    continue
-                token = f"env_{env_idx}"
-                for prim in Usd.PrimRange(env_prim):
-                    if prim == env_prim:
-                        attr_path = prim.GetPath().AppendProperty("primvars:omni:scenePartition")
-                    elif prim.IsA(UsdGeom.Camera):
-                        attr_path = prim.GetPath().AppendProperty("omni:scenePartition")
-                    else:
-                        continue
-                    # Idempotent: a different renderer backend sharing this stage may have already
-                    # authored this attribute. Re-creating an existing spec raises, so only create
-                    # it when absent, then (re)assign the per-env token either way.
+            for attr_path, token in attributes:
+                # Idempotent: a different renderer backend sharing this stage may have already
+                # authored this attribute. Re-creating an existing spec raises, so only create
+                # it when absent, then (re)assign the per-env token either way.
+                attr_spec = root_layer.GetAttributeAtPath(attr_path)
+                if attr_spec is None:
+                    Sdf.JustCreatePrimAttributeInLayer(
+                        root_layer, attr_path, Sdf.ValueTypeNames.Token, Sdf.VariabilityUniform, True
+                    )
                     attr_spec = root_layer.GetAttributeAtPath(attr_path)
-                    if attr_spec is None:
-                        Sdf.JustCreatePrimAttributeInLayer(
-                            root_layer, attr_path, token_type, Sdf.VariabilityUniform, True
-                        )
-                        attr_spec = root_layer.GetAttributeAtPath(attr_path)
-                    attr_spec.default = token
+                attr_spec.default = token
 
     def create_render_data(self, spec: CameraRenderSpec) -> IsaacRtxRenderData:
         """Create render product and annotators for the tiled camera.
         See :meth:`~isaaclab.renderers.base_renderer.BaseRenderer.create_render_data`."""
         import omni.replicator.core as rep
-        from omni.syntheticdata import SyntheticData
-        from pxr import UsdGeom
 
-        from isaaclab.sim.utils.stage import get_current_stage
-
-        settings = get_settings_manager()
         isaac_sim_version = get_isaac_sim_version()
 
         simple_shading_mode = None
@@ -272,9 +276,6 @@ class IsaacRtxRenderer(BaseRenderer):
             needs_color_render = any(
                 data_type in spec.cfg.data_types for data_type in ("rgb", "rgba", str(RenderBufferKind.RGB_HDR))
             )
-            has_gui = settings.get("/isaaclab/has_gui")
-            if simple_shading_mode is None and (not needs_color_render or has_gui):
-                settings.set_bool("/rtx/sdg/force/disableColorRender", not needs_color_render and not has_gui)
         else:
             unsupported = []
             if "albedo" in spec.cfg.data_types:
@@ -287,28 +288,9 @@ class IsaacRtxRenderer(BaseRenderer):
                     f" {unsupported}."
                 )
 
-        # HACK: Isaac Sim 4.5 has a bug in Camera that breaks segmentation
-        # outputs for instanceable assets. Disable instancing as a workaround.
-        stage = get_current_stage()
-        if isaac_sim_version == version.parse("4.5") and (
-            "semantic_segmentation" in spec.cfg.data_types or "instance_segmentation" in spec.cfg.data_types
-        ):
-            logger.warning(
-                "Isaac Sim 4.5 introduced a bug in Camera when outputting instance and semantic"
-                " segmentation outputs for instanceable assets. As a workaround, the instanceable flag on assets"
-                " will be disabled in the current workflow and may lead to longer load times and increased memory"
-                " usage."
-            )
-            with Sdf.ChangeBlock():
-                for prim in stage.Traverse():
-                    prim.SetInstanceable(False)
-
-        # Get camera prim paths from sensor view
+        stage = self._stage
+        # The clone plan supplied these exact destinations before replication.
         cam_prim_paths = list(spec.camera_prim_paths)
-        for cam_prim_path in cam_prim_paths:
-            cam_prim = stage.GetPrimAtPath(cam_prim_path)
-            if not cam_prim.IsA(UsdGeom.Camera):
-                raise RuntimeError(f"Prim at path '{cam_prim_path}' is not a Camera.")
 
         # Unique UUID name so concurrent tiled cameras and sequential env create/destroy
         # cycles in one Kit process do not reuse a stale Replicator / SyntheticData activation.
@@ -323,26 +305,21 @@ class IsaacRtxRenderer(BaseRenderer):
 
         # Apply background color as per-render-product USD attributes so each render product gets its own
         # background without touching the process-wide /rtx/background carb settings.
-        background_color = getattr(spec.cfg, "background_color", None)
+        background_color = spec.cfg.background_color
         if background_color is not None:
-            r, g, b = background_color
-            rp_prim = stage.GetPrimAtPath(rp.path)
-            if rp_prim is not None and rp_prim.IsValid():
-                with Sdf.ChangeBlock():
-                    rp_prim.CreateAttribute("omni:rtx:background:source:type", Sdf.ValueTypeNames.Token).Set("color")
-                    rp_prim.CreateAttribute("omni:rtx:background:source:color", Sdf.ValueTypeNames.Float3).Set(
-                        (r, g, b)
-                    )
-            else:
-                logger.warning(
-                    "create_render_data: render product prim at '%s' not found; background_color will not be applied.",
-                    rp.path,
-                )
-
-        # Synthetic-data instance mapping filter for segmentation; before annotator attach.
-        SyntheticData.Get().set_instance_mapping_semantic_filter(
-            _camera_semantic_filter_predicate(self.cfg.semantic_filter)
-        )
+            edit_layer = stage.GetEditTarget().GetLayer()
+            attributes = (
+                ("omni:rtx:background:source:type", Sdf.ValueTypeNames.Token, "color"),
+                ("omni:rtx:background:source:color", Sdf.ValueTypeNames.Float3, tuple(background_color)),
+            )
+            with Sdf.ChangeBlock():
+                for name, value_type, value in attributes:
+                    attr_path = Sdf.Path(rp.path).AppendProperty(name)
+                    if edit_layer.GetAttributeAtPath(attr_path) is None:
+                        Sdf.JustCreatePrimAttributeInLayer(
+                            edit_layer, attr_path, value_type, Sdf.VariabilityUniform, True
+                        )
+                    edit_layer.GetAttributeAtPath(attr_path).default = value
 
         # Register simple shading if needed
         if simple_shading_mode is not None:
@@ -478,19 +455,16 @@ class IsaacRtxRenderer(BaseRenderer):
             shading_mode: Minimal shading level, one of the values in :data:`SIMPLE_SHADING_MODES`.
             enable_minimal_render_mode: Whether to switch the render product to RTX Minimal mode.
         """
-        rp_prim = stage.GetPrimAtPath(render_product_path)
-        if rp_prim is None or not rp_prim.IsValid():
-            logger.warning(
-                "create_render_data: render product prim at '%s' not found; simple-shading settings will not be"
-                " applied and output may use default shading at full cost.",
-                render_product_path,
-            )
-            return
-        with Usd.EditContext(stage, stage.GetSessionLayer()):
-            with Sdf.ChangeBlock():
-                if enable_minimal_render_mode:
-                    rp_prim.CreateAttribute(RTX_RENDER_MODE_ATTR, Sdf.ValueTypeNames.Token).Set(RTX_MINIMAL_RENDER_MODE)
-                rp_prim.CreateAttribute(RTX_MINIMAL_MODE_ATTR, Sdf.ValueTypeNames.Int).Set(shading_mode)
+        layer = stage.GetSessionLayer()
+        attributes = [(RTX_MINIMAL_MODE_ATTR, Sdf.ValueTypeNames.Int, shading_mode)]
+        if enable_minimal_render_mode:
+            attributes.append((RTX_RENDER_MODE_ATTR, Sdf.ValueTypeNames.Token, RTX_MINIMAL_RENDER_MODE))
+        with Sdf.ChangeBlock():
+            for name, value_type, value in attributes:
+                path = Sdf.Path(render_product_path).AppendProperty(name)
+                if layer.GetAttributeAtPath(path) is None:
+                    Sdf.JustCreatePrimAttributeInLayer(layer, path, value_type, Sdf.VariabilityUniform, True)
+                layer.GetAttributeAtPath(path).default = value
 
     def _resolve_simple_shading_mode(self, spec: CameraRenderSpec) -> int | None:
         """Resolve the requested simple shading mode from data types."""
@@ -498,11 +472,7 @@ class IsaacRtxRenderer(BaseRenderer):
         if not requested:
             return None
         if len(requested) > 1:
-            logger.warning(
-                "Multiple simple shading modes requested (%s). Using '%s' only.",
-                requested,
-                requested[0],
-            )
+            raise ValueError(f"Multiple simple shading modes requested: {requested}.")
         return SIMPLE_SHADING_MODES[requested[0]]
 
     def set_outputs(self, render_data: IsaacRtxRenderData, output_data: dict[str, ProxyArray]):
@@ -521,7 +491,6 @@ class IsaacRtxRenderer(BaseRenderer):
         # output before LDR conversion.
         if render_data.ppisp_pipeline is not None and str(RenderBufferKind.RGB_HDR) not in output_data:
             spec = render_data.spec
-            assert spec is not None
             hdr_spec = self.supported_output_types()[RenderBufferKind.RGB_HDR]
             assert hdr_spec.dtype is wp.float32
             render_data._hdr_scratch_wp = wp.zeros(
@@ -530,50 +499,46 @@ class IsaacRtxRenderer(BaseRenderer):
                 device=spec.device,
             )
 
-    def update_transforms(self) -> None:
-        """No-op for Isaac RTX - uses USD scene directly.
-        See :meth:`~isaaclab.renderers.base_renderer.BaseRenderer.update_transforms`."""
-        pass
+    def update(self, render_data: IsaacRtxRenderData, intrinsics: ProxyArray) -> None:
+        """Ask SDP to update the stage and camera before drawing it.
 
-    def update_geometries(self) -> None:
-        """No-op for Isaac RTX - uses USD scene directly.
-        See :meth:`~isaaclab.renderers.base_renderer.BaseRenderer.update_geometries`."""
-        pass
-
-    def update_camera(
-        self,
-        render_data: IsaacRtxRenderData,
-        positions: ProxyArray,
-        orientations: ProxyArray,
-        intrinsics: ProxyArray,
-    ):
-        """No-op for Replicator - uses USD camera prims directly.
-        See :meth:`~isaaclab.renderers.base_renderer.BaseRenderer.update_camera`."""
-        pass
+        Isaac RTX draws the USD stage rather than a scene of its own, so it does not copy state --
+        it asks for the stage it is about to read in the format Fabric holds. The provider converts
+        only when the backend's data has changed, so the Kit viewport asking for the same frame
+        costs nothing.
+        See :meth:`~isaaclab.renderers.base_renderer.BaseRenderer.update`."""
+        self._scene_data_provider.request_transforms(SceneDataFormat.FabricMatrix44)
+        self._clone_ctx._update_fabric_hierarchy()
+        self._scene_data_provider.request_transforms(
+            SceneDataFormat.FabricMatrix44, name=render_data.spec.cfg.prim_path
+        )
+        self._clone_ctx._update_fabric_hierarchy()
+        for stream in self._point_stream_names:
+            self._scene_data_provider.request_points(SceneDataFormat.FabricMeshPoints, stream)
 
     def render(self, render_data: IsaacRtxRenderData):
         """Extract data from annotators and write to output buffers.
         See :meth:`~isaaclab.renderers.base_renderer.BaseRenderer.render`."""
         spec = render_data.spec
         output_data = render_data.output_data
-        if output_data is None or spec is None:
-            return
+        if output_data is None:
+            raise RuntimeError("Isaac RTX outputs must be set before rendering.")
 
-        # Ensure the RTX renderer has been pumped so annotator buffers are fresh.
-        # This is a no-op if another camera instance already triggered the update
-        # for the current physics step, or if a visualizer already pumped it.
+        if any("segmentation" in data_type for data_type in spec.cfg.data_types):
+            from omni.syntheticdata import SyntheticData
+
+            SyntheticData.Get().set_instance_mapping_semantic_filter(
+                _camera_semantic_filter_predicate(self.cfg.semantic_filter)
+            )
+
+        # Pump RTX when this camera requests a fresh frame.
         ensure_isaac_rtx_render_update()
 
-        view_count = spec.view_count
+        view_count = spec.num_instances
         cfg = spec.cfg
         device = spec.device
 
-        def tiling_grid_shape():
-            cols = math.ceil(math.sqrt(view_count))
-            rows = math.ceil(view_count / cols)
-            return (cols, rows)
-
-        num_tiles_x = tiling_grid_shape()[0]
+        num_tiles_x = math.ceil(math.sqrt(view_count))
 
         # Extract the flattened image buffer
         for data_type, annotator in render_data.annotators.items():
@@ -689,11 +654,24 @@ class IsaacRtxRenderer(BaseRenderer):
             annotator.detach([render_data.render_product.path])
 
         render_data.render_product.destroy()
-        render_data.render_product = None
 
         render_data.annotators.clear()
         render_data.output_data = None
-        render_data.spec = None
         render_data.renderer_info.clear()
         render_data.ppisp_pipeline = None
         render_data._hdr_scratch_wp = None
+
+
+class _IsaacRtxRuntime:
+    """Simulation-owned process-global RTX setup shared by every camera client."""
+
+    def __init__(self, global_settings: IsaacRtxRendererGlobalSettingsCfg):
+        self._global_settings = astuple(global_settings)
+        # Load Replicator only when selected; Kit experiences otherwise resolve its bundled Warp at startup.
+        enable_extension("omni.replicator.core")
+        self._settings = get_settings_manager()
+        self._settings.set_bool("/isaaclab/render/rtx_sensors", True)
+        apply_isaac_rtx_global_settings(global_settings, self._settings)
+        if self._settings.get("/isaaclab/render/deterministic", False):
+            apply_isaac_rtx_determinism_settings(self._settings)
+        ensure_rtx_hydra_engine_attached()

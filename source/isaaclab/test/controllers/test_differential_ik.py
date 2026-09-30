@@ -12,14 +12,15 @@ simulation_app = AppLauncher(headless=True).app
 
 """Rest everything follows."""
 
-import numpy as np
 import pytest
 import torch
+from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
 from isaaclab import cloner
-from isaaclab.assets import Articulation
+from isaaclab.assets import Articulation, ArticulationCfg, AssetBaseCfg
 from isaaclab.controllers import DifferentialIKController, DifferentialIKControllerCfg
+from isaaclab.utils.configclass import configclass
 
 from isaaclab.utils.math import (  # isort:skip
     compute_pose_error,
@@ -37,81 +38,61 @@ from isaaclab_assets import FRANKA_PANDA_HIGH_PD_CFG, UR10_CFG  # isort:skip
 pytestmark = pytest.mark.integration
 
 
-@pytest.fixture
-def sim():
-    """Create a simulation context for testing."""
-    # Wait for spawning
-    stage = sim_utils.create_new_stage()
-    # Constants
-    num_envs = 1
-    # Load kit helper
-    sim_cfg = sim_utils.SimulationCfg(dt=0.01)
-    sim = sim_utils.SimulationContext(sim_cfg)
-    # TODO: Remove this once we have a better way to handle this.
+_FRANKA_CFG = FRANKA_PANDA_HIGH_PD_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+_UR10_CFG = UR10_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+_UR10_CFG.spawn.rigid_props.disable_gravity = True
+
+
+@configclass
+class DirectCfg:
+    sim: sim_utils.SimulationCfg = sim_utils.SimulationCfg(physics=PhysxCfg(), dt=0.01)
+    num_envs: int = 1
+    env_spacing: float = 2.0
+    ground: AssetBaseCfg = AssetBaseCfg(prim_path="/World/GroundPlane", spawn=sim_utils.GroundPlaneCfg())
+    robot: ArticulationCfg = _FRANKA_CFG
+
+
+@pytest.mark.parametrize(
+    ("robot_cfg", "ee_frame_name", "arm_joint_names"),
+    [
+        pytest.param(_FRANKA_CFG, "panda_hand", ["panda_joint.*"], id="franka"),
+        pytest.param(_UR10_CFG, "ee_link", [".*"], id="ur10"),
+    ],
+)
+def test_ik_pose_abs(robot_cfg, ee_frame_name, arm_joint_names):
+    """Test absolute-pose IK convergence for each arm."""
+    sim_utils.create_new_stage()
+    cfg = DirectCfg(robot=robot_cfg)
+    sim = sim_utils.SimulationContext(cfg.sim)
     sim._app_control_on_stop_handle = None
+    try:
+        with cloner.ReplicateSession((cfg.ground, cfg.robot), cfg.num_envs, cfg.env_spacing):
+            (ground_source,) = cloner.query.cfg_source_paths(sim.get_clone_plan(), cfg.ground)
+            cfg.ground.spawn.func(ground_source, cfg.ground.spawn)
+            robot = cfg.robot.class_type(cfg.robot)
 
-    # Create a ground plane
-    cfg = sim_utils.GroundPlaneCfg()
-    cfg.func("/World/GroundPlane", cfg)
-
-    # Create environment clones using Isaac Lab's cloner utilities
-    env_prim_paths = [f"/World/envs/env_{i}" for i in range(num_envs)]
-    env_fmt = "/World/envs/env_{}"
-    env_ids = np.arange(num_envs, dtype=np.int64)
-    env_origins, _ = cloner.grid_transforms(num_envs, spacing=2.0)
-    # create source prim
-    stage.DefinePrim(env_prim_paths[0], "Xform")
-    # clone the env xform
-    cloner.usd_replicate(stage, [env_fmt.format(0)], [env_fmt], env_ids, positions=env_origins)
-
-    # Define goals for the arm (x, y, z, qx, qy, qz, qw)
-    ee_goals_set = [
-        [0.5, 0.5, 0.7, 0, 0.707, 0, 0.707],
-        [0.5, -0.4, 0.6, 0.707, 0, 0, 0.707],
-        [0.5, 0, 0.5, 1.0, 0.0, 0.0, 0.0],
-    ]
-    ee_pose_b_des_set = torch.tensor(ee_goals_set, device=sim.device)
-
-    yield sim, num_envs, ee_pose_b_des_set
-
-    # Cleanup
-    sim.stop()
-    sim.clear_instance()
-
-
-def test_franka_ik_pose_abs(sim):
-    """Test IK controller for Franka arm with Franka hand."""
-    sim_context, num_envs, ee_pose_b_des_set = sim
-
-    # Create robot instance
-    robot_cfg = FRANKA_PANDA_HIGH_PD_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-    robot = Articulation(cfg=robot_cfg)
-
-    # Create IK controller
-    diff_ik_cfg = DifferentialIKControllerCfg(command_type="pose", use_relative_mode=False, ik_method="dls")
-    diff_ik_controller = DifferentialIKController(diff_ik_cfg, num_envs=num_envs, device=sim_context.device)
-
-    # Run the controller and check that it converges to the goal
-    _run_ik_controller(
-        robot, diff_ik_controller, "panda_hand", ["panda_joint.*"], sim_context, num_envs, ee_pose_b_des_set
-    )
-
-
-def test_ur10_ik_pose_abs(sim):
-    """Test IK controller for UR10 arm."""
-    sim_context, num_envs, ee_pose_b_des_set = sim
-
-    # Create robot instance
-    robot_cfg = UR10_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-    robot_cfg.spawn.rigid_props.disable_gravity = True
-    robot = Articulation(cfg=robot_cfg)
-
-    # Create IK controller
-    diff_ik_cfg = DifferentialIKControllerCfg(command_type="pose", use_relative_mode=False, ik_method="dls")
-    diff_ik_controller = DifferentialIKController(diff_ik_cfg, num_envs=num_envs, device=sim_context.device)
-
-    # Run the controller and check that it converges to the goal
-    _run_ik_controller(robot, diff_ik_controller, "ee_link", [".*"], sim_context, num_envs, ee_pose_b_des_set)
+        ee_pose_b_des_set = torch.tensor(
+            [
+                [0.5, 0.5, 0.7, 0, 0.707, 0, 0.707],
+                [0.5, -0.4, 0.6, 0.707, 0, 0, 0.707],
+                [0.5, 0, 0.5, 1.0, 0.0, 0.0, 0.0],
+            ],
+            device=sim.device,
+        )
+        diff_ik_cfg = DifferentialIKControllerCfg(command_type="pose", use_relative_mode=False, ik_method="dls")
+        diff_ik_controller = DifferentialIKController(diff_ik_cfg, cfg.num_envs, sim.device)
+        _run_ik_controller(
+            robot,
+            diff_ik_controller,
+            ee_frame_name,
+            arm_joint_names,
+            sim,
+            cfg.num_envs,
+            ee_pose_b_des_set,
+        )
+    finally:
+        sim.stop()
+        sim.clear_instance()
 
 
 def _run_ik_controller(

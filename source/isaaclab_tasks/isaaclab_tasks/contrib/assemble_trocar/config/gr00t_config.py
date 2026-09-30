@@ -90,7 +90,7 @@ class IsaacLabDataConfig(BaseDataConfig):
         transforms = [
             # Video transforms
             VideoToTensor(apply_to=self.video_keys),
-            # Disabled: camera already outputs 224×224 via TiledCameraCfg.
+            # Disabled: the camera already outputs 224×224.
             # To avoid VideoToTensor size-check errors, either:
             #   1. Disable input size validation in VideoToTensor, OR
             #   2. Set modality meta height/width to 224 to match actual input.

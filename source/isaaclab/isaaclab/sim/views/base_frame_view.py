@@ -15,14 +15,17 @@ import warp as wp
 from isaaclab.utils.warp import ProxyArray
 
 if TYPE_CHECKING:
+    from isaaclab.cloner import ClonePlan
+    from isaaclab.scene_data import SceneDataProvider
+
     from .xform_space_writer import FrameViewLocalSpaceWriter, FrameViewSpaceWriterBase, FrameViewWorldSpaceWriter
 
 
 class BaseFrameView(abc.ABC):
     """Abstract interface for reading and writing transforms of multiple prims.
 
-    Backend-specific implementations (USD/Fabric, Newton GPU state, etc.) subclass
-    this to provide efficient batched pose queries.  The factory
+    Backend-specific implementations consume plan-bound frames and SDP transforms.
+    The factory
     :class:`~isaaclab.sim.views.FrameView` selects the correct
     implementation at runtime based on the active physics backend.
 
@@ -50,6 +53,11 @@ class BaseFrameView(abc.ABC):
     # __enter__ / __exit__ to track the active scope on this view.
     _active_writer: FrameViewSpaceWriterBase | None = None
 
+    @abc.abstractmethod
+    def initialize(self, plan: ClonePlan, scene_data_provider: SceneDataProvider) -> None:
+        """Bind the completed clone plan and shared scene-data provider."""
+        ...
+
     @property
     @abc.abstractmethod
     def count(self) -> int:
@@ -65,8 +73,7 @@ class BaseFrameView(abc.ABC):
     def close(self) -> None:
         """Release backend state authored by this view. The view must not be used afterwards.
 
-        The base implementation is a no-op; backends that author persistent
-        state (e.g. the Fabric backend's per-view index attributes) override it.
+        The base implementation is a no-op; backends that author persistent state override it.
         Backends also release best-effort when the view is garbage collected,
         but only an explicit :meth:`close` is deterministic -- collection
         timing is up to the interpreter.  Calling :meth:`close` more than once
@@ -297,54 +304,3 @@ class BaseFrameView(abc.ABC):
         """
         with self.xform_local_space_writer() as writer:
             writer.set_poses(translations, orientations, indices)
-
-    # ------------------------------------------------------------------
-    # Scale getter/setter convenience helpers.
-    # ------------------------------------------------------------------
-
-    def get_scales(self, indices: wp.array | None = None) -> ProxyArray:
-        """Get scales for prims in the view.
-
-        .. note::
-            Prefer the explicit :meth:`get_local_scales` or
-            :meth:`get_world_scales` when the space matters.  This method
-            delegates to :meth:`_get_scales_impl`, which preserves each
-            backend's legacy space (world for Fabric, local for USD).
-
-        Args:
-            indices: Subset of prims to query.  ``None`` means all prims.
-
-        Returns:
-            A ``ProxyArray`` of shape ``(M, 3)``.
-
-        Raises:
-            RuntimeError: If a writer scope is active on this view.
-        """
-        self._assert_no_active_writer("get_scales")
-        return self._get_scales_impl(indices)
-
-    def set_scales(self, scales: wp.array, indices: wp.array | None = None) -> None:
-        """Set scales for prims in the view.
-
-        This convenience method delegates to :meth:`_set_scales_impl`, which
-        opens the backend's legacy space (world for Fabric, local for USD) and
-        calls ``writer.set_scales``.  To update poses and scales together
-        without paying the opposite-space derive/sync twice, prefer
-        ``with view.xform_world_space_writer() as w: w.set_poses(...); w.set_scales(...)``
-        (or :meth:`xform_local_space_writer`).
-
-        Args:
-            scales: Scales ``(M, 3)`` as ``wp.array``.
-            indices: Subset of prims to update.  ``None`` means all prims.
-        """
-        self._set_scales_impl(scales, indices)
-
-    @abc.abstractmethod
-    def _get_scales_impl(self, indices: wp.array | None = None) -> ProxyArray:
-        """Backend-specific implementation for :meth:`get_scales`."""
-        ...
-
-    @abc.abstractmethod
-    def _set_scales_impl(self, scales: wp.array, indices: wp.array | None = None) -> None:
-        """Backend-specific implementation for :meth:`set_scales`."""
-        ...

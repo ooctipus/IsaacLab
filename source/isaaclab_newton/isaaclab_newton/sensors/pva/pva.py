@@ -12,13 +12,8 @@ from typing import TYPE_CHECKING
 import torch
 import warp as wp
 
-from pxr import UsdGeom
-
 import isaaclab.utils.math as math_utils
-from isaaclab.markers import VisualizationMarkers
 from isaaclab.sensors.pva import BasePva
-
-from isaaclab_newton.physics import NewtonManager
 
 from .kernels import pva_reset_kernel, pva_update_kernel
 from .pva_data import PvaData
@@ -60,8 +55,8 @@ class Pva(BasePva):
         self._newton_model = None
 
         offset_xform = wp.transform(cfg.offset.pos, cfg.offset.rot)
-        self._site_label = NewtonManager.cl_register_site(cfg.prim_path, offset_xform)
-        NewtonManager.request_extended_state_attribute("body_qdd")
+        self._site_label = self._physics_manager._newton.cl_register_site(cfg.prim_path, offset_xform)
+        self._physics_manager._newton.request_extended_state_attribute("body_qdd")
 
         logger.info(f"Pva '{cfg.prim_path}': site registered (label='{self._site_label}')")
 
@@ -124,13 +119,13 @@ class Pva(BasePva):
         """PHYSICS_READY callback: resolves site indices and stores model reference."""
         super()._initialize_impl()
 
-        site_map = NewtonManager._cl_site_index_map
+        site_map = self._physics_manager._newton._cl_site_index_map
         num_envs = self._num_envs
 
         if self._site_label not in site_map:
             raise ValueError(
                 f"Pva '{self.cfg.prim_path}': site label '{self._site_label}' "
-                "not found in NewtonManager._cl_site_index_map."
+                "not found in self._physics_manager._newton._cl_site_index_map."
             )
 
         global_idx, per_world = site_map[self._site_label]
@@ -153,7 +148,7 @@ class Pva(BasePva):
                 site_indices.append(world_sites[0])
 
         self._site_indices = wp.array(site_indices, dtype=int, device=self._device)
-        self._newton_model = NewtonManager._model
+        self._newton_model = self._physics_manager._newton._model
 
         self._data.create_buffers(num_envs=num_envs, device=self._device)
 
@@ -166,7 +161,7 @@ class Pva(BasePva):
                 f"Pva '{self.cfg.prim_path}': sensor not initialized. "
                 "Access sensor data only after sim.reset() has been called."
             )
-        state = NewtonManager._state_0
+        state = self._physics_manager._newton._state_0
 
         wp.launch(
             pva_update_kernel,
@@ -200,7 +195,7 @@ class Pva(BasePva):
     def _set_debug_vis_impl(self, debug_vis: bool):
         if debug_vis:
             if not hasattr(self, "acceleration_visualizer"):
-                self.acceleration_visualizer = VisualizationMarkers(self.cfg.visualizer_cfg)
+                self.acceleration_visualizer = self.cfg.visualizer_cfg.class_type(self.cfg.visualizer_cfg)
             self.acceleration_visualizer.set_visibility(True)
         else:
             if hasattr(self, "acceleration_visualizer"):
@@ -216,7 +211,6 @@ class Pva(BasePva):
         default_scale = self.acceleration_visualizer.cfg.markers["arrow"].scale
         arrow_scale = torch.tensor(default_scale, device=self.device).repeat(self._data.lin_acc_b.torch.shape[0], 1)
         # arrow direction from acceleration; filter out bodies with effectively zero accel (no defined direction)
-        up_axis = UsdGeom.GetStageUpAxis(self.stage)
         pos_w_torch = self._data.pos_w.torch
         accel_w = math_utils.quat_apply(self._data.quat_w.torch, self._data.lin_acc_b.torch)
         valid_indices = (torch.linalg.norm(accel_w, dim=-1) > 1e-5).nonzero(as_tuple=True)[0]
@@ -227,7 +221,7 @@ class Pva(BasePva):
         rotation_matrix = math_utils.create_rotation_matrix_from_view(
             pos_filtered,
             pos_filtered + accel_filtered,
-            up_axis=up_axis,
+            up_axis="Z",
             device=self._device,
         )
         quat_opengl = math_utils.quat_from_matrix(rotation_matrix)
@@ -239,7 +233,7 @@ class Pva(BasePva):
         )
 
     def _invalidate_initialize_callback(self, event):
-        """Clears references for re-initialization and re-registers with NewtonManager."""
+        """Clears references for re-initialization and re-registers with self._physics_manager."""
         super()._invalidate_initialize_callback(event)
         self._newton_model = None
         self._site_indices = None
@@ -260,5 +254,5 @@ class Pva(BasePva):
 
         # Re-register so a subsequent start_simulation picks them up.
         offset_xform = wp.transform(self.cfg.offset.pos, self.cfg.offset.rot)
-        self._site_label = NewtonManager.cl_register_site(self.cfg.prim_path, offset_xform)
-        NewtonManager.request_extended_state_attribute("body_qdd")
+        self._site_label = self._physics_manager._newton.cl_register_site(self.cfg.prim_path, offset_xform)
+        self._physics_manager._newton.request_extended_state_attribute("body_qdd")

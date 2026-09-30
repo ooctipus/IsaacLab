@@ -27,9 +27,11 @@ simulation_app = app_launcher.app
 
 """Rest everything follows."""
 
+from isaaclab_physx.physics import PhysxCfg
+
 import isaaclab.sim as sim_utils
 from isaaclab.assets import AssetBaseCfg
-from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
+from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors.ray_caster import RayCasterCfg, patterns
 from isaaclab.sim import SimulationContext
 from isaaclab.terrains import TerrainImporterCfg
@@ -80,13 +82,14 @@ def main():
     """Main function."""
 
     # Load kit helper
-    sim = SimulationContext(sim_utils.SimulationCfg(dt=0.005))
+    sim = SimulationContext(sim_utils.SimulationCfg(physics=PhysxCfg(), dt=0.005))
     # Set main camera
     sim.set_camera_view(eye=[5, 5, 5], target=[0.0, 0.0, 0.0])
 
     # Spawn things into stage
     with Timer("Setup scene"):
-        scene = InteractiveScene(MySceneCfg(num_envs=args_cli.num_envs, env_spacing=5.0, lazy_sensor_update=False))
+        scene_cfg = MySceneCfg(num_envs=args_cli.num_envs, env_spacing=5.0, lazy_sensor_update=False)
+        scene = scene_cfg.class_type(scene_cfg)
 
     # Check that parsing happened as expected
     assert len(scene.env_prim_paths) == args_cli.num_envs, "Number of environments does not match."

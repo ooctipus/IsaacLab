@@ -14,10 +14,13 @@ simulation_app = AppLauncher(headless=True, enable_cameras=True).app
 
 import pytest
 import torch
+from isaaclab_physx.physics import PhysxCfg
+from isaaclab_physx.renderers import IsaacRtxRendererCfg
 
 import omni.replicator.core as rep
 
 import isaaclab.sim as sim_utils
+from isaaclab import cloner
 from isaaclab.sensors.camera import Camera, CameraCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
@@ -46,6 +49,17 @@ CUBE_ORIENTATION = (0.7071, 0.0, 0.7071, 0.0)  # rotate DexCube with its yellow 
 CUBE_SCALE = (0.9, 0.9, 0.9)
 
 
+def _camera_in_plan(cfg):
+    """Build a camera inside a clone plan, the way a scene does.
+
+    Every asset the scene draws is declared to a plan and copied by the cloning pass, cameras
+    included: a camera reads where its copies land from the plan, so the plan has to exist before
+    it is built.
+    """
+    with cloner.ReplicateSession((cfg,), num_clones=1, env_spacing=0.0):
+        return Camera(cfg)
+
+
 def _is_grey(mean_rgb: torch.Tensor) -> bool:
     """Return True if mean_rgb looks like the grey default material."""
     channels_equal = (mean_rgb[1] - mean_rgb[0]).abs() < GREY_CHANNEL_TOLERANCE and (
@@ -63,7 +77,7 @@ def setup_sim(device):
     # Simulation time-step
     dt = 0.01
     # Load kit helper
-    sim_cfg = sim_utils.SimulationCfg(dt=dt, device=device)
+    sim_cfg = sim_utils.SimulationCfg(physics=PhysxCfg(), dt=dt, device=device)
     sim = sim_utils.SimulationContext(sim_cfg)
     # populate scene
     _populate_scene()
@@ -117,9 +131,10 @@ def test_first_frame_is_textured_camera(setup_sim, device):
             horizontal_aperture=20.955,
             clipping_range=(0.1, 1.0e5),
         ),
+        renderer_cfg=IsaacRtxRendererCfg(),
     )
     # Create camera
-    camera = Camera(camera_cfg)
+    camera = _camera_in_plan(camera_cfg)
 
     sim.reset()
 

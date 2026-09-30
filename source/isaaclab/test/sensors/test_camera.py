@@ -20,14 +20,17 @@ import random
 
 import numpy as np
 import pytest
-import scipy.spatial.transform as tf
 import torch
 import warp as wp
+from isaaclab_physx.physics import PhysxCfg
+from isaaclab_physx.renderers import IsaacRtxRendererCfg
 
 import omni.replicator.core as rep
-from pxr import Gf, Usd, UsdGeom
+from pxr import Gf, UsdGeom
 
 import isaaclab.sim as sim_utils
+from isaaclab import cloner
+from isaaclab.assets import AssetBaseCfg
 from isaaclab.sensors.camera import Camera, CameraCfg
 
 pytestmark = [pytest.mark.integration, pytest.mark.rendering, pytest.mark.isaacsim_ci]
@@ -59,6 +62,79 @@ HEIGHT = 240
 WIDTH = 320
 
 
+def _cameras_in_plan(*cfgs: CameraCfg) -> tuple[Camera, ...]:
+    """Build every camera in a scene inside its one clone plan.
+
+    Every asset the scene draws is declared to a plan and copied by the cloning pass, cameras
+    included: a camera reads where its copies land from the plan, so the plan has to exist before
+    it is built. These cameras sit outside the per-environment namespace, so the plan gives each
+    one row that every environment shares.
+    """
+    assets = _scene_cfgs()
+    with cloner.ReplicateSession((*assets, *cfgs), num_clones=1, env_spacing=0.0):
+        sim = sim_utils.SimulationContext.instance()
+        plan = sim.get_clone_plan()
+        for cfg in assets:
+            source_path = next(path for path in cloner.query.cfg_source_paths(plan, cfg) if path is not None)
+            cfg.spawn.func(
+                source_path,
+                cfg.spawn,
+                translation=cfg.init_state.pos,
+                orientation=cfg.init_state.rot,
+            )
+        return tuple(Camera(cfg) for cfg in cfgs)
+
+
+def _camera_in_plan(cfg: CameraCfg) -> Camera:
+    """Build one camera inside the scene's clone plan."""
+    return _cameras_in_plan(cfg)[0]
+
+
+def _scene_cfgs() -> tuple[AssetBaseCfg, ...]:
+    """Return the complete plan-owned scene drawn by the camera tests."""
+    assets = [
+        AssetBaseCfg(prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg()),
+        AssetBaseCfg(
+            prim_path="/World/Light/GreySphere",
+            spawn=sim_utils.SphereLightCfg(),
+            init_state=AssetBaseCfg.InitialStateCfg(pos=(4.5, 3.5, 10.0)),
+        ),
+        AssetBaseCfg(
+            prim_path="/World/Light/WhiteSphere",
+            spawn=sim_utils.SphereLightCfg(),
+            init_state=AssetBaseCfg.InitialStateCfg(pos=(-4.5, 3.5, 10.0)),
+        ),
+    ]
+    random.seed(0)
+    rng = np.random.default_rng(0)
+    for index in range(10):
+        prim_type = random.choice(("Cube", "Sphere", "Cylinder"))
+        common = dict(
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(),
+            mass_props=sim_utils.MassPropertiesCfg(mass=5.0),
+            collision_props=sim_utils.CollisionPropertiesCfg(),
+            semantic_tags=[("class", prim_type)],
+            visual_material=sim_utils.PreviewSurfaceCfg(
+                diffuse_color=(random.random(), random.random(), random.random())
+            ),
+        )
+        if prim_type == "Cube":
+            spawn = sim_utils.CuboidCfg(size=(0.5, 0.5, 0.5), **common)
+        elif prim_type == "Sphere":
+            spawn = sim_utils.SphereCfg(radius=0.25, **common)
+        else:
+            spawn = sim_utils.CylinderCfg(radius=0.25, height=0.5, **common)
+        position = (rng.random(3) - np.asarray([0.05, 0.05, -1.0])) * np.asarray([1.5, 1.5, 0.5])
+        assets.append(
+            AssetBaseCfg(
+                prim_path=f"/World/Objects/Obj_{index:02d}",
+                spawn=spawn,
+                init_state=AssetBaseCfg.InitialStateCfg(pos=tuple(position)),
+            )
+        )
+    return tuple(assets)
+
+
 def setup() -> tuple[sim_utils.SimulationContext, CameraCfg, float]:
     camera_cfg = CameraCfg(
         height=HEIGHT,
@@ -69,16 +145,15 @@ def setup() -> tuple[sim_utils.SimulationContext, CameraCfg, float]:
         spawn=sim_utils.PinholeCameraCfg(
             focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 1.0e5)
         ),
+        renderer_cfg=IsaacRtxRendererCfg(),
     )
     # Create a new stage
     sim_utils.create_new_stage()
     # Simulation time-step
     dt = 0.01
     # Load kit helper
-    sim_cfg = sim_utils.SimulationCfg(dt=dt)
+    sim_cfg = sim_utils.SimulationCfg(physics=PhysxCfg(), dt=dt)
     sim = sim_utils.SimulationContext(sim_cfg)
-    # populate scene
-    _populate_scene()
     # load stage
     sim_utils.update_stage()
     return sim, camera_cfg, dt
@@ -105,9 +180,12 @@ def setup_sim_camera():
 def test_camera_init(setup_sim_camera):
     """Test camera initialization."""
     # Create camera configuration
-    sim, camera_cfg, dt = setup_sim_camera
+    sim, camera_cfg, _dt = setup_sim_camera
     # Create camera
-    camera = Camera(camera_cfg)
+    camera = _camera_in_plan(camera_cfg)
+    assert camera._render_spec.camera_source_prim_paths == (camera_cfg.prim_path,)
+    assert camera.prim_paths == (camera_cfg.prim_path,)
+    assert tuple(str(camera.GetPath()) for camera in camera._prototype_sensor_prims) == (camera_cfg.prim_path,)
     # Check simulation parameter is set correctly
     assert sim.get_setting("/isaaclab/render/rtx_sensors")
     # Play sim
@@ -138,6 +216,44 @@ def test_camera_init(setup_sim_camera):
             assert im_data.shape == (1, camera_cfg.height, camera_cfg.width, 1)
 
 
+def test_camera_survives_a_stop_and_replay(setup_sim_camera):
+    """Regression: a camera must still render after physics is stopped and played again.
+
+    ``PhysicsEvent.STOP`` used to drop the camera's backend reference while leaving its render spec
+        in place, and recovery was keyed on the spec -- so it never fired and the next
+        ``PHYSICS_READY`` dereferenced ``None`` in ``create_render_data``. The backend is shared and
+        outlives the stop, so the reference is simply never dropped now.
+    """
+    sim, camera_cfg, dt = setup_sim_camera
+    camera = _camera_in_plan(camera_cfg)
+
+    sim.reset()
+    assert camera.is_initialized
+    renderer_before = camera._renderer
+    assert renderer_before is not None
+
+    sim.stop()
+    # STOP releases the per-play render data, which the camera owns. The backend is shared, owned by
+    # SimulationContext, and outlives the cycle -- so the reference stays good and the description stands.
+    assert camera._render_data is None
+    assert camera._renderer is renderer_before
+    assert camera._render_spec is not None
+    # Reading poses between the stop and the replay must say so, not trip over a released view.
+    with pytest.raises(RuntimeError, match="sim.play"):
+        camera._update_poses()
+
+    sim.reset()
+
+    assert camera.is_initialized
+    assert camera._renderer is renderer_before, "replay must reuse the backend, not lose or rebuild it"
+    assert camera._render_data is not None
+    # The camera still produces frames on the far side of the cycle.
+    for _ in range(2):
+        sim.step()
+        camera.update(dt)
+    assert camera.data.output["distance_to_image_plane"].torch.shape[0] == 1
+
+
 def test_camera_init_offset(setup_sim_camera):
     """Test camera initialization with offset using different conventions."""
     sim, camera_cfg, dt = setup_sim_camera
@@ -151,7 +267,6 @@ def test_camera_init_offset(setup_sim_camera):
         convention="ros",
     )
     cam_cfg_offset_ros.prim_path = "/World/CameraOffsetRos"
-    camera_ros = Camera(cam_cfg_offset_ros)
     # -- OpenGL convention
     cam_cfg_offset_opengl = copy.deepcopy(camera_cfg)
     cam_cfg_offset_opengl.update_latest_camera_pose = True
@@ -161,7 +276,6 @@ def test_camera_init_offset(setup_sim_camera):
         convention="opengl",
     )
     cam_cfg_offset_opengl.prim_path = "/World/CameraOffsetOpengl"
-    camera_opengl = Camera(cam_cfg_offset_opengl)
     # -- World convention
     cam_cfg_offset_world = copy.deepcopy(camera_cfg)
     cam_cfg_offset_world.update_latest_camera_pose = True
@@ -171,46 +285,22 @@ def test_camera_init_offset(setup_sim_camera):
         convention="world",
     )
     cam_cfg_offset_world.prim_path = "/World/CameraOffsetWorld"
-    camera_world = Camera(cam_cfg_offset_world)
+    camera_ros, camera_opengl, camera_world = _cameras_in_plan(
+        cam_cfg_offset_ros, cam_cfg_offset_opengl, cam_cfg_offset_world
+    )
+    plan = sim.get_clone_plan()
+    for cfg in (cam_cfg_offset_ros, cam_cfg_offset_opengl, cam_cfg_offset_world):
+        np.testing.assert_allclose(plan.match_frames(cfg.prim_path)[0].pose[:3], POSITION)
 
     # play sim
     sim.reset()
 
-    # retrieve camera pose using USD API
-    prim_tf_ros = camera_ros._sensor_prims[0].ComputeLocalToWorldTransform(Usd.TimeCode.Default())
-    prim_tf_opengl = camera_opengl._sensor_prims[0].ComputeLocalToWorldTransform(Usd.TimeCode.Default())
-    prim_tf_world = camera_world._sensor_prims[0].ComputeLocalToWorldTransform(Usd.TimeCode.Default())
-    # convert them from column-major to row-major
-    prim_tf_ros = np.transpose(prim_tf_ros)
-    prim_tf_opengl = np.transpose(prim_tf_opengl)
-    prim_tf_world = np.transpose(prim_tf_world)
-
-    # check that all transforms are set correctly
-    np.testing.assert_allclose(prim_tf_ros[0:3, 3], cam_cfg_offset_ros.offset.pos)
-    np.testing.assert_allclose(prim_tf_opengl[0:3, 3], cam_cfg_offset_opengl.offset.pos)
-    np.testing.assert_allclose(prim_tf_world[0:3, 3], cam_cfg_offset_world.offset.pos)
-    # scipy's as_quat() returns xyzw format, which matches our config format
-    np.testing.assert_allclose(
-        tf.Rotation.from_matrix(prim_tf_ros[:3, :3]).as_quat(),
-        cam_cfg_offset_opengl.offset.rot,
-        rtol=1e-5,
-    )
-    np.testing.assert_allclose(
-        tf.Rotation.from_matrix(prim_tf_opengl[:3, :3]).as_quat(),
-        cam_cfg_offset_opengl.offset.rot,
-        rtol=1e-5,
-    )
-    np.testing.assert_allclose(
-        tf.Rotation.from_matrix(prim_tf_world[:3, :3]).as_quat(),
-        cam_cfg_offset_opengl.offset.rot,
-        rtol=1e-5,
-    )
-
-    # check if transform correctly set in output
-    np.testing.assert_allclose(camera_ros.data.pos_w[0].cpu().numpy(), cam_cfg_offset_ros.offset.pos, rtol=1e-5)
-    _assert_quat_close(camera_ros.data.quat_w_ros[0], QUAT_ROS, rtol=1e-5, atol=1e-5)
-    _assert_quat_close(camera_ros.data.quat_w_opengl[0], QUAT_OPENGL, rtol=1e-5, atol=1e-5)
-    _assert_quat_close(camera_ros.data.quat_w_world[0], QUAT_WORLD, rtol=1e-5, atol=1e-5)
+    # Every convention describes the same camera pose; validate the SDP-backed camera state.
+    for camera in (camera_ros, camera_opengl, camera_world):
+        np.testing.assert_allclose(camera.data.pos_w.torch[0].cpu().numpy(), POSITION, rtol=1e-5)
+        _assert_quat_close(camera.data.quat_w_ros.torch[0], QUAT_ROS, rtol=1e-5, atol=1e-5)
+        _assert_quat_close(camera.data.quat_w_opengl[0], QUAT_OPENGL, rtol=1e-5, atol=1e-5)
+        _assert_quat_close(camera.data.quat_w_world[0], QUAT_WORLD, rtol=1e-5, atol=1e-5)
 
 
 def test_multi_camera_init(setup_sim_camera):
@@ -220,11 +310,10 @@ def test_multi_camera_init(setup_sim_camera):
     # -- camera 1
     cam_cfg_1 = copy.deepcopy(camera_cfg)
     cam_cfg_1.prim_path = "/World/Camera_1"
-    cam_1 = Camera(cam_cfg_1)
     # -- camera 2
     cam_cfg_2 = copy.deepcopy(camera_cfg)
     cam_cfg_2.prim_path = "/World/Camera_2"
-    cam_2 = Camera(cam_cfg_2)
+    cam_1, cam_2 = _cameras_in_plan(cam_cfg_1, cam_cfg_2)
 
     # play sim
     sim.reset()
@@ -249,13 +338,12 @@ def test_multi_camera_with_different_resolution(setup_sim_camera):
     # -- camera 1
     cam_cfg_1 = copy.deepcopy(camera_cfg)
     cam_cfg_1.prim_path = "/World/Camera_1"
-    cam_1 = Camera(cam_cfg_1)
     # -- camera 2
     cam_cfg_2 = copy.deepcopy(camera_cfg)
     cam_cfg_2.prim_path = "/World/Camera_2"
     cam_cfg_2.height = 240
     cam_cfg_2.width = 320
-    cam_2 = Camera(cam_cfg_2)
+    cam_1, cam_2 = _cameras_in_plan(cam_cfg_1, cam_cfg_2)
 
     # play sim
     sim.reset()
@@ -274,14 +362,13 @@ def test_camera_init_intrinsic_matrix(setup_sim_camera):
     """Test camera initialization from intrinsic matrix."""
     sim, camera_cfg, dt = setup_sim_camera
     # get the first camera
-    camera_1 = Camera(cfg=camera_cfg)
+    camera_1 = _camera_in_plan(camera_cfg)
     # get intrinsic matrix
     sim.reset()
     intrinsic_matrix = camera_1.data.intrinsic_matrices[0].cpu().flatten().tolist()
     teardown(sim)
     # reinit the first camera
     sim, camera_cfg, dt = setup()
-    camera_1 = Camera(cfg=camera_cfg)
     # initialize from intrinsic matrix
     intrinsic_camera_cfg = CameraCfg(
         height=HEIGHT,
@@ -297,8 +384,9 @@ def test_camera_init_intrinsic_matrix(setup_sim_camera):
             focus_distance=400.0,
             clipping_range=(0.1, 1.0e5),
         ),
+        renderer_cfg=IsaacRtxRendererCfg(),
     )
-    camera_2 = Camera(cfg=intrinsic_camera_cfg)
+    camera_1, camera_2 = _cameras_in_plan(camera_cfg, intrinsic_camera_cfg)
 
     # play sim
     sim.reset()
@@ -329,7 +417,7 @@ def test_camera_set_world_poses(setup_sim_camera, update_latest_camera_pose):
     sim, camera_cfg, dt = setup_sim_camera
     camera_cfg.update_latest_camera_pose = update_latest_camera_pose
     # init camera
-    camera = Camera(camera_cfg)
+    camera = _camera_in_plan(camera_cfg)
     # play sim
     sim.reset()
 
@@ -349,7 +437,7 @@ def test_camera_set_world_poses_from_view(setup_sim_camera, update_latest_camera
     sim, camera_cfg, dt = setup_sim_camera
     camera_cfg.update_latest_camera_pose = update_latest_camera_pose
     # init camera
-    camera = Camera(camera_cfg)
+    camera = _camera_in_plan(camera_cfg)
     # play sim
     sim.reset()
 
@@ -371,7 +459,7 @@ def test_intrinsic_matrix(setup_sim_camera):
     # enable update latest camera pose
     camera_cfg.update_latest_camera_pose = True
     # init camera
-    camera = Camera(camera_cfg)
+    camera = _camera_in_plan(camera_cfg)
     # play sim
     sim.reset()
     # Desired properties (obtained from realsense camera at 320x240 resolution)
@@ -416,19 +504,15 @@ def test_depth_clipping(setup_sim_camera):
         height=540,
         width=960,
         data_types=["distance_to_image_plane", "distance_to_camera"],
-        depth_clipping_behavior="zero",
+        renderer_cfg=IsaacRtxRendererCfg(depth_clipping_behavior="zero"),
     )
-    camera_zero = Camera(camera_cfg_zero)
-
     camera_cfg_none = copy.deepcopy(camera_cfg_zero)
     camera_cfg_none.prim_path = "/World/CameraNone"
     camera_cfg_none.renderer_cfg.depth_clipping_behavior = "none"
-    camera_none = Camera(camera_cfg_none)
-
     camera_cfg_max = copy.deepcopy(camera_cfg_zero)
     camera_cfg_max.prim_path = "/World/CameraMax"
     camera_cfg_max.renderer_cfg.depth_clipping_behavior = "max"
-    camera_max = Camera(camera_cfg_max)
+    camera_zero, camera_none, camera_max = _cameras_in_plan(camera_cfg_zero, camera_cfg_none, camera_cfg_max)
 
     # Play sim
     sim.reset()
@@ -522,7 +606,7 @@ def test_camera_resolution_all_colorize(setup_sim_camera):
     camera_cfg.renderer_cfg.colorize_instance_segmentation = True
     camera_cfg.renderer_cfg.colorize_semantic_segmentation = True
     # Create camera
-    camera = Camera(camera_cfg)
+    camera = _camera_in_plan(camera_cfg)
 
     # Play sim
     sim.reset()
@@ -584,7 +668,7 @@ def test_camera_resolution_no_colorize(setup_sim_camera):
     camera_cfg.renderer_cfg.colorize_instance_segmentation = False
     camera_cfg.renderer_cfg.colorize_semantic_segmentation = False
     # Create camera
-    camera = Camera(camera_cfg)
+    camera = _camera_in_plan(camera_cfg)
 
     # Play sim
     sim.reset()
@@ -647,7 +731,7 @@ def test_camera_large_resolution_all_colorize(setup_sim_camera):
     camera_cfg.width = 512
     camera_cfg.height = 512
     # Create camera
-    camera = Camera(camera_cfg)
+    camera = _camera_in_plan(camera_cfg)
 
     # Play sim
     sim.reset()
@@ -694,7 +778,7 @@ def test_camera_resolution_rgb_only(setup_sim_camera):
     sim, camera_cfg, dt = setup_sim_camera
     camera_cfg.data_types = ["rgb"]
     # Create camera
-    camera = Camera(camera_cfg)
+    camera = _camera_in_plan(camera_cfg)
 
     # Play sim
     sim.reset()
@@ -716,7 +800,7 @@ def test_camera_resolution_rgba_only(setup_sim_camera):
     sim, camera_cfg, dt = setup_sim_camera
     camera_cfg.data_types = ["rgba"]
     # Create camera
-    camera = Camera(camera_cfg)
+    camera = _camera_in_plan(camera_cfg)
 
     # Play sim
     sim.reset()
@@ -738,7 +822,7 @@ def test_camera_resolution_albedo_only(setup_sim_camera):
     sim, camera_cfg, dt = setup_sim_camera
     camera_cfg.data_types = ["albedo"]
     # Create camera
-    camera = Camera(camera_cfg)
+    camera = _camera_in_plan(camera_cfg)
 
     # Play sim
     sim.reset()
@@ -764,7 +848,7 @@ def test_camera_resolution_simple_shading_only(setup_sim_camera, data_type):
     sim, camera_cfg, dt = setup_sim_camera
     camera_cfg.data_types = [data_type]
     # Create camera
-    camera = Camera(camera_cfg)
+    camera = _camera_in_plan(camera_cfg)
 
     # Play sim
     sim.reset()
@@ -786,7 +870,7 @@ def test_camera_resolution_depth_only(setup_sim_camera):
     sim, camera_cfg, dt = setup_sim_camera
     camera_cfg.data_types = ["depth"]
     # Create camera
-    camera = Camera(camera_cfg)
+    camera = _camera_in_plan(camera_cfg)
 
     # Play sim
     sim.reset()
@@ -806,7 +890,7 @@ def test_sensor_print(setup_sim_camera):
     """Test sensor print is working correctly."""
     # Create sensor
     sim, camera_cfg, dt = setup_sim_camera
-    sensor = Camera(cfg=camera_cfg)
+    sensor = _camera_in_plan(camera_cfg)
     # Play sim
     sim.reset()
     # print info
@@ -824,12 +908,12 @@ def setup_with_device(device) -> tuple[sim_utils.SimulationContext, CameraCfg, f
         spawn=sim_utils.PinholeCameraCfg(
             focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 1.0e5)
         ),
+        renderer_cfg=IsaacRtxRendererCfg(),
     )
     sim_utils.create_new_stage()
     dt = 0.01
-    sim_cfg = sim_utils.SimulationCfg(dt=dt, device=device)
+    sim_cfg = sim_utils.SimulationCfg(physics=PhysxCfg(), dt=dt, device=device)
     sim = sim_utils.SimulationContext(sim_cfg)
-    _populate_scene()
     sim_utils.update_stage()
     return sim, camera_cfg, dt
 
@@ -853,7 +937,7 @@ def test_camera_multi_regex_init(setup_camera_device, device):
 
     camera_cfg = copy.deepcopy(camera_cfg)
     camera_cfg.prim_path = "/World/Origin_[^/]*/CameraSensor"
-    camera = Camera(camera_cfg)
+    camera = _camera_in_plan(camera_cfg)
 
     sim.reset()
 
@@ -908,7 +992,7 @@ def test_camera_all_annotators(setup_camera_device, device):
     camera_cfg = copy.deepcopy(camera_cfg)
     camera_cfg.data_types = all_annotator_types
     camera_cfg.prim_path = "/World/Origin_[^/]*/CameraSensor"
-    camera = Camera(camera_cfg)
+    camera = _camera_in_plan(camera_cfg)
 
     sim.reset()
 
@@ -974,7 +1058,7 @@ def test_camera_segmentation_non_colorize(setup_camera_device, device):
     camera_cfg.renderer_cfg.colorize_semantic_segmentation = False
     camera_cfg.renderer_cfg.colorize_instance_segmentation = False
     camera_cfg.renderer_cfg.colorize_instance_id_segmentation = False
-    camera = Camera(camera_cfg)
+    camera = _camera_in_plan(camera_cfg)
 
     sim.reset()
 
@@ -1001,7 +1085,7 @@ def test_camera_normals_unit_length(setup_camera_device, device):
     camera_cfg = copy.deepcopy(camera_cfg)
     camera_cfg.data_types = ["normals"]
     camera_cfg.prim_path = "/World/Origin_[^/]*/CameraSensor"
-    camera = Camera(camera_cfg)
+    camera = _camera_in_plan(camera_cfg)
 
     sim.reset()
 
@@ -1026,17 +1110,17 @@ def test_camera_data_types_ordering(setup_camera_device, device):
     camera_cfg_distance = copy.deepcopy(camera_cfg)
     camera_cfg_distance.data_types = ["distance_to_camera"]
     camera_cfg_distance.prim_path = "/World/CameraDistance"
-    camera_distance = Camera(camera_cfg_distance)
 
     camera_cfg_depth = copy.deepcopy(camera_cfg)
     camera_cfg_depth.data_types = ["depth"]
     camera_cfg_depth.prim_path = "/World/CameraDepth"
-    camera_depth = Camera(camera_cfg_depth)
 
     camera_cfg_both = copy.deepcopy(camera_cfg)
     camera_cfg_both.data_types = ["distance_to_camera", "depth"]
     camera_cfg_both.prim_path = "/World/CameraBoth"
-    camera_both = Camera(camera_cfg_both)
+    camera_distance, camera_depth, camera_both = _cameras_in_plan(
+        camera_cfg_distance, camera_cfg_depth, camera_cfg_both
+    )
 
     sim.reset()
 
@@ -1059,7 +1143,7 @@ def test_camera_frame_offset(setup_camera_device, device):
     camera_cfg = copy.deepcopy(camera_cfg)
     camera_cfg.height = 480
     camera_cfg.width = 480
-    camera = Camera(camera_cfg)
+    camera = _camera_in_plan(camera_cfg)
 
     stage = sim_utils.get_current_stage()
     for i in range(10):
@@ -1091,17 +1175,17 @@ def test_camera_frame_offset(setup_camera_device, device):
 
 
 @pytest.mark.parametrize(
-    ("data_types", "expected_names", "expected_messages"),
+    ("data_types", "expected_names", "expected_message"),
     [
-        (["rgba", "depth", "normals"], ["depth", "normals"], ["_PartialRenderer", "Supported data types"]),
-        (["rgba", "not_a_render_buffer_kind"], ["not_a_render_buffer_kind"], ["Unknown camera data types"]),
+        (["rgba", "depth", "normals"], ["depth", "normals"], "does not support requested data types"),
+        (["rgba", "not_a_render_buffer_kind"], ["not_a_render_buffer_kind"], "Unknown camera data types"),
     ],
 )
-def test_camera_raises_on_unsupported_data_types(setup_sim_camera, data_types, expected_names, expected_messages):
-    """Test Camera rejects data types its renderer cannot produce or does not recognize."""
+def test_camera_rejects_unsupported_data_types(setup_sim_camera, data_types, expected_names, expected_message):
+    """A renderer must implement every output the camera requests."""
     from isaaclab.renderers.base_renderer import BaseRenderer
 
-    sim, camera_cfg, dt = setup_sim_camera
+    sim, camera_cfg, _dt = setup_sim_camera
     camera_cfg = copy.deepcopy(camera_cfg)
     camera_cfg.data_types = data_types
 
@@ -1116,7 +1200,7 @@ def test_camera_raises_on_unsupported_data_types(setup_sim_camera, data_types, e
         def supported_output_types(self):
             return {RenderBufferKind.RGBA: RenderBufferSpec(4, wp.uint8)}
 
-        def prepare_stage(self, stage, num_envs):
+        def prepare_stage(self, stage, plan):
             pass
 
         def create_render_data(self, sensor):
@@ -1125,13 +1209,7 @@ def test_camera_raises_on_unsupported_data_types(setup_sim_camera, data_types, e
         def set_outputs(self, render_data, output_data):
             pass
 
-        def update_transforms(self):
-            pass
-
-        def update_geometries(self):
-            pass
-
-        def update_camera(self, render_data, positions, orientations, intrinsics):
+        def update(self, render_data, intrinsics):
             pass
 
         def render(self, render_data):
@@ -1144,23 +1222,43 @@ def test_camera_raises_on_unsupported_data_types(setup_sim_camera, data_types, e
             pass
 
     camera_cfg.renderer_cfg.class_type = _PartialRenderer
-    camera = Camera(camera_cfg)
+    camera = _camera_in_plan(camera_cfg)
     with pytest.raises(ValueError) as exc_info:
         sim.reset()
+    assert expected_message in str(exc_info.value)
     assert all(name in str(exc_info.value) for name in expected_names)
-    assert all(message in str(exc_info.value) for message in expected_messages)
-    assert "Hint:" not in str(exc_info.value)
 
     del camera
 
 
 def test_camera_raises_on_instance_segmentation_fast(setup_sim_camera):
     """Camera raises ValueError when the renamed data type 'instance_segmentation_fast' is used."""
-    sim, camera_cfg, dt = setup_sim_camera
+    _sim, camera_cfg, _dt = setup_sim_camera
     camera_cfg = copy.deepcopy(camera_cfg)
     camera_cfg.data_types = ["instance_segmentation_fast"]
     with pytest.raises(ValueError, match="instance_segmentation"):
-        Camera(camera_cfg)
+        _camera_in_plan(camera_cfg)
+
+
+def test_camera_rejects_multiple_simple_shading_modes(setup_sim_camera):
+    """A camera cannot silently select one of two explicitly requested shading modes."""
+    _sim, camera_cfg, _dt = setup_sim_camera
+    camera_cfg = copy.deepcopy(camera_cfg)
+    camera_cfg.data_types = ["simple_shading_constant_diffuse", "simple_shading_full_mdl"]
+
+    with pytest.raises(ValueError, match="multiple simple shading modes"):
+        _camera_in_plan(camera_cfg)
+
+
+@pytest.mark.parametrize("data_types", [[], ["rgb", "rgb"]])
+def test_camera_rejects_empty_or_duplicate_outputs(setup_sim_camera, data_types):
+    """Each camera declares a non-empty set of outputs exactly once."""
+    _sim, camera_cfg, _dt = setup_sim_camera
+    camera_cfg = copy.deepcopy(camera_cfg)
+    camera_cfg.data_types = data_types
+
+    with pytest.raises(ValueError, match="at least one|duplicate"):
+        _camera_in_plan(camera_cfg)
 
 
 @pytest.mark.parametrize("device", ["cuda:0", "cpu"])
@@ -1170,9 +1268,8 @@ def test_camera_pose_update_reflected_in_render(setup_camera_device, device):
 
     Moves the camera close then far, renders depth, and verifies that the mean
     valid depth from the far position is significantly larger (>1.5×) than the
-    close position.  This validates that Fabric-side pose writes (via
-    PrepareForReuse) and USD writes are correctly propagated to the RTX
-    renderer.
+    close position. This validates that the named SDP camera publication reaches
+    the exact plan-owned RTX camera sink.
     """
     sim, _unused_cam_cfg, dt = setup_camera_device
 
@@ -1189,8 +1286,9 @@ def test_camera_pose_update_reflected_in_render(setup_camera_device, device):
             horizontal_aperture=20.955,
             clipping_range=(0.1, 1.0e5),
         ),
+        renderer_cfg=IsaacRtxRendererCfg(),
     )
-    camera = Camera(cam_cfg)
+    camera = _camera_in_plan(cam_cfg)
     try:
         sim.reset()
 
@@ -1232,46 +1330,11 @@ def test_camera_pose_update_reflected_in_render(setup_camera_device, device):
 def test_camera_invalidate_before_initialize(setup_sim_camera):
     """Invalidation on a camera that never initialized does not raise."""
     _, camera_cfg, _ = setup_sim_camera
-    camera = Camera(camera_cfg.replace(prim_path="/World/NeverInitialized", spawn=None))
+    camera = _camera_in_plan(camera_cfg)
     try:
-        assert camera._view is None
+        view = camera._view
+        assert not camera.is_initialized
         camera._invalidate_initialize_callback(None)
+        assert camera._view is view
     finally:
         del camera
-
-
-def _populate_scene():
-    """Add prims to the scene."""
-    # Ground-plane
-    cfg = sim_utils.GroundPlaneCfg()
-    cfg.func("/World/defaultGroundPlane", cfg)
-    # Lights
-    cfg = sim_utils.SphereLightCfg()
-    cfg.func("/World/Light/GreySphere", cfg, translation=(4.5, 3.5, 10.0))
-    cfg.func("/World/Light/WhiteSphere", cfg, translation=(-4.5, 3.5, 10.0))
-    # Random objects
-    random.seed(0)
-    for i in range(10):
-        # sample random position
-        position = np.random.rand(3) - np.asarray([0.05, 0.05, -1.0])
-        position *= np.asarray([1.5, 1.5, 0.5])
-        # create prim
-        prim_type = random.choice(["Cube", "Sphere", "Cylinder"])
-        prim = sim_utils.create_prim(
-            f"/World/Objects/Obj_{i:02d}",
-            prim_type,
-            translation=position,
-            scale=(0.25, 0.25, 0.25),
-            semantic_label=prim_type,
-        )
-        # cast to geom prim
-        geom_prim = getattr(UsdGeom, prim_type)(prim)
-        # set random color
-        color = Gf.Vec3f(random.random(), random.random(), random.random())
-        geom_prim.CreateDisplayColorAttr()
-        geom_prim.GetDisplayColorAttr().Set([color])
-        # add rigid body and collision properties using Isaac Lab schemas
-        prim_path = f"/World/Objects/Obj_{i:02d}"
-        sim_utils.define_rigid_body_properties(prim_path, sim_utils.RigidBodyPropertiesCfg())
-        sim_utils.define_mass_properties(prim_path, sim_utils.MassPropertiesCfg(mass=5.0))
-        sim_utils.define_collision_properties(prim_path, sim_utils.CollisionPropertiesCfg())

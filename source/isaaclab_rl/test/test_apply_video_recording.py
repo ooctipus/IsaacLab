@@ -12,12 +12,12 @@ from __future__ import annotations
 
 import logging
 import os
-from types import ModuleType, SimpleNamespace
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
-from isaaclab_rl.entrypoints.common import apply_video_recording, wrap_record_video
+from isaaclab_rl.entrypoints.common import apply_video_recording, validate_video_config, wrap_record_video
 
 
 def _args(**kwargs) -> SimpleNamespace:
@@ -26,30 +26,9 @@ def _args(**kwargs) -> SimpleNamespace:
     return SimpleNamespace(**{**defaults, **kwargs})
 
 
-def _env_cfg():
-    cfg = MagicMock()
-    cfg.video_recorders = []
-    # Simulate an env with no concrete visualizer configured so that apply_video_recording
-    # uses the fallback "visualizer" source string rather than resolving a MagicMock type.
-    cfg.sim.visualizer_cfgs = []
-    cfg.sim.default_visualizer_cfg.visualizer_type = None
-    return cfg
-
-
-@pytest.fixture(autouse=True)
-def _patch_kit_visualizer():
-    """Stub isaaclab_visualizers.kit so tests run without Isaac Sim installed.
-
-    apply_video_recording() always injects KitVisualizerCfg(headless=True) when no
-    concrete visualizer is pre-configured. Without this stub the import would fail in
-    the CI environment where the isaacsim extra is not installed.
-    """
-    fake_kit_cfg_instance = MagicMock()
-    MockKitVisualizerCfg = MagicMock(return_value=fake_kit_cfg_instance)
-    fake_kit_module = ModuleType("isaaclab_visualizers.kit")
-    fake_kit_module.KitVisualizerCfg = MockKitVisualizerCfg
-    with patch.dict("sys.modules", {"isaaclab_visualizers.kit": fake_kit_module}):
-        yield
+def _env_cfg(*visualizer_types: str):
+    visualizer_cfgs = [SimpleNamespace(visualizer_type=name) for name in visualizer_types or ("kit",)]
+    return SimpleNamespace(video_recorders=[], sim=SimpleNamespace(visualizer_cfgs=visualizer_cfgs))
 
 
 def test_apply_video_recording_noop_when_video_false():
@@ -69,7 +48,6 @@ def test_apply_video_recording_injects_correct_recorder():
     apply_video_recording(env_cfg, "/my/log", _args(video_length=42, video_interval=500), subdir="play")
     assert len(env_cfg.video_recorders) == 1
     rec = env_cfg.video_recorders[0]
-    # No pre-configured visualizer → Kit headless auto-created; source is the concrete backend type.
     assert rec.source == "visualizer:kit"
     assert rec.video_length == 42  # CLI override applied
     assert rec.video_interval == 500  # CLI override applied
@@ -151,78 +129,44 @@ def test_apply_video_recording_patches_existing_recorders():
     assert rec.video_interval == 500  # CLI override applied
 
 
-def test_apply_video_recording_injects_kit_visualizer_when_no_concrete_visualizer():
-    """--video without --viz and no pre-configured visualizer injects a headless KitVisualizerCfg."""
-    import sys
-    from types import ModuleType
-    from unittest.mock import MagicMock, patch
-
-    kit_cfg_instance = object()
-    MockKitVisualizerCfg = MagicMock(return_value=kit_cfg_instance)
-
-    fake_kit_module = ModuleType("isaaclab_visualizers.kit")
-    fake_kit_module.KitVisualizerCfg = MockKitVisualizerCfg
-    fake_visualizers_module = ModuleType("isaaclab_visualizers")
-
+def test_apply_video_recording_requires_configured_capture_source():
     sim_cfg = SimpleNamespace(visualizer_cfgs=[])
     env_cfg = SimpleNamespace(video_recorders=[], sim=sim_cfg)
 
-    with patch.dict(
-        sys.modules,
-        {
-            "isaaclab_visualizers": fake_visualizers_module,
-            "isaaclab_visualizers.kit": fake_kit_module,
-        },
-    ):
+    with pytest.raises(ValueError, match="requires a capture-capable visualizer"):
         apply_video_recording(env_cfg, "/my/log", _args())
 
-    assert len(sim_cfg.visualizer_cfgs) == 1
-    assert sim_cfg.visualizer_cfgs[0] is kit_cfg_instance
-    MockKitVisualizerCfg.assert_called_once_with(headless=True)
-    assert len(env_cfg.video_recorders) == 1
-    assert env_cfg.video_recorders[0].source == "visualizer:kit"
-
-
-def test_apply_video_recording_rejects_viz_none_with_video():
-    """--viz none combined with --video raises ValueError with a clear message.
-
-    AppLauncher._parse_visualizer_csv("none") returns None (not ["none"]), and
-    ExplicitAction sets visualizer_explicit=True.  Simulate that parsed state.
-    """
-    sim_cfg = SimpleNamespace(visualizer_cfgs=[])
-    env_cfg = SimpleNamespace(video_recorders=[], sim=sim_cfg)
-
-    import pytest
-
-    with pytest.raises(ValueError, match="--video is not compatible with --viz none"):
-        apply_video_recording(env_cfg, "/my/log", _args(visualizer=None, visualizer_explicit=True))
+    assert sim_cfg.visualizer_cfgs == []
+    assert env_cfg.video_recorders == []
 
 
 @pytest.mark.parametrize("no_capture_viz", ["rerun", "viser"])
 def test_apply_video_recording_rejects_no_capture_visualizers(no_capture_viz):
-    """--viz rerun/viser with --video and no other capture backend raises ValueError."""
-    sim_cfg = SimpleNamespace(visualizer_cfgs=[], default_visualizer_cfg=SimpleNamespace(visualizer_type=None))
-    env_cfg = SimpleNamespace(video_recorders=[], sim=sim_cfg)
+    """Streaming-only cfgs cannot provide a local recording source."""
+    env_cfg = _env_cfg(no_capture_viz)
 
-    import pytest
-
-    with pytest.raises(ValueError, match="--video is not supported"):
-        apply_video_recording(env_cfg, "/my/log", _args(visualizer=[no_capture_viz]))
+    with pytest.raises(ValueError, match="stream remotely"):
+        apply_video_recording(env_cfg, "/my/log", _args())
 
 
 @pytest.mark.parametrize(
     ("visualizers", "expected_source"),
-    [(["rerun", "kit"], "visualizer:kit"), (["newton_rtx"], "visualizer:newton_rtx")],
+    [(("rerun", "kit"), "visualizer:kit"), (("newton_rtx",), "visualizer:newton_rtx")],
 )
-def test_apply_video_recording_uses_requested_capture_visualizer(visualizers, expected_source):
-    """--video records from the first requested capture-capable visualizer."""
-    sim_cfg = SimpleNamespace(visualizer_cfgs=[], default_visualizer_cfg=SimpleNamespace(visualizer_type=None))
-    env_cfg = SimpleNamespace(video_recorders=[], sim=sim_cfg)
+def test_apply_video_recording_uses_configured_capture_visualizer(visualizers, expected_source):
+    env_cfg = _env_cfg(*visualizers)
 
-    apply_video_recording(env_cfg, "/my/log", _args(visualizer=visualizers))
+    apply_video_recording(env_cfg, "/my/log", _args())
 
     assert len(env_cfg.video_recorders) == 1
     assert env_cfg.video_recorders[0].source == expected_source
+
+
+def test_validate_video_config_checks_before_launch():
+    env_cfg = SimpleNamespace(video_recorders=[], sim=SimpleNamespace(visualizer_cfgs=[]))
+
+    with pytest.raises(ValueError, match="requires a capture-capable visualizer"):
+        validate_video_config(env_cfg, _args())
 
 
 def test_wrap_record_video_is_noop_stub(caplog):

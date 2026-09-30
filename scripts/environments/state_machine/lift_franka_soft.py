@@ -11,16 +11,15 @@ It uses the `warp` library to run the state machine in parallel on the GPU.
 
 .. code-block:: bash
 
-    # Kitless run with the Newton OpenGL viewer (default).
-    uv run python scripts/environments/state_machine/lift_franka_soft.py
+    # Kitless run with the Newton OpenGL visualizer.
+    uv run python scripts/environments/state_machine/lift_franka_soft.py visualizer=newton_gl
 
-    # Headless.
-    uv run python scripts/environments/state_machine/lift_franka_soft.py --viz none
+    # Headless (default).
+    uv run python scripts/environments/state_machine/lift_franka_soft.py
 
 """
 
 import argparse
-import sys
 from collections.abc import Sequence
 
 import gymnasium as gym
@@ -29,10 +28,9 @@ import warp as wp
 
 from isaaclab.app import add_launcher_args, launch_simulation
 from isaaclab.assets.deformable_object.deformable_object_data import DeformableObjectData
-from isaaclab.visualizers import VisualizerCfg
 
 import isaaclab_tasks  # noqa: F401
-from isaaclab_tasks.utils import resolve_task_config, setup_preset_cli
+from isaaclab_tasks.utils import load_cfg_from_registry, resolve_config, setup_preset_cli
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Pick and lift a deformable with a robotic arm.")
@@ -40,10 +38,7 @@ parser.add_argument("--num_envs", type=int, default=1, help="Number of environme
 parser.add_argument("--num_steps", type=int, default=1000, help="Number of environment steps to run.")
 parser.add_argument("--task", type=str, default="Isaac-Lift-Soft-Franka", help="The task to run.")
 add_launcher_args(parser)
-# the task runs on Newton, so default to the kitless viewer
-parser.set_defaults(visualizer=["newton"])
 args_cli, hydra_args = setup_preset_cli(parser)
-sys.argv = [sys.argv[0]] + hydra_args
 
 # initialize warp
 wp.init()
@@ -260,8 +255,8 @@ class PickAndLiftSm:
 
 
 def main():
-    # parse configuration via Hydra, so presets can be selected on the CLI (e.g. presets=isaacsim_physx)
-    env_cfg, _ = resolve_task_config(args_cli.task, "")
+    env_cfg = load_cfg_from_registry(args_cli.task, "env_cfg_entry_point")
+    env_cfg = resolve_config(env_cfg, hydra_args)
     env_cfg.sim.device = args_cli.device
     env_cfg.scene.num_envs = args_cli.num_envs
     # Scripted demo: keep only the time-out, extended to 10 s so the slow low-PD Franka can finish a
@@ -275,9 +270,6 @@ def main():
     # (e.g. the cloth closes the gripper fully); the env otherwise defaults to relative joint
     # targets, which RL trains on.
     env_cfg.actions = type(env_cfg)().actions.ik
-    env_cfg.viewer.eye = (1.3, 0.6, 0.5)
-    env_cfg.viewer.lookat = (0.5, 0.0, 0.05)
-    env_cfg.sim.default_visualizer_cfg = VisualizerCfg(eye=env_cfg.viewer.eye, lookat=env_cfg.viewer.lookat)
 
     with launch_simulation(env_cfg, args_cli):
         env = gym.make(args_cli.task, cfg=env_cfg)

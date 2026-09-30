@@ -15,6 +15,7 @@ __all__ = [
     "HapticFeedbackReceiver",
     "IsaacTeleopCfg",
     "IsaacTeleopDevice",
+    "TeleopPipelineCfg",
     "SupportsControlEvents",
     "SystemCheckItem",
     "SystemCheckResult",
@@ -47,6 +48,7 @@ from .isaac_teleop_cfg import (
     CLOUDXR_JS_ENV,
     CLOUDXR_STANDALONE_ENV,
     IsaacTeleopCfg,
+    TeleopPipelineCfg,
     XrCameraFeedCfg,
     XrCameraFeedLayoutCfg,
 )

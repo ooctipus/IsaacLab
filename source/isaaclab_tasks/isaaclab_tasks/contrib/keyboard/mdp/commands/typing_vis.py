@@ -20,7 +20,7 @@ from isaaclab.markers.visualization_markers_cfg import VisualizationMarkersCfg
 
 from ...keyboards.keyboard_labels import _FONT_5X7
 
-# Marker prototype indices. MUST match the insertion order in :func:`make_typing_visualizer_cfg`.
+# Marker prototype indices. MUST match the insertion order in :data:`TYPING_VISUALIZER_CFG`.
 PIX_PENDING = 0  # gray: target letter not yet typed
 PIX_CORRECT = 1  # green: correctly typed prefix (target and typed rows)
 PIX_NEXT = 2  # yellow: next expected target letter (cursor)
@@ -31,34 +31,29 @@ GLYPH_ROWS = 7
 GLYPH_COLS = 5
 
 
-def make_typing_visualizer_cfg(
-    prim_path: str, pixel_size: float, key_radius: float, key_height: float
-) -> VisualizationMarkersCfg:
-    """Build the marker set: one cuboid pixel per color state plus a cylinder key-halo."""
-
-    # ``pixel_size`` is the pixel pitch (spacing); draw each dot a bit smaller for an LED-matrix look.
-    dot = pixel_size * 0.72
-
-    def _pix(rgb: tuple[float, float, float]) -> sim_utils.CuboidCfg:
-        return sim_utils.CuboidCfg(
-            size=(dot, dot, dot),
-            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=rgb),
+TYPING_VISUALIZER_CFG = VisualizationMarkersCfg(
+    prim_path="/Visuals/TypingCommand",
+    markers={
+        name: sim_utils.CuboidCfg(
+            size=(0.00324, 0.00324, 0.00324),
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=color),
         )
-
-    return VisualizationMarkersCfg(
-        prim_path=prim_path,
-        markers={
-            "pending": _pix((0.55, 0.55, 0.60)),
-            "correct": _pix((0.15, 0.90, 0.25)),
-            "next": _pix((1.00, 0.82, 0.10)),
-            "wrong": _pix((0.95, 0.20, 0.20)),
-            "key_next": sim_utils.CylinderCfg(
-                radius=key_radius,
-                height=key_height,
-                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.00, 0.82, 0.10)),
-            ),
-        },
-    )
+        for name, color in {
+            "pending": (0.55, 0.55, 0.60),
+            "correct": (0.15, 0.90, 0.25),
+            "next": (1.00, 0.82, 0.10),
+            "wrong": (0.95, 0.20, 0.20),
+        }.items()
+    }
+    | {
+        "key_next": sim_utils.CylinderCfg(
+            radius=0.009,
+            height=0.003,
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.00, 0.82, 0.10)),
+        )
+    },
+)
+"""Marker prototypes for the typing command banner and next-key halo."""
 
 
 def build_glyph_table(device: torch.device | str) -> tuple[torch.Tensor, dict[str, int]]:

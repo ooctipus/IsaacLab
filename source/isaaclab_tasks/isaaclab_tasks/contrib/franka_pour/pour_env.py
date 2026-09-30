@@ -26,8 +26,7 @@ from typing import TYPE_CHECKING
 import newton
 import torch
 import warp as wp
-from isaaclab_newton.cloner import newton_builder_world_hook
-from isaaclab_newton.physics import NewtonMPMManager
+from isaaclab_newton.cloner import NewtonReplicateContext, newton_builder_world_hook
 
 from isaaclab.envs import ManagerBasedRLEnv
 from isaaclab.utils import math as math_utils
@@ -111,7 +110,8 @@ class FrankaPourEnv(ManagerBasedRLEnv):
     def __init__(self, cfg: FrankaPourResetDatasetEnvCfg, render_mode: str | None = None, **kwargs):
         _configure_mpm_capacities(cfg)
         self._prepare_newton_extras(cfg)
-        with newton_builder_world_hook(self._add_pour_world_to_builder):
+        resource = self.sim.get_or_create_backend(NewtonReplicateContext, self.sim)
+        with newton_builder_world_hook(resource, self._add_pour_world_to_builder):
             super().__init__(cfg, render_mode, **kwargs)
 
     def load_managers(self) -> None:
@@ -630,8 +630,8 @@ class FrankaPourEnv(ManagerBasedRLEnv):
             finger_target[:, :1],
             env_ids=env_ids,
         )
-        # Consume the public FK invalidation before rigid proxies and observations access bodies.
-        _ = self._robot.data.body_link_pose_w
+        # Reconcile authored robot state before rigid proxies and observations access bodies.
+        self.sim.forward()
 
         source_pose = states["source_root_pose"][rows].clone()
         source_pose[:, :3] += self.env_origins[env_ids]
@@ -659,7 +659,7 @@ class FrankaPourEnv(ManagerBasedRLEnv):
 
         # Public particle writers restore both Newton state buffers. This masked solver reset then
         # clears MPM stress/deformation and every private contact/collider history for the worlds.
-        NewtonMPMManager.reset_solver_state(
+        self._media._physics_manager.reset_solver_state(
             world_mask=wp.from_torch(world_mask, dtype=wp.bool),
             flags=newton.StateFlags.BODY | newton.StateFlags.PARTICLE,
         )

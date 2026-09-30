@@ -5,14 +5,10 @@
 
 from __future__ import annotations
 
-import os
-from typing import TYPE_CHECKING
-
-import torch
-from torchvision.utils import save_image
+from isaaclab_newton.renderers import NewtonWarpRendererCfg
+from isaaclab_physx.renderers import IsaacRtxRendererCfg
 
 import isaaclab.sim as sim_utils
-import isaaclab.utils.math as math_utils
 from isaaclab.controllers.differential_ik_cfg import DifferentialIKControllerCfg
 from isaaclab.envs.mdp.actions.actions_cfg import DifferentialInverseKinematicsActionCfg
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
@@ -21,90 +17,15 @@ from isaaclab.managers import SceneEntityCfg
 from isaaclab.sensors import CameraCfg
 from isaaclab.utils.configclass import configclass
 
+from isaaclab_tasks.utils.presets import MultiBackendRendererCfg
+
 from ... import mdp
 from . import stack_joint_pos_env_cfg
 
-if TYPE_CHECKING:
-    from isaaclab.envs import ManagerBasedEnv
-    from isaaclab.sensors import Camera, RayCasterCamera
 ##
 # Pre-defined configs
 ##
 from isaaclab_assets.robots.franka import FRANKA_PANDA_HIGH_PD_CFG  # isort: skip
-
-
-def image(
-    env: ManagerBasedEnv,
-    sensor_cfg: SceneEntityCfg = SceneEntityCfg("tiled_camera"),
-    data_type: str = "rgb",
-    convert_perspective_to_orthogonal: bool = False,
-    normalize: bool = True,
-    save_image_to_file: bool = False,
-    image_path: str = "image",
-) -> torch.Tensor:
-    """Images of a specific datatype from the camera sensor.
-
-    If the flag :attr:`normalize` is True, post-processing of the images are performed based on their
-    data-types:
-
-    - "rgb": Scales the image to (0, 1) and subtracts with the mean of the current image batch.
-    - "depth" or "distance_to_camera" or "distance_to_plane": Replaces infinity values with zero.
-
-    Args:
-        env: The environment the cameras are placed within.
-        sensor_cfg: The desired sensor to read from. Defaults to SceneEntityCfg("tiled_camera").
-        data_type: The data type to pull from the desired camera. Defaults to "rgb".
-        convert_perspective_to_orthogonal: Whether to orthogonalize perspective depth images.
-            This is used only when the data type is "distance_to_camera". Defaults to False.
-        normalize: Whether to normalize the images. This depends on the selected data type.
-            Defaults to True.
-
-    Returns:
-        The images produced at the last time-step
-    """
-    # extract the used quantities (to enable type-hinting)
-    sensor: Camera | RayCasterCamera = env.scene.sensors[sensor_cfg.name]
-
-    # obtain the input image
-    images = sensor.data.output[data_type]
-
-    # depth image conversion
-    if (data_type == "distance_to_camera") and convert_perspective_to_orthogonal:
-        images = math_utils.orthogonalize_perspective_depth(images, sensor.data.intrinsic_matrices)
-
-    # rgb/depth image normalization
-    if normalize:
-        if data_type == "rgb":
-            images = images.float() / 255.0
-            mean_tensor = torch.mean(images, dim=(1, 2), keepdim=True)
-            images -= mean_tensor
-        elif "distance_to" in data_type or "depth" in data_type:
-            images[images == float("inf")] = 0
-        elif data_type == "normals":
-            images = (images + 1.0) * 0.5
-
-    if save_image_to_file:
-        dir_path, _ = os.path.split(image_path)
-        if dir_path:
-            os.makedirs(dir_path, exist_ok=True)
-        # output may be a ProxyArray (Warp-backed); extract torch.Tensor before dtype check
-        if not isinstance(images, torch.Tensor):
-            images = images.torch
-        if images.dtype == torch.uint8:
-            images = images.float() / 255.0
-        # Get total successful episodes
-        total_successes = 0
-        if hasattr(env, "recorder_manager") and env.recorder_manager is not None:
-            total_successes = env.recorder_manager.exported_successful_episode_count
-
-        for tile in range(images.shape[0]):
-            tile_chw = torch.swapaxes(images[tile : tile + 1].unsqueeze(1), 1, -1).squeeze(-1)
-            filename = (
-                f"{image_path}_{data_type}_trial_{total_successes}_tile_{tile}_step_{env.common_step_counter}.png"
-            )
-            save_image(tile_chw, filename)
-
-    return images.clone()
 
 
 @configclass
@@ -134,43 +55,35 @@ class ObservationsCfg:
         """Observations for policy group with RGB images."""
 
         table_cam_normals = ObsTerm(
-            func=image,
+            func=mdp.image,
             params={
                 "sensor_cfg": SceneEntityCfg("table_cam"),
                 "data_type": "normals",
                 "normalize": True,
-                "save_image_to_file": True,
-                "image_path": "table_cam",
             },
         )
         table_cam_segmentation = ObsTerm(
-            func=image,
+            func=mdp.image,
             params={
                 "sensor_cfg": SceneEntityCfg("table_cam"),
                 "data_type": "semantic_segmentation",
                 "normalize": False,
-                "save_image_to_file": True,
-                "image_path": "table_cam",
             },
         )
         table_high_cam_normals = ObsTerm(
-            func=image,
+            func=mdp.image,
             params={
                 "sensor_cfg": SceneEntityCfg("table_high_cam"),
                 "data_type": "normals",
                 "normalize": True,
-                "save_image_to_file": True,
-                "image_path": "table_high_cam",
             },
         )
         table_high_cam_segmentation = ObsTerm(
-            func=image,
+            func=mdp.image,
             params={
                 "sensor_cfg": SceneEntityCfg("table_high_cam"),
                 "data_type": "semantic_segmentation",
                 "normalize": False,
-                "save_image_to_file": True,
-                "image_path": "table_high_cam",
             },
         )
 
@@ -258,12 +171,15 @@ class FrankaCubeStackBlueprintEnvCfg(stack_joint_pos_env_cfg.FrankaCubeStackEnvC
             height=704,
             width=1280,
             data_types=["rgb", "semantic_segmentation", "normals"],
-            colorize_semantic_segmentation=True,
-            semantic_segmentation_mapping=MAPPING,
             spawn=sim_utils.PinholeCameraCfg(
                 focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 1.0e5)
             ),
             offset=CameraCfg.OffsetCfg(pos=(1.0, 0.0, 0.33), rot=(0.5963, 0.5963, -0.3799, -0.3799), convention="ros"),
+            renderer_cfg=MultiBackendRendererCfg(
+                default=IsaacRtxRendererCfg(semantic_segmentation_mapping=MAPPING),
+                isaacsim_rtx=IsaacRtxRendererCfg(semantic_segmentation_mapping=MAPPING),
+                newton_renderer=NewtonWarpRendererCfg(semantic_segmentation_mapping=MAPPING),
+            ),
         )
 
         # Set table view camera
@@ -273,10 +189,13 @@ class FrankaCubeStackBlueprintEnvCfg(stack_joint_pos_env_cfg.FrankaCubeStackEnvC
             height=704,
             width=1280,
             data_types=["rgb", "semantic_segmentation", "normals"],
-            colorize_semantic_segmentation=True,
-            semantic_segmentation_mapping=MAPPING,
             spawn=sim_utils.PinholeCameraCfg(
                 focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(1.5, 1.0e5)
             ),
             offset=CameraCfg.OffsetCfg(pos=(1.4, 1.8, 1.2), rot=(0.2025, 0.8185, -0.5192, -0.1393), convention="ros"),
+            renderer_cfg=MultiBackendRendererCfg(
+                default=IsaacRtxRendererCfg(semantic_segmentation_mapping=MAPPING),
+                isaacsim_rtx=IsaacRtxRendererCfg(semantic_segmentation_mapping=MAPPING),
+                newton_renderer=NewtonWarpRendererCfg(semantic_segmentation_mapping=MAPPING),
+            ),
         )

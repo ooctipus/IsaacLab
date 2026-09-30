@@ -5,7 +5,7 @@
 
 from dataclasses import MISSING
 
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
+from isaaclab_newton.physics import MJWarpSolverCfg, NewtonSolverCfg
 from isaaclab_ov.physics import OvPhysxCfg
 from isaaclab_physx.physics import PhysxCfg
 
@@ -22,12 +22,11 @@ from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.physics import PhysxAutoCfg
-from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils.configclass import configclass
 from isaaclab.utils.noise import UniformNoiseCfg as Unoise
-from isaaclab.visualizers import VisualizerCfg
 
 from isaaclab_tasks.utils import PresetCfg
+from isaaclab_tasks.utils.presets import MultiBackendSceneCfg, MultiBackendSimulationCfg
 
 ##
 # Physics backend presets
@@ -40,20 +39,18 @@ class ReachPhysicsCfg(PresetCfg):
     ovphysx: OvPhysxCfg = OvPhysxCfg()
     physx: PhysxAutoCfg = PhysxAutoCfg(isaacsim_physx=isaacsim_physx, ovphysx=ovphysx)
 
-    newton_mjwarp: NewtonCfg = NewtonCfg(
-        solver_cfg=MJWarpSolverCfg(
-            njmax=100,
-            nconmax=20,
-            cone="pyramidal",
-            integrator="implicitfast",
-            impratio=1,
-            update_data_interval=2,
-        ),
+    newton_mjwarp: NewtonSolverCfg = MJWarpSolverCfg(
+        njmax=100,
+        nconmax=20,
+        cone="pyramidal",
+        integrator="implicitfast",
+        impratio=1,
+        update_data_interval=2,
         num_substeps=2,
         debug_mode=False,
         use_cuda_graph=True,
     )
-    default: NewtonCfg = newton_mjwarp
+    default: NewtonSolverCfg = newton_mjwarp
 
 
 ##
@@ -62,7 +59,7 @@ class ReachPhysicsCfg(PresetCfg):
 
 
 @configclass
-class ReachSceneCfg(InteractiveSceneCfg):
+class ReachSceneCfg(MultiBackendSceneCfg):
     """Configuration for the scene with a robotic arm."""
 
     # world
@@ -222,6 +219,7 @@ class CurriculumCfg:
 class ReachEnvCfg(ManagerBasedRLEnvCfg):
     """Configuration for the reach end-effector pose tracking environment."""
 
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg()
     # Scene settings
     scene: ReachSceneCfg = ReachSceneCfg(num_envs=4096, env_spacing=2.5)
     # Basic settings
@@ -240,7 +238,6 @@ class ReachEnvCfg(ManagerBasedRLEnvCfg):
         self.decimation = 4
         self.sim.render_interval = self.decimation
         self.episode_length_s = 12.0
-        self.sim.default_visualizer_cfg = VisualizerCfg(eye=(3.5, 3.5, 3.5))
         # simulation settings
         self.sim.dt = 1.0 / 120.0
         self.sim.physics = ReachPhysicsCfg()

@@ -15,13 +15,12 @@ from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
-from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.configclass import configclass
 from isaaclab.utils.noise import UniformNoiseCfg as Unoise
-from isaaclab.visualizers import VisualizerCfg
 
 import isaaclab_tasks.contrib.deploy.mdp as mdp
+from isaaclab_tasks.utils.presets import MultiBackendSceneCfg, MultiBackendSimulationCfg
 
 ##
 # Scene definition
@@ -29,7 +28,7 @@ import isaaclab_tasks.contrib.deploy.mdp as mdp
 
 
 @configclass
-class SceneCfg(InteractiveSceneCfg):
+class SceneCfg(MultiBackendSceneCfg):
     """Configuration for the scene with a robotic arm."""
 
     # world
@@ -194,6 +193,7 @@ class TerminationsCfg:
 class ReachEnvCfg(ManagerBasedRLEnvCfg):
     """Configuration for the end-effector pose tracking environment that has been deployed on a real robot."""
 
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg()
     # Scene settings
     scene: SceneCfg = SceneCfg(num_envs=4096, env_spacing=2.5)
     # Basic settings
@@ -211,6 +211,5 @@ class ReachEnvCfg(ManagerBasedRLEnvCfg):
         self.decimation = 2
         self.sim.render_interval = self.decimation
         self.episode_length_s = 12.0
-        self.sim.default_visualizer_cfg = VisualizerCfg(eye=(3.5, 3.5, 3.5))
         # simulation settings
         self.sim.dt = 1.0 / 120.0

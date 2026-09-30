@@ -10,54 +10,58 @@ The camera sensor is based on using Warp kernels which do ray-casting against st
 
 .. code-block:: bash
 
-    # Usage
-    uv run python scripts/tutorials/04_sensors/run_ray_caster_camera.py --viz kit
+    uv run python scripts/tutorials/04_sensors/run_ray_caster_camera.py visualizer=kit
 
 """
 
-"""Launch Isaac Sim Simulator first."""
-
 import argparse
 
-from isaaclab.app import AppLauncher
+from isaaclab_physx.physics import PhysxCfg
+
+import isaaclab.sim as sim_utils
+from isaaclab.app import add_launcher_args, launch_simulation
+
+from isaaclab_tasks.utils import resolve_config, setup_preset_cli
+from isaaclab_tasks.utils.presets import MultiBackendSimulationCfg
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="This script demonstrates how to use the ray-cast camera sensor.")
-parser.add_argument("--num_envs", type=int, default=16, help="Number of environments to generate.")
 parser.add_argument("--save", action="store_true", default=False, help="Save the obtained data to disk.")
-# append AppLauncher cli args
-AppLauncher.add_app_launcher_args(parser)
-# parse the arguments
-args_cli = parser.parse_args()
-# launch omniverse app
-app_launcher = AppLauncher(args_cli)
-simulation_app = app_launcher.app
-
-"""Rest everything follows."""
+add_launcher_args(parser)
+args_cli, config_overrides = setup_preset_cli(parser)
 
 import os
 from typing import Any
 
 import torch
 
-import isaaclab.sim as sim_utils
+from isaaclab.assets import AssetBaseCfg
+from isaaclab.cloner import ReplicateSession
 from isaaclab.sensors.ray_caster import RayCasterCamera, RayCasterCameraCfg, patterns
 from isaaclab.utils import convert_dict_to_backend
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
+from isaaclab.utils.configclass import configclass
 from isaaclab.utils.math import project_points, unproject_depth
 
 
-def define_sensor() -> RayCasterCamera:
-    """Defines the ray-cast camera sensor to add to the scene."""
-    # Camera base frames
-    # In contras to the USD camera, we associate the sensor to the prims at these locations.
-    # This means that parent prim of the sensor is the prim at this location.
-    sim_utils.create_prim("/World/Origin_00/CameraSensor", "Xform")
-    sim_utils.create_prim("/World/Origin_01/CameraSensor", "Xform")
+@configclass
+class TutorialCfg:
+    """Ray-cast camera tutorial configuration."""
 
-    # Setup camera sensor
-    camera_cfg = RayCasterCameraCfg(
-        prim_path="/World/Origin_[^/]+/CameraSensor",
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(device=args_cli.device, physics=PhysxCfg())
+    num_envs: int = 2
+    env_spacing: float = 1.0
+    ground: AssetBaseCfg = AssetBaseCfg(
+        prim_path="/World/ground",
+        spawn=sim_utils.UsdFileCfg(usd_path=f"{ISAAC_NUCLEUS_DIR}/Environments/Terrains/rough_plane.usd"),
+    )
+    light: AssetBaseCfg = AssetBaseCfg(
+        prim_path="/World/Light",
+        spawn=sim_utils.DistantLightCfg(intensity=600.0, color=(0.75, 0.75, 0.75)),
+    )
+    camera_frame: AssetBaseCfg = AssetBaseCfg(prim_path="{ENV_REGEX_NS}/CameraSensor", spawn=sim_utils.SensorFrameCfg())
+    camera: RayCasterCameraCfg = RayCasterCameraCfg(
+        prim_path="{ENV_REGEX_NS}/CameraSensor",
         mesh_prim_paths=["/World/ground"],
         update_period=0.1,
         offset=RayCasterCameraCfg.OffsetCfg(pos=(0.0, 0.0, 0.0), rot=(1.0, 0.0, 0.0, 0.0)),
@@ -70,26 +74,6 @@ def define_sensor() -> RayCasterCamera:
             width=640,
         ),
     )
-    # Create camera
-    camera = RayCasterCamera(cfg=camera_cfg)
-
-    return camera
-
-
-def design_scene():
-    # Populate scene
-    # -- Rough terrain
-    cfg = sim_utils.UsdFileCfg(usd_path=f"{ISAAC_NUCLEUS_DIR}/Environments/Terrains/rough_plane.usd")
-    cfg.func("/World/ground", cfg)
-    # -- Lights
-    cfg = sim_utils.DistantLightCfg(intensity=600.0, color=(0.75, 0.75, 0.75))
-    cfg.func("/World/Light", cfg)
-    # -- Sensors
-    camera = define_sensor()
-
-    # return the scene information
-    scene_entities = {"camera": camera}
-    return scene_entities
 
 
 def run_simulator(sim: sim_utils.SimulationContext, scene_entities: dict):
@@ -117,7 +101,7 @@ def run_simulator(sim: sim_utils.SimulationContext, scene_entities: dict):
     # camera.set_world_poses(position, orientation, indices=[0], convention="ros")
 
     # Simulate physics
-    while simulation_app.is_running():
+    while sim.is_headless_or_exist_active_visualizer():
         # Step simulation
         sim.step()
         # Update camera data
@@ -165,23 +149,23 @@ def run_simulator(sim: sim_utils.SimulationContext, scene_entities: dict):
 
 def main():
     """Main function."""
-    # Load kit helper
-    sim_cfg = sim_utils.SimulationCfg()
-    sim = sim_utils.SimulationContext(sim_cfg)
-    # Set main camera
-    sim.set_camera_view([2.5, 2.5, 3.5], [0.0, 0.0, 0.0])
-    # Design scene
-    scene_entities = design_scene()
-    # Play simulator
-    sim.reset()
-    # Now we are ready!
-    print("[INFO]: Setup complete...")
-    # Run simulator
-    run_simulator(sim=sim, scene_entities=scene_entities)
+    cfg = resolve_config(TutorialCfg(), config_overrides)
+    with launch_simulation(cfg, args_cli):
+        sim = sim_utils.SimulationContext(cfg.sim)
+        sim.set_camera_view([2.5, 2.5, 3.5], [0.0, 0.0, 0.0])
+        with ReplicateSession(
+            (cfg.ground, cfg.light, cfg.camera_frame, cfg.camera, cfg.camera.visualizer_cfg),
+            cfg.num_envs,
+            cfg.env_spacing,
+        ):
+            cfg.ground.class_type(cfg.ground)
+            cfg.light.class_type(cfg.light)
+            cfg.camera_frame.class_type(cfg.camera_frame)
+            scene_entities = {"camera": cfg.camera.class_type(cfg.camera)}
+        sim.reset()
+        print("[INFO]: Setup complete...")
+        run_simulator(sim=sim, scene_entities=scene_entities)
 
 
 if __name__ == "__main__":
-    # run the main function
     main()
-    # close sim app
-    simulation_app.close()

@@ -10,13 +10,21 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
-from isaaclab_ov.cloner import OvPhysxReplicateContext, ovphysx_replicate
-from isaaclab_ov.physics.ovphysx_manager import OvPhysxManager
+from isaaclab_ov.cloner import OvReplicateContext, ovphysx_replicate
 
 from pxr import Gf, Usd, UsdGeom
 
-from isaaclab.cloner import ClonePlan
-from isaaclab.physics import PhysicsManager
+from isaaclab.sim import SimulationContext
+
+
+@pytest.fixture(autouse=True)
+def active_simulation(monkeypatch):
+    """Provide the simulation-scoped resource consumed by the public raw clone function."""
+    simulation = SimpleNamespace(stage=Usd.Stage.CreateInMemory())
+    context = OvReplicateContext(simulation)
+    simulation.get_or_create_backend = lambda backend_type, *_args: context
+    monkeypatch.setattr(SimulationContext, "instance", staticmethod(lambda: simulation))
+    return context._direct_physics_rows
 
 
 def _pose_matrix(position: tuple[float, float, float], quaternion: tuple[float, float, float, float]) -> Gf.Matrix4d:
@@ -27,10 +35,8 @@ def _pose_matrix(position: tuple[float, float, float], quaternion: tuple[float, 
     return matrix
 
 
-def test_nested_clone_uses_final_target_pose(monkeypatch):
+def test_nested_clone_uses_final_target_pose(active_simulation):
     """Nested clone rows keep their source-local pose under the target environment."""
-    monkeypatch.setattr(OvPhysxManager, "_active_clone_recipes", [])
-    monkeypatch.setattr(OvPhysxManager, "_pending_clones", [])
     half_sqrt_two = math.sqrt(0.5)
     source_half_angle_sin = 0.5
     source_half_angle_cos = math.sqrt(0.75)
@@ -45,7 +51,6 @@ def test_nested_clone_uses_final_target_pose(monkeypatch):
         _pose_matrix((0.0, 1.0, 2.0), (source_half_angle_sin, 0.0, 0.0, source_half_angle_cos))
     )
 
-    monkeypatch.setattr(PhysicsManager, "_sim", SimpleNamespace(physics_manager=OvPhysxManager))
     ovphysx_replicate(
         stage,
         sources=["/World/envs/env_0/Robot", "/World/envs/env_9/Inactive"],
@@ -70,51 +75,16 @@ def test_nested_clone_uses_final_target_pose(monkeypatch):
     )
     expected_transform = (10.0 - half_sqrt_two, 20.0 + half_sqrt_two, 32.0, *expected_orientation.tolist())
 
-    assert len(OvPhysxManager._pending_clones) == 1
-    pending_source, pending_targets, pending_transforms = OvPhysxManager._pending_clones[0]
+    assert len(active_simulation) == 1
+    pending_source, pending_targets, pending_transforms = active_simulation[0]
     assert pending_source == "/World/envs/env_0/Robot"
-    assert pending_targets == ["/World/envs/env_1/Robot"]
+    assert pending_targets == ("/World/envs/env_1/Robot",)
     assert len(pending_transforms) == 1
     assert pending_transforms[0][:3] == pytest.approx(expected_transform[:3])
     orientation = np.asarray(pending_transforms[0][3:], dtype=np.float32)
     if np.dot(orientation, expected_orientation) < 0.0:
         orientation = -orientation
     assert orientation.tolist() == pytest.approx(expected_orientation.tolist())
-
-
-def test_ovphysx_context_consumes_plan():
-    """The registered context publishes the rows routed to it by one clone plan."""
-    stage = Usd.Stage.CreateInMemory()
-    UsdGeom.Xform.Define(stage, "/World/envs/env_10")
-    UsdGeom.Xform.Define(stage, "/World/envs/env_10/Robot")
-    recipes = []
-    manager = SimpleNamespace(_register_clone_transforms=lambda *recipe: recipes.append(recipe))
-    simulation = SimpleNamespace(stage=stage, physics_manager=manager)
-    plan = ClonePlan(
-        sources=("/World/envs/env_10/Robot",),
-        destinations=("/World/envs/env_{}/Robot",),
-        clone_mask=np.ones((1, 2), dtype=np.bool_),
-        env_ids=np.array([10, 20], dtype=np.int64),
-        positions=np.array([[0.0, 0.0, 0.0], [1.0, 2.0, 3.0]], dtype=np.float32),
-        context_rows={OvPhysxReplicateContext: (0,)},
-    )
-
-    OvPhysxReplicateContext(simulation).replicate(plan)
-
-    assert recipes[0][0:2] == ("/World/envs/env_10/Robot", ["/World/envs/env_20/Robot"])
-    assert recipes[0][2][0] == pytest.approx((1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0))
-
-
-def test_register_clone_preserves_translation_only_compatibility(monkeypatch):
-    """World positions become target-root poses with identity rotations."""
-    monkeypatch.setattr(OvPhysxManager, "_active_clone_recipes", [])
-    monkeypatch.setattr(OvPhysxManager, "_pending_clones", [])
-
-    OvPhysxManager.register_clone("/World/env_0", ["/World/env_1"], [(1.0, 2.0, 3.0)])
-
-    expected_recipes = [("/World/env_0", ["/World/env_1"], [(1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0)])]
-    assert OvPhysxManager._active_clone_recipes == expected_recipes
-    assert OvPhysxManager._pending_clones == expected_recipes
 
 
 def test_raw_replicate_rejects_invalid_source_prim():

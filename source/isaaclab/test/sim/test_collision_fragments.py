@@ -13,6 +13,7 @@ simulation_app = AppLauncher(headless=True).app
 """Rest everything follows."""
 
 import pytest
+from isaaclab_physx.physics import PhysxCfg
 
 from pxr import Sdf, UsdGeom, UsdPhysics
 
@@ -52,7 +53,7 @@ def test_usd_physics_collision_fragment_writes_physics_namespace():
     from isaaclab.sim.schemas import UsdPhysicsCollisionCfg, apply_namespaced
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     prim = _make_xform(stage)
     UsdPhysics.CollisionAPI.Apply(prim)
@@ -71,7 +72,7 @@ def test_physx_collision_fragment_writes_physx_namespace():
     from isaaclab.sim.schemas import apply_namespaced
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     prim = _make_xform(stage, "/World/C2")
     UsdPhysics.CollisionAPI.Apply(prim)
@@ -94,7 +95,7 @@ def test_newton_collision_fragment_writes_newton_namespace():
     from isaaclab.sim.schemas import apply_namespaced
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     prim = _make_xform(stage, "/World/C3")
     UsdPhysics.CollisionAPI.Apply(prim)
@@ -112,7 +113,7 @@ def test_mujoco_collision_fragment_writes_mjc_namespace():
     from isaaclab_newton.sim.schemas import MujocoCollisionCfg, apply_mujoco_collision
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     prim = _make_xform(stage, "/World/C_mjc")
     UsdPhysics.CollisionAPI.Apply(prim)
@@ -142,7 +143,7 @@ def test_mujoco_collision_fragment_writes_only_set_fields():
     from isaaclab_newton.sim.schemas import MujocoCollisionCfg, apply_mujoco_collision
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     prim = _make_xform(stage, "/World/C_mjc_none")
     UsdPhysics.CollisionAPI.Apply(prim)
@@ -167,7 +168,7 @@ def test_mujoco_collision_fragment_rejects_invalid_values(cfg, message):
     from isaaclab_newton.sim.schemas import MujocoCollisionCfg, apply_mujoco_collision
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     prim = _make_xform(stage, "/World/C_mjc_invalid")
     UsdPhysics.CollisionAPI.Apply(prim)
@@ -187,7 +188,7 @@ def test_apply_collision_properties_composes_namespaces():
     from isaaclab.sim.schemas import UsdPhysicsCollisionCfg, apply_collision_properties
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     _make_xform(stage, "/World/C4")
     apply_collision_properties(
@@ -284,7 +285,7 @@ def test_spawn_shape_with_collision_fragment_list():
     from isaaclab.sim.schemas import UsdPhysicsCollisionCfg
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     cfg = sim_utils.CuboidCfg(
         size=(1, 1, 1),
         collision_props={"": [UsdPhysicsCollisionCfg(collision_enabled=True), PhysxCollisionCfg(contact_offset=0.03)]},

@@ -23,6 +23,7 @@ import warnings
 
 import pytest
 import torch
+from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
 import isaaclab.sim.utils.prims as prim_utils
@@ -308,12 +309,12 @@ def sim(request):
     """
     device = request.getfixturevalue("device") if "device" in request.fixturenames else "cpu"
     gravity_enabled = request.getfixturevalue("gravity_enabled") if "gravity_enabled" in request.fixturenames else True
-    add_ground_plane = (
-        request.getfixturevalue("add_ground_plane") if "add_ground_plane" in request.fixturenames else False
-    )
 
     with build_simulation_context(
-        device=device, auto_add_lighting=True, gravity_enabled=gravity_enabled, add_ground_plane=add_ground_plane
+        sim_cfg=sim_utils.SimulationCfg(
+            physics=PhysxCfg(), gravity=(0.0, 0.0, -9.81) if gravity_enabled else (0.0, 0.0, 0.0)
+        ),
+        device=device,
     ) as sim:
         sim._app_control_on_stop_handle = None
         yield sim

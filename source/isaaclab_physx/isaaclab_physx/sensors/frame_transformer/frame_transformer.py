@@ -14,14 +14,9 @@ from typing import TYPE_CHECKING
 import torch
 import warp as wp
 
-from pxr import UsdPhysics
-
-from isaaclab.markers import VisualizationMarkers
 from isaaclab.sensors.frame_transformer import BaseFrameTransformer
-from isaaclab.sim.utils.queries import path_expr_to_glob, resolve_matching_prims_from_source
+from isaaclab.sim.utils.queries import path_expr_to_glob
 from isaaclab.utils.math import is_identity_pose, normalize, quat_from_angle_axis
-
-from isaaclab_physx.physics import PhysxManager as SimulationManager
 
 from .frame_transformer_data import FrameTransformerData
 from .kernels import frame_transformer_update_kernel
@@ -184,20 +179,10 @@ class FrameTransformer(BaseFrameTransformer):
         # First element is None because source frame offset is handled separately
         frame_offsets = [None] + [target_frame.offset for target_frame in self.cfg.target_frames]
         frame_types = ["source"] + ["target"] * len(self.cfg.target_frames)
+        layout = self._clone_plan
         for frame, prim_path, offset, frame_type in zip(frames, frame_prim_paths, frame_offsets, frame_types):
-            # Resolve the source-side env prims (filtered to rigid bodies) and their destination
-            # expressions. Plan-aware: with an active ``ClonePlan``, only env-0 representatives
-            # are walked and dest expressions are rebuilt against the plan's destination glob.
-            def has_rigid_body_api(prim) -> bool:
-                return bool(prim.HasAPI(UsdPhysics.RigidBodyAPI))
-
-            matches = resolve_matching_prims_from_source(prim_path, has_rigid_body_api, raise_if_no_matches=False)
-            if not matches:
-                raise ValueError(
-                    f"Failed to create frame transformer for frame '{frame}' with path '{prim_path}'."
-                    " No matching rigid-body prims were found."
-                )
-            for prim, matching_prim_path in matches:
+            body_paths = list(dict.fromkeys(body.view_path for body in layout.match_rigid_body_subtrees(prim_path)))
+            for matching_prim_path in body_paths:
                 # Get the name of the body: use relative prim path for unique identification
                 body_name = self._get_relative_body_path(matching_prim_path)
                 # Use leaf name of prim path if frame name isn't specified by user
@@ -243,15 +228,10 @@ class FrameTransformer(BaseFrameTransformer):
         tracked_prim_paths = [body_names_to_frames[body_name]["prim_path"] for body_name in body_names_to_frames.keys()]
         tracked_body_names = [body_name for body_name in body_names_to_frames.keys()]
 
-        # Convert each tracked prim path to PhysX glob form for ``create_rigid_body_view``.
-        # Plan-mode dest expressions use ``env_.*`` (regex), legacy mode produces concrete
-        # ``env_0`` paths; chain both substitutions so each mode normalises to ``env_*``.
-        body_names_regex = [
-            path_expr_to_glob(tracked_prim_path).replace("env_0", "env_*") for tracked_prim_path in tracked_prim_paths
-        ]
+        body_names_regex = [path_expr_to_glob(tracked_prim_path) for tracked_prim_path in tracked_prim_paths]
 
         # obtain global simulation view
-        self._physics_sim_view = SimulationManager.get_physics_sim_view()
+        self._physics_sim_view = self._physics_manager.get_physics_sim_view()
         # Create a prim view for all frames and initialize it
         # order of transforms coming out of view will be source frame followed by target frame(s)
         self._frame_physx_view = self._physics_sim_view.create_rigid_body_view(body_names_regex)
@@ -477,7 +457,7 @@ class FrameTransformer(BaseFrameTransformer):
         # note: parent only deals with callbacks. not their visibility
         if debug_vis:
             if not hasattr(self, "frame_visualizer"):
-                self.frame_visualizer = VisualizationMarkers(self.cfg.visualizer_cfg)
+                self.frame_visualizer = self.cfg.visualizer_cfg.class_type(self.cfg.visualizer_cfg)
 
             # set their visibility to true
             self.frame_visualizer.set_visibility(True)

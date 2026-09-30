@@ -38,7 +38,6 @@ keywords = ["experience", "app", "usd"]
 "omni.kit.primitive.mesh" = {}
 "omni.kit.property.bundle" = {}
 "omni.kit.raycast.query" = {}
-"omni.kit.stagerecorder.bundle" = {}
 "omni.kit.stage_template.core" = {}
 "omni.kit.telemetry" = {}
 "omni.kit.tool.asset_importer" = {}
@@ -64,7 +63,6 @@ keywords = ["experience", "app", "usd"]
 "omni.physics.stageupdate" = {}
 "omni.physx" = {}
 "omni.physx.tensors" = {}
-"omni.physx.fabric" = {}
 "omni.rtx.settings.core" = {}
 "omni.uiaudio" = {}
 "omni.usd.metrics.assembler.ui" = {}
@@ -202,7 +200,7 @@ renderer.startupMessageDisplayed = true # hides the IOMMU popup window
 resourcemonitor.timeBetweenQueries = 100 # improves performance
 simulation.defaultMetersPerUnit = 1.0 # Meters default
 omni.replicator.captureOnPlay = true
-UJITSO.geometry = true
+UJITSO.geometry = false
 UJITSO.enabled = true
 
 [settings]
@@ -262,12 +260,6 @@ updateForceSensorsToUsd = false
 outputVelocitiesLocalSpace = false
 useFastCache = false
 visualizationDisplayJoints = false
-fabricUpdateTransformations = false
-fabricUpdateVelocities = false
-fabricUpdateForceSensors = false
-fabricUpdateJointStates = false
-### When Direct GPU mode is enabled (suppressReadback=true) use direct interop between PhysX GPU and Fabric
-fabricUseGPUInterop = true
 
 # Asset path
 # set the S3 directory manually to the latest published S3

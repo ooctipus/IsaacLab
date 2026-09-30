@@ -54,6 +54,7 @@ from generate_synthetic_gaussian_asset import (
     render_synthetic_gaussian_scene_with_controller_ppisp_attrs,
     render_synthetic_gaussian_scene_with_static_ppisp_attrs,
 )
+from isaaclab_physx.physics import PhysxCfg
 
 from isaaclab.sim import SimulationCfg
 
@@ -94,7 +95,7 @@ Keep only this comparison above that tiny-resolution regime.
 
 
 def _isaac_rtx_sim_cfg(device: str) -> SimulationCfg:
-    return SimulationCfg(dt=SIM_DT, device=device)
+    return SimulationCfg(physics=PhysxCfg(), dt=SIM_DT, device=device)
 
 
 if not _RENDERER_CFG_PARAMS:

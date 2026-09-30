@@ -11,16 +11,13 @@ contact sensor, and gait / contact / foot-clearance rewards.
 
 import math
 
-from isaaclab_newton.sensors import ContactSensorCfg as NewtonContactSensorCfg
-from isaaclab_physx.sensors import ContactSensorCfg as PhysXContactSensorCfg
-
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
+from isaaclab.sensors import ContactSensorCfg
 from isaaclab.utils.configclass import configclass
 
 import isaaclab_tasks.contrib.dr_legs.mdp as mdp
-from isaaclab_tasks.utils import PresetCfg
 
 from isaaclab_assets.robots.dr_legs import DR_LEGS_ACTUATED_JOINTS
 
@@ -42,26 +39,10 @@ _FOOT_SENSOR_CFG = SceneEntityCfg("contact_forces", body_names=["foot_l", "foot_
 
 
 @configclass
-class DrLegsContactSensorCfg(PresetCfg):
-    """Backend-specific foot contact sensor configuration."""
-
-    default = NewtonContactSensorCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/foot_[^/]*",
-        history_length=3,
-        track_air_time=True,
-    )
-    newton_kamino = default
-    physx = PhysXContactSensorCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/foot_[^/]*",
-        history_length=3,
-        track_air_time=True,
-    )
-    isaacsim_physx = physx
-
-
-@configclass
 class WalkSceneCfg(HoldPoseSceneCfg):
-    contact_forces = DrLegsContactSensorCfg()
+    contact_forces = ContactSensorCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/foot_[^/]*", history_length=3, track_air_time=True
+    )
 
 
 @configclass

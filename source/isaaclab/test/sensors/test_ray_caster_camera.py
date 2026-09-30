@@ -21,11 +21,14 @@ import os
 import numpy as np
 import pytest
 import torch
+from isaaclab_physx.physics import PhysxCfg
+from isaaclab_physx.renderers import IsaacRtxRendererCfg
 
 import omni.replicator.core as rep
 from pxr import Gf
 
 import isaaclab.sim as sim_utils
+from isaaclab import cloner
 from isaaclab.sensors.camera import Camera, CameraCfg
 from isaaclab.sensors.ray_caster import RayCasterCamera, RayCasterCameraCfg, patterns
 from isaaclab.sim import PinholeCameraCfg
@@ -39,6 +42,17 @@ POSITION = [2.5, 2.5, 2.5]
 QUAT_ROS = [0.33985114, 0.82047325, -0.42470819, -0.17591989]
 QUAT_OPENGL = [0.17591988, 0.42470818, 0.82047324, 0.33985113]
 QUAT_WORLD = [-0.27984815, -0.1159169, 0.88047623, -0.3647052]
+
+
+def _camera_in_plan(cfg):
+    """Build a camera inside a clone plan, the way a scene does.
+
+    Every asset the scene draws is declared to a plan and copied by the cloning pass, cameras
+    included: a camera reads where its copies land from the plan, so the plan has to exist before
+    it is built.
+    """
+    with cloner.ReplicateSession((cfg,), num_clones=1, env_spacing=0.0):
+        return Camera(cfg)
 
 
 def _assert_quat_close(actual, expected, **kwargs):
@@ -82,7 +96,7 @@ def setup() -> tuple[sim_utils.SimulationContext, RayCasterCameraCfg, float]:
     # Simulation time-step
     dt = 0.01
     # Load kit helper
-    sim_cfg = sim_utils.SimulationCfg(dt=dt)
+    sim_cfg = sim_utils.SimulationCfg(physics=PhysxCfg(), dt=dt)
     sim = sim_utils.SimulationContext(sim_cfg)
     # Ground-plane with visual material for RTX rendering compatibility
     mesh = make_plane(size=(100, 100), height=0.0, center_zero=True)
@@ -505,8 +519,9 @@ def test_output_equal_to_usdcamera(setup_sim):
             focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(1e-4, 1.0e5)
         ),
         offset=CameraCfg.OffsetCfg(pos=(0.0, 0.0, 0.0), rot=(0.0, 0.0, 0.0, 1.0)),
+        renderer_cfg=IsaacRtxRendererCfg(),
     )
-    camera_usd = Camera(camera_cfg_usd)
+    camera_usd = _camera_in_plan(camera_cfg_usd)
 
     # play sim
     sim.reset()
@@ -609,8 +624,9 @@ def test_output_equal_to_usdcamera_offset(setup_sim):
         offset=CameraCfg.OffsetCfg(
             pos=(2.5, 2.5, 4.0), rot=(offset_rot[0], offset_rot[1], offset_rot[2], offset_rot[3]), convention="ros"
         ),
+        renderer_cfg=IsaacRtxRendererCfg(),
     )
-    camera_usd = Camera(camera_cfg_usd)
+    camera_usd = _camera_in_plan(camera_cfg_usd)
 
     # play sim
     sim.reset()
@@ -695,12 +711,13 @@ def test_output_equal_to_usdcamera_prim_offset(setup_sim):
         ),
         offset=CameraCfg.OffsetCfg(pos=(0, 0, 2.0), rot=offset_rot, convention="ros"),
         update_latest_camera_pose=True,
+        renderer_cfg=IsaacRtxRendererCfg(),
     )
     prim_usd = sim_utils.create_prim("/World/Camera_usd", "Xform")
     prim_usd.GetAttribute("xformOp:translate").Set(tuple(POSITION))
     prim_usd.GetAttribute("xformOp:orient").Set(gf_quatf)
 
-    camera_usd = Camera(camera_cfg_usd)
+    camera_usd = _camera_in_plan(camera_cfg_usd)
 
     # play sim
     sim.reset()
@@ -784,8 +801,8 @@ def test_output_equal_to_usd_camera_intrinsics(setup_sim, focal_length):
         ),
         height=540,
         width=960,
-        depth_clipping_behavior="max",
         data_types=["distance_to_image_plane"],
+        renderer_cfg=IsaacRtxRendererCfg(depth_clipping_behavior="max"),
     )
 
     # set aperture offsets to 0, as currently not supported for usd camera
@@ -795,7 +812,7 @@ def test_output_equal_to_usd_camera_intrinsics(setup_sim, focal_length):
     camera_usd_cfg.spawn.vertical_aperture_offset = 0
     # init cameras
     camera_warp = RayCasterCamera(camera_warp_cfg)
-    camera_usd = Camera(camera_usd_cfg)
+    camera_usd = _camera_in_plan(camera_usd_cfg)
 
     # play sim
     sim.reset()
@@ -913,8 +930,9 @@ def test_output_equal_to_usd_camera_when_intrinsics_set(setup_sim, focal_length_
         spawn=PinholeCameraCfg(
             focal_length=focal_length, focus_distance=400.0, horizontal_aperture=aperture, clipping_range=(1e-4, 1.0e5)
         ),
+        renderer_cfg=IsaacRtxRendererCfg(),
     )
-    camera_usd = Camera(camera_cfg_usd)
+    camera_usd = _camera_in_plan(camera_cfg_usd)
 
     # play sim
     sim.reset()

@@ -3,16 +3,6 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-__all__ = [
-    "ManusVive",
-    "ManusViveCfg",
-    "OpenXRDevice",
-    "OpenXRDeviceCfg",
-    "XrAnchorRotationMode",
-    "XrCfg",
-    "remove_camera_configs",
-]
+__all__ = ["retargeters"]
 
-from .manus_vive import ManusVive, ManusViveCfg
-from .openxr_device import OpenXRDevice, OpenXRDeviceCfg
-from .xr_cfg import XrAnchorRotationMode, XrCfg, remove_camera_configs
+from . import retargeters

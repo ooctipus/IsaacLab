@@ -3,20 +3,11 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-r"""Profile Isaac Lab startup phases.
+r"""Measure Isaac Lab startup phases, with optional dense profiling.
 
-Each phase runs in an independent ``cProfile`` session. The schema formatter emits
-a :class:`~isaaclab.benchmark.StartupBundle`; other selected
-formatters receive equivalent measurement phases.
-
-Profiled phases
----------------
-* **app_launch**: :func:`~isaaclab.app.launch_simulation` context entry
-  (simulation runtime initialization).
-* **python_imports**: launcher, task registration, and runtime-library imports.
-* **task_config**: :func:`~isaaclab_tasks.utils.resolve_task_config`.
-* **env_creation**: :func:`gym.make` + ``env.reset()``.
-* **first_step**: first ``env.step()`` call.
+By default, each phase records uninstrumented wall time. Pass ``--profile`` for
+independent ``cProfile`` attribution of imports, task configuration, app launch,
+environment creation, and the first step.
 
 Usage example::
 
@@ -31,21 +22,30 @@ concurrently; see :mod:`isaaclab.benchmark.entrypoints.multigpu`.
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    import cProfile
+
     from isaaclab.benchmark import BenchmarkResult
 
 import argparse
-import cProfile
 import importlib.util
 import os
 import sys
 import time
 from datetime import datetime, timezone
 
-_PHASE_ORDER = ("python_imports", "task_config", "app_launch", "env_creation", "first_step")
-_VALID_PHASES = set(_PHASE_ORDER)
+_VALID_PHASES = {"python_imports", "task_config", "app_launch", "env_creation", "first_step"}
+
+
+def _profiler(enabled: bool) -> cProfile.Profile | None:
+    if not enabled:
+        return None
+    import cProfile
+
+    return cProfile.Profile()
 
 
 def _parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
@@ -62,11 +62,12 @@ def _parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
 
     from isaaclab_tasks.utils import setup_preset_cli
 
-    parser = argparse.ArgumentParser(description="Profile Isaac Lab startup phases.")
+    parser = argparse.ArgumentParser(description="Measure Isaac Lab startup phases.")
     help_requested = "-h" in argv or "--help" in argv
-    parser.add_argument("--task", type=str, required=not help_requested, help="Gym task id to profile.")
+    parser.add_argument("--task", type=str, required=not help_requested, help="Gym task id to measure.")
     parser.add_argument("--num_envs", type=int, default=None, help="Number of parallel environments.")
     parser.add_argument("--seed", type=int, default=None, help="Environment seed.")
+    parser.add_argument("--profile", action="store_true", help="Enable cProfile; reported wall times are instrumented.")
     parser.add_argument(
         "--top_n",
         type=int,
@@ -94,6 +95,8 @@ def _parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     add_launcher_args(parser)
 
     args, remaining = setup_preset_cli(parser, argv)
+    if not args.profile and (args.top_n is not None or args.whitelist_config is not None):
+        parser.error("--top_n and --whitelist_config require --profile")
     sys.argv = [sys.argv[0]] + remaining
     return args, remaining
 
@@ -204,49 +207,49 @@ def run(argv: list[str]) -> BenchmarkResult | None:
         Completed startup result, or ``None`` on a distributed rank other than global rank 0.
     """
     start_utc = datetime.now(timezone.utc).isoformat()
-    imports_profile = cProfile.Profile()
+    profile_enabled = "--profile" in argv
+    imports_profile = _profiler(profile_enabled)
     imports_time_begin = time.perf_counter_ns()
-    imports_profile.enable()
+    with imports_profile or nullcontext():
+        args, _ = _parse_args(argv)
 
-    args, hydra_args = _parse_args(argv)
+        import gymnasium as gym
+        import torch
 
-    import gymnasium as gym
-    import torch
+        from isaaclab.app import launch_simulation
+        from isaaclab.benchmark import BaseIsaacLabBenchmark, BenchmarkResult, builders, capture, console, stepping
+        from isaaclab.benchmark.distributed import DistributedContext
+        from isaaclab.benchmark.schema import CProfileFunction, StartupPhase
 
-    from isaaclab.app import launch_simulation
-    from isaaclab.benchmark import BaseIsaacLabBenchmark, BenchmarkResult, builders, capture, console, stepping
-    from isaaclab.benchmark.distributed import DistributedContext
-    from isaaclab.benchmark.profiling import parse_cprofile_stats
-    from isaaclab.benchmark.schema import CProfileFunction, StartupPhase
+        if profile_enabled:
+            from isaaclab.benchmark.profiling import parse_cprofile_stats
 
-    from isaaclab_tasks.utils import resolve_task_config
+        from isaaclab_tasks.utils import resolve_task_config
 
-    imports_profile.disable()
     if torch.cuda.is_available() and torch.cuda.is_initialized():
         torch.cuda.synchronize()
     imports_time_end = time.perf_counter_ns()
 
-    task_config_profile = cProfile.Profile()
+    task_config_profile = _profiler(profile_enabled)
     task_config_time_begin = time.perf_counter_ns()
-    task_config_profile.enable()
-    try:
+    with task_config_profile or nullcontext():
         env_cfg, _ = resolve_task_config(args.task, None)
-    finally:
-        task_config_profile.disable()
     task_config_time_end = time.perf_counter_ns()
 
-    source_prefixes = _isaaclab_source_prefixes()
-    whitelist = _load_whitelist(args.whitelist_config)
-    if args.top_n is None:
+    source_prefixes = _isaaclab_source_prefixes() if profile_enabled else []
+    whitelist = _load_whitelist(args.whitelist_config) if profile_enabled else {}
+    if profile_enabled and args.top_n is None:
         args.top_n = 5 if whitelist else 30
     distributed = DistributedContext.from_env(args.distributed, workflow="startup")
 
-    app_launch_profile = cProfile.Profile()
+    app_launch_profile = _profiler(profile_enabled)
     app_launch_time_begin = time.perf_counter_ns()
-    app_launch_profile.enable()
+    if app_launch_profile is not None:
+        app_launch_profile.enable()
 
     with launch_simulation(env_cfg, args):
-        app_launch_profile.disable()
+        if app_launch_profile is not None:
+            app_launch_profile.disable()
         if torch.cuda.is_available() and torch.cuda.is_initialized():
             torch.cuda.synchronize()
         app_launch_time_end = time.perf_counter_ns()
@@ -261,18 +264,15 @@ def run(argv: list[str]) -> BenchmarkResult | None:
             env_cfg.seed = args.seed
 
         env = None
-        env_creation_profile = cProfile.Profile()
+        env_creation_profile = _profiler(profile_enabled)
         env_creation_time_begin = time.perf_counter_ns()
         try:
             timers_before = _timer_totals()
-            env_creation_profile.enable()
-            try:
+            with env_creation_profile or nullcontext():
                 env = gym.make(args.task, cfg=env_cfg)
                 env_reset_time_begin = time.perf_counter_ns()
                 env.reset()
                 env_reset_time_end = time.perf_counter_ns()
-            finally:
-                env_creation_profile.disable()
             env_creation_detail = _timer_totals(since=timers_before)
             env_creation_detail["env_reset"] = (env_reset_time_end - env_reset_time_begin) / 1e9
 
@@ -282,14 +282,10 @@ def run(argv: list[str]) -> BenchmarkResult | None:
 
             actions = stepping.sample_random_actions(env)
 
-            first_step_profile = cProfile.Profile()
+            first_step_profile = _profiler(profile_enabled)
             first_step_time_begin = time.perf_counter_ns()
-            first_step_profile.enable()
-            try:
-                with torch.inference_mode():
-                    env.step(actions)
-            finally:
-                first_step_profile.disable()
+            with first_step_profile or nullcontext(), torch.inference_mode():
+                env.step(actions)
 
             if torch.cuda.is_available() and torch.cuda.is_initialized():
                 torch.cuda.synchronize()
@@ -302,7 +298,7 @@ def run(argv: list[str]) -> BenchmarkResult | None:
                 return None
 
             # Ordered chronologically: the bundle and the console summary preserve this order.
-            phase_profiles: dict[str, tuple[cProfile.Profile, float]] = {
+            phase_profiles = {
                 "python_imports": (imports_profile, (imports_time_end - imports_time_begin) / 1e6),
                 "task_config": (task_config_profile, (task_config_time_end - task_config_time_begin) / 1e6),
                 "app_launch": (app_launch_profile, (app_launch_time_end - app_launch_time_begin) / 1e6),
@@ -312,8 +308,12 @@ def run(argv: list[str]) -> BenchmarkResult | None:
 
             phases: dict[str, StartupPhase] = {}
             for phase_name, (profile, wall_ms) in phase_profiles.items():
-                functions = parse_cprofile_stats(
-                    profile, source_prefixes, top_n=args.top_n, whitelist=whitelist.get(phase_name)
+                functions = (
+                    parse_cprofile_stats(
+                        profile, source_prefixes, top_n=args.top_n, whitelist=whitelist.get(phase_name)
+                    )
+                    if profile is not None
+                    else []
                 )
                 phases[phase_name] = StartupPhase(
                     total_time_s=wall_ms / 1000.0,
@@ -355,6 +355,7 @@ def run(argv: list[str]) -> BenchmarkResult | None:
                         {"name": "task", "data": args.task},
                         {"name": "seed", "data": args.seed},
                         {"name": "num_envs", "data": args.num_envs},
+                        {"name": "profile", "data": args.profile},
                         {"name": "top_n", "data": args.top_n},
                         {"name": "world_size", "data": distributed.world_size},
                     ]
@@ -373,6 +374,7 @@ def run(argv: list[str]) -> BenchmarkResult | None:
                 versions=capture.capture_versions(benchmark),
                 hardware=capture.capture_hardware(benchmark),
                 phases=phases,
+                profile=args.profile,
                 top_n=args.top_n,
                 whitelist=args.whitelist_config,
                 extra=extra,

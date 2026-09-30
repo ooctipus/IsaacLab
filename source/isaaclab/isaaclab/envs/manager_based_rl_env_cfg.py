@@ -99,19 +99,11 @@ class ManagerBasedRLEnvCfg(ManagerBasedEnvCfg):
     def play_mode(self):
         """Adjust the configuration for interactive playback and policy inference.
 
-        Play scripts call this method after the configuration is fully initialized (i.e. after
-        :meth:`__post_init__`) unless the user requests the training configuration as-is.
-        The base implementation applies defaults that are useful for most tasks:
-
-        * caps the number of environments at 50 to keep the scene lightweight, and
-        * disables observation corruption for all observation groups.
-
-        Override this method in a task configuration to customize playback behavior. Call
-        ``super().play_mode()`` to keep the shared defaults.
+        The base implementation caps the scene at 50 environments and disables
+        observation corruption. Task configurations may override this method and
+        should call ``super().play_mode()`` to retain these defaults.
         """
-        # make a smaller scene for play
         self.scene.num_envs = min(self.scene.num_envs, 50)
-        # disable observation corruption for all observation groups
         for group_name in getattr(self.observations, "__dataclass_fields__", {}):
             group = getattr(self.observations, group_name)
             if hasattr(group, "enable_corruption"):

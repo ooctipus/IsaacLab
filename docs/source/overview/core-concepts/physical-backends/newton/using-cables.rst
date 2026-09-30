@@ -33,7 +33,7 @@ in your environment:
     uv run --extra isaacsim python scripts/demos/cables.py
 
     # Explicit Newton VBD physics with the Newton visualizer.
-    uv run python scripts/demos/cables.py --physics newton_vbd --visualizer newton
+    uv run python scripts/demos/cables.py --physics newton_vbd --visualizer newton_gl
 
     # No visualizer and a larger cable pile.
     uv run python scripts/demos/cables.py --visualizer none --num_cables 40 --num_segments 15
@@ -136,12 +136,12 @@ standalone :class:`~isaaclab_newton.physics.VBDSolverCfg`:
 
 .. code-block:: python
 
-    from isaaclab_newton.physics import NewtonCfg, VBDSolverCfg
+    from isaaclab_newton.physics import VBDSolverCfg
 
     sim_cfg = sim_utils.SimulationCfg(
         dt=0.01,
         device=args_cli.device,
-        physics=NewtonCfg(solver_cfg=VBDSolverCfg(iterations=20), num_substeps=8),
+        physics=VBDSolverCfg(iterations=20, num_substeps=8),
     )
 
 Mixed rigid + cable scenes (for example a robot manipulating a cable) run the

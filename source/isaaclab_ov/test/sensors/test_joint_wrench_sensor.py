@@ -28,7 +28,7 @@ import pytest
 import torch
 import warp as wp
 
-from pxr import Gf, UsdPhysics
+from pxr import Gf, Usd, UsdPhysics
 
 # OVRTX-only CI jobs collect the consolidated isaaclab_ov test suite without
 # the optional ovphysx wheel. Skip the OVPhysX tests gracefully in that case.
@@ -44,7 +44,7 @@ from isaaclab.sensors import JointWrenchSensor, JointWrenchSensorCfg  # noqa: E4
 from isaaclab.sim import SimulationCfg, build_simulation_context  # noqa: E402
 from isaaclab.terrains import TerrainImporterCfg  # noqa: E402
 from isaaclab.utils import math as math_utils  # noqa: E402
-from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR  # noqa: E402
+from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR, retrieve_file_path  # noqa: E402
 from isaaclab.utils.configclass import configclass  # noqa: E402
 
 from isaaclab_assets.robots.ant import ANT_CFG  # noqa: E402
@@ -88,13 +88,10 @@ def _ovphysx_skip_other_device(request):
 # ---------------------------------------------------------------------------
 
 
-def _ovphysx_sim_context(device: str, **kwargs):
+def _ovphysx_sim_context(device: str):
     """Wrapper around :func:`build_simulation_context` that injects OVPhysX cfg."""
-    dt = kwargs.pop("dt", 1.0 / 120.0)
-    gravity_enabled = kwargs.pop("gravity_enabled", True)
-    gravity = (0.0, 0.0, -9.81) if gravity_enabled else (0.0, 0.0, 0.0)
-    sim_cfg = SimulationCfg(physics=OvPhysxCfg(), device=device, dt=dt, gravity=gravity)
-    return build_simulation_context(device=device, sim_cfg=sim_cfg, **kwargs)
+    sim_cfg = SimulationCfg(physics=OvPhysxCfg(), device=device, dt=1.0 / 120.0)
+    return build_simulation_context(device=device, sim_cfg=sim_cfg)
 
 
 # ---------------------------------------------------------------------------
@@ -250,22 +247,18 @@ def _ovphysx_incoming_joint_wrench_in_joint_frame(
     return expected_force, expected_torque
 
 
-def _set_child_joint_frame(scene: InteractiveScene, child_body_name: str) -> None:
-    """Set a non-identity child-side joint frame for the requested body in env 0."""
-    for prim in scene.stage.Traverse():
-        if not prim.GetPath().pathString.startswith("/World/envs/env_0/Robot"):
-            continue
-        joint = UsdPhysics.Joint(prim)
-        if joint and any(target.name == child_body_name for target in joint.GetBody1Rel().GetTargets()):
-            joint.GetLocalPos1Attr().Set(Gf.Vec3f(0.25, -0.15, 0.1))
-            joint.GetLocalRot1Attr().Set(
-                Gf.Quatf(
-                    math.cos(math.pi / 4.0),
-                    Gf.Vec3f(math.sin(math.pi / 4.0), 0.0, 0.0),
-                )
-            )
-            return
-    raise RuntimeError(f"Failed to find a USD joint with child body '{child_body_name}'.")
+def _non_identity_joint_asset(path) -> str:
+    """Author the non-identity joint frame into an asset before the clone plan is built."""
+    source = retrieve_file_path(f"{ISAAC_NUCLEUS_DIR}/Robots/IsaacSim/SimpleArticulation/revolute_articulation.usd")
+    stage = Usd.Stage.CreateNew(str(path))
+    root = stage.DefinePrim("/Articulation", "Xform")
+    stage.SetDefaultPrim(root)
+    root.GetReferences().AddReference(source)
+    joint = UsdPhysics.Joint(stage.OverridePrim("/Articulation/Arm/RevoluteJoint"))
+    joint.CreateLocalPos1Attr().Set(Gf.Vec3f(0.25, -0.15, 0.1))
+    joint.CreateLocalRot1Attr().Set(Gf.Quatf(math.cos(math.pi / 4.0), Gf.Vec3f(math.sin(math.pi / 4.0), 0.0, 0.0)))
+    stage.GetRootLayer().Save()
+    return str(path)
 
 
 # ---------------------------------------------------------------------------
@@ -369,10 +362,11 @@ def test_force_and_torque_components_at_rest(sim, device):
 
 
 @pytest.mark.parametrize("device", ["cuda:0", "cpu"])
-def test_non_identity_joint_frame_transform(sim, device):
+def test_non_identity_joint_frame_transform(sim, device, tmp_path):
     """OVPhysX raw body-frame wrench is converted to the child-side joint frame."""
-    scene = InteractiveScene(_SingleJointSceneCfg(num_envs=1))
-    _set_child_joint_frame(scene, "Arm")
+    scene_cfg = _SingleJointSceneCfg(num_envs=1)
+    scene_cfg.robot.spawn.usd_path = _non_identity_joint_asset(tmp_path / "revolute_articulation.usda")
+    scene = InteractiveScene(scene_cfg)
     sim.reset()
 
     sensor: JointWrenchSensor = scene["wrench"]

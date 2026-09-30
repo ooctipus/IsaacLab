@@ -17,11 +17,10 @@ from typing import TYPE_CHECKING, Any
 import warp as wp
 
 from isaaclab.sensors.contact_sensor import BaseContactSensor
-from isaaclab.sim.utils.queries import path_expr_to_glob, resolve_matching_prims_from_source, split_path_expr
+from isaaclab.sim.utils.queries import path_expr_to_glob
 from isaaclab.utils.warp import ProxyArray
 
 import isaaclab_ov.tensor_types as TT
-from isaaclab_ov.physics import OvPhysxManager
 from isaaclab_ov.sim.views.ovphysx_view import OvPhysxView
 
 from .contact_sensor_data import ContactSensorData
@@ -178,39 +177,15 @@ class ContactSensor(BaseContactSensor):
     def _initialize_impl(self) -> None:
         super()._initialize_impl()
 
-        physx_instance = OvPhysxManager.get_physx_instance()
+        physx_instance = self._physics_manager.get_physx_instance()
         if physx_instance is None:
             raise RuntimeError("OvPhysxManager has not been initialized yet.")
         self._physx_instance = physx_instance
 
-        # Discover sensor bodies.  We use ``GetPrimTypeInfo().GetAppliedAPISchemas()``
-        # (raw apiSchemas listOp) instead of ``GetAppliedSchemas()`` so that codeless
-        # USDs without ``omni.physx``'s plugin loaded still report
-        # ``PhysxContactReportAPI``.  Under the kitless ovphysx flow the
-        # ``PhysxSchema`` USD plugin is registered by
-        # :meth:`OvPhysxManager.initialize` so the wheel-side schema check passes,
-        # but the Python-side filtered API still hides ``PhysxContactReportAPI``
-        # because the schema TYPE registration only happens when the C++ plugin
-        # library is loaded by ``omni.physx``.  The unfiltered API matches what
-        # the underlying USD apiSchemas listOp actually carries (verified against
-        # :class:`pxr.Sdf.PrimSpec.GetInfo("apiSchemas")`).
-        *parent_segments, leaf_pattern = split_path_expr(self.cfg.prim_path)
-        parent_expr = "/".join(parent_segments)
-        name_pattern = re.compile(leaf_pattern)
-
-        def has_contact_report(prim) -> bool:
-            return bool(name_pattern.fullmatch(prim.GetName())) and (
-                "PhysxContactReportAPI" in prim.GetPrimTypeInfo().GetAppliedAPISchemas()
-            )
-
-        resolve_kwargs = {"raise_if_no_matches": False, "traverse_instance_prims": False}
-        body_matches = resolve_matching_prims_from_source(parent_expr, has_contact_report, **resolve_kwargs)
-        body_names = [prim.GetPath().pathString.rsplit("/", 1)[-1] for prim, _ in body_matches]
-        if not body_names:
-            raise RuntimeError(
-                f"Sensor at path '{self.cfg.prim_path}' could not find any bodies with contact reporter API."
-                "\nHINT: Make sure to enable 'activate_contact_sensors' in the corresponding asset spawn configuration."
-            )
+        layout = self._clone_plan
+        planned_bodies = layout.match_contact_bodies(self.cfg.prim_path)
+        body_path_exprs = list(dict.fromkeys(body.view_path for body in planned_bodies))
+        body_names = [path.rsplit("/", 1)[-1] for path in body_path_exprs]
         self._body_names = body_names
         self._num_sensors = len(body_names)
 
@@ -219,7 +194,7 @@ class ContactSensor(BaseContactSensor):
         # hierarchies (child links authored under their parent link prim), where the bodies do
         # not share a parent. IsaacLab path forms map to ovphysx fnmatch globs the same way
         # Articulation does.
-        sensor_patterns = [path_expr_to_glob(re.sub(r"\{ENV_REGEX_NS\}", "*", expr)) for _, expr in body_matches]
+        sensor_patterns = [path_expr_to_glob(expr) for expr in body_path_exprs]
 
         # Build filter patterns (flat: len = n_sensors * filters_per_sensor).
         filter_globs = [
@@ -231,14 +206,6 @@ class ContactSensor(BaseContactSensor):
         else:
             filter_patterns = None
 
-        # Create the contact binding (must happen BEFORE the next step()).
-        # OVPhysX's ``InteractiveScene`` runs in ``clone_usd=False`` mode:
-        # env_1..N have no USD prim — they're physics-layer clones via
-        # ``physx.clone()``.  The parent class's ``find_matching_prims`` walk
-        # therefore sees only env_0 and sets ``self._num_envs = 1`` even when
-        # the scene is configured for many envs.  We size the
-        # ``max_contact_data_count`` for env_0 only here; the binding's
-        # ``sensor_count`` after creation gives us the real env count.
         max_count = self.cfg.max_contact_data_count_per_prim * self._num_sensors * self._num_envs
         self._contact_binding = physx_instance.create_contact_binding(
             sensor_patterns=sensor_patterns,
@@ -257,19 +224,12 @@ class ContactSensor(BaseContactSensor):
                 f"\n\tBound sensors       : {self._contact_binding.sensor_count}"
             )
 
-        # Override ``_num_envs`` with the binding's view if it differs (it does
-        # for any OVPhysX scene with ``num_envs > 1`` due to ``clone_usd=False``).
-        # Re-allocate the env-sized buffers from the parent class so they match
-        # the real env count.
         binding_num_envs = self._contact_binding.sensor_count // self._num_sensors
         if binding_num_envs != self._num_envs:
-            self._num_envs = binding_num_envs
-            self._ALL_ENV_MASK = wp.ones((self._num_envs,), dtype=wp.bool, device=self._device)
-            self._reset_mask = wp.zeros((self._num_envs,), dtype=wp.bool, device=self._device)
-            self._reset_mask_torch = wp.to_torch(self._reset_mask)
-            self._is_outdated = wp.ones(self._num_envs, dtype=wp.bool, device=self._device)
-            self._timestamp = wp.zeros(self._num_envs, dtype=wp.float32, device=self._device)
-            self._timestamp_last_update = wp.zeros_like(self._timestamp)
+            raise RuntimeError(
+                f"OVPhysX contact binding returned {binding_num_envs} environments; "
+                f"the clone plan declares {self._num_envs}."
+            )
 
         # Optional: pose tracking via a RIGID_BODY_POSE tensor binding.
         # ovphysx fnmatch does not brace-expand, so we cannot match multiple
@@ -514,7 +474,7 @@ class ContactSensor(BaseContactSensor):
         """Release native handles when the simulation stops."""
         super()._invalidate_initialize_callback(event)
         # Drop strong references; ovphysx native handles are torn down on the
-        # next reset() of OvPhysxManager.
+        # next reset() of self._physics_manager.
         if self._contact_binding is not None:
             with contextlib.suppress(Exception):
                 self._contact_binding.destroy()

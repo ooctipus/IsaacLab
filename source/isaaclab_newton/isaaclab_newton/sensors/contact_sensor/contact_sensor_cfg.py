@@ -19,9 +19,7 @@ class ContactSensorCfg(BaseContactSensorCfg):
 
     :class:`~isaaclab.sensors.ContactSensorCfg` already resolves to this backend automatically under
     Newton physics (including its ``*_shape_prim_expr`` shape-level fields). Use this class directly
-    only to force the Newton implementation regardless of the active backend. It warns about and
-    disables base fields the Newton backend does not support, and can be built from a base config via
-    :meth:`from_base_cfg`.
+    only to force the Newton implementation regardless of the active backend.
     """
 
     class_type: type["ContactSensor"] | str = "{DIR}.contact_sensor:ContactSensor"

@@ -14,8 +14,8 @@ surface deformables (cloth), see the deformable demo at ``scripts/demos/deformab
 The deformable object API and schema define/modify functions are shared across backends, while deformable
 property and material configuration classes are backend-specific. PhysX simulates soft bodies using the Finite
 Element Method (FEM); the Newton experimental backend uses the core VBD solver from
-:mod:`isaaclab_newton.physics` with the deformable object integration from
-:mod:`isaaclab_contrib.deformable`.
+:mod:`isaaclab_newton.physics` with the deformable object implementation from
+:mod:`isaaclab_newton.assets`.
 The volume deformable comprises of two tetrahedral meshes -- a simulation mesh and a collision mesh. The simulation
 mesh is used to simulate the deformations of the soft body, while the collision mesh is used to detect collisions
 with other objects in the scene. For PhysX-specific details, please check the `PhysX documentation`_.
@@ -79,13 +79,14 @@ when the simulation is played.
     implementation.
 
 
-As seen in the rigid body tutorial, we can spawn the deformable object into the scene in a similar fashion by creating
-an instance of the :class:`assets.DeformableObject` class by passing the configuration object to its constructor.
+The top-level :class:`TutorialCfg` owns the complete clone input: simulation, clone layout, static assets, and the
+deformable object. Its ``cube`` preset selects the matching backend-specific asset configuration before cloning. A
+:class:`cloner.ReplicateSession` then creates one plan from the resolved configuration, and the deformable object is
+constructed with ``cfg.cube.class_type(cfg.cube)`` inside that lifecycle.
 
 .. literalinclude:: ../../../../scripts/tutorials/01_assets/run_deformable_object.py
    :language: python
-   :start-at: # Create separate groups called "env_0", "env_1", ...
-   :end-at: cube_object = DeformableObject(cfg=cfg)
+   :pyobject: TutorialCfg
 
 Running the simulation loop
 ---------------------------

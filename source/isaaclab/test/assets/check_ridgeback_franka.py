@@ -35,6 +35,7 @@ simulation_app = app_launcher.app
 """Rest everything follows."""
 
 import torch
+from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import Articulation
@@ -150,7 +151,11 @@ def run_simulator(sim: sim_utils.SimulationContext, robot: Articulation):
 def main():
     """Main function."""
     # Initialize the simulation context
-    sim = sim_utils.SimulationContext(sim_utils.SimulationCfg())
+    sim = sim_utils.SimulationContext(
+        sim_utils.SimulationCfg(
+            physics=PhysxCfg(),
+        )
+    )
     # Set main camera
     sim.set_camera_view([1.5, 1.5, 1.5], [0.0, 0.0, 0.0])
     # design scene

@@ -5,13 +5,16 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import warp as wp
 
 from isaaclab.assets.deformable_object.base_deformable_object_data import BaseDeformableObjectData
 from isaaclab.utils.buffers import TimestampedBufferWarp as TimestampedBuffer
 from isaaclab.utils.warp import ProxyArray
 
-from isaaclab_newton.physics import NewtonManager as SimulationManager
+if TYPE_CHECKING:
+    from isaaclab_newton.physics import NewtonManager
 
 from .kernels import compute_mean_vec3f_over_particles, compute_particle_state_w, gather_particles_vec3f, vec6f
 
@@ -21,8 +24,16 @@ class MPMObjectData(BaseDeformableObjectData):
 
     __backend_name__: str = "newton"
 
-    def __init__(self, particle_offsets: wp.array, particles_per_object: int, num_instances: int, device: str):
+    def __init__(
+        self,
+        particle_offsets: wp.array,
+        particles_per_object: int,
+        num_instances: int,
+        device: str,
+        physics_manager: NewtonManager,
+    ):
         super().__init__(device)
+        self._physics_manager = physics_manager
         self._particle_offsets = particle_offsets
         self._particles_per_object = particles_per_object
         self._num_instances = num_instances
@@ -54,7 +65,7 @@ class MPMObjectData(BaseDeformableObjectData):
         self._root_vel_w.timestamp = -1.0
 
     def _get_current_particle_state(self):
-        state = SimulationManager.get_state_0()
+        state = self._physics_manager.get_state_0()
         if state is None or state.particle_q is None or state.particle_qd is None:
             raise RuntimeError(
                 "Failed to access Newton MPM particle state. Ensure the Newton model has been finalized and contains "

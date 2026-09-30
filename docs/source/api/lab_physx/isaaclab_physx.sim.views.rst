@@ -13,7 +13,7 @@ The following classes are part of the public :mod:`isaaclab_physx.sim.views` API
 .. autosummary::
    :nosignatures:
 
-   FabricFrameView
+   PhysxFrameView
 
-.. autoclass:: FabricFrameView
+.. autoclass:: PhysxFrameView
    :show-inheritance:

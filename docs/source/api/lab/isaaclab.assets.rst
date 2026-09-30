@@ -7,6 +7,7 @@
 
   .. autosummary::
 
+    Asset
     AssetBase
     AssetBaseCfg
     VisualMaterial
@@ -32,21 +33,15 @@
     Articulation
     ArticulationData
     ArticulationCfg
-    ArticulationOrderingConvention
     ArticulationNameMap
-
-  .. rubric:: Functions
-
-  .. autosummary::
-
-    apply_articulation_ordering_preset
-    parse_articulation_ordering_convention
-    get_articulation_name_ordering
 
 .. currentmodule:: isaaclab.assets
 
-Asset Base
-----------
+Asset Classes
+-------------
+
+.. autoclass:: Asset
+    :members:
 
 .. autoclass:: AssetBase
     :members:
@@ -207,17 +202,8 @@ Articulation
 Articulation Ordering
 ---------------------
 
-.. autoclass:: ArticulationOrderingConvention
-    :members:
-
 .. autoclass:: ArticulationNameMap
     :members:
-
-.. autofunction:: apply_articulation_ordering_preset
-
-.. autofunction:: parse_articulation_ordering_convention
-
-.. autofunction:: get_articulation_name_ordering
 
 Additional Public Classes
 -------------------------

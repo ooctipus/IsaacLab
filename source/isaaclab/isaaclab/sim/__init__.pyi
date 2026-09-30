@@ -195,7 +195,6 @@ __all__ = [
     "matches_path_expr_prefix",
     "path_expr_to_glob",
     "split_path_expr",
-    "resolve_matching_prims_from_source",
     "find_matching_prim_paths",
     "find_global_fixed_joint_prim",
     "has_deformable_body_api",
@@ -228,8 +227,6 @@ __all__ = [
     "BaseFrameView",
     "UsdFrameView",
     "FrameView",
-    # Deprecated alias
-    "XformPrimView",
 ]
 
 from .converters import (
@@ -446,7 +443,6 @@ from .utils import (
     split_path_expr,
     open_stage,
     remove_labels,
-    resolve_matching_prims_from_source,
     resolve_paths,
     resolve_prim_pose,
     resolve_prim_scale,
@@ -466,5 +462,4 @@ from .views import (
     BaseFrameView,
     FrameView,
     UsdFrameView,
-    XformPrimView,  # deprecated alias
 )

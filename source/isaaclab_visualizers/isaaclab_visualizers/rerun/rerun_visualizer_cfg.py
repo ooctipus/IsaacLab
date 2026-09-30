@@ -7,12 +7,12 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import typing
 
 from isaaclab.utils.configclass import configclass
 from isaaclab.visualizers.visualizer_cfg import VisualizerCfg
 
-if TYPE_CHECKING:
+if typing.TYPE_CHECKING:
     from .rerun_visualizer import RerunVisualizer
 
 

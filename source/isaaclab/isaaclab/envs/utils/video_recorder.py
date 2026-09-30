@@ -156,14 +156,7 @@ class VideoRecorder:
         visualizers = getattr(sim, "visualizers", [])
 
         if viz_type:
-            # "newton" is a backward-compatible alias for the newton_gl visualizer type.
-            # The canonical visualizer_type on NewtonGLVisualizerCfg is "newton_gl", but
-            # source strings in tutorials and docs use the shorter "newton" form.
-            _newton_aliases = ("newton_gl",)
-            if viz_type == "newton":
-                candidates = [v for v in visualizers if getattr(v.cfg, "visualizer_type", None) in _newton_aliases]
-            else:
-                candidates = [v for v in visualizers if getattr(v.cfg, "visualizer_type", None) == viz_type]
+            candidates = [v for v in visualizers if getattr(v.cfg, "visualizer_type", None) == viz_type]
             if not candidates:
                 active = [getattr(v.cfg, "visualizer_type", "unknown") for v in visualizers]
                 raise RuntimeError(
@@ -183,18 +176,6 @@ class VideoRecorder:
                     "source='sensor:<name>' to record from a scene sensor."
                 )
 
-        # Kit Replicator requires cubric to propagate Newton Fabric transforms to RTX's
-        # scene delegate. Without cubric, frames will be black. Log a warning but allow
-        # the capture to proceed — users with cubric available will get correct frames.
-        if viz_type == "kit":
-            physics_backend = getattr(getattr(sim, "physics_manager", None), "video_capture_backend", lambda: None)()
-            if physics_backend == "newton_gl":
-                logger.warning(
-                    "[VideoRecorder] source='visualizer:kit' with Newton physics requires cubric "
-                    "to propagate Fabric transforms to RTX. Frames may be black if cubric is "
-                    "unavailable. Use source='visualizer:newton' for guaranteed capture."
-                )
-
         viz = candidates[0]
         if sub == "streaming_view":
             if not hasattr(viz, "render_tiled_rgb_array"):
@@ -206,15 +187,12 @@ class VideoRecorder:
                 cfg_name = {
                     "kit": "KitVisualizerCfg",
                     "newton_gl": "NewtonGLVisualizerCfg",
-                    "newton": "NewtonGLVisualizerCfg",
                 }.get(viz_type or "", "VisualizerCfg")
                 raise RuntimeError(
                     f"[VideoRecorder] source='visualizer:{viz_type}:streaming_view' requested but "
                     f"streaming_view is not enabled on the '{viz_type}' visualizer. "
                     f"Enable it by setting streaming_view=True on the visualizer config:\n\n"
-                    f"    {cfg_name}(streaming_view=True, ...)\n\n"
-                    f"A streaming camera is auto-created from the streaming_cam_* fields. "
-                    f"To use an existing scene camera, set streaming_sensor_prim_path instead."
+                    f"    {cfg_name}(streaming_view=True, streaming_camera='{{ENV_REGEX_NS}}/Camera', ...)"
                 )
             return viz.render_tiled_rgb_array()
 

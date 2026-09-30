@@ -57,9 +57,6 @@ class AssembleTrocarState:
     tip_reward_locked: torch.Tensor = field(default_factory=lambda: torch.empty(0))
     insertion_reward_locked: torch.Tensor = field(default_factory=lambda: torch.empty(0))
     placement_reward_locked: torch.Tensor = field(default_factory=lambda: torch.empty(0))
-    # Cached tip offsets (populated on first call to get_trocar_tip_position)
-    tip_offset_trocar_1: torch.Tensor | None = None
-    tip_offset_trocar_2: torch.Tensor | None = None
     # Debug throttle
     last_debug_print_step: int = -1
 
@@ -110,6 +107,7 @@ def update_task_stage(
     env: ManagerBasedRLEnv,
     asset_cfg1: SceneEntityCfg,
     asset_cfg2: SceneEntityCfg,
+    tip_frames_cfg: SceneEntityCfg,
     table_height: float = 0.85483,
     lift_threshold: float = 0.05,
     tip_align_threshold: float = 0.015,
@@ -151,8 +149,7 @@ def update_task_stage(
 
     # Stage 1 -> 2: Check if tips are aligned (hole found)
     # Get tip positions
-    tip_pos1 = get_trocar_tip_position(env, asset_cfg1)
-    tip_pos2 = get_trocar_tip_position(env, asset_cfg2)
+    tip_pos1, tip_pos2 = get_trocar_tip_positions(env, tip_frames_cfg).unbind(dim=1)
     tip_dist = torch.norm(tip_pos1 - tip_pos2, dim=-1)
 
     # Tip alignment success
@@ -279,94 +276,9 @@ def lift_trocars_reward(
     return reward
 
 
-def get_trocar_tip_position(
-    env: ManagerBasedRLEnv,
-    asset_cfg: SceneEntityCfg = SceneEntityCfg("trocar_1"),
-) -> torch.Tensor:
-    """Get trocar tip position (White_pos or Red_pos) in world coordinates.
-
-    Calculates tip world position using trocar root's dynamic position and rotation,
-    plus the tip's relative offset.
-
-    Args:
-        env: Environment instance
-        asset_cfg: Trocar asset configuration (trocar_1 or trocar_2)
-
-    Returns:
-        torch.Tensor: Shape (num_envs, 3) - Position in world coordinates
-    """
-    from pxr import Gf, Usd, UsdGeom
-
-    import isaaclab.utils.math as math_utils
-
-    # Cache the tip offset to avoid recalculating every step.
-    # The local offset from root to tip is a static geometric property of the USD
-    # asset and is identical across all replicated envs. We read it once from env_0's
-    # USD prim, then apply it per-env at runtime using each env's dynamic root pose.
-    s = get_assemble_trocar_state(env)
-    cache_attr = f"tip_offset_{asset_cfg.name}"
-    tip_offset_local = getattr(s, cache_attr, None)
-
-    if tip_offset_local is None:
-        usd_stage = env.scene.stage
-
-        if asset_cfg.name == "trocar_1":
-            tip_path = "/World/envs/env_0/trocar_1/Trocar002/White_pos"
-            root_path = "/World/envs/env_0/trocar_1"
-        elif asset_cfg.name == "trocar_2":
-            tip_path = "/World/envs/env_0/trocar_2/DisposableLaparoscopicPunctureDevice001/Red_pos"
-            root_path = "/World/envs/env_0/trocar_2"
-        else:
-            raise ValueError(f"Invalid asset configuration: {asset_cfg.name}")
-
-        tip_prim = usd_stage.GetPrimAtPath(tip_path)
-        root_prim = usd_stage.GetPrimAtPath(root_path)
-
-        if not tip_prim.IsValid():
-            logger.warning("Tip prim not found at %s, using zero offset", tip_path)
-            tip_offset_local = torch.zeros(3, dtype=torch.float32, device=env.device)
-        else:
-            tip_xform = UsdGeom.Xformable(tip_prim)
-            root_xform = UsdGeom.Xformable(root_prim)
-
-            tip_world_transform = tip_xform.ComputeLocalToWorldTransform(Usd.TimeCode.Default())
-            root_world_transform = root_xform.ComputeLocalToWorldTransform(Usd.TimeCode.Default())
-
-            tip_world_pos = tip_world_transform.ExtractTranslation()
-            root_world_pos = root_world_transform.ExtractTranslation()
-
-            root_rotation_mat = root_world_transform.ExtractRotationMatrix()
-            root_rotation_quat = root_rotation_mat.ExtractRotation().GetQuat()
-
-            tip_offset_world = Gf.Vec3d(
-                tip_world_pos[0] - root_world_pos[0],
-                tip_world_pos[1] - root_world_pos[1],
-                tip_world_pos[2] - root_world_pos[2],
-            )
-
-            root_quat_inv = root_rotation_quat.GetInverse()
-            tip_offset_local_gf = root_quat_inv.Transform(tip_offset_world)
-
-            tip_offset_local = torch.tensor(
-                [tip_offset_local_gf[0], tip_offset_local_gf[1], tip_offset_local_gf[2]],
-                dtype=torch.float32,
-                device=env.device,
-            )
-
-            logger.debug("Cached tip offset for %s: %s", asset_cfg.name, tip_offset_local)
-
-        setattr(s, cache_attr, tip_offset_local)
-
-    obj: RigidObject = env.scene[asset_cfg.name]
-    root_pos_w = obj.data.root_pos_w.torch  # Shape: (num_envs, 3)
-    root_quat_w = obj.data.root_quat_w.torch  # Shape: (num_envs, 4) XYZW
-
-    tip_offset_local_batch = tip_offset_local.unsqueeze(0).repeat(env.num_envs, 1)
-
-    tip_offset_world = math_utils.quat_apply(root_quat_w, tip_offset_local_batch)
-    tip_pos_world = root_pos_w + tip_offset_world
-
-    return tip_pos_world  # Shape: (num_envs, 3)
+def get_trocar_tip_positions(env: ManagerBasedRLEnv, tip_frames_cfg: SceneEntityCfg) -> torch.Tensor:
+    """Return both plan-declared trocar tip positions [m], shape ``[num_envs, 2, 3]``."""
+    return env.scene[tip_frames_cfg.name].data.target_pos_w.torch
 
 
 def trocar_tip_alignment_reward(
@@ -374,6 +286,7 @@ def trocar_tip_alignment_reward(
     tip_dist_std: float = 0.02,  # Std for tip distance reward
     asset_cfg1: SceneEntityCfg = SceneEntityCfg("trocar_1"),
     asset_cfg2: SceneEntityCfg = SceneEntityCfg("trocar_2"),
+    tip_frames_cfg: SceneEntityCfg = SceneEntityCfg("trocar_tips"),
     use_sparse_reward: bool = True,
     print_log: bool = False,
 ) -> torch.Tensor:
@@ -398,8 +311,7 @@ def trocar_tip_alignment_reward(
     s = get_assemble_trocar_state(env)
     stage = s.task_stage
 
-    tip_pos1 = get_trocar_tip_position(env, asset_cfg1)
-    tip_pos2 = get_trocar_tip_position(env, asset_cfg2)
+    tip_pos1, tip_pos2 = get_trocar_tip_positions(env, tip_frames_cfg).unbind(dim=1)
     tip_dist = torch.norm(tip_pos1 - tip_pos2, dim=-1)
 
     if use_sparse_reward:

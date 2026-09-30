@@ -47,7 +47,7 @@ from physics.physics_test_utils import (
 )
 
 import isaaclab.sim as sim_utils
-from isaaclab.assets import Articulation, RigidObject, RigidObjectCfg
+from isaaclab.assets import Articulation, AssetBaseCfg, RigidObject, RigidObjectCfg
 from isaaclab.cloner.cloner_cfg import DEFAULT_ENV_TEMPLATE
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
 from isaaclab.sensors import ContactSensor, ContactSensorCfg
@@ -66,7 +66,8 @@ from isaaclab_assets.robots.allegro import ALLEGRO_HAND_CFG
 class ContactSensorTestSceneCfg(InteractiveSceneCfg):
     """Configuration for contact sensor test scenes."""
 
-    terrain: TerrainImporterCfg | None = TerrainImporterCfg(prim_path="/World/defaultGroundPlane", terrain_type="plane")
+    ground = AssetBaseCfg(prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg())
+    terrain: TerrainImporterCfg | None = None
     object_a: RigidObjectCfg | None = None
     object_b: RigidObjectCfg | None = None
     object_c: RigidObjectCfg | None = None
@@ -110,7 +111,7 @@ def test_contact_lifecycle(device: str, use_mujoco_contacts: bool, shape_type: S
 
     sim_cfg = make_sim_cfg(use_mujoco_contacts=use_mujoco_contacts, device=device, gravity=(0.0, 0.0, -gravity_mag))
 
-    with build_simulation_context(sim_cfg=sim_cfg, auto_add_lighting=True) as sim:
+    with build_simulation_context(sim_cfg=sim_cfg) as sim:
         scene_cfg = ContactSensorTestSceneCfg(num_envs=num_envs, env_spacing=5.0, lazy_sensor_update=False)
         scene_cfg.object_a = create_shape_cfg(
             shape_type,
@@ -231,7 +232,7 @@ def test_horizontal_collision_detects_contact(device: str, use_mujoco_contacts: 
 
     sim_cfg = make_sim_cfg(use_mujoco_contacts=use_mujoco_contacts, device=device, gravity=(0.0, 0.0, 0.0))
 
-    with build_simulation_context(sim_cfg=sim_cfg, auto_add_lighting=True) as sim:
+    with build_simulation_context(sim_cfg=sim_cfg) as sim:
         sim._app_control_on_stop_handle = None
 
         max_separation = max(cfg[1] for cfg in group_configs)
@@ -339,7 +340,7 @@ def test_resting_object_contact_force(device: str, use_mujoco_contacts: bool):
         use_mujoco_contacts=use_mujoco_contacts, device=device, gravity=(0.0, 0.0, -gravity_magnitude)
     )
 
-    with build_simulation_context(sim_cfg=sim_cfg, auto_add_lighting=True) as sim:
+    with build_simulation_context(sim_cfg=sim_cfg) as sim:
         sim._app_control_on_stop_handle = None
 
         scene_cfg = ContactSensorTestSceneCfg(num_envs=num_envs, env_spacing=5.0, lazy_sensor_update=False)
@@ -438,7 +439,7 @@ def test_higher_drop_produces_larger_impact_force(device: str, use_mujoco_contac
 
     sim_cfg = make_sim_cfg(use_mujoco_contacts=use_mujoco_contacts, device=device, gravity=(0.0, 0.0, -gravity_mag))
 
-    with build_simulation_context(sim_cfg=sim_cfg, auto_add_lighting=True) as sim:
+    with build_simulation_context(sim_cfg=sim_cfg) as sim:
         sim._app_control_on_stop_handle = None
 
         scene_cfg = ContactSensorTestSceneCfg(num_envs=num_envs, env_spacing=5.0, lazy_sensor_update=False)
@@ -538,7 +539,7 @@ def test_filter_enables_force_matrix(device: str, use_mujoco_contacts: bool):
 
     sim_cfg = make_sim_cfg(use_mujoco_contacts=use_mujoco_contacts, device=device, gravity=(0.0, 0.0, -gravity))
 
-    with build_simulation_context(sim_cfg=sim_cfg, auto_add_lighting=True) as sim:
+    with build_simulation_context(sim_cfg=sim_cfg) as sim:
         sim._app_control_on_stop_handle = None
 
         scene_cfg = ContactSensorTestSceneCfg(num_envs=num_envs, env_spacing=5.0, lazy_sensor_update=False)
@@ -677,7 +678,7 @@ def test_track_contact_points_reports_average_position(device: str, use_mujoco_c
 
     sim_cfg = make_sim_cfg(use_mujoco_contacts=use_mujoco_contacts, device=device, gravity=(0.0, 0.0, -gravity))
 
-    with build_simulation_context(sim_cfg=sim_cfg, auto_add_lighting=True) as sim:
+    with build_simulation_context(sim_cfg=sim_cfg) as sim:
         sim._app_control_on_stop_handle = None
 
         scene_cfg = ContactSensorTestSceneCfg(num_envs=num_envs, env_spacing=5.0, lazy_sensor_update=False)
@@ -838,7 +839,7 @@ def test_finger_contact_sensor_isolation(device: str, use_mujoco_contacts: bool,
 
     sim_cfg = make_sim_cfg(use_mujoco_contacts=use_mujoco_contacts, device=device, gravity=(0.0, 0.0, 0.0))
 
-    with build_simulation_context(sim_cfg=sim_cfg, add_lighting=True) as sim:
+    with build_simulation_context(sim_cfg=sim_cfg) as sim:
         sim._app_control_on_stop_handle = None
 
         scene_cfg = ContactSensorTestSceneCfg(num_envs=num_envs, env_spacing=1.0, lazy_sensor_update=False)
@@ -1008,7 +1009,7 @@ def test_sensor_metadata(device: str):
     num_envs = 4
     sim_cfg = make_sim_cfg(use_mujoco_contacts=False, device=device, gravity=(0.0, 0.0, -9.81))
 
-    with build_simulation_context(sim_cfg=sim_cfg, auto_add_lighting=True) as sim:
+    with build_simulation_context(sim_cfg=sim_cfg) as sim:
         sim._app_control_on_stop_handle = None
         scene_cfg = _make_two_box_scene_cfg(num_envs)
         # Body-mode, no filter: pattern matches two distinct body names per env.
@@ -1063,7 +1064,7 @@ def test_no_stale_data_after_scene_reset(device: str):
     contact buffer here (it still reflects the previous step).
     """
     sim_cfg = make_sim_cfg(use_mujoco_contacts=False, device=device, gravity=(0.0, 0.0, -9.81))
-    with build_simulation_context(sim_cfg=sim_cfg, auto_add_lighting=True) as sim:
+    with build_simulation_context(sim_cfg=sim_cfg) as sim:
         sim._app_control_on_stop_handle = None
 
         scene_cfg = ContactSensorTestSceneCfg(num_envs=1, env_spacing=2.0, lazy_sensor_update=False)

@@ -18,7 +18,7 @@
     python scripts/demos/sensors/multi_mesh_raycaster.py --num_envs 16 --asset_type objects
 
     # with Newton (MJWarp) physics
-    python scripts/demos/sensors/multi_mesh_raycaster.py --physics newton_mjwarp
+    python scripts/demos/sensors/multi_mesh_raycaster.py physics=newton_mjwarp
 
 """
 
@@ -28,6 +28,9 @@ import argparse
 from typing import TYPE_CHECKING
 
 from isaaclab.app import add_launcher_args, launch_simulation
+
+from isaaclab_tasks.utils import preset, resolve_config, setup_preset_cli
+from isaaclab_tasks.utils.presets import MultiBackendSceneCfg, MultiBackendSimulationCfg
 
 # add argparse arguments
 parser = argparse.ArgumentParser(
@@ -47,28 +50,16 @@ parser.add_argument(
     help="Asset type to use.",
     choices=["allegro_hand", "anymal_d", "objects"],
 )
-parser.add_argument(
-    "--physics", default="isaacsim_physx", choices=["isaacsim_physx", "newton_mjwarp"], help="Physics backend."
-)
 add_launcher_args(parser)
-# demos should open Kit visualizer by default
-parser.set_defaults(visualizer=["kit"])
-args_cli = parser.parse_args()
-if args_cli.physics == "newton_mjwarp":
-    if not getattr(args_cli, "visualizer_explicit", False):
-        args_cli.visualizer = ["newton"]
-    elif "kit" in (args_cli.visualizer or []):
-        parser.error("the Kit visualizer is not supported with Newton physics; select newton, rerun, viser, or none")
-
-import random
+args_cli, config_overrides = setup_preset_cli(parser)
 
 import torch
+from isaaclab_newton.physics import MJWarpSolverCfg
+from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
 from isaaclab.markers.config import VisualizationMarkersCfg
-from isaaclab.physics import PhysicsCfg
-from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors.ray_caster import MultiMeshRayCasterCfg, patterns
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.configclass import configclass
@@ -82,7 +73,6 @@ from isaaclab_assets.robots.anymal import ANYMAL_D_CFG
 if TYPE_CHECKING:
     from isaaclab.scene import InteractiveScene
 
-DEBUG_VISUALIZATION_ENABLED = "none" not in (args_cli.visualizer or [])
 if args_cli.flat_ground:
     ground_spawn_cfg = sim_utils.MeshCuboidCfg(
         size=(20.0, 20.0, 0.1),
@@ -122,7 +112,7 @@ if args_cli.asset_type == "allegro_hand":
         ],
         ray_alignment="world",
         pattern_cfg=patterns.GridPatternCfg(resolution=0.005, size=(0.4, 0.4), direction=(0, 0, -1)),
-        debug_vis=DEBUG_VISUALIZATION_ENABLED,
+        debug_vis=True,
         visualizer_cfg=RAY_CASTER_MARKER_CFG.replace(prim_path="/Visuals/RayCaster"),
     )
 
@@ -142,7 +132,7 @@ elif args_cli.asset_type == "anymal_d":
         ],
         ray_alignment="world",
         pattern_cfg=patterns.GridPatternCfg(resolution=0.02, size=(2.5, 2.5), direction=(0, 0, -1)),
-        debug_vis=DEBUG_VISUALIZATION_ENABLED,
+        debug_vis=True,
         visualizer_cfg=RAY_CASTER_MARKER_CFG.replace(prim_path="/Visuals/RayCaster"),
     )
 
@@ -175,15 +165,14 @@ elif args_cli.asset_type == "objects":
             visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 1.0), metallic=0.2),
         ),
     ]
-    if args_cli.physics == "newton_mjwarp":
-        # MJWarp requires homogeneous cloned worlds, so use one shape type across all environments.
-        object_assets_cfg = object_assets_cfg[:1]
-
     asset_cfg = RigidObjectCfg(
         prim_path="{ENV_REGEX_NS}/Object",
         spawn=sim_utils.MultiAssetSpawnerCfg(
-            assets_cfg=object_assets_cfg,
-            random_choice=True,
+            assets_cfg=preset(
+                default=object_assets_cfg,
+                isaacsim_physx=object_assets_cfg,
+                newton_mjwarp=object_assets_cfg[:1],
+            ),
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 solver_position_iteration_count=4, solver_velocity_iteration_count=0
             ),
@@ -202,7 +191,7 @@ elif args_cli.asset_type == "objects":
         ],
         ray_alignment="world",
         pattern_cfg=patterns.GridPatternCfg(resolution=0.01, size=(0.6, 0.6), direction=(0, 0, -1)),
-        debug_vis=DEBUG_VISUALIZATION_ENABLED,
+        debug_vis=True,
         visualizer_cfg=RAY_CASTER_MARKER_CFG.replace(prim_path="/Visuals/RayCaster"),
     )
 else:
@@ -210,7 +199,7 @@ else:
 
 
 @configclass
-class RaycasterSensorSceneCfg(InteractiveSceneCfg):
+class RaycasterSensorSceneCfg(MultiBackendSceneCfg):
     """Design the scene with sensors on the asset."""
 
     # ground plane
@@ -231,32 +220,22 @@ class RaycasterSensorSceneCfg(InteractiveSceneCfg):
     ray_caster = ray_caster_cfg
 
 
-def randomize_shape_color(prim_path_expr: str):
-    """Randomize the color of the geometry."""
-    # Import pxr only after launch_simulation has started Kit for PhysX runs.
-    from pxr import Gf, Sdf
+@configclass
+class DemoCfg:
+    """Multi-mesh ray-caster demo configuration."""
 
-    stage = sim_utils.get_current_stage()
-    # resolve prim paths for spawning and cloning
-    prim_paths = sim_utils.find_matching_prim_paths(prim_path_expr)
-    # manually clone prims if the source prim path is a regex expression
-
-    with Sdf.ChangeBlock():
-        for prim_path in prim_paths:
-            print("Applying prim scale to:", prim_path)
-            # spawn single instance
-            prim_spec = Sdf.CreatePrimInLayer(stage.GetRootLayer(), prim_path)
-
-            # DO YOUR OWN OTHER KIND OF RANDOMIZATION HERE!
-            # Note: Just need to acquire the right attribute about the property you want to set
-            # Here is an example on setting color randomly
-            color_spec = prim_spec.GetAttributeAtPath(prim_path + "/geometry/material/Shader.inputs:diffuseColor")
-            if color_spec is not None:
-                color_spec.default = Gf.Vec3f(random.random(), random.random(), random.random())
-
-            # randomize scale
-            scale_spec = prim_spec.GetAttributeAtPath(prim_path + ".xformOp:scale")
-            scale_spec.default = Gf.Vec3f(random.uniform(0.5, 1.5), random.uniform(0.5, 1.5), random.uniform(0.5, 1.5))
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(
+        dt=0.005,
+        device=args_cli.device,
+        physics=preset(
+            default=PhysxCfg(),
+            isaacsim_physx=PhysxCfg(),
+            newton_mjwarp=MJWarpSolverCfg(),
+        ),
+    )
+    scene: RaycasterSensorSceneCfg = RaycasterSensorSceneCfg(
+        num_envs=args_cli.num_envs, env_spacing=2.0, replicate_physics=True
+    )
 
 
 def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
@@ -313,34 +292,15 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
 
 def main():
     """Main function."""
-    with launch_simulation(cfg=PhysicsCfg(), launcher_args=args_cli) as physics_cfg:
-        from isaaclab.scene import InteractiveScene
-
-        # Initialize the simulation context
-        sim_cfg = sim_utils.SimulationCfg(
-            dt=0.005,
-            device=args_cli.device,
-            physics=physics_cfg,
-            visualizer_cfgs=None,
-        )
-        sim = sim_utils.SimulationContext(sim_cfg)
-        # Set main camera
+    cfg = resolve_config(DemoCfg(), config_overrides)
+    with launch_simulation(cfg.sim, args_cli):
+        sim = sim_utils.SimulationContext(cfg.sim)
         sim.set_camera_view(eye=[3.5, 3.5, 3.5], target=[0.0, 0.0, 0.0])
-        # design scene
-        scene_cfg = RaycasterSensorSceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0, replicate_physics=True)
-        scene = InteractiveScene(scene_cfg)
-
-        if args_cli.asset_type == "objects":
-            randomize_shape_color(scene_cfg.asset.prim_path.format(ENV_REGEX_NS="/World/envs/env_.*"))
-
-        # Play the simulator
+        scene = cfg.scene.class_type(cfg.scene)
         sim.reset()
-        # Now we are ready!
         print("[INFO]: Setup complete...")
-        # Run the simulator
         run_simulator(sim, scene)
 
 
 if __name__ == "__main__":
-    # run the main function
     main()

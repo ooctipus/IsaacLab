@@ -22,9 +22,11 @@ interacting with VBD cloth or an MPM material.
 Isaac Lab exposes this framework through
 :mod:`isaaclab_contrib.coupling`. The adapter turns configuration selectors
 into named Newton solver entries, constructs the selected coupling algorithm,
-and integrates it with :class:`~isaaclab_newton.physics.NewtonCfg`. For the
-shared-model architecture, iteration algorithms, supported constraint rows,
-and solver-specific implementation details, see Newton's
+and exposes it as a concrete
+:class:`~isaaclab_newton.physics.NewtonSolverCfg`. Pass that configuration
+directly to :attr:`~isaaclab.sim.SimulationCfg.physics`. For the shared-model
+architecture, iteration algorithms, supported constraint rows, and
+solver-specific implementation details, see Newton's
 `Coupled Solvers concept page
 <https://newton-physics.github.io/newton/stable/concepts/coupling.html>`_.
 
@@ -108,12 +110,12 @@ Configure a coupled solver
 In Isaac Lab, :class:`~isaaclab_contrib.coupling.CouplerEntryCfg` defines each
 entry's solver and ownership. Use
 :class:`~isaaclab_contrib.coupling.CouplerProxyCfg` or
-:class:`~isaaclab_contrib.coupling.CouplerAdmmCfg` as the
-:class:`~isaaclab_newton.physics.NewtonCfg` solver configuration.
+:class:`~isaaclab_contrib.coupling.CouplerAdmmCfg` directly as
+:attr:`~isaaclab.sim.SimulationCfg.physics`.
 
-The following configuration mirrors the maintained Franka rigid--deformable tasks. It
-assigns the complete robot to MJWarp, particles and static collision geometry
-to VBD, and exposes only the hand and fingers as VBD proxy colliders:
+The following configuration mirrors the maintained Franka rigid--deformable
+tasks. It assigns the complete robot to MJWarp, particles and static collision
+geometry to VBD, and exposes only the hand and fingers as VBD proxy colliders:
 
 .. code-block:: python
 
@@ -122,7 +124,8 @@ to VBD, and exposes only the hand and fingers as VBD proxy colliders:
        CouplerProxyCfg,
        CouplerProxyMappingCfg,
    )
-   from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg, VBDSolverCfg
+   from isaaclab.sim import SimulationCfg
+   from isaaclab_newton.physics import MJWarpSolverCfg, VBDSolverCfg
 
    entries = [
        CouplerEntryCfg(
@@ -138,8 +141,8 @@ to VBD, and exposes only the hand and fingers as VBD proxy colliders:
        ),
    ]
 
-   physics = NewtonCfg(
-       solver_cfg=CouplerProxyCfg(
+   sim = SimulationCfg(
+       physics=CouplerProxyCfg(
            entries=entries,
            proxies=[
                CouplerProxyMappingCfg(
@@ -153,8 +156,8 @@ to VBD, and exposes only the hand and fingers as VBD proxy colliders:
                )
            ],
            iterations=1,
+           num_substeps=2,
        ),
-       num_substeps=2,
    )
 
 For ADMM, keep the ownership entries and replace the proxy mapping with the
@@ -164,14 +167,14 @@ symmetric interfaces that should be coupled:
 
    from isaaclab_contrib.coupling import CouplerAdmmCfg
 
-   physics = NewtonCfg(
-       solver_cfg=CouplerAdmmCfg(
+   sim = SimulationCfg(
+       physics=CouplerAdmmCfg(
            entries=entries,
            contact_pairs=[("rigid", "soft")],
            iterations=5,
            rho=1.0,
+           num_substeps=2,
        ),
-       num_substeps=2,
    )
 
 Set ``contact_pairs=None`` to generate every distinct entry pair, or use an

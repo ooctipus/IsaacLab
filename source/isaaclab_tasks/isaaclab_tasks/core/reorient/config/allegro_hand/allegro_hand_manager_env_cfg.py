@@ -17,7 +17,11 @@ from isaaclab_tasks.core.reorient.config.allegro_hand.allegro_hand_common import
     GOAL_OBJECT_CFG,
     PhysicsCfg,
 )
-from isaaclab_tasks.core.reorient.reorient_manager_env_cfg import ReorientManagerEnvBaseCfg, ReorientSceneBaseCfg
+from isaaclab_tasks.core.reorient.reorient_manager_env_cfg import (
+    CommandsCfg,
+    ReorientManagerEnvBaseCfg,
+    ReorientSceneBaseCfg,
+)
 from isaaclab_tasks.utils import PresetCfg
 
 from isaaclab_assets.robots.allegro import ALLEGRO_ACTUATED_JOINT_NAMES, ALLEGRO_FINGERTIP_BODY_NAMES
@@ -130,9 +134,10 @@ class AllegroHandManagerEnvCfg(ReorientManagerEnvBaseCfg):
     fingertip_body_names = ALLEGRO_FINGERTIP_BODY_NAMES
     actuated_joint_names = ALLEGRO_ACTUATED_JOINT_NAMES
     goal_orientation_threshold = 0.2
-    goal_marker_cfg = GOAL_OBJECT_CFG
     decimation = 4
 
+    commands: CommandsCfg = CommandsCfg()
+    commands.object_pose.goal_pose_visualizer_cfg = GOAL_OBJECT_CFG
     scene: AllegroHandManagerSceneCfg = AllegroHandManagerSceneCfg()
     # ``presets=randomized`` adds the domain-randomization terms
     events: AllegroHandEventPresetCfg = AllegroHandEventPresetCfg()

@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING
 
 import torch
 
-from isaaclab import cloner
 from isaaclab.envs import DirectRLEnv
 from isaaclab.utils.math import sample_uniform, wrap_to_pi
 
@@ -26,35 +25,23 @@ class CartpoleEnv(DirectRLEnv):
     def __init__(self, cfg: CartpoleEnvCfg, render_mode: str | None = None, **kwargs):
         super().__init__(cfg, render_mode, **kwargs)
 
-        self._cart_dof_idx, _ = self.cartpole.find_joints(self.cfg.cart_dof_name)
-        self._pole_dof_idx, _ = self.cartpole.find_joints(self.cfg.pole_dof_name)
+        self._cart_dof_idx, _ = self.scene["robot"].find_joints(self.cfg.cart_dof_name)
+        self._pole_dof_idx, _ = self.scene["robot"].find_joints(self.cfg.pole_dof_name)
         self.action_scale = self.cfg.action_scale
-
-        self.joint_pos = self.cartpole.data.joint_pos.torch
-        self.joint_vel = self.cartpole.data.joint_vel.torch
-
-    def _setup_scene(self):
-        asset_cfgs = self.cfg.robot_cfg, self.cfg.ground_cfg, self.cfg.light_cfg
-        plan = cloner.clone_plan_from_env_0(
-            self.cfg.scene.clone_cfg, asset_cfgs, self.cfg.scene.num_envs, self.cfg.scene.env_spacing
-        )
-        self.cartpole = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
-        for cfg in (self.cfg.ground_cfg, self.cfg.light_cfg):
-            cfg.spawn.func(cfg.spawn.spawn_path, cfg.spawn, cfg.init_state.pos, cfg.init_state.rot)
-        cloner.replicate(plan, replicate_physics=self.cfg.scene.replicate_physics)
-        if "physx" in self.scene.physics_backend:
-            self.scene.filter_collisions()
-        self.scene.articulations["cartpole"] = self.cartpole
 
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
         self.actions = self.action_scale * actions.clone()
 
     def _apply_action(self) -> None:
-        self.cartpole.set_joint_effort_target_index(target=self.actions, joint_ids=self._cart_dof_idx)
+        self.scene["robot"].set_joint_effort_target_index(target=self.actions, joint_ids=self._cart_dof_idx)
+
+    def _refresh_task_state(self) -> None:
+        self.joint_pos = self.scene["robot"].data.joint_pos.torch
+        self.joint_vel = self.scene["robot"].data.joint_vel.torch
 
     def _get_observations(self) -> dict:
-        joint_pos_rel = self.joint_pos - self.cartpole.data.default_joint_pos.torch
-        joint_vel_rel = self.joint_vel - self.cartpole.data.default_joint_vel.torch
+        joint_pos_rel = self.joint_pos - self.scene["robot"].data.default_joint_pos.torch
+        joint_vel_rel = self.joint_vel - self.scene["robot"].data.default_joint_vel.torch
         obs = torch.cat(
             (
                 joint_pos_rel[:, self._cart_dof_idx[0]].unsqueeze(dim=1),
@@ -83,16 +70,13 @@ class CartpoleEnv(DirectRLEnv):
         return total_reward
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
-        self.joint_pos = self.cartpole.data.joint_pos.torch
-        self.joint_vel = self.cartpole.data.joint_vel.torch
-
         time_out = self.episode_length_buf >= self.max_episode_length
         out_of_bounds = torch.any(torch.abs(self.joint_pos[:, self._cart_dof_idx]) > self.cfg.max_cart_pos, dim=1)
         return out_of_bounds, time_out
 
     def _reset_idx(self, env_ids: Sequence[int] | None):
         if env_ids is None:
-            env_ids = self.cartpole._ALL_INDICES
+            env_ids = self.scene["robot"]._ALL_INDICES
 
         # Log survival success rate before resetting
         survived = self.reset_time_outs[env_ids].float()
@@ -100,14 +84,14 @@ class CartpoleEnv(DirectRLEnv):
 
         super()._reset_idx(env_ids)
 
-        joint_pos = self.cartpole.data.default_joint_pos.torch[env_ids].clone()
+        joint_pos = self.scene["robot"].data.default_joint_pos.torch[env_ids].clone()
         joint_pos[:, self._cart_dof_idx] += sample_uniform(
             self.cfg.initial_cart_position_range[0],
             self.cfg.initial_cart_position_range[1],
             joint_pos[:, self._cart_dof_idx].shape,
             joint_pos.device,
         )
-        joint_vel = self.cartpole.data.default_joint_vel.torch[env_ids].clone()
+        joint_vel = self.scene["robot"].data.default_joint_vel.torch[env_ids].clone()
         joint_vel[:, self._cart_dof_idx] += sample_uniform(
             self.cfg.initial_cart_velocity_range[0],
             self.cfg.initial_cart_velocity_range[1],
@@ -128,22 +112,19 @@ class CartpoleEnv(DirectRLEnv):
         )
 
         # clamp the sampled state to the joint limits (matches the manager-based reset_joints_by_offset)
-        joint_pos_limits = self.cartpole.data.soft_joint_pos_limits.torch[env_ids]
+        joint_pos_limits = self.scene["robot"].data.soft_joint_pos_limits.torch[env_ids]
         joint_pos = joint_pos.clamp_(joint_pos_limits[..., 0], joint_pos_limits[..., 1])
-        joint_vel_limits = self.cartpole.data.soft_joint_vel_limits.torch[env_ids]
+        joint_vel_limits = self.scene["robot"].data.soft_joint_vel_limits.torch[env_ids]
         joint_vel = joint_vel.clamp_(-joint_vel_limits, joint_vel_limits)
 
-        default_root_pose = self.cartpole.data.default_root_pose.torch[env_ids].clone()
+        default_root_pose = self.scene["robot"].data.default_root_pose.torch[env_ids].clone()
         default_root_pose[:, :3] += self.scene.env_origins[env_ids]
-        default_root_vel = self.cartpole.data.default_root_vel.torch[env_ids].clone()
+        default_root_vel = self.scene["robot"].data.default_root_vel.torch[env_ids].clone()
 
-        self.joint_pos[env_ids] = joint_pos
-        self.joint_vel[env_ids] = joint_vel
-
-        self.cartpole.write_root_pose_to_sim_index(root_pose=default_root_pose, env_ids=env_ids)
-        self.cartpole.write_root_velocity_to_sim_index(root_velocity=default_root_vel, env_ids=env_ids)
-        self.cartpole.write_joint_position_to_sim_index(position=joint_pos, env_ids=env_ids)
-        self.cartpole.write_joint_velocity_to_sim_index(velocity=joint_vel, env_ids=env_ids)
+        self.scene["robot"].write_root_pose_to_sim_index(root_pose=default_root_pose, env_ids=env_ids)
+        self.scene["robot"].write_root_velocity_to_sim_index(root_velocity=default_root_vel, env_ids=env_ids)
+        self.scene["robot"].write_joint_position_to_sim_index(position=joint_pos, env_ids=env_ids)
+        self.scene["robot"].write_joint_velocity_to_sim_index(velocity=joint_vel, env_ids=env_ids)
 
 
 @torch.jit.script

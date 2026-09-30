@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import logging
-import re
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
@@ -14,12 +13,9 @@ import warp as wp
 from newton import JointType
 from newton.selection import ArticulationView
 
-from pxr import UsdPhysics
-
 from isaaclab.sensors.joint_wrench import BaseJointWrenchSensor
-from isaaclab.sim.utils.queries import resolve_matching_prims_from_source
-
-from isaaclab_newton.physics import NewtonManager
+from isaaclab.sim.simulation_context import SimulationContext
+from isaaclab.sim.utils.queries import path_expr_to_glob
 
 from .joint_wrench_sensor_data import JointWrenchSensorData
 from .kernels import joint_wrench_reset_kernel, joint_wrench_to_incoming_joint_frame_kernel
@@ -71,7 +67,7 @@ class JointWrenchSensor(BaseJointWrenchSensor):
         self._joint_child: wp.array | None = None
         self._num_joints: int = 0
 
-        NewtonManager.request_extended_state_attribute("body_parent_f")
+        self._physics_manager._newton.request_extended_state_attribute("body_parent_f")
 
     def __str__(self) -> str:
         """String representation of the sensor instance."""
@@ -126,18 +122,19 @@ class JointWrenchSensor(BaseJointWrenchSensor):
         """PHYSICS_READY callback: builds the articulation view and binds model / state arrays."""
         super()._initialize_impl()
 
-        model, state_0 = NewtonManager.get_model(), NewtonManager.get_state_0()
+        model = self._physics_manager.get_model()
+        state_0 = self._physics_manager.get_state_0()
 
-        def has_articulation_root_api(prim) -> bool:
-            return bool(prim.HasAPI(UsdPhysics.ArticulationRootAPI))
-
-        resolve_kwargs = {"predicate": has_articulation_root_api, "expected_num_matches": 1}
-        _, root_prim_path_expr = resolve_matching_prims_from_source(self.cfg.prim_path, **resolve_kwargs)[0]
-        self._root_view = NewtonManager.views.get((NewtonManager, root_prim_path_expr))
+        plan = SimulationContext.instance().get_clone_plan()
+        if plan is None or not plan.is_complete:
+            raise RuntimeError(f"Joint wrench sensor at {self.cfg.prim_path!r} requires a completed clone plan.")
+        root_prim_path_expr = plan.match_articulation(self.cfg.prim_path).view_path
+        views = self._physics_manager._newton._articulation_views
+        self._root_view = views.get(root_prim_path_expr)
         if self._root_view is None:
-            self._root_view = NewtonManager.views[NewtonManager, root_prim_path_expr] = ArticulationView(
+            self._root_view = views[root_prim_path_expr] = ArticulationView(
                 model,
-                re.compile(root_prim_path_expr),
+                path_expr_to_glob(root_prim_path_expr),
                 verbose=False,
                 exclude_joint_types=[JointType.FREE, JointType.FIXED],
             )
@@ -223,4 +220,4 @@ class JointWrenchSensor(BaseJointWrenchSensor):
         self._data._body_names = []
         self._data._force_ta = None
         self._data._torque_ta = None
-        NewtonManager.request_extended_state_attribute("body_parent_f")
+        self._physics_manager._newton.request_extended_state_attribute("body_parent_f")

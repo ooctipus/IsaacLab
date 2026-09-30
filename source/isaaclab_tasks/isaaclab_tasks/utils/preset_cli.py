@@ -5,25 +5,26 @@
 
 """Typed-preset selection via Hydra-style CLI tokens.
 
-Recognizes three ``key=value`` tokens (no leading dashes) on ``sys.argv``:
+Recognizes four ``key=value`` tokens (no leading dashes) on ``sys.argv``:
 
 * ``physics=NAME``            -- typed selector for ``PhysicsCfg`` variants.
 * ``renderer=NAME``           -- typed selector for ``RendererCfg`` variants.
+* ``visualizer=NAME``         -- typed selector for ``VisualizerCfg`` variants.
 * ``presets=NAME[,NAME,...]`` -- broadcast applied to every matching ``PresetCfg``.
 
 :func:`setup_preset_cli` registers preset-selection help and, for RL callers,
 agent discovery. It then runs ``parse_known_args``, returning the verbatim
 remainder. The preset tokens above are passed through unchanged; hydra's
 :func:`~isaaclab_tasks.utils.hydra.register_task` parses them directly (applying
-the names as presets and enforcing that ``physics=``/``renderer=`` resolve
-against a config of that type). Callers simply assign the remainder to
-``sys.argv``; no rewriting step is needed.
+the names as presets and enforcing that each typed selector resolves against a
+config of that type). Callers simply assign the remainder to ``sys.argv``; no
+rewriting step is needed.
 
 No argparse arguments are registered for the typed selectors -- their
 discoverability lives in the ``argument_group`` description, so the parsed
 Namespace gains no preset attributes and cannot shadow
-:class:`~isaaclab.app.AppLauncher` SimulationApp config keys (``renderer``
-notably).
+:class:`~isaaclab.app.AppLauncher` SimulationApp config keys (notably
+``renderer`` and ``visualizer``).
 
 Typical script setup::
 
@@ -72,8 +73,9 @@ def setup_preset_cli(
     ``parse_known_args``'s remainder.
 
     The returned remainder contains the user-typed ``physics=`` / ``renderer=``
-    / ``presets=`` tokens verbatim, alongside any Hydra path overrides and any
-    unknown argparse flags, ready to assign to ``sys.argv`` for hydra to parse.
+    / ``visualizer=`` / ``presets=`` tokens verbatim, alongside any Hydra path
+    overrides and any unknown argparse flags, ready to assign to ``sys.argv``
+    for hydra to parse.
 
     Does not mutate ``sys.argv``; the caller assigns
     ``sys.argv = [sys.argv[0]] + remaining`` when ready, so any argv-aware logic
@@ -265,9 +267,9 @@ class _DescriptionBuilder:
 
     @staticmethod
     def _description(target: PresetTarget) -> str:
-        """One-line description of a selector's semantic target."""
+        """One-line description; for typed targets includes the cfg base class name."""
         if target.base_classes:
-            return f"(typed) selects a {target.value} backend"
+            return f"(typed) selects a {target.base_classes[0].__name__} variant"
         return "broadcast: applied to every matching PresetCfg"
 
 
@@ -437,15 +439,15 @@ def _enumerate_agents(task_name: str, agent_library: str) -> tuple[list[str], di
 def _bucket_variants_by_target(walked: dict) -> dict[PresetTarget, set[str]]:
     """Convert :func:`collect_presets` output into ``{target: set[name]}``.
 
-    Routes each ``(name, cfg)`` through :meth:`PresetTarget.matches`; cfgs
-    matching no typed target fall into ``DOMAIN``. The implicit ``default``
-    field is filtered -- it's the fallback, not a selectable name.
+    Routes each ``(name, cfg)`` by ``isinstance(cfg, target.base_classes)``;
+    cfgs matching no typed target fall into ``DOMAIN``. The implicit
+    ``default`` field is filtered -- it's the fallback, not a selectable name.
 
-    Direct routing by class hierarchy means new backends subclassing
+    Routing by class hierarchy means new backends subclassing
     :class:`~isaaclab.physics.PhysicsCfg` /
-    :class:`~isaaclab.renderers.renderer_cfg.RendererCfg` bucket automatically
-    regardless of what name the env_cfg gives the field. Targets may also
-    recognize documented container shapes through :meth:`PresetTarget.matches`.
+    :class:`~isaaclab.renderers.renderer_cfg.RendererCfg` /
+    :class:`~isaaclab.visualizers.visualizer_cfg.VisualizerCfg` bucket
+    automatically regardless of what name the env_cfg gives the field.
     """
     typed_targets = [t for t in PresetTarget if t.base_classes]
     result: dict[PresetTarget, set[str]] = {target: set() for target in PresetTarget}
@@ -453,9 +455,6 @@ def _bucket_variants_by_target(walked: dict) -> dict[PresetTarget, set[str]]:
         for name, cfg in path_dict.items():
             if name == "default":
                 continue
-            matched = next(
-                (target for target in typed_targets if target.matches(cfg)),
-                PresetTarget.DOMAIN,
-            )
+            matched = next((t for t in typed_targets if isinstance(cfg, t.base_classes)), PresetTarget.DOMAIN)
             result[matched].add(name)
     return result

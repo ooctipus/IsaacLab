@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 
     import torch
 
+    from isaaclab.cloner import ClonePlan
     from isaaclab.sensors.camera.camera_data import CameraData
     from isaaclab.utils.warp import ProxyArray
 
@@ -76,19 +77,22 @@ class BaseRenderer(ABC):
         """
         pass
 
-    @abstractmethod
-    def prepare_stage(self, stage: Any, num_envs: int) -> None:
+    def prepare_stage(self, stage: Any, plan: ClonePlan) -> None:
         """Prepare the stage for rendering before :meth:`create_render_data` is called.
 
-        Some renderers need to export or preprocess the USD stage before
-        creating render data. This method is called after the renderer is
-        instantiated and before :meth:`create_render_data`.
+        The default implementation is a no-op. A renderer that authors per-environment attributes
+        reads where the environments are from ``plan`` rather than assuming a naming convention.
 
         Args:
             stage: USD stage to prepare, or None if not applicable.
-            num_envs: Number of environments.
+            plan: Replication layout the stage was cloned from.
+
+        Raises:
+            ValueError: If stage preparation is attempted outside a clone-plan lifecycle.
         """
-        pass
+        if plan is None:
+            raise ValueError("Renderer stage preparation requires an active clone plan.")
+        return
 
     @abstractmethod
     def create_render_data(self, spec: CameraRenderSpec) -> Any:
@@ -98,7 +102,8 @@ class BaseRenderer(ABC):
             spec: Immutable description of the tiled camera (paths, config, device).
 
         Returns:
-            Renderer-specific data for subsequent :meth:`render` / :meth:`read_output` calls.
+            Renderer-specific data for subsequent :meth:`update`, :meth:`render`, and
+            :meth:`read_output` calls.
         """
         pass
 
@@ -116,38 +121,14 @@ class BaseRenderer(ABC):
         pass
 
     @abstractmethod
-    def update_transforms(self) -> None:
-        """Update scene transforms before rendering.
+    def update(self, render_data: Any, intrinsics: ProxyArray) -> None:
+        """Update scene geometry and camera state for the next render.
 
-        Called to sync physics/asset pose state into the renderer's scene representation.
-        """
-        pass
-
-    @abstractmethod
-    def update_geometries(self) -> None:
-        """Update mutable geometry attributes before rendering.
-
-        Called to sync physics-driven geometry such as mesh points, extents, or other
-        per-frame geometry buffers into the renderer's scene representation.
-        """
-        pass
-
-    @abstractmethod
-    def update_camera(
-        self,
-        render_data: Any,
-        positions: ProxyArray,
-        orientations: ProxyArray,
-        intrinsics: ProxyArray,
-    ) -> None:
-        """Update camera poses and intrinsics for the next render.
+        The renderer requests every physics-derived field from the scene-data provider. Only
+        camera-owned intrinsic metadata crosses this interface directly.
 
         Args:
             render_data: The render data object from :meth:`create_render_data`.
-            positions: Camera positions in world frame. Shape ``(N,)``, dtype ``wp.vec3f``.
-                Use ``.torch`` for a ``(N, 3)`` tensor view.
-            orientations: Camera orientations as quaternions ``(x, y, z, w)``. Shape ``(N,)``,
-                dtype ``wp.quatf``. Use ``.torch`` for a ``(N, 4)`` tensor view.
             intrinsics: Camera intrinsic matrices. Shape ``(N,)``, dtype ``wp.mat33f``.
                 Use ``.torch`` for a ``(N, 3, 3)`` tensor view.
         """
@@ -185,11 +166,9 @@ class BaseRenderer(ABC):
     def close(self) -> None:
         """Release resources owned by the renderer itself rather than by a render data.
 
-        A renderer is shared by every camera whose configuration resolves to it (see
-        :meth:`~isaaclab.renderers.render_context.RenderContext.get_renderer`), so state it owns
-        outlives any single camera and cannot be released from :meth:`cleanup`.
-        :meth:`~isaaclab.renderers.render_context.RenderContext.close` calls this once at
-        simulation teardown, while the stage and the underlying renderer backend are still alive.
+        Each camera owns its renderer instance, but renderer state outlives the camera's transient
+        render data and cannot be released from :meth:`cleanup`. The simulation calls this once at
+        teardown, while the stage and the underlying renderer backend are still alive.
 
         The default implementation is a no-op, for backends whose state lives entirely on the
         render data. Implementations must be idempotent.

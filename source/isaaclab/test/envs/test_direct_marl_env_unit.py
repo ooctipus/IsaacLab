@@ -15,6 +15,7 @@ from types import SimpleNamespace
 
 import gymnasium as gym
 import pytest
+import torch
 
 from isaaclab.envs import DirectMARLEnv, DirectMARLEnvCfg
 from isaaclab.markers.vis_marker_registry import VisMarkerRegistry
@@ -73,6 +74,50 @@ class _DebugVisStubMARLEnv(_StubMARLEnv):
         self.callback_count += 1
 
 
+def _make_step_env(events: list[object], reset_mask: torch.Tensor, manual_reset: bool) -> DirectMARLEnv:
+    zeros = torch.zeros_like(reset_mask)
+    env = object.__new__(DirectMARLEnv)
+    env._is_closed = True
+    env.cfg = SimpleNamespace(
+        decimation=1,
+        sim=SimpleNamespace(dt=0.01, render_interval=2),
+        action_noise_model=None,
+        observation_noise_model=None,
+        compute_final_obs=False,
+        events=True,
+    )
+    env.scene = SimpleNamespace(
+        num_envs=len(reset_mask),
+        write_data_to_sim=lambda: events.append("write"),
+        update=lambda dt: None,
+    )
+    env.sim = SimpleNamespace(
+        device="cpu",
+        is_rendering=False,
+        step=lambda render: None,
+        forward=lambda: events.append("forward"),
+        consume_reset_request=lambda: manual_reset,
+    )
+    env.event_manager = SimpleNamespace(available_modes=["interval"], apply=lambda **kwargs: events.append("interval"))
+    env.video_recorders = [SimpleNamespace(step=lambda: events.append("video"))]
+    env._physics_handles_decimation = True
+    env._sim_step_counter = 0
+    env.episode_length_buf = torch.zeros(len(reset_mask), dtype=torch.long)
+    env.common_step_counter = 0
+    env.reset_buf = zeros.clone()
+    env.render_enabled = True
+    env.extras = {"agent": {}}
+    env.possible_agents = ["agent"]
+    env._pre_physics_step = lambda actions: None
+    env._apply_action = lambda: None
+    env._get_dones = lambda: events.append("dones") or ({"agent": reset_mask}, {"agent": zeros})
+    env._get_rewards = lambda: events.append("rewards") or {"agent": torch.zeros(len(reset_mask))}
+    env._refresh_task_state = lambda: events.append("refresh")
+    env._reset_idx = lambda env_ids: events.append(("reset", tuple(env_ids.tolist())))
+    env._get_observations = lambda: events.append("observation") or {"agent": torch.zeros((len(reset_mask), 1))}
+    return env
+
+
 def test_set_debug_vis_registers_without_kit():
     """Debug visualization registers through the marker registry, so it needs no Kit application.
 
@@ -94,3 +139,56 @@ def test_set_debug_vis_registers_without_kit():
 
     registry.dispatch_callbacks()
     assert env.callback_count == 1
+
+
+def test_reset_forwards_scene_writes_before_observations():
+    """A public reset exposes reset state only after the simulator boundary."""
+    events = []
+    env = object.__new__(DirectMARLEnv)
+    env._is_closed = True
+    env.scene = SimpleNamespace(num_envs=2, write_data_to_sim=lambda: events.append("write"))
+    env.sim = SimpleNamespace(device="cpu", forward=lambda: events.append("forward"))
+    env.possible_agents = ["agent"]
+    env.extras = {"agent": {}}
+    env._reset_idx = lambda env_ids: events.append(("reset", tuple(env_ids.tolist())))
+    env._refresh_task_state = lambda: events.append("refresh")
+    env._get_observations = lambda: events.append("observation") or {"agent": torch.zeros((2, 1))}
+
+    env.reset()
+
+    assert events == [("reset", (0, 1)), "write", "forward", "refresh", "observation"]
+
+
+def test_step_forwards_automatic_and_ui_resets_once_before_consumers():
+    """Automatic and UI resets share one simulator boundary before post-reset consumers."""
+    events = []
+    reset_mask = torch.tensor([True, False])
+    env = _make_step_env(events, reset_mask, manual_reset=True)
+
+    env.step({"agent": torch.zeros((2, 1))})
+
+    assert events.count("write") == 2
+    assert events.count("forward") == 1
+    assert events.count("refresh") == 2
+    assert events.index("refresh") < events.index("dones") < events.index("rewards")
+    assert events[-8:] == [
+        ("reset", (0,)),
+        ("reset", (1,)),
+        "write",
+        "forward",
+        "refresh",
+        "interval",
+        "video",
+        "observation",
+    ]
+
+
+def test_step_refreshes_task_state_once_without_reset():
+    """The steady-state path refreshes once before termination and reward consumers."""
+    events = []
+    env = _make_step_env(events, torch.tensor([False, False]), manual_reset=False)
+
+    env.step({"agent": torch.zeros((2, 1))})
+
+    assert events.count("refresh") == 1
+    assert events.index("refresh") < events.index("dones") < events.index("rewards")

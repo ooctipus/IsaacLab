@@ -10,14 +10,14 @@ from __future__ import annotations
 import logging
 import math
 import random
-import re
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 from urllib.parse import urlparse
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from isaaclab.cloner import ClonePlan
     from isaaclab.managers import ManagerBase
     from isaaclab.renderers.base_renderer import VisualMaterialBatch
     from isaaclab.scene_data import SceneDataProvider
@@ -36,6 +36,9 @@ class BaseVisualizer(ABC):
     Lifecycle: __init__() -> initialize() -> step() (repeated) -> close()
     """
 
+    marker_type: ClassVar[type | None] = None
+    """Backend state used for clone-plan-declared visualization markers."""
+
     def __init__(self, cfg: VisualizerCfg):
         """Initialize visualizer with config.
 
@@ -44,6 +47,7 @@ class BaseVisualizer(ABC):
         """
         self.cfg = cfg
         self._scene_data_provider = None
+        self._clone_plan = None
         self._is_initialized = False
         self._is_closed = False
         self._env_ids: list[int] | None = None
@@ -63,19 +67,25 @@ class BaseVisualizer(ABC):
         return None
 
     @abstractmethod
-    def initialize(self, scene_data_provider: SceneDataProvider) -> None:
+    def initialize(self, scene_data_provider: SceneDataProvider, clone_plan: ClonePlan) -> None:
         """Initialize visualizer resources.
 
         Args:
             scene_data_provider: Scene data provider used by the visualizer.
+            clone_plan: Shared plan describing every cloned scene row.
         """
         raise NotImplementedError
 
-    def _set_scene_data_provider(self, scene_data_provider: SceneDataProvider) -> SceneDataProvider:
-        """Store the scene data provider shared by all visualizer backends."""
+    def _set_scene_data_provider(
+        self, scene_data_provider: SceneDataProvider, clone_plan: ClonePlan
+    ) -> SceneDataProvider:
+        """Store the scene data provider and clone plan shared by all visualizers."""
         if scene_data_provider is None:
             raise RuntimeError(f"{self.__class__.__name__} requires a scene_data_provider.")
+        if clone_plan.env_ids is None:
+            raise RuntimeError(f"{self.__class__.__name__} requires a completed clone plan.")
         self._scene_data_provider = scene_data_provider
+        self._clone_plan = clone_plan
         return scene_data_provider
 
     @abstractmethod
@@ -117,14 +127,6 @@ class BaseVisualizer(ABC):
         """
         return False
 
-    def is_reset_requested(self) -> bool:
-        """Check if an episode reset was requested from visualizer controls.
-
-        Returns:
-            ``True`` if a reset was requested, otherwise ``False``.
-        """
-        return self._reset_requested
-
     def consume_reset_request(self) -> bool:
         """Return whether an episode reset was requested and clear the flag.
 
@@ -144,31 +146,6 @@ class BaseVisualizer(ABC):
     def is_closed(self) -> bool:
         """Check if close() has been called."""
         return self._is_closed
-
-    @property
-    def physics_backend(self) -> str | None:
-        """Return the active physics backend name (e.g. ``'newton'``, ``'physx'``, ``'ovphysx'``).
-
-        Returns:
-            Backend name string, or ``None`` when no simulation context is active yet.
-        """
-        try:
-            from isaaclab.sim.simulation_context import SimulationContext
-            from isaaclab.utils.backend_utils import FactoryBase
-
-            if SimulationContext.instance() is None:
-                return None
-            return FactoryBase._get_backend()
-        except Exception:
-            return None
-
-    def supports_markers(self) -> bool:
-        """Check if visualizer supports VisualizationMarkers.
-
-        Returns:
-            ``True`` if marker rendering is supported, otherwise ``False``.
-        """
-        return False
 
     def supports_live_plots(self) -> bool:
         """Check if visualizer supports live plots.
@@ -203,11 +180,7 @@ class BaseVisualizer(ABC):
         """
         if not self.supports_live_plots():
             return
-        if not getattr(self.cfg, "enable_live_plots", True):
-            return
-        import os
-
-        if os.environ.get("ISAACLAB_DISABLE_LIVE_PLOTS", "0") == "1":
+        if not self.cfg.enable_live_plots:
             return
         from isaaclab.ui.live_plots.manager_live_plots import DirectScalarLivePlots, ManagerLivePlots
 
@@ -238,14 +211,6 @@ class BaseVisualizer(ABC):
         """
         pass
 
-    def requires_forward_before_step(self) -> bool:
-        """Whether simulation should run forward() before step().
-
-        Returns:
-            ``True`` when forward kinematics should run before stepping.
-        """
-        return False
-
     def pumps_app_update(self) -> bool:
         """Whether this visualizer calls omni.kit.app.get_app().update() in step().
 
@@ -269,10 +234,10 @@ class BaseVisualizer(ABC):
         Returns:
             Selected environment ids, or ``None`` to visualize all environments.
         """
-        if self._scene_data_provider is None:
+        if self._clone_plan is None:
             return None
         cfg = self.cfg
-        num_envs = self._scene_data_provider.num_envs
+        num_envs = len(self._clone_plan.env_ids)
         if num_envs <= 0:
             logger.debug("[Visualizer] num_envs is 0 or missing from provider; env selection disabled.")
             return None
@@ -280,9 +245,9 @@ class BaseVisualizer(ABC):
         if cfg.visible_env_indices is not None:
             return [i for i in cfg.visible_env_indices if 0 <= i < num_envs]
 
-        max_visible = getattr(cfg, "max_visible_envs", None)
+        max_visible = cfg.max_visible_envs
         # Random subset only for cap-only mode: needs a cap and no explicit indices (see VisualizerCfg).
-        if max_visible is not None and getattr(cfg, "randomly_sample_visible_envs", True) and int(max_visible) >= 0:
+        if max_visible is not None and cfg.randomly_sample_visible_envs and int(max_visible) >= 0:
             k = min(int(max_visible), num_envs)
             # k == 0: sample(range(n), 0) is []; contiguous resolver used the same convention.
             return sorted(random.sample(range(num_envs), k))
@@ -319,101 +284,6 @@ class BaseVisualizer(ABC):
         if focal_length <= 0.0:
             raise ValueError("VisualizerCfg.focal_length must be positive.")
         return math.degrees(2.0 * math.atan(_USD_DEFAULT_VERTICAL_APERTURE_MM / (2.0 * focal_length)))
-
-    def _resolve_camera_pose_from_usd_path(
-        self, usd_path: str
-    ) -> tuple[tuple[float, float, float], tuple[float, float, float]] | None:
-        """Resolve camera pose/target from provider camera transforms.
-
-        Args:
-            usd_path: Concrete USD camera path.
-
-        Returns:
-            Eye/target tuple when available, otherwise ``None``.
-        """
-        if self._scene_data_provider is None:
-            return None
-        transforms = self._scene_data_provider.get_camera_transforms()
-        if not transforms:
-            return None
-
-        env_id, template_path = self._resolve_template_camera_path(usd_path)
-        camera_transform = self._lookup_camera_transform(transforms, template_path, env_id)
-        if camera_transform is None:
-            return None
-        pos, ori = camera_transform
-
-        pos_t = (float(pos[0]), float(pos[1]), float(pos[2]))
-        ori_t = (float(ori[0]), float(ori[1]), float(ori[2]), float(ori[3]))
-        forward = self._quat_rotate_vec(ori_t, (0.0, 0.0, -1.0))
-        target = (pos_t[0] + forward[0], pos_t[1] + forward[1], pos_t[2] + forward[2])
-        return pos_t, target
-
-    def _resolve_template_camera_path(self, usd_path: str) -> tuple[int, str]:
-        """Normalize concrete env camera path to templated camera path.
-
-        Args:
-            usd_path: Concrete USD camera path.
-
-        Returns:
-            Tuple of environment id and templated camera path.
-        """
-        env_pattern = re.compile(r"(?P<root>/World/envs/env_)(?P<id>\d+)(?P<path>/.*)")
-        if match := env_pattern.match(usd_path):
-            return int(match.group("id")), match.group("root") + "%d" + match.group("path")
-        return 0, usd_path
-
-    def _lookup_camera_transform(
-        self, transforms: dict[str, Any], template_path: str, env_id: int
-    ) -> tuple[list[float], list[float]] | None:
-        """Fetch camera position/orientation for a templated path and environment.
-
-        Args:
-            transforms: Camera transform dictionary from provider.
-            template_path: Templated camera path.
-            env_id: Environment id to query.
-
-        Returns:
-            Position/orientation tuple when available, otherwise ``None``.
-        """
-        order = transforms.get("order", [])
-        positions = transforms.get("positions", [])
-        orientations = transforms.get("orientations", [])
-
-        if template_path not in order:
-            return None
-        idx = order.index(template_path)
-        if idx >= len(positions) or idx >= len(orientations):
-            return None
-        if env_id < 0 or env_id >= len(positions[idx]):
-            return None
-        pos = positions[idx][env_id]
-        ori = orientations[idx][env_id]
-        if pos is None or ori is None:
-            return None
-        return pos, ori
-
-    @staticmethod
-    def _quat_rotate_vec(
-        quat_xyzw: tuple[float, float, float, float], vec: tuple[float, float, float]
-    ) -> tuple[float, float, float]:
-        """Rotate a vector by a quaternion.
-
-        Args:
-            quat_xyzw: Quaternion in xyzw order.
-            vec: Input vector.
-
-        Returns:
-            Rotated vector.
-        """
-        import torch
-
-        from isaaclab.utils.math import quat_apply
-
-        quat = torch.tensor(quat_xyzw, dtype=torch.float32).unsqueeze(0)
-        vector = torch.tensor(vec, dtype=torch.float32).unsqueeze(0)
-        rotated = quat_apply(quat, vector)[0]
-        return (float(rotated[0]), float(rotated[1]), float(rotated[2]))
 
     def reset(self, soft: bool = False) -> None:
         """Reset visualizer state.

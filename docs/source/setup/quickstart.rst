@@ -27,7 +27,9 @@ visualizer:
 
 .. code-block:: bash
 
-   uv run isaaclab train --task Isaac-Cartpole --num_envs 16 --viz newton
+   uv run isaaclab train --rl_library rsl_rl \
+      --task Isaac-Cartpole-Direct --num_envs 16 --max_iterations 10 \
+      physics=newton_mjwarp --viz newton_gl
 
 Training outputs, including checkpoints, are saved under ``logs/``. Add
 ``--help`` to any command to see its available arguments:
@@ -121,10 +123,10 @@ All task commands accept ``--task <task_name>``. Start by listing the registered
      - ``uv run isaaclab play --task Isaac-Cartpole --checkpoint latest``
    * - ``zero_agent``
      - Run a task with zero actions to verify that it launches correctly.
-     - ``uv run isaaclab zero_agent --task Isaac-Cartpole --viz newton``
+     - ``uv run isaaclab zero_agent --task Isaac-Cartpole --viz newton_gl``
    * - ``random_agent``
      - Run a task with random actions for a quick interaction smoke test.
-     - ``uv run isaaclab random_agent --task Isaac-Cartpole --viz newton``
+     - ``uv run isaaclab random_agent --task Isaac-Cartpole --viz newton_gl``
    * - ``benchmark``
      - Measure environment, training, play, or startup performance.
      - ``uv run isaaclab benchmark runtime --task Isaac-Cartpole``
@@ -201,9 +203,8 @@ and :doc:`/source/features/hydra` for arbitrary configuration overrides.
 Visualize a task
 ----------------
 
-Use ``--viz`` (or ``--visualizer``) to choose one or more visualizers during
-training or playback. To use multiple visualizers, pass a comma-separated list
-without spaces, such as ``--viz newton,rerun``.
+Use ``--viz`` (or ``--visualizer``) to select one or more visualizers during training or playback. Pass a
+comma-separated list without spaces, such as ``--viz newton_gl,rerun``.
 
 .. list-table::
    :widths: 18 58 24
@@ -212,7 +213,7 @@ without spaces, such as ``--viz newton,rerun``.
    * - Option
      - Use it to
      - Required extra
-   * - ``--viz newton``
+   * - ``--viz newton_gl``
      - Open the Newton visualizer.
      - None
    * - ``--viz rerun``
@@ -232,8 +233,8 @@ For example, open the same task in both Newton and Rerun:
 
 .. code-block:: bash
 
-   uv run --extra rerun isaaclab random_agent --task Isaac-Cartpole \
-      physics=newton_mjwarp --viz newton,rerun
+   uv run --extra rerun isaaclab random_agent --task Isaac-Cartpole-Direct \
+      physics=newton_mjwarp --viz newton_gl,rerun
 
 See :doc:`/source/concepts/visualization` for visualizer setup and
 configuration.
@@ -252,7 +253,9 @@ Then play the latest checkpoint in the Newton visualizer:
 
 .. code-block:: bash
 
-   uv run isaaclab play --task Isaac-Cartpole --checkpoint latest --viz newton
+   uv run isaaclab play --rl_library rsl_rl \
+      --task Isaac-Cartpole-Direct physics=newton_mjwarp \
+      --checkpoint latest --viz newton_gl
 
 Choose a checkpoint with one of the following options:
 

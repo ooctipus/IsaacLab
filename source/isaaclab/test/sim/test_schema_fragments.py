@@ -13,6 +13,7 @@ simulation_app = AppLauncher(headless=True).app
 """Rest everything follows."""
 
 import pytest
+from isaaclab_physx.physics import PhysxCfg
 
 from pxr import UsdGeom, UsdPhysics
 
@@ -52,7 +53,7 @@ def test_apply_namespaced_writes_only_set_fields():
     from isaaclab.sim.schemas import UsdPhysicsRigidBodyCfg, apply_namespaced
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     prim = _make_xform(stage)
     UsdPhysics.RigidBodyAPI.Apply(prim)
@@ -74,7 +75,7 @@ def test_physx_rigid_body_fragment_writes_physx_namespace():
     from isaaclab.sim.schemas import apply_namespaced
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     prim = _make_xform(stage, "/World/B2")
     UsdPhysics.RigidBodyAPI.Apply(prim)
@@ -94,7 +95,7 @@ def test_mujoco_rigid_body_fragment_writes_mjc_namespace():
     from isaaclab.sim.schemas import apply_namespaced
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     prim = _make_xform(stage, "/World/B3")
     UsdPhysics.RigidBodyAPI.Apply(prim)
@@ -110,7 +111,7 @@ def test_mujoco_rigid_body_fragment_does_not_write_gravcomp_when_none():
     from isaaclab.sim.schemas import apply_namespaced
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     prim = _make_xform(stage, "/World/B3b")
     UsdPhysics.RigidBodyAPI.Apply(prim)
@@ -130,7 +131,7 @@ def test_apply_rigid_body_properties_composes_namespaces():
     from isaaclab.sim.schemas import UsdPhysicsRigidBodyCfg, apply_rigid_body_properties
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     _make_xform(stage, "/World/B4")
     apply_rigid_body_properties(
@@ -161,7 +162,7 @@ def test_spawn_shape_with_rigid_fragment_list():
     from isaaclab.sim.schemas import UsdPhysicsRigidBodyCfg
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     cfg = sim_utils.CuboidCfg(
         size=(1, 1, 1),
         rigid_props={"": [UsdPhysicsRigidBodyCfg(rigid_body_enabled=True), PhysxRigidBodyCfg(linear_damping=0.3)]},
@@ -199,7 +200,7 @@ def test_apply_namespaced_raises_on_invalid_prim():
     from isaaclab.sim.schemas import UsdPhysicsRigidBodyCfg, apply_namespaced
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     # no prim authored at this path -> GetPrimAtPath returns an invalid prim
     with pytest.raises(ValueError):
@@ -210,7 +211,7 @@ def test_apply_rigid_body_properties_warns_on_unmatched_path(caplog):
     from isaaclab.sim.schemas import UsdPhysicsRigidBodyCfg, apply_rigid_body_properties
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     with caplog.at_level("WARNING"):
         result = apply_rigid_body_properties(
@@ -224,7 +225,7 @@ def test_apply_rigid_body_properties_aggregates_fragment_results():
     from isaaclab.sim.schemas import UsdPhysicsRigidBodyCfg, apply_rigid_body_properties
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     _make_xform(stage, "/World/Agg")
 
@@ -252,7 +253,7 @@ def test_apply_namespaced_raises_without_namespace():
         rigid_body_enabled: bool | None = None
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     prim = _make_xform(stage, "/World/NoNs")
     UsdPhysics.RigidBodyAPI.Apply(prim)

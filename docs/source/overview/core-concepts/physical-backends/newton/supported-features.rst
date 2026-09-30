@@ -17,8 +17,8 @@ a selectable Newton preset:
 
     grep -rln "newton_mjwarp" source/isaaclab_tasks/
 
-Tasks built specifically for Newton can instead assign
-:class:`~isaaclab_newton.physics.NewtonCfg` directly. The coupled-MPM
+Tasks built specifically for Newton can instead assign a concrete
+:class:`~isaaclab_newton.physics.NewtonSolverCfg` subclass directly. The coupled-MPM
 ``IsaacContrib-Franka-Pour`` artifact-backed task and
 ``IsaacContrib-UR10-Particle-Push`` use this fixed-Newton pattern and should be launched
 without a ``physics=`` selector. Passing

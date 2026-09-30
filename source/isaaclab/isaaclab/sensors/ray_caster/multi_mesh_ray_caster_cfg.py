@@ -28,23 +28,6 @@ class MultiMeshRayCasterCfg(RayCasterCfg):
         prim_expr: str = MISSING
         """The regex to specify the target prim to ray cast against."""
 
-        is_shared: bool = False
-        """Whether the target prim is assumed to be the same mesh across all environments. Defaults to False.
-
-        If True, only the first mesh is read and then reused for all environments, rather than re-parsed.
-        This provides a startup performance boost when there are many environments that all use the same asset.
-
-        .. note::
-            If :attr:`MultiMeshRayCasterCfg.reference_meshes` is False, this flag has no effect.
-        """
-
-        merge_prim_meshes: bool = True
-        """Whether to merge the parsed meshes for a prim that contains multiple meshes. Defaults to True.
-
-        This will create a new mesh that combines all meshes in the parsed prim. The raycast hits mesh IDs
-        will then refer to the single merged mesh.
-        """
-
         track_mesh_transforms: bool = True
         """Whether the mesh transformations should be tracked. Defaults to True.
 
@@ -58,17 +41,8 @@ class MultiMeshRayCasterCfg(RayCasterCfg):
     """The list of mesh primitive paths to ray cast against.
 
     If an entry is a string, it is internally converted to :class:`RaycastTargetCfg` with
-    :attr:`~RaycastTargetCfg.track_mesh_transforms` disabled. These settings ensure backwards compatibility
-    with the default raycaster.
+    :attr:`~RaycastTargetCfg.track_mesh_transforms` disabled.
     """
 
     update_mesh_ids: bool = False
     """Whether to update the mesh ids of the ray hits in the :attr:`data` container."""
-
-    reference_meshes: bool = True
-    """Whether to reference duplicated meshes instead of loading each one separately into memory.
-    Defaults to True.
-
-    When enabled, the raycaster parses all meshes in all environments, but reuses references
-    for duplicates instead of storing multiple copies. This reduces memory footprint.
-    """

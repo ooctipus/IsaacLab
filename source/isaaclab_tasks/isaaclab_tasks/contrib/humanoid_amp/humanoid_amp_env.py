@@ -10,7 +10,6 @@ import numpy as np
 import torch
 import warp as wp
 
-from isaaclab import cloner
 from isaaclab.envs import DirectRLEnv
 from isaaclab.utils.math import quat_apply
 
@@ -25,7 +24,7 @@ class HumanoidAmpEnv(DirectRLEnv):
         super().__init__(cfg, render_mode, **kwargs)
 
         # action offset and scale
-        soft_joint_pos_limits = self.robot.data.soft_joint_pos_limits.torch
+        soft_joint_pos_limits = self.scene["robot"].data.soft_joint_pos_limits.torch
         dof_lower_limits = soft_joint_pos_limits[0, :, 0]
         dof_upper_limits = soft_joint_pos_limits[0, :, 1]
         self.action_offset = 0.5 * (dof_upper_limits + dof_lower_limits)
@@ -36,9 +35,9 @@ class HumanoidAmpEnv(DirectRLEnv):
 
         # DOF and key body indexes
         key_body_names = ["right_hand", "left_hand", "right_foot", "left_foot"]
-        self.ref_body_index = self.robot.data.body_names.index(self.cfg.reference_body)
-        self.key_body_indexes = [self.robot.data.body_names.index(name) for name in key_body_names]
-        self.motion_dof_indexes = self._motion_loader.get_dof_index(self.robot.data.joint_names)
+        self.ref_body_index = self.scene["robot"].data.body_names.index(self.cfg.reference_body)
+        self.key_body_indexes = [self.scene["robot"].data.body_names.index(name) for name in key_body_names]
+        self.motion_dof_indexes = self._motion_loader.get_dof_index(self.scene["robot"].data.joint_names)
         self.motion_ref_body_index = self._motion_loader.get_body_index([self.cfg.reference_body])[0]
         self.motion_key_body_indexes = self._motion_loader.get_body_index(key_body_names)
 
@@ -49,36 +48,23 @@ class HumanoidAmpEnv(DirectRLEnv):
             (self.num_envs, self.cfg.num_amp_observations, self.cfg.amp_observation_space), device=self.device
         )
 
-    def _setup_scene(self):
-        asset_cfgs = (self.cfg.robot, self.cfg.ground, self.cfg.light)
-        plan = cloner.clone_plan_from_env_0(
-            self.cfg.scene.clone_cfg, asset_cfgs, self.cfg.scene.num_envs, self.cfg.scene.env_spacing
-        )
-        for cfg in (self.cfg.ground, self.cfg.light):
-            cfg.spawn.func(cfg.spawn.spawn_path, cfg.spawn, cfg.init_state.pos, cfg.init_state.rot)
-        self.robot = self.cfg.robot.class_type(self.cfg.robot)
-        self.scene.articulations["robot"] = self.robot
-        cloner.replicate(plan, replicate_physics=self.cfg.scene.replicate_physics)
-        if "physx" in self.scene.physics_backend:
-            self.scene.filter_collisions(global_prim_paths=[self.cfg.ground.prim_path])
-
     def _pre_physics_step(self, actions: torch.Tensor):
         self.actions = actions.clone()
 
     def _apply_action(self):
         target = self.action_offset + self.action_scale * self.actions
-        self.robot.set_joint_position_target_index(target=target)
+        self.scene["robot"].set_joint_position_target_index(target=target)
 
     def _get_observations(self) -> dict:
         # build task observation
         obs = compute_obs(
-            self.robot.data.joint_pos.torch,
-            self.robot.data.joint_vel.torch,
-            self.robot.data.body_pos_w.torch[:, self.ref_body_index],
-            self.robot.data.body_quat_w.torch[:, self.ref_body_index],
-            self.robot.data.body_lin_vel_w.torch[:, self.ref_body_index],
-            self.robot.data.body_ang_vel_w.torch[:, self.ref_body_index],
-            self.robot.data.body_pos_w.torch[:, self.key_body_indexes],
+            self.scene["robot"].data.joint_pos.torch,
+            self.scene["robot"].data.joint_vel.torch,
+            self.scene["robot"].data.body_pos_w.torch[:, self.ref_body_index],
+            self.scene["robot"].data.body_quat_w.torch[:, self.ref_body_index],
+            self.scene["robot"].data.body_lin_vel_w.torch[:, self.ref_body_index],
+            self.scene["robot"].data.body_ang_vel_w.torch[:, self.ref_body_index],
+            self.scene["robot"].data.body_pos_w.torch[:, self.key_body_indexes],
         )
 
         # update AMP observation history
@@ -96,7 +82,7 @@ class HumanoidAmpEnv(DirectRLEnv):
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
         time_out = self.episode_length_buf >= self.max_episode_length - 1
         if self.cfg.early_termination:
-            died = self.robot.data.body_pos_w.torch[:, self.ref_body_index, 2] < self.cfg.termination_height
+            died = self.scene["robot"].data.body_pos_w.torch[:, self.ref_body_index, 2] < self.cfg.termination_height
         else:
             died = torch.zeros_like(time_out)
         return died, time_out
@@ -105,11 +91,11 @@ class HumanoidAmpEnv(DirectRLEnv):
         if env_ids is None or len(env_ids) == self.num_envs:
             # Convert warp array to torch tensor if needed
             env_ids = (
-                wp.to_torch(self.robot._ALL_INDICES)
-                if isinstance(self.robot._ALL_INDICES, wp.array)
-                else self.robot._ALL_INDICES
+                wp.to_torch(self.scene["robot"]._ALL_INDICES)
+                if isinstance(self.scene["robot"]._ALL_INDICES, wp.array)
+                else self.scene["robot"]._ALL_INDICES
             )
-        self.robot.reset(env_ids)
+        self.scene["robot"].reset(env_ids)
         super()._reset_idx(env_ids)
 
         if self.cfg.reset_strategy == "default":
@@ -120,20 +106,20 @@ class HumanoidAmpEnv(DirectRLEnv):
         else:
             raise ValueError(f"Unknown reset strategy: {self.cfg.reset_strategy}")
 
-        self.robot.write_root_link_pose_to_sim_index(root_pose=root_state[:, :7], env_ids=env_ids)
-        self.robot.write_root_com_velocity_to_sim_index(root_velocity=root_state[:, 7:], env_ids=env_ids)
-        self.robot.write_joint_position_to_sim_index(position=joint_pos, env_ids=env_ids)
-        self.robot.write_joint_velocity_to_sim_index(velocity=joint_vel, env_ids=env_ids)
+        self.scene["robot"].write_root_link_pose_to_sim_index(root_pose=root_state[:, :7], env_ids=env_ids)
+        self.scene["robot"].write_root_com_velocity_to_sim_index(root_velocity=root_state[:, 7:], env_ids=env_ids)
+        self.scene["robot"].write_joint_position_to_sim_index(position=joint_pos, env_ids=env_ids)
+        self.scene["robot"].write_joint_velocity_to_sim_index(velocity=joint_vel, env_ids=env_ids)
 
     # reset strategies
 
     def _reset_strategy_default(self, env_ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        default_root_pose = self.robot.data.default_root_pose.torch[env_ids].clone()
-        default_root_vel = self.robot.data.default_root_vel.torch[env_ids].clone()
+        default_root_pose = self.scene["robot"].data.default_root_pose.torch[env_ids].clone()
+        default_root_vel = self.scene["robot"].data.default_root_vel.torch[env_ids].clone()
         default_root_pose[:, :3] += self.scene.env_origins[env_ids]
         root_state = torch.cat([default_root_pose, default_root_vel], dim=-1)
-        joint_pos = self.robot.data.default_joint_pos.torch[env_ids].clone()
-        joint_vel = self.robot.data.default_joint_vel.torch[env_ids].clone()
+        joint_pos = self.scene["robot"].data.default_joint_pos.torch[env_ids].clone()
+        joint_vel = self.scene["robot"].data.default_joint_vel.torch[env_ids].clone()
         return root_state, joint_pos, joint_vel
 
     def _reset_strategy_random(
@@ -156,8 +142,8 @@ class HumanoidAmpEnv(DirectRLEnv):
         motion_torso_index = self._motion_loader.get_body_index(["torso"])[0]
         root_state = torch.cat(
             [
-                self.robot.data.default_root_pose.torch[env_ids],
-                self.robot.data.default_root_vel.torch[env_ids],
+                self.scene["robot"].data.default_root_pose.torch[env_ids],
+                self.scene["robot"].data.default_root_vel.torch[env_ids],
             ],
             dim=-1,
         ).clone()

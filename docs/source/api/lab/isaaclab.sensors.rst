@@ -257,8 +257,6 @@ The following classes are part of the public :mod:`isaaclab.sensors` API.
    BasePvaData
    ImuData
    MultiMeshRayCasterCameraData
-   TiledCamera
-   TiledCameraCfg
 
 .. autoclass:: BaseContactSensor
    :show-inheritance:
@@ -294,10 +292,4 @@ The following classes are part of the public :mod:`isaaclab.sensors` API.
    :show-inheritance:
 
 .. autoclass:: MultiMeshRayCasterCameraData
-   :show-inheritance:
-
-.. autoclass:: TiledCamera
-   :show-inheritance:
-
-.. autoclass:: TiledCameraCfg
    :show-inheritance:

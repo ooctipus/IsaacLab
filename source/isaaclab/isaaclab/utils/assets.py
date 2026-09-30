@@ -15,7 +15,6 @@ For more information, please check information on `Omniverse Nucleus`_.
 
 import contextlib
 import io
-import json
 import logging
 import os
 import posixpath
@@ -198,11 +197,6 @@ def _resolve_asset_root() -> str:
     asset_root = os.getenv("ISAACSIM_ASSET_ROOT")
     if asset_root:
         return asset_root.rstrip("/\\")
-
-    selected_profile = _selected_storage_profile()
-    if selected_profile is not None:
-        return selected_profile[1]["asset_root"]
-
     return _parse_kit_asset_root()
 
 
@@ -226,12 +220,6 @@ NEWTON_ASSET_DIR: str = os.environ.get("NEWTON_ASSET_DIR", NEWTON_ASSET_REPO_URL
 
 GIT_ASSET_CACHE_DIR: str = os.path.join(tempfile.gettempdir(), "asset_cache")
 """Default local directory where git asset repositories are cached."""
-
-_MIRROR_FINGERPRINT_SUFFIX = ".isaaclab-cache.json"
-"""Suffix of the sidecar file recording the remote revision a locally cached asset came from."""
-
-_REMOTE_FINGERPRINTS: dict[str, dict | None] = {}
-"""Remote metadata per URL, resolved at most once per process."""
 
 _ANNOUNCED_MIRROR_DIRS: set[str] = set()
 """Cache directories already announced, so the banner is logged once per directory."""
@@ -467,92 +455,13 @@ def unmirror_file_path(path: str) -> str:
     return _MIRRORED_URLS.get(os.path.abspath(path), "")
 
 
-def _remote_fingerprint(url: str) -> dict | None:
-    """Provider metadata identifying the revision of ``url`` the server currently holds.
-
-    Every reported field is kept, because which ones a provider fills in varies: a Nucleus
-    server reporting a content hash and an HTTP host reporting only a size and a modification
-    time both yield a usable revision marker.
-
-    The answer is resolved once per URL per process, so the existence check, the freshness
-    check and the download path share a single status probe.
-
-    Args:
-        url: Remote asset URL.
-
-    Returns:
-        The reported metadata, or ``None`` when the server does not report the file. That
-        covers both a missing file and an unreachable server, which ``omni.client`` does not
-        distinguish here.
-    """
-    if url not in _REMOTE_FINGERPRINTS:
-        omni_client = _get_omni_client()
-
-        result, entry = omni_client.stat(url.replace(os.sep, "/"))
-        _REMOTE_FINGERPRINTS[url] = (
-            {
-                "hash": str(entry.hash or ""),
-                "version": str(entry.version or ""),
-                "size": int(entry.size or 0),
-                "modified_time": str(entry.modified_time or ""),
-            }
-            if result == omni_client.Result.OK
-            else None
-        )
-    return _REMOTE_FINGERPRINTS[url]
-
-
-def _write_mirror_fingerprint(url: str, mirrored: str) -> None:
-    """Record the remote revision a freshly cached copy was taken from."""
-    fingerprint = _remote_fingerprint(url)
-    if fingerprint is None:
-        return
-    try:
-        with open(mirrored + _MIRROR_FINGERPRINT_SUFFIX, "w", encoding="utf-8") as f:
-            json.dump(fingerprint, f)
-    except OSError as exc:
-        # a copy we cannot annotate is simply re-fetched on the next run
-        logger.debug("Unable to record the asset cache fingerprint for '%s': %s", url, exc)
-
-
-def _mirror_is_current(url: str, mirrored: str) -> bool:
-    """Whether the locally cached copy of ``url`` still matches what the server holds.
-
-    A copy with no recorded fingerprint counts as outdated, so copies left by earlier Isaac Lab
-    versions are re-fetched once and annotated. When the answer cannot be obtained at all --
-    an unreachable server, or a provider that reports no metadata -- the copy is used anyway
-    and the missing guarantee is logged, so offline runs keep working.
-    """
-    remote = _remote_fingerprint(url)
-    if remote is None:
-        logger.warning(
-            "Asset server did not respond for '%s'. Using the local copy at '%s', which may be out of date.",
-            url,
-            mirrored,
-        )
-        return True
-    if not any(remote.values()):
-        logger.warning(
-            "Asset server reports no revision metadata for '%s'. Using the local copy at '%s' without a"
-            " freshness check.",
-            url,
-            mirrored,
-        )
-        return True
-    try:
-        with open(mirrored + _MIRROR_FINGERPRINT_SUFFIX, encoding="utf-8") as f:
-            return json.load(f) == remote
-    except (OSError, ValueError):
-        return False
-
-
 def _announce_local_asset(url: str, mirrored: str, download_dir: str) -> None:
     """Announce, once per cache directory and once per asset, that a local copy is being used."""
     if download_dir not in _ANNOUNCED_MIRROR_DIRS:
         _ANNOUNCED_MIRROR_DIRS.add(download_dir)
         logger.warning(
-            "Serving remote assets from the local cache under '%s'. Each copy is checked against the server"
-            " before use; delete the directory to force a full re-download.",
+            "Serving remote assets from the local cache under '%s'. Delete the directory or request a forced"
+            " download to refresh it.",
             download_dir,
         )
     if url not in _ANNOUNCED_MIRRORS:
@@ -564,7 +473,7 @@ def _usable_mirror(url: str, download_dir: str | None = None) -> str:
     """Local copy to serve ``url`` from, or ``""`` when it has to come from the server."""
     download_dir = download_dir or tempfile.gettempdir()
     mirrored = _mirror_path(url, download_dir)
-    if not mirrored or not os.path.isfile(mirrored) or not _mirror_is_current(url, mirrored):
+    if not mirrored or not os.path.isfile(mirrored):
         return ""
     _announce_local_asset(url, mirrored, download_dir)
     return mirrored
@@ -586,7 +495,6 @@ def _store_mirror(url: str, data: bytes) -> None:
             finally:
                 with contextlib.suppress(OSError):
                     os.remove(temporary_path)
-            _write_mirror_fingerprint(url, mirrored)
     except OSError as exc:
         logger.debug("Unable to cache the asset '%s' locally: %s", url, exc)
 
@@ -607,11 +515,13 @@ def check_file_path(path: str) -> Literal[0, 1, 2]:
     if os.path.isfile(path):
         return 1
 
-    # a locally cached copy that still matches the server answers this without a download
+    # a locally cached copy answers this without a server round trip
     if _usable_mirror(path):
         return 2
 
-    return 2 if _remote_fingerprint(path) is not None else 0
+    import omni.client  # noqa: PLC0415
+
+    return 2 if omni.client.stat(path.replace(os.sep, "/"))[0] == omni.client.Result.OK else 0
 
 
 def retrieve_file_path(path: str, download_dir: str | None = None, force_download: bool = False) -> str:
@@ -619,14 +529,14 @@ def retrieve_file_path(path: str, download_dir: str | None = None, force_downloa
 
     If the file exists locally, then the absolute path to the file is returned.
     If the file exists on the Nucleus Server, then the file is downloaded to the local machine
-    and the absolute path to the file is returned.
+    and the absolute path to the file is returned. A cached remote file is authoritative unless
+    :paramref:`force_download` is set.
 
     Args:
         path: The path to the file.
         download_dir: The directory where the file should be downloaded. Defaults to None, in which
             case the file is downloaded to the system's temporary directory.
-        force_download: Whether to force download the file from the Nucleus Server. This will overwrite
-            the local file if it exists. Defaults to False.
+        force_download: Whether to replace an existing remote-file mirror. Defaults to False.
 
     Returns:
         The path to the file on the local machine.
@@ -641,7 +551,7 @@ def retrieve_file_path(path: str, download_dir: str | None = None, force_downloa
     if file_status == 1:
         return os.path.abspath(path)
     elif file_status == 2:
-        omni_client = _get_omni_client()
+        import omni.client  # noqa: PLC0415
 
         from isaaclab.app.loading_screen import report_activity
 
@@ -672,7 +582,7 @@ def retrieve_file_path(path: str, download_dir: str | None = None, force_downloa
             if _UDIM_RE.search(cur_url):
                 for tile in range(1001, 1101):
                     tile_url = _UDIM_RE.sub(str(tile), cur_url)
-                    if omni_client.stat(tile_url.replace(os.sep, "/"))[0] == omni_client.Result.OK:
+                    if omni.client.stat(tile_url.replace(os.sep, "/"))[0] == omni.client.Result.OK:
                         if tile_url not in visited:
                             to_visit.append(tile_url)
                     else:
@@ -691,8 +601,8 @@ def retrieve_file_path(path: str, download_dir: str | None = None, force_downloa
                 if force_download or not _usable_mirror(cur_url, download_dir):
                     temporary_path = f"{target_path}.{uuid.uuid4().hex}.partial"
                     try:
-                        result = omni_client.copy(cur_url, temporary_path, omni_client.CopyBehavior.OVERWRITE)
-                        if result != omni_client.Result.OK:
+                        result = omni.client.copy(cur_url, temporary_path, omni.client.CopyBehavior.OVERWRITE)
+                        if result != omni.client.Result.OK:
                             if force_download or is_root_asset:
                                 raise RuntimeError(f"Unable to copy file: '{cur_url}'. Is the Nucleus Server running?")
                             logger.debug("Skipping unavailable dependency: %s", cur_url)
@@ -700,7 +610,6 @@ def retrieve_file_path(path: str, download_dir: str | None = None, force_downloa
                         # A reader that does not take this process-local lock must never observe
                         # a partially copied USD file.
                         os.replace(temporary_path, target_path)
-                        _write_mirror_fingerprint(cur_url, target_path)
                     finally:
                         with contextlib.suppress(OSError):
                             os.remove(temporary_path)
@@ -742,7 +651,7 @@ def read_file(path: str) -> io.BytesIO:
         with open(path, "rb") as f:
             return io.BytesIO(f.read())
     elif file_status == 2:
-        # Read the local copy when an earlier run already fetched this revision. Actuator
+        # Read the local copy when an earlier run already fetched the asset. Actuator
         # networks and similar payloads are read at every startup, so a remote read re-downloads
         # megabytes that :func:`retrieve_file_path` already cached.
         mirrored = _usable_mirror(path)
@@ -750,9 +659,9 @@ def read_file(path: str) -> io.BytesIO:
             with open(mirrored, "rb") as f:
                 return io.BytesIO(f.read())
 
-        omni_client = _get_omni_client()
+        import omni.client  # noqa: PLC0415
 
-        file_content = omni_client.read_file(path.replace(os.sep, "/"))[2]
+        file_content = omni.client.read_file(path.replace(os.sep, "/"))[2]
         data = memoryview(file_content).tobytes()
         # cache what was just downloaded, so the next run reads it from disk
         _store_mirror(path, data)
@@ -805,7 +714,9 @@ def _find_asset_dependencies(local_asset_path: str) -> set[str]:
         Returns:
             The input path unchanged.
         """
-        if path:
+        # Bare MDL names are module identifiers resolved through MDL search paths, not files
+        # relative to the USD layer. Explicit relative, nested, absolute, and URL paths remain.
+        if path and not (path.lower().endswith(".mdl") and "/" not in path and "\\" not in path):
             refs.add(path)
         return path
 

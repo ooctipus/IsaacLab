@@ -13,23 +13,23 @@ from typing import TYPE_CHECKING, Any
 
 import torch
 import warp as wp
-from ovrtx import BindingFlag, DataAccess, PrimMode
+from ovrtx import DataAccess
 
 if TYPE_CHECKING:
     from isaaclab.renderers.base_renderer import VisualMaterialBatch
 
-    from .ovrtx_renderer import OVRTXRenderer
+    from isaaclab_ov.cloner import OvReplicateContext
 
 
 class OVRTXVisualMaterialWriter:
     """Compile OVRTX material addresses once and publish dirty device buffers."""
 
-    def __init__(self, renderer: OVRTXRenderer, batches: tuple[VisualMaterialBatch, ...]):
-        self._renderer_ref = weakref.ref(renderer)
+    def __init__(self, context: OvReplicateContext, batches: tuple[VisualMaterialBatch, ...]):
+        self._context_ref = weakref.ref(context)
         self._buffers: dict[str, torch.Tensor] = {}
         self._dirty_channels: set[str] = set()
         self._operations: tuple[Any, ...] = ()
-        self._addresses: list[tuple[str, Any, Any | None, str, slice]] = []
+        self._addresses: list[tuple[str, Any, slice]] = []
 
         groups = []
         device = None
@@ -57,28 +57,13 @@ class OVRTXVisualMaterialWriter:
                 )
                 start = end
         self._event = wp.Event(device=str(device))
+        scene = context.scene
         try:
             for channel, attribute_name, shader_paths, rows, dtype, shape in groups:
-                if renderer._use_ovstage:
-                    path_list = renderer._stage_paths.create_path_list_from_strings(shader_paths)
-                    try:
-                        address = renderer._stage.query_from_path_list(path_list)
-                    except Exception:
-                        renderer._stage_paths.destroy_path_list(path_list)
-                        raise
-                else:
-                    path_list = None
-                    address = renderer._renderer.bind_attribute(
-                        prim_paths=shader_paths,
-                        attribute_name=attribute_name,
-                        dtype=dtype,
-                        shape=shape,
-                        prim_mode=PrimMode.EXISTING_ONLY,
-                        flags=BindingFlag.OPTIMIZE,
-                    )
-                self._addresses.append((channel, address, path_list, attribute_name, rows))
+                handle = scene.bind(shader_paths, attribute_name, dtype=dtype, shape=shape)
+                self._addresses.append((channel, handle, rows))
         except Exception:
-            self._release_backend_addresses(renderer)
+            self._release_backend_addresses(context)
             raise
 
     def __call__(self, material_offsets: dict[str, Any] | None = None, env_ids: Any | None = None) -> None:
@@ -93,27 +78,18 @@ class OVRTXVisualMaterialWriter:
         channels = self._dirty_channels
         if not channels:
             return
-        renderer = self._renderer_ref()
+        if self._context_ref() is None:
+            return
         operations = []
         try:
-            for channel, address, _path_list, attribute_name, rows in self._addresses:
+            for channel, handle, rows in self._addresses:
                 if channel not in channels:
                     continue
-                if renderer._use_ovstage:
-                    operation = renderer._stage.write_attribute(
-                        address,
-                        attribute_name,
-                        ordinal=renderer._current_ordinal,
-                        tensors=self._buffers[channel][rows],
-                        is_array=False,
-                        cuda_event=self._event.cuda_event,
-                    )
-                else:
-                    operation = address.write_async(
-                        self._buffers[channel][rows],
-                        data_access=DataAccess.ASYNC,
-                        cuda_event=self._event.cuda_event,
-                    )
+                operation = handle.binding.write_async(
+                    self._buffers[channel][rows],
+                    data_access=DataAccess.ASYNC,
+                    cuda_event=self._event.cuda_event,
+                )
                 operations.append(operation)
         finally:
             self._operations = tuple(operations)
@@ -125,13 +101,12 @@ class OVRTXVisualMaterialWriter:
         for operation in operations:
             operation.wait()
 
-    def _release_backend_addresses(self, renderer: OVRTXRenderer) -> None:
-        for _channel, address, path_list, _attribute_name, _rows in self._addresses:
-            if renderer._use_ovstage:
-                renderer._stage.release_query(address).wait()
-                renderer._stage_paths.destroy_path_list(path_list)
-            else:
-                address.unbind()
+    def _release_backend_addresses(self, context: OvReplicateContext) -> None:
+        if not self._addresses:
+            return
+        scene = context.scene
+        for _channel, handle, _rows in self._addresses:
+            scene.release(handle)
         self._addresses.clear()
 
     def close(self) -> None:
@@ -139,8 +114,10 @@ class OVRTXVisualMaterialWriter:
         try:
             self.drain()
         finally:
-            renderer = self._renderer_ref()
-            if renderer is not None:
-                self._release_backend_addresses(renderer)
+            context = self._context_ref()
+            if context is not None:
+                self._release_backend_addresses(context)
+                if context._visual_material_writer is self:
+                    context._visual_material_writer = None
             self._dirty_channels.clear()
             self._buffers.clear()

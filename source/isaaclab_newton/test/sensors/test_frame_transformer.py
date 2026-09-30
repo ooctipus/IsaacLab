@@ -15,7 +15,7 @@ import math
 import pytest
 import scipy.spatial.transform as tf
 import torch
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
+from isaaclab_newton.physics import MJWarpSolverCfg
 
 import isaaclab.sim as sim_utils
 import isaaclab.utils.math as math_utils
@@ -76,15 +76,13 @@ def sim():
     """Create a simulation context with Newton physics."""
     sim_cfg = SimulationCfg(
         dt=1 / 120,
-        physics=NewtonCfg(
-            solver_cfg=MJWarpSolverCfg(
-                njmax=70,
-                nconmax=70,
-                ls_iterations=40,
-                cone="elliptic",
-                impratio=100,
-                integrator="implicitfast",
-            ),
+        physics=MJWarpSolverCfg(
+            njmax=70,
+            nconmax=70,
+            ls_iterations=40,
+            cone="elliptic",
+            impratio=100,
+            integrator="implicitfast",
             num_substeps=2,
             debug_mode=True,
         ),

@@ -52,7 +52,7 @@ def teleop(monkeypatch):
 
     try:
         from isaaclab_teleop.control_events import TELEOP_CONTROL_CHANNEL_UUID
-        from isaaclab_teleop.isaac_teleop_cfg import IsaacTeleopCfg
+        from isaaclab_teleop.isaac_teleop_cfg import IsaacTeleopCfg, TeleopPipelineCfg
         from isaaclab_teleop.session_lifecycle import TeleopSessionLifecycle
     except ImportError:
         for name in [n for n in sys.modules if n.split(".")[0] in _PURGED_ROOTS]:
@@ -64,6 +64,7 @@ def teleop(monkeypatch):
         yield SimpleNamespace(
             TELEOP_CONTROL_CHANNEL_UUID=TELEOP_CONTROL_CHANNEL_UUID,
             IsaacTeleopCfg=IsaacTeleopCfg,
+            TeleopPipelineCfg=TeleopPipelineCfg,
             TeleopSessionLifecycle=TeleopSessionLifecycle,
         )
     finally:
@@ -77,7 +78,7 @@ def _make_lifecycle(teleop, control_channel_uuid: bytes | None = _UNSET):
     if control_channel_uuid is _UNSET:
         control_channel_uuid = teleop.TELEOP_CONTROL_CHANNEL_UUID
     cfg = teleop.IsaacTeleopCfg(
-        pipeline_builder=lambda: MagicMock(),
+        pipeline_cfg=teleop.TeleopPipelineCfg(class_type=lambda _cfg: MagicMock()),
         control_channel_uuid=control_channel_uuid,
     )
     return teleop.TeleopSessionLifecycle(cfg, cloudxr_env_file=None, use_kit_xr_bridge=False)

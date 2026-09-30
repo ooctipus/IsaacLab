@@ -14,6 +14,7 @@ simulation_app = AppLauncher(headless=True).app
 
 
 import pytest
+from isaaclab_physx.physics import PhysxCfg
 
 from pxr import Usd
 
@@ -30,7 +31,7 @@ def sim():
     """Create a simulation context."""
     sim_utils.create_new_stage()
     dt = 0.1
-    sim = SimulationContext(SimulationCfg(dt=dt))
+    sim = SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=dt))
     sim_utils.update_stage()
     yield sim
     sim.stop()
@@ -52,6 +53,7 @@ def test_spawn_pinhole_camera(sim):
     assert prim.IsValid()
     assert sim.stage.GetPrimAtPath("/World/pinhole_camera").IsValid()
     assert prim.GetPrimTypeInfo().GetTypeName() == "Camera"
+    assert prim.GetAttribute("omni:kit:cameraLock").Get() is True
     # Check properties
     _validate_properties_on_prim(prim, cfg, CUSTOM_PINHOLE_CAMERA_ATTRIBUTES)
 

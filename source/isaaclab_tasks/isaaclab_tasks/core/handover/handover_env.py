@@ -10,7 +10,6 @@ from collections.abc import Sequence
 
 import torch
 
-from isaaclab import cloner
 from isaaclab.assets import Articulation
 from isaaclab.envs import DirectMARLEnv
 from isaaclab.utils.math import quat_conjugate, quat_mul, sample_uniform, saturate, scale_transform, unscale_transform
@@ -32,7 +31,7 @@ class HandoverEnv(DirectMARLEnv):
     def __init__(self, cfg: HandoverEnvCfg, render_mode: str | None = None, **kwargs):
         super().__init__(cfg, render_mode, **kwargs)
 
-        self.num_hand_dofs = self.right_hand.num_joints
+        self.num_hand_dofs = self.scene["right_robot"].num_joints
 
         # buffers for position targets
         self.right_hand_prev_targets = torch.zeros(
@@ -49,7 +48,7 @@ class HandoverEnv(DirectMARLEnv):
         )
 
         # list of actuated joints
-        self.actuated_dof_indices, _ = self.right_hand.find_joints(cfg.actuated_joint_names)
+        self.actuated_dof_indices, _ = self.scene["right_robot"].find_joints(cfg.actuated_joint_names)
         if len(self.actuated_dof_indices) != len(cfg.actuated_joint_names):
             raise ValueError(
                 f"Expected {len(cfg.actuated_joint_names)} actuated joints, found {len(self.actuated_dof_indices)}."
@@ -60,7 +59,7 @@ class HandoverEnv(DirectMARLEnv):
         self.actuated_tendon_indices: list[int] = []
         if cfg.actuated_tendon_names:
             self.actuated_tendon_indices, self.tendon_lower_limits, self.tendon_upper_limits = resolve_actuated_tendons(
-                self.right_hand,
+                self.scene["right_robot"],
                 cfg.actuated_tendon_names,
                 self.num_envs,
                 self.device,
@@ -68,7 +67,7 @@ class HandoverEnv(DirectMARLEnv):
             )
 
         # finger bodies
-        self.finger_bodies, _ = self.right_hand.find_bodies(self.cfg.fingertip_body_names)
+        self.finger_bodies, _ = self.scene["right_robot"].find_bodies(self.cfg.fingertip_body_names)
         if len(self.finger_bodies) != len(self.cfg.fingertip_body_names):
             raise ValueError(
                 f"Expected {len(self.cfg.fingertip_body_names)} fingertip bodies, found {len(self.finger_bodies)}."
@@ -76,7 +75,7 @@ class HandoverEnv(DirectMARLEnv):
         self.num_fingertips = len(self.finger_bodies)
 
         # joint limits
-        joint_pos_limits = self.right_hand.data.joint_limits.torch
+        joint_pos_limits = self.scene["right_robot"].data.joint_limits.torch
         self.hand_dof_lower_limits = joint_pos_limits[..., 0]
         self.hand_dof_upper_limits = joint_pos_limits[..., 1]
 
@@ -85,9 +84,12 @@ class HandoverEnv(DirectMARLEnv):
         self.goal_rot[:, 3] = 1.0  # identity quaternion in (x, y, z, w) layout
         self.goal_pos = torch.zeros((self.num_envs, 3), dtype=torch.float, device=self.device)
         # goal = object default position + shared offset (mirrors HandoverCommand.__init__)
-        self.goal_pos[:, :] = self.object.data.default_root_pose.torch[:, :3] + torch.tensor(
+        self.goal_pos[:, :] = self.scene["object"].data.default_root_pose.torch[:, :3] + torch.tensor(
             GOAL_POSITION_OFFSET, dtype=torch.float, device=self.device
         )
+        # initialize goal marker
+        self.goal_markers = self.cfg.scene.goal_object_cfg.class_type(self.cfg.scene.goal_object_cfg)
+
         # Sticky per-env flag: True once the object reached the goal within threshold.
         self._episode_succeeded = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         # Goal distance from the most recent reward step, read at reset as the episode's final value.
@@ -98,34 +100,16 @@ class HandoverEnv(DirectMARLEnv):
         self.x_unit_tensor = torch.tensor([1, 0, 0], dtype=torch.float, device=self.device).repeat((self.num_envs, 1))
         self.y_unit_tensor = torch.tensor([0, 1, 0], dtype=torch.float, device=self.device).repeat((self.num_envs, 1))
 
-    def _setup_scene(self):
-        asset_cfgs = self.cfg.right_robot_cfg, self.cfg.left_robot_cfg, self.cfg.object_cfg
-        asset_cfgs += self.cfg.ground_cfg, self.cfg.light_cfg, self.cfg.goal_object_cfg
-        plan = cloner.clone_plan_from_env_0(
-            self.cfg.scene.clone_cfg, asset_cfgs, self.cfg.scene.num_envs, self.cfg.scene.env_spacing
-        )
-        self.right_hand = self.cfg.right_robot_cfg.class_type(self.cfg.right_robot_cfg)
-        self.left_hand = self.cfg.left_robot_cfg.class_type(self.cfg.left_robot_cfg)
-        self.object = self.cfg.object_cfg.class_type(self.cfg.object_cfg)
-        for cfg in (self.cfg.ground_cfg, self.cfg.light_cfg):
-            cfg.spawn.func(cfg.spawn.spawn_path, cfg.spawn, cfg.init_state.pos, cfg.init_state.rot)
-        self.goal_markers = self.cfg.goal_object_cfg.class_type(self.cfg.goal_object_cfg)
-        cloner.replicate(plan, replicate_physics=self.cfg.scene.replicate_physics)
-        if "physx" in self.scene.physics_backend:
-            self.scene.filter_collisions(global_prim_paths=[self.cfg.ground_cfg.prim_path])
-        # add articulation to scene - we must register to scene to randomize with EventManager
-        self.scene.articulations["right_robot"] = self.right_hand
-        self.scene.articulations["left_robot"] = self.left_hand
-        self.scene.rigid_objects["object"] = self.object
-
     def _pre_physics_step(self, actions: dict[str, torch.Tensor]) -> None:
         self.actions = actions
 
     def _apply_action(self) -> None:
         self._apply_hand_action(
-            self.right_hand, "right_hand", self.right_hand_curr_targets, self.right_hand_prev_targets
+            self.scene["right_robot"], "right_hand", self.right_hand_curr_targets, self.right_hand_prev_targets
         )
-        self._apply_hand_action(self.left_hand, "left_hand", self.left_hand_curr_targets, self.left_hand_prev_targets)
+        self._apply_hand_action(
+            self.scene["left_robot"], "left_hand", self.left_hand_curr_targets, self.left_hand_prev_targets
+        )
 
     def _apply_hand_action(
         self,
@@ -242,8 +226,6 @@ class HandoverEnv(DirectMARLEnv):
         return {"right_hand": rew_dist, "left_hand": rew_dist}
 
     def _get_dones(self) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
-        self._compute_intermediate_values()
-
         # reset when object has fallen
         out_of_reach = self.object_pos[:, 2] <= self.cfg.fall_dist
         # reset when episode ends
@@ -255,7 +237,7 @@ class HandoverEnv(DirectMARLEnv):
 
     def _reset_idx(self, env_ids: Sequence[int] | torch.Tensor | None):
         if env_ids is None:
-            env_ids = self.right_hand._ALL_INDICES
+            env_ids = self.scene["right_robot"]._ALL_INDICES
         # Flush per-episode success: the object is AT the goal as the episode ends, not merely
         # that it passed through. 0-dim device tensor, for the same reason.
         succeeded = (self._last_goal_dist[env_ids] < self.cfg.success_distance_threshold) & self._episode_succeeded[
@@ -272,8 +254,8 @@ class HandoverEnv(DirectMARLEnv):
         self._reset_target_pose(env_ids)
 
         # reset object
-        object_default_pose = self.object.data.default_root_pose.torch.clone()[env_ids]
-        object_default_vel = self.object.data.default_root_vel.torch.clone()[env_ids]
+        object_default_pose = self.scene["object"].data.default_root_pose.torch.clone()[env_ids]
+        object_default_vel = self.scene["object"].data.default_root_vel.torch.clone()[env_ids]
         pos_noise = sample_uniform(-1.0, 1.0, (len(env_ids), 3), device=self.device)
 
         object_default_pose[:, 0:3] = (
@@ -286,40 +268,44 @@ class HandoverEnv(DirectMARLEnv):
         )
 
         object_default_vel[:] = 0.0
-        self.object.write_root_pose_to_sim_index(root_pose=object_default_pose, env_ids=env_ids)
-        self.object.write_root_velocity_to_sim_index(root_velocity=object_default_vel, env_ids=env_ids)
+        self.scene["object"].write_root_pose_to_sim_index(root_pose=object_default_pose, env_ids=env_ids)
+        self.scene["object"].write_root_velocity_to_sim_index(root_velocity=object_default_vel, env_ids=env_ids)
 
         # reset right hand
-        default_dof_pos = self.right_hand.data.default_joint_pos.torch[env_ids]
-        dof_limits = self.right_hand.data.joint_limits.torch[env_ids]
+        default_dof_pos = self.scene["right_robot"].data.default_joint_pos.torch[env_ids]
+        dof_limits = self.scene["right_robot"].data.joint_limits.torch[env_ids]
         dof_pos = sample_joint_positions_within_limits(default_dof_pos, dof_limits, self.cfg.reset_dof_pos_noise)
 
         dof_vel_noise = sample_uniform(-1.0, 1.0, (len(env_ids), self.num_hand_dofs), device=self.device)
-        dof_vel = self.right_hand.data.default_joint_vel.torch[env_ids] + self.cfg.reset_dof_vel_noise * dof_vel_noise
+        dof_vel = (
+            self.scene["right_robot"].data.default_joint_vel.torch[env_ids]
+            + self.cfg.reset_dof_vel_noise * dof_vel_noise
+        )
 
         self.right_hand_prev_targets[env_ids] = dof_pos
         self.right_hand_curr_targets[env_ids] = dof_pos
 
-        self.right_hand.set_joint_position_target_index(target=dof_pos, env_ids=env_ids)
-        self.right_hand.write_joint_position_to_sim_index(position=dof_pos, env_ids=env_ids)
-        self.right_hand.write_joint_velocity_to_sim_index(velocity=dof_vel, env_ids=env_ids)
+        self.scene["right_robot"].set_joint_position_target_index(target=dof_pos, env_ids=env_ids)
+        self.scene["right_robot"].write_joint_position_to_sim_index(position=dof_pos, env_ids=env_ids)
+        self.scene["right_robot"].write_joint_velocity_to_sim_index(velocity=dof_vel, env_ids=env_ids)
 
         # reset left hand
-        default_dof_pos = self.left_hand.data.default_joint_pos.torch[env_ids]
-        dof_limits = self.left_hand.data.joint_limits.torch[env_ids]
+        default_dof_pos = self.scene["left_robot"].data.default_joint_pos.torch[env_ids]
+        dof_limits = self.scene["left_robot"].data.joint_limits.torch[env_ids]
         dof_pos = sample_joint_positions_within_limits(default_dof_pos, dof_limits, self.cfg.reset_dof_pos_noise)
 
         dof_vel_noise = sample_uniform(-1.0, 1.0, (len(env_ids), self.num_hand_dofs), device=self.device)
-        dof_vel = self.left_hand.data.default_joint_vel.torch[env_ids] + self.cfg.reset_dof_vel_noise * dof_vel_noise
+        dof_vel = (
+            self.scene["left_robot"].data.default_joint_vel.torch[env_ids]
+            + self.cfg.reset_dof_vel_noise * dof_vel_noise
+        )
 
         self.left_hand_prev_targets[env_ids] = dof_pos
         self.left_hand_curr_targets[env_ids] = dof_pos
 
-        self.left_hand.set_joint_position_target_index(target=dof_pos, env_ids=env_ids)
-        self.left_hand.write_joint_position_to_sim_index(position=dof_pos, env_ids=env_ids)
-        self.left_hand.write_joint_velocity_to_sim_index(velocity=dof_vel, env_ids=env_ids)
-
-        self._compute_intermediate_values()
+        self.scene["left_robot"].set_joint_position_target_index(target=dof_pos, env_ids=env_ids)
+        self.scene["left_robot"].write_joint_position_to_sim_index(position=dof_pos, env_ids=env_ids)
+        self.scene["left_robot"].write_joint_velocity_to_sim_index(velocity=dof_vel, env_ids=env_ids)
 
     def _reset_target_pose(self, env_ids):
         # reset goal rotation
@@ -337,31 +323,31 @@ class HandoverEnv(DirectMARLEnv):
             environment_ids=self.scene._ALL_INDICES,
         )
 
-    def _compute_intermediate_values(self):
+    def _refresh_task_state(self):
         # data for right hand
-        self.right_fingertip_pos = self.right_hand.data.body_pos_w.torch[:, self.finger_bodies]
-        self.right_fingertip_rot = self.right_hand.data.body_quat_w.torch[:, self.finger_bodies]
+        self.right_fingertip_pos = self.scene["right_robot"].data.body_pos_w.torch[:, self.finger_bodies]
+        self.right_fingertip_rot = self.scene["right_robot"].data.body_quat_w.torch[:, self.finger_bodies]
         self.right_fingertip_pos -= self.scene.env_origins.repeat((1, self.num_fingertips)).reshape(
             self.num_envs, self.num_fingertips, 3
         )
-        self.right_fingertip_velocities = self.right_hand.data.body_vel_w.torch[:, self.finger_bodies]
+        self.right_fingertip_velocities = self.scene["right_robot"].data.body_vel_w.torch[:, self.finger_bodies]
 
-        self.right_hand_dof_pos = self.right_hand.data.joint_pos.torch
-        self.right_hand_dof_vel = self.right_hand.data.joint_vel.torch
+        self.right_hand_dof_pos = self.scene["right_robot"].data.joint_pos.torch
+        self.right_hand_dof_vel = self.scene["right_robot"].data.joint_vel.torch
 
         # data for left hand
-        self.left_fingertip_pos = self.left_hand.data.body_pos_w.torch[:, self.finger_bodies]
-        self.left_fingertip_rot = self.left_hand.data.body_quat_w.torch[:, self.finger_bodies]
+        self.left_fingertip_pos = self.scene["left_robot"].data.body_pos_w.torch[:, self.finger_bodies]
+        self.left_fingertip_rot = self.scene["left_robot"].data.body_quat_w.torch[:, self.finger_bodies]
         self.left_fingertip_pos -= self.scene.env_origins.repeat((1, self.num_fingertips)).reshape(
             self.num_envs, self.num_fingertips, 3
         )
-        self.left_fingertip_velocities = self.left_hand.data.body_vel_w.torch[:, self.finger_bodies]
+        self.left_fingertip_velocities = self.scene["left_robot"].data.body_vel_w.torch[:, self.finger_bodies]
 
-        self.left_hand_dof_pos = self.left_hand.data.joint_pos.torch
-        self.left_hand_dof_vel = self.left_hand.data.joint_vel.torch
+        self.left_hand_dof_pos = self.scene["left_robot"].data.joint_pos.torch
+        self.left_hand_dof_vel = self.scene["left_robot"].data.joint_vel.torch
 
         # data for object
-        self.object_pos = self.object.data.root_pos_w.torch - self.scene.env_origins
-        self.object_rot = self.object.data.root_quat_w.torch
-        self.object_linvel = self.object.data.root_lin_vel_w.torch
-        self.object_angvel = self.object.data.root_ang_vel_w.torch
+        self.object_pos = self.scene["object"].data.root_pos_w.torch - self.scene.env_origins
+        self.object_rot = self.scene["object"].data.root_quat_w.torch
+        self.object_linvel = self.scene["object"].data.root_lin_vel_w.torch
+        self.object_angvel = self.scene["object"].data.root_ang_vel_w.torch

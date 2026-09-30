@@ -644,10 +644,9 @@ Replace the log directory path with your actual training log location if differe
 Step 4: Evaluate the Trained Policy
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Once training completes, evaluate the policy with the play command. The play command
-automatically applies the task's play-mode overrides (``play_mode``), which disable
-observation corruption for cleaner evaluation and cap the number of environments for
-better visualization:
+Once training completes, evaluate the policy with the play command. Pass ``--num_envs``
+and any declared ``presets=NAME`` domain variant explicitly when evaluation should use
+different data than training:
 
 .. tab-set::
 

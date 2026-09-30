@@ -9,35 +9,34 @@ Five ANYmal-C appearance styles are assigned round-robin by heterogeneous clonin
 robot binds scene-declared :class:`~isaaclab.assets.VisualMaterial` assets for its body, legs, and
 feet, so the three part groups and every environment randomize independently on partial resets.
 
-The surface, glass, and solid styles exercise their numeric shader channels. Newton currently
-mirrors material color only, so its demo run randomizes tint and per-shape colors while leaving the
-other optical channels to RTX renderers.
+The surface, glass, and solid styles all randomize the common color channel through the selected
+renderer.
 
 .. code-block:: bash
 
     # PhysX physics and Kit visualizer.
-    uv run --extra isaacsim python scripts/demos/visual_color_randomization.py
+    uv run --extra isaacsim python scripts/demos/visual_color_randomization.py visualizer=kit
 
     # Newton physics and Newton GL visualizer.
     uv run python scripts/demos/visual_color_randomization.py \
-        --physics newton_mjwarp --visualizer newton_gl
+        physics=newton_mjwarp visualizer=newton_gl
 
 """
 
 from __future__ import annotations
 
 import argparse
+from typing import TYPE_CHECKING
 
 from isaaclab.app import add_launcher_args, launch_simulation
 
+from isaaclab_tasks.utils import preset, resolve_config, setup_preset_cli
+from isaaclab_tasks.utils.presets import MultiBackendSimulationCfg
+
 parser = argparse.ArgumentParser(description=__doc__, conflict_handler="resolve")
 parser.add_argument("--num_envs", type=int, default=512, help="Number of environments to spawn.")
-parser.add_argument(
-    "--physics", default="isaacsim_physx", choices=["isaacsim_physx", "newton_mjwarp"], help="Physics backend."
-)
 add_launcher_args(parser)
-parser.set_defaults(visualizer=["kit"])
-args_cli = parser.parse_args()
+args_cli, config_overrides = setup_preset_cli(parser)
 
 import torch
 
@@ -49,12 +48,16 @@ from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import SceneEntityCfg
-from isaaclab.physics import PhysicsCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils.configclass import configclass
 from isaaclab.utils.timer import Timer
 
+from isaaclab_newton.physics import MJWarpSolverCfg  # isort: skip
+from isaaclab_physx.physics import PhysxCfg  # isort: skip
 from isaaclab_assets.robots.anymal import ANYMAL_C_CFG  # isort: skip
+
+if TYPE_CHECKING:
+    from isaaclab.envs import ManagerBasedEnv
 
 
 _LEGS = ("LF", "LH", "RF", "RH")
@@ -76,44 +79,47 @@ class VisualMaterialSceneCfg(InteractiveSceneCfg):
     surface_body = VisualMaterialCfg(
         prim_path="{ENV_REGEX_NS}/Robot/surface_body",
         spawn=sim_utils.PreviewSurfaceCfg(),
-        channels=("color", "roughness", "metallic", "emissive_color", "opacity"),
+        channels=("color",),
     )
     surface_leg = VisualMaterialCfg(
         prim_path="{ENV_REGEX_NS}/Robot/surface_leg",
         spawn=sim_utils.PreviewSurfaceCfg(),
-        channels=("color", "roughness", "metallic", "emissive_color", "opacity"),
+        channels=("color",),
     )
     surface_foot = VisualMaterialCfg(
         prim_path="{ENV_REGEX_NS}/Robot/surface_foot",
         spawn=sim_utils.PreviewSurfaceCfg(),
-        channels=("color", "roughness", "metallic", "emissive_color", "opacity"),
+        channels=("color",),
     )
     glass_body = VisualMaterialCfg(
         prim_path="{ENV_REGEX_NS}/Robot/glass_body",
         spawn=sim_utils.GlassMdlCfg(glass_color=(0.8, 0.9, 1.0), glass_ior=1.5),
-        channels=("color", "roughness", "ior"),
+        channels=("color",),
     )
     glass_leg = VisualMaterialCfg(
         prim_path="{ENV_REGEX_NS}/Robot/glass_leg",
         spawn=sim_utils.GlassMdlCfg(glass_color=(0.8, 0.9, 1.0), glass_ior=1.5),
-        channels=("color", "roughness", "ior"),
+        channels=("color",),
     )
     glass_foot = VisualMaterialCfg(
         prim_path="{ENV_REGEX_NS}/Robot/glass_foot",
         spawn=sim_utils.GlassMdlCfg(glass_color=(0.8, 0.9, 1.0), glass_ior=1.5),
-        channels=("color", "roughness", "ior"),
+        channels=("color",),
     )
     solid_body = VisualMaterialCfg(
         prim_path="{ENV_REGEX_NS}/Robot/solid_body",
         spawn=sim_utils.PbrMdlCfg(diffuse_color_constant=(0.8, 0.3, 0.1)),
+        channels=("color",),
     )
     solid_leg = VisualMaterialCfg(
         prim_path="{ENV_REGEX_NS}/Robot/solid_leg",
         spawn=sim_utils.PbrMdlCfg(diffuse_color_constant=(0.2, 0.2, 0.7)),
+        channels=("color",),
     )
     solid_foot = VisualMaterialCfg(
         prim_path="{ENV_REGEX_NS}/Robot/solid_foot",
         spawn=sim_utils.PbrMdlCfg(diffuse_color_constant=(0.1, 0.6, 0.2), reflection_roughness_constant=0.9),
+        channels=("color",),
     )
 
     robot: ArticulationCfg = ANYMAL_C_CFG.replace(
@@ -150,7 +156,6 @@ class VisualMaterialSceneCfg(InteractiveSceneCfg):
                     )
                 ),
             ],
-            random_choice=False,
         ),
     )
 
@@ -194,13 +199,7 @@ class EventCfg:
                 SceneEntityCfg("surface_leg"),
                 SceneEntityCfg("surface_foot"),
             ],
-            "channels": {
-                "color": {"r": (0.05, 1.0), "g": (0.05, 1.0), "b": (0.05, 1.0)},
-                "roughness": (0.0, 1.0),
-                "metallic": (0.0, 1.0),
-                "emissive_color": ((0.0, 0.0, 0.0), (0.25, 0.25, 0.25)),
-                "opacity": (0.5, 1.0),
-            },
+            "channels": {"color": {"r": (0.05, 1.0), "g": (0.05, 1.0), "b": (0.05, 1.0)}},
         },
     )
     randomize_glass_style = EventTerm(
@@ -208,11 +207,7 @@ class EventCfg:
         mode="reset",
         params={
             "materials": [SceneEntityCfg("glass_body"), SceneEntityCfg("glass_leg"), SceneEntityCfg("glass_foot")],
-            "channels": {
-                "color": {"r": (0.05, 1.0), "g": (0.05, 1.0), "b": (0.05, 1.0)},
-                "roughness": (0.0, 0.8),
-                "ior": (1.1, 1.8),
-            },
+            "channels": {"color": {"r": (0.05, 1.0), "g": (0.05, 1.0), "b": (0.05, 1.0)}},
         },
     )
     randomize_solid_style = EventTerm(
@@ -223,63 +218,31 @@ class EventCfg:
             "channels": {"color": {"r": (0.05, 1.0), "g": (0.05, 1.0), "b": (0.05, 1.0)}},
         },
     )
-    randomize_parts_per_env = EventTerm(
-        func=mdp.randomize_visual_shape,
-        mode="reset",
-        params={
-            "asset_cfg": SceneEntityCfg(
-                "robot", body_names=[f"{leg}_{link}" for leg in _LEGS for link in ("SHANK", "FOOT", "HIP", "THIGH")]
-            ),
-            "channels": {"color": ((0.05, 0.05, 0.05), (1.0, 1.0, 1.0))},
-        },
-    )
 
 
 @configclass
 class VisualMaterialEnvCfg(ManagerBasedEnvCfg):
     """Manager-based environment for the visual-material demo."""
 
+    class_type: type[ManagerBasedEnv] | str = "isaaclab.envs.manager_based_env:ManagerBasedEnv"
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(
+        dt=0.005,
+        device=args_cli.device,
+        physics=preset(default=PhysxCfg(), isaacsim_physx=PhysxCfg(), newton_mjwarp=MJWarpSolverCfg()),
+    )
     scene: VisualMaterialSceneCfg = VisualMaterialSceneCfg(num_envs=512, env_spacing=1.5)
     actions: ActionsCfg = ActionsCfg()
     observations: ObservationsCfg = ObservationsCfg()
     events: EventCfg = EventCfg()
-
-    def __post_init__(self):
-        self.decimation = 4
-        self.sim.dt = 0.005
+    decimation: int = 4
 
 
 def main() -> None:
     """Launch the selected backends and run the randomization scene."""
-    with launch_simulation(cfg=PhysicsCfg(), launcher_args=args_cli) as physics_cfg:
-        from isaaclab.envs import ManagerBasedEnv  # noqa: PLC0415
-
-        env_cfg = VisualMaterialEnvCfg()
-        env_cfg.scene.num_envs = args_cli.num_envs
-        env_cfg.sim.device = args_cli.device
-        env_cfg.sim.physics = physics_cfg
-        visualizers = set(args_cli.visualizer or ())
-        newton_only = bool(visualizers) and visualizers <= {"newton_gl", "newton_rtx"}
-        if newton_only:
-            for name in (
-                "surface_body",
-                "surface_leg",
-                "surface_foot",
-                "glass_body",
-                "glass_leg",
-                "glass_foot",
-            ):
-                getattr(env_cfg.scene, name).channels = ("color",)
-            env_cfg.events.randomize_surface_style.params["channels"] = {
-                "color": {"r": (0.05, 1.0), "g": (0.05, 1.0), "b": (0.05, 1.0)}
-            }
-            env_cfg.events.randomize_glass_style.params["channels"] = {
-                "color": {"r": (0.05, 1.0), "g": (0.05, 1.0), "b": (0.05, 1.0)}
-            }
-        if not newton_only:
-            env_cfg.events.randomize_parts_per_env = None
-
-        env = ManagerBasedEnv(cfg=env_cfg)
+    env_cfg = resolve_config(VisualMaterialEnvCfg(), config_overrides)
+    env_cfg.scene.num_envs = args_cli.num_envs
+    with launch_simulation(env_cfg, args_cli):
+        env = env_cfg.class_type(env_cfg)
         actions = torch.zeros((env.num_envs, env.action_manager.total_action_dim), device=env.device)
         count = 0
         env.reset()

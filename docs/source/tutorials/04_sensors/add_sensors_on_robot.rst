@@ -146,12 +146,14 @@ The entire configuration of the contact sensor is as follows:
 Running the simulation loop
 ---------------------------
 
-Similar to when using assets, the buffers and physics handles for the sensors are initialized only
-when the simulation is played, i.e., it is important to call ``sim.reset()`` after creating the scene.
+Sensors are declared in the scene configuration, so they participate in the same clone plan as the
+robot and the other scene assets. The scene is constructed inside the shared
+:class:`cloner.ReplicateSession`; only after that lifecycle completes does ``sim.reset()`` initialize
+the sensor buffers and physics handles.
 
 .. literalinclude:: ../../../../scripts/tutorials/04_sensors/add_sensors_on_robot.py
    :language: python
-   :start-at: # Play the simulator
+   :start-at: with ReplicateSession(
    :end-at: sim.reset()
 
 Besides that, the simulation loop is similar to the previous tutorials. The sensors are updated as part

@@ -8,10 +8,14 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from isaaclab.markers import VisualizationMarkersCfg
 
 
 def _aim_world_pose(tensor_group, world_T_anchor: np.ndarray) -> tuple[np.ndarray, np.ndarray] | None:
@@ -63,21 +67,8 @@ class ControllerAimVisualizer:
     transform.
     """
 
-    def __init__(self):
-        import isaaclab.sim as sim_utils
-        from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
-        from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
-
-        marker_cfg = VisualizationMarkersCfg(
-            prim_path="/Visuals/ControllerAimMarkers",
-            markers={
-                "frame": sim_utils.UsdFileCfg(
-                    usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/UIElements/frame_prim.usd",
-                    scale=(0.05, 0.05, 0.05),
-                ),
-            },
-        )
-        self._markers = VisualizationMarkers(marker_cfg)
+    def __init__(self, cfg: VisualizationMarkersCfg):
+        self._markers = cfg.class_type(cfg)
         self._markers.set_visibility(True)
         self._logged_error = False
 

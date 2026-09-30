@@ -22,6 +22,7 @@ simulation_app = AppLauncher(headless=True).app
 """Rest everything follows."""
 
 import pytest
+from isaaclab_physx.physics import PhysxCfg
 
 from isaaclab.sim.simulation_cfg import SimulationCfg
 from isaaclab.sim.simulation_context import build_simulation_context
@@ -32,9 +33,14 @@ pytestmark = pytest.mark.integration
 @pytest.mark.parametrize("gravity_enabled", [True, False])
 @pytest.mark.parametrize("device", ["cuda:0", "cpu"])
 @pytest.mark.parametrize("dt", [0.01, 0.1])
-def test_build_simulation_context_no_cfg(gravity_enabled, device, dt):
-    """Test that the simulation context is built when no simulation cfg is passed in."""
-    with build_simulation_context(gravity_enabled=gravity_enabled, device=device, dt=dt) as sim:
+def test_build_simulation_context_explicit_cfg(gravity_enabled, device, dt):
+    """Test that the simulation context is built from the provided configuration."""
+    with build_simulation_context(
+        sim_cfg=SimulationCfg(
+            physics=PhysxCfg(), dt=dt, gravity=(0.0, 0.0, -9.81) if gravity_enabled else (0.0, 0.0, 0.0)
+        ),
+        device=device,
+    ) as sim:
         if gravity_enabled:
             assert sim.cfg.gravity == (0.0, 0.0, -9.81)
         else:
@@ -42,33 +48,6 @@ def test_build_simulation_context_no_cfg(gravity_enabled, device, dt):
 
         assert sim.cfg.device == device
         assert sim.cfg.dt == dt
-
-
-@pytest.mark.parametrize("add_ground_plane", [True, False])
-def test_build_simulation_context_ground_plane(add_ground_plane):
-    """Test that the simulation context is built with the correct ground plane."""
-    with build_simulation_context(add_ground_plane=add_ground_plane) as sim:
-        # Ensure that ground plane got added
-        if add_ground_plane:
-            assert sim.stage.GetPrimAtPath("/World/defaultGroundPlane").IsValid()
-        else:
-            assert not sim.stage.GetPrimAtPath("/World/defaultGroundPlane").IsValid()
-
-
-@pytest.mark.parametrize("add_lighting", [True, False])
-@pytest.mark.parametrize("auto_add_lighting", [True, False])
-def test_build_simulation_context_auto_add_lighting(add_lighting, auto_add_lighting):
-    """Test that the simulation context is built with the correct lighting."""
-    with build_simulation_context(add_lighting=add_lighting, auto_add_lighting=auto_add_lighting) as sim:
-        has_gui = sim.get_setting("/isaaclab/has_gui")
-        # Dome light is added if add_lighting=True OR (auto_add_lighting=True AND has_gui)
-        should_have_light = add_lighting or (auto_add_lighting and has_gui)
-        if should_have_light:
-            # Ensure that dome light got added
-            assert sim.stage.GetPrimAtPath("/World/defaultDomeLight").IsValid()
-        else:
-            # Ensure that dome light didn't get added
-            assert not sim.stage.GetPrimAtPath("/World/defaultDomeLight").IsValid()
 
 
 def test_build_simulation_context_cfg():
@@ -86,13 +65,16 @@ def test_build_simulation_context_cfg():
     device = "cuda:0"
 
     cfg = SimulationCfg(
+        physics=PhysxCfg(),
         gravity=gravity,
         device=device,
         dt=dt,
     )
 
-    # Pass only sim_cfg: gravity, device, dt all come from sim_cfg (kwargs ignored).
-    with build_simulation_context(sim_cfg=cfg, gravity_enabled=False, dt=0.01) as sim:
+    # Pass only sim_cfg: gravity, device, and dt all come from it.
+    with build_simulation_context(
+        sim_cfg=cfg,
+    ) as sim:
         assert sim.cfg.gravity == gravity
         assert sim.cfg.device == device
         assert sim.cfg.dt == dt

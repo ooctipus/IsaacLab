@@ -235,7 +235,7 @@ class reset_end_effector_around_asset(ManagerTermBase):
         )
         self.solver: DifferentialInverseKinematicsAction = None  # type: ignore
         self.grasp_angle_range = (0.3, 0.7)
-        self.is_physx = "physx" in env.sim.physics_manager.__name__.lower()
+        self.is_physx = "physx" in env.sim.physics_backend
 
     def __call__(
         self,

@@ -169,10 +169,9 @@ def _measurements_from_bundle(
 
     if isinstance(bundle, StartupBundle):
         projected: dict[str, list[Measurement]] = {}
+        wall_label = "Profiled Wall Clock Time" if bundle.config.measurement_mode == "cprofile" else "Wall Clock Time"
         for phase_name, phase in bundle.phases.items():
-            measurements: list[Measurement] = [
-                SingleMeasurement(name="Wall Clock Time", value=phase.total_time_s, unit="s")
-            ]
+            measurements: list[Measurement] = [SingleMeasurement(name=wall_label, value=phase.total_time_s, unit="s")]
             for function in phase.top_functions:
                 measurements.extend(
                     [

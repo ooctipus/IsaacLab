@@ -9,7 +9,7 @@ The :class:`SceneDataProvider` bridges physics simulation backends and the
 consumers that read scene transforms (renderers and visualizers). Physics
 backends implement :class:`SceneDataBackend` to expose their current
 transforms in one of the :class:`SceneDataFormat` Warp struct variants;
-the provider converts and remaps them on demand for each consumer.
+the provider passes or converts them on demand for each consumer.
 
 This package is deliberately separate from :mod:`isaaclab.scene` so that
 physics backends (``isaaclab_physx``, ``isaaclab_newton``) can subclass

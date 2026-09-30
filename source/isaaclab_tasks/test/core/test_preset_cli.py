@@ -7,11 +7,12 @@
 
 :func:`setup_preset_cli` registers the preset-selection help description and
 runs ``parse_known_args``, returning the verbatim remainder. The
-``physics=``/``renderer=``/``presets=`` tokens are passed through unchanged;
-Hydra's :func:`~isaaclab_tasks.utils.hydra.register_task` parses them directly.
+``physics=``/``renderer=``/``visualizer=``/``presets=`` tokens are passed
+through unchanged; Hydra's :func:`~isaaclab_tasks.utils.hydra.register_task`
+parses them directly.
 
-Name validation, alias rewriting, typed-selector enforcement, and resolution
-all live in :mod:`isaaclab_tasks.utils.hydra` and have their own tests in
+Name validation, typed-selector enforcement, and resolution all live in
+:mod:`isaaclab_tasks.utils.hydra` and have their own tests in
 ``test_hydra.py``; this file does not re-cover them.
 """
 
@@ -34,25 +35,19 @@ def _make_parser() -> argparse.ArgumentParser:
 # ---------------------------------------------------------------------------
 
 
-def test_all_legacy_aliases_aggregates_per_target_tables():
-    from isaaclab_tasks.utils.preset_target import PresetTarget
-
-    flat = PresetTarget.all_legacy_aliases()
-    assert flat["newton"] == "newton_mjwarp"
-    assert flat["kamino"] == "newton_kamino"
-
-
 def test_preset_target_carries_base_classes():
     """Typed targets carry the cfg base classes whose subclass instances
     should bucket to them. DOMAIN carries no base classes (it's the
     catch-all)."""
     from isaaclab.physics import PhysicsCfg
     from isaaclab.renderers.renderer_cfg import RendererCfg
+    from isaaclab.visualizers.visualizer_cfg import VisualizerCfg
 
     from isaaclab_tasks.utils.preset_target import PresetTarget
 
     assert PresetTarget.PHYSICS.base_classes == (PhysicsCfg,)
     assert PresetTarget.RENDERER.base_classes == (RendererCfg,)
+    assert PresetTarget.VISUALIZER.base_classes == (VisualizerCfg,)
     assert PresetTarget.DOMAIN.base_classes == ()
 
 
@@ -76,9 +71,8 @@ def test_setup_preset_cli_returns_remainder_only(monkeypatch):
 
 
 def test_setup_preset_cli_passes_typed_tokens_verbatim(monkeypatch):
-    """Preset tokens come back in their original ``physics=`` / ``renderer=`` /
-    ``presets=`` form so hydra can parse them directly and callers can intersect
-    with callback returns in matching vocabulary."""
+    """Preset tokens come back in their original typed/broadcast forms so
+    hydra can parse them directly and callbacks see the same vocabulary."""
     monkeypatch.setattr(
         "sys.argv",
         [
@@ -86,6 +80,7 @@ def test_setup_preset_cli_passes_typed_tokens_verbatim(monkeypatch):
             "--task=Foo-v0",
             "physics=newton_mjwarp",
             "renderer=newton_renderer",
+            "visualizer=rerun",
             "presets=albedo,depth",
             "env.sim.dt=0.001",
         ],
@@ -96,6 +91,7 @@ def test_setup_preset_cli_passes_typed_tokens_verbatim(monkeypatch):
     assert remaining == [
         "physics=newton_mjwarp",
         "renderer=newton_renderer",
+        "visualizer=rerun",
         "presets=albedo,depth",
         "env.sim.dt=0.001",
     ]
@@ -119,7 +115,7 @@ def test_setup_preset_cli_does_not_mutate_sys_argv(monkeypatch):
 
 def test_setup_preset_cli_namespace_carries_no_preset_attributes(monkeypatch):
     """Preset tokens are never registered with argparse, so the parsed
-    Namespace gains no ``physics`` / ``renderer`` / ``presets`` attribute.
+    Namespace gains no preset selector attribute.
 
     This is the bug-class-level guarantee against AppLauncher's name-based
     forwarding (``set(_SIM_APP_CFG_TYPES) & set(vars(args))``,
@@ -127,12 +123,19 @@ def test_setup_preset_cli_namespace_carries_no_preset_attributes(monkeypatch):
     """
     monkeypatch.setattr(
         "sys.argv",
-        ["train.py", "--task=Foo-v0", "physics=newton_mjwarp", "renderer=newton_renderer", "presets=albedo"],
+        [
+            "train.py",
+            "--task=Foo-v0",
+            "physics=newton_mjwarp",
+            "renderer=newton_renderer",
+            "visualizer=rerun",
+            "presets=albedo",
+        ],
     )
     from isaaclab_tasks.utils.preset_cli import setup_preset_cli
 
     args, _ = setup_preset_cli(_make_parser())
-    for attr in ("physics", "renderer", "presets"):
+    for attr in ("physics", "renderer", "visualizer", "presets"):
         assert not hasattr(args, attr), (
             f"setup_preset_cli wrote ``args.{attr}`` to the namespace -- AppLauncher's name-based"
             " forwarding can then push it into SimulationApp config. Drop the argparse registration"
@@ -143,14 +146,21 @@ def test_setup_preset_cli_namespace_carries_no_preset_attributes(monkeypatch):
 def test_setup_preset_cli_does_not_leak_into_app_launcher_sim_app_intersection(monkeypatch):
     """Mirrors the literal intersection :class:`~isaaclab.app.AppLauncher`
     computes (``set(_SIM_APP_CFG_TYPES) & set(vars(args))``,
-    ``app_launcher.py:681``). After ``setup_preset_cli`` runs with all three
-    preset selectors, no preset name can be in that intersection -- the only
+    ``app_launcher.py:681``). After ``setup_preset_cli`` runs with all preset
+    selectors, no preset name can be in that intersection -- the only
     keys present are those AppLauncher itself registered on the parser
     (``headless``, ``experience``, ...).
     """
     monkeypatch.setattr(
         "sys.argv",
-        ["train.py", "--task=Foo-v0", "physics=newton_mjwarp", "renderer=newton_renderer", "presets=albedo"],
+        [
+            "train.py",
+            "--task=Foo-v0",
+            "physics=newton_mjwarp",
+            "renderer=newton_renderer",
+            "visualizer=rerun",
+            "presets=albedo",
+        ],
     )
     from isaaclab.app import AppLauncher
 
@@ -241,16 +251,15 @@ def test_argv_helper_task_returns_last_value():
 
 
 def test_bucket_variants_routes_by_target_match():
-    """Variants bucket through :meth:`PresetTarget.matches`.
+    """Variants bucket by their typed base class.
 
-    PhysicsCfg subclass instances route to PHYSICS, RendererCfg subclass
-    instances route to RENDERER, PhysicsCfg-containing SimulationCfg bundles
-    route to PHYSICS, and values matching no target fall into DOMAIN.
+    PhysicsCfg, RendererCfg, and VisualizerCfg subclass instances route to
+    their typed targets, and everything else falls into DOMAIN.
     """
     from isaaclab.physics import PhysicsCfg
     from isaaclab.renderers.renderer_cfg import RendererCfg
-    from isaaclab.sim import SimulationCfg
     from isaaclab.utils.configclass import configclass
+    from isaaclab.visualizers.visualizer_cfg import VisualizerCfg
 
     from isaaclab_tasks.utils.preset_cli import _bucket_variants_by_target
     from isaaclab_tasks.utils.preset_target import PresetTarget
@@ -261,7 +270,7 @@ def test_bucket_variants_routes_by_target_match():
 
     @configclass
     class _PhysWrapper(PhysicsCfg):
-        # Mirrors NewtonCfg's "wrapper holds an inner solver" shape: still
+        # Mirrors NewtonSolverCfg's "wrapper holds an inner solver" shape: still
         # subclasses PhysicsCfg, so the base-class isinstance check still
         # buckets it correctly regardless of any nested member type.
         class_type: str = "mock_wrapper"
@@ -270,6 +279,10 @@ def test_bucket_variants_routes_by_target_match():
     @configclass
     class _RendVariant(RendererCfg):
         pass
+
+    @configclass
+    class _VizVariant(VisualizerCfg):
+        class_type: str = "mock"
 
     walked = {
         "physics": {
@@ -282,13 +295,9 @@ def test_bucket_variants_routes_by_target_match():
             "default": _RendVariant(),
             "newton_renderer": _RendVariant(),
         },
-        "sim": {
-            "default": SimulationCfg(dt=1 / 60, physics=_PhysVariant()),
-            "simulation_physx": SimulationCfg(dt=1 / 60, physics=_PhysVariant()),
-        },
-        "sim_no_backend": {
-            "default": SimulationCfg(dt=1 / 240),
-            "plain": SimulationCfg(dt=1 / 240),
+        "visualizer": {
+            "default": _VizVariant(),
+            "rerun": _VizVariant(),
         },
         "weight": {  # cfgs whose type is not a typed-target base subclass -> DOMAIN
             "default": 1.0,
@@ -298,10 +307,11 @@ def test_bucket_variants_routes_by_target_match():
     }
     result = _bucket_variants_by_target(walked)
     # All physics variants bucket to PHYSICS (including the wrapper-shaped ones).
-    assert {"physx", "newton_mjwarp", "newton_kamino", "simulation_physx"} <= result[PresetTarget.PHYSICS]
+    assert {"physx", "newton_mjwarp", "newton_kamino"} <= result[PresetTarget.PHYSICS]
     assert "newton_renderer" in result[PresetTarget.RENDERER]
+    assert "rerun" in result[PresetTarget.VISUALIZER]
     # Primitive-typed variants land in DOMAIN.
-    assert {"plain", "light", "heavy"} <= result[PresetTarget.DOMAIN]
+    assert {"light", "heavy"} <= result[PresetTarget.DOMAIN]
     # 'default' is filtered out everywhere -- it's the fallback, not a selectable name.
     for bucket in result.values():
         assert "default" not in bucket
@@ -333,8 +343,9 @@ def test_help_without_task_says_pass_task(monkeypatch, capsys):
         pytest.param(
             "empty",
             [
-                "physics=NAME (typed) selects a physics backend. Available: (none)",
-                "renderer=NAME (typed) selects a renderer backend. Available: (none)",
+                "physics=NAME (typed) selects a PhysicsCfg variant. Available: (none)",
+                "renderer=NAME (typed) selects a RendererCfg variant. Available: (none)",
+                "visualizer=NAME (typed) selects a VisualizerCfg variant. Available: (none)",
                 "presets=NAME[,NAME,...] broadcast: applied to every matching PresetCfg. Available: (none)",
             ],
             id="zero_variants_everywhere",
@@ -342,8 +353,9 @@ def test_help_without_task_says_pass_task(monkeypatch, capsys):
         pytest.param(
             "physics_only",
             [
-                "physics=NAME (typed) selects a physics backend. Available: - alpha - beta",
-                "renderer=NAME (typed) selects a renderer backend. Available: (none)",
+                "physics=NAME (typed) selects a PhysicsCfg variant. Available: - alpha - beta",
+                "renderer=NAME (typed) selects a RendererCfg variant. Available: (none)",
+                "visualizer=NAME (typed) selects a VisualizerCfg variant. Available: (none)",
                 "presets=NAME[,NAME,...] broadcast: applied to every matching PresetCfg. Available: (none)",
             ],
             id="typed_populated_other_typed_empty",
@@ -351,8 +363,9 @@ def test_help_without_task_says_pass_task(monkeypatch, capsys):
         pytest.param(
             "domain_only",
             [
-                "physics=NAME (typed) selects a physics backend. Available: (none)",
-                "renderer=NAME (typed) selects a renderer backend. Available: (none)",
+                "physics=NAME (typed) selects a PhysicsCfg variant. Available: (none)",
+                "renderer=NAME (typed) selects a RendererCfg variant. Available: (none)",
+                "visualizer=NAME (typed) selects a VisualizerCfg variant. Available: (none)",
                 "presets=NAME[,NAME,...] broadcast: applied to every matching PresetCfg. Available: - heavy - light",
             ],
             id="domain_bucket_only",
@@ -360,18 +373,19 @@ def test_help_without_task_says_pass_task(monkeypatch, capsys):
         pytest.param(
             "mixed",
             [
-                "physics=NAME (typed) selects a physics backend. Available: - my_phys",
-                "renderer=NAME (typed) selects a renderer backend. Available: - my_rend",
+                "physics=NAME (typed) selects a PhysicsCfg variant. Available: - my_phys",
+                "renderer=NAME (typed) selects a RendererCfg variant. Available: - my_rend",
+                "visualizer=NAME (typed) selects a VisualizerCfg variant. Available: - my_viz",
                 "presets=NAME[,NAME,...] broadcast: applied to every matching PresetCfg. Available: - heavy - light",
             ],
-            id="all_three_buckets_populated",
+            id="all_four_buckets_populated",
         ),
     ],
 )
 def test_help_text_branch_strings(monkeypatch, capsys, build_key, expected_phrases):
     """Each branch of the description builder renders the documented strings
-    for its variant shape. Typed-bucketed names appear only under their typed
-    section; the DOMAIN bucket
+    for its variant shape. Typed-bucketed names (PhysicsCfg, RendererCfg, or
+    VisualizerCfg subclass instances) appear only under their typed section; the DOMAIN bucket
     (``presets:``) lists only variants that fell into the catch-all. The
     parametrize id captures which branch each case locks; argparse line-
     wrapping is normalized away before substring assertions so wording changes
@@ -380,6 +394,7 @@ def test_help_text_branch_strings(monkeypatch, capsys, build_key, expected_phras
     from isaaclab.physics import PhysicsCfg
     from isaaclab.renderers.renderer_cfg import RendererCfg
     from isaaclab.utils.configclass import configclass
+    from isaaclab.visualizers.visualizer_cfg import VisualizerCfg
 
     from isaaclab_tasks.utils.hydra import preset
 
@@ -390,6 +405,10 @@ def test_help_text_branch_strings(monkeypatch, capsys, build_key, expected_phras
     @configclass
     class _HelpRendCfg(RendererCfg):
         pass
+
+    @configclass
+    class _HelpVizCfg(VisualizerCfg):
+        class_type: str = "mock"
 
     @configclass
     class _EmptyCfg:
@@ -407,6 +426,7 @@ def test_help_text_branch_strings(monkeypatch, capsys, build_key, expected_phras
     class _MixedCfg:
         physics: object = preset(default=_HelpPhysCfg(), my_phys=_HelpPhysCfg())
         renderer: object = preset(default=_HelpRendCfg(), my_rend=_HelpRendCfg())
+        visualizer: object = preset(default=_HelpVizCfg(), my_viz=_HelpVizCfg())
         weight: object = preset(default=1.0, light=0.5, heavy=2.0)
 
     builders = {

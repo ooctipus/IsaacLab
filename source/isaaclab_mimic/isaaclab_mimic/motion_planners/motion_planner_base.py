@@ -25,10 +25,8 @@ class MotionPlannerBase(ABC):
     3. Execute plan using has_next_waypoint() and get_next_waypoint_ee_pose()
 
     Example:
-        >>> from isaaclab_mimic.motion_planners.curobo.curobo_planner import CuroboPlanner
-        >>> from isaaclab_mimic.motion_planners.curobo.curobo_planner_cfg import CuroboPlannerCfg
-        >>> config = CuroboPlannerCfg.franka_config()
-        >>> planner = CuroboPlanner(env, robot, config)
+        >>> config = env.cfg.motion_planner
+        >>> planner = config.class_type(config, env, 0)
         >>> success = planner.update_world_and_plan_motion(target_pose)
         >>> if success:
         >>>     while planner.has_next_waypoint():

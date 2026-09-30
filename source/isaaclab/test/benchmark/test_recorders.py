@@ -756,6 +756,9 @@ class TestVersionInfoRecorder:
         if "commit_hash_short" in dev:
             # Short hash should be 8 characters
             assert len(dev["commit_hash_short"]) == 8
+        if "diff_sha256" in dev:
+            assert len(dev["diff_sha256"]) == 64
+            assert all(c in "0123456789abcdef" for c in dev["diff_sha256"])
 
     def test_update_is_noop(self, recorder):
         """Test that update doesn't change anything."""

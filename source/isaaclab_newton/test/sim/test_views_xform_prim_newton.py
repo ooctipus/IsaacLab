@@ -23,22 +23,18 @@ import torch
 import warp as wp
 from frame_view_contract_utils import *  # noqa: F401, F403 — import all contract tests
 from frame_view_contract_utils import CHILD_OFFSET, ViewBundle, _wp_vec3f, _wp_vec4f
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
-from isaaclab_newton.physics.newton_manager import NewtonManager
+from isaaclab_newton.physics import MJWarpSolverCfg
 from isaaclab_newton.sim.views import NewtonSiteFrameView as FrameView
 
-from pxr import Sdf
-
 import isaaclab.sim as sim_utils
-from isaaclab.assets import RigidObjectCfg
+from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
 from isaaclab.sim import SimulationCfg, build_simulation_context
 from isaaclab.utils.configclass import configclass
 
-NEWTON_SIM_CFG = SimulationCfg(physics=NewtonCfg(solver_cfg=MJWarpSolverCfg()))
+NEWTON_SIM_CFG = SimulationCfg(physics=MJWarpSolverCfg())
 WORLD_MARKER_POS = (5.0, 3.0, 1.0)
-SITE_PATH = "/World/Robot/SiteFrame"
-VISUAL_PATH = "/World/Robot/VisualFrame"
+PARENT_OFFSET = (0.2, 0.3, 0.4)
 
 
 @configclass
@@ -53,24 +49,52 @@ class _SceneCfg(InteractiveSceneCfg):
         ),
         init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 1.0)),
     )
+    camera_mount: AssetBaseCfg = AssetBaseCfg(
+        prim_path="{ENV_REGEX_NS}/Cube/CameraMount",
+        spawn=sim_utils.PinholeCameraCfg(),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=CHILD_OFFSET),
+    )
+    nested_parent: AssetBaseCfg = AssetBaseCfg(
+        prim_path="{ENV_REGEX_NS}/Cube/NestedParent",
+        spawn=sim_utils.PinholeCameraCfg(),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=PARENT_OFFSET),
+    )
+    nested_child: AssetBaseCfg = AssetBaseCfg(
+        prim_path="{ENV_REGEX_NS}/Cube/NestedParent/Child",
+        spawn=sim_utils.PinholeCameraCfg(),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=CHILD_OFFSET),
+    )
+    static_marker: AssetBaseCfg = AssetBaseCfg(
+        prim_path="/World/StaticMarker",
+        spawn=sim_utils.PinholeCameraCfg(),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=WORLD_MARKER_POS),
+    )
 
 
 def _sim_context(device, num_envs=4):
     NEWTON_SIM_CFG.device = device
-    return build_simulation_context(device=device, sim_cfg=NEWTON_SIM_CFG, add_ground_plane=True)
+    return build_simulation_context(device=device, sim_cfg=NEWTON_SIM_CFG)
+
+
+def _frame_view(sim, prim_path: str, device: str) -> FrameView:
+    view = FrameView(prim_path, simulation_context=sim, device=device)
+    view.initialize(sim.get_clone_plan(), sim.get_scene_data_provider())
+    return view
 
 
 def _get_body_positions(num_envs, device="cpu"):
-    model = NewtonManager.get_model()
+    manager = sim_utils.SimulationContext.instance()._physics_manager
+    model = manager.get_model()
     body_labels = list(model.body_label)
-    body_q_t = wp.to_torch(NewtonManager.get_state_0().body_q)
+    body_q_t = wp.to_torch(manager.get_state_0().body_q)
     return torch.stack([body_q_t[body_labels.index(f"/World/envs/env_{i}/Cube"), :3] for i in range(num_envs)])
 
 
 def _set_body_positions(positions, num_envs):
-    model = NewtonManager.get_model()
+    manager = sim_utils.SimulationContext.instance()._physics_manager
+    model = manager.get_model()
     body_labels = list(model.body_label)
-    body_q_t = wp.to_torch(NewtonManager.get_state_0().body_q)
+    body_q_t = wp.to_torch(manager.get_state_0().body_q)
     for i in range(num_envs):
         body_q_t[body_labels.index(f"/World/envs/env_{i}/Cube"), :3] = positions[i]
 
@@ -88,9 +112,9 @@ def view_factory():
         ctx = _sim_context(device, num_envs=num_envs)
         sim = ctx.__enter__()
         sim._app_control_on_stop_handle = None
-        InteractiveScene(_SceneCfg(num_envs=num_envs, env_spacing=2.0))
-        sim_utils.create_prim("/World/envs/env_0/Cube/CameraMount", translation=CHILD_OFFSET)
-        view = FrameView("/World/envs/env_[^/]+/Cube/CameraMount", device=device)
+        scene_cfg = _SceneCfg(num_envs=num_envs, env_spacing=2.0)
+        InteractiveScene(scene_cfg)
+        view = _frame_view(sim, "/World/envs/env_[^/]+/Cube/CameraMount", device)
         sim.reset()
 
         return ViewBundle(
@@ -114,58 +138,12 @@ def test_reject_body_path(device):
     ctx = _sim_context(device, num_envs=2)
     sim = ctx.__enter__()
     sim._app_control_on_stop_handle = None
-    InteractiveScene(_SceneCfg(num_envs=2, env_spacing=2.0))
+    scene_cfg = _SceneCfg(num_envs=2, env_spacing=2.0)
+    InteractiveScene(scene_cfg)
     sim.reset()
 
     with pytest.raises(ValueError, match="physics body"):
-        FrameView("/World/envs/env_[^/]+/Cube", device=device)
-    ctx.__exit__(None, None, None)
-
-
-@pytest.mark.parametrize("device", test_devices())
-def test_reject_shape_path(device):
-    """FrameView rejects prim paths that resolve to a Newton collision shape."""
-    ctx = _sim_context(device, num_envs=2)
-    sim = ctx.__enter__()
-    sim._app_control_on_stop_handle = None
-    InteractiveScene(_SceneCfg(num_envs=2, env_spacing=2.0))
-    sim.reset()
-
-    shape_labels = list(NewtonManager.get_model().shape_label)
-    if not shape_labels:
-        pytest.skip("No shapes in model")
-
-    with pytest.raises(ValueError, match="collision shape"):
-        FrameView(shape_labels[0], device=device)
-    ctx.__exit__(None, None, None)
-
-
-@pytest.mark.parametrize("device", test_devices())
-def test_non_colliding_shapes_after_finalize(device):
-    """Non-colliding site and visual shapes remain valid after finalization."""
-    ctx = _sim_context(device, num_envs=1)
-    sim = ctx.__enter__()
-    sim._app_control_on_stop_handle = None
-    body_cfg = sim_utils.CuboidCfg(
-        size=(0.2, 0.2, 0.2),
-        rigid_props=sim_utils.RigidBodyBaseCfg(),
-        mass_props=sim_utils.MassPropertiesCfg(mass=1.0),
-        collision_props=sim_utils.CollisionBaseCfg(),
-    )
-    body_cfg.func("/World/Robot", body_cfg)
-
-    site_prim = sim_utils.create_prim(SITE_PATH, prim_type="Sphere", scale=(0.01, 0.01, 0.01))
-    site_schemas = Sdf.TokenListOp()
-    site_schemas.prependedItems = ["MjcSiteAPI"]
-    site_prim.SetMetadata("apiSchemas", site_schemas)
-    sim_utils.create_prim(VISUAL_PATH, prim_type="Cube", scale=(0.01, 0.01, 0.01))
-    sim.reset()
-
-    shape_labels = list(NewtonManager.get_model().shape_label)
-    assert SITE_PATH in shape_labels
-    assert VISUAL_PATH in shape_labels
-    FrameView(SITE_PATH, device=device)
-    FrameView(VISUAL_PATH, device=device)
+        _frame_view(sim, "/World/envs/env_[^/]+/Cube", device)
     ctx.__exit__(None, None, None)
 
 
@@ -176,14 +154,13 @@ def test_clone_plan_view_uses_source_child_without_destination_usd(device):
     ctx = _sim_context(device, num_envs=num_envs)
     sim = ctx.__enter__()
     sim._app_control_on_stop_handle = None
-    InteractiveScene(_SceneCfg(num_envs=num_envs, env_spacing=2.0))
+    scene_cfg = _SceneCfg(num_envs=num_envs, env_spacing=2.0)
+    InteractiveScene(scene_cfg)
 
     stage = sim_utils.get_current_stage()
     assert stage.GetPrimAtPath("/World/envs/env_0/Cube").IsValid()
     assert not stage.GetPrimAtPath("/World/envs/env_1/Cube").IsValid()
-    sim_utils.create_prim("/World/envs/env_0/Cube/CameraMount", translation=CHILD_OFFSET)
-
-    view = FrameView("/World/envs/env_[^/]+/Cube/CameraMount", device=device)
+    view = _frame_view(sim, "/World/envs/env_[^/]+/Cube/CameraMount", device)
     sim.reset()
 
     assert view.count == num_envs
@@ -201,15 +178,29 @@ def test_view_can_resolve_from_body_labels_after_reset(device):
     ctx = _sim_context(device, num_envs=num_envs)
     sim = ctx.__enter__()
     sim._app_control_on_stop_handle = None
-    InteractiveScene(_SceneCfg(num_envs=num_envs, env_spacing=2.0))
-    sim_utils.create_prim("/World/envs/env_0/Cube/CameraMount", translation=CHILD_OFFSET)
-
+    scene_cfg = _SceneCfg(num_envs=num_envs, env_spacing=2.0)
+    InteractiveScene(scene_cfg)
     sim.reset()
-    view = FrameView("/World/envs/env_[^/]+/Cube/CameraMount", device=device)
+    view = _frame_view(sim, "/World/envs/env_[^/]+/Cube/CameraMount", device)
 
     pos = view.get_world_poses()[0].torch
     expected = _get_body_positions(num_envs, device) + torch.tensor(CHILD_OFFSET, device=device)
     torch.testing.assert_close(pos, expected, atol=1e-5, rtol=0)
+    ctx.__exit__(None, None, None)
+
+
+@pytest.mark.parametrize("device", test_devices())
+def test_local_pose_is_relative_to_non_physics_parent(device):
+    """Local transforms are relative to the immediate planned parent, not its rigid body."""
+    ctx = _sim_context(device, num_envs=2)
+    sim = ctx.__enter__()
+    sim._app_control_on_stop_handle = None
+    InteractiveScene(_SceneCfg(num_envs=2, env_spacing=2.0))
+    sim.reset()
+
+    view = _frame_view(sim, "/World/envs/env_[^/]+/Cube/NestedParent/Child", device)
+    local_pos = view.get_local_poses()[0].torch
+    torch.testing.assert_close(local_pos, torch.tensor(CHILD_OFFSET, device=device).expand(2, -1), atol=1e-5, rtol=0)
     ctx.__exit__(None, None, None)
 
 
@@ -224,11 +215,11 @@ def test_world_attached_returns_initial_pose(device):
     ctx = _sim_context(device, num_envs=2)
     sim = ctx.__enter__()
     sim._app_control_on_stop_handle = None
-    InteractiveScene(_SceneCfg(num_envs=2, env_spacing=2.0))
+    scene_cfg = _SceneCfg(num_envs=2, env_spacing=2.0)
+    InteractiveScene(scene_cfg)
 
     sim.reset()
-    sim_utils.create_prim("/World/StaticMarker", translation=WORLD_MARKER_POS)
-    view = FrameView("/World/StaticMarker", device=device)
+    view = _frame_view(sim, "/World/StaticMarker", device)
 
     pos = view.get_world_poses()[0].torch
     expected = torch.tensor([list(WORLD_MARKER_POS)], device=device)
@@ -242,11 +233,11 @@ def test_world_attached_set_world_roundtrip(device):
     ctx = _sim_context(device, num_envs=2)
     sim = ctx.__enter__()
     sim._app_control_on_stop_handle = None
-    InteractiveScene(_SceneCfg(num_envs=2, env_spacing=2.0))
+    scene_cfg = _SceneCfg(num_envs=2, env_spacing=2.0)
+    InteractiveScene(scene_cfg)
 
     sim.reset()
-    sim_utils.create_prim("/World/StaticMarker", translation=WORLD_MARKER_POS)
-    view = FrameView("/World/StaticMarker", device=device)
+    view = _frame_view(sim, "/World/StaticMarker", device)
 
     new_pos = _wp_vec3f([[10.0, 20.0, 30.0]], device=device)
     new_quat = _wp_vec4f([[0.0, 0.0, 0.0, 1.0]], device=device)

@@ -11,20 +11,17 @@ from typing import TYPE_CHECKING
 
 import torch
 
-from pxr import UsdPhysics
-
 import isaaclab.utils.math as math_utils
 import isaaclab.utils.string as string_utils
 from isaaclab.assets.articulation import Articulation
 from isaaclab.controllers.differential_ik import DifferentialIKController
 from isaaclab.controllers.operational_space import OperationalSpaceController
 from isaaclab.managers.action_manager import ActionTerm
-from isaaclab.sensors import ContactSensor, ContactSensorCfg, FrameTransformer, FrameTransformerCfg
-from isaaclab.sim.utils.queries import resolve_matching_prims_from_source
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedEnv
     from isaaclab.envs.utils.io_descriptors import GenericActionIODescriptor
+    from isaaclab.sensors import ContactSensor, FrameTransformer
 
     from . import actions_cfg
 
@@ -284,16 +281,14 @@ class OperationalSpaceControllerAction(ActionTerm):
     """The configuration of the action term."""
     _asset: Articulation
     """The articulation asset on which the action term is applied."""
-    _contact_sensor: ContactSensor = None
+    _contact_sensor: ContactSensor | None
     """The contact sensor for the end-effector body."""
-    _task_frame_transformer: FrameTransformer = None
+    _task_frame_transformer: FrameTransformer | None
     """The frame transformer for the task frame."""
 
     def __init__(self, cfg: actions_cfg.OperationalSpaceControllerActionCfg, env: ManagerBasedEnv):
         # initialize the action term
         super().__init__(cfg, env)
-
-        self._sim_dt = env.sim.get_physics_dt()
 
         # resolve the joints over which the action term is applied
         self._joint_ids, self._joint_names = self._asset.find_joints(self.cfg.joint_names)
@@ -330,50 +325,19 @@ class OperationalSpaceControllerAction(ActionTerm):
         else:
             self._offset_pos, self._offset_rot = None, None
 
-        # create contact sensor if any of the command is wrench_abs, and if stiffness is provided
-        if (
+        needs_contact_sensor = (
             "wrench_abs" in self.cfg.controller_cfg.target_types
             and self.cfg.controller_cfg.contact_wrench_stiffness_task is not None
-        ):
-            self._contact_sensor_cfg = ContactSensorCfg(prim_path=self._asset.cfg.prim_path + "/" + self._ee_body_name)
-            self._contact_sensor = ContactSensor(self._contact_sensor_cfg)
-            if not self._contact_sensor.is_initialized:
-                self._contact_sensor._initialize_impl()
-                self._contact_sensor._is_initialized = True
-
-        # Initialize the task frame transformer if a relative path for the RigidObject, representing the task frame,
-        # is provided.
-        if self.cfg.task_frame_rel_path is not None:
-            # The source RigidObject can be any child of the articulation asset (we will not use it),
-            # hence, we will use the first RigidObject descendant.
-            def has_rigid_body_api(prim) -> bool:
-                return bool(prim.HasAPI(UsdPhysics.RigidBodyAPI))
-
-            prim_path = self._asset.cfg.prim_path
-            resolve_kwargs = {"raise_if_no_matches": False, "traverse_instance_prims": False}
-            rigid_matches = resolve_matching_prims_from_source(prim_path, has_rigid_body_api, **resolve_kwargs)
-            if not rigid_matches:
-                raise ValueError(f"No descendant rigid body found under the expression: '{self._asset.cfg.prim_path}'.")
-            _, root_rigidbody_path = rigid_matches[0]
-            task_frame_transformer_path = f"{self._env.scene.env_regex_ns}/{self.cfg.task_frame_rel_path}"
-            task_frame_transformer_cfg = FrameTransformerCfg(
-                prim_path=root_rigidbody_path,
-                target_frames=[
-                    FrameTransformerCfg.FrameCfg(
-                        name="task_frame",
-                        prim_path=task_frame_transformer_path,
-                    ),
-                ],
-            )
-            self._task_frame_transformer = FrameTransformer(task_frame_transformer_cfg)
-            if not self._task_frame_transformer.is_initialized:
-                self._task_frame_transformer._initialize_impl()
-                self._task_frame_transformer._is_initialized = True
-            # create tensor for task frame pose in the root frame
-            self._task_frame_pose_b = torch.zeros(self.num_envs, 7, device=self.device)
-        else:
-            # create an empty reference for task frame pose
-            self._task_frame_pose_b = None
+        )
+        if needs_contact_sensor and self.cfg.contact_sensor_name is None:
+            raise ValueError("Closed-loop OSC force control requires a planned scene contact_sensor_name.")
+        self._contact_sensor = None if self.cfg.contact_sensor_name is None else env.scene[self.cfg.contact_sensor_name]
+        self._task_frame_transformer = (
+            None if self.cfg.task_frame_sensor_name is None else env.scene[self.cfg.task_frame_sensor_name]
+        )
+        self._task_frame_pose_b = (
+            None if self._task_frame_transformer is None else torch.zeros(self.num_envs, 7, device=self.device)
+        )
 
         # create the operational space controller
         self._osc = OperationalSpaceController(cfg=self.cfg.controller_cfg, num_envs=self.num_envs, device=self.device)
@@ -561,16 +525,12 @@ class OperationalSpaceControllerAction(ActionTerm):
         self._asset.set_joint_effort_target_index(target=self._joint_efforts, joint_ids=self._joint_ids)
 
     def reset(self, env_ids: Sequence[int] | None = None) -> None:
-        """Resets the raw actions and the sensors if available.
+        """Reset the raw actions.
 
         Args:
             env_ids (Sequence[int] | None): The environment indices to reset. If ``None``, all environments are reset.
         """
         self._raw_actions[env_ids] = 0.0
-        if self._contact_sensor is not None:
-            self._contact_sensor.reset(env_ids)
-        if self._task_frame_transformer is not None:
-            self._task_frame_transformer.reset(env_ids)
 
     """
     Helper functions.
@@ -732,7 +692,6 @@ class OperationalSpaceControllerAction(ActionTerm):
 
     def _compute_ee_force(self):
         """Computes the contact forces on the ee frame in root frame."""
-        # Obtain contact forces only if the contact sensor is available
         if self._contact_sensor is not None:
             self._contact_sensor.update(self._sim_dt)
             self._ee_force_w[:] = self._contact_sensor.data.net_normal_forces_w.torch[:, 0, :]  # type: ignore
@@ -747,9 +706,7 @@ class OperationalSpaceControllerAction(ActionTerm):
 
     def _compute_task_frame_pose(self):
         """Computes the pose of the task frame in root frame."""
-        # Update task frame pose if task frame rigidbody is provided
         if self._task_frame_transformer is not None and self._task_frame_pose_b is not None:
-            self._task_frame_transformer.update(self._sim_dt)
             # Calculate the pose of the task frame in the root frame
             self._task_frame_pose_b[:, :3], self._task_frame_pose_b[:, 3:] = math_utils.subtract_frame_transforms(
                 self._asset.data.root_pos_w.torch,

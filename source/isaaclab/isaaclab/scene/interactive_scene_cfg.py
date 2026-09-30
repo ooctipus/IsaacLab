@@ -9,14 +9,13 @@ from collections.abc import Callable
 from dataclasses import MISSING
 from typing import TYPE_CHECKING
 
+from isaaclab.assets import AssetBaseCfg
 from isaaclab.cloner import CloneCfg, InclusionSet
 from isaaclab.cloner import add as clone_add
 from isaaclab.utils import find_unique_string_name
 from isaaclab.utils.configclass import configclass
 
 if TYPE_CHECKING:
-    from isaaclab.assets import AssetBaseCfg
-
     from .interactive_scene import InteractiveScene
 
 
@@ -121,10 +120,7 @@ class InteractiveSceneCfg:
         replace for cloned environments.
 
     .. note::
-        The scene pipes this flag into :attr:`~isaaclab.cloner.CloneCfg.replicate_physics`;
-        the policy is applied by :func:`~isaaclab.cloner.replicate`. Direct workflows that
-        call :func:`~isaaclab.cloner.replicate` themselves pass ``replicate_physics``
-        explicitly.
+        The scene passes this flag to :class:`~isaaclab.cloner.ReplicateSession`, which applies the policy.
     """
 
     filter_collisions: bool = True
@@ -134,10 +130,6 @@ class InteractiveSceneCfg:
 
     If False, the simulation will generate collisions between environments.
 
-    .. note::
-        Collisions can only be filtered automatically in direct workflows when physics replication is enabled.
-        If :attr:`replicated_physics` is ``False`` and collision filtering is desired, make sure to call
-        ``scene.filter_collisions()``.
     """
 
     clone_in_fabric: bool = False
@@ -146,9 +138,11 @@ class InteractiveSceneCfg:
     Clone-plan replication does not forward this flag to the PhysX replicator;
     ``useFabricForReplication`` is always ``False``.
     """
-
     clone_cfg: CloneCfg = CloneCfg()
     """Clone execution and legal scene-combination configuration."""
+
+    geometry_prim_paths: tuple[str, ...] = ()
+    """Prim-path expressions whose geometry the clone plan must declare."""
 
 
 def add(
@@ -192,20 +186,18 @@ def add(
     if not target_assets or not source_assets:
         raise ValueError("both scenes must contain at least one spawned environment asset.")
 
-    # ``target`` accumulates only the participating assets: clear everything else
     base_fields = InteractiveSceneCfg.__dataclass_fields__
     target_names = {name for name, _ in target_assets}
     for name in [
-        n for n, v in vars(target).items() if n not in base_fields and v is not None and n not in target_names
+        name
+        for name, value in vars(target).items()
+        if name not in base_fields and value is not None and name not in target_names
     ]:
         setattr(target, name, None)
 
-    # an empty clone configuration is homogeneous: make the base combination explicit
     if not target.clone_cfg.clone_combinations:
         clone_add(target.clone_cfg, InclusionSet(assets=[name for name, _ in target_assets]))
 
-    # a duplicate is an asset equal to an existing binding; each binding is
-    # reused at most once per call so distinct twins survive
     available = dict(target_assets)
     added_names: list[str] = []
     used_names = set(dir(target))
@@ -232,14 +224,10 @@ def _scene_assets(
     asset_skip: Callable[[AssetBaseCfg], bool] | None,
 ) -> list[tuple[str, AssetBaseCfg]]:
     """List the environment-scoped spawned assets of one scene."""
-    # Deferred: config construction must stay importable without isaaclab.assets
-    # (kitless factories); only scene composition pays for it.
-    from isaaclab.assets import AssetBaseCfg  # noqa: PLC0415
-
     env_root = "{ENV_REGEX_NS}/"
-    base_fields, assets = InteractiveSceneCfg.__dataclass_fields__, []
+    base_fields = InteractiveSceneCfg.__dataclass_fields__
+    assets = []
     for name, value in vars(scene_cfg).items():
-        # only spawned assets compose; sensors, terrains, and collections are not AssetBaseCfg
         if name in base_fields or not isinstance(value, AssetBaseCfg) or value.spawn is None:
             continue
         if asset_skip is not None and asset_skip(value):

@@ -15,7 +15,6 @@ from dataclasses import MISSING
 from typing import Any, ClassVar
 
 import gymnasium as gym
-import numpy as np
 import torch
 
 # import omni.kit.app
@@ -34,7 +33,6 @@ from isaaclab.utils.noise import NoiseModel
 from isaaclab.utils.seed import configure_seed
 from isaaclab.utils.timer import Timer
 
-from isaaclab_experimental.envs.interactive_scene_warp import InteractiveSceneWarp
 from isaaclab_experimental.utils.warp_graph_cache import WarpGraphCache
 
 # from isaacsim.core.simulation_manager import SimulationManager
@@ -97,7 +95,7 @@ class DirectRLEnvWarp(DirectRLEnv):
     is_vector_env: ClassVar[bool] = True
     """Whether the environment is a vectorized environment."""
     metadata: ClassVar[dict[str, Any]] = {
-        "render_modes": [None, "human", "rgb_array"],
+        "render_modes": [None, "human"],
         # "isaac_sim_version": get_version(),
     }
     """Metadata for the environment."""
@@ -123,17 +121,21 @@ class DirectRLEnvWarp(DirectRLEnv):
         # initialize internal variables
         self._is_closed = False
 
-        # set the seed for the environment
-        if self.cfg.seed is not None:
-            self.cfg.seed = self.seed(self.cfg.seed)
-        else:
-            logger.warning("Seed not set for the environment. The environment creation may not be deterministic.")
-
         # create a simulation context to control the simulator
         if SimulationContext.instance() is None:
             self.sim: SimulationContext = SimulationContext(self.cfg.sim)
         else:
             raise RuntimeError("Simulation context already exists. Cannot create a new one.")
+
+        # seed Replicator after the SimulationContext stage exists but before task scene construction
+        try:
+            if self.cfg.seed is not None:
+                self.cfg.seed = self.seed(self.cfg.seed)
+            else:
+                logger.warning("Seed not set for the environment. The environment creation may not be deterministic.")
+        except Exception:
+            self.sim.clear_instance()
+            raise
 
         # make sure torch is running on the correct device
         if "cuda" in self.device:
@@ -159,9 +161,10 @@ class DirectRLEnvWarp(DirectRLEnv):
         with Timer("[INFO]: Time taken for scene creation", "scene_creation"):
             # set the stage context for scene creation steps which use the stage
             with use_stage(self.sim.stage):
-                self.scene = InteractiveSceneWarp(self.cfg.scene)
+                self.scene = self.cfg.scene.class_type(self.cfg.scene)
                 self._setup_scene()
-                # attach_stage_to_usd_context()
+                if self.sim.get_clone_plan() is None:
+                    raise RuntimeError("The configured direct scene must publish and replicate one ClonePlan.")
         print("[INFO]: Scene manager: ", self.scene)
 
         # create event manager
@@ -350,14 +353,11 @@ class DirectRLEnvWarp(DirectRLEnv):
 
         # update articulation kinematics
         self.scene.write_data_to_sim()
+        self.sim.forward()
 
         # if sensors are added to the scene, make sure we render to reflect changes in reset
         if hasattr(self.sim, "has_rtx_sensors") and self.sim.has_rtx_sensors() and self.cfg.rerender_on_reset:
             self.sim.render()
-
-        # if self.cfg.wait_for_textures and self.sim.has_rtx_sensors():
-        #     while SimulationManager.assets_loading():
-        #         self.sim.render()
 
         # return observations
         self._get_observations()
@@ -437,6 +437,7 @@ class DirectRLEnvWarp(DirectRLEnv):
         # write_data_to_sim runs uncaptured — it uses torch ops that cross CUDA streams.
         with Timer(name="write_data_to_sim_post", msg="Write data to sim (post-reset) took:", enable=DEBUG_TIMERS):
             self.scene.write_data_to_sim()
+        self.sim.forward()
         with Timer(name="end_post_graph", msg="End post-graph took:", enable=DEBUG_TIMERS):
             self._graph_cache.capture_or_replay("end_post", self._step_warp_end_post)
 
@@ -518,81 +519,14 @@ class DirectRLEnvWarp(DirectRLEnv):
         Returns:
             The seed used for random generator.
         """
-        # set seed for replicator
+        seed = configure_seed(seed)
         try:
             import omni.replicator.core as rep
 
             rep.set_global_seed(seed)
         except ModuleNotFoundError:
             pass
-        # set seed for torch and other libraries
-        return configure_seed(seed)
-
-    def render(self, recompute: bool = False) -> np.ndarray | None:
-        """Run rendering without stepping through the physics.
-
-        By convention, if mode is:
-
-        - **human**: Render to the current display and return nothing. Usually for human consumption.
-        - **rgb_array**: Return an numpy.ndarray with shape (x, y, 3), representing RGB values for an
-          x-by-y pixel image, suitable for turning into a video.
-
-        Args:
-            recompute: Whether to force a render even if the simulator has already rendered the scene.
-                Defaults to False.
-
-        Returns:
-            The rendered image as a numpy array if mode is "rgb_array". Otherwise, returns None.
-
-        Raises:
-            RuntimeError: If mode is set to "rgb_data" and simulation render mode does not support it.
-                In this case, the simulation render mode must be set to ``RenderMode.PARTIAL_RENDERING``
-                or ``RenderMode.FULL_RENDERING``.
-            NotImplementedError: If an unsupported rendering mode is specified.
-        """
-        # run a rendering step of the simulator
-        # if we have rtx sensors, we do not need to render again sim
-        if not (hasattr(self.sim, "has_rtx_sensors") and self.sim.has_rtx_sensors()) and not recompute:
-            self.sim.render()
-        # decide the rendering mode
-        if self.render_mode == "human" or self.render_mode is None:
-            return None
-        elif self.render_mode == "rgb_array":
-            # rendering requires a GUI or offscreen rendering (mirrors the stable env)
-            if not (self.sim.has_gui or self.sim.has_offscreen_render):
-                render_mode_name = "NO_GUI_OR_RENDERING"
-                raise RuntimeError(
-                    f"Cannot render '{self.render_mode}' when the simulation render mode is"
-                    f" '{render_mode_name}'. Please set the simulation render mode"
-                    " to:'PARTIAL_RENDERING' or"
-                    " 'FULL_RENDERING'."
-                )
-            # create the annotator if it does not exist
-            if not hasattr(self, "_rgb_annotator"):
-                import omni.replicator.core as rep
-
-                # create render product from the main Kit viewport camera
-                _cam_prim_path = "/OmniverseKit_Persp"
-                _resolution = (1280, 720)
-                self._render_product = rep.create.render_product(_cam_prim_path, _resolution)
-                self._render_resolution = _resolution
-                # create rgb annotator -- used to read data from the render product
-                self._rgb_annotator = rep.AnnotatorRegistry.get_annotator("rgb", device="cpu")
-                self._rgb_annotator.attach([self._render_product])
-            # obtain the rgb data
-            rgb_data = self._rgb_annotator.get_data()
-            # convert to numpy array
-            rgb_data = np.frombuffer(rgb_data, dtype=np.uint8).reshape(*rgb_data.shape)
-            # return the rgb data
-            # note: initially the renerer is warming up and returns empty data
-            if rgb_data.size == 0:
-                return np.zeros((self._render_resolution[1], self._render_resolution[0], 3), dtype=np.uint8)
-            else:
-                return rgb_data[:, :, :3]
-        else:
-            raise NotImplementedError(
-                f"Render mode '{self.render_mode}' is not supported. Please use: {self.metadata['render_modes']}."
-            )
+        return seed
 
     def close(self):
         """Cleanup for the environment."""
@@ -728,14 +662,10 @@ class DirectRLEnvWarp(DirectRLEnv):
     """
 
     def _setup_scene(self):
-        """Setup the scene for the environment.
+        """Perform optional task-specific setup after the configured scene is constructed.
 
-        This function is responsible for creating the scene objects and setting up the scene for the environment.
-        The scene creation can happen through :class:`isaaclab.scene.InteractiveSceneCfg` or through
-        directly creating the scene objects and registering them with the scene manager.
-
-        We leave the implementation of this function to the derived classes. If the environment does not require
-        any explicit scene setup, the function can be left empty.
+        Assets and sensors belong on the direct cfg's scene; implementations must not construct,
+        spawn, or clone them here.
         """
         pass
 

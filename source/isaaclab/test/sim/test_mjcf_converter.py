@@ -24,6 +24,7 @@ if _USE_KIT:
     import omni.kit.app
 
 import newton
+from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
 from isaaclab.sim import SimulationCfg, SimulationContext
@@ -57,7 +58,7 @@ def test_setup_teardown():
     stage = sim_utils.create_new_stage()
     if _USE_KIT:
         # Kit path: create a simulation context and use the importer extension's asset.
-        sim = SimulationContext(SimulationCfg(dt=0.01))
+        sim = SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
         extension_path = _get_extension_path_without_enabling(_MJCF_IMPORTER_EXTENSION)
         asset_path = f"{extension_path}/data/mjcf/nv_ant.xml"
     else:

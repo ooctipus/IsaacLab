@@ -8,12 +8,14 @@
 from __future__ import annotations
 
 import contextlib
-import logging
 
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from .xr_anchor_utils import XrAnchorSynchronizer
+from isaaclab import cloner
+from isaaclab.sim import SimulationContext
+
+from .xr_anchor_utils import XrAnchorSynchronizer, _PlannedFrameTransform
 from .xr_cfg import XrCfg
 
 # Import Kit components with fallback for sessions without Kit
@@ -26,46 +28,16 @@ XRCoreEventType = None
 with contextlib.suppress(ModuleNotFoundError):
     from omni.kit.xr.core import XRCore, XRCoreEventType
 
-from isaaclab.sim.utils.prims import create_prim as _create_prim
-
-logger = logging.getLogger(__name__)
-
-
-def _xr_anchor_prim_exists(prim_path: str) -> bool:
-    """Return True when ``prim_path`` is already a valid prim on the active stage.
-
-    Used to avoid re-creating the anchor prim on every
-    :class:`XrAnchorManager` construction in multi-replay batches (the
-    replay agent rebuilds the device per run, but the prim is
-    stage-scoped). Best-effort: returns ``False`` if the stage cannot
-    be inspected (e.g. unit tests without omni.usd) so the caller falls
-    through to the create-and-warn path used historically.
-    """
-    try:
-        import omni.usd
-
-        context = omni.usd.get_context()
-        if context is None:
-            return False
-        stage = context.get_stage()
-        if stage is None:
-            return False
-        return stage.GetPrimAtPath(prim_path).IsValid()
-    except Exception as exc:
-        logger.debug("_xr_anchor_prim_exists(%r) failed: %s", prim_path, exc)
-        return False
-
 
 class XrAnchorManager:
-    """Manages XR anchor prim creation, synchronization, and world transform computation.
+    """Synchronize the plan-owned XR anchor and compute its world transform.
 
     This class is responsible for:
 
-    1. Creating the XR anchor prim in the USD stage
-    2. Configuring carb settings for XR rendering
-    3. Managing the :class:`XrAnchorSynchronizer` that keeps the anchor
+    1. Configuring carb settings for XR rendering
+    2. Managing the :class:`XrAnchorSynchronizer` that keeps the anchor
        aligned with a reference prim (for dynamic anchoring)
-    4. Computing the 4x4 world transform matrix that converts OpenXR
+    3. Computing the 4x4 world transform matrix that converts OpenXR
        local-space poses into the Isaac Lab world frame
     """
 
@@ -82,8 +54,7 @@ class XrAnchorManager:
     def __init__(self, xr_cfg: XrCfg):
         """Initialize the XR anchor manager.
 
-        Creates the anchor prim, configures carb XR settings, and sets up
-        the optional anchor synchronizer for dynamic anchoring.
+        Resolve the planned anchor, configure XR settings, and set up dynamic anchoring.
 
         Args:
             xr_cfg: XR configuration specifying anchor position, rotation,
@@ -93,29 +64,18 @@ class XrAnchorManager:
         self._xr_core = XRCore.get_singleton() if XRCore is not None else None
         self._xr_pre_sync_update_subscription = None
 
-        # Resolve the headset anchor path
-        if self._xr_cfg.anchor_prim_path is not None:
-            anchor_path = self._xr_cfg.anchor_prim_path
-            if anchor_path.endswith("/"):
-                anchor_path = anchor_path[:-1]
-            self._xr_anchor_headset_path = f"{anchor_path}/XRAnchor"
-        else:
-            self._xr_anchor_headset_path = "/World/XRAnchor"
-
-        # Create the XR anchor prim in USD if it does not already exist.
-        # The check matters for multi-replay batches (the replay agent
-        # rebuilds ``IsaacTeleopDevice`` -- and therefore this manager --
-        # for each run, but the prim is stage-scoped and survives
-        # per-run device teardown). XrCfg.anchor_rot is xyzw; create_prim
-        # orientation expects xyzw.
-        if not _xr_anchor_prim_exists(self._xr_anchor_headset_path):
-            x, y, z, w = self._xr_cfg.anchor_rot
-            try:
-                pos = np.asarray(self._xr_cfg.anchor_pos, dtype=np.float64)
-                quat_xyzw = np.asarray([x, y, z, w], dtype=np.float64)
-                _create_prim(self._xr_anchor_headset_path, prim_type="Xform", position=pos, orientation=quat_xyzw)
-            except Exception as e:
-                logger.warning(f"Failed to create XR anchor prim: {e}")
+        sim = SimulationContext.instance()
+        if sim is None:
+            raise RuntimeError("XrAnchorManager requires an active SimulationContext.")
+        plan = sim.get_clone_plan()
+        if plan is None or not plan.is_complete or plan.root_layer_identifier is None:
+            raise RuntimeError("XrAnchorManager requires the environment's completed clone plan.")
+        source_paths = {source_path for _, _, source_path, _ in cloner.query.iter_sources(plan, xr_cfg.prim_path)}
+        if len(source_paths) != 1:
+            raise RuntimeError(
+                f"XR anchor {xr_cfg.prim_path!r} resolved {len(source_paths)} clone-plan sources; expected one."
+            )
+        self._xr_anchor_headset_path = source_paths.pop()
 
         # Configure carb settings for XR rendering
         if carb is not None and hasattr(carb, "settings"):
@@ -125,26 +85,24 @@ class XrAnchorManager:
 
         self._anchor_sync: XrAnchorSynchronizer | None = None
         if self._xr_core is not None:
-            try:
-                self._anchor_sync = XrAnchorSynchronizer(
-                    xr_core=self._xr_core,
-                    xr_cfg=self._xr_cfg,
-                    xr_anchor_headset_path=self._xr_anchor_headset_path,
-                )
-                # Subscribe to pre_sync_update to keep anchor in sync each frame.
-                # Capture the synchronizer in a local to satisfy type narrowing.
-                if XRCoreEventType is not None:
-                    assert self._anchor_sync is not None  # guaranteed by the lines above
-                    anchor_sync = self._anchor_sync
-                    self._xr_pre_sync_update_subscription = (
-                        self._xr_core.get_message_bus().create_subscription_to_pop_by_type(
-                            XRCoreEventType.pre_sync_update,
-                            lambda _, _sync=anchor_sync: _sync.sync_headset_to_anchor(),
-                            name="isaaclab_teleop_xr_pre_sync_update",
-                        )
+            self._anchor_sync = XrAnchorSynchronizer(
+                xr_core=self._xr_core,
+                xr_cfg=self._xr_cfg,
+                xr_anchor_headset_path=self._xr_anchor_headset_path,
+                anchor_frame=None
+                if self._xr_cfg.anchor_prim_path is None
+                else _PlannedFrameTransform(self._xr_cfg.anchor_prim_path),
+                anchor_layer_identifier=plan.root_layer_identifier,
+            )
+            if XRCoreEventType is not None:
+                anchor_sync = self._anchor_sync
+                self._xr_pre_sync_update_subscription = (
+                    self._xr_core.get_message_bus().create_subscription_to_pop_by_type(
+                        XRCoreEventType.pre_sync_update,
+                        lambda _, _sync=anchor_sync: _sync.sync_headset_to_anchor(),
+                        name="isaaclab_teleop_xr_pre_sync_update",
                     )
-            except Exception as e:
-                logger.warning(f"Failed to initialize anchor synchronizer: {e}")
+                )
 
     @property
     def xr_core(self):

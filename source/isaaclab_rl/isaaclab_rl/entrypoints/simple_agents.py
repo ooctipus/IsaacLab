@@ -68,8 +68,6 @@ def run(argv: list[str] | None = None, *, policy: PolicyName) -> None:
     # launching Kit or initializing a native physics backend.
     env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
     env_cfg.sim.device = args_cli.device if args_cli.device is not None else env_cfg.sim.device
-    if args_cli.disable_fabric:
-        env_cfg.sim.use_fabric = False
     try:
         env_cfg.validate()
     except (TypeError, ValueError) as exc:
@@ -239,9 +237,6 @@ def _unscale_action(command: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
 def _parse_args(argv: list[str] | None, policy: PolicyName) -> argparse.Namespace:
     """Parse the command line of a checkpoint-free agent and hand the remainder to Hydra."""
     parser = argparse.ArgumentParser(description=_DESCRIPTIONS[policy])
-    parser.add_argument(
-        "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
-    )
     parser.add_argument("--num_envs", type=int, default=None, help="Number of environments to simulate.")
     parser.add_argument("--task", type=str, default=None, help="Name of the task.")
     parser.add_argument(

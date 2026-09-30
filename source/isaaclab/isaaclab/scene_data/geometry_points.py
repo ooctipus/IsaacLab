@@ -3,166 +3,181 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Device-side geometry point scatter helpers for SceneData."""
+"""Request-driven geometry conversion kernels for SceneData."""
 
 from __future__ import annotations
 
-import logging
-
-import numpy as np
 import warp as wp
 
-logger = logging.getLogger(__name__)
 
-
-@wp.kernel
-def scatter_geometry_points_kernel(
-    src: wp.array(dtype=wp.vec3f),
-    dst: wp.array(dtype=wp.vec3f),
-    src_offsets: wp.array(dtype=wp.int32),
-    dest_offsets: wp.array(dtype=wp.int32),
-    counts: wp.array(dtype=wp.int32),
-):
-    """Copy contiguous geometry slices from ``src`` into ``dst`` for each entity."""
-    entity_id = wp.tid()
-    dest_offset = dest_offsets[entity_id]
-    if dest_offset < 0:
-        return
-    src_offset = src_offsets[entity_id]
-    count = counts[entity_id]
-    for i in range(count):
-        dst[dest_offset + i] = src[src_offset + i]
-
-
-@wp.kernel
-def pack_body_slices_kernel(
-    src: wp.array2d(dtype=wp.vec3f),
-    dst: wp.array(dtype=wp.vec3f),
-    body_counts: wp.array(dtype=wp.int32),
-    write_offsets: wp.array(dtype=wp.int32),
-    dest_base_offset: int,
-):
-    """Pack per-body nodal slices from a ``(body_count, max_nodes)`` view into a flat buffer."""
-    body_idx = wp.tid()
-    count = body_counts[body_idx]
-    write_offset = dest_base_offset + write_offsets[body_idx]
-    for i in range(count):
-        dst[write_offset + i] = src[body_idx, i]
-
-
-def scatter_geometry_points(
-    src: wp.array(dtype=wp.vec3f),
-    dst: wp.array(dtype=wp.vec3f),
-    entity_counts: list[int],
-    mapping: wp.array(dtype=wp.int32) | None,
-    *,
-    device: str,
-) -> None:
-    """Scatter backend geometry entities into a consumer points buffer on device.
-
-    Args:
-        src: Flattened source geometry points [m], shape ``[src_count]``, ``wp.vec3f``.
-        dst: Pre-allocated destination buffer [m], shape ``[dst_count]``, ``wp.vec3f``.
-        entity_counts: Unpadded point count for each backend geometry entity.
-        mapping: Optional destination particle offsets per entity (``-1`` skips copy).
-        device: Warp device for launch metadata.
-    """
-    if not entity_counts:
-        wp.copy(dst, src)
-        return
-
-    num_entities = len(entity_counts)
-    src_offsets = np.zeros(num_entities, dtype=np.int32)
-    flat = 0
-    for index, count in enumerate(entity_counts):
-        src_offsets[index] = flat
-        flat += int(count)
-
-    if mapping is None:
-        dest_offsets = src_offsets.copy()
-    else:
-        dest_offsets = mapping.numpy().astype(np.int32, copy=True)
-
-    # Clamp per-entity copies so oversized backend counts cannot overflow ``dst``/``src``
-    # or bleed into the next mapped destination slot (shadow sim layouts may use a smaller
-    # per-entity stride than the backend when USD discovery and PhysX nodal counts diverge).
-    dest_size = int(dst.shape[0])
-    src_size = int(src.shape[0])
-    positive_dests = sorted(int(offset) for offset in dest_offsets if int(offset) >= 0)
-    counts = np.zeros(num_entities, dtype=np.int32)
-    for entity_id, count in enumerate(entity_counts):
-        count = int(count)
-        dest_offset = int(dest_offsets[entity_id])
-        src_offset = int(src_offsets[entity_id])
-        if dest_offset < 0 or count <= 0:
-            counts[entity_id] = 0
-            continue
-        # Space until the next destination slot (or end of buffer), not merely dest_size.
-        next_dest = dest_size
-        for offset in positive_dests:
-            if offset > dest_offset:
-                next_dest = offset
-                break
-        dest_slot = max(0, next_dest - dest_offset)
-        copy_count = min(count, dest_slot, dest_size - dest_offset, src_size - src_offset)
-        if copy_count < 0:
-            copy_count = 0
-        if copy_count < count:
-            logger.warning(
-                "Clamping geometry point copy for entity %d from %d to %d "
-                "(dest_offset=%d dest_slot=%d dest_size=%d src_offset=%d src_size=%d).",
-                entity_id,
-                count,
-                copy_count,
-                dest_offset,
-                dest_slot,
-                dest_size,
-                src_offset,
-                src_size,
-            )
-        counts[entity_id] = int(copy_count)
-
-    wp.launch(
-        scatter_geometry_points_kernel,
-        dim=num_entities,
-        inputs=[
-            src,
-            dst,
-            wp.array(src_offsets, dtype=wp.int32, device=src.device),
-            wp.array(dest_offsets, dtype=wp.int32, device=src.device),
-            wp.array(counts, dtype=wp.int32, device=src.device),
-        ],
-        device=device,
+@wp.func
+def _body_point(
+    points: wp.array2d(dtype=wp.vec3f),
+    body: int,
+    local: int,
+    mapping: int,
+    source_indices: wp.array2d(dtype=wp.int32),
+    weights: wp.array2d(dtype=wp.float32),
+) -> wp.vec3f:
+    if mapping < 0:
+        return points[body, local]
+    row = mapping + local
+    return (
+        weights[row, 0] * points[body, source_indices[row, 0]]
+        + weights[row, 1] * points[body, source_indices[row, 1]]
+        + weights[row, 2] * points[body, source_indices[row, 2]]
+        + weights[row, 3] * points[body, source_indices[row, 3]]
     )
 
 
-def pack_body_nodal_slices(
-    nodal: wp.array2d,
-    dst: wp.array(dtype=wp.vec3f),
-    body_counts: list[int],
-    *,
-    device: str,
-    dest_base_offset: int = 0,
-) -> None:
-    """Pack per-body nodal positions from a 2D view into ``dst``."""
-    if not body_counts:
-        return
+@wp.kernel(enable_backward=False)
+def body_points_to_points_kernel(
+    input_points: wp.array2d(dtype=wp.vec3f),
+    binding_ids: wp.array(dtype=wp.int32),
+    source_offsets: wp.array(dtype=wp.int32),
+    source_counts: wp.array(dtype=wp.int32),
+    output_points: wp.array(dtype=wp.vec3f),
+):
+    """Gather one native padded body array into canonical plan order."""
+    body = wp.tid()
+    binding = binding_ids[body]
+    offset = source_offsets[binding]
+    for local in range(source_counts[binding]):
+        output_points[offset + local] = input_points[body, local]
 
-    write_offsets = np.zeros(len(body_counts), dtype=np.int32)
-    flat = 0
-    for index, count in enumerate(body_counts):
-        write_offsets[index] = flat
-        flat += int(count)
 
-    wp.launch(
-        pack_body_slices_kernel,
-        dim=len(body_counts),
-        inputs=[
-            nodal,
-            dst,
-            wp.array(np.asarray(body_counts, dtype=np.int32), dtype=wp.int32, device=nodal.device),
-            wp.array(write_offsets, dtype=wp.int32, device=nodal.device),
-            dest_base_offset,
-        ],
-        device=device,
-    )
+@wp.kernel(enable_backward=False)
+def body_points_to_mesh_points_kernel(
+    input_points: wp.array2d(dtype=wp.vec3f),
+    binding_ids: wp.array(dtype=wp.int32),
+    output_offsets: wp.array(dtype=wp.int32),
+    output_counts: wp.array(dtype=wp.int32),
+    mapping_offsets: wp.array(dtype=wp.int32),
+    source_indices: wp.array2d(dtype=wp.int32),
+    weights: wp.array2d(dtype=wp.float32),
+    output_points: wp.array(dtype=wp.vec3f),
+):
+    """Gather and interpolate native padded bodies directly into a flat mesh output."""
+    body = wp.tid()
+    binding = binding_ids[body]
+    output = output_offsets[binding]
+    mapping = mapping_offsets[binding]
+    for local in range(output_counts[binding]):
+        output_points[output + local] = _body_point(input_points, body, local, mapping, source_indices, weights)
+
+
+@wp.kernel(enable_backward=False)
+def body_points_to_fabric_mesh_points_kernel(
+    input_points: wp.array2d(dtype=wp.vec3f),
+    binding_ids: wp.array(dtype=wp.int32),
+    world_matrices: wp.fabricarray(dtype=wp.mat44d),
+    binding_slots: wp.array(dtype=wp.int32),
+    output_counts: wp.array(dtype=wp.int32),
+    mapping_offsets: wp.array(dtype=wp.int32),
+    source_indices: wp.array2d(dtype=wp.int32),
+    weights: wp.array2d(dtype=wp.float32),
+    output_points: wp.fabricarrayarray(dtype=wp.vec3f),
+):
+    """Gather, interpolate, and transform native bodies directly into Fabric mesh arrays."""
+    body = wp.tid()
+    binding = binding_ids[body]
+    slot = binding_slots[binding]
+    mapping = mapping_offsets[binding]
+    world_to_local = wp.inverse(wp.transpose(wp.mat44f(world_matrices[slot])))
+    for local in range(output_counts[binding]):
+        point = _body_point(input_points, body, local, mapping, source_indices, weights)
+        output_points[slot][local] = wp.transform_point(world_to_local, point)
+
+
+@wp.func
+def _cable_point(
+    curve_shape_offsets: wp.array(dtype=wp.int32),
+    curve_segment_counts: wp.array(dtype=wp.int32),
+    shape_ids: wp.array(dtype=wp.int32),
+    shape_body: wp.array(dtype=wp.int32),
+    body_q: wp.array(dtype=wp.transformf),
+    shape_transform: wp.array(dtype=wp.transformf),
+    shape_scale: wp.array(dtype=wp.vec3f),
+    curve: int,
+    point: int,
+) -> wp.vec3f:
+    offset = curve_shape_offsets[curve]
+    segment_count = curve_segment_counts[curve]
+    if point == 0:
+        shape = shape_ids[offset]
+        shape_q = wp.transform_multiply(body_q[shape_body[shape]], shape_transform[shape])
+        return wp.transform_point(shape_q, wp.vec3f(0.0, 0.0, -shape_scale[shape][1]))
+    if point == segment_count:
+        shape = shape_ids[offset + segment_count - 1]
+        shape_q = wp.transform_multiply(body_q[shape_body[shape]], shape_transform[shape])
+        return wp.transform_point(shape_q, wp.vec3f(0.0, 0.0, shape_scale[shape][1]))
+    left_shape = shape_ids[offset + point - 1]
+    left_q = wp.transform_multiply(body_q[shape_body[left_shape]], shape_transform[left_shape])
+    left_w = wp.transform_point(left_q, wp.vec3f(0.0, 0.0, shape_scale[left_shape][1]))
+    right_shape = shape_ids[offset + point]
+    right_q = wp.transform_multiply(body_q[shape_body[right_shape]], shape_transform[right_shape])
+    right_w = wp.transform_point(right_q, wp.vec3f(0.0, 0.0, -shape_scale[right_shape][1]))
+    return 0.5 * (left_w + right_w)
+
+
+@wp.kernel(enable_backward=False)
+def cable_points_to_points_kernel(
+    curve_shape_offsets: wp.array(dtype=wp.int32),
+    curve_segment_counts: wp.array(dtype=wp.int32),
+    binding_ids: wp.array(dtype=wp.int32),
+    output_offsets: wp.array(dtype=wp.int32),
+    shape_ids: wp.array(dtype=wp.int32),
+    shape_body: wp.array(dtype=wp.int32),
+    body_q: wp.array(dtype=wp.transformf),
+    shape_transform: wp.array(dtype=wp.transformf),
+    shape_scale: wp.array(dtype=wp.vec3f),
+    output_points: wp.array(dtype=wp.vec3f),
+):
+    """Derive Newton cable endpoints directly into a requested flat output."""
+    curve = wp.tid()
+    output = output_offsets[binding_ids[curve]]
+    for point in range(curve_segment_counts[curve] + 1):
+        output_points[output + point] = _cable_point(
+            curve_shape_offsets,
+            curve_segment_counts,
+            shape_ids,
+            shape_body,
+            body_q,
+            shape_transform,
+            shape_scale,
+            curve,
+            point,
+        )
+
+
+@wp.kernel(enable_backward=False)
+def cable_points_to_fabric_mesh_points_kernel(
+    curve_shape_offsets: wp.array(dtype=wp.int32),
+    curve_segment_counts: wp.array(dtype=wp.int32),
+    binding_ids: wp.array(dtype=wp.int32),
+    shape_ids: wp.array(dtype=wp.int32),
+    shape_body: wp.array(dtype=wp.int32),
+    body_q: wp.array(dtype=wp.transformf),
+    shape_transform: wp.array(dtype=wp.transformf),
+    shape_scale: wp.array(dtype=wp.vec3f),
+    world_matrices: wp.fabricarray(dtype=wp.mat44d),
+    binding_slots: wp.array(dtype=wp.int32),
+    output_points: wp.fabricarrayarray(dtype=wp.vec3f),
+):
+    """Derive and transform Newton cable endpoints directly into Fabric curve arrays."""
+    curve = wp.tid()
+    slot = binding_slots[binding_ids[curve]]
+    world_to_local = wp.inverse(wp.transpose(wp.mat44f(world_matrices[slot])))
+    for point in range(curve_segment_counts[curve] + 1):
+        point_w = _cable_point(
+            curve_shape_offsets,
+            curve_segment_counts,
+            shape_ids,
+            shape_body,
+            body_q,
+            shape_transform,
+            shape_scale,
+            curve,
+            point,
+        )
+        output_points[slot][point] = wp.transform_point(world_to_local, point_w)

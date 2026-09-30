@@ -43,8 +43,6 @@ _BACKEND_MIRROR_NAMES = frozenset(
         "ovrtx",
         "physx",
         "rtx",
-        *PresetTarget.all_legacy_aliases().keys(),
-        *PresetTarget.all_legacy_aliases().values(),
     }
 )
 

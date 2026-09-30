@@ -29,7 +29,6 @@ log.outputStreamLevel = "Warn"
 "omni.physics.stageupdate" = {}
 "omni.physx" = {}
 "omni.physx.tensors" = {}
-"omni.physx.fabric" = {}
 "usdrt.scenegraph" = {}
 # the RTX renderer is not loaded here, so nothing pulls in the USDRT scene delegate implicitly
 "omni.hydra.usdrt_delegate" = {}
@@ -166,12 +165,6 @@ updateForceSensorsToUsd = false
 outputVelocitiesLocalSpace = false
 useFastCache = false
 visualizationDisplayJoints = false
-fabricUpdateTransformations = false
-fabricUpdateVelocities = false
-fabricUpdateForceSensors = false
-fabricUpdateJointStates = false
-### When Direct GPU mode is enabled (suppressReadback=true) use direct interop between PhysX GPU and Fabric
-fabricUseGPUInterop = true
 
 # Performance improvement
 resourcemonitor.timeBetweenQueries = 100

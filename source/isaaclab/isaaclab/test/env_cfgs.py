@@ -12,6 +12,8 @@ resulting configurations still requires a running simulator.
 
 from __future__ import annotations
 
+from isaaclab_physx.physics import PhysxCfg
+
 import isaaclab.sim as sim_utils
 from isaaclab.envs import DirectMARLEnvCfg, ManagerBasedEnvCfg, ManagerBasedRLEnvCfg
 from isaaclab.scene import InteractiveSceneCfg
@@ -40,6 +42,7 @@ def make_empty_manager_based_env_cfg(
     return ManagerBasedEnvCfg(
         decimation=_DEFAULT_DECIMATION,
         sim=sim_utils.SimulationCfg(
+            physics=PhysxCfg(),
             device=device,
             dt=_DEFAULT_SIM_DT,
             render_interval=_DEFAULT_DECIMATION,
@@ -69,6 +72,7 @@ def make_empty_manager_based_rl_env_cfg(
         decimation=_DEFAULT_DECIMATION,
         episode_length_s=_DEFAULT_EPISODE_LENGTH_S,
         sim=sim_utils.SimulationCfg(
+            physics=PhysxCfg(),
             device=device,
             dt=_DEFAULT_SIM_DT,
             render_interval=_DEFAULT_DECIMATION,
@@ -102,7 +106,7 @@ def make_empty_direct_marl_env_cfg(
     return DirectMARLEnvCfg(
         decimation=1,
         episode_length_s=100.0,
-        sim=sim_utils.SimulationCfg(device=device, dt=_DEFAULT_SIM_DT, render_interval=1),
+        sim=sim_utils.SimulationCfg(physics=PhysxCfg(), device=device, dt=_DEFAULT_SIM_DT, render_interval=1),
         scene=EmptySceneCfg(num_envs=num_envs, env_spacing=env_spacing),
         possible_agents=["agent_0", "agent_1"],
         action_spaces={"agent_0": 1, "agent_1": 2},

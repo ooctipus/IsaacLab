@@ -13,6 +13,8 @@ from pxr import Usd, UsdGeom, UsdPhysics
 
 from isaaclab.actuators import ActuatorBaseCfg, DCMotor, DCMotorCfg, DelayedPDActuatorCfg, RemotizedPDActuatorCfg
 from isaaclab.actuators.newton import NewtonActuatorAdapter
+from isaaclab.cloner import ClonePlan
+from isaaclab.cloner.scene_layout import declare_scene_layout
 from isaaclab.sim.schemas.schemas_actuators import _author_actuator_prims
 from isaaclab.utils.configclass import configclass
 
@@ -39,7 +41,8 @@ class MisleadingImplicitActuatorDCMotor(DCMotor):
 
 def _make_actuator_stage() -> Usd.Stage:
     stage = Usd.Stage.CreateInMemory()
-    UsdGeom.Xform.Define(stage, "/World/Robot")
+    root = UsdGeom.Xform.Define(stage, "/World/Robot")
+    UsdPhysics.ArticulationRootAPI.Apply(root.GetPrim())
 
     bodies = [UsdGeom.Xform.Define(stage, f"/World/Robot/body_{index}") for index in range(len(_JOINT_NAMES))]
     for body in bodies:
@@ -96,15 +99,32 @@ def _make_actuator_stage() -> Usd.Stage:
     return stage
 
 
-def test_from_usd_groups_by_structure_and_preserves_per_dof_values():
+def test_from_layout_groups_by_structure_and_preserves_per_dof_values():
     """Aggregate scalar variants while keeping incompatible shared lookup tables separate."""
-    actuators = NewtonActuatorAdapter.from_usd(
-        stage=_make_actuator_stage(),
+    stage = _make_actuator_stage()
+    plan = ClonePlan(
+        sources=("/World/Robot",),
+        destinations=("/World/Robot",),
+        clone_mask=np.zeros((1, 2), dtype=np.bool_),
+        env_ids=np.arange(2, dtype=np.int64),
+    )
+    layout = declare_scene_layout(plan, stage).match_articulation("/World/Robot")
+    lookup_values = [
+        value
+        for joint in layout.joints
+        if joint.newton_actuator is not None
+        for _component, arguments in joint.newton_actuator.component_arguments
+        for name, value in arguments
+        if name in {"lookup_positions", "lookup_efforts"}
+    ]
+    assert lookup_values and all(isinstance(value, tuple) for value in lookup_values)
+
+    actuators = NewtonActuatorAdapter.from_layout(
+        layout=layout,
         joint_names=_JOINT_NAMES,
         num_envs=2,
         num_joints=len(_JOINT_NAMES),
         device="cpu",
-        articulation_prim_path="/World/Robot",
     ).actuators
 
     assert len(actuators) == 4

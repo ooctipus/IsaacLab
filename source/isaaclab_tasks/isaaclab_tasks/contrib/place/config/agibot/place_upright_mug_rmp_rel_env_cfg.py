@@ -22,7 +22,6 @@ from isaaclab.sim.schemas.schemas_cfg import RigidBodyPropertiesCfg
 from isaaclab.sim.spawners.from_files.from_files_cfg import UsdFileCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
 from isaaclab.utils.configclass import configclass
-from isaaclab.visualizers import VisualizerCfg
 
 from isaaclab_tasks.contrib.place import mdp as place_mdp
 from isaaclab_tasks.contrib.place.config.agibot import place_toy2box_rmp_rel_env_cfg
@@ -160,9 +159,6 @@ class RmpFlowAgibotPlaceUprightMugEnvCfg(place_toy2box_rmp_rel_env_cfg.PlaceToy2
 
         self.events = EventCfgPlaceUprightMug()
 
-        # visualizer camera settings
-        self.sim.default_visualizer_cfg = VisualizerCfg(eye=(1.8, -1.8, 1.8), lookat=(0.3, 0.0, 0.8))
-
         # Set Agibot as robot
         self.scene.robot = AGIBOT_A2D_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
         self.scene.robot.init_state.pos = (-0.60, 0.0, 0.0)
@@ -238,14 +234,14 @@ class RmpFlowAgibotPlaceUprightMugEnvCfg(place_toy2box_rmp_rel_env_cfg.PlaceToy2
         )
 
         # Listens to the required transforms
-        self.marker_cfg = FRAME_MARKER_CFG.copy()
-        self.marker_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
-        self.marker_cfg.prim_path = "/Visuals/FrameTransformer"
+        marker_cfg = FRAME_MARKER_CFG.copy()
+        marker_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
+        marker_cfg.prim_path = "/Visuals/FrameTransformer"
 
         self.scene.ee_frame = FrameTransformerCfg(
             prim_path="{ENV_REGEX_NS}/Robot/base_link",
             debug_vis=False,
-            visualizer_cfg=self.marker_cfg,
+            visualizer_cfg=marker_cfg,
             target_frames=[
                 FrameTransformerCfg.FrameCfg(
                     prim_path="{ENV_REGEX_NS}/Robot/gripper_center",

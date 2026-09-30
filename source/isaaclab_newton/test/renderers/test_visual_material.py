@@ -5,20 +5,22 @@
 
 """Tests for Newton's compiled visual-material writers."""
 
+from types import SimpleNamespace
+
 import torch
 import warp as wp
+from isaaclab_newton.cloner.newton_clone_utils import build_source_builders
+from isaaclab_newton.cloner.replicate import NewtonReplicateContext
 from isaaclab_newton.renderers.newton_warp_renderer import NewtonWarpRenderer
-from isaaclab_newton.renderers.visual_material import (
-    VisualMaterialWriter,
-    VisualShapeColorWriter,
-    import_builder_visual_material_paths,
-)
+from isaaclab_newton.renderers.newton_warp_renderer_cfg import NewtonWarpRendererCfg
+from isaaclab_newton.renderers.visual_material import VisualMaterialWriter, VisualShapeColorWriter
 from newton import ModelBuilder
 from newton.selection import ArticulationView
 
 from pxr import Sdf, Usd, UsdGeom, UsdShade
 
 from isaaclab.renderers.base_renderer import VisualMaterialBatch
+from isaaclab.sim import SimulationContext
 
 
 def _srgb(colors: torch.Tensor) -> torch.Tensor:
@@ -27,43 +29,36 @@ def _srgb(colors: torch.Tensor) -> torch.Tensor:
 
 def _material_model(material_paths: list[str]):
     stage = Usd.Stage.CreateInMemory()
-    builder = ModelBuilder()
     for index, material_path in enumerate(material_paths):
         shape = UsdGeom.Cube.Define(stage, f"/World/shape_{index}")
-        builder.add_shape_box(-1, label=str(shape.GetPath()))
         if material_path:
             material = UsdShade.Material.Define(stage, material_path)
             UsdShade.MaterialBindingAPI.Apply(shape.GetPrim()).Bind(material)
-    import_builder_visual_material_paths(builder, stage)
-    return builder.finalize(device="cpu")
+    return _source_builder(stage).finalize(device="cpu")
+
+
+def _source_builder(stage: Usd.Stage, source: str = "/World") -> ModelBuilder:
+    return build_source_builders(stage, (source,), ModelBuilder, ())[source]
 
 
 def test_import_captures_effective_material_binding() -> None:
     stage = Usd.Stage.CreateInMemory()
     root = UsdGeom.Xform.Define(stage, "/World/Robot")
-    shape = UsdGeom.Cube.Define(stage, "/World/Robot/mesh")
+    UsdGeom.Cube.Define(stage, "/World/Robot/mesh")
     material = UsdShade.Material.Define(stage, "/World/Looks/robot")
     UsdShade.MaterialBindingAPI.Apply(root.GetPrim()).Bind(material)
-    builder = ModelBuilder()
-    builder.add_shape_box(-1, label=str(shape.GetPath()))
-
-    colors = tuple(tuple(color) for color in builder.shape_color)
-    import_builder_visual_material_paths(builder, stage)
+    builder = _source_builder(stage, "/World/Robot")
 
     assert builder.finalize(device="cpu").isaaclab.visual_material_path == ["/World/Looks/robot"]
-    assert tuple(tuple(color) for color in builder.shape_color) == colors
 
 
 def test_import_preserves_binding_to_a_logical_clone_not_yet_on_stage() -> None:
     stage = Usd.Stage.CreateInMemory()
     root = UsdGeom.Xform.Define(stage, "/World/envs/env_1/Robot")
-    shape = UsdGeom.Cube.Define(stage, "/World/envs/env_1/Robot/mesh")
+    UsdGeom.Cube.Define(stage, "/World/envs/env_1/Robot/mesh")
     relationship = UsdShade.MaterialBindingAPI.Apply(root.GetPrim()).GetDirectBindingRel()
     relationship.SetTargets([Sdf.Path("/World/envs/env_1/Robot/material")])
-    builder = ModelBuilder()
-    builder.add_shape_box(-1, label=str(shape.GetPath()))
-
-    import_builder_visual_material_paths(builder, stage)
+    builder = _source_builder(stage, "/World/envs/env_1/Robot")
 
     assert builder.finalize(device="cpu").isaaclab.visual_material_path == ["/World/envs/env_1/Robot/material"]
 
@@ -141,5 +136,36 @@ def test_shape_writer_samples_each_body_and_selected_environment_independently()
 
 
 def test_newton_renderer_exposes_shared_writer_factory() -> None:
+    class Resource:
+        def create_visual_material_writer(self, batches):
+            return batches
+
+    resource = Resource()
     renderer = object.__new__(NewtonWarpRenderer)
-    assert renderer.visual_material_writer.__func__.__name__ == "create_visual_material_writer"
+    renderer._newton_backend = resource
+    assert renderer.visual_material_writer == resource.create_visual_material_writer
+
+
+def test_newton_renderer_reuses_backend_by_type(monkeypatch) -> None:
+    resource = SimpleNamespace(load_visual_shapes=False)
+    context = object.__new__(SimulationContext)
+    key = NewtonReplicateContext
+    context._backend_registry = {key: resource}
+    context._backend_clone_roles = {}
+    context._clone_plan = None
+    monkeypatch.setattr(SimulationContext, "_instance", context)
+
+    renderer = NewtonWarpRenderer(NewtonWarpRendererCfg())
+
+    assert renderer._newton_backend is resource
+    assert context._backend_clone_roles == {key: {"scene"}}
+
+
+def test_newton_resource_constructs_writer_from_its_shared_model() -> None:
+    model = _material_model(["/Looks/a"])
+    resource = object.__new__(NewtonReplicateContext)
+    resource._model = model
+
+    writer = resource.create_visual_material_writer(())
+
+    assert writer._model is model

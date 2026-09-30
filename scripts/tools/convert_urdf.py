@@ -27,10 +27,6 @@ optional arguments:
   --joint_damping           The damping of the joint drive. (default: 1.0)
   --joint_target_type       The type of control to use for the joint drive. (default: "position")
 
-The standard launcher arguments are also accepted. In particular, ``--viz`` previews the converted
-asset: ``--viz kit`` opens it in the Isaac Sim viewport, while ``--viz newton`` (or ``rerun`` /
-``viser``) opens it kitlessly. Run with ``--help`` for the full list.
-
 """
 
 """Parse CLI first so we can decide whether to launch Isaac Sim Kit."""
@@ -78,12 +74,9 @@ parser.add_argument(
 add_launcher_args(parser)
 args_cli = parser.parse_args()
 
-# Prefer kit-less: it skips Kit startup and the kitless visualizers can host the preview.
+# Conversion never needs rendering.
+args_cli.headless = True
 args_cli.require_kit = not standalone_importers_available()
-
-# ``launch_simulation`` receives a bare ``PhysicsCfg()`` placeholder, so name the backend the
-# runtime provides; without it the preview builds a simulation with no physics manager.
-args_cli.physics = "isaacsim_physx" if args_cli.require_kit else "newton_mjwarp"
 
 # Report the missing importer before converting anything. Without this the launcher reports only
 # that Isaac Sim is absent, which does not mention the wheel that would make this run kitlessly.
@@ -95,45 +88,10 @@ if args_cli.require_kit and not AppLauncher.is_available():
 
 import os  # noqa: E402
 
-import isaaclab.sim as sim_utils  # noqa: E402
 from isaaclab.physics import PhysicsCfg  # noqa: E402
 from isaaclab.sim.converters import UrdfConverter, UrdfConverterCfg  # noqa: E402
 from isaaclab.utils.assets import check_file_path  # noqa: E402
 from isaaclab.utils.dict import print_dict  # noqa: E402
-
-
-def preview(usd_path: str, physics_cfg: PhysicsCfg) -> None:
-    """Open the converted asset in the visualizer selected on the command line.
-
-    Args:
-        usd_path: Path of the generated USD file to display.
-        physics_cfg: Physics config resolved by :func:`~isaaclab.app.launch_simulation`.
-    """
-    visualizers = args_cli.visualizer or []
-    if not visualizers:
-        return
-
-    if "kit" in visualizers:
-        # a Kit app that resolved without a GUI has no viewport to display the asset in
-        if AppLauncher.has_gui():
-            sim_utils.show_stage_in_viewport(usd_path)
-        return
-
-    # Kitless preview: the physics backend ingests the USD stage and every visualizer renders the
-    # shared scene data, so no backend-specific code is needed here. Physics is not stepped -- the
-    # asset is shown in its imported pose until the visualizer window is closed.
-    sim = sim_utils.SimulationContext(sim_utils.SimulationCfg(device=args_cli.device, physics=physics_cfg))
-    light_cfg = sim_utils.DomeLightCfg(intensity=3000.0, color=(0.75, 0.75, 0.75))
-    light_cfg.func("/World/Light", light_cfg)
-    asset_cfg = sim_utils.UsdFileCfg(usd_path=usd_path)
-    asset_cfg.func("/World/ConvertedAsset", asset_cfg)
-    sim.reset()
-
-    # Checked per visualizer rather than through ``SimulationContext.is_headless_or_exist_active_visualizer``:
-    # that predicate also reports True for an empty visualizer list (headless stepping), and ``render``
-    # drops visualizers once they close, so the preview would never exit.
-    while any(viz.is_running() and not viz.is_closed for viz in sim.visualizers):
-        sim.render()
 
 
 def main():
@@ -175,7 +133,7 @@ def main():
     print("-" * 80)
     print("-" * 80)
 
-    with launch_simulation(cfg=PhysicsCfg(), launcher_args=args_cli) as physics_cfg:
+    with launch_simulation(cfg=PhysicsCfg(), launcher_args=args_cli):
         # Create Urdf converter and import the file
         urdf_converter = UrdfConverter(urdf_converter_cfg)
         # print output
@@ -183,8 +141,6 @@ def main():
         print(f"Generated USD file: {urdf_converter.usd_path}")
         print("-" * 80)
         print("-" * 80)
-
-        preview(urdf_converter.usd_path, physics_cfg)
 
 
 if __name__ == "__main__":

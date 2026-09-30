@@ -792,8 +792,6 @@ def bind_visual_material(
 ):
     """Bind a visual material to a prim.
 
-    The binding is authored using the standard OpenUSD :class:`UsdShade.MaterialBindingAPI`.
-
     .. note::
         The function is decorated with :meth:`apply_nested` to allow applying the function to a prim path
         and all its descendants.
@@ -823,14 +821,18 @@ def bind_visual_material(
     if not material_prim.IsValid():
         raise ValueError(f"Visual material '{material_path}' does not exist.")
 
+    # obtain material binding API
+    material_binding_api = UsdShade.MaterialBindingAPI(prim)
+    if not prim.HasAPI(UsdShade.MaterialBindingAPI):
+        material_binding_api = UsdShade.MaterialBindingAPI.Apply(prim)
+    material = UsdShade.Material(material_prim)
     # resolve token for weaker than descendants
     if stronger_than_descendants:
         binding_strength = UsdShade.Tokens.strongerThanDescendants
     else:
         binding_strength = UsdShade.Tokens.weakerThanDescendants
-    binding_api = UsdShade.MaterialBindingAPI.Apply(prim)
-    material = UsdShade.Material(material_prim)
-    return binding_api.Bind(material, bindingStrength=binding_strength)
+    material_binding_api.Bind(material, bindingStrength=binding_strength)
+    return True
 
 
 @apply_nested

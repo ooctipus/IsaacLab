@@ -5,6 +5,7 @@
 
 import pytest
 import warp as wp
+from isaaclab_newton.renderers import NewtonWarpRendererCfg
 from isaaclab_ppisp import (
     PpispCfg,
     apply_ppisp_to_rgba,
@@ -37,7 +38,7 @@ from isaaclab_ppisp.kernels import (
     PPISP_CONTROLLER_PARAM_COUNT,
 )
 
-from isaaclab.sensors.camera.tiled_camera_cfg import TiledCameraCfg
+from isaaclab.sensors.camera import CameraCfg
 
 wp.init()
 
@@ -319,15 +320,16 @@ def test_ppisp_warp_crf_extreme_centers_stay_finite():
     assert np.isfinite(rgba_np.astype(float)).all()
 
 
-def test_tiled_camera_cfg_accepts_ppisp_cfg():
+def test_camera_cfg_accepts_ppisp_cfg():
     ppisp_cfg = PpispCfg(inputs={"exposureOffset": 1.0})
 
-    cfg = TiledCameraCfg(
+    cfg = CameraCfg(
         prim_path="/World/Camera",
         width=4,
         height=4,
         data_types=["rgb"],
         isp_cfg=ppisp_cfg,
+        renderer_cfg=NewtonWarpRendererCfg(),
     )
 
     assert cfg.isp_cfg == ppisp_cfg

@@ -73,6 +73,19 @@ def test_string_to_callable_allows_safe_lambdas():
     assert string_utils.string_to_callable("math:sqrt") is math.sqrt
 
 
+def test_string_to_callable_skips_lambda_parser_for_module_references(monkeypatch):
+    """Test that module references bypass lambda-expression parsing."""
+    parse, calls = string_utils.ast.parse, []
+
+    def counting_parse(*args, **kwargs):
+        calls.append(args[0])
+        return parse(*args, **kwargs)
+
+    monkeypatch.setattr(string_utils.ast, "parse", counting_parse)
+    assert string_utils.string_to_callable("math:sqrt") is math.sqrt
+    assert calls == []
+
+
 @pytest.mark.parametrize(
     "payload",
     [

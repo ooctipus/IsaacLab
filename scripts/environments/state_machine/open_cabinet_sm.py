@@ -11,32 +11,21 @@ It uses the `warp` library to run the state machine in parallel on the GPU.
 
 .. code-block:: bash
 
-    uv run python scripts/environments/state_machine/open_cabinet_sm.py --num_envs 32 --viz kit
+    uv run python scripts/environments/state_machine/open_cabinet_sm.py --num_envs 32 visualizer=kit
 
 """
 
-"""Launch Omniverse Toolkit first."""
-
 import argparse
 
-from isaaclab.app import AppLauncher
+from isaaclab.app import add_launcher_args, launch_simulation
+
+from isaaclab_tasks.utils import preset, resolve_config, setup_preset_cli
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Pick and lift state machine for cabinet environments.")
-parser.add_argument(
-    "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
-)
 parser.add_argument("--num_envs", type=int, default=None, help="Number of environments to simulate.")
-# append AppLauncher cli args
-AppLauncher.add_app_launcher_args(parser)
-# parse the arguments, forwarding unrecognized ones as Hydra-style task config overrides
-args_cli, hydra_overrides = parser.parse_known_args()
-
-# launch omniverse app
-app_launcher = AppLauncher(args_cli)
-simulation_app = app_launcher.app
-
-"""Rest everything else."""
+add_launcher_args(parser)
+args_cli, config_overrides = setup_preset_cli(parser)
 
 from collections.abc import Sequence
 
@@ -47,8 +36,31 @@ import warp as wp
 from isaaclab.sensors import FrameTransformer
 
 import isaaclab_tasks  # noqa: F401
-from isaaclab_tasks.core.cabinet.cabinet_env_cfg import CabinetEnvCfg
-from isaaclab_tasks.utils.parse_cfg import parse_env_cfg
+from isaaclab_tasks.contrib.cabinet.config.franka.ik_abs_env_cfg import FrankaCabinetEnvCfg
+
+_CABINET_ENV_CFG = FrankaCabinetEnvCfg()
+_CABINET_SIM_CFG = _CABINET_ENV_CFG.sim
+OPEN_CABINET_STATE_MACHINE_CFG = _CABINET_ENV_CFG.replace(
+    sim=_CABINET_SIM_CFG.newton_mjwarp.replace(
+        dt=preset(
+            default=_CABINET_SIM_CFG.newton_mjwarp.dt,
+            isaacsim_physx=_CABINET_SIM_CFG.isaacsim_physx.dt,
+            ovphysx=_CABINET_SIM_CFG.ovphysx.dt,
+            physx=_CABINET_SIM_CFG.physx.dt,
+            newton_mjwarp=_CABINET_SIM_CFG.newton_mjwarp.dt,
+            newton_kamino=_CABINET_SIM_CFG.newton_kamino.dt,
+        ),
+        device=args_cli.device,
+        physics=preset(
+            default=_CABINET_SIM_CFG.newton_mjwarp.physics,
+            isaacsim_physx=_CABINET_SIM_CFG.isaacsim_physx.physics,
+            ovphysx=_CABINET_SIM_CFG.ovphysx.physics,
+            physx=_CABINET_SIM_CFG.physx.physics,
+            newton_mjwarp=_CABINET_SIM_CFG.newton_mjwarp.physics,
+            newton_kamino=_CABINET_SIM_CFG.newton_kamino.physics,
+        ),
+    )
+)
 
 # initialize warp
 wp.init()
@@ -270,62 +282,51 @@ class OpenDrawerSm:
 
 
 def main():
-    # parse configuration
-    env_cfg: CabinetEnvCfg = parse_env_cfg(
-        "IsaacContrib-Open-Drawer-Franka-IK-Abs",
-        device=args_cli.device,
-        num_envs=args_cli.num_envs,
-        use_fabric=not args_cli.disable_fabric,
-        overrides=hydra_overrides,
-    )
-    # create environment
-    env = gym.make("IsaacContrib-Open-Drawer-Franka-IK-Abs", cfg=env_cfg)
-    # reset environment at start
-    env.reset()
+    env_cfg = resolve_config(OPEN_CABINET_STATE_MACHINE_CFG, config_overrides)
+    if args_cli.num_envs is not None:
+        env_cfg.scene.num_envs = args_cli.num_envs
 
-    # create action buffers (position + quaternion)
-    actions = torch.zeros(env.unwrapped.action_space.shape, device=env.unwrapped.device)
-    actions[:, 3] = 1.0
-    # desired object orientation (we only do position control of object)
-    desired_orientation = torch.zeros((env.unwrapped.num_envs, 4), device=env.unwrapped.device)
-    desired_orientation[:, 1] = 1.0
-    # create state machine
-    open_sm = OpenDrawerSm(env_cfg.sim.dt * env_cfg.decimation, env.unwrapped.num_envs, env.unwrapped.device)
+    with launch_simulation(env_cfg, args_cli):
+        env = gym.make("IsaacContrib-Open-Drawer-Franka-IK-Abs", cfg=env_cfg)
+        env.reset()
 
-    while simulation_app.is_running():
-        # run everything in inference mode
-        with torch.inference_mode():
-            # step environment
-            dones = env.step(actions)[-2]
+        # create action buffers (position + quaternion)
+        actions = torch.zeros(env.unwrapped.action_space.shape, device=env.unwrapped.device)
+        actions[:, 3] = 1.0
+        # desired object orientation (we only do position control of object)
+        desired_orientation = torch.zeros((env.unwrapped.num_envs, 4), device=env.unwrapped.device)
+        desired_orientation[:, 1] = 1.0
+        # create state machine
+        open_sm = OpenDrawerSm(env_cfg.sim.dt * env_cfg.decimation, env.unwrapped.num_envs, env.unwrapped.device)
 
-            # observations
-            # -- end-effector frame
-            ee_frame_tf: FrameTransformer = env.unwrapped.scene["ee_frame"]
-            tcp_rest_position = ee_frame_tf.data.target_pos_w.torch[..., 0, :].clone() - env.unwrapped.scene.env_origins
-            tcp_rest_orientation = ee_frame_tf.data.target_quat_w.torch[..., 0, :].clone()
-            # -- handle frame
-            cabinet_frame_tf: FrameTransformer = env.unwrapped.scene["cabinet_frame"]
-            cabinet_position = (
-                cabinet_frame_tf.data.target_pos_w.torch[..., 0, :].clone() - env.unwrapped.scene.env_origins
-            )
-            cabinet_orientation = cabinet_frame_tf.data.target_quat_w.torch[..., 0, :].clone()
+        while env.unwrapped.sim.is_headless_or_exist_active_visualizer():
+            with torch.inference_mode():
+                dones = env.step(actions)[-2]
 
-            # advance state machine
-            actions = open_sm.compute(
-                torch.cat([tcp_rest_position, tcp_rest_orientation], dim=-1),
-                torch.cat([cabinet_position, cabinet_orientation], dim=-1),
-            )
+                # observations
+                # -- end-effector frame
+                ee_frame_tf: FrameTransformer = env.unwrapped.scene["ee_frame"]
+                tcp_rest_position = (
+                    ee_frame_tf.data.target_pos_w.torch[..., 0, :].clone() - env.unwrapped.scene.env_origins
+                )
+                tcp_rest_orientation = ee_frame_tf.data.target_quat_w.torch[..., 0, :].clone()
+                # -- handle frame
+                cabinet_frame_tf: FrameTransformer = env.unwrapped.scene["cabinet_frame"]
+                cabinet_position = (
+                    cabinet_frame_tf.data.target_pos_w.torch[..., 0, :].clone() - env.unwrapped.scene.env_origins
+                )
+                cabinet_orientation = cabinet_frame_tf.data.target_quat_w.torch[..., 0, :].clone()
 
-            # reset state machine
-            if dones.any():
-                open_sm.reset_idx(dones.nonzero(as_tuple=False).squeeze(-1))
+                actions = open_sm.compute(
+                    torch.cat([tcp_rest_position, tcp_rest_orientation], dim=-1),
+                    torch.cat([cabinet_position, cabinet_orientation], dim=-1),
+                )
 
-    # close the environment
-    env.close()
+                if dones.any():
+                    open_sm.reset_idx(dones.nonzero(as_tuple=False).squeeze(-1))
+
+        env.close()
 
 
 if __name__ == "__main__":
-    # run the main execution
     main()
-    # close sim app
-    simulation_app.close()

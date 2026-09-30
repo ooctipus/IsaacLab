@@ -17,7 +17,20 @@ class VisMarkerRegistry:
 
     def __init__(self):
         self._callbacks: dict[str, Callable[[Any], None]] = {}
-        self._groups: dict[str, Any] = {}
+        self._groups: list[tuple[Any, tuple[Any, ...]]] = []
+        self._marker_types: tuple[type, ...] | None = None
+
+    def prepare(self, cfgs: tuple[Any, ...], marker_types: tuple[type, ...]) -> None:
+        """Construct marker backend state for one clone lifecycle.
+
+        Args:
+            cfgs: Plan-owned marker configurations.
+            marker_types: Backend marker implementations selected by the active visualizers.
+        """
+        if self._marker_types is not None:
+            raise RuntimeError("Visualization marker backends are already prepared.")
+        self._marker_types = marker_types
+        self._groups = [(cfg, tuple(marker_type(cfg) for marker_type in marker_types)) for cfg in cfgs]
 
     def add_callback(self, name: str, callback: Callable[[Any], None]) -> str:
         """Register a callback invoked before marker-capable visualizers step each render tick."""
@@ -61,14 +74,25 @@ class VisMarkerRegistry:
             except ReferenceError:
                 self._callbacks.pop(callback_id, None)
 
-    def set_group(self, group_id: str, state: Any) -> None:
-        """Set or replace one visualization marker group state."""
-        self._groups[group_id] = state
+    def get(self, cfg: Any) -> tuple[Any, tuple[Any, ...]]:
+        """Return planned backend states, or an inert state when no marker backend was selected."""
+        if self._marker_types is None:
+            raise RuntimeError("Visualization marker backends have not been prepared by a clone lifecycle.")
+        for planned_cfg, groups in self._groups:
+            if planned_cfg == cfg:
+                return planned_cfg, groups
+        if self._marker_types == ():
+            return cfg, ()
+        raise ValueError(f"VisualizationMarkersCfg at {cfg.prim_path!r} is not covered by the clone plan.")
 
-    def remove_group(self, group_id: str) -> None:
-        """Remove one visualization marker group state if present."""
-        self._groups.pop(group_id, None)
+    def get_groups(self) -> tuple[Any, ...]:
+        """Return all planned visualization marker backend states."""
+        return tuple(group for _, groups in self._groups for group in groups)
 
-    def get_groups(self) -> dict[str, Any]:
-        """Return all active visualization marker groups."""
-        return self._groups
+    def close(self) -> None:
+        """Close marker backend states and clear the registry."""
+        for group in self.get_groups():
+            group.close()
+        self._callbacks.clear()
+        self._groups.clear()
+        self._marker_types = None

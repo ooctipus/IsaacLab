@@ -5,45 +5,54 @@
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 import newton
 import numpy as np
 import warp as wp
 
-import isaaclab.sim as sim_utils
-from isaaclab import cloner
-from isaaclab.cloner.cloner_cfg import DEFAULT_ENV_TEMPLATE
 from isaaclab.sensors.ray_caster.base_ray_caster import BaseRayCaster
 from isaaclab.sensors.ray_caster.kernels import ALIGNMENT_BASE, update_ray_caster_kernel
+from isaaclab.sim.simulation_context import SimulationContext
 from isaaclab.utils.warp import ProxyArray
-
-from isaaclab_newton.physics import NewtonManager
 
 from .newton_raycast_sensor_cfg import NewtonRaycastSensorCfg
 from .newton_raycast_sensor_data import NewtonRaycastSensorData
 
 
 @wp.kernel(enable_backward=False)
-def _newton_site_world_poses_kernel(
-    site_indices: wp.array(dtype=wp.int32),
-    shape_body: wp.array(dtype=wp.int32),
-    shape_transform: wp.array(dtype=wp.transform),
+def _newton_frame_world_poses_kernel(
+    body_indices: wp.array(dtype=wp.int32),
+    local_poses: wp.array(dtype=wp.transformf),
     body_q: wp.array(dtype=wp.transform),
     out_pose: wp.array(dtype=wp.transformf),
     out_pos: wp.array(dtype=wp.vec3f),
     out_quat: wp.array(dtype=wp.quatf),
 ):
-    """Write world poses for Newton sites."""
+    """Write world poses for exact planned frames."""
     index = wp.tid()
-    site_index = site_indices[index]
-    body_index = shape_body[site_index]
-    site_transform = shape_transform[site_index]
+    body_index = body_indices[index]
+    local_pose = local_poses[index]
     if body_index == -1:
-        world_transform = site_transform
+        world_transform = local_pose
     else:
-        world_transform = wp.transform_multiply(body_q[body_index], site_transform)
+        world_transform = wp.transform_multiply(body_q[body_index], local_pose)
+    out_pose[index] = world_transform
+    out_pos[index] = wp.transform_get_translation(world_transform)
+    out_quat[index] = wp.transform_get_rotation(world_transform)
+
+
+@wp.kernel(enable_backward=False)
+def _newton_body_world_poses_kernel(
+    body_indices: wp.array(dtype=wp.int32),
+    body_q: wp.array(dtype=wp.transform),
+    out_pose: wp.array(dtype=wp.transformf),
+    out_pos: wp.array(dtype=wp.vec3f),
+    out_quat: wp.array(dtype=wp.quatf),
+):
+    """Gather exact Newton body poses."""
+    index = wp.tid()
+    world_transform = body_q[body_indices[index]]
     out_pose[index] = world_transform
     out_pos[index] = wp.transform_get_translation(world_transform)
     out_quat[index] = wp.transform_get_rotation(world_transform)
@@ -64,82 +73,45 @@ def _gather_pose_by_index_kernel(
     quat_dst[index] = quat_src[source_index]
 
 
-# the clone slot, spelled the way every other destination expression spells it, so patterns
-# built here compare equal to ones built from the destination template.
-_ENV_SLOT_NS = DEFAULT_ENV_TEMPLATE.format("[^/]+")
-_CONCRETE_ENV_NS = re.compile(rf"^{re.escape(DEFAULT_ENV_TEMPLATE.format(''))}\d+/")
-
-
-def _newton_body_pattern(body_path: str) -> str:
-    """Convert a concrete environment index to a prototype body pattern."""
-    body_path = body_path.replace("{}", "[^/]+")
-    return _CONCRETE_ENV_NS.sub(_ENV_SLOT_NS + "/", body_path)
-
-
-def _identity_offsets(count: int, device: str) -> tuple[wp.array, wp.array]:
-    """Create identity offsets for site poses that already include frame placement."""
-    offset_pos = wp.zeros(count, dtype=wp.vec3f, device=device)
-    identity_quat = np.zeros((count, 4), dtype=np.float32)
-    identity_quat[:, 3] = 1.0
-    return offset_pos, wp.array(identity_quat, dtype=wp.quatf, device=device)
-
-
 class _NewtonRayCasterPoseMixin:
-    """Register Newton sensor sites and update ray poses from the Newton manager state."""
+    """Update exact planned ray-caster frames from Newton body state."""
 
     @property
     def count(self: Any) -> int:
-        """Number of resolved Newton sites tracked as sensor frames."""
+        """Number of planned sensor frames."""
         return self._view_count
 
-    def __init__(self: Any, cfg):
-        """Register the sensor site before Newton model finalization."""
-        super().__init__(cfg)  # pyright: ignore[reportCallIssue]
-        self._sensor_site_labels = self._register_sites_for_expr(self.cfg.prim_path)
-
-    def _register_sites_for_expr(self, prim_expr: str) -> list[str]:
-        """Register Newton sites for a prim expression."""
-        plan = sim_utils.SimulationContext.instance().get_clone_plan()
-        if plan is not None:
-            for destination_template in plan.destinations:
-                matched = cloner.path.match(prim_expr, destination_template)
-                if matched is not None and not matched.suffix:
-                    return [NewtonManager.cl_register_site(None, wp.transform(), per_world=True)]
-
-        try:
-            body_expr, fixed_pos, fixed_quat = self._resolve_rigid_body_ancestor_expr()
-        except RuntimeError:
-            # Preserve support for sensor paths registered before their USD prim
-            # exists. Known camera/raycaster child names attach to their parent.
-            body_expr = prim_expr
-            *parent_segments, leaf_segment = sim_utils.split_path_expr(prim_expr)
-            if leaf_segment.lower() in ("camera", "raycaster"):
-                body_expr = "/".join(parent_segments)
-            fixed_pos = None
-            fixed_quat = None
-
-        pos = fixed_pos or (0.0, 0.0, 0.0)
-        quat = fixed_quat or (0.0, 0.0, 0.0, 1.0)
-        site_transform = wp.transform(wp.vec3(*pos), wp.quat(*quat))
-
-        return [NewtonManager.cl_register_site(_newton_body_pattern(body_expr), site_transform)]
-
     def _initialize_pose_tracking(self: Any) -> None:
-        """Resolve registered site labels and allocate pose buffers."""
-        site_indices = self._resolve_site_indices(self._sensor_site_labels, self.cfg.prim_path, self._num_envs)
+        """Bind exact planned frames to Newton body indices and fixed local poses."""
+        plan = SimulationContext.instance().get_clone_plan()
+        if plan is None or not plan.is_complete:
+            raise RuntimeError(f"RayCaster at {self.cfg.prim_path!r} requires a completed clone plan.")
+        frames = list(plan.match_frames(self.cfg.prim_path))
+        if len(frames) == 1 and frames[0].env_id is None and self._num_envs > 1:
+            frames *= self._num_envs
+        model = self._physics_manager.get_model()
+        body_indices = {path: index for index, path in enumerate(model.body_label)}
+        try:
+            indices = [-1 if frame.body_path is None else body_indices[frame.body_path] for frame in frames]
+        except KeyError as exc:
+            raise ValueError(f"Newton model is missing planned RayCaster body {exc.args[0]!r}.") from exc
         self._view = self
-        self._view_count = len(site_indices)
-        self._sensor_site_indices = wp.array(site_indices, dtype=wp.int32, device=self._device)
+        self._view_count = len(frames)
+        self._frame_body_indices = wp.array(indices, dtype=wp.int32, device=self._device)
+        self._frame_local_poses = wp.array(
+            [wp.transform(*frame.pose) for frame in frames], dtype=wp.transformf, device=self._device
+        )
         self._newton_pose_w = wp.empty(self._view_count, dtype=wp.transformf, device=self._device)
         self._newton_pos_w = ProxyArray(wp.empty(self._view_count, dtype=wp.vec3f, device=self._device))
         self._newton_quat_w = ProxyArray(wp.empty(self._view_count, dtype=wp.quatf, device=self._device))
-        self._offset_pos_wp, self._offset_quat_wp = _identity_offsets(self._view_count, self._device)
+        self._offset_pos_wp = wp.zeros(self._view_count, dtype=wp.vec3f, device=self._device)
+        identity_quat = np.zeros((self._view_count, 4), dtype=np.float32)
+        identity_quat[:, 3] = 1.0
+        self._offset_quat_wp = wp.array(identity_quat, dtype=wp.quatf, device=self._device)
 
     def _update_ray_infos(self: Any, env_mask: wp.array) -> None:
-        """Update site poses and transform local rays into world space."""
-        self._update_newton_site_transforms(
-            self._sensor_site_indices, self._newton_pose_w, self._newton_pos_w.warp, self._newton_quat_w.warp
-        )
+        """Update planned frame poses and transform local rays into world space."""
+        self._update_newton_frame_transforms(self._newton_pose_w, self._newton_pos_w.warp, self._newton_quat_w.warp)
         pos_w = self._data.pos_w.warp
         quat_w = self._data.quat_w_world.warp if hasattr(self._data, "quat_w_world") else self._data.quat_w.warp
         ray_starts = self.ray_starts.warp if hasattr(self.ray_starts, "warp") else self._ray_starts_local
@@ -166,11 +138,8 @@ class _NewtonRayCasterPoseMixin:
         )
 
     def get_world_poses(self: Any, indices=None) -> tuple[ProxyArray, ProxyArray]:
-        """Return current world poses after resolving pending FK."""
-        NewtonManager.get_state()
-        self._update_newton_site_transforms(
-            self._sensor_site_indices, self._newton_pose_w, self._newton_pos_w.warp, self._newton_quat_w.warp
-        )
+        """Return world poses for legacy camera helpers."""
+        self._update_newton_frame_transforms(self._newton_pose_w, self._newton_pos_w.warp, self._newton_quat_w.warp)
         if indices is None:
             return self._newton_pos_w, self._newton_quat_w
         if not isinstance(indices, wp.array):
@@ -186,38 +155,28 @@ class _NewtonRayCasterPoseMixin:
         )
         return ProxyArray(pos_w), ProxyArray(quat_w)
 
-    def _update_newton_site_transforms(
-        self: Any,
-        site_indices: wp.array,
-        pose_buf: wp.array,
-        pos_buf: wp.array,
-        quat_buf: wp.array,
-    ) -> None:
-        """Update site transforms from manager state already refreshed by the caller."""
-        model = NewtonManager.get_model()
-        state = NewtonManager.get_state_0()
+    def _update_newton_frame_transforms(self: Any, pose_buf: wp.array, pos_buf: wp.array, quat_buf: wp.array) -> None:
+        """Update planned frame transforms using the manager-bound state."""
+        state = self._physics_manager.get_state_0()
         wp.launch(
-            _newton_site_world_poses_kernel,
-            dim=site_indices.shape[0],
-            inputs=[site_indices, model.shape_body, model.shape_transform, state.body_q],
+            _newton_frame_world_poses_kernel,
+            dim=self._frame_body_indices.shape[0],
+            inputs=[self._frame_body_indices, self._frame_local_poses, state.body_q],
             outputs=[pose_buf, pos_buf, quat_buf],
             device=self._device,
         )
 
-    @staticmethod
-    def _resolve_site_indices(labels: list[str], prim_expr: str, num_envs: int) -> list[int]:
-        """Expand registered site labels into per-environment Newton site indices."""
-        site_map = NewtonManager._cl_site_index_map
-        site_indices: list[int] = []
-        for env_index in range(num_envs):
-            for label in labels:
-                error_prefix = f"RayCaster target '{prim_expr}' site label '{label}'"
-                if label not in site_map:
-                    raise ValueError(f"{error_prefix} was not found in NewtonManager._cl_site_index_map.")
-                global_index, per_world = site_map[label]
-                env_site_indices = [global_index] if per_world is None else per_world[env_index]
-                site_indices.extend(env_site_indices)
-        return site_indices
+    def _update_newton_body_transforms(
+        self: Any, body_indices: wp.array, pose_buf: wp.array, pos_buf: wp.array, quat_buf: wp.array
+    ) -> None:
+        """Gather exact Newton body transforms."""
+        wp.launch(
+            _newton_body_world_poses_kernel,
+            dim=body_indices.shape[0],
+            inputs=[body_indices, self._physics_manager.get_state_0().body_q],
+            outputs=[pose_buf, pos_buf, quat_buf],
+            device=self._device,
+        )
 
 
 @wp.kernel(enable_backward=False)
@@ -274,7 +233,11 @@ class NewtonRaycastSensor(_NewtonRayCasterPoseMixin, BaseRayCaster):
     def __init__(self, cfg: NewtonRaycastSensorCfg):
         if cfg.max_distance <= 0.0:
             raise ValueError(f"max_distance must be positive, received {cfg.max_distance}.")
-        NewtonManager._sensor_bvh_shape_flags |= newton.ShapeFlags.COLLIDE_SHAPES
+        from isaaclab_newton.cloner import NewtonReplicateContext
+
+        sim = SimulationContext.instance()
+        resource = sim.get_or_create_backend(NewtonReplicateContext, sim, clone_role="scene")
+        resource._sensor_bvh_shape_flags |= newton.ShapeFlags.COLLIDE_SHAPES
         super().__init__(cfg)
         self._data = NewtonRaycastSensorData()
         self._sensor_task_name: str | None = None
@@ -308,8 +271,8 @@ class NewtonRaycastSensor(_NewtonRayCasterPoseMixin, BaseRayCaster):
         super()._initialize_impl()
         if self._view_count != self._num_envs:
             raise RuntimeError(
-                f"NewtonRaycastSensor '{self.cfg.prim_path}' resolved {self._view_count} Newton sites"
-                f" for {self._num_envs} environments; exactly one site per environment is supported."
+                f"NewtonRaycastSensor '{self.cfg.prim_path}' resolved {self._view_count} planned frames"
+                f" for {self._num_envs} environments; exactly one frame per environment is supported."
                 " Attach the sensor to a single rigid body per environment."
             )
         ray_count = self._num_envs * self.num_rays
@@ -318,7 +281,7 @@ class NewtonRaycastSensor(_NewtonRayCasterPoseMixin, BaseRayCaster):
         # Flat views and scratch buffers for newton.intersect_ray.
         self._ray_starts_w_flat = self._ray_starts_w.reshape((ray_count,))
         self._ray_directions_w_flat = self._ray_directions_w.reshape((ray_count,))
-        global_world_only = bool(getattr(self.cfg, "global_world_only", False))
+        global_world_only = self.cfg.global_world_only
         if global_world_only:
             world_ids = np.full(ray_count, -1, dtype=np.int32)
         else:
@@ -328,17 +291,17 @@ class NewtonRaycastSensor(_NewtonRayCasterPoseMixin, BaseRayCaster):
         self._hit_normal = wp.empty(ray_count, dtype=wp.vec3f, device=self._device)
 
         self._sensor_task_name = f"newton_raycast:{self.cfg.prim_path}:{id(self)}"
-        NewtonManager._register_sensor_task(self._sensor_task_name, self._launch_raycast)
+        self._physics_manager._newton._register_sensor_task(self._sensor_task_name, self._launch_raycast)
 
     def _launch_raycast(self) -> None:
         """Sensor pose + ray transform + BVH query + hit resolve (graph-capturable)."""
         self._update_ray_infos(self._is_outdated)
         newton.intersect_ray(
-            NewtonManager.get_model(),
+            self._physics_manager.get_model(),
             ray_origins=self._ray_starts_w_flat,
             ray_directions=self._ray_directions_w_flat,
             ray_worlds=self._ray_worlds,
-            enable_global_world=not bool(getattr(self.cfg, "global_world_only", False)),
+            enable_global_world=not self.cfg.global_world_only,
             out_dist=self._hit_dist,
             out_normal=self._hit_normal,
         )
@@ -367,11 +330,11 @@ class NewtonRaycastSensor(_NewtonRayCasterPoseMixin, BaseRayCaster):
         if env_mask.ptr != self._is_outdated.ptr:
             wp.copy(self._is_outdated, env_mask)
         assert self._sensor_task_name is not None
-        NewtonManager._update_sensor_tasks(self._sensor_task_name)
+        self._physics_manager._newton._update_sensor_tasks(self._sensor_task_name)
 
     def _invalidate_initialize_callback(self, event) -> None:
         if self._sensor_task_name is not None:
-            NewtonManager._unregister_sensor_task(self._sensor_task_name)
+            self._physics_manager._newton._unregister_sensor_task(self._sensor_task_name)
         self._sensor_task_name = None
         super()._invalidate_initialize_callback(event)
 

@@ -6,6 +6,8 @@
 from isaaclab.envs.mimic_env_cfg import MimicEnvCfg, SubTaskConfig
 from isaaclab.utils.configclass import configclass
 
+from isaaclab_mimic.motion_planners.curobo.curobo_planner_cfg import CuroboPlannerCfg
+
 from isaaclab_tasks.contrib.stack.config.franka.stack_ik_rel_env_cfg_skillgen import (
     FrankaCubeStackSkillgenEnvCfg,
 )
@@ -17,9 +19,12 @@ class FrankaCubeStackIKRelSkillgenEnvCfg(FrankaCubeStackSkillgenEnvCfg, MimicEnv
     Isaac Lab Mimic environment config class for Franka Cube Stack IK Rel env.
     """
 
+    motion_planner: CuroboPlannerCfg = CuroboPlannerCfg()
+
     def __post_init__(self):
         # post init of parents
         super().__post_init__()
+        self.scene.geometry_prim_paths = tuple(target.prim_expr for target in self.motion_planner.mesh_prim_paths)
         # # TODO: Figure out how we can move this to the MimicEnvCfg class
         # # The __post_init__() above only calls the init for FrankaCubeStackEnvCfg and not MimicEnvCfg
         # # https://stackoverflow.com/questions/59986413/achieving-multiple-inheritance-using-python-dataclasses

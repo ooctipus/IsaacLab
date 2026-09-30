@@ -6,6 +6,7 @@
 import tempfile
 from dataclasses import MISSING
 
+from isaaclab_physx.renderers import IsaacRtxRendererCfg, IsaacRtxRendererGlobalSettingsCfg
 from isaaclab_teleop import XrCfg
 
 # Marker consumed by ``env_test_utils._is_teleop_env`` to bucket teleop
@@ -21,7 +22,6 @@ from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import TerminationTermCfg as DoneTerm
-from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import CameraCfg
 
 # from isaaclab.sim.schemas.schemas_cfg import RigidBodyPropertiesCfg
@@ -29,18 +29,21 @@ from isaaclab.sim.spawners.from_files.from_files_cfg import GroundPlaneCfg, UsdF
 from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR
 from isaaclab.utils.configclass import configclass
 
-from isaaclab_tasks.utils.presets import set_isaac_rtx_global_settings
+from isaaclab_tasks.utils.presets import MultiBackendRendererCfg, MultiBackendSceneCfg, MultiBackendSimulationCfg
 
 from . import mdp
 
 from isaaclab_assets.robots.fourier import GR1T2_CFG  # isort: skip
+
+_ISAAC_RTX_CFG = IsaacRtxRendererCfg(global_settings=IsaacRtxRendererGlobalSettingsCfg(antialiasing_mode="DLAA"))
+_DLAA_RENDERER_CFG = MultiBackendRendererCfg(default=_ISAAC_RTX_CFG, isaacsim_rtx=_ISAAC_RTX_CFG)
 
 
 ##
 # Scene definition
 ##
 @configclass
-class ObjectTableSceneCfg(InteractiveSceneCfg):
+class ObjectTableSceneCfg(MultiBackendSceneCfg):
     """Configuration for the GR1T2 Nut Pour Base Scene."""
 
     # Table
@@ -172,6 +175,7 @@ class ObjectTableSceneCfg(InteractiveSceneCfg):
         data_types=["rgb"],
         spawn=sim_utils.PinholeCameraCfg(focal_length=18.15, clipping_range=(0.1, 2)),
         offset=CameraCfg.OffsetCfg(pos=(0.0, 0.12, 1.67675), rot=(0.9801, 0.0, 0.0, -0.19848), convention="ros"),
+        renderer_cfg=_DLAA_RENDERER_CFG,
     )
 
     # Ground plane
@@ -287,6 +291,7 @@ class EventCfg:
 class NutPourGR1T2BaseEnvCfg(ManagerBasedRLEnvCfg):
     """Configuration for the GR1T2 environment."""
 
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg()
     # Scene settings
     scene: ObjectTableSceneCfg = ObjectTableSceneCfg(num_envs=1, env_spacing=2.5, replicate_physics=True)
     # Basic settings
@@ -355,14 +360,12 @@ class NutPourGR1T2BaseEnvCfg(ManagerBasedRLEnvCfg):
         self.sim.dt = 1 / 100
         self.sim.render_interval = 2
 
-        # Set settings for camera rendering
         self.num_rerenders_on_reset = 3
-        set_isaac_rtx_global_settings(self.scene.robot_pov_cam.renderer_cfg, antialiasing_mode="DLAA")
 
         # List of image observations in policy observations
         self.image_obs_list = ["robot_pov_cam"]
 
-        self.xr = XrCfg(
+        self.scene.xr_anchor = XrCfg(
             anchor_pos=(0.0, 0.0, 0.0),
             anchor_rot=(0.0, 0.0, 0.0, 1.0),
         )

@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import logging
-import sys
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Literal
 
@@ -18,8 +17,10 @@ from pxr import Usd, UsdGeom, UsdPhysics
 
 import isaaclab.sim as sim_utils
 import isaaclab.utils.sensors as sensor_utils
+from isaaclab import cloner
 from isaaclab.app.logging_utils import force_log_level
 from isaaclab.renderers import BaseRenderer, CameraRenderSpec
+from isaaclab.scene_data import SceneDataFormat, SceneDataPublication
 from isaaclab.sim.views import FrameView
 from isaaclab.utils import to_camel_case
 from isaaclab.utils.math import (
@@ -143,11 +144,25 @@ class Camera(SensorBase):
             RuntimeError: If no camera prim is found at the given path.
             ValueError: If the provided data types are not supported by the camera or active renderer.
         """
+        # These are the only fields cleanup owns, and construction can fail before SensorBase has
+        # registered its callbacks. Seed them before any validation so ``__del__`` stays total.
+        self._view: FrameView | None = None
+        self._render_data = None
+        self._render_pose_publication: SceneDataPublication | None = None
+        self._scene_data_provider = None
         # perform check on supported data types
         self._check_supported_data_types(cfg)
         # initialize base class
         super().__init__(cfg)
-
+        sim_ctx = sim_utils.SimulationContext.instance()
+        if sim_ctx is None:
+            raise RuntimeError("Camera construction requires an active SimulationContext.")
+        self._scene_data_provider = sim_ctx.get_scene_data_provider()
+        plan = sim_ctx.get_clone_plan()
+        if plan is None or plan.is_complete:
+            raise RuntimeError(
+                f"Camera at {self.cfg.prim_path!r} requires an active clone plan before replication completes."
+            )
         # Compute camera orientation (convention conversion) and spawn.
         rot = torch.tensor(self.cfg.offset.rot, dtype=torch.float32, device="cpu").unsqueeze(0)
         rot_offset = convert_camera_frame_orientation_convention(
@@ -156,85 +171,70 @@ class Camera(SensorBase):
         rot_offset = rot_offset.squeeze(0).cpu().numpy()
         if self.cfg.spawn is not None and self.cfg.spawn.vertical_aperture is None:
             self.cfg.spawn.vertical_aperture = self.cfg.spawn.horizontal_aperture * self.cfg.height / self.cfg.width
-        # Resolve the camera prim path and spawn it, redirecting to a child if prim_path is a physics body.
+        # Spawn exactly the prototype the plan assigned this camera cfg.
         spawn = self.cfg.spawn
         if spawn is not None:
-            probe_path = spawn.spawn_path or self.cfg.prim_path
-            probe_matches = sim_utils.resolve_matching_prims_from_source(probe_path, raise_if_no_matches=False)
-            source_prim, _source_destination_expr = probe_matches[0] if probe_matches else (None, None)
-            if source_prim is not None and (
+            source_paths = cloner.query.cfg_source_paths(plan, self._source_cfg)
+            spawn_target = next((path for path in source_paths if path is not None), None)
+            if spawn_target is None:
+                raise RuntimeError(f"Camera at {self.cfg.prim_path!r} has no populated clone-plan source.")
+            source_prim = self.stage.GetPrimAtPath(spawn_target)
+            if source_prim.IsValid() and (
                 source_prim.HasAPI(UsdPhysics.ArticulationRootAPI) or source_prim.HasAPI(UsdPhysics.RigidBodyAPI)
             ):
                 logger.info(f" Spawning camera at '{self.cfg.prim_path}/camera'.")
                 self.cfg.prim_path = f"{self.cfg.prim_path}/camera"
-                spawn.spawn_path = f"{probe_path}/camera"
-
-            spawn_target = spawn.spawn_path or self.cfg.prim_path
-            if sim_utils.find_first_matching_prim(spawn_target) is None:
+                spawn_target = f"{spawn_target}/camera"
+            if not self.stage.GetPrimAtPath(spawn_target).IsValid():
                 spawn.func(spawn_target, spawn, translation=self.cfg.offset.pos, orientation=rot_offset)
-            if not sim_utils.find_matching_prims(spawn_target):
-                raise RuntimeError(f"Could not find prim with path {spawn_target!r}.")
-
-        # Every renderer backend draws the visual-only geometry, so it must survive cloning even
-        # when the run is otherwise headless. This must happen before plan dispatch, which is why
-        # it is here rather than in ``_initialize_impl``.
-        sim_ctx = sim_utils.SimulationContext.instance()
-        if sim_ctx is not None:
-            sim_ctx.require_visual_shapes()
-
-        # An ISP (any ``isp_cfg`` other than ``None``) requires the HDR AOV;
-        # an explicit ``"rgb_hdr"`` in ``data_types`` also requires the
-        # HDR-routing flag flipped on the RTX-bearing backends.
-        require_hdr_output = "rgb_hdr" in self.cfg.data_types or self.cfg.isp_cfg is not None
-
-        # TODO(follow-up PR): move this flag flip out of Camera. The cleanest path is
-        # an apply_pre_reset_settings() hook on RendererCfg (default no-op) that
-        # IsaacRtxRendererCfg overrides to flip /isaaclab/render/rtx_sensors. The
-        # flag must be set pre-sim.reset() because SimulationContext.is_rendering
-        # and several env classes read it before the renderer's __init__ runs.
-        renderer_type = getattr(self.cfg.renderer_cfg, "renderer_type", None)
-        if renderer_type == "isaac_rtx":
-            from isaaclab.app.settings_manager import get_settings_manager
-
-            settings = get_settings_manager()
-            settings.set_bool("/isaaclab/render/rtx_sensors", True)
-            if require_hdr_output:
-                settings.set_bool("/rtx/rtpt/gaussian/skipTonemapping/enabled", False)
-        elif renderer_type == "ovrtx" and require_hdr_output:
-            from isaaclab.app.settings_manager import get_settings_manager
-
-            get_settings_manager().set_bool("/rtx/rtpt/gaussian/skipTonemapping/enabled", False)
-            # FIXME: settings set_bool is a no-op for ovrtx
-            # warning only since it affects only ParticleField3DGaussianSplat scene
-            logger.warning(
-                "OVRTX backend with PPISP/HDR requires /rtx/rtpt/gaussian/skipTonemapping/enabled to be false."
-            )
-
+        self._view = FrameView(self.cfg.prim_path, simulation_context=sim_ctx, device=sim_ctx.device)
         # UsdGeom Camera prim for the sensor
         self._sensor_prims: list[UsdGeom.Camera] = list()
         # Allocated in :meth:`_create_buffers` once the renderer's output contract is known.
         self._data: CameraData | None = None
-        # The backend's ``__init__`` is its pre-physics phase, so it has to exist before
-        # ``sim.reset()``; sensor initialization only runs on ``PhysicsEvent.PHYSICS_READY``, which is
-        # too late. Backends are shared per renderer config, so this stays cheap for many cameras.
-        self._renderer: BaseRenderer | None = None
-        if sim_ctx is not None:
-            self._renderer = sim_ctx.render_context.get_renderer(self.cfg.renderer_cfg)
-            with force_log_level(logging.INFO):
-                logger.info("Using renderer: %s", type(self._renderer).__name__)
-        # Render data — assigned in _initialize_impl.
-        self._render_data = None
-        # Frame view — assigned in _initialize_impl.
-        self._view: FrameView | None = None
+        # Construct the shared backend before reset; runtime resources initialize after cloning.
+        self._renderer: BaseRenderer = sim_ctx.get_renderer(self.cfg.renderer_cfg)
+        with force_log_level(logging.INFO):
+            logger.info("Using renderer: %s", type(self._renderer).__name__)
+        rows = tuple(cloner.query.iter_sources(plan, self.cfg.prim_path))
+        if rows:
+            source_paths = tuple(dict.fromkeys(source_path for _, _, source_path, _ in rows))
+            source_paths_by_env = {env_id: source_path for _, _, source_path, env_ids in rows for env_id in env_ids}
+            paths_by_env = {
+                env_id: cloner.path.rebase(source_path, root, template.format(env_id))
+                for root, template, source_path, env_ids in rows
+                for env_id in env_ids
+            }
+            source_cameras = {path: UsdGeom.Camera.Get(self.stage, path) for path in source_paths}
+            invalid_sources = [path for path, camera in source_cameras.items() if not camera]
+            if invalid_sources:
+                raise RuntimeError(f"Clone-plan camera source is not a UsdGeom.Camera: {invalid_sources}")
+            # A global camera is one prim every env shares, so it is one render target, not N. Keep
+            # the matching prototype handle beside each unique destination for stage-less backends.
+            cameras_by_path = {
+                paths_by_env[env_id]: source_cameras[source_paths_by_env[env_id]] for env_id in sorted(paths_by_env)
+            }
+            cam_paths = tuple(cameras_by_path)
+            self._prototype_sensor_prims = tuple(cameras_by_path.values())
+        else:
+            raise RuntimeError(
+                f"No clone-plan row covers the camera at '{self.cfg.prim_path}', so there is nothing to"
+                " render into. Every asset the scene draws is declared to the plan and copied by the"
+                " cloning pass, cameras included: build this camera inside a"
+                " :class:`~isaaclab.cloner.ReplicateSession` that lists its config, or add it to the"
+                " scene so the scene plans it."
+            )
+        self._render_spec = CameraRenderSpec(self.cfg, sim_ctx.device, source_paths, cam_paths)
+        self._render_pose_publication = SceneDataPublication(SceneDataFormat.Vec3_Quat(), False)
+        self._scene_data_provider.register_transforms(self.cfg.prim_path, self._render_pose_publication)
+        self._renderer.prepare_cameras(self.stage, self._render_spec)
+        sim_ctx.register_camera_sensor(self)
 
-    def __del__(self, _sys=sys):
-        """Unsubscribes from callbacks and cleans up renderer resources.
-
-        Skips cleanup during interpreter shutdown so destructor-time imports or renderer teardown
-        cannot raise ``ImportError: sys.meta_path is None`` and mask the original exception.
-        """
-        if _sys.is_finalizing() or _sys.meta_path is None:
-            return
+    def __del__(self):
+        """Unsubscribes from callbacks and cleans up renderer resources."""
+        if self._scene_data_provider is not None and self._render_pose_publication is not None:
+            self._scene_data_provider.unregister_transforms(self.cfg.prim_path, self._render_pose_publication)
+            self._render_pose_publication = None
         # unsubscribe callbacks
         super().__del__()
 
@@ -242,9 +242,9 @@ class Camera(SensorBase):
         if getattr(self, "_view", None) is not None:
             self._view.close()
             self._view = None
-        # cleanup render resources (renderer may be None if never initialized)
-        if getattr(self, "_renderer", None) is not None:
-            self._renderer.cleanup(getattr(self, "_render_data", None))
+        # release the render data; the backend itself belongs to SimulationContext
+        if self._render_data is not None:
+            self._renderer.cleanup(self._render_data)
 
     def __str__(self) -> str:
         """Returns: A string containing information about the instance."""
@@ -282,6 +282,23 @@ class Camera(SensorBase):
         """A tuple containing (height, width) of the camera sensor."""
         return (self.cfg.height, self.cfg.width)
 
+    @property
+    def output_shapes(self) -> dict[str, tuple[int, ...]]:
+        """Allocated renderer output shapes without updating the camera."""
+        outputs = None if self._data is None else self._data.output
+        if outputs is None:
+            raise RuntimeError("Camera output buffers are not available. Please call 'sim.play()' first.")
+        return {name: buffer.shape for name, buffer in outputs.items()}
+
+    @property
+    def prim_paths(self) -> tuple[str, ...]:
+        """USD path of this camera in each environment it covers, in ascending environment order.
+
+        The clone plan says where the camera is cloned to, so these are known as soon as the
+        prototype is spawned, whether or not the stage carries the clones.
+        """
+        return self._render_spec.camera_prim_paths
+
     """
     Configuration
     """
@@ -305,13 +322,6 @@ class Camera(SensorBase):
             i.e. has square pixels, and the optical center is centered at the camera eye. If this assumption
             is not true in the input intrinsic matrix, then the camera will not set up correctly.
 
-        .. note::
-
-            Cameras carrying an OpenCV lens-distortion model are skipped (with a warning): their
-            ``fx/fy/cx/cy`` are fixed at spawn through the
-            :attr:`~isaaclab.sim.spawners.sensors.PinholeCameraCfg.distortion` cfg and cannot be overridden
-            here. Any other selected cameras in the same call are still updated.
-
         Args:
             matrices: The intrinsic matrices for the camera. Shape is (N, 3, 3).
             focal_length: Perspective focal length (in cm) used to calculate pixel size. Defaults to None. If None,
@@ -320,6 +330,8 @@ class Camera(SensorBase):
 
         Raises:
             TypeError: If ``matrices`` is not a :class:`torch.Tensor` or a Warp array.
+            ValueError: If the matrix count does not match the selected cameras, or a selected camera's
+                calibration is owned by an OpenCV lens-distortion model.
         """
         if isinstance(matrices, torch.Tensor):
             if not matrices.is_contiguous():
@@ -338,19 +350,26 @@ class Camera(SensorBase):
         matrices = matrices.numpy().astype(float, copy=False)
         if matrices.ndim == 2:
             matrices = matrices[None, ...]
-        # iterate over env_ids
+        if matrices.shape != (len(env_ids_np), 3, 3):
+            raise ValueError(
+                f"Expected one 3x3 intrinsic matrix per selected camera, got {matrices.shape} for"
+                f" {len(env_ids_np)} cameras."
+            )
+        distortion_ids = [
+            int(i)
+            for i in env_ids_np
+            if self._sensor_prims[int(i)].GetPrim().GetAttribute("omni:lensdistortion:model").Get()
+        ]
+        if distortion_ids:
+            raise ValueError(
+                "set_intrinsic_matrices() cannot override cameras configured with an OpenCV lens-distortion"
+                f" model: {distortion_ids}. Set their calibration in CameraCfg.spawn.distortion."
+            )
+
         height, width = self.image_shape
-        skipped_distortion = False
         for i, intrinsic_matrix in zip(env_ids_np, matrices):
             # change data for corresponding camera index
             sensor_prim = self._sensor_prims[i]
-            # A camera with an authored OpenCV lens-distortion model owns its fx/fy/cx/cy through the
-            # ``omni:lensdistortion:*`` calibration, which this square-pixel, centered focal-length/aperture
-            # write cannot express, so skip that camera and leave its calibration untouched.
-            if sensor_prim.GetPrim().GetAttribute("omni:lensdistortion:model").Get():
-                skipped_distortion = True
-                continue
-
             params = sensor_utils.convert_camera_intrinsics_to_usd(
                 intrinsic_matrix=intrinsic_matrix.reshape(-1), height=height, width=width, focal_length=focal_length
             )
@@ -365,11 +384,6 @@ class Camera(SensorBase):
                     param_value = float(param_value)
                 # set value using pure USD API
                 param_attr().Set(param_value)
-        if skipped_distortion:
-            logger.warning(
-                "set_intrinsic_matrices() skipped one or more cameras configured with an OpenCV"
-                " lens-distortion model; their intrinsics are fixed at spawn via the 'distortion' cfg."
-            )
         # update the internal buffers
         self._update_intrinsic_matrices(env_ids_np)
 
@@ -427,9 +441,7 @@ class Camera(SensorBase):
         idx_wp = self._resolve_env_ids_wp(env_ids)
         with self._view.xform_world_space_writer() as writer:
             writer.set_poses(pos_wp, ori_wp, idx_wp)
-        # write through to the data buffers so explicitly set poses are never stale,
-        # regardless of :attr:`CameraCfg.update_latest_camera_pose`
-        self._update_poses(env_ids=idx_wp, frame_op=0)
+        self._update_poses()
 
     def set_world_poses_from_view(
         self, eyes: torch.Tensor, targets: torch.Tensor, env_ids: Sequence[int] | None = None
@@ -443,7 +455,6 @@ class Camera(SensorBase):
 
         Raises:
             RuntimeError: If the camera prim is not set. Need to call :meth:`initialize` method first.
-            NotImplementedError: If the stage up-axis is not "Y" or "Z".
             ValueError: If every eye position equals its target (look-at direction undefined for the
                 whole batch). When only some rows are degenerate, those rows are skipped and the
                 remaining poses are still applied; a warning is logged.
@@ -468,10 +479,8 @@ class Camera(SensorBase):
             env_ids_torch = env_ids.to(device=self._device, dtype=torch.int32).reshape(-1)
         else:
             env_ids_torch = torch.tensor(env_ids, dtype=torch.int32, device=self._device).reshape(-1)
-        # get up axis of current stage
-        up_axis = UsdGeom.GetStageUpAxis(self.stage)
         # set camera poses using the view; degenerate rows (eye == target) come back as NaN
-        rotation_matrix = create_rotation_matrix_from_view(eyes, targets, up_axis, device=self._device)
+        rotation_matrix = create_rotation_matrix_from_view(eyes, targets, "Z", device=self._device)
         valid_indices = (~torch.isnan(rotation_matrix).any(dim=(-2, -1))).nonzero(as_tuple=True)[0]
         n_valid = valid_indices.numel()
         n_total = rotation_matrix.shape[0]
@@ -486,16 +495,7 @@ class Camera(SensorBase):
             eyes = eyes.index_select(0, valid_indices)
             env_ids_torch = env_ids_torch.index_select(0, valid_indices)
         orientations = quat_from_matrix(rotation_matrix)
-        idx_wp = wp.from_torch(env_ids_torch.contiguous(), dtype=wp.int32)
-        with self._view.xform_world_space_writer() as writer:
-            writer.set_poses(
-                wp.from_torch(eyes.contiguous(), dtype=wp.vec3f),
-                wp.from_torch(orientations.contiguous(), dtype=wp.vec4f),
-                idx_wp,
-            )
-        # write through to the data buffers so explicitly set poses are never stale,
-        # regardless of :attr:`CameraCfg.update_latest_camera_pose`
-        self._update_poses(env_ids=idx_wp, frame_op=0)
+        self.set_world_poses(eyes, orientations, env_ids_torch, convention="opengl")
 
     """
     Operations
@@ -506,15 +506,14 @@ class Camera(SensorBase):
             raise RuntimeError("Camera could not be initialized. Check the renderer and simulation logs for details.")
         # reset the timestamps
         super().reset(env_ids, env_mask)
-        # reset the data
-        # note: this recomputation is useful if one performs events such as randomizations on the camera poses.
+        update_state = self._update_poses if self._pose_follows_physics else self._update_camera_state
         if env_mask is not None:
-            self._update_poses(env_mask=env_mask, frame_op=2)
+            update_state(env_mask=env_mask, frame_op=2)
         elif env_ids is None:
-            self._update_poses(frame_op=2)
+            update_state(frame_op=2)
         else:
             env_ids_wp = self._resolve_env_ids_wp(env_ids)
-            self._update_poses(env_ids_wp, frame_op=2)
+            update_state(env_ids_wp, frame_op=2)
 
     """
     Implementation.
@@ -535,42 +534,9 @@ class Camera(SensorBase):
         # Initialize parent class
         super()._initialize_impl()
 
-        sim_ctx = sim_utils.SimulationContext.instance()
-        if sim_ctx is None:
-            raise RuntimeError("SimulationContext is not initialized.")
-        # Normally created in ``__init__``; only missing when the camera was built without a simulation.
-        if self._renderer is None:
-            self._renderer = sim_ctx.render_context.get_renderer(self.cfg.renderer_cfg)
-
-        # Build the render spec early — both the wrapper ISP (which delegates
-        # any renderer-side per-camera setup) and ``create_render_data`` consume
-        # it, and the prims are already authored at this point.
-        cam_paths = tuple(str(p.GetPath()) for p in sim_utils.find_matching_prims(self.cfg.prim_path, self.stage))
-        env_0_prefix = "/World/envs/env_0/"
-        rel_under_env0 = (
-            cam_paths[0].removeprefix(env_0_prefix) if cam_paths and cam_paths[0].startswith(env_0_prefix) else ""
-        )
-        device_str = self._device if isinstance(self._device, str) else str(self._device)
-        render_spec = CameraRenderSpec(
-            cfg=self.cfg,
-            device=device_str,
-            num_instances=self._num_envs,
-            camera_prim_paths=cam_paths,
-            view_count=self._num_envs,
-            camera_path_relative_to_env_0=rel_under_env0,
-        )
-
-        # Delegate per-camera USD setup to the renderer — must run **before**
-        # ``ensure_prepare_stage`` so renderers that snapshot the stage
-        # (ovrtx's ``stage.Export``) capture the resulting overrides in their
-        # exported USD.
-        self._renderer.prepare_cameras(self.stage, render_spec)
-
-        # Stage preprocessing must happen before creating the view because the view keeps
-        # references to prims located in the stage.
-        sim_ctx.render_context.ensure_prepare_stage(self.stage, self._num_envs)
-
-        self._view = FrameView(self.cfg.prim_path, device=self._device, stage=self.stage)
+        self._view.initialize(self._clone_plan, self._scene_data_provider)
+        frames = self._clone_plan.match_frames(self.cfg.prim_path)
+        self._pose_follows_physics = any(frame.body_path is not None for frame in frames)
         # Check that sizes are correct
         if self._view.count != self._num_envs:
             raise RuntimeError(
@@ -583,21 +549,19 @@ class Camera(SensorBase):
         # Create frame count buffer
         self._frame = ProxyArray(wp.zeros(self._view.count, device=self._device, dtype=wp.int64))
 
-        # Convert all encapsulated prims to Camera. Newton keeps only source USD camera prims.
+        # Convert all encapsulated prims to Camera. A stage-less backend uses the exact prototype
+        # handles retained when the plan was read, aligned with its clone destinations.
         self._sensor_prims.clear()
         view_prims = list(self._view.prims)
-        if not view_prims and cam_paths:
-            view_prims = [self.stage.GetPrimAtPath(cam_paths[0])] * self._view.count
-        for cam_prim in view_prims:
-            # Obtain the prim path
-            cam_prim_path = cam_prim.GetPath().pathString
-            # Check if prim is a camera
-            if not cam_prim.IsA(UsdGeom.Camera):
-                raise RuntimeError(f"Prim at path '{cam_prim_path}' is not a Camera.")
-            # Add to list
-            self._sensor_prims.append(UsdGeom.Camera(cam_prim))
+        if view_prims:
+            for cam_prim in view_prims:
+                if not cam_prim.IsA(UsdGeom.Camera):
+                    raise RuntimeError(f"Prim at path '{cam_prim.GetPath()}' is not a Camera.")
+                self._sensor_prims.append(UsdGeom.Camera(cam_prim))
+        else:
+            self._sensor_prims.extend(self._prototype_sensor_prims)
 
-        self._render_data = self._renderer.create_render_data(render_spec)
+        self._render_data = self._renderer.create_render_data(self._render_spec)
 
         # Create internal buffers (includes intrinsic matrix and pose init)
         self._create_buffers()
@@ -605,25 +569,14 @@ class Camera(SensorBase):
     def _update_buffers_impl(self, env_mask: wp.array):
         if not self._env_mask_has_any(env_mask):
             return
-        # Increment frame count
-        if self.cfg.update_latest_camera_pose:
-            self._update_poses(env_mask=env_mask, frame_op=1)
+        if self._pose_follows_physics:
+            self._update_poses(env_mask=env_mask, frame_op=1, update_data_pose=self.cfg.update_latest_camera_pose)
         else:
             self._update_camera_state(env_mask=env_mask, frame_op=1)
 
-        sim_ctx = sim_utils.SimulationContext.instance()
-        renderer = self._renderer
-        assert renderer is not None
-        if sim_ctx is not None:
-            sim_ctx.render_context.render_into_camera(
-                renderer,
-                self._render_data,
-                self._data,
-                sim_ctx.get_physics_step_count(),
-            )
-        else:
-            renderer.render(self._render_data)
-            renderer.read_output(self._render_data, self._data)
+        self._renderer.update(self._render_data, self._data.intrinsic_matrices)
+        self._renderer.render(self._render_data)
+        self._renderer.read_output(self._render_data, self._data)
 
     """
     Private Helpers
@@ -631,6 +584,10 @@ class Camera(SensorBase):
 
     def _check_supported_data_types(self, cfg: CameraCfg):
         """Checks if the data types are supported by the ray-caster camera."""
+        if not cfg.data_types:
+            raise ValueError("CameraCfg.data_types must request at least one renderer output.")
+        if len(set(cfg.data_types)) != len(cfg.data_types):
+            raise ValueError(f"CameraCfg.data_types contains duplicate outputs: {cfg.data_types}.")
         if "instance_segmentation_fast" in cfg.data_types:
             raise ValueError(
                 "The data type 'instance_segmentation_fast' has been renamed to 'instance_segmentation'."
@@ -654,19 +611,20 @@ class Camera(SensorBase):
                 "\n\tHint: If you need to work with these sensor types, we recommend using their fast counterparts."
                 f"\n\t\tFast counterparts: {fast_common_elements}"
             )
+        simple_shading = [name for name in cfg.data_types if name.startswith("simple_shading_")]
+        if len(simple_shading) > 1:
+            raise ValueError(f"CameraCfg.data_types selects multiple simple shading modes: {simple_shading}.")
 
     def _create_buffers(self):
         """Create buffers for storing data."""
         specs = self._renderer.supported_output_types()
-        # Split requested names into known, unknown, and unsupported types.
-        known: list[str] = []
+        # A requested output is part of the camera contract; silently dropping it would make the
+        # selected renderer appear to work while returning a different interface.
         unknown: list[str] = []
         unsupported: list[str] = []
         for name in self.cfg.data_types:
             try:
-                if RenderBufferKind(name) in specs:
-                    known.append(name)
-                else:
+                if RenderBufferKind(name) not in specs:
                     unsupported.append(name)
             except ValueError:
                 unknown.append(name)
@@ -675,15 +633,12 @@ class Camera(SensorBase):
             errors.append(f"Unknown camera data types: {unknown}.")
         if unsupported:
             errors.append(
-                f"Renderer {type(self._renderer).__name__} does not support the following requested data types:"
-                f" {unsupported}."
-                f"\n\tSupported data types: {sorted(str(kind) for kind in specs)}"
+                f"Renderer {type(self._renderer).__name__} does not support requested data types: {unsupported}."
             )
         if errors:
             raise ValueError("\n".join(errors))
-        device_str = self._device if isinstance(self._device, str) else str(self._device)
         self._data = CameraData.allocate(
-            data_types=known,
+            data_types=self.cfg.data_types,
             height=self.cfg.height,
             width=self.cfg.width,
             num_views=self._view.count,
@@ -692,7 +647,7 @@ class Camera(SensorBase):
         )
         # Camera-frame state (pose / intrinsics) is owned by the camera, not
         # the renderer: allocate warp buffers and populate them.
-        self._data.create_buffers(self._view.count, device_str)
+        self._data.create_buffers(self._view.count, self._device)
         self._update_intrinsic_matrices()
         self._update_poses()
         self._renderer.set_outputs(self._render_data, self._data.output)
@@ -703,48 +658,35 @@ class Camera(SensorBase):
         """Read the authored OpenCV lens-distortion intrinsics from a camera prim.
 
         Returns the calibrated ``(fx, fy, cx, cy)`` that the RTX/OVRTX renderer projects through when
-        the prim carries a complete OpenCV lens-distortion model, otherwise ``None`` so the caller can
-        fall back to the focal-length/aperture projection. Unlike that projection, these intrinsics may
-        be non-square (``fx != fy``) or off-center.
+        the prim carries an OpenCV lens-distortion model. Unlike the focal-length/aperture projection,
+        these intrinsics may be non-square (``fx != fy``) or off-center.
 
         Args:
             prim: The camera prim to read the authored intrinsics from.
             width: The render width in pixels.
             height: The render height in pixels.
-            env_id: The environment index, used only for warning messages.
+            env_id: The environment index, used in validation errors.
 
         Returns:
-            The authored ``(fx, fy, cx, cy)`` in pixels, or ``None`` when no complete model is present.
+            The authored ``(fx, fy, cx, cy)`` in pixels, or ``None`` when no model is authored.
         """
         distortion_model = prim.GetAttribute("omni:lensdistortion:model").Get()
         if not distortion_model:
             return None
         prefix = f"omni:lensdistortion:{distortion_model}"
-        # a prim may carry the model token without fx/fy/cx/cy
         intrinsics = tuple(prim.GetAttribute(f"{prefix}:{name}").Get() for name in ("fx", "fy", "cx", "cy"))
         if None in intrinsics:
-            # a model token without intrinsics falls back to the focal-length/aperture projection
-            logger.warning(
-                "Camera prim '%s' declares lens-distortion model '%s' but is missing one or more"
-                " fx/fy/cx/cy intrinsics; falling back to the focal-length/aperture projection.",
-                prim.GetPath(),
-                distortion_model,
+            raise ValueError(
+                f"Camera prim {prim.GetPath()!s} declares lens-distortion model {distortion_model!r}"
+                " without complete fx/fy/cx/cy intrinsics."
             )
-            return None
-        # the intrinsics are reported in the calibrated pixel space; warn if the render resolution
-        # differs, since the matrix will not match the rendered pixels.
         image_size = prim.GetAttribute(f"{prefix}:imageSize").Get()
         if image_size is not None:
             authored_size = (int(image_size[0]), int(image_size[1]))
             if authored_size != (width, height):
-                logger.warning(
-                    "Camera prim '%s' (env %d) lens-distortion 'imageSize' %s does not match the render"
-                    " resolution (%d, %d). The reported intrinsic matrix is in the calibrated pixel space.",
-                    prim.GetPath(),
-                    env_id,
-                    authored_size,
-                    width,
-                    height,
+                raise ValueError(
+                    f"Camera prim {prim.GetPath()!s} (env {env_id}) lens-distortion imageSize"
+                    f" {authored_size} does not match render resolution {(width, height)}."
                 )
         return tuple(float(value) for value in intrinsics)
 
@@ -766,25 +708,27 @@ class Camera(SensorBase):
         intrinsic_matrices = np.zeros((len(env_ids_np), 3, 3), dtype=np.float32)
         # viewport parameters are shared by every camera prim of this sensor
         height, width = self.image_shape
+        # A full initialization reads the clone-plan prototypes. Cloned destinations inherit these
+        # values, so reading each unique source once avoids an equivalent USD query per environment.
+        sensor_prims = self._prototype_sensor_prims if env_ids is None else self._sensor_prims
+        intrinsics_by_source = {}
         # iterate over all cameras
         for matrix_id, i in enumerate(env_ids_np):
             # Get corresponding sensor prim
-            sensor_prim = self._sensor_prims[int(i)]
-            # Prefer an authored OpenCV lens-distortion model when present: it carries the authoritative
-            # fx/fy/cx/cy that the RTX/OVRTX renderer projects through, which may be non-square or off-center.
-            authored = self._read_authored_opencv_intrinsics(sensor_prim.GetPrim(), width, height, int(i))
-            if authored is not None:
-                f_x, f_y, c_x, c_y = authored
-            else:
-                # get camera parameters
-                # currently rendering does not use aperture offsets or vertical aperture
-                focal_length = sensor_prim.GetFocalLengthAttr().Get()
-                horiz_aperture = sensor_prim.GetHorizontalApertureAttr().Get()
-                # extract intrinsic parameters (square pixels, centered principal point)
-                f_x = (width * focal_length) / horiz_aperture
-                f_y = f_x
-                c_x = width * 0.5
-                c_y = height * 0.5
+            sensor_prim = sensor_prims[int(i)]
+            source_path = sensor_prim.GetPath()
+            if source_path not in intrinsics_by_source:
+                # Prefer an authored OpenCV lens-distortion model when present: it carries the authoritative
+                # fx/fy/cx/cy that the RTX/OVRTX renderer projects through, which may be non-square or off-center.
+                authored = self._read_authored_opencv_intrinsics(sensor_prim.GetPrim(), width, height, int(i))
+                if authored is not None:
+                    intrinsics_by_source[source_path] = authored
+                else:
+                    # Rendering ignores aperture offsets and vertical aperture and assumes square pixels.
+                    focal_length = sensor_prim.GetFocalLengthAttr().Get()
+                    f_x = (width * focal_length) / sensor_prim.GetHorizontalApertureAttr().Get()
+                    intrinsics_by_source[source_path] = (f_x, f_x, width * 0.5, height * 0.5)
+            f_x, f_y, c_x, c_y = intrinsics_by_source[source_path]
             # create intrinsic matrix for depth linear
             intrinsic_matrices[matrix_id, 0, 0] = f_x
             intrinsic_matrices[matrix_id, 0, 2] = c_x
@@ -800,7 +744,11 @@ class Camera(SensorBase):
         )
 
     def _update_poses(
-        self, env_ids: Sequence[int] | wp.array | None = None, env_mask: wp.array | None = None, frame_op: int = 0
+        self,
+        env_ids: Sequence[int] | wp.array | None = None,
+        env_mask: wp.array | None = None,
+        frame_op: int = 0,
+        update_data_pose: bool = True,
     ):
         """Computes the pose of the camera in the world frame with ROS convention.
 
@@ -810,9 +758,8 @@ class Camera(SensorBase):
         Returns:
             A tuple of the position (in meters) and quaternion (x, y, z, w).
         """
-        # check camera prim exists
-        if len(self._sensor_prims) == 0:
-            raise RuntimeError("Camera prim is None. Please call 'sim.play()' first.")
+        if self._view is None or self._render_data is None:
+            raise RuntimeError("Camera view is not available. Please call 'sim.play()' first.")
 
         # get the poses from the view (returns ProxyArray)
         env_ids_wp = None if env_mask is not None else self._resolve_env_ids_wp(env_ids)
@@ -834,19 +781,22 @@ class Camera(SensorBase):
             copy=False,
         )
 
+        # FrameView publishes the camera prim's native OpenGL pose. Renderers request their exact
+        # layout from SDP, avoiding CameraData's public world-convention conversion and its inverse.
+        if env_ids_wp is None:
+            publication = self._render_pose_publication
+            publication.data.positions = pos_w_wp
+            publication.data.orientations = quat_w_wp
+            publication.dirty = True
+
         self._update_camera_state(
             env_ids=env_ids_wp,
             env_mask=env_mask,
             pos_src=pos_w_wp,
             quat_src=quat_w_wp,
-            update_pose=True,
+            update_pose=update_data_pose,
             frame_op=frame_op,
         )
-        # notify renderer of updated poses (guarded in case called before initialization completes)
-        if self._render_data is not None:
-            self._renderer.update_camera(
-                self._render_data, self._data.pos_w, self._data.quat_w_world, self._data.intrinsic_matrices
-            )
 
     def _update_camera_state(
         self,
@@ -927,13 +877,8 @@ class Camera(SensorBase):
 
     def _invalidate_initialize_callback(self, event):
         """Invalidates the scene elements."""
-        if self._renderer is not None and self._render_data is not None:
+        if self._render_data is not None:
             self._renderer.cleanup(self._render_data)
         self._render_data = None
-        self._renderer = None
         # call parent
         super()._invalidate_initialize_callback(event)
-        # release backend state deterministically, then invalidate the view
-        if self._view is not None:
-            self._view.close()
-            self._view = None

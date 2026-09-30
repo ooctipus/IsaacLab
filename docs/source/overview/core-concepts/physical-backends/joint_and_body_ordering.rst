@@ -3,7 +3,7 @@ Joint and Body Ordering
 
 PhysX and MJWarp may order an articulation's joints and bodies differently. Set
 ``joint_ordering`` and ``body_ordering`` to keep names mapped to the same tensor elements
-across backends. This page explains the supported conventions, conversion costs, and direct
+across backends. This page explains explicit ordering, conversion costs, and direct
 backend-view access. For backend selection and capabilities, see the :doc:`Physics Backends
 overview <index>`.
 
@@ -16,7 +16,7 @@ overview <index>`.
 Why Articulation Orders Differ
 ------------------------------
 
-Three facts explain why a checkpoint can need an ordering convention even when
+Three facts explain why a checkpoint can need an explicit ordering even when
 both backends load the same USD asset:
 
 1. USD names identify physical joints and bodies, but they do not impose one
@@ -36,30 +36,24 @@ Public and Backend Order
 ------------------------
 
 Set ``joint_ordering`` and ``body_ordering`` on
-:class:`~isaaclab.assets.ArticulationCfg`. Each field accepts one of:
+:class:`~isaaclab.assets.ArticulationCfg`. Each field accepts either:
 
 * ``None`` -- backend-native order and the zero-conversion default (see below).
-* ``"physx"`` -- PhysX or OVPhysX articulation-view order.
-* ``"mjwarp"`` -- Newton or MJWarp articulation-view order.
-* ``"robot_schema"`` -- the order authored on the asset's
-  ``isaac:physics:robotJoints`` (joints) or ``isaac:physics:robotLinks``
-  (bodies) relationships.
 * an explicit, complete name permutation -- a ``list`` or ``tuple`` naming every
   joint or body exactly once.
 
 See :attr:`~isaaclab.assets.ArticulationCfg.joint_ordering` for the
 authoritative list of accepted values.
 
-For Python configs, prefer
-:func:`~isaaclab.assets.apply_articulation_ordering_preset` to set both fields
-to the same convention in a single call, which keeps joint and body order
-consistent:
+Declare both permutations in the asset config so the clone plan contains the
+entire cross-backend contract:
 
 .. code-block:: python
 
-    from isaaclab.assets import apply_articulation_ordering_preset
-
-    robot_cfg = apply_articulation_ordering_preset(robot_cfg, "mjwarp")
+    robot_cfg = robot_cfg.replace(
+        joint_ordering=("shoulder", "elbow", "wrist"),
+        body_ordering=("base", "upper_arm", "forearm", "hand"),
+    )
 
 .. warning::
     When overriding from the CLI or Hydra, set **both** ``joint_ordering`` and
@@ -91,17 +85,16 @@ Once initialized, the articulation and its
 
 ``None`` is the zero-conversion default. Public names follow the active
 backend, no ordering map is installed, no reorder staging is allocated, and no
-reorder kernel is launched. An explicit convention or name sequence that
-resolves to backend order is normalized to ``None`` at initialization after a
-one-time name resolution, so it reaches the exact same zero-conversion state:
+reorder kernel is launched. An explicit name sequence equal to backend order is
+normalized to ``None`` at initialization, so it reaches the exact same zero-conversion state:
 a non-``None`` ordering map always denotes an actual permutation.
 
 .. tip::
     After configuring an ordering, confirm the resolved public axis by comparing
     :attr:`~isaaclab.assets.Articulation.joint_names` with
     :attr:`~isaaclab.assets.Articulation.backend_joint_names` (and ``body_names``
-    with ``backend_body_names``). Cross-backend conventions are resolved by
-    emulation, so spot-check the result against the order your checkpoint expects.
+    with ``backend_body_names``). Keep these explicit lists alongside the asset
+    config rather than deriving them from a live stage.
 
 High-Level MDP Terms
 ^^^^^^^^^^^^^^^^^^^^
@@ -121,8 +114,8 @@ indices and tensors.
 Conversion Cost
 ---------------
 
-Convention resolution and map construction are one-time initialization
-work. For a nonidentity map, affected reads and writes can require persistent
+Map construction is one-time initialization work. For a nonidentity map,
+affected reads and writes can require persistent
 staging memory plus gather/scatter kernel launches. Identity maps avoid those
 ongoing conversion paths.
 

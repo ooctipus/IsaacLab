@@ -26,8 +26,8 @@ Do not use this skill to duplicate backend reference material. Link to the multi
 7. Separate backend-specific differences using `PresetCfg` or existing preset helpers rather than runtime conditionals scattered through task code.
 8. Use suffixless task names in backend smoke-test and training commands.
 9. Validate each backend with a small reset/step rollout before training.
-10. For backend architecture changes, resolve shared native runtimes through
-    `SimulationContext.get_or_create_backend(...)` instead of copying state between consumers.
+10. For backend architecture changes, run `scripts/benchmarks/benchmark_backend_lifecycle.py` to
+    audit the direct-cfg clone, registry, initialization, pointer, dirty, and conversion lifecycle.
 11. Document intentional behavior differences, especially around contacts, randomization timing, CPU/GPU data paths, and renderer requirements.
 
 ## Validation
@@ -39,6 +39,8 @@ Use this checklist:
 3. Compare observation shape, action shape, reset behavior, and contact behavior.
 4. Check randomization events for backend-specific support and device assumptions.
 5. Run short training only after both backends pass smoke tests.
+6. For cross-backend renderer or visualizer changes, run the lifecycle matrix or its focused
+   `--case`/`--points` selection and inspect its JSON gates.
 
 For skill changes, run:
 

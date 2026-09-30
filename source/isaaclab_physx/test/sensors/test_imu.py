@@ -39,6 +39,7 @@ from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR  # isort: skip
 POS_OFFSET = (0.2488, 0.00835, 0.04628)
 ROT_OFFSET = (0, 0, 0.7071068, 0.7071068)
 
+
 # offset of imu_link from link_1 on simple_2_link
 PEND_POS_OFFSET = (0.4, 0.0, 0.1)
 PEND_ROT_OFFSET = (0.5, 0.5, 0.5, 0.5)
@@ -456,7 +457,7 @@ def test_attachment_validity(setup_sim):
     sim, scene = setup_sim
     imu_world_cfg = ImuCfg(prim_path="/World/envs/env_0")
     with pytest.raises(RuntimeError) as exc_info:
-        imu_world = Imu(imu_world_cfg)
+        imu_world = imu_world_cfg.class_type(imu_world_cfg)
         imu_world._initialize_impl()
     assert exc_info.type is RuntimeError and "find a rigid body ancestor prim" in str(exc_info.value)
 

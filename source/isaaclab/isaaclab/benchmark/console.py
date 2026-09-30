@@ -56,7 +56,8 @@ def print_startup_report(bundle: StartupBundle, output_paths: tuple[Path, ...], 
     rows.append(None)
     rows.append(("total", f"{total_s:7.2f} s"))
 
-    _print_report(_title("Startup summary", bundle), rows, _footer(output_paths))
+    mode = "Startup cProfile summary" if bundle.config.measurement_mode == "cprofile" else "Startup timing summary"
+    _print_report(_title(mode, bundle), rows, _footer(output_paths))
 
 
 def print_runtime_report(bundle: RuntimeBundle, output_paths: tuple[Path, ...]) -> None:

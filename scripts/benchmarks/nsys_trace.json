@@ -69,30 +69,64 @@
         ]
     },
     {
-        "_comment": "=== ISAACLAB SIMULATION === DO NOT add PhysicsManager backends (NewtonManager, PhysxManager, ...) here or in their own block. Their methods are @classmethod, and nsys's --python-functions-trace wrapper replaces the class attribute with a plain function, destroying the descriptor binding: the `cls` slot then swallows the first real argument, so SimulationContext.__init__ -> physics_manager.initialize(self) dies with 'initialize() missing 1 required positional argument: sim_context'. Physics time consequently stays inside the SimulationContext.step span -- a known, accepted gap. The same hazard applies to any @classmethod/@staticmethod anywhere in this file.",
+        "_comment": "=== ISAACLAB SIMULATION === Trace concrete instance methods only. Do not list @classmethod or @staticmethod targets: nsys replaces their descriptors with plain functions and breaks argument binding.",
         "domain": "IsaacLab-Sim",
         "color": "0x4CAF50",
         "module": "isaaclab.sim.simulation_context",
         "functions": [
             {"function": "SimulationContext.__init__", "color": "0x4CAF50"},
+            {"function": "SimulationContext.get_renderer", "color": "0x66BB6A"},
+            {"function": "SimulationContext._initialize_renderers", "color": "0x66BB6A"},
             {"function": "SimulationContext.reset", "color": "0x66BB6A"},
             {"function": "SimulationContext.step", "color": "0x81C784"},
             {"function": "SimulationContext.render", "color": "0xA5D6A7"},
-            {"function": "SimulationContext.update_visualizers", "color": "0xC8E6C9"},
+            {"function": "SimulationContext.initialize_visualizers", "color": "0xC8E6C9"},
             {"function": "SimulationContext.forward", "color": "0xC8E6C9"}
         ]
     },
     {
-        "_comment": "=== RENDER ORCHESTRATION: sits between the camera sensor and the renderer. render_into_camera wraps update_scene_state + render + read_output, so it brackets the whole per-frame render. update_scene_state is the once-per-physics-step dedupe gate that drives update_transforms/update_geometries -- when it early-outs you see the renderer do nothing, which is the expected behavior, not a gap. ===",
-        "domain": "IsaacLab-RenderContext",
-        "color": "0xFFC107",
-        "module": "isaaclab.renderers.render_context",
+        "_comment": "=== NEWTON STARTUP: clone-plan model finalization, solver construction, and hard reset. ===",
+        "domain": "IsaacLab-Sim",
+        "color": "0x43A047",
+        "module": "isaaclab_newton.physics.newton_manager",
         "functions": [
-            {"function": "RenderContext.render_into_camera", "color": "0xFFC107"},
-            {"function": "RenderContext.update_scene_state", "color": "0xFFD54F"},
-            {"function": "RenderContext.get_renderer", "color": "0xFFE082"},
-            {"function": "RenderContext.ensure_initialize", "color": "0xFFE082"},
-            {"function": "RenderContext.ensure_prepare_stage", "color": "0xFFE082"}
+            {"function": "NewtonManager.reset", "color": "0x66BB6A"},
+            {"function": "NewtonManager.start_simulation", "color": "0x81C784"},
+            {"function": "NewtonManager.initialize_solver", "color": "0xA5D6A7"}
+        ]
+    },
+    {
+        "_comment": "=== NEWTON CLONE RESOURCE: one simulation-scoped builder/model owner. ===",
+        "domain": "IsaacLab-Sim",
+        "color": "0x43A047",
+        "module": "isaaclab_newton.cloner.replicate",
+        "functions": [
+            {"function": "NewtonReplicateContext.replicate", "color": "0x66BB6A"},
+            {"function": "NewtonReplicateContext.finalize_visualization_model", "color": "0xA5D6A7"}
+        ]
+    },
+    {
+        "_comment": "=== OVPHYSX STARTUP: shared snapshot population, OVStage attachment, and runtime warmup. ===",
+        "domain": "IsaacLab-Sim",
+        "color": "0x43A047",
+        "module": "isaaclab_ov.physics.ovphysx_manager",
+        "functions": [
+            {"function": "OvPhysxManager.reset", "color": "0x66BB6A"},
+            {"function": "OvPhysxManager._warmup_and_load", "color": "0x81C784"},
+            {"function": "OvPhysxManager._attach_ovstage", "color": "0xA5D6A7"}
+        ]
+    },
+    {
+        "_comment": "=== OV CLONE RESOURCE: one cached stage serialization shared by OVPhysX and OVRTX. ===",
+        "domain": "IsaacLab-Sim",
+        "color": "0x43A047",
+        "module": "isaaclab_ov.cloner.replicate",
+        "functions": [
+            {"function": "OvReplicateContext.replicate", "color": "0x66BB6A"},
+            {"function": "OvReplicateContext._snapshot_stage", "color": "0xA5D6A7"},
+            {"function": "OvReplicateContext._configure_ovrtx", "color": "0x81C784"},
+            {"function": "OvReplicateContext._initialize_ovrtx", "color": "0x81C784"},
+            {"function": "OvReplicateContext._update_ovrtx", "color": "0xA5D6A7"}
         ]
     },
     {
@@ -105,6 +139,18 @@
             {"function": "InteractiveScene.reset", "color": "0x42A5F5"},
             {"function": "InteractiveScene.write_data_to_sim", "color": "0x64B5F6"},
             {"function": "InteractiveScene.update", "color": "0x90CAF9"}
+        ]
+    },
+    {
+        "_comment": "=== SCENE DATA PROVIDER: the only motion-data boundary between physics publishers and renderer/visualizer consumers. Requests expose pass-through time; conversion spans expose the one allowed format conversion. ===",
+        "domain": "IsaacLab-SDP",
+        "color": "0x00ACC1",
+        "module": "isaaclab.scene_data.scene_data_provider",
+        "functions": [
+            {"function": "SceneDataProvider.request_transforms", "color": "0x00838F"},
+            {"function": "SceneDataProvider.request_points", "color": "0x00838F"},
+            {"function": "SceneDataProvider._convert_transforms", "color": "0x4DD0E1"},
+            {"function": "SceneDataProvider._convert_points", "color": "0x80DEEA"}
         ]
     },
     {
@@ -242,56 +288,62 @@
         "color": "0xE91E63",
         "module": "isaaclab_newton.renderers.newton_warp_renderer",
         "functions": [
-            {"function": "NewtonWarpRenderer.update_transforms", "color": "0x2196F3"},
+            {"function": "NewtonWarpRenderer.update", "color": "0x2196F3"},
             {"function": "NewtonWarpRenderer.render", "color": "0x4CAF50"},
             {"function": "NewtonWarpRenderer.read_output", "color": "0xFF9800"}
         ]
     },
     {
-        "_comment": "=== OVRTX RENDERER ===",
+        "_comment": "=== OVRTX RENDERER: camera clients configure and consume the one OV clone resource and native scene. ===",
         "domain": "OVRTXRenderer",
         "color": "0x76B800",
         "module": "isaaclab_ov.renderers.ovrtx_renderer",
         "functions": [
-            "OVRTXRenderer.prepare_stage",
+            "OVRTXRenderer.__init__",
+            "OVRTXRenderer.prepare_cameras",
+            "OVRTXRenderer.initialize",
             "OVRTXRenderer.create_render_data",
-            "OVRTXRenderer._clone_sources_in_ovrtx",
-            "OVRTXRenderer._clone_sources_ovstage",
-            "OVRTXRenderer._update_scene_partitions_after_clone",
-            "OVRTXRenderer._update_scene_partitions_after_clone_ovstage",
-            "OVRTXRenderer._setup_xform_bindings",
-            "OVRTXRenderer._setup_deformable_bindings",
-            "OVRTXRenderer._setup_particle_bindings",
-            "OVRTXRenderer.update_transforms",
-            "OVRTXRenderer.update_geometries",
-            "OVRTXRenderer.update_camera",
+            "OVRTXRenderer.set_outputs",
+            "OVRTXRenderer.update",
             "OVRTXRenderer.render",
             "OVRTXRenderer.read_output",
-            {"module": "isaaclab_ov.renderers.ovrtx_usd", "function": "create_scene_partition_attributes"},
-            {"module": "isaaclab_ov.renderers.ovrtx_usd", "function": "export_stage_to_string"}
+            "OVRTXRenderer.cleanup",
+            "OVRTXRenderer.close",
+            {"module": "isaaclab_ov.renderers.ovrtx_usd", "function": "build_render_product_as_string"}
         ]
     },
     {
-        "_comment": "=== OVRTX: renderer-side calls made from ovrtx_renderer.py. Renderer.step is the actual submit -- everything else is setup (bind_*, clone_usd, open_usd_from_string, attach/detach_ovstage) or per-frame data movement (write_*). Only Renderer is traced: the other ovrtx imports (BindingFlag, DataAccess, Device, PrimMode, Semantic, RendererConfig) are enum/config classes, and replacing a class with a wrapper function breaks isinstance/type dispatch -- the same failure mode documented on the USD block above. ===",
+        "_comment": "=== OVRTX SCENE TRANSPORT: the one ovstage-owned scene. The spans make SDP host ingestion, blocking writes, and clone/open ownership visible without inferring them from native calls. ===",
+        "domain": "OVRTXScene",
+        "color": "0x5E8C31",
+        "module": "isaaclab_ov.renderers.ovrtx_scene",
+        "functions": [
+            {"function": "OvrtxScene.open", "color": "0x00796B"},
+            {"function": "OvrtxScene.clone", "color": "0x00796B"},
+            {"function": "OvrtxScene.write_tokens", "color": "0x26A69A"},
+            {"function": "OvrtxScene.write_reset_xform_stack", "color": "0x26A69A"},
+            {"function": "OvrtxScene.point_render_products_at", "color": "0x26A69A"},
+            {"function": "OvrtxScene.bind", "color": "0x26A69A"},
+            {"function": "OvrtxScene.pin_world_space", "color": "0x26A69A"},
+            {"function": "OvrtxScene.write_xforms", "color": "0x26A69A"},
+            {"function": "OvrtxScene.write_points", "color": "0x80CBC4"},
+            {"function": "OvrtxScene.step", "color": "0xB2DFDB"},
+            {"function": "OvrtxScene.close", "color": "0xE0F2F1"}
+        ]
+    },
+    {
+        "_comment": "=== OVRTX: renderer-side calls made by the ovstage scene. Renderer.step is the render submit; attach/detach delimit scene ownership. ===",
         "domain": "ovrtx",
         "color": "0x87CEEB",
         "module": "ovrtx",
         "functions": [
-            {"function": "Renderer.open_usd_from_string", "color": "0x87CEEB"},
-            {"function": "Renderer.clone_usd", "color": "0x9FD8F0"},
-            {"function": "Renderer.reset_stage", "color": "0x9FD8F0"},
             {"function": "Renderer.attach_ovstage", "color": "0x9FD8F0"},
             {"function": "Renderer.detach_ovstage", "color": "0x9FD8F0"},
-            {"function": "Renderer.bind_attribute", "color": "0xB8E4F5"},
-            {"function": "Renderer.bind_array_attribute", "color": "0xB8E4F5"},
-            {"function": "Renderer.read_attribute", "color": "0xB8E4F5"},
-            {"function": "Renderer.write_attribute", "color": "0x5FB8DC"},
-            {"function": "Renderer.write_array_attribute", "color": "0x5FB8DC"},
             {"function": "Renderer.step", "color": "0x2E9BC0"}
         ]
     },
     {
-        "_comment": "=== OVSTAGE: stage-side calls made from ovrtx_renderer.py. Operation.wait and advance_write_floor are the blocking barriers -- time there is a stall, not work. Only functions the renderer actually calls are listed: Stage.query and Stage.release_op exist in ovstage but are never called by IsaacLab (the renderer uses query_from_path_list; release_op appears only in a comment), so tracing them would add empty rows. The ovstage enum/type classes (AttributeSemantic, DLTensor, DLDataType, DLDataTypeCode, PathDictionary) are deliberately omitted -- replacing a class with a wrapper function breaks isinstance/type dispatch, per the USD block above. ===",
+        "_comment": "=== OVSTAGE: stage-side calls made from ovrtx_scene.py. Operation.wait and advance_write_floor are the blocking barriers -- time there is a stall, not work. Only functions the renderer actually calls are listed: Stage.query and Stage.release_op exist in ovstage but are never called by IsaacLab (the renderer uses query_from_path_list; release_op appears only in a comment), so tracing them would add empty rows. The ovstage enum/type classes (AttributeSemantic, DLTensor, DLDataType, DLDataTypeCode, PathDictionary) are deliberately omitted -- replacing a class with a wrapper function breaks isinstance/type dispatch, per the USD block above. ===",
         "domain": "ovstage",
         "color": "0x26A69A",
         "module": "ovstage",

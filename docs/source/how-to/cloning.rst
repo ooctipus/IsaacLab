@@ -31,7 +31,7 @@ and tests and deliberately have parallel signatures:
 
     backend_replicate(stage, sources, destinations, env_ids, selection, positions=None, quaternions=None, ...)
 
-The arguments are parallel arrays describing the layout:
+The parallel arrays describe the layout:
 
 * ``sources`` — source prim paths already authored on the stage.
 * ``destinations`` — destination templates containing ``"{}"``, formatted with each env id.
@@ -104,6 +104,12 @@ control. Production code reaches for one of the ways in
 
     ovphysx_replicate(stage, sources, destinations, env_ids, mapping=mapping)
 
+Application code does not call those backend entry points independently. Doing
+so would create multiple clone lifecycles and lets physics and rendering drift
+onto different layouts. It publishes one :class:`~isaaclab.cloner.ClonePlan` and
+dispatches that same plan once to the backends registered by the selected physics,
+renderer, and visualizer cfgs.
+
 
 Cloning in a Backend-Agnostic Way
 ---------------------------------
@@ -145,20 +151,27 @@ fields listed below are that table's columns:
      - Optional per-env world positions [m], shape ``[num_envs, 3]``.
    * - ``global_paths``
      - Unique prim paths for scene assets shared by every env and therefore not replicated.
-   * - ``context_rows``
-     - Clone-context types mapped to the rows they consume.
+   * - ``semantic_tags``
+     - Cfg-declared semantic tags, one tuple per row; labels embedded only in USD are not inferred.
+   * - ``*_prototypes`` and plan-owned geometry data
+     - Completed frame, rigid-body, articulation, deformable, cable, and requested-geometry topology.
 
 The plan does not own a stage. Simulation-owned contexts supply their own runtime
 when they consume it.
 
-When every env is a copy of env_0:
+A cartpole in every env is one row that reaches every env:
 
 .. code-block:: text
 
-    sources      = ("/World/envs/env_0",)
-    destinations = ("/World/envs/env_{}",)
+    sources      = ("/World/envs/env_0/Cartpole",)
+    destinations = ("/World/envs/env_{}/Cartpole",)
     clone_mask   = [[True, True, ..., True]]
-    global_paths = ("/World/Ground", "/World/Light")
+
+Every asset gets its own row whether or not the envs differ, so the plan reads the same way in
+every scene. Replication still copies whole envs where it can: when the rows together cover every
+env from every prototype, dispatch hands the backends one copy of ``env_0`` instead of one copy
+per asset. That is an internal shortcut — the plan itself, and everything that queries it, keeps
+the per-asset rows.
 
 When envs differ — say a cartpole in every env plus a 2-variant obstacle (box into
 envs 0/1, sphere into envs 2/3):
@@ -187,53 +200,40 @@ manipulating path strings itself:
 
     from isaaclab import cloner
 
-    # where does this prototype land in env 2?
-    cloner.query.path_to_clone(plan, "/World/envs/env_0/Obstacle_1", env_id=2)
-    # -> "/World/envs/env_2/Obstacle"
-
-    # which envs does this prototype reach at all?
-    cloner.query.path_env_ids(plan, "/World/envs/env_0/Obstacle_1")
-    # -> (2, 3)
-
     # which prototype is env 2's obstacle cloned from?
     cloner.query.path_to_source(plan, "/World/envs/env_2/Obstacle")
-    # -> ("/World/envs/env_0/Obstacle_1", "/World/envs/env_*/Obstacle", "")
+    # -> ("/World/envs/env_0/Obstacle_1", "/World/envs/env_[^/]+/Obstacle", "")
+
+    # the same question asked of a wildcard expression, naming the env it stands for
+    cloner.query.path_to_source(plan, "/World/envs/env_[^/]+/Obstacle", env_id=0)
+    # -> ("/World/envs/env_0/Obstacle_0", "/World/envs/env_[^/]+/Obstacle", "")
 
 Two obstacle variants share one destination template, so the template alone does not
 identify a prototype — the environment does. A concrete path carries it in the clone
-slot; a ``env_.*`` wildcard does not, and resolves to one representative variant
+slot; a wildcard does not, and resolves to one representative variant
 unless you pass ``env_id``. Use :func:`~isaaclab.cloner.query.iter_sources` when you
 need every variant behind a template. Note that environment ids are not mask columns:
 column ``j`` stands for ``env_ids[j]``, and the queries speak ids throughout.
 
 A plan is the *what*. Putting one together and handing it to the backends is
-the *how*, and Isaac Lab exposes two idiomatic ways to do that. Both end
-in the same ``cloner.replicate(plan)`` call, so the choice between
-them is purely about ergonomics:
+the *how*. Isaac Lab exposes two application-facing ways to do that:
 
-* The first wraps both phases in a context manager and is what
-  :class:`~isaaclab.scene.InteractiveScene` runs under the hood. Reach for it
-  when you want the lifecycle hidden and you are authoring assets through a
-  scene config.
-* The second is a cfg-first shortcut for the case where every env is one copy
-  of env_0. Reach for it in :class:`~isaaclab.envs.DirectRLEnv` and homogeneous
-  standalone workflows.
+* :class:`~isaaclab.scene.InteractiveScene` owns the lifecycle when assets and
+  sensors are declared on its scene config. This is the normal workflow for both direct and
+  manager-based environments, whether the scene is homogeneous or heterogeneous.
+* :func:`~isaaclab.cloner.clone_plan_from_env_0` plus
+  :func:`~isaaclab.cloner.replicate` is a cfg-first shortcut when every env is one copy
+  of env_0. Reach for it in standalone tools and tests where depending on
+  :class:`~isaaclab.scene.InteractiveScene` is unsuitable.
 
-``ReplicateSession``
+``InteractiveScene``
 ~~~~~~~~~~~~~~~~~~~~
 
-:class:`~isaaclab.cloner.ReplicateSession` is a context manager that brackets the
-whole cloning lifecycle. Entering the block builds and publishes the plan, the body
-constructs assets at their planned source paths, and exiting dispatches that same plan:
-
-.. code-block:: python
-
-    with cloner.ReplicateSession(cfgs, num_clones=N, env_spacing=2.0):
-        for cfg in cfgs:
-            cfg.class_type(cfg)
-
-This is what :class:`~isaaclab.scene.InteractiveScene` runs when you declare assets
-in an :class:`~isaaclab.scene.InteractiveSceneCfg`:
+Declare assets in an :class:`~isaaclab.scene.InteractiveSceneCfg` and construct
+the scene normally. :class:`~isaaclab.scene.InteractiveScene` brackets asset
+construction with :class:`~isaaclab.cloner.ReplicateSession` internally, so task
+code does not expose clone-lifecycle ceremony. :class:`~isaaclab.envs.DirectRLEnv`
+and :class:`~isaaclab.envs.DirectMARLEnv` construct their configured scene automatically.
 
 .. code-block:: python
 
@@ -252,48 +252,98 @@ When envs need to differ across the population, use
 :class:`~isaaclab.sim.spawners.wrappers.MultiUsdFileCfg`; see
 :doc:`multi_asset_spawning`.
 
+:class:`~isaaclab.cloner.ReplicateSession` remains available to standalone tools
+that need to author a heterogeneous scene without :class:`~isaaclab.scene.InteractiveScene`.
+
 ``clone_plan_from_env_0`` + ``replicate``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Shortcut for the case where every env is one copy of env_0. Pass the declared
+Shortcut for a standalone tool or test where every env is one copy of env_0 and
+:class:`~isaaclab.scene.InteractiveScene` is not a suitable dependency. Pass a
 :class:`~isaaclab.cloner.CloneCfg` and a flat tuple of asset and sensor cfgs;
 :func:`~isaaclab.cloner.clone_plan_from_env_0` publishes the plan and assigns
-their prototype spawn paths before construction. This is the pattern used by
-homogeneous :class:`~isaaclab.envs.DirectRLEnv` subclasses:
+their prototype spawn paths before construction:
 
 .. code-block:: python
 
-    def _setup_scene(self):
-        asset_cfgs = (self.cfg.robot_cfg, self.cfg.ground_cfg, self.cfg.light_cfg)
-        plan = cloner.clone_plan_from_env_0(
-            self.cfg.scene.clone_cfg, asset_cfgs, self.cfg.scene.num_envs, self.cfg.scene.env_spacing
-        )
-        self.cartpole = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
-        self.cfg.ground_cfg.spawn.func(self.cfg.ground_cfg.spawn.spawn_path, self.cfg.ground_cfg.spawn)
-        self.cfg.light_cfg.spawn.func(self.cfg.light_cfg.spawn.spawn_path, self.cfg.light_cfg.spawn)
-        cloner.replicate(plan, replicate_physics=self.cfg.scene.replicate_physics)
-        self.scene.articulations["cartpole"] = self.cartpole
+    from isaaclab import cloner
 
-Every env receives the same prototype. When envs need to differ, use
-:class:`~isaaclab.cloner.ReplicateSession` directly or declare their assets on
-:class:`~isaaclab.scene.InteractiveSceneCfg` so the scene owns that lifecycle.
-The tuple is deliberately flat: the cloner does not inspect a task or scene cfg
-tree, and ``None`` is allowed for an optional declared participant.
+    asset_cfgs = (robot_cfg, ground_cfg, light_cfg)
+    plan = cloner.clone_plan_from_env_0(cloner.CloneCfg(), asset_cfgs, num_envs=128, env_spacing=2.0)
+    robot, _, _ = [cfg.class_type(cfg) for cfg in asset_cfgs]
+    cloner.replicate(plan)
+
+Every env receives the same prototype. The tuple is deliberately flat: the cloner
+does not inspect a task or scene cfg tree, and ``None`` is allowed for an optional
+declared participant. Use :class:`~isaaclab.scene.InteractiveSceneCfg` in task
+environments and whenever envs need to differ across the population.
 
 
 Under the Hood
 --------------
 
-Planning maps each cfg to rows in ``cfg_rows`` and each participating backend to
-its subset in ``context_rows``. The active physics manager registers its clone
-context during simulation initialization. Assets use that context by default;
-:attr:`~isaaclab.assets.AssetBaseCfg.cloning_contexts` can select an explicitly
-registered context instead. Planning also registers
-:class:`~isaaclab.cloner.UsdReplicateContext` for spawned assets when Kit is
-available.
+To see how the backend-agnostic surface works, follow one asset through the
+system. :class:`~isaaclab.scene.InteractiveScene` builds and publishes one plan
+before any asset constructor runs; the homogeneous direct helper does the same.
+Constructors spawn only the prototype paths that plan assigns them. Replication
+completes the plan's authored topology and hands that exact plan once to every
+clone-capable backend in the simulation registry.
 
-The backend packages expose different context implementations behind one
-execution contract:
+The story has to look like this because the engines underneath disagree about
+*when* and *how* replication actually happens:
+
+* **PhysX** registers its native replicator before scene construction and
+  defers the copy work to physics runtime.
+* **USD** is declarative and immediate — its registered
+  :class:`~isaaclab.cloner.UsdReplicateContext` materializes the clones in place.
+* **Newton** builds every asset row into one model builder, then finalizes one
+  model after all rows have arrived.
+
+Every engine supplies a context such as
+:class:`~isaaclab.cloner.UsdReplicateContext`, ``PhysxReplicateContext`` or
+``NewtonReplicateContext``. Physics managers, renderers and visualizers call
+:meth:`~isaaclab.sim.SimulationContext.get_or_create_backend` as soon as they
+know their cfg-derived backend class. That class is the complete registry key, so every consumer
+of one backend type shares one simulation-owned context. The replication session dispatches
+directly from that registry; asset and sensor cfgs contain no backend-selection or cloning
+callbacks.
+
+Registry dispatch
+~~~~~~~~~~~~~~~~~
+
+The Kit visualizer and Isaac RTX renderer each register the same
+:class:`~isaaclab.cloner.UsdReplicateContext`; each physics manager registers its native context,
+and a consumer with an independent scene registers the context that builds it. The replication
+session sends the complete plan to each unique context in priority order. With
+:attr:`~isaaclab.cloner.CloneCfg.replicate_physics` disabled, a context used
+only by physics is skipped; a context shared with a renderer still runs.
+In that USD-only mode, the session registers
+:class:`~isaaclab.cloner.UsdReplicateContext` itself. A USD-backed renderer or visualizer resolves
+the same type and therefore reuses that context automatically.
+
+A renderer that draws into a scene of its own, such as OVRTX, registers its context the same way.
+Its one simulation-owned clone context exports once and applies every row to the renderer scene.
+Its camera has to be declared with the scene — an :class:`~isaaclab.scene.InteractiveSceneCfg`
+field, or a camera built inside the session — because a camera added to an already replicated
+scene is absent from the plan and therefore wrong.
+
+Deferring the work like this buys three things at once:
+
+* Replication can wait until the plan is fully built, so the final layout is
+  known before any prims are spawned.
+* Every asset's request is batched into a single backend call instead of one
+  call per asset.
+* Asset code stays free of backend selection and clone lifecycle state.
+
+:attr:`~isaaclab.scene.InteractiveSceneCfg.replicate_physics` is piped into
+:attr:`~isaaclab.cloner.CloneCfg.replicate_physics` and applied at dispatch.
+
+Backend contexts
+~~~~~~~~~~~~~~~~
+
+Each backend ships a small adapter class — its *replicate context* — that
+knows how to take a registered cfg and replicate it on the backend's specific
+runtime:
 
 .. code-block:: text
 
@@ -301,21 +351,28 @@ execution contract:
     PhysxReplicateContext    # replicates PhysX rigid bodies and articulations
     NewtonReplicateContext   # replicates Newton bodies in its parallel pipeline
 
-:func:`~isaaclab.cloner.replicate` resolves these types through the
-:class:`~isaaclab.sim.SimulationContext` backend registry, orders them by
-``replicate_priority``, and passes the published plan to each one:
+One plan usually reaches more than one context — a Kit or Isaac RTX consumer pairs USD with the
+active physics context so physics and visuals both follow, while kitless Newton skips USD authoring.
+Swapping physics or renderers changes the registered contexts; asset
+cfgs and scene code stay unchanged.
+
+Running replication
+~~~~~~~~~~~~~~~~~~~
+
+:func:`~isaaclab.cloner.replicate` completes and publishes the plan, then runs the
+registry's clone-capable backends in priority order. The private dispatch shape is roughly:
 
 .. code-block:: python
 
-    plan = published_clone_plan
-    for context_type in plan.context_rows:
-        simulation_backends[context_type].replicate(plan)
+    def replicate(plan):
+        plan = declare_scene_layout(plan)
+        publish(plan)
+        for context in sorted(registered_clone_contexts, key=lambda item: item.replicate_priority):
+            context.replicate(plan)
 
-Every maintained lifecycle publishes its plan before asset construction. The
-simulation accepts one plan and each backend receives that exact object.
-
-USD runs before native physics contexts so the destination topology exists when
-they consume it. No fallback context is constructed during dispatch.
+The plan is published to :class:`~isaaclab.sim.SimulationContext` so physics,
+renderers, visualizers, and scene-data providers read the same layout. No fallback
+context is constructed during dispatch.
 
 Collision Filtering
 -------------------
@@ -325,8 +382,8 @@ filtering pass after cloning to keep envs from colliding with each other while
 still letting them collide with global prims (terrain, ground planes, lights).
 
 :class:`~isaaclab.scene.InteractiveScene` runs that pass automatically when
-``filter_collisions=True`` and the backend is PhysX. For direct PhysX pipelines,
-call :func:`~isaaclab.cloner.filter_collisions` after the replicate:
+``filter_collisions=True`` and the backend is PhysX. For standalone PhysX pipelines,
+call :func:`~isaaclab.cloner.filter_collisions` after replication:
 
 .. code-block:: python
 

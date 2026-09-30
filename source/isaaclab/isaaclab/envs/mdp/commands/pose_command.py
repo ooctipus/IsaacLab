@@ -14,7 +14,6 @@ import torch
 
 from isaaclab.assets import Articulation
 from isaaclab.managers import CommandTerm
-from isaaclab.markers import VisualizationMarkers
 from isaaclab.utils.leapp import POSE7_ELEMENT_NAMES
 from isaaclab.utils.math import combine_frame_transforms, compute_pose_error, quat_from_euler_xyz, quat_unique
 
@@ -188,9 +187,13 @@ class UniformPoseCommand(CommandTerm):
         if debug_vis:
             if not hasattr(self, "goal_pose_visualizer"):
                 # -- goal pose
-                self.goal_pose_visualizer = VisualizationMarkers(self.cfg.goal_pose_visualizer_cfg)
+                self.goal_pose_visualizer = self.cfg.goal_pose_visualizer_cfg.class_type(
+                    self.cfg.goal_pose_visualizer_cfg
+                )
                 # -- current body pose
-                self.current_pose_visualizer = VisualizationMarkers(self.cfg.current_pose_visualizer_cfg)
+                self.current_pose_visualizer = self.cfg.current_pose_visualizer_cfg.class_type(
+                    self.cfg.current_pose_visualizer_cfg
+                )
             # set their visibility to true
             self.goal_pose_visualizer.set_visibility(True)
             self.current_pose_visualizer.set_visibility(True)

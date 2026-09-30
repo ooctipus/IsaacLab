@@ -3,41 +3,27 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""End-to-end test of :class:`stacked_image` through :class:`ObservationManager`.
-
-Launches Kit + sim so the obs manager's construction-time shape probe and per-step compute
-exercise the real lifecycle. Mocks the camera-pull function ``image`` so no scene/sensors
-are required.
-"""
+"""Unit test of :class:`stacked_image` through :class:`ObservationManager`."""
 
 from __future__ import annotations
 
-"""Launch Isaac Sim Simulator first."""
-
-from isaaclab.app import AppLauncher
-
-simulation_app = AppLauncher(headless=True).app
-
-"""Rest everything follows."""
-
-from collections import namedtuple
+from types import SimpleNamespace
 from unittest import mock
 
 import pytest
 import torch
 
-import isaaclab.sim as sim_utils
 from isaaclab.envs.mdp.observations import stacked_image
 from isaaclab.managers import ObservationGroupCfg, ObservationManager, ObservationTermCfg
 from isaaclab.utils.configclass import configclass
 
-pytestmark = [pytest.mark.integration, pytest.mark.isaacsim_ci]
+pytestmark = pytest.mark.unit
 
 NUM_ENVS = 4
 HEIGHT = 8
 WIDTH = 8
 CHANNELS = 3
-DEVICE = "cuda:0"
+DEVICE = "cpu"
 
 
 def _fake_image(
@@ -58,14 +44,11 @@ _fake_image.call_count = 0
 
 @pytest.fixture
 def env_with_sim():
-    sim_cfg = sim_utils.SimulationCfg(dt=0.01, device=DEVICE)
-    sim = sim_utils.SimulationContext(sim_cfg)
-    env = namedtuple("Env", ["num_envs", "device", "sim"])(NUM_ENVS, DEVICE, sim)
-    env.sim._app_control_on_stop_handle = None
-    env.sim.reset()
+    sim = SimpleNamespace(is_playing=lambda: True)
+    sensor = SimpleNamespace(output_shapes={"rgb": (NUM_ENVS, HEIGHT, WIDTH, CHANNELS)})
+    scene = SimpleNamespace(sensors={"tiled_camera": sensor})
     _fake_image.call_count = 0
-    yield env
-    sim.clear_instance()
+    return SimpleNamespace(num_envs=NUM_ENVS, device=DEVICE, sim=sim, scene=scene)
 
 
 def _make_cfg(frame_stack: int):
@@ -84,9 +67,10 @@ def _make_cfg(frame_stack: int):
 
 
 def test_obs_manager_infers_channel_stacked_shape(env_with_sim):
-    """ObservationManager probes ``stacked_image`` at construction and infers the stacked shape."""
+    """ObservationManager derives the stacked shape without pulling a camera frame."""
     with mock.patch("isaaclab.envs.mdp.observations.image", side_effect=_fake_image):
         manager = ObservationManager(_make_cfg(frame_stack=2), env_with_sim)
+    assert _fake_image.call_count == 0
     assert manager.group_obs_dim["policy"] == (HEIGHT, WIDTH, CHANNELS * 2)
 
 

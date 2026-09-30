@@ -364,8 +364,11 @@ class OperationalSpaceControllerActionCfg(ActionTermCfg):
     body_offset: OffsetCfg | None = None
     """Offset of target frame w.r.t. to the body frame. Defaults to None, in which case no offset is applied."""
 
-    task_frame_rel_path: str = None
-    """The path of a ``RigidObject``, relative to the sub-environment, representing task frame. Defaults to None."""
+    contact_sensor_name: str | None = None
+    """Scene contact sensor used for closed-loop force control. Required when contact-wrench stiffness is set."""
+
+    task_frame_sensor_name: str | None = None
+    """Scene frame-transformer sensor whose target represents the task frame. Defaults to None."""
 
     controller_cfg: OperationalSpaceControllerCfg = MISSING
     """The configuration for the operational space controller."""

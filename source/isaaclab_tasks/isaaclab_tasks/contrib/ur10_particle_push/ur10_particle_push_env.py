@@ -14,19 +14,17 @@ import newton
 import torch
 import torch.nn.functional as F
 import warp as wp
-from isaaclab_newton.cloner import copy_newton_clone_source
+from isaaclab_newton.cloner import NewtonReplicateContext, copy_newton_clone_source
 from isaaclab_newton.ik import (
     NewtonIKJointLimitObjectiveCfg,
     NewtonIKPoseObjectiveCfg,
     NewtonIKSolver,
     NewtonIKSolverCfg,
 )
-from isaaclab_newton.physics import NewtonMPMManager
 
 import isaaclab.sim as sim_utils
 from isaaclab import cloner
 from isaaclab.envs import ManagerBasedRLEnv
-from isaaclab.markers import VisualizationMarkers
 from isaaclab.utils.math import quat_apply
 
 from . import mdp
@@ -125,7 +123,7 @@ class UR10ParticlePushEnv(ManagerBasedRLEnv):
         # Re-resolve capacities after any CLI/Hydra num-environment override.
         configure_sparse_mpm_capacities(cfg)
         self._particle_max_velocity = float(cfg.particle_max_velocity)
-        self._heightmap_visualizer: VisualizationMarkers | None = None
+        self._heightmap_visualizer = None
         super().__init__(cfg, render_mode, **kwargs)
         if cfg.heightmap_visualizer_cfg is not None:
             self._setup_heightmap_visualizer()
@@ -137,7 +135,8 @@ class UR10ParticlePushEnv(ManagerBasedRLEnv):
 
     def _setup_task_state(self) -> None:
         """Resolve scene assets and allocate state shared by the MDP terms."""
-        NewtonMPMManager.get_model().particle_max_velocity = self._particle_max_velocity
+        self._newton_resource = self.sim.get_or_create_backend(NewtonReplicateContext, self.sim)
+        self._newton_resource.get_model().particle_max_velocity = self._particle_max_velocity
 
         self._robot = self.scene["robot"]
         self._media = self.scene["media"]
@@ -373,7 +372,7 @@ class UR10ParticlePushEnv(ManagerBasedRLEnv):
         prototype_origin = -self.scene.env_origins[0]
         prototype_xform = wp.transform(wp.vec3(*prototype_origin.tolist()), wp.quat_identity())
 
-        prototype_builder = copy_newton_clone_source(source_path, xform=prototype_xform)
+        prototype_builder = copy_newton_clone_source(self._newton_resource, source_path, xform=prototype_xform)
         model = prototype_builder.finalize(device=self.device)
 
         ee_matches = [
@@ -655,7 +654,7 @@ class UR10ParticlePushEnv(ManagerBasedRLEnv):
         self._heightmap_visualizer_positions.add_(self.scene.env_origins[:, None, :])
         self._heightmap_visualizer_scales = torch.zeros_like(self._heightmap_visualizer_positions)
         self._heightmap_visualizer_radius = 0.2 * min((x_hi - x_lo) / columns, (y_hi - y_lo) / rows)
-        self._heightmap_visualizer = VisualizationMarkers(self.cfg.heightmap_visualizer_cfg)
+        self._heightmap_visualizer = self.cfg.heightmap_visualizer_cfg.class_type(self.cfg.heightmap_visualizer_cfg)
         self._heightmap_visualizer.set_visibility(False)
 
     def _update_heightmap_visualizer(self, heightmap: torch.Tensor) -> None:
@@ -751,8 +750,8 @@ class UR10ParticlePushEnv(ManagerBasedRLEnv):
             env_ids=env_ids,
         )
         self.arm_action.set_reset_position(joint_position, env_ids=env_ids)
-        # Consume FK invalidation before MPM snapshots the reset paddle transform.
-        _ = self._robot.data.body_link_pose_w
+        # Reconcile authored robot state before MPM snapshots the reset paddle transform.
+        self.sim.forward()
 
         pile_yaw = (
             (2.0 * torch.rand(reset_count, device=self.device) - 1.0)
@@ -795,7 +794,7 @@ class UR10ParticlePushEnv(ManagerBasedRLEnv):
         # Newton reset masks include one trailing slot for global (world -1) entities.
         world_mask = torch.zeros(self.num_envs + 1, dtype=torch.bool, device=self.device)
         world_mask[env_ids] = True
-        NewtonMPMManager.reset_solver_state(
+        self._media._physics_manager.reset_solver_state(
             world_mask=wp.from_torch(world_mask, dtype=wp.bool),
             flags=newton.StateFlags.BODY | newton.StateFlags.PARTICLE,
         )

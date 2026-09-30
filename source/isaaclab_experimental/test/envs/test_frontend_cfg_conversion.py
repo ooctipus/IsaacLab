@@ -29,7 +29,7 @@ import gymnasium as gym
 import isaaclab_tasks_experimental  # noqa: F401
 import pytest
 from isaaclab_experimental.envs.frontend import WarpFrontend
-from isaaclab_newton.physics import NewtonCfg
+from isaaclab_newton.physics import NewtonSolverCfg
 
 # Registering the task packages is the whole point — import for side effects.
 import isaaclab_tasks  # noqa: F401
@@ -88,8 +88,8 @@ def _manager_warp_tasks() -> list[tuple[str, str]]:
 
 def _load_adapted_cfg(task_id: str):
     """Compose a task for Newton and adapt it for warp."""
-    cfg, _ = resolve_task_config(task_id, "", overrides=("physics=newton_mjwarp",))
-    assert isinstance(cfg.sim.physics, NewtonCfg), "task does not provide Newton MJWarp physics"
+    cfg, _ = resolve_task_config(task_id, None, overrides=("physics=newton_mjwarp",))
+    assert isinstance(cfg.sim.physics, NewtonSolverCfg), "task does not provide a newton_mjwarp physics preset"
     # Raises FrontendIncompatibleError if any warp-managed term lacks a warp twin.
     WarpFrontend.adapt_cfg(cfg)
     return cfg

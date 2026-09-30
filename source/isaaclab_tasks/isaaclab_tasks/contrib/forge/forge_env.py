@@ -41,7 +41,7 @@ class ForgeEnv(FactoryEnv):
         # Force sensor information. The index is resolved in backend view order because
         # it is used to index `root_view.get_link_incoming_joint_force()`, which is a
         # raw solver-view array (see `_compute_intermediate_values`).
-        self.force_sensor_body_idx = self._robot.backend_body_names.index("force_sensor")
+        self.force_sensor_body_idx = self.scene["robot"].backend_body_names.index("force_sensor")
         self.force_sensor_smooth = torch.zeros((self.num_envs, 6), device=self.device)
         self.force_sensor_world_smooth = torch.zeros((self.num_envs, 6), device=self.device)
 
@@ -98,7 +98,7 @@ class ForgeEnv(FactoryEnv):
         self.prev_fingertip_quat = self.noisy_fingertip_quat.clone()
 
         # Update and smooth force values.
-        self.force_sensor_world = wp.to_torch(self._robot.root_view.get_link_incoming_joint_force())[
+        self.force_sensor_world = wp.to_torch(self.scene["robot"].root_view.get_link_incoming_joint_force())[
             :, self.force_sensor_body_idx
         ]
 
@@ -161,7 +161,7 @@ class ForgeEnv(FactoryEnv):
         the randomized action-scale semantics.
         """
 
-        if self.last_update_timestamp < self._robot._data._sim_timestamp:
+        if self.last_update_timestamp < self.scene["robot"]._data._sim_timestamp:
             self._compute_intermediate_values(dt=self.physics_dt)
 
         # Step (0): Scale actions to allowed range.

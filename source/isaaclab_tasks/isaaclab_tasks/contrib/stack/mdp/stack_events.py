@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import math
 import random
+import re
 from typing import TYPE_CHECKING
 
 import torch
@@ -138,12 +139,7 @@ def randomize_scene_lighting_domelight(
     default_texture: str = "",
     asset_cfg: SceneEntityCfg = SceneEntityCfg("light"),
 ):
-    # Static assets carry no runtime view; fetch the light prim from the stage by its
-    # spawned path. Local import: keep USD out of module load for pure cfg loading.
-    from isaaclab.sim.utils import find_matching_prims  # noqa: PLC0415
-
-    light_cfg = env.scene[asset_cfg.name]
-    light_prim = find_matching_prims(light_cfg.prim_path)[0]
+    light_prim = env.scene[asset_cfg.name].prim
 
     intensity_attr = light_prim.GetAttribute("inputs:intensity")
     intensity_attr.Set(default_intensity)
@@ -315,7 +311,7 @@ def randomize_visual_texture_material(
 
     .. note::
         When randomizing the texture of individual assets, please make sure to set
-        :attr:`isaaclab.scene.InteractiveSceneCfg.replicate_physics` to False. This ensures that physics
+        :attr:`isaaclab.scene.MultiBackendSceneCfg.replicate_physics` to False. This ensures that physics
         parser will parse the individual asset properties separately.
     """
     if hasattr(env.cfg, "eval_mode") and (
@@ -338,7 +334,7 @@ def randomize_visual_texture_material(
         raise RuntimeError(
             "Unable to randomize visual texture material with scene replication enabled."
             " For stable USD-level randomization, please disable scene replication"
-            " by setting 'replicate_physics' to False in 'InteractiveSceneCfg'."
+            " by setting 'replicate_physics' to False in 'MultiBackendSceneCfg'."
         )
 
     # convert from radians to degrees
@@ -356,15 +352,15 @@ def randomize_visual_texture_material(
     else:
         body_names_regex = ".*"
 
-    if not hasattr(asset, "cfg"):
-        # Static assets carry no runtime view; 'asset' is the spawned cfg. Resolve the prim from
-        # the stage by its spawned path. Local import: keep USD out of module load for pure cfg loading.
-        from isaaclab.sim.utils import find_matching_prims  # noqa: PLC0415
+    asset_prim_path = asset.cfg.prim_path if hasattr(asset, "cfg") else asset.prim_path
+    if "{ENV_REGEX_NS}" in asset_prim_path:
+        from isaaclab.cloner import expand_env_regex_ns  # noqa: PLC0415
 
-        asset_prim_path = find_matching_prims(asset.prim_path)[0].GetPath().pathString
-        prims_group = rep.get.prims(path_pattern=f"{asset_prim_path}/visuals")
-    else:
-        prims_group = rep.get.prims(path_pattern=f"{asset.cfg.prim_path}/{body_names_regex}/visuals")
+        asset_prim_path = expand_env_regex_ns(asset_prim_path, env.scene.cfg.clone_cfg.clone_template)
+    roots = env.scene.clone_plan.match_frames(asset_prim_path)
+    root_pattern = "|".join(re.escape(frame.path) for frame in roots)
+    suffix = "/visuals" if not hasattr(asset, "cfg") else f"/{body_names_regex}/visuals"
+    prims_group = rep.get.prims(path_pattern=f"({root_pattern}){suffix}")
 
     with prims_group:
         rep.randomizer.texture(

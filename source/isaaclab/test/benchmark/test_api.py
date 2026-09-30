@@ -20,6 +20,7 @@ from isaaclab.benchmark import (
     BenchmarkPlayRequest,
     BenchmarkResult,
     BenchmarkRuntimeRequest,
+    BenchmarkStartupRequest,
     BenchmarkTrainingRequest,
     PlayBundle,
     RuntimeBundle,
@@ -130,6 +131,14 @@ def test_runtime_request_uses_runtime_defaults() -> None:
     ]
 
 
+def test_startup_request_profiles_only_when_explicit() -> None:
+    wall_argv = dispatch._request_argv(BenchmarkStartupRequest(task="Isaac-Cartpole-Direct"))
+    profile_argv = dispatch._request_argv(BenchmarkStartupRequest(task="Isaac-Cartpole-Direct", profile=True, top_n=10))
+
+    assert "--profile" not in wall_argv
+    assert profile_argv[:7] == ["--task", "Isaac-Cartpole-Direct", "--profile", "--top_n", "10", "--output_path", "."]
+
+
 @pytest.mark.parametrize("backend", ["rsl_rl", "rl_games", "skrl", "sb3"])
 def test_play_request_uses_backend_arguments(backend: str, monkeypatch) -> None:
     request = BenchmarkPlayRequest(
@@ -155,10 +164,15 @@ def test_play_request_uses_backend_arguments(backend: str, monkeypatch) -> None:
     assert remaining_args == []
 
 
-@pytest.mark.parametrize("configured_output_dir", [None, "/tmp/custom-videos"])
-def test_play_backend_configures_video_before_environment_creation(
-    monkeypatch, tmp_path, configured_output_dir
-) -> None:
+def test_play_backends_never_inject_video_visualizers() -> None:
+    for backend in ("rsl_rl", "rl_games", "skrl", "sb3"):
+        entrypoint = importlib.import_module(dispatch._workflow_module("play", backend))
+        source = Path(entrypoint.__file__).read_text(encoding="utf-8")
+        assert "_common.validate_video_config(" in source
+        assert "pre_launch_video_config" not in source
+
+
+def test_play_backend_validates_declared_video_capture_before_environment_creation(monkeypatch, tmp_path) -> None:
     class VideoConfigured(Exception):
         pass
 
@@ -172,17 +186,12 @@ def test_play_backend_configures_video_before_environment_creation(
     @contextlib.contextmanager
     def launch_simulation(env_cfg, args):
         assert env_cfg.video_recorders == []
-        assert any(cfg.visualizer_type == "kit" for cfg in env_cfg.sim.visualizer_cfgs)
-        if configured_output_dir is not None:
-            from isaaclab.envs.utils.video_recorder_cfg import VideoRecorderCfg
-
-            env_cfg.video_recorders = [VideoRecorderCfg(output_dir=configured_output_dir)]
+        assert env_cfg.sim.visualizer_cfgs.visualizer_type == "kit"
         yield
 
     def make_environment(task, *, cfg):
         recorder = cfg.video_recorders[0]
-        expected_output_dir = configured_output_dir or str(tmp_path / "videos" / "play")
-        assert recorder.output_dir == expected_output_dir
+        assert recorder.output_dir == str(tmp_path / "videos" / "play")
         assert recorder.video_length == 37
         raise VideoConfigured
 
@@ -201,8 +210,17 @@ def test_play_backend_configures_video_before_environment_creation(
                 "--video",
                 "--video_length",
                 "37",
+                "visualizer=kit",
             ]
         )
+
+
+def test_play_backend_rejects_video_without_declared_capture(monkeypatch) -> None:
+    entrypoint = importlib.import_module(dispatch._workflow_module("play", "rsl_rl"))
+    monkeypatch.setattr(entrypoint._common, "resolve_play_checkpoint", lambda *args: "/tmp/checkpoint")
+
+    with pytest.raises(ValueError, match="requires a capture-capable visualizer"):
+        entrypoint.run(["--task", "Isaac-Cartpole-Direct", "--checkpoint", "/tmp/checkpoint", "--video"])
 
 
 @pytest.mark.parametrize("workflow", ["runtime", "startup"])

@@ -437,7 +437,7 @@ when no CLI override is given. Other fields are named presets selectable with
        ovphysx: OvPhysxCfg = OvPhysxCfg()
        physx: PhysxAutoCfg = PhysxAutoCfg(isaacsim_physx=isaacsim_physx, ovphysx=ovphysx)
        default: PhysxCfg = isaacsim_physx  # used when no override is given
-       newton_mjwarp:  NewtonCfg = NewtonCfg(...)  # selected by physics=newton_mjwarp
+       newton_mjwarp: MJWarpSolverCfg = MJWarpSolverCfg(...)  # selected by physics=newton_mjwarp
 
 **Selecting a preset at launch**
 
@@ -484,7 +484,7 @@ subclass that carries both a PhysX and a Newton variant.
 .. code-block:: python
 
    from isaaclab.physics import PhysxAutoCfg
-   from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
+   from isaaclab_newton.physics import MJWarpSolverCfg
    from isaaclab_ov.physics import OvPhysxCfg
    from isaaclab_physx.physics import PhysxCfg
    from isaaclab_tasks.utils import PresetCfg
@@ -494,16 +494,14 @@ subclass that carries both a PhysX and a Newton variant.
        isaacsim_physx: PhysxCfg = PhysxCfg(bounce_threshold_velocity=0.2)
        ovphysx: OvPhysxCfg = OvPhysxCfg()
        physx: PhysxAutoCfg = PhysxAutoCfg(isaacsim_physx=isaacsim_physx, ovphysx=ovphysx)
-       newton_mjwarp:  NewtonCfg = NewtonCfg(
-           solver_cfg=MJWarpSolverCfg(
-               njmax=20, nconmax=20, ls_iterations=20,
-               cone="pyramidal", integrator="implicitfast",
-               impratio=1,
-           ),
+       newton_mjwarp: MJWarpSolverCfg = MJWarpSolverCfg(
+           njmax=20, nconmax=20, ls_iterations=20,
+           cone="pyramidal", integrator="implicitfast",
+           impratio=1,
            num_substeps=1,
            debug_mode=False,
        )
-       default: NewtonCfg = newton_mjwarp
+       default: MJWarpSolverCfg = newton_mjwarp
 
    # In the env cfg __post_init__:
    def __post_init__(self):
@@ -779,7 +777,7 @@ Update asset-facing APIs after the backend configuration is in place. This inclu
 
 Isaac Lab's ``XformPrimView`` and related classes have been renamed to ``FrameView`` to
 better reflect their purpose and avoid confusion with Isaac Sim's ``XFormPrim`` class
-hierarchy. The old ``XformPrimView`` name is kept as a deprecated alias.
+hierarchy. The old names have been removed.
 
 The rename applies across all backends:
 
@@ -791,12 +789,10 @@ The rename applies across all backends:
      - Isaac Lab 3.0
    * - ``BaseXformPrimView``
      - :class:`~isaaclab.sim.views.BaseFrameView`
-   * - ``UsdXformPrimView``
-     - :class:`~isaaclab.sim.views.UsdFrameView`
    * - ``XformPrimView``
      - :class:`~isaaclab.sim.views.FrameView`
    * - ``FabricXformPrimView``
-     - :class:`~isaaclab_physx.sim.views.FabricFrameView`
+     - :class:`~isaaclab_physx.sim.views.PhysxFrameView`
    * - ``NewtonSiteXformPrimView``
      - :class:`~isaaclab_newton.sim.views.NewtonSiteFrameView`
 
@@ -811,10 +807,9 @@ For most users, the only change needed is updating imports:
    from isaaclab.sim.views import FrameView
 
 The :class:`~isaaclab.sim.views.FrameView` factory automatically dispatches to the correct
-backend (:class:`~isaaclab_physx.sim.views.FabricFrameView` for PhysX,
+backend (:class:`~isaaclab_physx.sim.views.PhysxFrameView` for PhysX,
 :class:`~isaaclab_newton.sim.views.NewtonSiteFrameView` for Newton) based on the active
-physics backend. The deprecated ``XformPrimView`` alias continues to work but will be
-removed in a future release.
+physics backend.
 
 
 .. _actuators-solver-limit-migration:
@@ -2368,18 +2363,12 @@ and sets ``source="visualizer:kit"`` on the default recorder, printing:
    set video_recorders in your env config to record from a scene sensor instead.
 
 
-.. rubric:: Viewport Camera Configuration (``ViewerCfg`` deprecated)
+.. rubric:: Viewport Camera Configuration (``ViewerCfg`` removed)
 
-The ``viewer`` field (type :class:`~isaaclab.envs.common.ViewerCfg`) is deprecated on
+The ``viewer`` field (formerly configured with ``ViewerCfg``) was removed from
 :class:`~isaaclab.envs.DirectRLEnvCfg`, :class:`~isaaclab.envs.ManagerBasedEnvCfg`, and
-:class:`~isaaclab.envs.DirectMARLEnvCfg`.  A backward-compatibility shim re-routes
-``viewer.*`` assignments for one release, but the field will be removed in a future version.
-Configure the viewport camera through :attr:`~isaaclab.sim.SimulationCfg.default_visualizer_cfg`
-on the sim config instead.
-
-Similarly, :class:`~isaaclab.envs.ui.ViewportCameraController` is deprecated.  A shim class
-remains so existing imports do not break, but it raises a :class:`DeprecationWarning` at
-construction.  Camera tracking is now handled directly by
+:class:`~isaaclab.envs.DirectMARLEnvCfg`. Configure an explicit visualizer in
+``env_cfg.sim.visualizer_cfgs`` instead. Camera tracking is handled directly by
 :class:`~isaaclab_visualizers.kit.KitVisualizer` via ``origin_type`` and
 ``origin_track_path`` on :class:`~isaaclab_visualizers.kit.KitVisualizerCfg`.
 
@@ -2390,8 +2379,8 @@ construction.  Camera tracking is now handled directly by
    env_cfg.viewer.lookat = (0.0, 0.0, 2.0)
 
    # After (Isaac Lab 3.x)
-   from isaaclab.visualizers import VisualizerCfg
-   env_cfg.sim.default_visualizer_cfg = VisualizerCfg(eye=(4.5, 0.0, 6.0), lookat=(0.0, 0.0, 2.0))
+   from isaaclab_visualizers.kit import KitVisualizerCfg
+   env_cfg.sim.visualizer_cfgs = [KitVisualizerCfg(eye=(4.5, 0.0, 6.0), lookat=(0.0, 0.0, 2.0))]
 
 For asset-body tracking (previously ``origin_type="asset_root"`` / ``"asset_body"``), use
 :class:`~isaaclab_visualizers.kit.KitVisualizerCfg` with ``origin_type="asset"`` and
@@ -2407,17 +2396,17 @@ For asset-body tracking (previously ``origin_type="asset_root"`` / ``"asset_body
    from isaaclab_visualizers.kit import KitVisualizerCfg
    env_cfg.sim.visualizer_cfgs = [KitVisualizerCfg(origin_type="asset", origin_track_path="robot")]
 
-The :class:`~isaaclab.envs.ui.ViewportCameraController` class is also deprecated; camera
-tracking is handled directly by :class:`~isaaclab_visualizers.kit.KitVisualizer`.
+``ViewportCameraController`` was removed; camera tracking is handled directly by
+:class:`~isaaclab_visualizers.kit.KitVisualizer`.
 
 
 .. rubric:: Streaming Camera View (``tiled_cam_*`` fields removed)
 
 The ``tiled_cam_*`` configuration fields on visualizer configs (e.g. ``tiled_cam_view``,
 ``tiled_cam_num``, ``tiled_cam_prim_path``) have been removed and replaced by the unified
-``streaming_*`` API available on all four visualizer backends.  A one-release deprecation
-shim forwards each removed field to its ``streaming_*`` equivalent and emits
-:class:`DeprecationWarning`; the shim will be removed in the next major release.
+``streaming_*`` API available on all four visualizer backends. The streaming camera is named
+rather than matched by prim path: it must be a sensor the scene cfg declares and the clone plan
+covers. Visualizers no longer declare, pose, or update camera sensors.
 
 .. list-table:: Field rename reference
    :header-rows: 1
@@ -2931,8 +2920,8 @@ module and unified command.
    ``benchmark_rigid_object.py``, and friends) are unchanged — only the
    ``run_physx_benchmarks.sh`` wrapper that invoked them was removed, so run those scripts
    directly. The other standalone benchmark scripts under ``scripts/benchmarks/`` —
-   ``benchmark_cameras.py``, ``benchmark_load_robot.py``, ``benchmark_view_comparison.py``,
-   ``benchmark_xform_prim_view.py``, ``benchmark_lazy_export.py``, and
+   ``benchmark_cameras.py``, ``benchmark_load_robot.py``, ``benchmark_xform_prim_view.py``,
+   ``benchmark_lazy_export.py``, and
    ``benchmark_hydra_resolve.py`` — are independent of the unified suite and likewise
    unaffected.
 
@@ -3070,7 +3059,7 @@ Pattern" section above.
 
 .. rubric:: XR Teleoperation: Isaac Teleop Integration
 
-The native XR teleoperation stack in ``isaaclab.devices.openxr`` has been deprecated and replaced
+The native XR teleoperation stack in ``isaaclab.devices.openxr`` has been removed and replaced
 by `Isaac Teleop <https://github.com/NVIDIA/IsaacTeleop>`_, integrated via the ``isaaclab_teleop``
 extension. The ``isaac-teleop-device-plugins`` repository has also been deprecated; all device
 plugin support is now in Isaac Teleop.
@@ -3143,9 +3132,9 @@ field with ``IsaacTeleopCfg`` and a pipeline builder callable.
 
 .. code-block:: python
 
-   from isaaclab_teleop import IsaacTeleopCfg, XrCfg
+   from isaaclab_teleop import IsaacTeleopCfg, TeleopPipelineCfg, XrCfg
 
-   def _build_pipeline():
+   def _build_pipeline(_cfg: TeleopPipelineCfg):
        from isaacteleop.retargeting_engine.deviceio_source_nodes import ControllersSource, HandsSource
        from isaacteleop.retargeting_engine.interface import OutputCombiner, ValueInput
        from isaacteleop.retargeters import (
@@ -3180,27 +3169,20 @@ field with ``IsaacTeleopCfg`` and a pipeline builder callable.
    @configclass
    class MyEnvCfg(ManagerBasedRLEnvCfg):
 
-       xr: XrCfg = XrCfg(anchor_pos=(0.0, 0.0, 0.0))
-
        def __post_init__(self):
            super().__post_init__()
+           self.scene.xr_anchor = XrCfg(anchor_pos=(0.0, 0.0, 0.0))
            self.isaac_teleop = IsaacTeleopCfg(
-               pipeline_builder=_build_pipeline,
+               pipeline_cfg=TeleopPipelineCfg(class_type=_build_pipeline),
                sim_device=self.sim.device,
-               xr_cfg=self.xr,
            )
 
 
-**Backward Compatibility**
+**Legacy Retargeters**
 
-The old classes still exist and will issue ``DeprecationWarning`` when used:
-
-* ``isaaclab.devices.openxr.OpenXRDevice`` and ``OpenXRDeviceCfg``
-* ``isaaclab.devices.openxr.ManusVive`` and ``ManusViveCfg``
-* All retargeters under ``isaaclab.devices.openxr.retargeters``
-
-Deprecated retargeters have been moved to ``isaaclab_teleop.deprecated.openxr.retargeters`` for
-compatibility. These will be removed in a future release.
+``OpenXRDevice``, ``ManusVive``, and their configuration classes no longer exist. Legacy
+retargeters remain under ``isaaclab_teleop.deprecated.openxr.retargeters`` while their pipelines
+are migrated to Isaac Teleop.
 
 
 Getting Help

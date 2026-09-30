@@ -3,11 +3,8 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Deprecated teleoperation classes consolidated under isaaclab_teleop.
+"""Deprecated retargeters retained under :mod:`isaaclab_teleop`.
 
-This sub-package contains legacy OpenXR device classes, retargeters, and the
-teleop device factory that were previously located in
-:mod:`isaaclab.devices.openxr` and :mod:`isaaclab.devices`.  They are preserved
-here for backward compatibility while users migrate to the new
-:class:`~isaaclab_teleop.IsaacTeleopDevice` API.
+The old OpenXR devices and their configuration classes were removed. Only the
+legacy retargeters remain while users migrate pipelines to Isaac Teleop.
 """

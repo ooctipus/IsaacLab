@@ -10,7 +10,6 @@ import torch
 import warp as wp
 
 import isaaclab.utils.math as math_utils
-from isaaclab.assets import AssetBaseCfg
 from isaaclab.sim.views import FrameView
 
 from .occupancy_map_utils import OccupancyMap, intersect_occupancy_maps
@@ -104,23 +103,12 @@ class SceneAsset(HasPose):
         self._xform_view: FrameView | None = None
 
     def _get_xform_view(self) -> FrameView:
-        """Return the FrameView for this asset, building it on demand.
-
-        Static scene assets carry no runtime view (``scene[name]`` returns the spawned
-        configuration), so the pose view is created lazily here and cached on this
-        wrapper. A cached view created before environment cloning is rebuilt once the
-        cloned prims exist.
-        """
-        if self._xform_view is None or self._xform_view.count == 0:
-            if self._xform_view is not None:
-                self._xform_view.close()
-            entity = self.scene[self.entity_name]
-            prim_path = (
-                entity.prim_path
-                if isinstance(entity, AssetBaseCfg)
-                else getattr(entity, "_usd_view", entity)._prim_path
-            )
-            self._xform_view = FrameView(prim_path, device=self.scene.device)
+        """Return the plan-bound FrameView for this asset."""
+        if self._xform_view is None:
+            prim_path = self.scene[self.entity_name].cfg.prim_path
+            view = FrameView(prim_path, simulation_context=self.scene.sim, device=self.scene.device)
+            view.initialize(self.scene.clone_plan, self.scene.sim.get_scene_data_provider())
+            self._xform_view = view
         return self._xform_view
 
     def get_pose(self):

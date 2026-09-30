@@ -23,6 +23,7 @@ import torch
 import warp as wp
 from flaky import flaky
 from isaaclab_physx.assets import DeformableObject
+from isaaclab_physx.physics import PhysxCfg
 from isaaclab_physx.sim import (
     PhysxDeformableBodyMaterialCfg,
     PhysxDeformableBodyPropertiesCfg,
@@ -33,6 +34,7 @@ import carb
 
 import isaaclab.sim as sim_utils
 import isaaclab.utils.math as math_utils
+from isaaclab import cloner
 from isaaclab.assets import DeformableObjectCfg
 from isaaclab.sim import build_simulation_context
 
@@ -68,11 +70,6 @@ def generate_cubes_scene(
         The deformable object representing the cubes.
 
     """
-    origins = torch.tensor([(i * 1.0, 0, height) for i in range(num_cubes)]).to(device)
-    # Create Top-level Xforms, one for each cube
-    for i, origin in enumerate(origins):
-        sim_utils.create_prim(f"/World/Table_{i}", "Xform", translation=origin)
-
     # Resolve spawn configuration
     if has_api:
         spawn_cfg = sim_utils.MeshCuboidCfg(
@@ -96,11 +93,17 @@ def generate_cubes_scene(
         )
     # Create deformable object
     cube_object_cfg = DeformableObjectCfg(
-        prim_path="/World/Table_[^/]*/Object",
+        prim_path="{ENV_REGEX_NS}/Object",
         spawn=spawn_cfg,
         init_state=DeformableObjectCfg.InitialStateCfg(pos=(0.0, 0.0, height), rot=initial_rot),
     )
-    cube_object = DeformableObject(cfg=cube_object_cfg)
+    with cloner.ReplicateSession(
+        [cube_object_cfg],
+        num_clones=num_cubes,
+        env_spacing=1.0,
+        env_template="/World/Table_{}",
+    ):
+        cube_object = cube_object_cfg.class_type(cube_object_cfg)
 
     return cube_object
 
@@ -108,7 +111,7 @@ def generate_cubes_scene(
 @pytest.fixture
 def sim():
     """Create simulation context."""
-    with build_simulation_context(auto_add_lighting=True) as sim:
+    with build_simulation_context(sim_cfg=sim_utils.SimulationCfg(physics=PhysxCfg())) as sim:
         sim._app_control_on_stop_handle = None
         yield sim
 
@@ -203,7 +206,7 @@ def test_initialization_surface_deformable(sim):
 @pytest.mark.isaacsim_ci
 def test_initialization_on_device_cpu():
     """Test that initialization fails with deformable body API on the CPU."""
-    with build_simulation_context(device="cpu", auto_add_lighting=True) as sim:
+    with build_simulation_context(sim_cfg=sim_utils.SimulationCfg(physics=PhysxCfg()), device="cpu") as sim:
         sim._app_control_on_stop_handle = None
         cube_object = generate_cubes_scene(num_cubes=5, device="cpu")
 
@@ -270,7 +273,7 @@ def test_set_nodal_state_with_applied_transform(num_cubes, randomize_pos, random
     carb_settings_iface.set_bool("/physics/cooking/ujitsoCollisionCooking", False)
 
     # Create simulation context with gravity disabled (no fixture needed)
-    with build_simulation_context(auto_add_lighting=True, gravity_enabled=False) as sim:
+    with build_simulation_context(sim_cfg=sim_utils.SimulationCfg(physics=PhysxCfg(), gravity=(0.0, 0.0, 0.0))) as sim:
         sim._app_control_on_stop_handle = None
         cube_object = generate_cubes_scene(num_cubes=num_cubes)
         sim.reset()

@@ -17,9 +17,8 @@ tactile sensing with the GelSight finger setup.
         --use_tactile_ff \
         --tactile_compliance_stiffness 100.0 \
         --num_envs 16 \
-        --contact_object_type nut \
         --save_viz \
-        --viz kit/newton
+        presets=nut visualizer=kit
 
 """
 
@@ -31,17 +30,14 @@ import cv2
 import numpy as np
 import torch
 
-from isaaclab.app import AppLauncher
+from isaaclab.app import add_launcher_args, launch_simulation
+
+from isaaclab_tasks.utils import preset, resolve_config, setup_preset_cli
+from isaaclab_tasks.utils.presets import MultiBackendRendererCfg, MultiBackendSimulationCfg
 
 # Add argparse arguments
 parser = argparse.ArgumentParser(description="TacSL tactile sensor example.")
 parser.add_argument("--num_envs", type=int, default=2, help="Number of environments to spawn.")
-parser.add_argument(
-    "--physics",
-    default="isaacsim_physx",
-    choices=["isaacsim_physx"],
-    help="Physics backend.",
-)
 parser.add_argument("--normal_contact_stiffness", type=float, default=1.0, help="Tactile normal stiffness.")
 parser.add_argument("--tangential_stiffness", type=float, default=0.1, help="Tactile tangential stiffness.")
 parser.add_argument("--friction_coefficient", type=float, default=2.0, help="Tactile friction coefficient.")
@@ -64,25 +60,11 @@ parser.add_argument("--use_tactile_ff", action="store_true", help="Use tactile f
 parser.add_argument("--debug_sdf_closest_pts", action="store_true", help="Visualize closest SDF points.")
 parser.add_argument("--debug_tactile_sensor_pts", action="store_true", help="Visualize tactile sensor points.")
 parser.add_argument("--trimesh_vis_tactile_points", action="store_true", help="Visualize tactile points using trimesh.")
-parser.add_argument(
-    "--contact_object_type",
-    type=str,
-    default="nut",
-    choices=["none", "cube", "nut"],
-    help="Type of contact object to use.",
-)
+add_launcher_args(parser)
+args_cli, config_overrides = setup_preset_cli(parser)
+args_cli.enable_cameras = args_cli.use_tactile_rgb
 
-# Append AppLauncher cli args
-AppLauncher.add_app_launcher_args(parser)
-# Parse the arguments
-args_cli = parser.parse_args()
-
-# Launch omniverse app
-app_launcher = AppLauncher(args_cli)
-simulation_app = app_launcher.app
-
-"""Rest everything follows."""
-
+from isaaclab_physx.physics import PhysxCfg
 from isaaclab_physx.sim.schemas import (
     PhysxArticulationRootPropertiesCfg,
     PhysxCollisionPropertiesCfg,
@@ -148,17 +130,17 @@ class TactileSensorsSceneCfg(InteractiveSceneCfg):
 
     # TacSL Tactile Sensor
     tactile_sensor = VisuoTactileSensorCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/elastomer/tactile_sensor",
+        prim_path="{ENV_REGEX_NS}/Robot/elastomer",
         debug_vis=args_cli.debug_tactile_sensor_pts or args_cli.debug_sdf_closest_pts,
         # Sensor configuration
         render_cfg=GELSIGHT_R15_CFG,
-        enable_camera_tactile=args_cli.use_tactile_rgb,
         enable_force_field=args_cli.use_tactile_ff,
         # Elastomer configuration
         tactile_array_size=(20, 25),
         tactile_margin=0.003,
         # Contact object configuration
         contact_object_prim_path_expr="{ENV_REGEX_NS}/contact_object",
+        mesh_prim_paths=["{ENV_REGEX_NS}/Robot/elastomer", "{ENV_REGEX_NS}/contact_object"],
         # Force field physics parameters
         normal_contact_stiffness=args_cli.normal_contact_stiffness,
         friction_coefficient=args_cli.friction_coefficient,
@@ -166,12 +148,17 @@ class TactileSensorsSceneCfg(InteractiveSceneCfg):
         # Camera configuration
         # Note: the camera is already spawned in the scene, properties are set in the
         # 'gelsight_r15_finger.usd' USD file
-        camera_cfg=CameraCfg(
-            prim_path="{ENV_REGEX_NS}/Robot/elastomer_tip/cam",
-            height=GELSIGHT_R15_CFG.image_height,
-            width=GELSIGHT_R15_CFG.image_width,
-            data_types=["distance_to_image_plane"],
-            spawn=None,
+        camera_cfg=(
+            CameraCfg(
+                prim_path="{ENV_REGEX_NS}/Robot/elastomer_tip/cam",
+                height=GELSIGHT_R15_CFG.image_height,
+                width=GELSIGHT_R15_CFG.image_width,
+                data_types=["distance_to_image_plane"],
+                spawn=None,
+                renderer_cfg=MultiBackendRendererCfg(),
+            )
+            if args_cli.use_tactile_rgb
+            else None
         ),
         # Debug Visualization
         trimesh_vis_tactile_points=args_cli.trimesh_vis_tactile_points,
@@ -182,6 +169,8 @@ class TactileSensorsSceneCfg(InteractiveSceneCfg):
 @configclass
 class CubeTactileSceneCfg(TactileSensorsSceneCfg):
     """Scene with cube contact object."""
+
+    tactile_sensor = TactileSensorsSceneCfg().tactile_sensor.replace(enable_force_field=False)
 
     # Cube contact object
     contact_object = RigidObjectCfg(
@@ -221,6 +210,33 @@ class NutTactileSceneCfg(TactileSensorsSceneCfg):
             pos=(0.0, 0.0 + 0.06776, 0.498),
             rot=(0.0, 0.0, 0.0, 1.0),
         ),
+    )
+
+
+@configclass
+class NoContactTactileSceneCfg(TactileSensorsSceneCfg):
+    """Scene without a contact object."""
+
+    tactile_sensor = TactileSensorsSceneCfg().tactile_sensor.replace(contact_object_prim_path_expr=None, debug_vis=True)
+
+
+@configclass
+class DemoCfg:
+    """TacSL demo configuration."""
+
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(
+        dt=0.005,
+        device=args_cli.device,
+        physics=preset(
+            default=PhysxCfg(gpu_collision_stack_size=2**30),
+            isaacsim_physx=PhysxCfg(gpu_collision_stack_size=2**30),
+        ),
+    )
+    scene = preset(
+        default=NutTactileSceneCfg(num_envs=args_cli.num_envs, env_spacing=0.2),
+        nut=NutTactileSceneCfg(num_envs=args_cli.num_envs, env_spacing=0.2),
+        cube=CubeTactileSceneCfg(num_envs=args_cli.num_envs, env_spacing=0.2),
+        no_contact=NoContactTactileSceneCfg(num_envs=args_cli.num_envs, env_spacing=0.2),
     )
 
 
@@ -332,7 +348,7 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
     if "contact_object" in scene.keys():
         entity_list.append("contact_object")
 
-    while simulation_app.is_running():
+    while sim.is_headless_or_exist_active_visualizer():
         if count == 122:
             # Reset robot and contact object positions
             count = 0
@@ -374,63 +390,16 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
 
 def main():
     """Main function."""
-    from isaaclab_physx.physics import PhysxCfg
-
-    # Initialize simulation
-    # Note: We set the gpu_collision_stack_size to prevent buffer overflow in contact-rich environments.
-    sim_cfg = sim_utils.SimulationCfg(
-        dt=0.005,
-        device=args_cli.device,
-        physics=PhysxCfg(gpu_collision_stack_size=2**30),
-    )
-    sim = sim_utils.SimulationContext(sim_cfg)
-
-    # Set main camera
-    sim.set_camera_view(eye=(0.5, 0.6, 1.0), target=(-0.1, 0.1, 0.5))
-
-    # Create scene based on contact object type
-    if args_cli.contact_object_type == "cube":
-        scene_cfg = CubeTactileSceneCfg(num_envs=args_cli.num_envs, env_spacing=0.2)
-        # disabled force field for cube contact object because a SDF collision mesh cannot
-        # be created for the Shape Prims
-        scene_cfg.tactile_sensor.enable_force_field = False
-    elif args_cli.contact_object_type == "nut":
-        scene_cfg = NutTactileSceneCfg(num_envs=args_cli.num_envs, env_spacing=0.2)
-    elif args_cli.contact_object_type == "none":
-        scene_cfg = TactileSensorsSceneCfg(num_envs=args_cli.num_envs, env_spacing=0.2)
-        scene_cfg.tactile_sensor.contact_object_prim_path_expr = None
-        # this flag is to visualize the tactile sensor points
-        scene_cfg.tactile_sensor.debug_vis = True
-    else:
-        raise ValueError(
-            f"Invalid contact object type: '{args_cli.contact_object_type}'. Must be 'none', 'cube', or 'nut'."
-        )
-
-    scene = InteractiveScene(scene_cfg)
-
-    # Initialize simulation
-    sim.reset()
-
-    # The tactile RGB path internally uses an RTX camera that may request only non-color render products.
-    # Isaac RTX can disable color rendering for that case, which makes the Kit viewport black even though
-    # the sensor images are produced correctly. Keep color rendering enabled when a Kit viewport is active.
-    visualizers = args_cli.visualizer
-    if isinstance(visualizers, str):
-        visualizers = [token.strip() for token in visualizers.split(",")]
-    if args_cli.use_tactile_rgb and "kit" in visualizers:
-        print("[INFO]: Keeping RTX color rendering enabled for Kit viewport visualization.")
-        sim.set_setting("/rtx/sdg/force/disableColorRender", False)
-
-    print("[INFO]: Setup complete...")
-
-    # Get initial render
-    scene["tactile_sensor"].get_initial_render()
-    # Run simulation
-    run_simulator(sim, scene)
+    cfg = resolve_config(DemoCfg(), config_overrides)
+    with launch_simulation(cfg.sim, args_cli):
+        sim = sim_utils.SimulationContext(cfg.sim)
+        sim.set_camera_view(eye=(0.5, 0.6, 1.0), target=(-0.1, 0.1, 0.5))
+        scene = cfg.scene.class_type(cfg.scene)
+        sim.reset()
+        print("[INFO]: Setup complete...")
+        scene["tactile_sensor"].get_initial_render()
+        run_simulator(sim, scene)
 
 
 if __name__ == "__main__":
-    # Run the main function
     main()
-    # Close sim app
-    simulation_app.close()

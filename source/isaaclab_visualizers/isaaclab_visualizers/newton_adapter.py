@@ -10,6 +10,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+import warp as wp
+
 VISUALIZER_INFINITE_PLANE_SIZE = 1000.0
 """Finite render size used for Newton planes encoded as infinite."""
 
@@ -59,7 +61,7 @@ def resolve_visible_env_indices(
     max_visible_envs: int | None,
     num_envs: int,
 ) -> list[int] | None:
-    """Resolve which env indices stay visible (same rules as :func:`apply_viewer_visible_worlds`).
+    """Resolve which environment indices stay visible.
 
     * Cap-only path (``env_ids`` is ``None``): contiguous ``0 .. min(cap, num_envs) - 1`` when ``max_visible_envs``
       is set; otherwise ``None`` (viewer shows all worlds). (Random cap-only selection is applied earlier by
@@ -81,32 +83,31 @@ def resolve_visible_env_indices(
     return None
 
 
-def apply_viewer_visible_worlds(
-    viewer,
-    *,
-    env_ids: list[int] | None,
-    max_visible_envs: int | None,
-    num_envs: int,
-) -> None:
-    """Select which simulation worlds are visualized; no-op if the viewer does not support it.
-
-    Prefer this over ``set_model(..., max_worlds=...)`` (deprecated in Newton).
-
-    Args:
-        viewer: Newton viewer (ViewerGL, ViewerRerun, ViewerViser, etc.).
-        env_ids: Env indices from ``visible_env_indices`` (after validation), or ``None`` for the cap-only
-            contiguous path (see ``VisualizerCfg``).
-        max_visible_envs: When ``env_ids`` is ``None``, caps the contiguous count; otherwise truncates the list to
-            the first *N* indices.
-        num_envs: Total environment count from scene metadata.
-    """
-    if not hasattr(viewer, "set_visible_worlds"):
+def log_state_particles(viewer, state) -> None:
+    """Log the point pointer already ordered for the clone-built Newton model by SDP."""
+    model = viewer.model
+    if model is None or not model.particle_count:
         return
-    resolved = resolve_visible_env_indices(env_ids, max_visible_envs, num_envs)
-    if resolved is None:
-        viewer.set_visible_worlds(None)
-    else:
-        viewer.set_visible_worlds(resolved)
+
+    points = state.particle_q
+    if points is None:
+        raise RuntimeError("Newton viewer received a particle model without an SDP point publication.")
+    if len(points) != model.particle_count:
+        raise RuntimeError(
+            f"SDP published {len(points)} points for a Newton model with {model.particle_count} particles."
+        )
+
+    points = viewer._apply_layer_transform_to_points(points)
+    colors = (
+        wp.full(shape=len(points), value=wp.vec3(0.7, 0.6, 0.4), device=viewer.device) if viewer.model_changed else None
+    )
+    viewer.log_points(
+        name=viewer._qualify("/model/particles"),
+        points=points,
+        radii=model.particle_radius,
+        colors=colors,
+        hidden=not viewer.show_particles or viewer._layer_force_hidden(),
+    )
 
 
 # TODO: Newton GL's checker floor (GeoType.PLANE, material.z=1.0) renders in the Newton GL

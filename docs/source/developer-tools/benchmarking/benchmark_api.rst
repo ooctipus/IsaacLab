@@ -89,8 +89,9 @@ The examples below reuse the runtime workflow's output and launcher objects.
 
 .. dropdown:: Run startup profiling
 
-   Startup profiling records wall time and the most expensive functions for
-   each phase:
+   Startup profiling records instrumented wall time and the most expensive
+   functions for each phase. Omit ``profile=True`` for authoritative unprofiled
+   wall timing:
 
    .. code-block:: python
 
@@ -107,6 +108,7 @@ The examples below reuse the runtime workflow's output and launcher objects.
           BenchmarkStartupRequest(
               task="Isaac-Cartpole-Direct",
               num_envs=4096,
+              profile=True,
               top_n=20,
               presets=("newton_mjwarp",),
               output=BenchmarkOutputConfig(
@@ -226,8 +228,8 @@ task configuration, output configuration, and launcher configuration.
      - ``num_steps``, ``warmup_steps``
      - Measured environment steps and preceding excluded steps.
    * - Startup
-     - ``top_n``, ``whitelist_config``
-     - Number and optional filter of profiled functions retained per phase.
+     - ``profile``, ``top_n``, ``whitelist_config``
+     - Explicit cProfile attribution mode, retained function count, and optional filter.
    * - Training
      - ``backend``, ``max_iterations``, ``warmup_steps``
      - RL library, learning iterations, and initial environment steps excluded

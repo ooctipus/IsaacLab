@@ -15,6 +15,7 @@ simulation_app = AppLauncher(headless=True).app
 import os
 
 import pytest
+from isaaclab_physx.physics import PhysxCfg
 from isaaclab_physx.sim.schemas import PhysxCollisionCfg, PhysxRigidBodyCfg
 
 from pxr import Usd, UsdGeom, UsdPhysics
@@ -60,7 +61,7 @@ def _spawn_robot(tmp_path, prim_path: str, **cfg_kwargs):
     usd_path = os.path.join(tmp_path, "robot.usda")
     _author_robot_usd(usd_path)
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     cfg = UsdFileCfg(usd_path=usd_path, **cfg_kwargs)
     _spawn_from_usd_file(prim_path, usd_path, cfg)
     return sim_utils.get_current_stage()
@@ -143,7 +144,7 @@ def test_fragment_and_legacy_paths_place_apis_identically_on_usd_asset(tmp_path)
     usd_path = os.path.join(tmp_path, "robot.usda")
     _author_robot_usd(usd_path)
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     legacy_cfg = UsdFileCfg(usd_path=usd_path, rigid_props=PhysxRigidBodyPropertiesCfg(max_depenetration_velocity=5.0))
     frag_cfg = UsdFileCfg(
         usd_path=usd_path, rigid_props={"(/.*)?": [PhysxRigidBodyCfg(max_depenetration_velocity=5.0)]}
@@ -209,7 +210,7 @@ def test_rigid_body_fragments_create_on_bare_prim():
     from isaaclab.sim.schemas import apply_rigid_body_properties
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     UsdGeom.Xform.Define(stage, "/World/Bare")
     result = apply_rigid_body_properties(
@@ -226,7 +227,7 @@ def test_rigid_body_fragments_create_on_every_matched_prim():
     from isaaclab.sim.schemas import apply_rigid_body_properties
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     for path in ("/World/Grp", "/World/Grp/a", "/World/Grp/b"):
         UsdGeom.Xform.Define(stage, path)
@@ -317,7 +318,7 @@ def test_rigid_body_fragments_skip_instanced_carriers(caplog):
     from isaaclab.sim.schemas import apply_rigid_body_properties
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     source = UsdGeom.Xform.Define(stage, "/World/Source").GetPrim()
     source_body = UsdGeom.Xform.Define(stage, "/World/Source/body").GetPrim()
@@ -344,7 +345,7 @@ def test_rigid_body_fragments_empty_list_authors_nothing():
     from isaaclab.sim.schemas import apply_rigid_body_properties
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     UsdGeom.Xform.Define(stage, "/World/Bare")
     result = apply_rigid_body_properties("/World/Bare", [], stage=stage)

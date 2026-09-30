@@ -6,7 +6,7 @@ import os
 import tempfile
 
 from isaaclab_physx.physics import PhysxCfg
-from isaaclab_teleop.isaac_teleop_cfg import IsaacTeleopCfg
+from isaaclab_teleop.isaac_teleop_cfg import IsaacTeleopCfg, TeleopPipelineCfg
 from isaaclab_teleop.xr_cfg import XrCfg
 
 import isaaclab.envs.mdp as base_mdp
@@ -20,7 +20,6 @@ from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
-from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim.schemas.schemas_cfg import MassPropertiesCfg
 from isaaclab.sim.spawners.from_files.from_files_cfg import GroundPlaneCfg, UsdFileCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR, retrieve_file_path
@@ -30,8 +29,10 @@ from . import mdp
 
 from isaaclab_assets.robots.unitree import G1_INSPIRE_FTP_CFG  # isort: skip
 
+from isaaclab_tasks.utils.presets import MultiBackendSceneCfg, MultiBackendSimulationCfg
 
-def _build_g1_inspire_pickplace_pipeline():
+
+def _build_g1_inspire_pickplace_pipeline(_cfg: TeleopPipelineCfg):
     """Build an IsaacTeleop retargeting pipeline for Unitree G1 Inspire Hand pick-place teleoperation.
 
     Creates two Se3AbsRetargeters for left and right wrist pose tracking and
@@ -253,15 +254,14 @@ def _build_g1_inspire_pickplace_pipeline():
         }
     )
 
-    pipeline = OutputCombiner({"action": connected_reorderer.output("output")})
-    return pipeline
+    return OutputCombiner({"action": connected_reorderer.output("output")})
 
 
 ##
 # Scene definition
 ##
 @configclass
-class ObjectTableSceneCfg(InteractiveSceneCfg):
+class ObjectTableSceneCfg(MultiBackendSceneCfg):
     """Configuration for the Unitree G1 Inspire Hand Pick Place Base Scene."""
 
     # Table
@@ -513,6 +513,7 @@ class EventCfg:
 class PickPlaceG1InspireFTPEnvCfg(ManagerBasedRLEnvCfg):
     """Configuration for the GR1T2 environment."""
 
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg()
     # Scene settings
     scene: ObjectTableSceneCfg = ObjectTableSceneCfg(num_envs=1, env_spacing=2.5, replicate_physics=True)
     # Basic settings
@@ -594,12 +595,11 @@ class PickPlaceG1InspireFTPEnvCfg(ManagerBasedRLEnvCfg):
         self.actions.pink_ik_cfg.controller.urdf_output_dir = self.temp_urdf_dir
 
         # IsaacTeleop-based teleoperation pipeline (resolved lazily at runtime).
-        self.xr = XrCfg(
+        self.scene.xr_anchor = XrCfg(
             anchor_pos=(0.0, 0.0, 0.0),
             anchor_rot=(0.0, 0.0, 0.0, 1.0),
         )
         self.isaac_teleop = IsaacTeleopCfg(
-            pipeline_builder=_build_g1_inspire_pickplace_pipeline,
+            pipeline_cfg=TeleopPipelineCfg(class_type=_build_g1_inspire_pickplace_pipeline),
             sim_device=self.sim.device,
-            xr_cfg=self.xr,
         )

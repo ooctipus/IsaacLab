@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg, NewtonShapeCfg, VBDSolverCfg
+from isaaclab_newton.physics import MJWarpSolverCfg, NewtonShapeCfg, NewtonSolverCfg, VBDSolverCfg
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import AssetBaseCfg, CableObjectCfg
@@ -58,38 +58,36 @@ _PARTITION_BOUNDS_MARKER_SPAWN_CFG = sim_utils.CuboidCfg(
 class PhysicsCfg(PresetCfg):
     """Newton proxy physics for rigid-cable coupling."""
 
-    newton_mjwarp_vbd_proxy: NewtonCfg = NewtonCfg(
-        solver_cfg=CouplerProxyCfg(
-            entries=[
-                CouplerEntryCfg(
-                    name="rigid",
-                    solver_cfg=MJWarpSolverCfg(
-                        cone="elliptic",
-                        ls_iterations=20,
-                        integrator="implicitfast",
-                    ),
-                    bodies=[r"/World/envs/env_.*/Robot"],
+    newton_mjwarp_vbd_proxy: NewtonSolverCfg = CouplerProxyCfg(
+        entries=[
+            CouplerEntryCfg(
+                name="rigid",
+                solver_cfg=MJWarpSolverCfg(
+                    cone="elliptic",
+                    ls_iterations=20,
+                    integrator="implicitfast",
                 ),
-                CouplerEntryCfg(
-                    name="cable",
-                    solver_cfg=VBDSolverCfg(iterations=10),
-                    bodies=[r"/World/envs/env_.*/Cable"],
-                    include_static_shapes=True,
-                ),
-            ],
-            proxies=[
-                CouplerProxyMappingCfg(
-                    source="rigid",
-                    destination="cable",
-                    bodies=[
-                        r"/World/envs/env_.*/Robot/Geometry/.*panda_hand",
-                        r"/World/envs/env_.*/Robot/Geometry/.*panda_(left|right)finger",
-                    ],
-                    collide_interval=1,
-                )
-            ],
-            iterations=1,
-        ),
+                bodies=[r"/World/envs/env_.*/Robot"],
+            ),
+            CouplerEntryCfg(
+                name="cable",
+                solver_cfg=VBDSolverCfg(iterations=10),
+                bodies=[r"/World/envs/env_.*/Cable"],
+                include_static_shapes=True,
+            ),
+        ],
+        proxies=[
+            CouplerProxyMappingCfg(
+                source="rigid",
+                destination="cable",
+                bodies=[
+                    r"/World/envs/env_.*/Robot/Geometry/.*panda_hand",
+                    r"/World/envs/env_.*/Robot/Geometry/.*panda_(left|right)finger",
+                ],
+                collide_interval=1,
+            )
+        ],
+        iterations=1,
         default_shape_cfg=NewtonShapeCfg(
             ke=2.5e3,
             kd=100.0,
@@ -153,7 +151,7 @@ class FrankaCableSceneCfg(_FrankaSoftSceneCfg):
 class FrankaCableCameraSceneCfg(FrankaCableSceneCfg):
     """Franka cable scene with a base camera."""
 
-    base_camera: CameraCfg = FRANKA_CAMERA_CFG
+    camera: CameraCfg = FRANKA_CAMERA_CFG
 
 
 @configclass
@@ -175,7 +173,7 @@ class CommandsCfg:
             yaw=(0.0, 0.0),
         ),
         success_vis_asset_name="table",
-        success_visualizer_cfg=VisualizationMarkersCfg(
+        success_marker_cfg=VisualizationMarkersCfg(
             prim_path="/Visuals/SuccessMarkers",
             markers={
                 "failure": TABLE_SPAWN_CFG.replace(

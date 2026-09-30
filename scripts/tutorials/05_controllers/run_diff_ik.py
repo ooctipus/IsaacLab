@@ -38,12 +38,13 @@ simulation_app = app_launcher.app
 """Rest everything follows."""
 
 import torch
+from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import AssetBaseCfg
 from isaaclab.controllers import DifferentialIKController, DifferentialIKControllerCfg
 from isaaclab.managers import SceneEntityCfg
-from isaaclab.markers import VisualizationMarkers
+from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
 from isaaclab.markers.config import FRAME_MARKER_CFG
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
@@ -88,8 +89,26 @@ class TableTopSceneCfg(InteractiveSceneCfg):
     else:
         raise ValueError(f"Robot {args_cli.robot} is not supported. Valid: franka_panda, ur10")
 
+    ee_marker: VisualizationMarkersCfg = FRAME_MARKER_CFG.replace(prim_path="/Visuals/ee_current")
+    goal_marker: VisualizationMarkersCfg = FRAME_MARKER_CFG.replace(prim_path="/Visuals/ee_goal")
+    ee_marker.markers["frame"].scale = (0.1, 0.1, 0.1)
+    goal_marker.markers["frame"].scale = (0.1, 0.1, 0.1)
 
-def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
+
+@configclass
+class TutorialCfg:
+    """Complete direct controller tutorial configuration."""
+
+    sim: sim_utils.SimulationCfg = sim_utils.SimulationCfg(physics=PhysxCfg(), dt=0.01, device=args_cli.device)
+    scene: TableTopSceneCfg = TableTopSceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0)
+
+
+def run_simulator(
+    sim: sim_utils.SimulationContext,
+    scene: InteractiveScene,
+    ee_marker: VisualizationMarkers,
+    goal_marker: VisualizationMarkers,
+):
     """Runs the simulation loop."""
     # Extract scene entities
     # note: we only do this here for readability.
@@ -98,12 +117,6 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
     # Create controller
     diff_ik_cfg = DifferentialIKControllerCfg(command_type="pose", use_relative_mode=False, ik_method="dls")
     diff_ik_controller = DifferentialIKController(diff_ik_cfg, num_envs=scene.num_envs, device=sim.device)
-
-    # Markers
-    frame_marker_cfg = FRAME_MARKER_CFG.copy()
-    frame_marker_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
-    ee_marker = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/ee_current"))
-    goal_marker = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/ee_goal"))
 
     # Define goals for the arm (x,y,z,qx,qy,qz,qw)
     ee_goals = [
@@ -194,19 +207,20 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
 def main():
     """Main function."""
     # Load kit helper
-    sim_cfg = sim_utils.SimulationCfg(dt=0.01, device=args_cli.device)
-    sim = sim_utils.SimulationContext(sim_cfg)
+    cfg = TutorialCfg()
+    sim = sim_utils.SimulationContext(cfg.sim)
     # Set main camera
     sim.set_camera_view([2.5, 2.5, 2.5], [0.0, 0.0, 0.0])
     # Design scene
-    scene_cfg = TableTopSceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0)
-    scene = InteractiveScene(scene_cfg)
+    scene = cfg.scene.class_type(cfg.scene)
+    ee_marker = cfg.scene.ee_marker.class_type(cfg.scene.ee_marker)
+    goal_marker = cfg.scene.goal_marker.class_type(cfg.scene.goal_marker)
     # Play the simulator
     sim.reset()
     # Now we are ready!
     print("[INFO]: Setup complete...")
     # Run the simulator
-    run_simulator(sim, scene)
+    run_simulator(sim, scene, ee_marker, goal_marker)
 
 
 if __name__ == "__main__":

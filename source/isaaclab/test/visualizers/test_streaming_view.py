@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 import torch
@@ -16,7 +18,7 @@ from isaaclab.envs.utils.camera_colorizer import (
     sensor_key_for_gt_type,
     sensor_keys_for_gt_types,
 )
-from isaaclab.envs.utils.camera_view import _best_streaming_cols, compose_streaming_grid
+from isaaclab.visualizers.streaming_view import _best_streaming_cols, compose_streaming_grid
 
 # ---------------------------------------------------------------------------
 # CameraFrameColorizer
@@ -222,7 +224,74 @@ def test_streaming_cfg_fields_on_visualizer_cfg():
     assert cfg.streaming_envs == [0, 1, 2]
     assert cfg.streaming_gt_types == ["rgb", "depth"]
     assert cfg.streaming_depth_max == 8.0
-    assert cfg.streaming_cam_renderer is None
+    assert cfg.streaming_camera is None
+
+
+# ---------------------------------------------------------------------------
+# StreamingView camera resolution
+# ---------------------------------------------------------------------------
+
+
+def _fake_camera(prim_path: str, num_instances: int = 4):
+    return SimpleNamespace(
+        num_instances=num_instances,
+        cfg=SimpleNamespace(prim_path=prim_path),
+        update=lambda **_kwargs: None,
+        data=SimpleNamespace(output={"rgb": torch.zeros((num_instances, 1, 1, 4), dtype=torch.uint8)}),
+    )
+
+
+def test_streaming_view_requires_an_explicit_camera():
+    from isaaclab.visualizers.streaming_view import StreamingView
+    from isaaclab.visualizers.visualizer_cfg import VisualizerCfg
+
+    with pytest.raises(ValueError, match="requires an explicit streaming_camera"):
+        StreamingView(VisualizerCfg(streaming_envs=[0, 1]), {})
+
+
+def test_streaming_view_streams_the_named_scene_camera():
+    from isaaclab.visualizers.streaming_view import StreamingView
+    from isaaclab.visualizers.visualizer_cfg import VisualizerCfg
+
+    first, wanted = _fake_camera("/World/envs/env_0/Camera"), _fake_camera("/World/envs/env_0/Depth")
+    depth_path = "/World/envs/env_[^/]+/Depth"
+    cfg = VisualizerCfg(streaming_envs=[0], streaming_camera="{ENV_REGEX_NS}/Depth")
+    view = StreamingView(cfg, {"/World/envs/env_[^/]+/Camera": first, depth_path: wanted})
+
+    assert view.camera is wanted
+
+
+def test_streaming_view_rejects_a_camera_the_scene_does_not_have():
+    from isaaclab.visualizers.streaming_view import StreamingView
+    from isaaclab.visualizers.visualizer_cfg import VisualizerCfg
+
+    cfg = VisualizerCfg(streaming_envs=[0], streaming_camera="{ENV_REGEX_NS}/Missing")
+    with pytest.raises(RuntimeError, match="is not a registered camera prim-path expression"):
+        StreamingView(
+            cfg,
+            {"/World/envs/env_[^/]+/Camera": _fake_camera("/World/envs/env_0/Camera")},
+        )
+
+
+def test_streaming_view_rejects_a_scene_without_any_camera():
+    from isaaclab.visualizers.streaming_view import StreamingView
+    from isaaclab.visualizers.visualizer_cfg import VisualizerCfg
+
+    cfg = VisualizerCfg(streaming_camera="{ENV_REGEX_NS}/Camera")
+    with pytest.raises(RuntimeError, match="is not a registered camera prim-path expression"):
+        StreamingView(cfg, {})
+
+
+def test_streaming_view_rejects_a_camera_without_the_requested_output():
+    from isaaclab.visualizers.streaming_view import StreamingView
+    from isaaclab.visualizers.visualizer_cfg import VisualizerCfg
+
+    camera = _fake_camera("/World/envs/env_0/Camera")
+    with pytest.raises(KeyError, match="No sensor output found for GT type 'depth'"):
+        StreamingView(
+            VisualizerCfg(streaming_camera="{ENV_REGEX_NS}/Camera", streaming_gt_types=("depth",)),
+            {"/World/envs/env_[^/]+/Camera": camera},
+        )
 
 
 def test_camera_colorizer_segmentation_golden_ratio_hues():
@@ -250,17 +319,12 @@ def test_compose_streaming_grid_no_env_split():
 
 
 def test_streaming_gt_types_validated_on_setup():
-    import unittest.mock as mock
+    from isaaclab.visualizers.streaming_view import StreamingView
+    from isaaclab.visualizers.visualizer_cfg import VisualizerCfg
 
-    from isaaclab_visualizers.newton import NewtonGLVisualizer, NewtonGLVisualizerCfg
-
-    cfg = NewtonGLVisualizerCfg(streaming_view=True, streaming_gt_types=["rgb", "optical_flow"])
-    viz = mock.MagicMock()
-    viz.cfg = cfg
-    viz._uses_streaming_view = lambda: bool(cfg.streaming_view)
-
+    cfg = VisualizerCfg(streaming_view=True, streaming_gt_types=["rgb", "optical_flow"])
     with pytest.raises(ValueError, match="optical_flow"):
-        NewtonGLVisualizer._setup_streaming_view(viz, 4)
+        StreamingView(cfg, {})
 
 
 # ---------------------------------------------------------------------------
@@ -319,14 +383,12 @@ def test_best_streaming_cols_target_aspect_16_9():
     )
 
 
-def test_compose_streaming_grid_invalid_target_aspect_fallback():
-    """Non-positive or non-finite target_aspect falls back to 1.0 without raising."""
+def test_compose_streaming_grid_rejects_invalid_target_aspect():
+    """The requested layout cannot silently select another aspect ratio."""
     import math
 
     h, w = 48, 64
     frames = [np.zeros((h, w, 3), dtype=np.uint8)] * 4
-    shape_default = compose_streaming_grid(frames, 4, 1).shape
-    assert compose_streaming_grid(frames, 4, 1, target_aspect=float("nan")).shape == shape_default
-    assert compose_streaming_grid(frames, 4, 1, target_aspect=0.0).shape == shape_default
-    assert compose_streaming_grid(frames, 4, 1, target_aspect=-1.0).shape == shape_default
-    assert compose_streaming_grid(frames, 4, 1, target_aspect=math.inf).shape == shape_default
+    for invalid in (float("nan"), math.inf, 0.0, -1.0):
+        with pytest.raises(ValueError, match="positive and finite"):
+            compose_streaming_grid(frames, 4, 1, target_aspect=invalid)

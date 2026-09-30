@@ -9,10 +9,9 @@
 from __future__ import annotations
 
 import enum
-from collections.abc import Callable
 
-import numpy as np
-
+from isaaclab.assets import AssetBaseCfg
+from isaaclab.sim import SensorFrameCfg
 from isaaclab.utils.configclass import configclass
 
 
@@ -28,13 +27,16 @@ class XrAnchorRotationMode(enum.Enum):
     FOLLOW_PRIM_SMOOTHED = "follow_prim_smoothed"
     """Follow prim rotation mode with smooth interpolation: rotation smoothly follows prim's rotation using slerp."""
 
-    CUSTOM = "custom_rotation"
-    """Custom rotation mode: user provided function to calculate the rotation."""
-
 
 @configclass
-class XrCfg:
+class XrCfg(AssetBaseCfg):
     """Configuration for viewing and interacting with the environment through an XR device."""
+
+    prim_path: str = "/World/XRAnchor"
+    """Global clone-plan path for the XR anchor frame."""
+
+    spawn: SensorFrameCfg = SensorFrameCfg()
+    """Plain Xform spawner for the plan-owned XR anchor frame."""
 
     anchor_pos: tuple[float, float, float] = (0.0, 0.0, 0.0)
     """Specifies the position (in m) of the simulation when viewed in an XR device.
@@ -68,7 +70,6 @@ class XrCfg:
     - :attr:`XrAnchorRotationMode.FIXED`: Sets rotation once to anchor_rot value
     - :attr:`XrAnchorRotationMode.FOLLOW_PRIM`: Rotation follows prim's rotation
     - :attr:`XrAnchorRotationMode.FOLLOW_PRIM_SMOOTHED`: Rotation smoothly follows prim's rotation using slerp
-    - :attr:`XrAnchorRotationMode.CUSTOM`: user provided function to calculate the rotation
     """
 
     anchor_rotation_smoothing_time: float = 1.0
@@ -78,19 +79,6 @@ class XrCfg:
     Smaller values (e.g., 0.1) result in faster/snappier response but less smoothing.
     Larger values (e.g., 0.75–2.0) result in slower/smoother response but more lag.
     Typical useful range: 0.3 – 1.5 seconds depending on runtime frame-rate and comfort.
-    """
-
-    anchor_rotation_custom_func: Callable[[np.ndarray, np.ndarray], np.ndarray] = lambda headpose, primpose: np.array(
-        [0, 0, 0, 1], dtype=np.float64
-    )
-    """Specifies the function to calculate the rotation of the XR anchor when anchor_rotation_mode is CUSTOM.
-
-    Args:
-        headpose: Previous head pose as numpy array [x, y, z, w, x, y, z] (position + quaternion)
-        pose: Anchor prim pose as numpy array [x, y, z, w, x, y, z] (position + quaternion)
-
-    Returns:
-        np.ndarray: Quaternion as numpy array [w, x, y, z]
     """
 
     near_plane: float = 0.15

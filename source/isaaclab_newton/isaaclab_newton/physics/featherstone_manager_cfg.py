@@ -36,9 +36,6 @@ class FeatherstoneSolverCfg(NewtonSolverCfg):
     class_type: type[NewtonManager] | str = "{DIR}.featherstone_manager:NewtonFeatherstoneManager"
     """Manager class for the Featherstone solver."""
 
-    solver_type: str = "featherstone"
-    """Solver type. Can be "featherstone"."""
-
     angular_damping: float = 0.05
     """Angular damping parameter for rigid contact simulation."""
 

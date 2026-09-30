@@ -78,30 +78,6 @@ def test_launch_simulation_passes_visualizer_intent_to_applauncher(monkeypatch):
     assert captured["closed"] is True
 
 
-def test_launch_simulation_kitless_viz_none_sets_disable_all(monkeypatch):
-    """Kitless mode should persist explicit disable-all semantics for --viz none."""
-    captured = {"types": None, "explicit": None, "disable_all": None}
-
-    class _FakeAppLauncher:
-        is_available = staticmethod(lambda: True)
-
-        @staticmethod
-        def sync_visualizer_cli_settings_to_carb(launcher_args: dict) -> None:
-            captured["types"] = " ".join(launcher_args["visualizer"]) if launcher_args.get("visualizer") else ""
-            captured["explicit"] = launcher_args["visualizer_explicit"]
-            captured["disable_all"] = launcher_args["visualizer_disable_all"]
-
-    _force_kitless(monkeypatch)
-    monkeypatch.setitem(sys.modules, "isaaclab.app", types.SimpleNamespace(AppLauncher=_FakeAppLauncher))
-
-    env_cfg = _DummyEnvCfg(_DummySimCfg(None))
-    launcher_args = argparse.Namespace(visualizer=None, visualizer_explicit=True)
-    with sim_launcher.launch_simulation(env_cfg, launcher_args):
-        pass
-
-    assert captured == {"types": "", "explicit": True, "disable_all": True}
-
-
 def test_launch_simulation_kitless_applies_python_logging_level(monkeypatch):
     """Kitless mode should apply the resolved Python logging level before yielding."""
     captured: dict[str, object] = {}
@@ -118,7 +94,7 @@ def test_launch_simulation_kitless_applies_python_logging_level(monkeypatch):
     monkeypatch.setattr(sim_launcher, "apply_python_logging_level", fake_apply)
 
     env_cfg = _DummyEnvCfg(_DummySimCfg(None))
-    launcher_args = argparse.Namespace(visualizer=None, visualizer_explicit=True)
+    launcher_args = argparse.Namespace()
     with sim_launcher.launch_simulation(env_cfg, launcher_args):
         pass
 

@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import inspect
-import weakref
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from collections.abc import Sequence
@@ -16,15 +15,13 @@ import torch
 import warp as wp
 
 import isaaclab.sim as sim_utils
-from isaaclab.cloner.cloner_cfg import expand_env_regex_ns
-from isaaclab.physics import PhysicsEvent, PhysicsManager
+from isaaclab.physics import PhysicsEvent
 from isaaclab.sim.simulation_context import SimulationContext
-from isaaclab.sim.utils.stage import get_current_stage
 from isaaclab.utils.warp import ProxyArray
 
-if TYPE_CHECKING:
-    from pxr import Usd
+from .asset import Asset
 
+if TYPE_CHECKING:
     from .asset_base_cfg import AssetBaseCfg
 
 
@@ -54,7 +51,7 @@ class _AssetSelectorCache:
         self._entries.clear()
 
 
-class AssetBase(ABC):
+class AssetBase(Asset, ABC):
     """The base interface class for assets.
 
     An asset corresponds to any physics-enabled object that can be spawned in the simulation. These include
@@ -64,13 +61,8 @@ class AssetBase(ABC):
     This allows a convenient way to perform post-processing operations on the buffers before writing them
     into the simulator and obtaining the corresponding simulation results.
 
-    The class handles both the spawning of the asset into the USD stage as well as initialization of necessary
-    physics handles to interact with the asset. Upon construction of the asset instance, the prim corresponding
-    to the asset is spawned into the USD stage if the spawn configuration is not None. The spawn configuration
-    is defined in the :attr:`AssetBaseCfg.spawn` attribute. In case the configured :attr:`AssetBaseCfg.prim_path`
-    is an expression, then the prim is spawned at all the matching paths. Otherwise, a single prim is spawned
-    at the configured path. For more information on the spawn configuration, see the
-    :mod:`isaaclab.sim.spawners` module.
+    The class extends :class:`Asset` with physics handles and runtime data buffers. Construction first authors
+    the plan-owned asset, then registers the callbacks that initialize its runtime view.
 
     Unlike backend-specific interfaces (e.g. Isaac Sim PhysX) where one usually needs to call
     initialize explicitly, the asset class automatically initializes and invalidates physics
@@ -92,14 +84,8 @@ class AssetBase(ABC):
         Args:
             cfg: The configuration class for the asset.
 
-        Raises:
-            RuntimeError: If no prims found at input prim path or prim path expression.
         """
-        # check that the config is valid
-        cfg.validate()
-        cfg.prim_path = expand_env_regex_ns(cfg.prim_path)
-        # store inputs
-        self.cfg = cfg.copy()
+        super().__init__(cfg)
         # Resolve shape-check flag once: True means checks are active.
         # cfg.disable_shape_checks: None -> follow __debug__
         # True -> force disable checks; False -> force enable checks.
@@ -109,30 +95,6 @@ class AssetBase(ABC):
             self._check_shapes = not self.cfg.disable_shape_checks
         # flag for whether the asset is initialized
         self._is_initialized = False
-        # get stage handle
-        self.stage: Usd.Stage = get_current_stage()
-
-        # spawn the asset
-        # determine path where prims should exist after spawn
-        if self.cfg.spawn is not None:
-            # Use spawn_path if set (by InteractiveScene), otherwise fall back to prim_path
-            check_path = self.cfg.spawn.spawn_path if self.cfg.spawn.spawn_path is not None else self.cfg.prim_path
-            self.cfg.spawn.func(
-                check_path,
-                self.cfg.spawn,
-                translation=self.cfg.init_state.pos,
-                orientation=self.cfg.init_state.rot,
-            )
-            # check that prims exist
-            matching_prims = sim_utils.find_matching_prims(check_path)
-            if len(matching_prims) == 0:
-                raise RuntimeError(f"Could not find prim with path {check_path}.")
-            # schema-side post-spawn hook (e.g. ArticulationCfg authors NewtonActuator prims here)
-            self.cfg._post_spawn(self.stage)
-        else:
-            # asset should exist at run time
-            check_path = self.cfg.prim_path
-
         # register various callback functions
         self._register_callbacks()
 
@@ -188,36 +150,6 @@ class AssetBase(ABC):
     """
     Operations.
     """
-
-    def set_visibility(self, visible: bool, env_ids: Sequence[int] | None = None):
-        """Set the visibility of the prims corresponding to the asset.
-
-        This operation affects the visibility of the prims corresponding to the asset in the USD stage.
-        It is useful for toggling the visibility of the asset in the simulator. For instance, one can
-        hide the asset when it is not being used to reduce the rendering overhead.
-
-        .. note::
-            This operation uses the PXR API to set the visibility of the prims. Thus, the operation
-            may have an overhead if the number of prims is large.
-
-        Args:
-            visible: Whether to make the prims visible or not.
-            env_ids: The indices of the object to set visibility. Defaults to None (all instances).
-        """
-        # resolve the environment ids
-        if env_ids is None:
-            env_ids = range(len(self._prims))
-        elif isinstance(env_ids, torch.Tensor):
-            env_ids = env_ids.detach().cpu().tolist()
-
-        # obtain the prims corresponding to the asset
-        # note: we only want to find the prims once since this is a costly operation
-        if not hasattr(self, "_prims"):
-            self._prims = sim_utils.find_matching_prims(self.cfg.prim_path)
-
-        # iterate over the environment ids
-        for env_id in env_ids:
-            sim_utils.set_prim_visibility(self._prims[env_id], visible)
 
     def set_debug_vis(self, debug_vis: bool) -> bool:
         """Sets whether to visualize the asset data.
@@ -425,41 +357,22 @@ class AssetBase(ABC):
 
     def _register_callbacks(self):
         """Registers physics lifecycle callbacks via the current backend's physics manager."""
-        physics_mgr_cls = SimulationContext.instance().physics_manager
+        manager = self._physics_manager = SimulationContext.instance()._physics_manager
 
-        # note: use weakref on callbacks to ensure that this object can be deleted when its destructor is called.
-        obj_ref = weakref.proxy(self)
-
-        def _invoke(callback_name, event):
-            getattr(obj_ref, callback_name)(event)
-
-        # Backend-agnostic: PHYSICS_READY (init) and STOP (invalidate)
-        self._initialize_handle = physics_mgr_cls.register_callback(
-            lambda payload: PhysicsManager.safe_callback_invoke(
-                _invoke, "_initialize_callback", payload, physics_manager=physics_mgr_cls
-            ),
+        self._initialize_handle = manager.register_callback(
+            self._initialize_callback,
             PhysicsEvent.PHYSICS_READY,
             order=10,
         )
-        self._invalidate_initialize_handle = physics_mgr_cls.register_callback(
-            lambda payload: PhysicsManager.safe_callback_invoke(
-                _invoke, "_invalidate_initialize_callback", payload, physics_manager=physics_mgr_cls
-            ),
+        self._invalidate_initialize_handle = manager.register_callback(
+            self._invalidate_initialize_callback,
             PhysicsEvent.STOP,
             order=10,
         )
-        # Optional: prim deletion (only supported by Kit PhysX backend, not ovphysx)
-        self._prim_deletion_handle = None
-        physics_backend = physics_mgr_cls.__name__.lower()
-        if physics_backend.startswith("physx"):
-            from isaaclab_physx.physics import IsaacEvents
-
-            self._prim_deletion_handle = physics_mgr_cls.register_callback(
-                lambda event: PhysicsManager.safe_callback_invoke(
-                    _invoke, "_on_prim_deletion", event, physics_manager=physics_mgr_cls
-                ),
-                IsaacEvents.PRIM_DELETION,
-            )
+        self._prim_deletion_handle = manager.register_callback(
+            self._on_prim_deletion,
+            PhysicsEvent.PRIM_DELETION,
+        )
 
     def _initialize_callback(self, event):
         """Initializes the scene elements.
@@ -469,8 +382,8 @@ class AssetBase(ABC):
             :attr:`PhysicsEvent.PHYSICS_READY` is dispatched by the current backend.
         """
         if not self._is_initialized:
-            self._backend = SimulationContext.instance().physics_manager.get_backend()
-            self._device = SimulationContext.instance().physics_manager.get_device()
+            self._backend = self._physics_manager.get_backend()
+            self._device = self._physics_manager.get_device()
             self._initialize_impl()
             self._is_initialized = True
 
@@ -484,13 +397,9 @@ class AssetBase(ABC):
         else:
             self._debug_vis_handle = None
 
-    def _on_prim_deletion(self, event) -> None:
-        """Invalidates and clears callbacks when the prim is deleted.
-
-        Only used when the backend supports prim deletion events (e.g. PhysX).
-        """
-        payload = getattr(event, "payload", event) if not isinstance(event, dict) else event
-        prim_path = payload.get("prim_path", "") if isinstance(payload, dict) else ""
+    def _on_prim_deletion(self, payload: dict[str, str]) -> None:
+        """Invalidate and clear callbacks when the prim is deleted."""
+        prim_path = payload["prim_path"]
         if prim_path == "/":
             self._clear_callbacks()
             return

@@ -33,10 +33,13 @@ simulation_app = app_launcher.app
 """Rest everything follows."""
 
 import torch
+from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
-from isaaclab.assets import Articulation
+from isaaclab import cloner
+from isaaclab.assets import Articulation, ArticulationCfg, AssetBaseCfg
 from isaaclab.sim import SimulationContext
+from isaaclab.utils import configclass
 
 ##
 # Pre-defined configs
@@ -44,31 +47,31 @@ from isaaclab.sim import SimulationContext
 from isaaclab_assets import CARTPOLE_CFG  # isort:skip
 
 
-def design_scene() -> tuple[dict, list[list[float]]]:
+@configclass
+class ArticulationTutorialCfg:
+    """Complete declarative input for the direct clone lifecycle."""
+
+    sim: sim_utils.SimulationCfg = sim_utils.SimulationCfg(
+        physics=PhysxCfg(),
+    )
+    num_envs = 2
+    env_spacing = 1.0
+    ground = AssetBaseCfg(prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg())
+    cartpole: ArticulationCfg = CARTPOLE_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+    light = AssetBaseCfg(
+        prim_path="/World/Light", spawn=sim_utils.DomeLightCfg(intensity=3000.0, color=(0.75, 0.75, 0.75))
+    )
+
+
+def design_scene(sim: SimulationContext, cfg: ArticulationTutorialCfg) -> tuple[dict[str, Articulation], torch.Tensor]:
     """Designs the scene."""
-    # Ground-plane
-    cfg = sim_utils.GroundPlaneCfg()
-    cfg.func("/World/defaultGroundPlane", cfg)
-    # Lights
-    cfg = sim_utils.DomeLightCfg(intensity=3000.0, color=(0.75, 0.75, 0.75))
-    cfg.func("/World/Light", cfg)
-
-    # Create separate groups called "Origin1", "Origin2"
-    # Each group will have a robot in it
-    origins = [[0.0, 0.0, 0.0], [-1.0, 0.0, 0.0]]
-    # Origin 1
-    sim_utils.create_prim("/World/Origin1", "Xform", translation=origins[0])
-    # Origin 2
-    sim_utils.create_prim("/World/Origin2", "Xform", translation=origins[1])
-
-    # Articulation
-    cartpole_cfg = CARTPOLE_CFG.copy()
-    cartpole_cfg.prim_path = "/World/Origin.*/Robot"
-    cartpole = Articulation(cfg=cartpole_cfg)
-
-    # return the scene information
-    scene_entities = {"cartpole": cartpole}
-    return scene_entities, origins
+    with cloner.ReplicateSession(
+        (cfg.ground, cfg.light, cfg.cartpole), num_clones=cfg.num_envs, env_spacing=cfg.env_spacing
+    ):
+        cfg.ground.class_type(cfg.ground)
+        cfg.light.class_type(cfg.light)
+        cartpole = cfg.cartpole.class_type(cfg.cartpole)
+    return {"cartpole": cartpole}, sim.get_clone_plan().positions
 
 
 def run_simulator(sim: sim_utils.SimulationContext, entities: dict[str, Articulation], origins: torch.Tensor):
@@ -123,14 +126,13 @@ def run_simulator(sim: sim_utils.SimulationContext, entities: dict[str, Articula
 
 def main():
     """Main function."""
-    # Load kit helper
-    sim_cfg = sim_utils.SimulationCfg(device=args_cli.device)
-    sim = SimulationContext(sim_cfg)
+    cfg = ArticulationTutorialCfg()
+    cfg.sim.device = args_cli.device
+    sim = SimulationContext(cfg.sim)
     # Set main camera
     sim.set_camera_view([2.5, 0.0, 4.0], [0.0, 0.0, 2.0])
     # Design scene
-    scene_entities, scene_origins = design_scene()
-    scene_origins = torch.tensor(scene_origins, device=sim.device)
+    scene_entities, scene_origins = design_scene(sim, cfg)
     # Play the simulator
     sim.reset()
     # Now we are ready!

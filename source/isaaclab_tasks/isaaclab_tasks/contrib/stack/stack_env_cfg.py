@@ -5,12 +5,12 @@
 
 from dataclasses import MISSING
 
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg, NewtonCollisionPipelineCfg, NewtonShapeCfg
+from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCollisionPipelineCfg, NewtonShapeCfg, NewtonSolverCfg
 from isaaclab_physx.physics import PhysxCfg
+from isaaclab_teleop import XrCfg
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
-from isaaclab.devices.openxr import XrCfg
 from isaaclab.envs import ManagerBasedRLEnvCfg
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
@@ -19,7 +19,6 @@ from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.markers.config import FRAME_MARKER_CFG
 from isaaclab.physics import PhysxAutoCfg
-from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors.frame_transformer.frame_transformer_cfg import FrameTransformerCfg, OffsetCfg
 from isaaclab.sim.schemas.schemas_cfg import RigidBodyPropertiesCfg
 from isaaclab.sim.spawners.from_files.from_files_cfg import GroundPlaneCfg, UsdFileCfg
@@ -27,6 +26,7 @@ from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.configclass import configclass
 
 from isaaclab_tasks.utils import PresetCfg
+from isaaclab_tasks.utils.presets import MultiBackendSceneCfg, MultiBackendSimulationCfg
 
 from . import mdp
 from .mdp import stack_events
@@ -89,7 +89,7 @@ def apply_default_semantics(scene: "ObjectTableSceneCfg") -> None:
 # Scene definition
 ##
 @configclass
-class ObjectTableSceneCfg(InteractiveSceneCfg):
+class ObjectTableSceneCfg(MultiBackendSceneCfg):
     """Configuration for the stacking scene with a robot and objects.
     This is the abstract base implementation, the exact scene is defined in the derived classes
     which need to set the target object, robot and end-effector frames
@@ -299,21 +299,18 @@ class PhysicsCfg(PresetCfg):
         # Let object contacts stall position-driven grippers before they tunnel through a grasp.
         solve_articulation_contact_last=True,
     )
-    newton_mjwarp = NewtonCfg(
-        solver_cfg=MJWarpSolverCfg(
-            solver="newton",
-            integrator="implicitfast",
-            njmax=300,
-            nconmax=200,
-            impratio=10.0,
-            cone="elliptic",
-            update_data_interval=2,
-            iterations=100,
-            ls_iterations=15,
-            ls_parallel=False,
-            use_mujoco_contacts=False,
-            ccd_iterations=35,
-        ),
+    newton_mjwarp = MJWarpSolverCfg(
+        solver="newton",
+        integrator="implicitfast",
+        njmax=300,
+        nconmax=200,
+        impratio=10.0,
+        cone="elliptic",
+        update_data_interval=2,
+        iterations=100,
+        ls_iterations=15,
+        use_mujoco_contacts=False,
+        ccd_iterations=35,
         collision_cfg=NewtonCollisionPipelineCfg(),
         default_shape_cfg=NewtonShapeCfg(),
         num_substeps=2,
@@ -335,7 +332,7 @@ def raise_if_surface_gripper_on_newton(env_cfg) -> None:
     """
     if getattr(env_cfg.scene, "surface_gripper", None) is None:
         return
-    if isinstance(env_cfg.sim.physics, NewtonCfg):
+    if isinstance(env_cfg.sim.physics, NewtonSolverCfg):
         raise ValueError(
             "Surface grippers are only supported by the PhysX backend; the Newton backend has no "
             "surface-gripper implementation. Re-run this task with physics=isaacsim_physx (the default)."
@@ -346,6 +343,7 @@ def raise_if_surface_gripper_on_newton(env_cfg) -> None:
 class StackEnvCfg(ManagerBasedRLEnvCfg):
     """Configuration for the stacking environment."""
 
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg()
     # Scene settings
     scene: ObjectTableSceneCfg = ObjectTableSceneCfg(num_envs=1, env_spacing=2.5, replicate_physics=False)
     # Basic settings
@@ -360,11 +358,6 @@ class StackEnvCfg(ManagerBasedRLEnvCfg):
     events = None
     curriculum = None
 
-    xr: XrCfg = XrCfg(
-        anchor_pos=(-0.1, -0.5, -1.05),
-        anchor_rot=(0, 0, -0.5, 0.866),
-    )
-
     def __post_init__(self):
         """Post initialization."""
         # general settings
@@ -374,3 +367,7 @@ class StackEnvCfg(ManagerBasedRLEnvCfg):
         self.sim.dt = 0.01  # 100Hz
         self.sim.render_interval = 2
         self.sim.physics = PhysicsCfg()
+        self.scene.xr_anchor = XrCfg(
+            anchor_pos=(-0.1, -0.5, -1.05),
+            anchor_rot=(0, 0, -0.5, 0.866),
+        )

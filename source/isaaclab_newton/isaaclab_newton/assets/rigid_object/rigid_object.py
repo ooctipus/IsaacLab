@@ -15,17 +15,15 @@ import warp as wp
 from newton import ModelFlags
 from newton.selection import ArticulationView
 
-from pxr import UsdPhysics
-
 import isaaclab.utils.string as string_utils
 from isaaclab.assets.rigid_object.base_rigid_object import BaseRigidObject
 from isaaclab.physics import PhysicsEvent
-from isaaclab.sim.utils.queries import path_expr_to_glob, resolve_matching_prims_from_source
+from isaaclab.sim import SimulationContext
+from isaaclab.sim.utils.queries import path_expr_to_glob
 from isaaclab.utils.warp import ProxyArray
 from isaaclab.utils.wrench_composer import WrenchComposer
 
 from isaaclab_newton.assets import kernels as shared_kernels
-from isaaclab_newton.physics import NewtonManager as SimulationManager
 
 from .rigid_object_data import RigidObjectData
 
@@ -799,7 +797,7 @@ class RigidObject(BaseRigidObject):
             device=self.device,
         )
         # tell the physics engine that some of the body properties have been updated
-        SimulationManager.add_model_change(ModelFlags.BODY_INERTIAL_PROPERTIES)
+        self._physics_manager.add_model_change(ModelFlags.BODY_INERTIAL_PROPERTIES)
 
     def set_masses_mask(
         self,
@@ -848,7 +846,7 @@ class RigidObject(BaseRigidObject):
             device=self.device,
         )
         # tell the physics engine that some of the body properties have been updated
-        SimulationManager.add_model_change(ModelFlags.BODY_INERTIAL_PROPERTIES)
+        self._physics_manager.add_model_change(ModelFlags.BODY_INERTIAL_PROPERTIES)
 
     def set_coms_index(
         self,
@@ -896,7 +894,7 @@ class RigidObject(BaseRigidObject):
         )
         self.data._reset_body_com_pose_b_dependents()
         # tell the physics engine that some of the body properties have been updated
-        SimulationManager.add_model_change(ModelFlags.BODY_INERTIAL_PROPERTIES)
+        self._physics_manager.add_model_change(ModelFlags.BODY_INERTIAL_PROPERTIES)
 
     def set_coms_mask(
         self,
@@ -945,7 +943,7 @@ class RigidObject(BaseRigidObject):
         )
         self.data._reset_body_com_pose_b_dependents()
         # tell the physics engine that some of the body properties have been updated
-        SimulationManager.add_model_change(ModelFlags.BODY_INERTIAL_PROPERTIES)
+        self._physics_manager.add_model_change(ModelFlags.BODY_INERTIAL_PROPERTIES)
 
     def set_inertias_index(
         self,
@@ -993,7 +991,7 @@ class RigidObject(BaseRigidObject):
             device=self.device,
         )
         # tell the physics engine that some of the body properties have been updated
-        SimulationManager.add_model_change(ModelFlags.BODY_INERTIAL_PROPERTIES)
+        self._physics_manager.add_model_change(ModelFlags.BODY_INERTIAL_PROPERTIES)
 
     def set_inertias_mask(
         self,
@@ -1042,30 +1040,27 @@ class RigidObject(BaseRigidObject):
             device=self.device,
         )
         # tell the physics engine that some of the body properties have been updated
-        SimulationManager.add_model_change(ModelFlags.BODY_INERTIAL_PROPERTIES)
+        self._physics_manager.add_model_change(ModelFlags.BODY_INERTIAL_PROPERTIES)
 
     """
     Internal helper.
     """
 
     def _initialize_impl(self):
-        def has_rigid_body_api(prim) -> bool:
-            return bool(prim.HasAPI(UsdPhysics.RigidBodyAPI))
-
-        resolve_kwargs = {"predicate": has_rigid_body_api, "expected_num_matches": 1}
-        _, root_prim_path_expr = resolve_matching_prims_from_source(self.cfg.prim_path, **resolve_kwargs)[0]
+        layout = SimulationContext.instance().get_clone_plan()
+        root_prim_path_expr = layout.match_rigid_body(self.cfg.prim_path).view_path
         # -- object view
         self._root_view = ArticulationView(
-            SimulationManager.get_model(),
+            self._physics_manager.get_model(),
             path_expr_to_glob(root_prim_path_expr),
             verbose=False,
         )
 
         # container for data access
-        self._data = RigidObjectData(self.root_view, self.device)
+        self._data = RigidObjectData(self.root_view, self.device, self._physics_manager)
 
         # Register callback to rebind simulation data after a full reset (model/state recreation).
-        self._physics_ready_handle = SimulationManager.register_callback(
+        self._physics_ready_handle = self._physics_manager.register_callback(
             lambda _: self._data._create_simulation_bindings(),
             PhysicsEvent.PHYSICS_READY,
             name=f"rigid_object_rebind_{self.cfg.prim_path}",

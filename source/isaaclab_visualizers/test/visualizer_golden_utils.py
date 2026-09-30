@@ -54,9 +54,10 @@ _MAX_DIFF_PCT_OVERRIDES: dict[str, float] = {
     # AnymalD: golden captured warm, first attempt runs cold; observed up to 9.61%.
     "anymal_d-kit-tiled": 12.0,
     "anymal_d-kit-viewport": 4.5,
-    # Newton GL tiled output differs by 0.64% between the L40S CI runner and the golden.
-    # Keep this narrow 1.0% tolerance paired with an SSIM guard for scene regressions.
-    "anymal_d-newton-tiled": 1.0,
+    # Newton GL tiled output varies per GPU model: 0.64% on the L40S CI runner, 1.15% on an
+    # RTX 5090, as shading and anti-aliasing speckle over the robot bodies. Matches the tolerance
+    # the other Newton GL entries already carry; the SSIM guard catches scene regressions.
+    "anymal_d-newton-tiled": 2.0,
     # RTX PRO 6000 Blackwell differs by up to 6.5% while preserving the expected pose.
     "shadow_hand-kit-tiled": 7.0,
     "shadow_hand-kit-viewport": 2.0,
@@ -81,9 +82,9 @@ _SSIM_THRESHOLD_OVERRIDES: dict[str, float] = {
     # 0.910 lets attempt 1 pass with a large gap above wrong-pose regressions (~0.69).
     "anymal_d-kit-tiled": 0.910,
     "anymal_d-kit-viewport": 0.960,
-    # The L40S comparison reaches SSIM 0.9883; retain a structural threshold well above
-    # known pose regressions while accepting this cross-GPU rasterization variation.
-    "anymal_d-newton-tiled": 0.980,
+    # Cross-GPU rasterization variation: SSIM 0.9883 on the L40S, 0.9667 on an RTX 5090. Kept
+    # well above the ~0.85 a wrong pose produces, so structural regressions still fail.
+    "anymal_d-newton-tiled": 0.960,
     # Cross-GPU RTX variation; observed SSIM 0.941 on RTX PRO 6000 Blackwell vs L40S goldens.
     # Wrong-pose regressions drop SSIM below 0.90.
     "shadow_hand-kit-tiled": 0.935,
@@ -344,7 +345,7 @@ def validate_visualizer_frame(
 def _get_active_visualizer(env, viz_type: str):
     """Return the first visualizer of the given type from ``env.sim.visualizers``."""
     from isaaclab_visualizers.kit import KitVisualizer
-    from isaaclab_visualizers.newton import NewtonVisualizer
+    from isaaclab_visualizers.newton.newton_visualizer import NewtonVisualizer
 
     cls = KitVisualizer if viz_type == "kit" else NewtonVisualizer
     matches = [v for v in env.sim.visualizers if isinstance(v, cls)]
@@ -387,9 +388,7 @@ def run_visualizer_golden_cartpole(
         if capture_mode == "tiled":
             return _viz_utils._capture_visualizer_tiled_camera_rgb(_get_active_visualizer(env, viz_type))
         if viz_type == "kit":
-            return _viz_utils._capture_kit_viewport_with_pose_reapply(
-                env, _get_active_visualizer(env, "kit"), physics_backend=backend, prior_physics_steps=buffer_steps
-            )
+            return _viz_utils._capture_kit_viewport_with_pose_reapply(env, _get_active_visualizer(env, "kit"))
         newton_viz = _get_active_visualizer(env, "newton")
         viewer = getattr(newton_viz, "_viewer", None)
         assert viewer is not None, "NewtonVisualizer did not create a viewer."
@@ -463,8 +462,6 @@ def run_visualizer_golden_shadow_hand(
                 env,
                 _get_active_visualizer(env, "kit"),
                 resolution=_viz_utils._SHADOW_HAND_KIT_INTEGRATION_RENDER_RESOLUTION,
-                physics_backend=backend,
-                prior_physics_steps=0,
             )
         newton_viz = _get_active_visualizer(env, "newton")
         viewer = getattr(newton_viz, "_viewer", None)
@@ -539,8 +536,6 @@ def run_visualizer_golden_anymal_d(
                 env,
                 _get_active_visualizer(env, "kit"),
                 resolution=_viz_utils._ANYMAL_D_KIT_INTEGRATION_RENDER_RESOLUTION,
-                physics_backend=backend,
-                prior_physics_steps=_viz_utils._START_BUFFER_STEPS,
             )
         newton_viz = _get_active_visualizer(env, "newton")
         viewer = getattr(newton_viz, "_viewer", None)
@@ -603,19 +598,11 @@ def run_visualizer_golden_franka_cloth(
         if capture_mode == "tiled":
             return _viz_utils._capture_visualizer_tiled_camera_rgb(_get_active_visualizer(env, viz_type))
         if viz_type == "kit":
-            # Do NOT call env.sim.render() here: the VBD cloth solver never sets
-            # NewtonManager._newton_fabric_ready, so env.sim.render() blocks in
-            # the Fabric sync path indefinitely on some GPU/driver combinations
-            # (observed 48+ min hang on RTX PRO 4500 Blackwell).  Instead use
-            # app_updates_only=True which drives RTX TAA via lightweight app.update()
-            # ticks without triggering Newton Fabric sync.  The 12%/SSIM-0.85
-            # thresholds are loose enough to accept the resulting frame quality.
             return _viz_utils._capture_kit_viewport_with_pose_reapply(
                 env,
                 _get_active_visualizer(env, "kit"),
                 resolution=_viz_utils._FRANKA_CLOTH_KIT_INTEGRATION_RENDER_RESOLUTION,
                 max_warmup_frames=_viz_utils._FRANKA_CLOTH_KIT_VIEWPORT_WARMUP_FRAMES,
-                app_updates_only=True,
             )
         newton_viz = _get_active_visualizer(env, "newton")
         viewer = getattr(newton_viz, "_viewer", None)

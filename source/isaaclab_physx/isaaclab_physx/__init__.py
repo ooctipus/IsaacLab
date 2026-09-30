@@ -8,7 +8,6 @@
 import importlib.metadata
 import sys
 from contextlib import suppress
-from types import ModuleType
 from typing import Any
 
 try:
@@ -20,14 +19,13 @@ _SIMULATION_MANAGER_ENABLE_HOOK: Any | None = None
 
 
 def _patch_isaacsim_simulation_manager() -> None:
-    """Patch legacy Isaac Sim's ``SimulationManager`` to use :class:`PhysxManager`.
+    """Disable legacy Isaac Sim physics lifecycle callbacks.
 
     New Isaac Sim versions support disabling their default lifecycle callbacks
     before extension startup. In that case, Isaac Lab leaves the original class
     and module exports untouched. Older versions register timeline (PLAY/STOP)
     and stage (OPENED/CLOSED) subscriptions unconditionally, so this function
-    disables those callbacks and redirects future imports to
-    :class:`isaaclab_physx.physics.PhysxManager`.
+    disables those callbacks.
 
     Starting with Isaac Sim 6.0.0-alpha.180 (commit ``8df6beeb0`` on
     ``develop``, "hmazhar/autofix_bugs"), the original
@@ -48,9 +46,8 @@ def _patch_isaacsim_simulation_manager() -> None:
     getDofVelocities`` on the very first ``scene.update()`` after
     ``sim.reset()``.
 
-    To prevent this on older versions, we disable the original class's default
-    callbacks here *before* swapping the module attribute, so
-    :class:`PhysxManager` becomes the single owner of the simulation lifecycle.
+    Disabling the original class's callbacks leaves :class:`PhysxManager` as the
+    single owner of the simulation lifecycle.
 
     This function is intentionally lazy. Config loading may import
     :mod:`isaaclab_physx` before Kit has launched; in that case, there is no app
@@ -63,19 +60,20 @@ def _patch_isaacsim_simulation_manager() -> None:
     if original_module is None:
         return
 
-    from .physics.physx_manager import IsaacEvents, PhysxManager
-
     # Tear down the original Isaac Sim SimulationManager's default timeline /
     # stage subscriptions so they cannot invalidate the omni.physics.tensors
     # view that PhysxManager owns. ``enable_all_default_callbacks(False)``
     # covers warm_start (PLAY), on_stop (STOP), stage_open (OPENED) and
     # stage_close (CLOSED). Older Isaac Sim builds may not expose this API, so
     # fall back gracefully.
-    original_class = _get_original_simulation_manager_class(original_module, PhysxManager)
+    implementation_module = sys.modules.get("isaacsim.core.simulation_manager.impl.simulation_manager")
+    original_class = getattr(implementation_module, "SimulationManager", None)
+    if original_class is None:
+        original_class = getattr(original_module, "SimulationManager", None)
     if original_class is not None and _default_callbacks_disabled_at_startup(original_class):
         return
 
-    if original_class is not None and original_class is not PhysxManager:
+    if original_class is not None:
         try:
             original_class.enable_all_default_callbacks(False)
         except Exception:
@@ -91,10 +89,6 @@ def _patch_isaacsim_simulation_manager() -> None:
                 if hasattr(original_class, attr):
                     setattr(original_class, attr, None)
 
-    original_module.SimulationManager = PhysxManager
-    original_module.IsaacEvents = IsaacEvents
-
-
 def _default_callbacks_disabled_at_startup(original_class: type) -> bool:
     """Return whether Isaac Sim supports and honored its startup callback setting."""
     implementation_module = sys.modules.get("isaacsim.core.simulation_manager.impl.simulation_manager")
@@ -107,17 +101,6 @@ def _default_callbacks_disabled_at_startup(original_class: type) -> bool:
         return not any(original_class.get_default_callback_status().values())
     except (AttributeError, TypeError):
         return False
-
-
-def _get_original_simulation_manager_class(original_module: ModuleType, physx_manager: type) -> type | None:
-    """Return Isaac Sim's implementation class, including after a module-level patch."""
-    original_class = getattr(original_module, "SimulationManager", None)
-    if original_class is not physx_manager:
-        return original_class
-
-    implementation_module = sys.modules.get("isaacsim.core.simulation_manager.impl.simulation_manager")
-    return getattr(implementation_module, "SimulationManager", None)
-
 
 def _get_kit_extension_manager() -> Any | None:
     """Return Kit's extension manager when Kit is running."""

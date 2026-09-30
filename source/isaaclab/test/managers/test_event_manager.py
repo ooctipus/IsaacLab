@@ -22,10 +22,11 @@ from collections import namedtuple
 
 import pytest
 import torch
+from isaaclab_physx.physics import PhysxCfg
 
 from isaaclab.envs import ManagerBasedEnv
 from isaaclab.managers import EventManager, EventTermCfg, ManagerTermBase, ManagerTermBaseCfg
-from isaaclab.sim import SimulationContext
+from isaaclab.sim import SimulationCfg, SimulationContext
 from isaaclab.utils.configclass import configclass
 
 pytestmark = pytest.mark.integration
@@ -92,7 +93,7 @@ def env():
     dummy1 = torch.zeros((num_envs, 2), device=device)
     dummy2 = torch.zeros((num_envs, 10), device=device)
     # create sim
-    sim = SimulationContext()
+    sim = SimulationContext(SimulationCfg(physics=PhysxCfg()))
     # create dummy environment
     return DummyEnv(num_envs, 0.01, device, sim, dummy1, dummy2)
 

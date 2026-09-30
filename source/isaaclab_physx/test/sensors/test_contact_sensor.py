@@ -22,6 +22,7 @@ import pytest
 import torch
 import warp as wp
 from flaky import flaky
+from isaaclab_physx.physics import PhysxCfg
 from isaaclab_physx.sensors.contact_sensor import contact_sensor as contact_sensor_module
 from isaaclab_physx.sensors.contact_sensor.contact_sensor import ContactSensor as PhysxContactSensor
 
@@ -29,8 +30,9 @@ from pxr import Gf, UsdGeom, UsdPhysics
 
 import isaaclab.sim as sim_utils
 import isaaclab.sim.schemas as schemas
+from isaaclab import cloner
 from isaaclab.app.settings_manager import get_settings_manager
-from isaaclab.assets import RigidObject, RigidObjectCfg
+from isaaclab.assets import AssetBaseCfg, RigidObject, RigidObjectCfg
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
 from isaaclab.sensors import ContactSensor, ContactSensorCfg
 from isaaclab.sensors.contact_sensor import BaseContactSensor
@@ -398,7 +400,7 @@ def test_sphere_contact_time(setup_simulation, disable_contact_processing):
 def test_cube_stack_contact_filtering(setup_simulation, device, num_envs):
     """Checks contact sensor reporting for filtering stacked cube prims."""
     sim_dt, durations, terrains, devices, settings = setup_simulation
-    with build_simulation_context(device=device, dt=sim_dt, add_lighting=True) as sim:
+    with build_simulation_context(sim_cfg=sim_utils.SimulationCfg(physics=PhysxCfg(), dt=sim_dt), device=device) as sim:
         sim._app_control_on_stop_handle = None
         # Instance new scene for the current terrain and contact prim.
         scene_cfg = ContactSensorSceneCfg(num_envs=num_envs, env_spacing=1.0, lazy_sensor_update=False)
@@ -460,14 +462,15 @@ def test_cube_stack_contact_filtering(setup_simulation, device, num_envs):
         assert contact_sensor.data.net_normal_forces_w.torch.sum().item() > 0.0
 
 
-def _author_nested_chain(prim_path: str):
+def _author_nested_chain(prim_path: str, cfg, translation=None, orientation=None):
     """Author a chain of kinematic rigid bodies whose link prims are nested under each other.
 
     Mirrors the layout produced by the URDF importer in Isaac Sim 6.0+, where each child
     link prim is authored under its parent link prim instead of as a flat sibling. The
     bodies are kinematic so their poses stay at the authored values without joints.
     """
-    stage = get_current_stage()
+    del cfg, translation, orientation
+    stage = SimulationContext.instance().stage
     UsdGeom.Xform.Define(stage, prim_path)
     # each link: an Xform with the rigid-body schema and a cube collision geometry below it
     link_specs = [
@@ -486,6 +489,7 @@ def _author_nested_chain(prim_path: str):
         UsdPhysics.CollisionAPI.Apply(geom.GetPrim())
     # add the contact-report schema to every nested link
     schemas.activate_contact_sensors(prim_path)
+    return stage.GetPrimAtPath(prim_path)
 
 
 @pytest.mark.isaacsim_ci
@@ -498,26 +502,24 @@ def test_nested_rigid_body_hierarchy(setup_simulation, device, num_envs):
     parent-level name alternation, which cannot address bodies nested under other
     bodies, so sensor initialization failed on URDF-importer-style assets.
 
-    The chains are authored directly under each environment prim (no scene/cloner):
-    the sensor path under test only depends on the prims existing on the stage.
+    One source chain is authored from cfg and the clone plan replicates it to every environment.
     """
     sim_dt, durations, terrains, devices, settings = setup_simulation
-    with build_simulation_context(device=device, dt=sim_dt, add_lighting=False) as sim:
+    with build_simulation_context(sim_cfg=sim_utils.SimulationCfg(physics=PhysxCfg(), dt=sim_dt), device=device) as sim:
         sim._app_control_on_stop_handle = None
-        stage = get_current_stage()
-        env_origins = [(3.0 * env_id, 0.0, 0.0) for env_id in range(num_envs)]
-        for env_id, origin in enumerate(env_origins):
-            env_xform = UsdGeom.Xform.Define(stage, f"/World/envs/env_{env_id}")
-            env_xform.AddTranslateOp().Set(Gf.Vec3d(*origin))
-            _author_nested_chain(f"/World/envs/env_{env_id}/Robot")
-        contact_sensor = ContactSensor(
-            ContactSensorCfg(
-                prim_path="{ENV_REGEX_NS}/Robot/[^/]*",
-                track_pose=True,
-                debug_vis=False,
-                update_period=0.0,
-            )
+        robot_cfg = AssetBaseCfg(
+            prim_path="{ENV_REGEX_NS}/Robot", spawn=sim_utils.SpawnerCfg(func=_author_nested_chain)
         )
+        sensor_cfg = ContactSensorCfg(
+            prim_path="{ENV_REGEX_NS}/Robot/[^/]*",
+            track_pose=True,
+            debug_vis=False,
+            update_period=0.0,
+        )
+        with cloner.ReplicateSession([robot_cfg, sensor_cfg], num_clones=num_envs, env_spacing=3.0):
+            (source_path,) = cloner.query.cfg_source_paths(sim.get_clone_plan(), robot_cfg)
+            robot_cfg.spawn.func(source_path, robot_cfg.spawn)
+            contact_sensor = sensor_cfg.class_type(sensor_cfg)
         sim.reset()
 
         # all three nested bodies must be resolved into the views (pre-fix: init raised);
@@ -534,9 +536,10 @@ def test_nested_rigid_body_hierarchy(setup_simulation, device, num_envs):
         # each (env, body) cell must carry that body's authored world position, which
         # validates the body-major view ordering end-to-end through the data kernels
         pos_w = contact_sensor.data.pos_w.torch  # (num_envs, num_bodies, 3)
-        for env_id, origin in enumerate(env_origins):
+        for env_id, origin in enumerate(sim.get_clone_plan().positions):
             for body_id, body_name in enumerate(contact_sensor.body_names):
-                expected = torch.tensor([origin[0], origin[1], expected_body_z[body_name]], device=pos_w.device)
+                expected = origin.to(pos_w.device).clone()
+                expected[2] += expected_body_z[body_name]
                 torch.testing.assert_close(pos_w[env_id, body_id], expected, atol=1e-4, rtol=0.0)
 
 
@@ -547,7 +550,7 @@ def test_no_contact_reporting(setup_simulation):
     """
     # TODO: This test only works on CPU. For GPU, it seems the contact processing is not disabled.
     sim_dt, durations, terrains, devices, settings = setup_simulation
-    with build_simulation_context(device="cpu", dt=sim_dt, add_lighting=True) as sim:
+    with build_simulation_context(sim_cfg=sim_utils.SimulationCfg(physics=PhysxCfg(), dt=sim_dt), device="cpu") as sim:
         sim._app_control_on_stop_handle = None
         # Instance new scene for the current terrain and contact prim.
         scene_cfg = ContactSensorSceneCfg(num_envs=2, env_spacing=1.0, lazy_sensor_update=False)
@@ -614,7 +617,7 @@ def test_contact_sensor_no_stale_data_after_reset(setup_simulation, device):
     """
     sim_dt, _, _, _, settings = setup_simulation
     settings.set_bool("/physics/disableContactProcessing", False)
-    with build_simulation_context(device=device, dt=sim_dt, add_lighting=True) as sim:
+    with build_simulation_context(sim_cfg=sim_utils.SimulationCfg(physics=PhysxCfg(), dt=sim_dt), device=device) as sim:
         sim._app_control_on_stop_handle = None
         scene_cfg = ContactSensorSceneCfg(num_envs=1, env_spacing=2.0, lazy_sensor_update=False)
         scene_cfg.terrain = FLAT_TERRAIN_CFG.replace(prim_path="/World/ground")
@@ -668,7 +671,7 @@ def test_contact_history_updates_at_sensor_period(
     """History-bearing sensors update at their period even when the scene is lazy."""
     sim_dt, _, _, _, settings = setup_simulation
     settings.set_bool("/physics/disableContactProcessing", False)
-    with build_simulation_context(device=device, dt=sim_dt, add_lighting=False) as sim:
+    with build_simulation_context(sim_cfg=sim_utils.SimulationCfg(physics=PhysxCfg(), dt=sim_dt), device=device) as sim:
         sim._app_control_on_stop_handle = None
         scene_cfg = ContactSensorSceneCfg(num_envs=1, env_spacing=2.0, lazy_sensor_update=True)
         scene_cfg.terrain = FLAT_TERRAIN_CFG.replace(prim_path="/World/ground")
@@ -715,7 +718,9 @@ def test_contact_history_updates_at_sensor_period(
 def test_sensor_print(setup_simulation):
     """Test sensor print is working correctly."""
     sim_dt, durations, terrains, devices, settings = setup_simulation
-    with build_simulation_context(device="cuda:0", dt=sim_dt, add_lighting=False) as sim:
+    with build_simulation_context(
+        sim_cfg=sim_utils.SimulationCfg(physics=PhysxCfg(), dt=sim_dt), device="cuda:0"
+    ) as sim:
         sim._app_control_on_stop_handle = None
         # Spawn things into stage
         scene_cfg = ContactSensorSceneCfg(num_envs=1, env_spacing=1.0, lazy_sensor_update=False)
@@ -740,7 +745,7 @@ def test_sensor_print(setup_simulation):
 def test_contact_sensor_threshold(setup_simulation, device):
     """Test that the contact sensor USD threshold attribute is set to 0.0."""
     sim_dt, durations, terrains, devices, settings = setup_simulation
-    with build_simulation_context(device=device, dt=sim_dt, add_lighting=False) as sim:
+    with build_simulation_context(sim_cfg=sim_utils.SimulationCfg(physics=PhysxCfg(), dt=sim_dt), device=device) as sim:
         sim._app_control_on_stop_handle = None
         # Spawn things into stage
         scene_cfg = ContactSensorSceneCfg(num_envs=1, env_spacing=1.0, lazy_sensor_update=False)
@@ -789,8 +794,8 @@ def test_friction_reporting(setup_simulation, grav_dir):
     sim_dt, _, _, _, settings = setup_simulation
     settings.set_bool("/physics/disableContactProcessing", True)
     device = "cuda:0"
-    sim_cfg = SimulationCfg(dt=sim_dt, device=device, gravity=grav_dir)
-    with build_simulation_context(sim_cfg=sim_cfg, add_lighting=False) as sim:
+    sim_cfg = SimulationCfg(physics=PhysxCfg(), dt=sim_dt, device=device, gravity=grav_dir)
+    with build_simulation_context(sim_cfg=sim_cfg) as sim:
         sim._app_control_on_stop_handle = None
 
         scene_cfg = ContactSensorSceneCfg(num_envs=1, env_spacing=1.0, lazy_sensor_update=False)
@@ -843,8 +848,8 @@ def test_invalid_prim_paths_config(setup_simulation):
     sim_dt, _, _, _, settings = setup_simulation
     settings.set_bool("/physics/disableContactProcessing", True)
     device = "cuda:0"
-    sim_cfg = SimulationCfg(dt=sim_dt, device=device)
-    with build_simulation_context(sim_cfg=sim_cfg, add_lighting=False) as sim:
+    sim_cfg = SimulationCfg(physics=PhysxCfg(), dt=sim_dt, device=device)
+    with build_simulation_context(sim_cfg=sim_cfg) as sim:
         sim._app_control_on_stop_handle = None
 
         scene_cfg = ContactSensorSceneCfg(num_envs=1, env_spacing=1.0, lazy_sensor_update=False)
@@ -877,8 +882,8 @@ def test_invalid_max_contact_points_config(setup_simulation):
     sim_dt, _, _, _, settings = setup_simulation
     settings.set_bool("/physics/disableContactProcessing", True)
     device = "cuda:0"
-    sim_cfg = SimulationCfg(dt=sim_dt, device=device)
-    with build_simulation_context(sim_cfg=sim_cfg, add_lighting=False) as sim:
+    sim_cfg = SimulationCfg(physics=PhysxCfg(), dt=sim_dt, device=device)
+    with build_simulation_context(sim_cfg=sim_cfg) as sim:
         sim._app_control_on_stop_handle = None
 
         scene_cfg = ContactSensorSceneCfg(num_envs=1, env_spacing=1.0, lazy_sensor_update=False)
@@ -930,7 +935,9 @@ def _run_contact_sensor_test(
     for device in devices:
         for terrain in terrains:
             for track_contact_data in [True, False]:
-                with build_simulation_context(device=device, dt=sim_dt, add_lighting=True) as sim:
+                with build_simulation_context(
+                    sim_cfg=sim_utils.SimulationCfg(physics=PhysxCfg(), dt=sim_dt), device=device
+                ) as sim:
                     sim._app_control_on_stop_handle = None
 
                     scene_cfg = ContactSensorSceneCfg(num_envs=1, env_spacing=1.0, lazy_sensor_update=False)

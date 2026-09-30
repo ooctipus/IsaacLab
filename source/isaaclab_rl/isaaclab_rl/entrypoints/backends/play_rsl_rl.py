@@ -28,12 +28,11 @@ from isaaclab_rl.entrypoints.common import (
     add_frontend_args,
     apply_video_recording,
     create_isaaclab_env,
-    pre_launch_video_config,
     request_determinism,
     resolve_checkpoint_selector,
-    resolve_play_task_name,
     show_run_summary,
     startup_screen,
+    validate_video_config,
 )
 from isaaclab_rl.rsl_rl import (
     RslRlBaseRunnerCfg,
@@ -73,9 +72,6 @@ parser.add_argument(
     default=None,
     help="Interval between video clips in env steps. Overrides the value in VideoRecorderCfg.",
 )
-parser.add_argument(
-    "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
-)
 parser.add_argument("--num_envs", type=int, default=None, help="Number of environments to simulate.")
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument(
@@ -94,7 +90,6 @@ cli_args.add_rsl_rl_args(parser)
 add_launcher_args(parser)
 add_frontend_args(parser)
 args_cli, remaining_args = setup_preset_cli(parser, agent_library="rsl_rl")
-args_cli.task = resolve_play_task_name(args_cli.task)
 
 if args_cli.video:
     args_cli.enable_cameras = True
@@ -117,7 +112,7 @@ installed_version = metadata.version("rsl-rl-lib")
 @hydra_task_config(args_cli.task, args_cli.agent, play_mode=not args_cli.train_env_cfg)
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RslRlBaseRunnerCfg):
     """Play with RSL-RL agent."""
-    pre_launch_video_config(env_cfg, args_cli=args_cli)
+    validate_video_config(env_cfg, args_cli)
     with startup_screen(args_cli, num_stages=3) as screen:
         show_run_summary(screen, args_cli, env_cfg, library="rsl_rl", action="play")
         screen.stage("Launching simulation")

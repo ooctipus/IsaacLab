@@ -19,7 +19,6 @@ from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
-from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import ContactSensorCfg
 from isaaclab.sensors.ray_caster.multi_mesh_ray_caster_camera_cfg import MultiMeshRayCasterCameraCfg
 from isaaclab.sensors.ray_caster.patterns import PinholeCameraPatternCfg
@@ -50,6 +49,8 @@ logging.getLogger("isaaclab.sensors.ray_caster.multi_mesh_ray_caster").setLevel(
 ##
 # Pre-defined configs
 ##
+from isaaclab_tasks.utils.presets import MultiBackendSceneCfg, MultiBackendSimulationCfg
+
 from .scenes.obstacle_scenes.obstacle_scene import (
     OBSTACLE_SCENE_CFG,
     generate_obstacle_collection,
@@ -60,7 +61,7 @@ from .scenes.obstacle_scenes.obstacle_scene import (
 # Scene definition
 ##
 @configclass
-class ArlNavigationSceneCfg(InteractiveSceneCfg):
+class ArlNavigationSceneCfg(MultiBackendSceneCfg):
     """Scene configuration for drone navigation with obstacles."""
 
     # obstacles
@@ -74,13 +75,13 @@ class ArlNavigationSceneCfg(InteractiveSceneCfg):
         prim_path="{ENV_REGEX_NS}/Robot/base_link",
         mesh_prim_paths=[
             MultiMeshRayCasterCameraCfg.RaycastTargetCfg(
-                prim_expr=f"{{ENV_REGEX_NS}}/obstacle_{wall_name}", is_shared=False, track_mesh_transforms=True
+                prim_expr=f"{{ENV_REGEX_NS}}/obstacle_{wall_name}", track_mesh_transforms=True
             )
             for wall_name, _ in OBSTACLE_SCENE_CFG.wall_cfgs.items()
         ]
         + [
             MultiMeshRayCasterCameraCfg.RaycastTargetCfg(
-                prim_expr=f"{{ENV_REGEX_NS}}/obstacle_{i}", is_shared=False, track_mesh_transforms=True
+                prim_expr=f"{{ENV_REGEX_NS}}/obstacle_{i}", track_mesh_transforms=True
             )
             for i in range(OBSTACLE_SCENE_CFG.max_num_obstacles)
         ],
@@ -311,6 +312,7 @@ class CurriculumCfg:
 class NavigationVelocityFloatingObstacleEnvCfg(ManagerBasedRLEnvCfg):
     """Configuration for the locomotion velocity-tracking environment."""
 
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg()
     # Scene settings
     scene: ArlNavigationSceneCfg = ArlNavigationSceneCfg(num_envs=1024, env_spacing=20.5)
     # Basic settings

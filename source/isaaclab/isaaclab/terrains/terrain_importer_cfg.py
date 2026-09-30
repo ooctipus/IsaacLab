@@ -9,6 +9,8 @@ from dataclasses import MISSING
 from typing import TYPE_CHECKING, Literal
 
 import isaaclab.sim as sim_utils
+from isaaclab.markers import VisualizationMarkersCfg
+from isaaclab.markers.config import FRAME_MARKER_CFG
 from isaaclab.sim.spawners import materials
 from isaaclab.utils.configclass import configclass
 
@@ -36,13 +38,6 @@ class TerrainImporterCfg:
     All sub-terrains are imported relative to this prim path.
     """
 
-    num_envs: int = 1
-    """The number of environment origins to consider. Defaults to 1.
-
-    In case, the :class:`~isaaclab.scene.InteractiveSceneCfg` is used, this parameter gets overridden by
-    :attr:`isaaclab.scene.InteractiveSceneCfg.num_envs` attribute.
-    """
-
     terrain_type: Literal["generator", "plane", "usd"] = "generator"
     """The type of terrain to generate. Defaults to "generator".
 
@@ -61,17 +56,8 @@ class TerrainImporterCfg:
     Only used if ``terrain_type`` is set to "usd".
     """
 
-    env_spacing: float | None = None
-    """The spacing between environment origins when defined in a grid. Defaults to None.
-
-    Note:
-      This parameter is used only when the ``terrain_type`` is "plane" or "usd" or if
-      :attr:`use_terrain_origins` is False.
-    """
-
     use_terrain_origins: bool = True
-    """Whether to set the environment origins based on the terrain origins or in a grid
-    according to :attr:`env_spacing`. Defaults to True.
+    """Whether to set the environment origins based on the terrain origins or the clone plan. Defaults to True.
 
     Note:
       This parameter is used only when the :attr:`terrain type` is "generator".
@@ -120,6 +106,9 @@ class TerrainImporterCfg:
 
     debug_vis: bool = False
     """Whether to enable visualization of terrain origins for the terrain. Defaults to False."""
+
+    visualizer_cfg: VisualizationMarkersCfg = FRAME_MARKER_CFG.replace(prim_path="/Visuals/TerrainOrigin")
+    """Marker configuration for terrain origins."""
 
     def __post_init__(self):
         """Resolve the terrain-type-specific visual material default."""

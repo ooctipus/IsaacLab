@@ -14,10 +14,9 @@ if TYPE_CHECKING:
     from pxr import Usd
 
 from isaaclab_newton.assets import MPMObjectCfg
-from isaaclab_newton.physics import MJWarpSolverCfg, MPMSolverCfg, NewtonCfg, NewtonCollisionPipelineCfg
+from isaaclab_newton.physics import MJWarpSolverCfg, MPMSolverCfg, NewtonCollisionPipelineCfg
 from isaaclab_newton.sim.schemas import MujocoJointCfg, NewtonCollisionPropertiesCfg
 from isaaclab_newton.sim.spawners.mpm import MPMGridCfg, MPMParticleMaterialCfg
-from isaaclab_visualizers.newton import NewtonGLVisualizerCfg, NewtonRTXVisualizerCfg
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
@@ -29,14 +28,14 @@ from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.markers import VisualizationMarkersCfg
-from isaaclab.scene import InteractiveSceneCfg
-from isaaclab.sim import SimulationCfg
 from isaaclab.sim.schemas import UsdPhysicsRigidBodyCfg
 from isaaclab.sim.spawners.materials import RigidBodyMaterialBaseCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.configclass import configclass
 
 from isaaclab_contrib.coupling import CouplerEntryCfg, CouplerProxyCfg, CouplerProxyMappingCfg
+
+from isaaclab_tasks.utils.presets import MultiBackendSceneCfg, MultiBackendSimulationCfg
 
 from isaaclab_assets.robots.universal_robots import UR10_CFG
 
@@ -52,15 +51,6 @@ MPM_RESET_JITTER_FRACTION = 0.45
 MPM_VISUAL_COLOR = (0.83, 0.60, 0.22)
 PUSH_ACTION_DIM = 6
 HEIGHTMAP_VISUALIZATION_SHAPE = (8, 16)
-HEIGHTMAP_VISUALIZER_CFG = VisualizationMarkersCfg(
-    prim_path="/Visuals/Policy_Heightmap",
-    markers={
-        "height": sim_utils.SphereCfg(
-            radius=1.0,
-            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.20, 0.85, 1.00)),
-        )
-    },
-)
 
 # Enforce a per-world lower-node minimum and a 32-node total upper minimum.
 SPARSE_MPM_MIN_LOWER_NODES_PER_WORLD = 1 << 6
@@ -213,7 +203,7 @@ UR10_PUSH_HOME = (
 
 def get_mpm_solver_cfg(cfg: UR10ParticlePushEnvCfg) -> MPMSolverCfg:
     """Return the unique implicit-MPM solver entry."""
-    entries = [entry for entry in cfg.sim.physics.solver_cfg.entries if entry.name == MPM_ENTRY]
+    entries = [entry for entry in cfg.sim.physics.entries if entry.name == MPM_ENTRY]
     if len(entries) != 1 or not isinstance(entries[0].solver_cfg, MPMSolverCfg):
         raise ValueError(f"Expected one {MPM_ENTRY!r} MPMSolverCfg entry, found {len(entries)}.")
     return entries[0].solver_cfg
@@ -328,7 +318,7 @@ def _static_collision_box(
 
 
 @configclass
-class UR10ParticlePushSceneCfg(InteractiveSceneCfg):
+class UR10ParticlePushSceneCfg(MultiBackendSceneCfg):
     """Official workcell plus aligned MPM and rigid work-surface/bin collision."""
 
     table = AssetBaseCfg(
@@ -611,9 +601,8 @@ class UR10ParticlePushEnvCfg(ManagerBasedRLEnvCfg):
         num_envs=64,
         env_spacing=3.0,
         replicate_physics=True,
-        clone_in_fabric=True,
     )
-    sim: SimulationCfg = SimulationCfg(dt=1.0 / 120.0, render_interval=decimation)
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(dt=1.0 / 120.0, render_interval=decimation)
     actions: ActionsCfg = ActionsCfg()
     observations: ObservationsCfg = ObservationsCfg()
     rewards: RewardsCfg = RewardsCfg()
@@ -958,78 +947,68 @@ class UR10ParticlePushEnvCfg(ManagerBasedRLEnvCfg):
         self._validate_runtime_config()
 
     def __post_init__(self) -> None:
-        from isaaclab_visualizers.kit import KitVisualizerCfg
-
-        self.sim.default_visualizer_cfg = KitVisualizerCfg(
-            eye=(1.7, 1.5, 1.0),
-            lookat=(0.55, 0.0, 0.0),
-            origin_type="env",
-            origin_env_index=0,
-        )
-        self.sim.physics = NewtonCfg(
-            solver_cfg=CouplerProxyCfg(
-                entries=[
-                    CouplerEntryCfg(
-                        name=RIGID_ENTRY,
-                        solver_cfg=MJWarpSolverCfg(
-                            use_mujoco_contacts=False,
-                            integrator="implicitfast",
-                            njmax=256,
-                            nconmax=512,
-                        ),
-                        bodies=[r"/World/envs/env_.*/Robot", r"/World/envs/env_.*/Table"],
-                        include_static_shapes=True,
-                        # Refine rigid integration with three substeps per coupled interval.
-                        substeps=3,
+        self.sim.physics = CouplerProxyCfg(
+            entries=[
+                CouplerEntryCfg(
+                    name=RIGID_ENTRY,
+                    solver_cfg=MJWarpSolverCfg(
+                        use_mujoco_contacts=False,
+                        integrator="implicitfast",
+                        njmax=256,
+                        nconmax=512,
                     ),
-                    CouplerEntryCfg(
-                        name=MPM_ENTRY,
-                        solver_cfg=MPMSolverCfg(
-                            voxel_size=MPM_VOXEL_SIZE,
-                            grid_type="sparse",
-                            grid_padding=0,
-                            strain_basis="P0",
-                            transfer_scheme="apic",
-                            # Preserve particle-backed constitutive history on the rebuildable sparse grid.
-                            max_iterations=24,
-                            tolerance=1.0e-4,
-                            warmstart_mode="auto",
-                            velocity_basis="Q1",
-                            collider_basis="pic27",
-                            collider_velocity_mode="forward",
-                            solver="auto",
-                            separate_worlds=True,
-                            project_outside_colliders=False,
-                        ),
-                        bodies=[
-                            r"/World/envs/env_.*/MPMWorkSurface",
-                            r"/World/envs/env_.*/MPMGround",
-                            r"/World/envs/env_.*/MPMBinFloor",
-                            r"/World/envs/env_.*/MPMBinFront",
-                            r"/World/envs/env_.*/MPMBinBack",
-                            r"/World/envs/env_.*/MPMBinLeft",
-                            r"/World/envs/env_.*/MPMBinRight",
-                        ],
-                        all_particles=True,
-                        include_static_shapes=False,
-                        include_child_joints=False,
-                        # Keep entry-local substeps at one; collider poses refresh between outer coupled substeps.
-                        substeps=1,
-                        in_place=True,
+                    bodies=[r"/World/envs/env_.*/Robot", r"/World/envs/env_.*/Table"],
+                    include_static_shapes=True,
+                    # Refine rigid integration with three substeps per coupled interval.
+                    substeps=3,
+                ),
+                CouplerEntryCfg(
+                    name=MPM_ENTRY,
+                    solver_cfg=MPMSolverCfg(
+                        voxel_size=MPM_VOXEL_SIZE,
+                        grid_type="sparse",
+                        grid_padding=0,
+                        strain_basis="P0",
+                        transfer_scheme="apic",
+                        # Preserve particle-backed constitutive history on the rebuildable sparse grid.
+                        max_iterations=24,
+                        tolerance=1.0e-4,
+                        warmstart_mode="auto",
+                        velocity_basis="Q1",
+                        collider_basis="pic27",
+                        collider_velocity_mode="forward",
+                        solver="auto",
+                        separate_worlds=True,
+                        project_outside_colliders=False,
                     ),
-                ],
-                proxies=[
-                    CouplerProxyMappingCfg(
-                        source=RIGID_ENTRY,
-                        destination=MPM_ENTRY,
-                        bodies=[r"/World/envs/env_.*/Robot/ee_link/Paddle"],
-                        mode="lagged",
-                        mass_scale=self.proxy_mass_scale,
-                        collision_pipeline=None,
-                    )
-                ],
-                iterations=1,
-            ),
+                    bodies=[
+                        r"/World/envs/env_.*/MPMWorkSurface",
+                        r"/World/envs/env_.*/MPMGround",
+                        r"/World/envs/env_.*/MPMBinFloor",
+                        r"/World/envs/env_.*/MPMBinFront",
+                        r"/World/envs/env_.*/MPMBinBack",
+                        r"/World/envs/env_.*/MPMBinLeft",
+                        r"/World/envs/env_.*/MPMBinRight",
+                    ],
+                    all_particles=True,
+                    include_static_shapes=False,
+                    include_child_joints=False,
+                    # Keep entry-local substeps at one; collider poses refresh between outer coupled substeps.
+                    substeps=1,
+                    in_place=True,
+                ),
+            ],
+            proxies=[
+                CouplerProxyMappingCfg(
+                    source=RIGID_ENTRY,
+                    destination=MPM_ENTRY,
+                    bodies=[r"/World/envs/env_.*/Robot/ee_link/Paddle"],
+                    mode="lagged",
+                    mass_scale=self.proxy_mass_scale,
+                    collision_pipeline=None,
+                )
+            ],
+            iterations=1,
             collision_cfg=NewtonCollisionPipelineCfg(soft_contact_max=0),
             # Run one coupled solve per 120 Hz simulation step.
             num_substeps=1,
@@ -1038,24 +1017,4 @@ class UR10ParticlePushEnvCfg(ManagerBasedRLEnvCfg):
         )
         # Keep the UR10's implicit drives on the Newton backend used by the coupled step.
         self.sim.use_newton_actuators = True
-        configure_sparse_mpm_capacities(self)
-
-    def play_mode(self) -> None:
-        """Cycle the randomized reset bank in a small playback scene."""
-        super().play_mode()
-        self.scene.num_envs = min(self.scene.num_envs, 4)
-        self.heightmap_depth_noise_std = 0.0
-        self.heightmap_xy_noise_std = 0.0
-        self.heightmap_dropout_probability = 0.0
-        self.reset_cycle = True
-        self.reset_level_probabilities = (0.0,) * (len(self.reset_randomization_scales) - 1) + (1.0,)
-        camera_cfg = self.sim.default_visualizer_cfg
-        self.sim.default_visualizer_cfg = NewtonRTXVisualizerCfg(
-            eye=camera_cfg.eye,
-            lookat=camera_cfg.lookat,
-            show_particles=True,
-            particle_color=MPM_VISUAL_COLOR,
-        )
-        self.sim.visualizer_cfgs = [NewtonGLVisualizerCfg()]
-        self.heightmap_visualizer_cfg = HEIGHTMAP_VISUALIZER_CFG
         configure_sparse_mpm_capacities(self)

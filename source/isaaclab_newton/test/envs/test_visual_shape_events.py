@@ -34,20 +34,33 @@ def test_event_samples_selected_links_per_environment_and_rebinds(monkeypatch) -
     writer = _Writer()
     created = []
     new_model = object()
+
+    class Backend:
+        def create_visual_shape_color_writer(self, asset, body_names):
+            created.append((asset, body_names))
+            return writer
+
+        def get_model(self):
+            return new_model
+
+    backend = Backend()
+
+    class Sim:
+        def get_or_create_backend(self, backend_type, *args, clone_role, **kwargs):
+            assert backend_type is events_module.NewtonReplicateContext
+            assert args == (self,)
+            assert kwargs == {}
+            assert clone_role == "scene"
+            return backend
+
     asset = SimpleNamespace(num_bodies=3, body_names=["base", "hip", "foot"])
-    env = SimpleNamespace(scene={"robot": asset}, device="cpu", num_envs=4)
+    env = SimpleNamespace(scene={"robot": asset}, sim=Sim(), device="cpu", num_envs=4)
     asset_cfg = SceneEntityCfg("robot", body_ids=[0, 2])
     cfg = EventTermCfg(
         func=randomize_visual_shape,
         mode="reset",
         params={"asset_cfg": asset_cfg, "channels": {"color": ((0.0, 0.0, 0.0), (1.0, 1.0, 1.0))}},
     )
-    monkeypatch.setattr(
-        events_module.NewtonManager,
-        "create_visual_shape_color_writer",
-        lambda asset, body_names: created.append((asset, body_names)) or writer,
-    )
-    monkeypatch.setattr(events_module.NewtonManager, "get_model", lambda: new_model)
     monkeypatch.setattr(
         events_module,
         "_compile_distribution",

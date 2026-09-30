@@ -6,7 +6,7 @@
 
 from dataclasses import MISSING
 
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
+from isaaclab_newton.physics import KaminoPADMMSolverCfg, MJWarpSolverCfg
 from isaaclab_ov.physics import OvPhysxCfg
 from isaaclab_physx.physics import PhysxCfg
 
@@ -22,16 +22,14 @@ from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.markers.config import FRAME_MARKER_CFG
 from isaaclab.physics import PhysxAutoCfg
-from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import FrameTransformerCfg
 from isaaclab.sensors.frame_transformer import OffsetCfg
-from isaaclab.sim import SimulationCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.configclass import configclass
-from isaaclab.visualizers import VisualizerCfg
 
 import isaaclab_tasks.core.cabinet.mdp as mdp
 from isaaclab_tasks.utils import PresetCfg
+from isaaclab_tasks.utils.presets import MultiBackendSceneCfg, MultiBackendSimulationCfg
 
 FRAME_MARKER_SMALL_CFG = FRAME_MARKER_CFG.copy()
 FRAME_MARKER_SMALL_CFG.markers["frame"].scale = (0.10, 0.10, 0.10)
@@ -88,37 +86,38 @@ LIGHT_CFG = AssetBaseCfg(
 class CabinetSimCfg(PresetCfg):
     """Simulation configuration presets for the cabinet environment.
 
-    Wraps the full :class:`~isaaclab.sim.SimulationCfg` so that Newton can run at a
+    Wraps the full :class:`~isaaclab.sim.MultiBackendSimulationCfg` so that Newton can run at a
     finer physics timestep (1/600 s) while PhysX keeps its default (1/60 s).
     """
 
-    isaacsim_physx: SimulationCfg = SimulationCfg(
+    isaacsim_physx: MultiBackendSimulationCfg = MultiBackendSimulationCfg(
         dt=1 / 60,
         render_interval=1,
         physics=PhysxCfg(bounce_threshold_velocity=0.01, friction_correlation_distance=0.00625),
-        default_visualizer_cfg=VisualizerCfg(eye=(-2.0, 2.0, 2.0), lookat=(0.8, 0.0, 0.5)),
     )
-    ovphysx: SimulationCfg = isaacsim_physx.replace(physics=OvPhysxCfg())
-    physx: SimulationCfg = isaacsim_physx.replace(
+    ovphysx: MultiBackendSimulationCfg = isaacsim_physx.replace(physics=OvPhysxCfg())
+    physx: MultiBackendSimulationCfg = isaacsim_physx.replace(
         physics=PhysxAutoCfg(isaacsim_physx=isaacsim_physx.physics, ovphysx=ovphysx.physics)
     )
-    newton_mjwarp: SimulationCfg = SimulationCfg(
+    newton_mjwarp: MultiBackendSimulationCfg = MultiBackendSimulationCfg(
         dt=1 / 600,
         render_interval=1,
-        default_visualizer_cfg=VisualizerCfg(eye=(-2.0, 2.0, 2.0), lookat=(0.8, 0.0, 0.5)),
-        physics=NewtonCfg(
-            solver_cfg=MJWarpSolverCfg(
-                njmax=90,
-                nconmax=100,
-                cone="pyramidal",
-                integrator="implicitfast",
-                impratio=1,
-            ),
+        physics=MJWarpSolverCfg(
+            njmax=90,
+            nconmax=100,
+            cone="pyramidal",
+            integrator="implicitfast",
+            impratio=1,
             num_substeps=1,
             debug_mode=False,
         ),
     )
-    default: SimulationCfg = newton_mjwarp
+    newton_kamino: MultiBackendSimulationCfg = MultiBackendSimulationCfg(
+        dt=1 / 600,
+        render_interval=1,
+        physics=KaminoPADMMSolverCfg(max_contacts_per_world=64),
+    )
+    default: MultiBackendSimulationCfg = newton_mjwarp
 
 
 @configclass
@@ -133,6 +132,7 @@ class CabinetDecimationCfg(PresetCfg):
     ovphysx: int = isaacsim_physx
     physx: int = isaacsim_physx
     newton_mjwarp: int = 10
+    newton_kamino: int = 10
     default: int = newton_mjwarp
 
 
@@ -142,7 +142,7 @@ class CabinetDecimationCfg(PresetCfg):
 
 
 @configclass
-class CabinetSceneCfg(InteractiveSceneCfg):
+class CabinetSceneCfg(MultiBackendSceneCfg):
     """Configuration for the cabinet scene with a robot and a cabinet.
 
     This is the abstract base implementation, the exact scene is defined in the derived classes

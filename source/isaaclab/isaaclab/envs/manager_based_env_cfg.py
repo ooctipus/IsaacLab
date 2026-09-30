@@ -12,20 +12,15 @@ configuring the environment instances and simulation parameters.
 from __future__ import annotations
 
 from dataclasses import MISSING, field
-from typing import TYPE_CHECKING
 
 import isaaclab.envs.mdp as mdp
 from isaaclab.devices.device_base import DevicesCfg
-
-if TYPE_CHECKING:
-    from isaaclab.devices.openxr import XrCfg
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import RecorderManagerBaseCfg as DefaultEmptyRecorderManagerCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim import SimulationCfg
 from isaaclab.utils.configclass import configclass
 
-from .common import ViewerCfg
 from .utils.video_recorder_cfg import VideoRecorderCfg
 
 
@@ -45,8 +40,8 @@ class ManagerBasedEnvCfg:
     """Base configuration of the environment."""
 
     # simulation settings
-    sim: SimulationCfg = SimulationCfg()
-    """Physics simulation configuration. Default is SimulationCfg()."""
+    sim: SimulationCfg = MISSING
+    """Physics simulation configuration."""
 
     # ui settings
     ui_window_class_type: type | str | None = "isaaclab.envs.ui.base_env_window:BaseEnvWindow"
@@ -136,12 +131,6 @@ class ManagerBasedEnvCfg:
       render steps will be performed after each time an environment is reset.
     """
 
-    wait_for_textures: bool = True
-    """True to wait for assets to be loaded completely, False otherwise. Defaults to True."""
-
-    xr: XrCfg | None = None
-    """Configuration for viewing and interacting with the environment through an XR device."""
-
     teleop_devices: DevicesCfg = field(default_factory=DevicesCfg)
     """Configuration for teleoperation devices."""
 
@@ -165,18 +154,5 @@ class ManagerBasedEnvCfg:
     video_recorders: list[VideoRecorderCfg] = []
     """Video recording streams. Each entry records from its configured source independently.
 
-    Leave empty to disable recording. Set ``--video`` on the CLI to auto-populate this list
-    with a default stream from the active visualizer.
-    """
-
-    viewer: ViewerCfg = ViewerCfg()
-    """Deprecated viewer configuration. Use :attr:`~isaaclab.sim.SimulationCfg.default_visualizer_cfg`
-    or :attr:`~isaaclab.sim.SimulationCfg.visualizer_cfgs` instead.
-
-    .. deprecated::
-        This field is deprecated and will be removed in a future release. Configure the viewport
-        camera via :class:`~isaaclab.visualizers.VisualizerCfg` on the simulation config::
-
-            from isaaclab.visualizers import VisualizerCfg
-            env_cfg.sim.default_visualizer_cfg = VisualizerCfg(eye=(4.5, 0.0, 6.0))
+    Leave empty to disable recording. Recording requires an explicitly configured source.
     """

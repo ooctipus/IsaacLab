@@ -32,23 +32,26 @@ class TemplateMatch(NamedTuple):
 def split(template: str) -> tuple[str, str]:
     """Split a clone destination template around its ``"{}"`` clone slot.
 
-    The clone slot represents one concrete environment/instance path segment.
+    The clone slot represents one concrete environment/instance path segment. A destination
+    without one names a single prim shared by every environment -- a global asset, whose
+    destination is its source path -- so the whole template is the prefix and the suffix is empty.
+    That the slot is absent is what tells a caller the row is not replicated.
 
     Args:
-        template: Destination path template with exactly one ``"{}"`` for the instance id.
+        template: Destination path template, with one ``"{}"`` for the instance id or none at all.
 
     Returns:
         The ``(prefix, suffix)`` strings around the clone slot. A trailing slash is
         insignificant, so an instance-root template (``".../env_{}"``) yields an empty suffix.
 
     Raises:
-        ValueError: If ``template`` does not hold exactly one clone slot. A second slot would
-            survive into the suffix and break the later ``str.format`` that fills the first.
+        ValueError: If ``template`` holds more than one clone slot. A second slot would survive
+            into the suffix and break the later ``str.format`` that fills the first.
     """
     template = template.rstrip("/") or "/"
     slots = template.count("{}")
-    if slots != 1:
-        raise ValueError(f"Clone destination template must contain exactly one '{{}}', found {slots}: {template!r}.")
+    if slots > 1:
+        raise ValueError(f"Clone destination template must contain at most one '{{}}', found {slots}: {template!r}.")
     prefix, _, suffix = template.partition("{}")
     return prefix, suffix
 
@@ -73,6 +76,11 @@ def match(path_expr: str, template: str) -> TemplateMatch | None:
         TemplateMatch(instance='3', suffix='/base')
     """
     prefix, template_suffix = split(template)
+    if "{}" not in template:
+        # No slot, so no instance to capture: the template names one prim every environment
+        # shares, and matching is just asking whether the path is under it.
+        suffix = relative_to(path_expr, prefix)
+        return None if suffix is None else TemplateMatch("", suffix)
     # the slot holds one segment's worth of text: a concrete id, or a wildcard standing for one.
     # A segment-safe wildcard is written as a character class, whose text contains a '/' that is
     # not a separator, so it is matched as a class rather than by the one-segment alternative.

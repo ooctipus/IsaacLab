@@ -13,91 +13,43 @@ from typing import Any
 
 import warp as wp
 
-from pxr import UsdPhysics
-
-import isaaclab.sim as sim_utils
 from isaaclab.sensors.ray_caster.base_multi_mesh_ray_caster import BaseMultiMeshRayCaster
 from isaaclab.sensors.ray_caster.base_multi_mesh_ray_caster_camera import BaseMultiMeshRayCasterCamera
 from isaaclab.sensors.ray_caster.base_ray_caster import BaseRayCaster
 from isaaclab.sensors.ray_caster.base_ray_caster_camera import BaseRayCasterCamera
 from isaaclab.sensors.ray_caster.kernels import copy_mesh_poses_to_table_kernel
 
-from isaaclab_newton.physics import NewtonManager
-
-from .newton_raycast_sensor import _newton_body_pattern, _NewtonRayCasterPoseMixin
-
-
-def _has_rigid_body_api(prim) -> bool:
-    """Return whether a USD prim has rigid-body physics applied."""
-    return bool(prim.HasAPI(UsdPhysics.RigidBodyAPI))
+from .newton_raycast_sensor import _NewtonRayCasterPoseMixin
 
 
 class _LegacyNewtonRayCasterMixin(_NewtonRayCasterPoseMixin):
     """Add explicit mesh-target tracking required by legacy ray casters."""
 
-    def __init__(self: Any, cfg):
-        super().__init__(cfg)
-        self._tracked_site_labels: list[list[str]] = []
-        self._tracked_target_index = 0
-        for target_cfg in getattr(self, "_raycast_targets_cfg", []):
-            if target_cfg.track_mesh_transforms:
-                owner_exprs = self._resolve_target_owner_exprs(target_cfg.prim_expr)
-                labels = self._register_target_sites_for_exprs(owner_exprs)
-                self._tracked_site_labels.append(labels)
-
-    def _initialize_warp_meshes(self: Any) -> None:
-        """Reset tracked-target association before creating mesh views."""
-        self._tracked_target_index = 0
-        super()._initialize_warp_meshes()
-
-    def _resolve_target_owner_exprs(self, prim_expr: str) -> list[str]:
-        """Resolve mesh target expressions to owning rigid-body expressions."""
-        matches = sim_utils.resolve_matching_prims_from_source(prim_expr, raise_if_no_matches=False)
-        if not matches:
-            return [_newton_body_pattern(prim_expr)]
-        owner_exprs = []
-        for prim, dest_expr in matches:
-            body = sim_utils.get_first_matching_ancestor_prim(prim.GetPath(), predicate=_has_rigid_body_api)
-            if body is None:
-                raise RuntimeError(
-                    f"Cannot track non-physics ray-cast target '{prim_expr}' with Newton. "
-                    "Set track_mesh_transforms=False for static targets, or apply RigidBodyAPI "
-                    "to dynamic targets."
-                )
-            prim_path = prim.GetPath().pathString
-            owner_suffix = prim_path[len(body.GetPath().pathString) :]
-            owner_exprs.append(_newton_body_pattern(dest_expr.removesuffix(owner_suffix)))
-        return list(dict.fromkeys(owner_exprs))
-
-    def _register_target_sites_for_exprs(self, owner_exprs: list[str]) -> list[str]:
-        """Register identity-pose Newton sites on target owner bodies."""
-        identity = wp.transform(wp.vec3(0.0, 0.0, 0.0), wp.quat(0.0, 0.0, 0.0, 1.0))
-        labels = [NewtonManager.cl_register_site(owner_expr, identity) for owner_expr in owner_exprs]
-        return list(dict.fromkeys(labels))
-
     def _create_tracked_target_view(self: Any, target_prim_path: str | list[str]) -> wp.array:
-        """Resolve dynamic multi-mesh target sites to Newton site indices."""
-        labels = self._tracked_site_labels[self._tracked_target_index]
-        self._tracked_target_index += 1
-        site_indices = self._resolve_site_indices(labels, str(target_prim_path), self._num_envs)
-        return wp.array(site_indices, dtype=wp.int32, device=self._device)
+        """Resolve exact planned target bodies to Newton body indices."""
+        paths = target_prim_path if isinstance(target_prim_path, list) else [target_prim_path]
+        indices = {path: index for index, path in enumerate(self._physics_manager.get_model().body_label)}
+        try:
+            return wp.array([indices[path] for path in paths], dtype=wp.int32, device=self._device)
+        except KeyError as exc:
+            raise ValueError(f"Newton model is missing planned ray-cast target body {exc.args[0]!r}.") from exc
 
     def _update_mesh_transforms(self: Any) -> None:
-        """Refresh dynamic multi-mesh targets from Newton sites."""
+        """Refresh dynamic multi-mesh targets from Newton bodies."""
         if not hasattr(self, "_mesh_views"):
             return
         mesh_index = 0
-        for site_indices, target_cfg in zip(self._mesh_views, self._raycast_targets_cfg):
+        for body_indices, target_cfg in zip(self._mesh_views, self._raycast_targets_cfg):
             if not target_cfg.track_mesh_transforms:
                 mesh_index += self._num_meshes_per_env[target_cfg.prim_expr]
                 continue
 
-            site_count = site_indices.shape[0]
-            pos_buf = wp.empty(site_count, dtype=wp.vec3f, device=self._device)
-            quat_buf = wp.empty(site_count, dtype=wp.quatf, device=self._device)
-            pose_buf = wp.empty(site_count, dtype=wp.transformf, device=self._device)
-            self._update_newton_site_transforms(site_indices, pose_buf, pos_buf, quat_buf)
-            meshes_per_env = site_count if site_count == 1 else site_count // self._num_envs
+            body_count = body_indices.shape[0]
+            pos_buf = wp.empty(body_count, dtype=wp.vec3f, device=self._device)
+            quat_buf = wp.empty(body_count, dtype=wp.quatf, device=self._device)
+            pose_buf = wp.empty(body_count, dtype=wp.transformf, device=self._device)
+            self._update_newton_body_transforms(body_indices, pose_buf, pos_buf, quat_buf)
+            meshes_per_env = body_count if body_count == 1 else body_count // self._num_envs
 
             wp.launch(
                 copy_mesh_poses_to_table_kernel,
@@ -107,7 +59,7 @@ class _LegacyNewtonRayCasterMixin(_NewtonRayCasterPoseMixin):
                     quat_buf,
                     int(meshes_per_env),
                     int(mesh_index),
-                    bool(site_count == 1),
+                    bool(body_count == 1),
                     self._mesh_positions_w,
                     self._mesh_orientations_w,
                 ],

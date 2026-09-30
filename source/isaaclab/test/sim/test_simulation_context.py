@@ -17,12 +17,15 @@ import weakref
 
 import numpy as np
 import pytest
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
-from isaaclab_physx.physics import IsaacEvents, PhysxCfg, PhysxManager
+from isaaclab_newton.physics import MJWarpSolverCfg
+from isaaclab_physx.physics import PhysxCfg
 
 import omni.timeline
 
 import isaaclab.sim as sim_utils
+import isaaclab.sim.simulation_context as simulation_context_module
+import isaaclab.sim.utils.stage as stage_utils
+from isaaclab import cloner
 from isaaclab.physics import PhysicsEvent
 from isaaclab.sim import SimulationCfg, SimulationContext
 
@@ -54,6 +57,7 @@ def test_init(device):
     from isaaclab.sim.spawners.materials import RigidBodyMaterialCfg
 
     cfg = SimulationCfg(
+        physics=PhysxCfg(),
         device=device,
         physics_prim_path="/Physics/PhysX",
         gravity=(0.0, -0.5, -0.5),
@@ -77,8 +81,11 @@ def test_init(device):
 
     physics_scene_prim = sim.stage.GetPrimAtPath("/Physics/PhysX")
     assert physics_scene_prim.IsValid()
+    assert sim._physics_scene_prim == physics_scene_prim
     physics_scene = UsdPhysics.Scene(physics_scene_prim)
     physics_hz = physics_scene_prim.GetAttribute("physxScene:timeStepsPerSecond").Get()
+    assert physics_scene_prim.GetAttribute("physxScene:envIdInBoundsBitCount").Get() == 4
+    assert not physics_scene_prim.HasAttribute("physxScene:backend")
     physics_dt = 1.0 / physics_hz
     assert physics_dt == cfg.dt
 
@@ -95,9 +102,45 @@ def test_init(device):
 
 
 @pytest.mark.isaacsim_ci
+def test_context_creates_kit_owned_stage(monkeypatch) -> None:
+    """The context creates the one real stage through Kit when none exists."""
+    import omni.usd
+
+    def _reject_pure_stage_creation() -> None:
+        pytest.fail("SimulationContext must let Kit create the process-owned stage.")
+
+    stale_stage = sim_utils.get_current_stage()
+    stage_utils._context.stage = None
+    assert omni.usd.get_context().get_stage() is None
+    monkeypatch.setattr(sim_utils, "create_new_stage", _reject_pure_stage_creation)
+    monkeypatch.setattr(simulation_context_module, "create_new_stage", _reject_pure_stage_creation)
+
+    with sim_utils.build_simulation_context(sim_cfg=SimulationCfg(physics=PhysxCfg()), create_new_stage=False) as sim:
+        assert sim.stage is not stale_stage
+        assert sim.stage is sim_utils.get_current_stage()
+        assert sim.stage is omni.usd.get_context().get_stage()
+
+
+@pytest.mark.isaacsim_ci
+def test_context_removes_kit_implicit_cameras() -> None:
+    """Kit infrastructure cameras never enter the scene's clone plan."""
+    from pxr import Usd, UsdGeom
+
+    stage = sim_utils.get_current_stage()
+    camera_paths = tuple(f"/OmniverseKit_{name}" for name in ("Persp", "Front", "Top", "Right"))
+    with Usd.EditContext(stage, stage.GetSessionLayer()):
+        for path in camera_paths:
+            UsdGeom.Camera.Define(stage, path)
+
+    sim = SimulationContext(SimulationCfg(physics=PhysxCfg()))
+
+    assert all(not sim.stage.GetPrimAtPath(path).IsValid() for path in camera_paths)
+
+
+@pytest.mark.isaacsim_ci
 @pytest.mark.parametrize(
     "physics_cfg",
-    [PhysxCfg(), NewtonCfg(solver_cfg=MJWarpSolverCfg())],
+    [PhysxCfg(), MJWarpSolverCfg()],
     ids=["physx", "newton"],
 )
 def test_stop_is_dispatched_for_lazy_class_type(physics_cfg):
@@ -114,7 +157,7 @@ def test_stop_is_dispatched_for_lazy_class_type(physics_cfg):
     def on_stop(_):
         stopped.append(True)
 
-    sim.physics_manager.register_callback(on_stop, PhysicsEvent.STOP, name="test_stop")
+    sim._physics_manager.register_callback(on_stop, PhysicsEvent.STOP, name="test_stop")
     SimulationContext.clear_instance()
 
     assert stopped, "PhysicsEvent.STOP was not dispatched at teardown"
@@ -124,10 +167,9 @@ def test_stop_is_dispatched_for_lazy_class_type(physics_cfg):
 def test_clear_instance_closes_renderers():
     """``clear_instance`` must close registered renderers rather than leave them to garbage collection.
 
-    A renderer is shared by every camera whose config resolves to it, so the stage-bound resources it
-    owns cannot be released from a single camera's ``cleanup``. Nothing else releases them either:
-    the OVRTX ovstage path holds its stage in a ``contextlib.ExitStack``, which has no finalizer, so
-    collection never runs the context managers that own it.
+    Renderer state outlives a camera's transient render data, so stage-bound resources cannot be
+    released from ``cleanup``. The OVRTX ovstage path holds its stage in a ``contextlib.ExitStack``,
+    which has no finalizer, so collection never runs the context managers that own it.
     """
     sim = SimulationContext(SimulationCfg(physics=PhysxCfg()))
 
@@ -137,7 +179,7 @@ def test_clear_instance_closes_renderers():
         def close(self):
             closed.append(True)
 
-    sim.render_context._renderer_entries.append((object(), _Renderer()))  # noqa: SLF001
+    sim._renderer_entries.append(_Renderer())  # noqa: SLF001
     SimulationContext.clear_instance()
 
     assert closed, "registered renderers were not closed at teardown"
@@ -154,17 +196,18 @@ def test_instance_before_creation():
 
 
 @pytest.mark.isaacsim_ci
-def test_singleton():
-    """Tests that the singleton is working."""
-    sim1 = SimulationContext()
-    sim2 = SimulationContext()
-    assert sim1 is sim2
+def test_second_construction_is_rejected():
+    """A live context must be obtained explicitly instead of reconstructed."""
+    sim1 = SimulationContext(sim_utils.SimulationCfg(physics=PhysxCfg()))
+    with pytest.raises(RuntimeError, match="SimulationContext already exists"):
+        SimulationContext(sim_utils.SimulationCfg(physics=PhysxCfg()))
+    assert SimulationContext.instance() is sim1
 
     # try to delete the singleton
-    sim2.clear_instance()
+    sim1.clear_instance()
     assert sim1.instance() is None
     # create new instance
-    sim3 = SimulationContext()
+    sim3 = SimulationContext(sim_utils.SimulationCfg(physics=PhysxCfg()))
     assert sim1 is not sim3
     assert sim1.instance() is sim3.instance()
     # clear instance
@@ -179,7 +222,7 @@ Property Tests.
 @pytest.mark.isaacsim_ci
 def test_carb_setting():
     """Test setting carb settings."""
-    sim = SimulationContext()
+    sim = SimulationContext(sim_utils.SimulationCfg(physics=PhysxCfg()))
     # known carb setting
     sim.set_setting("/physics/physxDispatcher", False)
     assert sim.get_setting("/physics/physxDispatcher") is False
@@ -191,7 +234,7 @@ def test_carb_setting():
 @pytest.mark.isaacsim_ci
 def test_headless_mode():
     """Test that render mode is headless since we are running in headless mode."""
-    sim = SimulationContext()
+    sim = SimulationContext(sim_utils.SimulationCfg(physics=PhysxCfg()))
     # check default render mode (no GUI and no offscreen rendering)
     assert not sim.has_gui and not sim.has_offscreen_render
 
@@ -204,7 +247,7 @@ Timeline Operations Tests.
 @pytest.mark.isaacsim_ci
 def test_timeline_play_stop():
     """Test timeline play and stop operations."""
-    sim = SimulationContext()
+    sim = SimulationContext(sim_utils.SimulationCfg(physics=PhysxCfg()))
 
     # initially simulation should be stopped
     assert sim.is_stopped()
@@ -226,7 +269,7 @@ def test_timeline_play_stop():
 @pytest.mark.isaacsim_ci
 def test_timeline_pause():
     """Test timeline pause operation."""
-    sim = SimulationContext()
+    sim = SimulationContext(sim_utils.SimulationCfg(physics=PhysxCfg()))
 
     # start the simulation
     sim.play()
@@ -246,12 +289,10 @@ Reset and Step Tests
 @pytest.mark.isaacsim_ci
 def test_reset():
     """Test simulation reset."""
-    cfg = SimulationCfg(dt=0.01)
+    cfg = SimulationCfg(physics=PhysxCfg(), dt=0.01)
     sim = SimulationContext(cfg)
-
-    # create a simple cube to test with
-    cube_cfg = sim_utils.CuboidCfg(size=(0.1, 0.1, 0.1))
-    cube_cfg.func("/World/Cube", cube_cfg)
+    with cloner.ReplicateSession((), num_clones=1, env_spacing=0.0):
+        pass
 
     # reset the simulation
     sim.reset()
@@ -266,12 +307,10 @@ def test_reset():
 @pytest.mark.isaacsim_ci
 def test_reset_soft():
     """Test soft reset (without stopping simulation)."""
-    cfg = SimulationCfg(dt=0.01)
+    cfg = SimulationCfg(physics=PhysxCfg(), dt=0.01)
     sim = SimulationContext(cfg)
-
-    # create a simple cube
-    cube_cfg = sim_utils.CuboidCfg(size=(0.1, 0.1, 0.1))
-    cube_cfg.func("/World/Cube", cube_cfg)
+    with cloner.ReplicateSession((), num_clones=1, env_spacing=0.0):
+        pass
 
     # perform initial reset
     sim.reset()
@@ -287,12 +326,10 @@ def test_reset_soft():
 @pytest.mark.isaacsim_ci
 def test_forward():
     """Test forward propagation for fabric updates."""
-    cfg = SimulationCfg(dt=0.01, use_fabric=True)
+    cfg = SimulationCfg(physics=PhysxCfg(), dt=0.01)
     sim = SimulationContext(cfg)
-
-    # create simple scene
-    cube_cfg = sim_utils.CuboidCfg(size=(0.1, 0.1, 0.1))
-    cube_cfg.func("/World/Cube", cube_cfg)
+    with cloner.ReplicateSession((), num_clones=1, env_spacing=0.0):
+        pass
 
     sim.reset()
 
@@ -307,12 +344,10 @@ def test_forward():
 @pytest.mark.parametrize("render", [True, False])
 def test_step(render):
     """Test stepping simulation with and without rendering."""
-    cfg = SimulationCfg(dt=0.01)
+    cfg = SimulationCfg(physics=PhysxCfg(), dt=0.01)
     sim = SimulationContext(cfg)
-
-    # create simple scene
-    cube_cfg = sim_utils.CuboidCfg(size=(0.1, 0.1, 0.1))
-    cube_cfg.func("/World/Cube", cube_cfg)
+    with cloner.ReplicateSession((), num_clones=1, env_spacing=0.0):
+        pass
 
     sim.reset()
 
@@ -327,12 +362,10 @@ def test_step(render):
 @pytest.mark.isaacsim_ci
 def test_render():
     """Test rendering simulation."""
-    cfg = SimulationCfg(dt=0.01)
+    cfg = SimulationCfg(physics=PhysxCfg(), dt=0.01)
     sim = SimulationContext(cfg)
-
-    # create simple scene
-    cube_cfg = sim_utils.CuboidCfg(size=(0.1, 0.1, 0.1))
-    cube_cfg.func("/World/Cube", cube_cfg)
+    with cloner.ReplicateSession((), num_clones=1, env_spacing=0.0):
+        pass
 
     sim.reset()
 
@@ -344,87 +377,6 @@ def test_render():
     assert sim.is_playing()
 
 
-@pytest.mark.isaacsim_ci
-def test_render_pumps_app_update_without_visualizer():
-    """Regression test for issue #5052: headless video must pump Kit when no visualizer does.
-
-    Originally ``SimulationContext.render()`` called ``omni.kit.app.get_app().update()`` when
-    no visualizer had ``pumps_app_update()`` (see PR #5056). The same contract is now implemented
-    by physics-backend render callbacks registered via :meth:`~SimulationContext.add_render_callback`
-    (e.g. ``PhysxManager.initialize()`` registers a headless video pump). These callbacks call
-    :func:`~isaaclab_physx.renderers.isaac_rtx_renderer_utils.pump_kit_app_for_headless_video_render_if_needed`
-    when ``/isaaclab/video/enabled`` is set (as with ``--video``), which in turn calls
-    ``ensure_isaac_rtx_render_update()`` (guarded by ``is_rendering`` and the no-pumping-visualizer check).
-
-    Without this path, replicator render products used for ``rgb_array`` / RecordVideo stay stale (black frames).
-    """
-    from unittest.mock import MagicMock, patch
-
-    cfg = SimulationCfg(dt=0.01)
-    sim = SimulationContext(cfg)
-    sim.reset()
-
-    sim.set_setting("/isaaclab/video/enabled", True)
-    sim.set_setting("/isaaclab/render/rtx_sensors", True)
-
-    mock_app = MagicMock()
-    mock_app.is_running.return_value = True
-
-    with (
-        patch("isaaclab.utils.version.has_kit", return_value=True),
-        patch(
-            "isaaclab_physx.renderers.isaac_rtx_renderer_utils._get_stage_streaming_busy",
-            return_value=False,
-        ),
-        patch("omni.kit.app.get_app", return_value=mock_app),
-    ):
-        sim.render()
-
-    mock_app.update.assert_called_once()
-
-
-@pytest.mark.isaacsim_ci
-def test_render_skips_app_update_when_visualizer_pumps_it():
-    """Regression test: do not pump Kit in the headless-video path when a visualizer already does.
-
-    A visualizer with ``pumps_app_update() == True`` (e.g. KitVisualizer) calls ``app.update()`` in
-    its own ``step()``. The render callback registered by the physics backend must then skip
-    ``ensure_isaac_rtx_render_update`` so we do not double-pump the Kit loop.
-    """
-    from unittest.mock import MagicMock, patch
-
-    from isaaclab.visualizers.base_visualizer import BaseVisualizer
-
-    cfg = SimulationCfg(dt=0.01)
-    sim = SimulationContext(cfg)
-    sim.reset()
-
-    sim.set_setting("/isaaclab/video/enabled", True)
-    sim.set_setting("/isaaclab/render/rtx_sensors", True)
-
-    mock_viz = MagicMock(spec=BaseVisualizer)
-    mock_viz.pumps_app_update.return_value = True
-    mock_viz.is_closed = False
-    mock_viz.is_running.return_value = True
-    mock_viz.is_rendering_paused.return_value = False
-    mock_viz.is_training_paused.return_value = False
-    mock_viz.get_rendering_dt.return_value = None
-    sim._visualizers = [mock_viz]
-
-    mock_app = MagicMock()
-    mock_app.is_running.return_value = True
-
-    with (
-        patch("isaaclab.utils.version.has_kit", return_value=True),
-        patch("omni.kit.app.get_app", return_value=mock_app),
-    ):
-        sim.render()
-
-    mock_app.update.assert_not_called()
-
-    sim._visualizers = []
-
-
 """
 Stage Operations Tests
 """
@@ -433,7 +385,7 @@ Stage Operations Tests
 @pytest.mark.isaacsim_ci
 def test_get_initial_stage():
     """Test getting the initial stage."""
-    sim = SimulationContext()
+    sim = SimulationContext(sim_utils.SimulationCfg(physics=PhysxCfg()))
 
     # get initial stage
     stage = sim.stage
@@ -446,7 +398,7 @@ def test_get_initial_stage():
 @pytest.mark.isaacsim_ci
 def test_clear_stage():
     """Test clearing the stage."""
-    sim = SimulationContext()
+    sim = SimulationContext(sim_utils.SimulationCfg(physics=PhysxCfg()))
 
     # create some objects
     cube_cfg1 = sim_utils.CuboidCfg(size=(0.1, 0.1, 0.1))
@@ -487,21 +439,10 @@ def test_solver_type(solver_type):
 
 
 @pytest.mark.isaacsim_ci
-@pytest.mark.parametrize("use_fabric", [True, False])
-def test_fabric_setting(use_fabric):
-    """Test that fabric setting is properly set."""
-    cfg = SimulationCfg(use_fabric=use_fabric)
-    sim = SimulationContext(cfg)
-
-    # check fabric is enabled via physics setting
-    assert sim.get_setting("/isaaclab/fabric_enabled") == use_fabric
-
-
-@pytest.mark.isaacsim_ci
 @pytest.mark.parametrize("dt", [0.01, 0.02, 0.005])
 def test_physics_dt(dt):
     """Test that physics time step is properly configured."""
-    cfg = SimulationCfg(dt=dt)
+    cfg = SimulationCfg(physics=PhysxCfg(), dt=dt)
     sim = SimulationContext(cfg)
 
     # obtain physics scene from USD (string-based: physxScene:timeStepsPerSecond)
@@ -517,7 +458,7 @@ def test_custom_gravity(gravity):
     """Test that gravity can be properly set."""
     from pxr import UsdPhysics
 
-    cfg = SimulationCfg(gravity=gravity)
+    cfg = SimulationCfg(physics=PhysxCfg(), gravity=gravity)
     sim = SimulationContext(cfg)
 
     # obtain physics scene from USD
@@ -540,7 +481,7 @@ Callback Tests.
 @pytest.mark.isaacsim_ci
 def test_timeline_callbacks_on_play():
     """Test that timeline callbacks are triggered on play event."""
-    cfg = SimulationCfg(dt=0.01)
+    cfg = SimulationCfg(physics=PhysxCfg(), dt=0.01)
     sim = SimulationContext(cfg)
 
     # create a simple scene
@@ -602,7 +543,7 @@ def test_timeline_callbacks_on_play():
 def test_timeline_callbacks_with_weakref():
     """Test that timeline callbacks work correctly with weak references (similar to asset_base.py)."""
 
-    cfg = SimulationCfg(dt=0.01)
+    cfg = SimulationCfg(physics=PhysxCfg(), dt=0.01)
     sim = SimulationContext(cfg)
 
     # create a simple scene
@@ -689,7 +630,7 @@ def test_timeline_callbacks_with_weakref():
 @pytest.mark.isaacsim_ci
 def test_multiple_callbacks_on_same_event():
     """Test that multiple callbacks can be registered for the same event."""
-    cfg = SimulationCfg(dt=0.01)
+    cfg = SimulationCfg(physics=PhysxCfg(), dt=0.01)
     sim = SimulationContext(cfg)
 
     # create tracking for multiple callbacks
@@ -741,7 +682,7 @@ def test_multiple_callbacks_on_same_event():
 @pytest.mark.isaacsim_ci
 def test_callback_execution_order():
     """Test that callbacks are executed in the correct order based on priority."""
-    cfg = SimulationCfg(dt=0.01)
+    cfg = SimulationCfg(physics=PhysxCfg(), dt=0.01)
     sim = SimulationContext(cfg)
 
     # track execution order
@@ -791,7 +732,7 @@ def test_callback_execution_order():
 @pytest.mark.isaacsim_ci
 def test_callback_unsubscribe():
     """Test that unsubscribing callbacks works correctly."""
-    cfg = SimulationCfg(dt=0.01)
+    cfg = SimulationCfg(physics=PhysxCfg(), dt=0.01)
     sim = SimulationContext(cfg)
 
     # create callback counter
@@ -834,7 +775,7 @@ def test_callback_unsubscribe():
 @pytest.mark.isaacsim_ci
 def test_pause_event_callback():
     """Test that pause event callbacks are triggered correctly."""
-    cfg = SimulationCfg(dt=0.01)
+    cfg = SimulationCfg(physics=PhysxCfg(), dt=0.01)
     sim = SimulationContext(cfg)
 
     # create callback tracker
@@ -866,314 +807,24 @@ def test_pause_event_callback():
             pause_handle.unsubscribe()
 
 
-"""
-Isaac Events Callback Tests.
-"""
-
-
 @pytest.mark.isaacsim_ci
-@pytest.mark.parametrize(
-    "event_type",
-    [IsaacEvents.PHYSICS_WARMUP, IsaacEvents.SIMULATION_VIEW_CREATED, IsaacEvents.PHYSICS_READY],
-)
-def test_isaac_event_triggered_on_reset(event_type):
-    """Test that Isaac events are triggered during reset."""
-    cfg = SimulationCfg(dt=0.01)
-    sim = SimulationContext(cfg)
+def test_physx_lifecycle_events_are_dispatched_once():
+    """PhysX publishes one READY per view and one root deletion during teardown."""
+    sim = SimulationContext(SimulationCfg(dt=0.01, physics=PhysxCfg()))
+    with cloner.ReplicateSession((), num_clones=1, env_spacing=1.0):
+        pass
 
-    # create simple scene
-    cube_cfg = sim_utils.CuboidCfg(size=(0.1, 0.1, 0.1))
-    cube_cfg.func("/World/Cube", cube_cfg)
-
-    # create callback tracker
-    callback_state = {"called": False}
-
-    def on_event(event):
-        callback_state["called"] = True
-
-    # register callback for the event
-    callback_id = PhysxManager.register_callback(lambda event: on_event(event), event=event_type)
-
-    try:
-        # verify callback hasn't been called yet
-        assert not callback_state["called"]
-
-        # reset the simulation - should trigger the event
-        sim.reset()
-
-        # verify callback was triggered
-        assert callback_state["called"]
-
-    finally:
-        # cleanup callback
-        if callback_id is not None:
-            PhysxManager.deregister_callback(callback_id)
-
-
-@pytest.mark.isaacsim_ci
-def test_isaac_event_prim_deletion():
-    """Test that PRIM_DELETION Isaac event is triggered when a prim is deleted."""
-    cfg = SimulationCfg(dt=0.01)
-    sim = SimulationContext(cfg)
-
-    # create simple scene
-    cube_cfg = sim_utils.CuboidCfg(size=(0.1, 0.1, 0.1))
-    cube_cfg.func("/World/Cube", cube_cfg)
+    ready = []
+    deleted = []
+    sim._physics_manager.register_callback(lambda payload: ready.append(payload), PhysicsEvent.PHYSICS_READY)
+    sim._physics_manager.register_callback(lambda payload: deleted.append(payload), PhysicsEvent.PRIM_DELETION)
 
     sim.reset()
-
-    # create callback tracker
-    callback_state = {"prim_deleted": False, "deleted_path": None}
-
-    def on_prim_deletion(event):
-        callback_state["prim_deleted"] = True
-        # event payload should contain the deleted prim path
-        if hasattr(event, "payload") and event.payload:
-            callback_state["deleted_path"] = event.payload.get("prim_path")
-
-    # register callback for PRIM_DELETION event
-    callback_id = PhysxManager.register_callback(lambda event: on_prim_deletion(event), event=IsaacEvents.PRIM_DELETION)
-
-    try:
-        # verify callback hasn't been called yet
-        assert not callback_state["prim_deleted"]
-
-        # delete the cube prim
-        sim_utils.delete_prim("/World/Cube")
-
-        # trigger the event by dispatching it manually (since deletion might be handled differently)
-        PhysxManager._message_bus.dispatch_event(IsaacEvents.PRIM_DELETION.value, payload={"prim_path": "/World/Cube"})  # type: ignore
-
-        # verify callback was triggered
-        assert callback_state["prim_deleted"]
-
-    finally:
-        # cleanup callback
-        if callback_id is not None:
-            PhysxManager.deregister_callback(callback_id)
-
-
-@pytest.mark.isaacsim_ci
-def test_isaac_event_timeline_stop():
-    """Test that TIMELINE_STOP Isaac event can be registered and triggered."""
-    cfg = SimulationCfg(dt=0.01)
-    sim = SimulationContext(cfg)
-
-    # create callback tracker
-    callback_state = {"timeline_stop_called": False}
-
-    def on_timeline_stop(event):
-        callback_state["timeline_stop_called"] = True
-
-    # register callback for TIMELINE_STOP event
-    callback_id = PhysxManager.register_callback(lambda event: on_timeline_stop(event), event=IsaacEvents.TIMELINE_STOP)
-
-    try:
-        # verify callback hasn't been called yet
-        assert not callback_state["timeline_stop_called"]
-
-        # play and stop the simulation
-        sim.play()
-
-        # disable app control to prevent hanging
-        sim._disable_app_control_on_stop_handle = True  # type: ignore
-
-        # stop the simulation
-        sim.stop()
-
-        # dispatch the event manually
-        PhysxManager._message_bus.dispatch_event(IsaacEvents.TIMELINE_STOP.value, payload={})  # type: ignore
-
-        # verify callback was triggered
-        assert callback_state["timeline_stop_called"]
-
-    finally:
-        # cleanup callback
-        if callback_id is not None:
-            PhysxManager.deregister_callback(callback_id)
-
-
-@pytest.mark.isaacsim_ci
-def test_isaac_event_callbacks_with_weakref():
-    """Test Isaac event callbacks with weak references (similar to asset_base.py pattern)."""
-    cfg = SimulationCfg(dt=0.01)
-    sim = SimulationContext(cfg)
-
-    # create simple scene
-    cube_cfg = sim_utils.CuboidCfg(size=(0.1, 0.1, 0.1))
-    cube_cfg.func("/World/Cube", cube_cfg)
-
-    # create a test object that will be weakly referenced
-    class PhysicsTracker:
-        def __init__(self):
-            self.warmup_count = 0
-            self.ready_count = 0
-
-        def on_warmup(self, event):
-            self.warmup_count += 1
-
-        def on_ready(self, event):
-            self.ready_count += 1
-
-    tracker = PhysicsTracker()
-
-    # define safe callback wrapper (same pattern as asset_base.py)
-    def safe_callback(callback_name, event, obj_ref):
-        """Safely invoke a callback on a weakly-referenced object."""
-        try:
-            obj = obj_ref()
-            if obj is not None:
-                getattr(obj, callback_name)(event)
-        except ReferenceError:
-            # Object has been deleted; ignore
-            pass
-
-    # register callbacks with weakref
-    obj_ref = weakref.ref(tracker)
-
-    warmup_id = PhysxManager.register_callback(
-        lambda event, obj_ref=obj_ref: safe_callback("on_warmup", event, obj_ref),
-        event=IsaacEvents.PHYSICS_WARMUP,
-    )
-    ready_id = PhysxManager.register_callback(
-        lambda event, obj_ref=obj_ref: safe_callback("on_ready", event, obj_ref), event=IsaacEvents.PHYSICS_READY
-    )
-
-    try:
-        # verify callbacks haven't been called
-        assert tracker.warmup_count == 0
-        assert tracker.ready_count == 0
-
-        # reset simulation - triggers WARMUP and READY events
-        sim.reset()
-
-        # verify callbacks were triggered (may be called multiple times during warmup sequence)
-        assert tracker.warmup_count >= 1
-        assert tracker.ready_count >= 1
-
-        # delete the tracker object
-        del tracker
-
-        # reset again - callbacks should handle the deleted object gracefully
-        sim.reset(soft=True)
-
-        # should not raise any errors even though tracker is deleted
-
-    finally:
-        # cleanup callbacks
-        if warmup_id is not None:
-            PhysxManager.deregister_callback(warmup_id)
-        if ready_id is not None:
-            PhysxManager.deregister_callback(ready_id)
-
-
-@pytest.mark.isaacsim_ci
-def test_multiple_isaac_event_callbacks():
-    """Test that multiple callbacks can be registered for the same Isaac event."""
-    cfg = SimulationCfg(dt=0.01)
-    sim = SimulationContext(cfg)
-
-    # create simple scene
-    cube_cfg = sim_utils.CuboidCfg(size=(0.1, 0.1, 0.1))
-    cube_cfg.func("/World/Cube", cube_cfg)
-
-    # create tracking for multiple callbacks
-    callback_counts = {"callback1": 0, "callback2": 0, "callback3": 0}
-
-    def callback1(event):
-        callback_counts["callback1"] += 1
-
-    def callback2(event):
-        callback_counts["callback2"] += 1
-
-    def callback3(event):
-        callback_counts["callback3"] += 1
-
-    # register multiple callbacks for PHYSICS_READY event
-    id1 = PhysxManager.register_callback(lambda event: callback1(event), event=IsaacEvents.PHYSICS_READY)
-    id2 = PhysxManager.register_callback(lambda event: callback2(event), event=IsaacEvents.PHYSICS_READY)
-    id3 = PhysxManager.register_callback(lambda event: callback3(event), event=IsaacEvents.PHYSICS_READY)
-
-    try:
-        # verify none have been called
-        assert all(count == 0 for count in callback_counts.values())
-
-        # reset simulation - triggers PHYSICS_READY event
-        sim.reset()
-
-        # all callbacks should have been called (may be called multiple times during warmup sequence)
-        assert callback_counts["callback1"] >= 1
-        assert callback_counts["callback2"] >= 1
-        assert callback_counts["callback3"] >= 1
-
-    finally:
-        # cleanup all callbacks
-        if id1 is not None:
-            PhysxManager.deregister_callback(id1)
-        if id2 is not None:
-            PhysxManager.deregister_callback(id2)
-        if id3 is not None:
-            PhysxManager.deregister_callback(id3)
-
-
-"""
-Exception Handling in Callbacks Tests.
-"""
-
-
-@pytest.mark.isaacsim_ci
-def test_exception_in_callback_on_reset():
-    """Test that exceptions stored during reset are raised."""
-    cfg = SimulationCfg(dt=0.01)
-    sim = SimulationContext(cfg)
-
-    # create simple scene
-    cube_cfg = sim_utils.CuboidCfg(size=(0.1, 0.1, 0.1))
-    cube_cfg.func("/World/Cube", cube_cfg)
-
-    test_error_message = "Test exception on reset"
-
-    def failing_callback(event):
-        PhysxManager.store_callback_exception(RuntimeError(test_error_message))
-
-    handle = PhysxManager.register_callback(failing_callback, event=IsaacEvents.PHYSICS_READY)
-
-    try:
-        with pytest.raises(RuntimeError, match=test_error_message):
-            sim.reset()
-    finally:
-        if handle is not None:
-            PhysxManager.deregister_callback(handle)
-        SimulationContext.clear_instance()
-
-
-@pytest.mark.isaacsim_ci
-def test_exception_in_callback_on_step():
-    """Test that exceptions stored during step are raised."""
-    cfg = SimulationCfg(dt=0.01)
-    sim = SimulationContext(cfg)
-
-    # create simple scene
-    cube_cfg = sim_utils.CuboidCfg(size=(0.1, 0.1, 0.1))
-    cube_cfg.func("/World/Cube", cube_cfg)
-
-    # reset first to initialize
     sim.reset()
+    assert ready == [{}]
 
-    test_error_message = "Test exception on step"
-
-    def failing_callback(event):
-        PhysxManager.store_callback_exception(RuntimeError(test_error_message))
-
-    handle = PhysxManager.register_callback(failing_callback, event=IsaacEvents.POST_PHYSICS_STEP)
-
-    try:
-        with pytest.raises(RuntimeError, match=test_error_message):
-            sim.step()
-    finally:
-        if handle is not None:
-            PhysxManager.deregister_callback(handle)
-        SimulationContext.clear_instance()
+    SimulationContext.clear_instance()
+    assert deleted == [{"prim_path": "/"}]
 
 
 # ------------------------------------------------------------------
@@ -1183,18 +834,16 @@ def test_exception_in_callback_on_step():
 
 def test_render_callback_is_invoked_on_render():
     """Callback registered via add_render_callback fires on every render() call."""
-    from unittest.mock import MagicMock, patch
+    from unittest.mock import MagicMock
 
-    cfg = SimulationCfg(dt=0.01)
+    cfg = SimulationCfg(physics=PhysxCfg(), dt=0.01)
     sim = SimulationContext(cfg)
-    sim.reset()
 
     cb = MagicMock()
     sim.add_render_callback("test_cb", cb)
 
-    with patch("isaaclab.utils.version.has_kit", return_value=False):
-        sim.render()
-        sim.render()
+    sim.render()
+    sim.render()
 
     assert cb.call_count == 2
     cb.assert_called_with(None)
@@ -1204,19 +853,15 @@ def test_render_callback_is_invoked_on_render():
 
 def test_render_callback_ordering():
     """Callbacks fire in ascending order value; lower order fires first."""
-    from unittest.mock import patch
-
-    cfg = SimulationCfg(dt=0.01)
+    cfg = SimulationCfg(physics=PhysxCfg(), dt=0.01)
     sim = SimulationContext(cfg)
-    sim.reset()
 
     call_log: list[str] = []
     sim.add_render_callback("second", lambda _: call_log.append("second"), order=10)
     sim.add_render_callback("first", lambda _: call_log.append("first"), order=0)
     sim.add_render_callback("third", lambda _: call_log.append("third"), order=20)
 
-    with patch("isaaclab.utils.version.has_kit", return_value=False):
-        sim.render()
+    sim.render()
 
     assert call_log == ["first", "second", "third"]
 
@@ -1225,19 +870,17 @@ def test_render_callback_ordering():
 
 def test_render_callback_replace_on_same_name():
     """Re-registering with the same name silently replaces the old callback."""
-    from unittest.mock import MagicMock, patch
+    from unittest.mock import MagicMock
 
-    cfg = SimulationCfg(dt=0.01)
+    cfg = SimulationCfg(physics=PhysxCfg(), dt=0.01)
     sim = SimulationContext(cfg)
-    sim.reset()
 
     old_cb = MagicMock()
     new_cb = MagicMock()
     sim.add_render_callback("cb", old_cb)
     sim.add_render_callback("cb", new_cb)
 
-    with patch("isaaclab.utils.version.has_kit", return_value=False):
-        sim.render()
+    sim.render()
 
     old_cb.assert_not_called()
     new_cb.assert_called_once_with(None)
@@ -1247,18 +890,16 @@ def test_render_callback_replace_on_same_name():
 
 def test_remove_render_callback_stops_invocation():
     """remove_render_callback prevents a registered callback from firing."""
-    from unittest.mock import MagicMock, patch
+    from unittest.mock import MagicMock
 
-    cfg = SimulationCfg(dt=0.01)
+    cfg = SimulationCfg(physics=PhysxCfg(), dt=0.01)
     sim = SimulationContext(cfg)
-    sim.reset()
 
     cb = MagicMock()
     sim.add_render_callback("cb", cb)
     sim.remove_render_callback("cb")
 
-    with patch("isaaclab.utils.version.has_kit", return_value=False):
-        sim.render()
+    sim.render()
 
     cb.assert_not_called()
 
@@ -1267,9 +908,8 @@ def test_remove_render_callback_stops_invocation():
 
 def test_remove_render_callback_noop_for_unknown_name():
     """remove_render_callback is a no-op when the name was never registered."""
-    cfg = SimulationCfg(dt=0.01)
+    cfg = SimulationCfg(physics=PhysxCfg(), dt=0.01)
     sim = SimulationContext(cfg)
-    sim.reset()
 
     sim.remove_render_callback("nonexistent")  # must not raise
 

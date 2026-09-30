@@ -3,6 +3,9 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
+from isaaclab_newton.renderers import NewtonWarpRendererCfg
+from isaaclab_physx.renderers import IsaacRtxRendererCfg, IsaacRtxRendererGlobalSettingsCfg
+
 import isaaclab.sim as sim_utils
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
@@ -11,7 +14,7 @@ from isaaclab.sensors import CameraCfg
 from isaaclab.utils.configclass import configclass
 
 from isaaclab_tasks.contrib.stack import mdp
-from isaaclab_tasks.utils.presets import set_isaac_rtx_global_settings
+from isaaclab_tasks.utils.presets import MultiBackendRendererCfg
 
 from . import stack_ik_rel_visuomotor_env_cfg
 
@@ -34,10 +37,12 @@ class ObservationsCfg:
         eef_quat = ObsTerm(func=mdp.ee_frame_quat)
         gripper_pos = ObsTerm(func=mdp.gripper_pos)
         table_cam = ObsTerm(
-            func=mdp.image, params={"sensor_cfg": SceneEntityCfg("table_cam"), "data_type": "rgb", "normalize": False}
+            func=mdp.image,
+            params={"sensor_cfg": SceneEntityCfg("table_cam"), "data_type": "rgb", "normalize": False},
         )
         wrist_cam = ObsTerm(
-            func=mdp.image, params={"sensor_cfg": SceneEntityCfg("wrist_cam"), "data_type": "rgb", "normalize": False}
+            func=mdp.image,
+            params={"sensor_cfg": SceneEntityCfg("wrist_cam"), "data_type": "rgb", "normalize": False},
         )
         table_cam_segmentation = ObsTerm(
             func=mdp.image,
@@ -116,6 +121,11 @@ class FrankaCubeStackVisuomotorCosmosEnvCfg(stack_ik_rel_visuomotor_env_cfg.Fran
             "class:UNLABELLED": (150, 150, 150, 255),
             "class:BACKGROUND": (200, 200, 200, 255),
         }
+        rtx_settings = IsaacRtxRendererGlobalSettingsCfg(dome_light_upper_lower_strategy=4, antialiasing_mode="Off")
+        wrist_rtx_cfg = IsaacRtxRendererCfg(global_settings=rtx_settings)
+        table_rtx_cfg = IsaacRtxRendererCfg(
+            global_settings=rtx_settings, semantic_segmentation_mapping=SEMANTIC_MAPPING
+        )
 
         # Set cameras
         # Set wrist camera
@@ -131,6 +141,7 @@ class FrankaCubeStackVisuomotorCosmosEnvCfg(stack_ik_rel_visuomotor_env_cfg.Fran
             offset=CameraCfg.OffsetCfg(
                 pos=(0.13, 0.0, -0.15), rot=(0.03701, 0.03701, -0.70614, -0.70614), convention="ros"
             ),
+            renderer_cfg=MultiBackendRendererCfg(default=wrist_rtx_cfg, isaacsim_rtx=wrist_rtx_cfg),
         )
 
         # Set table view camera
@@ -140,24 +151,20 @@ class FrankaCubeStackVisuomotorCosmosEnvCfg(stack_ik_rel_visuomotor_env_cfg.Fran
             height=200,
             width=200,
             data_types=["rgb", "semantic_segmentation", "normals", "distance_to_image_plane"],
-            colorize_semantic_segmentation=True,
-            semantic_segmentation_mapping=SEMANTIC_MAPPING,
             spawn=sim_utils.PinholeCameraCfg(
                 focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 2)
             ),
             offset=CameraCfg.OffsetCfg(
                 pos=(1.0, 0.0, 0.4), rot=(-0.61237, -0.61237, 0.35355, 0.35355), convention="ros"
             ),
+            renderer_cfg=MultiBackendRendererCfg(
+                default=table_rtx_cfg,
+                isaacsim_rtx=table_rtx_cfg,
+                newton_renderer=NewtonWarpRendererCfg(semantic_segmentation_mapping=SEMANTIC_MAPPING),
+            ),
         )
 
-        # Set settings for camera rendering
         self.num_rerenders_on_reset = 1
-        for camera_cfg in (self.scene.table_cam, self.scene.wrist_cam):
-            set_isaac_rtx_global_settings(
-                camera_cfg.renderer_cfg,
-                dome_light_upper_lower_strategy=4,
-                antialiasing_mode="Off",
-            )
 
         # List of image observations in policy observations
         self.image_obs_list = ["table_cam", "wrist_cam"]

@@ -93,7 +93,7 @@ def instance_randomize_cube_orientations_in_world_frame(
 ) -> torch.Tensor:
     """The orientation of the cubes in the world frame."""
     if not hasattr(env, "rigid_objects_in_focus"):
-        return torch.full((env.num_envs, 9), fill_value=-1)
+        return torch.full((env.num_envs, 12), fill_value=-1)
 
     cube_1: RigidObjectCollection = env.scene[cube_1_cfg.name]
     cube_2: RigidObjectCollection = env.scene[cube_2_cfg.name]
@@ -200,7 +200,7 @@ def instance_randomize_object_obs(
         cube_1 to cube_3,
     """
     if not hasattr(env, "rigid_objects_in_focus"):
-        return torch.full((env.num_envs, 9), fill_value=-1)
+        return torch.full((env.num_envs, 39), fill_value=-1)
 
     cube_1: RigidObjectCollection = env.scene[cube_1_cfg.name]
     cube_2: RigidObjectCollection = env.scene[cube_2_cfg.name]
@@ -324,7 +324,7 @@ def object_grasped(
 
     if hasattr(env.scene, "surface_grippers") and len(env.scene.surface_grippers) > 0:
         surface_gripper = env.scene.surface_grippers["surface_gripper"]
-        suction_cup_status = wp.to_torch(surface_gripper.state).view(-1, 1)  # 1: closed, 0: closing, -1: open
+        suction_cup_status = wp.to_torch(surface_gripper.state).view(-1)  # 1: closed, 0: closing, -1: open
         suction_cup_is_closed = (suction_cup_status == 1).to(torch.float32)
         grasped = torch.logical_and(suction_cup_is_closed, pose_diff < diff_threshold)
 
@@ -535,3 +535,17 @@ def ee_frame_pose_in_base_frame(
         return ee_quat_in_base
     else:
         return torch.cat((ee_pos_in_base, ee_quat_in_base), dim=1)
+
+
+def _pose_output_shape(_env: object, return_key: Literal["pos", "quat", None] = None, **_: object) -> tuple[int, ...]:
+    return (3,) if return_key == "pos" else (4,) if return_key == "quat" else (7,)
+
+
+instance_randomize_cube_positions_in_world_frame._output_shape = (9,)
+instance_randomize_cube_orientations_in_world_frame._output_shape = (12,)
+object_obs._output_shape = instance_randomize_object_obs._output_shape = (39,)
+ee_frame_pos._output_shape = (3,)
+ee_frame_quat._output_shape = (4,)
+object_grasped._output_shape = ()
+object_abs_obs_in_base_frame._output_shape = (28,)
+ee_frame_pose_in_base_frame._output_shape = _pose_output_shape

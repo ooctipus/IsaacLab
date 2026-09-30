@@ -14,15 +14,11 @@ and are instanced efficiently through prototype indices.
 
 from __future__ import annotations
 
-import logging
-
 import torch
 
 import isaaclab.sim as sim_utils
 from isaaclab.markers.visualization_markers_cfg import VisualizationMarkersCfg
 from isaaclab.utils.version import has_kit
-
-logger = logging.getLogger(__name__)
 
 
 class KitVisualizationMarkers:
@@ -47,17 +43,19 @@ class KitVisualizationMarkers:
         When this backend is initialized, the :class:`UsdGeom.PointInstancer`
         is created in the stage and the marker prims are registered into it.
 
-        .. note::
-            If a prim already exists at the requested path, the next free path
-            is used for the :class:`UsdGeom.PointInstancer` prim.
         """
         self.cfg = cfg
-        self.stage = sim_utils.get_current_stage()
-        # Resolve the next free prim path before creating the point instancer.
-        self.prim_path = sim_utils.get_next_free_prim_path(cfg.prim_path)
+        self.group_id = f"{cfg.prim_path}::{id(self)}"
+        sim = sim_utils.SimulationContext.instance()
+        if sim is None:
+            raise RuntimeError("Visualization markers require an active SimulationContext.")
+        self._sim = sim
+        self.stage = sim.stage
+        self.prim_path = cfg.prim_path
         self._is_visible = visible
         self._count = len(cfg.markers)
         self._environment_ids: tuple[int, ...] | None = None
+        self._invisible_ids_backup: tuple[bool, object] | None = None
 
         from pxr import Gf, UsdGeom  # noqa: PLC0415
 
@@ -93,6 +91,34 @@ class KitVisualizationMarkers:
         from pxr import UsdGeom  # noqa: PLC0415
 
         return self._instancer_manager.GetVisibilityAttr().Get() != UsdGeom.Tokens.invisible
+
+    def close(self) -> None:
+        """Restore temporary instance visibility."""
+        self.clear_visible_envs()
+
+    def set_visible_envs(self, visible_env_ids: set[int], num_envs: int) -> None:
+        """Hide dense environment-major marker instances outside the selection."""
+        if self._count != num_envs:
+            return
+        from pxr import Vt  # noqa: PLC0415
+
+        attr = self._instancer_manager.GetInvisibleIdsAttr()
+        if self._invisible_ids_backup is None:
+            authored = attr.HasAuthoredValue()
+            self._invisible_ids_backup = (authored, attr.Get() if authored else None)
+        attr.Set(Vt.Int64Array([env_id for env_id in range(num_envs) if env_id not in visible_env_ids]))
+
+    def clear_visible_envs(self) -> None:
+        """Restore the marker's authored instance visibility."""
+        if self._invisible_ids_backup is None:
+            return
+        authored, value = self._invisible_ids_backup
+        attr = self._instancer_manager.GetInvisibleIdsAttr()
+        if authored:
+            attr.Set(value)
+        else:
+            attr.Clear()
+        self._invisible_ids_backup = None
 
     def visualize(
         self,
@@ -167,7 +193,7 @@ class KitVisualizationMarkers:
         primvars_api = UsdGeom.PrimvarsAPI(self._instancer_manager.GetPrim())
         # PrimvarsAPI adds the ``primvars:`` namespace, matching the env-root attribute.
         primvar = primvars_api.GetPrimvar("omni:scenePartition")
-        if self._environment_ids is None or not self._scene_partitioning_is_active():
+        if self._environment_ids is None or not self._sim.get_setting("/isaaclab/render/rtx_sensors"):
             if primvar:
                 primvar.GetAttr().Clear()
             return
@@ -185,18 +211,6 @@ class KitVisualizationMarkers:
                 f"Expected '{primvar.GetAttr().GetPath()}' to have type TokenArray. Received: {primvar.GetTypeName()}."
             )
         primvar.Set(Vt.TokenArray([f"env_{env_id}" for env_id in self._environment_ids]))
-
-    def _scene_partitioning_is_active(self) -> bool:
-        """Return whether renderer stage preparation authored environment partitions.
-
-        Renderer preparation always starts with ``env_0``, so its root is the
-        canonical stage-level signal regardless of which environments own markers.
-        """
-        env_prim = self.stage.GetPrimAtPath("/World/envs/env_0")
-        if not env_prim.IsValid():
-            return False
-        attr = env_prim.GetAttribute("primvars:omni:scenePartition")
-        return attr.IsValid() and attr.Get() is not None
 
     def _add_markers_prototypes(self, markers_cfg: dict[str, sim_utils.SpawnerCfg]) -> None:
         """Add marker prototypes to the scene and register them with the point instancer."""
@@ -237,7 +251,7 @@ class KitVisualizationMarkers:
         from pxr import Sdf, UsdGeom, UsdPhysics  # noqa: PLC0415
 
         if not prim.IsValid():
-            raise ValueError(f"Prim at path '{prim.GetPrimAtPath()}' is not valid.")
+            raise ValueError(f"Marker prototype {prim.GetPath()} is not valid.")
 
         # Iterate over all prims under the marker prim path.
         all_prims = [prim]
@@ -263,7 +277,7 @@ class KitVisualizationMarkers:
                 sim_utils.change_prim_property(
                     prop_path=f"{child_prim.GetPrimPath().pathString}.primvars:invisibleToSecondaryRays",
                     value=True,
-                    stage=prim.GetStage(),
+                    stage=self.stage,
                     type_to_create_if_not_exist=Sdf.ValueTypeNames.Bool,
                 )
             all_prims += child_prim.GetChildren()

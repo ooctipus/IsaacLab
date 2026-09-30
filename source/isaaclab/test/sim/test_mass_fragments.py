@@ -13,6 +13,7 @@ simulation_app = AppLauncher(headless=True).app
 """Rest everything follows."""
 
 import pytest
+from isaaclab_physx.physics import PhysxCfg
 
 from pxr import UsdGeom, UsdPhysics
 
@@ -52,7 +53,7 @@ def test_apply_namespaced_writes_only_set_fields():
     from isaaclab.sim.schemas import MassCfg, apply_namespaced
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     prim = _make_xform(stage)
     UsdPhysics.MassAPI.Apply(prim)
@@ -71,10 +72,10 @@ def test_apply_mass_properties_applies_anchor_and_writes_fields():
     from isaaclab.sim.schemas import MassCfg, apply_mass_properties
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     _make_xform(stage, "/World/B2")
-    apply_mass_properties("/World/B2", [MassCfg(mass=5.0, density=100.0)], create_if_missing=True, stage=stage)
+    apply_mass_properties("/World/B2", [MassCfg(mass=5.0, density=100.0)], stage)
     prim = stage.GetPrimAtPath("/World/B2")
     assert bool(UsdPhysics.MassAPI(prim))  # implicit anchor applied
     assert abs(prim.GetAttribute("physics:mass").Get() - 5.0) < 1e-6
@@ -82,19 +83,19 @@ def test_apply_mass_properties_applies_anchor_and_writes_fields():
 
 
 # -------------------------------------------------------------------------------------
-# spawner slot accepts a fragment mapping + routing by type
+# spawner slot accepts a fragment list + transition routing
 # -------------------------------------------------------------------------------------
 
 
-def test_spawn_shape_with_mass_fragment_dict():
+def test_spawn_shape_with_mass_fragment_list():
     from isaaclab.sim.schemas import MassCfg, UsdPhysicsRigidBodyCfg
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     cfg = sim_utils.CuboidCfg(
         size=(1, 1, 1),
-        rigid_props={"": [UsdPhysicsRigidBodyCfg(rigid_body_enabled=True)]},
-        mass_props={"": [MassCfg(mass=4.0)]},
+        rigid_props=[UsdPhysicsRigidBodyCfg(rigid_body_enabled=True)],
+        mass_props=[MassCfg(mass=4.0)],
     )
     cfg.func("/World/Cube", cfg)
     prim = sim_utils.get_current_stage().GetPrimAtPath("/World/Cube")
@@ -102,73 +103,69 @@ def test_spawn_shape_with_mass_fragment_dict():
     assert abs(prim.GetAttribute("physics:mass").Get() - 4.0) < 1e-6
 
 
+def test_spawn_shape_with_single_mass_fragment():
+    # the ``mass_props`` slot advertises a single fragment (convenience form), not only a list;
+    # the spawn shim must route a bare fragment through ``apply_mass_properties`` (not the legacy writer)
+    from isaaclab.sim.schemas import MassCfg, UsdPhysicsRigidBodyCfg
+
+    sim_utils.create_new_stage()
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
+    cfg = sim_utils.CuboidCfg(
+        size=(1, 1, 1),
+        rigid_props=[UsdPhysicsRigidBodyCfg(rigid_body_enabled=True)],
+        mass_props=MassCfg(mass=4.0),
+    )
+    cfg.func("/World/CubeSingle", cfg)
+    prim = sim_utils.get_current_stage().GetPrimAtPath("/World/CubeSingle")
+    assert bool(UsdPhysics.MassAPI(prim))
+    assert abs(prim.GetAttribute("physics:mass").Get() - 4.0) < 1e-6
+
+
 # -------------------------------------------------------------------------------------
-# Review follow-ups -- unmatched-path warning, aggregated return, empty-list no-op
+# Review follow-ups -- prim-validity guard, aggregated return, empty-list no-op
 # -------------------------------------------------------------------------------------
 
 
-def test_apply_mass_properties_warns_on_unmatched_path(caplog):
+def test_apply_mass_properties_raises_on_invalid_prim():
     from isaaclab.sim.schemas import MassCfg, apply_mass_properties
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
-    # no prim authored at this path -> zero matches -> warning + False, no exception
-    with caplog.at_level("WARNING"):
-        result = apply_mass_properties("/World/DoesNotExist", [MassCfg(mass=1.0)], stage=stage)
-    assert result is False
-    assert "/World/DoesNotExist" in caplog.text
+    # no prim authored at this path -> GetPrimAtPath returns an invalid prim
+    with pytest.raises(ValueError):
+        apply_mass_properties("/World/DoesNotExist", [MassCfg(mass=1.0)], stage)
 
 
 def test_apply_mass_properties_aggregates_fragment_results():
     from isaaclab.sim.schemas import MassCfg, apply_mass_properties
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     _make_xform(stage, "/World/Agg")
 
     # a fragment whose applier reports failure must make the aggregate return False
     failing = MassCfg(mass=1.0)
     failing.func = lambda cfg, prim_path, stage=None: False
-    assert apply_mass_properties("/World/Agg", [failing], create_if_missing=True, stage=stage) is False
+    assert apply_mass_properties("/World/Agg", [failing], stage) is False
 
     # all-succeeding fragments return True
     ok = MassCfg(mass=1.0)
-    assert apply_mass_properties("/World/Agg", [ok], create_if_missing=True, stage=stage) is True
-
-
-def test_apply_mass_properties_creates_on_every_matched_prim():
-    """Creation applies ``MassAPI`` to every matched prim lacking it, rigid body or not."""
-    from isaaclab.sim.schemas import MassCfg, apply_mass_properties
-
-    sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
-    stage = sim_utils.get_current_stage()
-    root = UsdGeom.Xform.Define(stage, "/World/Bot").GetPrim()
-    body = UsdGeom.Xform.Define(stage, "/World/Bot/link").GetPrim()
-    UsdPhysics.RigidBodyAPI.Apply(body)
-    plain = UsdGeom.Xform.Define(stage, "/World/Bot/frame").GetPrim()
-
-    result = apply_mass_properties("/World/Bot(/.*)?", [MassCfg(mass=2.0)], create_if_missing=True, stage=stage)
-
-    assert result is True
-    for prim in (root, body, plain):
-        assert prim.HasAPI(UsdPhysics.MassAPI), prim.GetPath()
-        assert prim.GetAttribute("physics:mass").Get() == pytest.approx(2.0), prim.GetPath()
+    assert apply_mass_properties("/World/Agg", [ok], stage) is True
 
 
 def test_spawn_shape_with_empty_mass_list_is_noop():
     from isaaclab.sim.schemas import UsdPhysicsRigidBodyCfg
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     cfg = sim_utils.CuboidCfg(
         size=(1, 1, 1),
-        rigid_props={"": [UsdPhysicsRigidBodyCfg(rigid_body_enabled=True)]},
-        mass_props={"": []},
+        rigid_props=[UsdPhysicsRigidBodyCfg(rigid_body_enabled=True)],
+        mass_props=[],
     )
-    # an entry with an empty fragment list routes through the fragment path and applies nothing (no exception)
+    # an empty fragment list routes through the fragment path and applies nothing (no exception)
     cfg.func("/World/Cube", cfg)
     prim = sim_utils.get_current_stage().GetPrimAtPath("/World/Cube")
     # mass anchor is not required when there are zero fragments to apply

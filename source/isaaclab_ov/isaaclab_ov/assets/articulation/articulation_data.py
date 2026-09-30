@@ -34,7 +34,6 @@ from isaaclab_ov.assets.kernels import (
     get_body_link_vel_from_body_com_vel,
     vec13f,
 )
-from isaaclab_ov.physics import OvPhysxManager
 from isaaclab_ov.sim.views.ovphysx_view import OvPhysxView
 
 from . import kernels as articulation_kernels
@@ -87,7 +86,7 @@ class ArticulationData(BaseArticulationData):
     __backend_name__: str = "ovphysx"
     """The name of the backend for the articulation data."""
 
-    def __init__(self, view: OvPhysxView, device: str) -> None:
+    def __init__(self, view: OvPhysxView, device: str, physics_manager) -> None:
         """Initialize the articulation data container.
 
         Args:
@@ -100,6 +99,7 @@ class ArticulationData(BaseArticulationData):
             device: Simulation device string (e.g., ``"cuda:0"`` or ``"cpu"``).
         """
         super().__init__(root_view=None, device=device)
+        self._physics_manager = physics_manager
         self._view = view
 
         # The view exposes the articulation metadata (instance count, dof_count,
@@ -118,7 +118,6 @@ class ArticulationData(BaseArticulationData):
 
         # Set initial time stamp
         self._sim_timestamp: float = 0.0
-        self._fk_timestamp: float = 0.0
         self._is_primed: bool = False
         self._read_launch_cache = _WarpLaunchCache(device)
         self._joint_dof_signs = wp.ones(self.num_joints, dtype=wp.int32, device=device)
@@ -128,11 +127,7 @@ class ArticulationData(BaseArticulationData):
 
         # obtain gravity from the simulation configuration (fall back to standard
         # gravity when the simulation has not been configured yet, e.g. in unit tests)
-        gravity = (0.0, 0.0, -9.81)
-        from isaaclab.physics import PhysicsManager
-
-        if PhysicsManager._sim is not None and hasattr(PhysicsManager._sim, "cfg"):
-            gravity = PhysicsManager._sim.cfg.gravity
+        gravity = self._physics_manager.get_gravity()
         gravity_np = np.array(gravity, dtype=np.float32)
         gravity_mag = float(np.linalg.norm(gravity_np))
         if gravity_mag == 0.0:
@@ -178,29 +173,11 @@ class ArticulationData(BaseArticulationData):
         """
         # update the simulation timestamp
         self._sim_timestamp += dt
-        # FK is current after a sim step. Keep fk_timestamp in sync unless it was explicitly invalidated.
-        if self._fk_timestamp >= 0.0:
-            self._fk_timestamp = self._sim_timestamp
         if not self._is_primed:
             return
         # Trigger a finite-difference refresh of the joint acceleration at step frequency. The
         # property recomputes lazily when stale; reading it here keeps the FD cadence at one step.
         self.joint_acc
-
-    def _ensure_fk_fresh(self) -> None:
-        """Run forward kinematics if the joint / body state has changed since the last FK update.
-
-        Isaac Sim's articulation link transforms and velocities are recomputed by
-        ``update_articulations_kinematic``. After a manual joint or root write that bypassed the sim
-        step (``write_*_to_sim_*``), ``_fk_timestamp`` is set to ``-1.0`` to force a refresh on the
-        next read of any property that depends on body poses or velocities. The physics instance is
-        absent under the mocked-interface tests, in which case the refresh is skipped.
-        """
-        if self._fk_timestamp < self._sim_timestamp:
-            physx_instance = OvPhysxManager.get_physx_instance()
-            if physx_instance is not None:
-                physx_instance.update_articulations_kinematic()
-            self._fk_timestamp = self._sim_timestamp
 
     def _reset_pose(self, from_link: bool = True) -> None:
         """Reset pose-dependent cached articulation properties.
@@ -243,8 +220,6 @@ class ArticulationData(BaseArticulationData):
                 self._gravity_compensation_forces,
             ]
         )
-        # Force a kinematic refresh on the next FK-dependent read.
-        self._fk_timestamp = -1.0
 
     def _reset_velocity(self, from_com: bool = True) -> None:
         """Reset velocity-dependent cached articulation properties.
@@ -278,8 +253,6 @@ class ArticulationData(BaseArticulationData):
                 self._body_com_state_w_buf,
             ]
         )
-        # Force a kinematic refresh on the next FK-dependent read.
-        self._fk_timestamp = -1.0
 
     def _reset_dynamics(
         self, *, body_com_jacobian: bool = False, mass_matrix: bool = False, gravity_compensation: bool = False
@@ -773,7 +746,6 @@ class ArticulationData(BaseArticulationData):
         This quantity contains the linear and angular velocities of the articulation root's actor frame
         relative to the world.
         """
-        self._ensure_fk_fresh()
         # ovphysx ROOT_VELOCITY is COM velocity; link velocity comes from the first
         # element of the backend-order per-link velocity tensor.
         if self.has_body_ordering:
@@ -853,7 +825,6 @@ class ArticulationData(BaseArticulationData):
         (identical in either order for the same physical body), so it must not advance the public
         :attr:`body_link_pose_w` shadow.
         """
-        self._ensure_fk_fresh()
         if not self.has_body_ordering:
             self._read_transform_binding(TT.LINK_POSE, self._body_link_pose_w)
             return self._body_link_pose_w.data
@@ -951,7 +922,6 @@ class ArticulationData(BaseArticulationData):
         This quantity is the pose of the articulation links' actor frame relative to the world.
         The orientation is provided in (x, y, z, w) format.
         """
-        self._ensure_fk_fresh()
         self._refresh_reordered_body_buffer(self._body_link_pose_w, self._body_link_pose_w_backend, TT.LINK_POSE)
         if self._body_link_pose_w_ta is None:
             self._body_link_pose_w_ta = ProxyArray(self._body_link_pose_w.data)
@@ -964,7 +934,6 @@ class ArticulationData(BaseArticulationData):
         Shape is (num_instances, num_bodies), dtype = wp.spatial_vectorf.
         In torch this resolves to (num_instances, num_bodies, 6).
         """
-        self._ensure_fk_fresh()
         self._refresh_reordered_body_buffer(self._body_com_vel_w, self._body_com_vel_w_backend, TT.LINK_VELOCITY)
         if self._body_com_vel_w_ta is None:
             self._body_com_vel_w_ta = ProxyArray(self._body_com_vel_w.data)

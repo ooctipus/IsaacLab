@@ -13,8 +13,6 @@ import torch
 import warp as wp
 from isaaclab_experimental.envs import DirectRLEnvWarp
 
-from isaaclab import cloner
-
 if TYPE_CHECKING:
     from isaaclab_tasks.core.reorient.config.allegro_hand.allegro_hand_direct_env_cfg import AllegroHandEnvCfg
 
@@ -173,7 +171,7 @@ def reset_hand(
             vel = default_joint_vel[env_id, dof_id] + reset_dof_vel_noise * dof_vel_noise
 
             # The following lines should be equivalent to the following:
-            # self.hand.write_joint_state_to_sim(dof_pos, dof_vel, env_ids=env_ids)
+            # self.scene["robot"].write_joint_state_to_sim(dof_pos, dof_vel, env_ids=env_ids)
             joint_pos[env_id, dof_id] = pos
             joint_vel[env_id, dof_id] = vel
 
@@ -557,12 +555,12 @@ class ReorientDirectWarpEnv(DirectRLEnvWarp):
         # ---------------------------------------------------------------------
 
         # dof used for joint related init and sample
-        self.num_hand_dofs = self.hand.num_joints
+        self.num_hand_dofs = self.scene["robot"].num_joints
 
         # list of actuated joints
         actuated_dof_indices: list[int] = list()
         for joint_name in cfg.actuated_joint_names:
-            actuated_dof_indices.append(self.hand.joint_names.index(joint_name))
+            actuated_dof_indices.append(self.scene["robot"].joint_names.index(joint_name))
         actuated_dof_indices.sort()
         self.num_actuated_dofs = len(actuated_dof_indices)
 
@@ -576,14 +574,14 @@ class ReorientDirectWarpEnv(DirectRLEnvWarp):
         # finger bodies
         finger_bodies: list[int] = list()
         for body_name in self.cfg.fingertip_body_names:
-            finger_bodies.append(self.hand.body_names.index(body_name))
+            finger_bodies.append(self.scene["robot"].body_names.index(body_name))
         finger_bodies.sort()
         self.num_fingertips = len(finger_bodies)
         self.finger_bodies = wp.array(finger_bodies, dtype=wp.int32, device=self.device)
 
         # joint limits
-        self.hand_dof_lower_limits = self.hand.data.joint_pos_limits_lower.warp
-        self.hand_dof_upper_limits = self.hand.data.joint_pos_limits_upper.warp
+        self.hand_dof_lower_limits = self.scene["robot"].data.joint_pos_limits_lower.warp
+        self.hand_dof_upper_limits = self.scene["robot"].data.joint_pos_limits_upper.warp
 
         # unit vectors
         self.x_unit_vec = wp.vec3f(1.0, 0.0, 0.0)
@@ -612,7 +610,7 @@ class ReorientDirectWarpEnv(DirectRLEnvWarp):
         self.goal_pos_w = wp.zeros(self.num_envs, dtype=wp.vec3f, device=self.device)
 
         # Initialize goal constants from Torch (avoid a one-off kernel launch).
-        default_root_pose = self.object.data.default_root_pose.torch.to(self.device)
+        default_root_pose = self.scene["object"].data.default_root_pose.torch.to(self.device)
         in_hand_pos = default_root_pose[:, 0:3].clone()
         in_hand_pos[:, 2] -= 0.04
         self.in_hand_pos.assign(wp.from_torch(in_hand_pos, dtype=wp.vec3f))
@@ -623,6 +621,9 @@ class ReorientDirectWarpEnv(DirectRLEnvWarp):
         goal_rot = torch.zeros((self.num_envs, 4), device=self.device, dtype=torch.float32)
         goal_rot[:, 3] = 1.0  # (x, y, z, w)
         self.goal_rot.assign(wp.from_torch(goal_rot, dtype=wp.quatf))
+
+        # initialize goal marker
+        self.goal_markers = self.cfg.scene.goal_object_cfg.class_type(self.cfg.scene.goal_object_cfg)
 
         # Reduction buffers for consecutive_successes update (Warp-only).
         self._num_resets = wp.zeros(1, dtype=wp.float32, device=self.device)
@@ -673,21 +674,6 @@ class ReorientDirectWarpEnv(DirectRLEnvWarp):
         self.torch_reset_time_outs = wp.to_torch(self.reset_time_outs)
         self.torch_episode_length_buf = self.episode_length_buf  # already a torch tensor via wp.to_torch
 
-    def _setup_scene(self):
-        asset_cfgs = self.cfg.robot_cfg, self.cfg.object_cfg, self.cfg.ground_cfg
-        asset_cfgs += self.cfg.light_cfg, self.cfg.goal_object_cfg
-        plan = cloner.clone_plan_from_env_0(
-            self.cfg.scene.clone_cfg, asset_cfgs, self.cfg.scene.num_envs, self.cfg.scene.env_spacing
-        )
-        for cfg in (self.cfg.ground_cfg, self.cfg.light_cfg):
-            cfg.spawn.func(cfg.spawn.spawn_path, cfg.spawn, cfg.init_state.pos, cfg.init_state.rot)
-        self.hand = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
-        self.object = self.cfg.object_cfg.class_type(self.cfg.object_cfg)
-        self.goal_markers = self.cfg.goal_object_cfg.class_type(self.cfg.goal_object_cfg)
-        self.scene.articulations["robot"] = self.hand
-        self.scene.rigid_objects["object"] = self.object
-        cloner.replicate(plan, replicate_physics=self.cfg.scene.replicate_physics)
-
     def _pre_physics_step(self, actions: wp.array) -> None:
         # Store actions in a persistent Warp buffer (analogous to `actions.clone()` in the Torch env).
         wp.copy(self.actions, actions)
@@ -710,11 +696,11 @@ class ReorientDirectWarpEnv(DirectRLEnvWarp):
 
         # Apply position targets using mask method (CUDA graph safe).
         # All joints are actuated for Allegro, so default masks (None = all) are correct.
-        self.hand.set_joint_position_target_mask(target=self.cur_targets)
+        self.scene["robot"].set_joint_position_target_mask(target=self.cur_targets)
 
     def _get_observations(self) -> dict:
         # if self.cfg.asymmetric_obs:
-        #    self.fingertip_force_sensors = self.hand.root_physx_view.get_link_incoming_joint_force()[
+        #    self.fingertip_force_sensors = self.scene["robot"].root_physx_view.get_link_incoming_joint_force()[
         #        :, self.finger_bodies
         #    ]
         # NOTE: if re-enabled, `self.finger_bodies` holds public-order indices (from `body_names.index`)
@@ -820,15 +806,15 @@ class ReorientDirectWarpEnv(DirectRLEnvWarp):
             reset_object,
             dim=self.num_envs,
             inputs=[
-                self.object.data.default_root_pose.warp,
+                self.scene["object"].data.default_root_pose.warp,
                 self.env_origins,
                 self.cfg.reset_position_noise,
                 self.x_unit_vec,
                 self.y_unit_vec,
                 mask,
                 self.rng_state,
-                self.object.data.root_link_pose_w.warp,
-                self.object.data.root_com_vel_w.warp,
+                self.scene["object"].data.root_link_pose_w.warp,
+                self.scene["object"].data.root_com_vel_w.warp,
             ],
             device=self.device,
         )
@@ -838,8 +824,8 @@ class ReorientDirectWarpEnv(DirectRLEnvWarp):
             reset_hand,
             dim=self.num_envs,
             inputs=[
-                self.hand.data.default_joint_pos.warp,
-                self.hand.data.default_joint_vel.warp,
+                self.scene["robot"].data.default_joint_pos.warp,
+                self.scene["robot"].data.default_joint_vel.warp,
                 self.hand_dof_lower_limits,
                 self.hand_dof_upper_limits,
                 self.cfg.reset_dof_pos_noise,
@@ -847,8 +833,8 @@ class ReorientDirectWarpEnv(DirectRLEnvWarp):
                 mask,
                 self.num_hand_dofs,
                 self.rng_state,
-                self.hand.data.joint_pos.warp,
-                self.hand.data.joint_vel.warp,
+                self.scene["robot"].data.joint_pos.warp,
+                self.scene["robot"].data.joint_vel.warp,
                 self.prev_targets,
                 self.cur_targets,
                 self.hand_dof_targets,
@@ -856,7 +842,7 @@ class ReorientDirectWarpEnv(DirectRLEnvWarp):
             device=self.device,
         )
 
-        self.hand.set_joint_position_target_mask(target=self.cur_targets, env_mask=mask)
+        self.scene["robot"].set_joint_position_target_mask(target=self.cur_targets, env_mask=mask)
 
         wp.launch(
             reset_successes,
@@ -912,13 +898,13 @@ class ReorientDirectWarpEnv(DirectRLEnvWarp):
             compute_intermediate_values,
             dim=self.num_envs,
             inputs=[
-                self.hand.data.body_pos_w.warp,
-                self.hand.data.body_quat_w.warp,
-                self.hand.data.body_vel_w.warp,
+                self.scene["robot"].data.body_pos_w.warp,
+                self.scene["robot"].data.body_quat_w.warp,
+                self.scene["robot"].data.body_vel_w.warp,
                 self.finger_bodies,
                 self.env_origins,
-                self.object.data.root_link_pose_w.warp,
-                self.object.data.root_com_vel_w.warp,
+                self.scene["object"].data.root_link_pose_w.warp,
+                self.scene["object"].data.root_com_vel_w.warp,
                 self.num_fingertips,
                 self.fingertip_pos,
                 self.fingertip_rot,
@@ -962,8 +948,8 @@ class ReorientDirectWarpEnv(DirectRLEnvWarp):
             compute_full_observations,
             dim=self.num_envs,
             inputs=[
-                self.hand.data.joint_pos.warp,
-                self.hand.data.joint_vel.warp,
+                self.scene["robot"].data.joint_pos.warp,
+                self.scene["robot"].data.joint_vel.warp,
                 self.hand_dof_lower_limits,
                 self.hand_dof_upper_limits,
                 self.cfg.vel_obs_scale,

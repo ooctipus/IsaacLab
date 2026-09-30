@@ -521,6 +521,19 @@ class image_features(ManagerTermBase):
         else:
             model_config = self.model_zoo_cfg[self.model_name]
 
+        if self.model_zoo_cfg is not None:
+            self._output_shape = model_config.get("output_shape")
+            if not isinstance(self._output_shape, tuple):
+                raise ValueError(f"Custom image model '{self.model_name}' must declare a tuple 'output_shape'.")
+        elif self.model_name in default_resnet_models:
+            self._output_shape = (1000,)
+        else:
+            sensor_cfg = cfg.params.get("sensor_cfg", SceneEntityCfg("tiled_camera"))
+            sensor: Camera | RayCasterCamera = env.scene.sensors[sensor_cfg.name]
+            _, height, width, _ = sensor.output_shapes[cfg.params.get("data_type", "rgb")]
+            feature_dim = {"tiny": 192, "small": 384, "base": 768}[self.model_name.split("-")[1]]
+            self._output_shape = ((height // 16) * (width // 16), feature_dim)
+
         # Retrieve the model, preprocess and inference functions
         self._model = model_config["model"]()
         self._reset_fn = model_config.get("reset")
@@ -692,6 +705,11 @@ class stacked_image(ManagerTermBase):
         frame_stack: int = cfg.params.get("frame_stack", 1)
         if frame_stack < 1:
             raise ValueError(f"frame_stack must be >= 1, got {frame_stack}.")
+        sensor_cfg: SceneEntityCfg = cfg.params.get("sensor_cfg", SceneEntityCfg("tiled_camera"))
+        data_type: str = cfg.params.get("data_type", "rgb")
+        sensor: Camera | RayCasterCamera = env.scene.sensors[sensor_cfg.name]
+        _, height, width, channels = sensor.output_shapes[data_type]
+        self._output_shape = (height, width, frame_stack * channels)
 
         # K=1 is a documented passthrough; no buffer needed.
         self._buffer: CircularBuffer | None = None
@@ -795,3 +813,37 @@ def current_time_s(env: ManagerBasedRLEnv) -> torch.Tensor:
 def remaining_time_s(env: ManagerBasedRLEnv) -> torch.Tensor:
     """The maximum time remaining in the episode (in seconds)."""
     return env.max_episode_length_s - env.episode_length_buf.unsqueeze(1) * env.step_dt
+
+
+def _image_output_shape(
+    env: ManagerBasedEnv,
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("tiled_camera"),
+    data_type: str = "rgb",
+    permute: bool = False,
+    **_: object,
+) -> tuple[int, ...]:
+    sensor: Camera | RayCasterCamera = env.scene.sensors[sensor_cfg.name]
+    _, height, width, channels = sensor.output_shapes[data_type]
+    return (channels, height, width) if permute else (height, width, channels)
+
+
+def _height_scan_output_shape(env: ManagerBasedEnv, sensor_cfg: SceneEntityCfg, **_: object) -> tuple[int, ...]:
+    sensor: RayCaster = env.scene.sensors[sensor_cfg.name]
+    return (sensor.num_rays,)
+
+
+def _body_incoming_wrench_output_shape(
+    env: ManagerBasedEnv, sensor_cfg: SceneEntityCfg, **_: object
+) -> tuple[int, ...]:
+    sensor: JointWrenchSensor = env.scene.sensors[sensor_cfg.name]
+    num_bodies = sensor.num_bodies if isinstance(sensor_cfg.body_ids, slice) else len(sensor_cfg.body_ids)
+    return (6 * num_bodies,)
+
+
+image._output_shape = _image_output_shape
+height_scan._output_shape = _height_scan_output_shape
+body_incoming_wrench._output_shape = _body_incoming_wrench_output_shape
+pva_orientation._output_shape = (4,)
+pva_projected_gravity._output_shape = (3,)
+imu_ang_vel._output_shape = (3,)
+imu_lin_acc._output_shape = (3,)

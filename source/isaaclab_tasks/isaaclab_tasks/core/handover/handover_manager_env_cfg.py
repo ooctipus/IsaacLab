@@ -14,7 +14,6 @@ from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
-from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim.spawners.materials import RigidBodyMaterialBaseCfg
 from isaaclab.utils.configclass import configclass
 
@@ -27,6 +26,7 @@ from isaaclab_tasks.core.handover.handover_env_cfg import (
     RightHandCfg,
 )
 from isaaclab_tasks.utils import PresetCfg
+from isaaclab_tasks.utils.presets import MultiBackendSceneCfg, MultiBackendSimulationCfg
 
 from isaaclab_assets.robots.shadow_hand import (
     FINGERTIP_NAMES,
@@ -37,7 +37,7 @@ from isaaclab_assets.robots.shadow_hand import (
 
 
 @configclass
-class HandoverManagerSceneCfg(InteractiveSceneCfg):
+class HandoverManagerSceneCfg(MultiBackendSceneCfg):
     """Two Shadow hands facing each other over a ground plane."""
 
     num_envs = 2048
@@ -306,6 +306,14 @@ class TerminationsCfg:
 class HandoverManagerEnvCfg(ManagerBasedRLEnvCfg):
     """Manager-based handover environment matching the Direct RSL-RL view."""
 
+    decimation = 2
+    episode_length_s = 7.5
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(
+        dt=1 / 120,
+        render_interval=decimation,
+        physics_material=RigidBodyMaterialBaseCfg(static_friction=1.0, dynamic_friction=1.0),
+        physics=PhysicsCfg(),
+    )
     scene: HandoverManagerSceneCfg = HandoverManagerSceneCfg()
     observations: ObservationsCfg = ObservationsCfg()
     actions: ActionsCfg = ActionsCfg()
@@ -313,13 +321,3 @@ class HandoverManagerEnvCfg(ManagerBasedRLEnvCfg):
     rewards: RewardsCfg = RewardsCfg()
     terminations: TerminationsCfg = TerminationsCfg()
     events: HandoverEventPresetCfg = HandoverEventPresetCfg()
-
-    def __post_init__(self):
-        self.decimation = 2
-        self.episode_length_s = 7.5
-        # simulation — mirrors the Direct cfg
-        self.sim.dt = 1 / 120
-        self.sim.render_interval = self.decimation
-        self.sim.physics_material = RigidBodyMaterialBaseCfg(static_friction=1.0, dynamic_friction=1.0)
-        self.sim.physics = PhysicsCfg()
-        self.viewer.eye = (2.0, 2.0, 2.0)

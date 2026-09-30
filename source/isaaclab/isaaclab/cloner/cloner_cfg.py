@@ -23,8 +23,8 @@ def expand_env_regex_ns(path_expr: str, env_template: str = DEFAULT_ENV_TEMPLATE
 
     The macro spares a configuration from spelling the namespace, and with it the segment
     wildcard that names one environment. :class:`~isaaclab.scene.InteractiveScene` expands it
-    against its own template for the assets it collects; assets built outside the scene (a
-    direct environment builds its own) go through here instead.
+    against its own template for the assets it collects; standalone workflows that build assets
+    without an interactive scene go through here instead.
 
     Args:
         path_expr: Prim path expression, with or without the macro.

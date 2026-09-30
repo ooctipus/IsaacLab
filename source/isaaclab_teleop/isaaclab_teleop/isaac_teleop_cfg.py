@@ -12,10 +12,12 @@ from dataclasses import MISSING, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
+import isaaclab.sim as sim_utils
+from isaaclab.markers import VisualizationMarkersCfg
+from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.configclass import configclass
 
 from .control_events import TELEOP_CONTROL_CHANNEL_UUID
-from .xr_cfg import XrCfg
 
 _CLOUDXR_ENV_DIR = Path(__file__).resolve().parent
 
@@ -34,43 +36,39 @@ pure input/output transport and creates its own OpenXR session. It forces a
 no client connected, working around ``XR_ERROR_FORM_FACTOR_UNAVAILABLE`` (``-35``).
 """
 
+HAND_JOINT_MARKER_CFG = VisualizationMarkersCfg(
+    prim_path="/Visuals/HandJointMarkers",
+    markers={
+        "joint": sim_utils.SphereCfg(
+            radius=0.005,
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
+        )
+    },
+)
+CONTROLLER_AIM_MARKER_CFG = VisualizationMarkersCfg(
+    prim_path="/Visuals/ControllerAimMarkers",
+    markers={
+        "frame": sim_utils.UsdFileCfg(
+            usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/UIElements/frame_prim.usd",
+            scale=(0.05, 0.05, 0.05),
+        )
+    },
+)
+
 if TYPE_CHECKING:
-    from isaacteleop.retargeting_engine.interface import BaseRetargeter, OutputCombiner
+    from isaacteleop.retargeting_engine.interface import OutputCombiner
     from isaacteleop.teleop_session_manager import PluginConfig, RetargetingExecutionConfig
 
 
 @configclass
 class XrCameraFeedCfg:
-    """Configuration for one camera image panel shown in XR.
-
-    Render-product policy authored for a feed remains on the selected camera
-    render product until that prim is replaced or destroyed. Closing the PiP
-    panel releases display resources but does not restore prior policy values.
-    """
+    """Configuration for one camera image panel shown in XR."""
 
     camera_name: str = MISSING
     """Name of the :class:`~isaaclab.sensors.Camera` in the interactive scene."""
 
     enabled: bool = True
     """Whether to create and update this feed."""
-
-    enable_dlss_ray_reconstruction: bool | None = None
-    """Enable DLSS Ray Reconstruction on this feed's RTX render product.
-
-    ``None`` preserves the render-product default. On Isaac Sim versions before
-    6.1, ``True`` falls back to classic DLSS because responsive denoising is
-    unavailable. The private PiP adapter applies this setting on a best-effort
-    basis when binding to a compatible render product. Backends without one keep
-    using the Camera-buffer fallback.
-    """
-
-    dlss_exec_mode: Literal["performance", "balanced", "quality", "auto", "rtxaa", "manual"] | None = None
-    """Optional DLSS execution mode for this feed's RTX render product.
-
-    ``None`` preserves the render-product default. The private PiP adapter applies
-    this setting on a best-effort basis when binding to a compatible render product;
-    it does not author the value on other render products.
-    """
 
     panel_width_m: float = 0.48
     """Physical panel width [m]."""
@@ -141,46 +139,34 @@ class XrCameraFeedLayoutCfg:
 
 
 @configclass
+class TeleopPipelineCfg:
+    """Configuration selecting one IsaacTeleop retargeting pipeline implementation."""
+
+    class_type: Callable[[TeleopPipelineCfg], OutputCombiner] = MISSING
+    """Pipeline implementation constructed as ``class_type(cfg)``."""
+
+
+@configclass
 class IsaacTeleopCfg:
     """Configuration for IsaacTeleop-based teleoperation.
 
     This configuration class defines the parameters needed to create a IsaacTeleop
     teleoperation session integrated with Isaac Lab environments.
 
-    The pipeline_builder is a callable that constructs the IsaacTeleop retargeting
-    pipeline. It should return an OutputCombiner with a single "action" output
-    that contains the flattened action tensor (typically via TensorReorderer).
-
-    If the pipeline builder also produces retargeters that should be exposed in
-    the tuning UI, the env cfg should call the builder, unpack the results, and
-    populate both ``pipeline_builder`` and ``retargeters_to_tune`` explicitly.
-    Both fields must be callables (lambdas / functions) so they survive the
-    ``deepcopy`` performed by ``@configclass`` on mutable attributes.
+    The selected pipeline implementation returns an ``OutputCombiner`` with one
+    ``"action"`` output containing the flattened action tensor.
 
     Example:
         .. code-block:: python
 
-            def build_pipeline():
+            def build_pipeline(cfg):
                 controllers = ControllersSource(name="controllers")
                 se3 = Se3AbsRetargeter(cfg, name="ee_pose")
                 # ... connect and flatten with TensorReorderer ...
-                pipeline = OutputCombiner({"action": reorderer.output("output")})
-                return pipeline, [se3]  # return retargeters separately
+                return OutputCombiner({"action": reorderer.output("output")})
 
 
-            pipeline, retargeters = build_pipeline()
-            teleop_cfg = IsaacTeleopCfg(
-                xr_cfg=XrCfg(anchor_pos=(0.5, 0.0, 0.5)),
-                pipeline_builder=lambda: pipeline,
-                retargeters_to_tune=lambda: retargeters,
-            )
-    """
-
-    xr_cfg: XrCfg = field(default_factory=XrCfg)
-    """XR anchor configuration for positioning the user in the simulation.
-
-    This includes anchor position, rotation, and optional dynamic anchoring
-    to follow a prim (e.g., robot base) during locomotion tasks.
+            teleop_cfg = IsaacTeleopCfg(pipeline_cfg=TeleopPipelineCfg(class_type=build_pipeline))
     """
 
     xr_camera_feeds: list[XrCameraFeedCfg] = field(default_factory=list)
@@ -192,16 +178,12 @@ class IsaacTeleopCfg:
     xr_camera_feed_layout: XrCameraFeedLayoutCfg = field(default_factory=XrCameraFeedLayoutCfg)
     """Placement and packing applied to the ordered enabled camera feeds."""
 
-    pipeline_builder: Callable[[], OutputCombiner] = MISSING
-    """Callable that builds the IsaacTeleop retargeting pipeline.
+    pipeline_cfg: TeleopPipelineCfg = MISSING
+    """Retargeting pipeline implementation configuration.
 
-    The function should return an OutputCombiner with an "action" output
+    Its ``class_type`` must return an ``OutputCombiner`` with an ``"action"`` output
     containing the flattened action tensor matching the Isaac Lab action space.
     Use TensorReorderer to flatten multiple retargeter outputs into a single array.
-
-    To expose retargeters for the tuning UI, populate :attr:`retargeters_to_tune`
-    directly when constructing this config rather than encoding them into the
-    builder's return value.
     """
 
     plugins: list[PluginConfig] = field(default_factory=list)
@@ -213,6 +195,12 @@ class IsaacTeleopCfg:
 
     sim_device: str = "cuda:0"
     """Torch device string for placing output action tensors."""
+
+    hand_joint_visualizer_cfg: VisualizationMarkersCfg = HAND_JOINT_MARKER_CFG
+    """Marker configuration for tracked hand joints."""
+
+    controller_aim_visualizer_cfg: VisualizationMarkersCfg = CONTROLLER_AIM_MARKER_CFG
+    """Marker configuration for controller aim poses."""
 
     retargeting_execution: RetargetingExecutionConfig | None = None
     """IsaacTeleop retargeting execution settings.
@@ -232,22 +220,6 @@ class IsaacTeleopCfg:
 
     When ``False`` (the default), the teleop session remains inactive until a
     ``"START"`` command is received from xr_core via the message bus.
-    """
-
-    retargeters_to_tune: Callable[[], list[BaseRetargeter]] | None = None
-    """Optional callable returning retargeters to expose in the tuning UI.
-
-    Must be a callable (e.g. ``lambda: [retargeter1, retargeter2]``) rather
-    than a plain list because ``@configclass`` deep-copies mutable attributes
-    and retargeter objects often contain non-picklable C++/SWIG handles.
-    Wrapping in a callable makes the value opaque to ``deepcopy``.
-
-    When set and the tuning UI is enabled, the returned retargeters will be
-    displayed in the ``MultiRetargeterTuningUIImGui`` window, allowing
-    real-time adjustment of their tunable parameters.  Only retargeters that
-    have a ``ParameterState`` (i.e. tunable parameters) will appear.
-
-    If ``None``, the tuning UI will not be opened.
     """
 
     control_channel_uuid: bytes | None = TELEOP_CONTROL_CHANNEL_UUID

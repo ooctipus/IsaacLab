@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Unit tests for Newton clone label rewriting and visualization clone-plan sources."""
+"""Unit tests for Newton clone label rewriting."""
 
 import unittest
 from unittest import mock
@@ -13,13 +13,6 @@ import numpy as np
 import warp as wp
 from isaaclab_newton.cloner import newton_clone_utils as newton_clone_utils_module
 from isaaclab_newton.cloner.newton_clone_utils import rename_builder_labels, replicate_builder_mapping
-from isaaclab_newton.physics import visualization_builder as visualization_builder_module
-from isaaclab_newton.physics import visualization_deformables as visualization_deformables_module
-
-from pxr import Sdf, Usd, UsdGeom, UsdPhysics
-
-from isaaclab.cloner import ClonePlan
-from isaaclab.scene_data.deformable_discovery import DeformableStageEntry
 
 _VIS_LABEL_SUFFIXES = {
     "body_label": "Body",
@@ -59,12 +52,17 @@ class _FakeVisualizationModelBuilder:
             ),
         }
         self.geometry_sources = []
+        self.particle_q = []
         self.world_slices = []
         self._current_world = None
 
     @property
     def shape_count(self):
         return len(self.shape_label)
+
+    @property
+    def particle_count(self):
+        return len(self.particle_q)
 
     def begin_world(self):
         self._current_world = len(self.world_slices)
@@ -226,6 +224,42 @@ class TestRenameCustomAttributes(unittest.TestCase):
         self.assertEqual(notes, {index: f"{_SRC}/note" for index in range(len(self.worlds))})
 
 
+class TestRenameEntityLabels(unittest.TestCase):
+    def test_nested_and_heterogeneous_sources_follow_active_row_order(self):
+        builder = newton.ModelBuilder()
+        builder.body_label.extend(
+            (
+                "/World/envs/env_0/Robot/base",
+                "/World/envs/env_0/Robot/tool/tip",
+                "/World/envs/env_1/Object/body",
+            )
+        )
+        builder.body_world.extend((0, 0, 1))
+        sources = (
+            "/World/envs/env_0/Robot/tool",
+            "/World/envs/env_0/Robot",
+            "/World/envs/env_1/Object",
+        )
+
+        bindings = rename_builder_labels(
+            builder,
+            sources,
+            ("/World/envs/env_{}/EndEffector", "/World/envs/env_{}/Robot", "/World/envs/env_{}/Object"),
+            np.array((4, 9), dtype=np.int64),
+            np.array(((True, False), (True, False), (False, True)), dtype=np.bool_),
+        )
+
+        self.assertEqual(
+            builder.body_label,
+            [
+                "/World/envs/env_4/Robot/base",
+                "/World/envs/env_4/EndEffector/tip",
+                "/World/envs/env_9/Object/body",
+            ],
+        )
+        self.assertEqual(bindings, list(zip(builder.body_label, range(3), strict=True)))
+
+
 class TestReplicateBuilderMapping(unittest.TestCase):
     @staticmethod
     def _source_builder(root_path: str):
@@ -322,177 +356,73 @@ class TestReplicateBuilderMapping(unittest.TestCase):
             source_builders,
             destinations=("/World/envs/env_{}/inactive", "/World/envs/env_{}/active"),
             env_ids=np.arange(2, dtype=np.int64),
+            per_world_builder_hooks=(lambda *_: None,),
         )
 
         self.assertEqual(builder.geometry_sources_for_world(0), ["/World/envs/env_0/active"])
         self.assertEqual(builder.geometry_sources_for_world(1), [])
 
-
-class TestVisualizationClonePlan(unittest.TestCase):
-    def test_clone_plan_expands_prototype_deformables_to_selected_environments(self):
-        entry = DeformableStageEntry(
-            root_path="/World/envs/env_0/Deformable",
-            sim_mesh_path="/World/envs/env_0/Deformable/simulation_mesh",
-            vis_mesh_path="/World/envs/env_0/Deformable/visual_mesh",
-            deformable_type="surface",
-            vertex_count=3,
-            vis_vertex_count=3,
-        )
-        clone_plan = ClonePlan(
-            sources=("/World/envs/env_0",),
-            destinations=("/World/envs/env_{}",),
-            clone_mask=np.ones((1, 4), dtype=np.bool_),
-            env_ids=np.arange(4, dtype=np.int64),
+    def test_contiguous_combinations_replicate_as_native_blocks(self):
+        sources = ("/World/envs/env_0/Robot", "/World/envs/env_0/Object", "/World/envs/env_2/Object")
+        source_builders = {}
+        for source in sources:
+            source_builders[source] = newton.ModelBuilder()
+            source_builders[source].add_body(label=f"{source}/body")
+        builder = newton.ModelBuilder()
+        mapping = np.array(
+            [[True, True, True, True], [True, True, False, False], [False, False, True, True]], dtype=np.bool_
         )
 
-        entries = visualization_deformables_module._expand_clone_plan_deformable_entries([entry], clone_plan)
+        with mock.patch.object(builder, "replicate", wraps=builder.replicate) as replicate:
+            _, _, bindings = replicate_builder_mapping(
+                builder,
+                sources,
+                mapping,
+                np.arange(4, dtype=np.float32)[:, None] * np.array([[1.0, 0.0, 0.0]], dtype=np.float32),
+                np.array([[0.0, 0.0, 0.0, 1.0]] * 4, dtype=np.float32),
+                source_builders,
+                destinations=(
+                    "/World/envs/env_{}/Robot",
+                    "/World/envs/env_{}/Object",
+                    "/World/envs/env_{}/Object",
+                ),
+                env_ids=np.arange(10, 14, dtype=np.int64),
+            )
 
+        self.assertEqual([call.args[1] for call in replicate.call_args_list], [2, 2])
         self.assertEqual(
-            [entry.root_path for entry in entries],
-            [f"/World/envs/env_{env_id}/Deformable" for env_id in range(4)],
+            builder.body_label,
+            [
+                "/World/envs/env_10/Robot/body",
+                "/World/envs/env_10/Object/body",
+                "/World/envs/env_11/Robot/body",
+                "/World/envs/env_11/Object/body",
+                "/World/envs/env_12/Robot/body",
+                "/World/envs/env_12/Object/body",
+                "/World/envs/env_13/Robot/body",
+                "/World/envs/env_13/Object/body",
+            ],
         )
-        self.assertEqual(
-            [entry.vis_mesh_path for entry in entries],
-            [f"/World/envs/env_{env_id}/Deformable/visual_mesh" for env_id in range(4)],
-        )
+        self.assertEqual(bindings, list(zip(builder.body_label, range(8), strict=True)))
 
-    @staticmethod
-    def _define_xform(stage, path, translation=None):
-        xform = UsdGeom.Xform.Define(stage, path)
-        if translation is not None:
-            xform.AddTranslateOp().Set(translation)
+    def test_interleaved_combinations_do_not_replicate_one_world_blocks(self):
+        sources = ("/World/envs/env_0/A", "/World/envs/env_1/B")
+        source_builders = {source: newton.ModelBuilder() for source in sources}
+        for source, source_builder in source_builders.items():
+            source_builder.add_body(label=source)
+        builder = newton.ModelBuilder()
 
-    def test_visualization_builder_imports_standalone_stage_as_one_world(self):
-        stage = Usd.Stage.CreateInMemory()
-        self._define_xform(stage, "/World")
-        self._define_xform(stage, "/World/Robot")
-        builder = mock.Mock()
-        builder.shape_collision_filter_pairs = []
-        builder.shape_collision_group = []
-        builder.shape_count = 0
-        builder.add_usd.return_value = {"path_shape_map": {}}
-
-        with (
-            mock.patch.object(visualization_builder_module, "ModelBuilder", return_value=builder),
-            mock.patch.object(visualization_builder_module, "SchemaResolverNewton", lambda: "newton"),
-            mock.patch.object(visualization_builder_module, "SchemaResolverPhysx", lambda: "physx"),
-            mock.patch.object(visualization_builder_module, "import_builder_visual_material_paths"),
-        ):
-            result, (shadow_entities, registry_groups) = (
-                visualization_builder_module.build_visualization_builder_from_stage_envs(stage, [], None)
+        with mock.patch.object(builder, "replicate", wraps=builder.replicate) as replicate:
+            replicate_builder_mapping(
+                builder,
+                sources,
+                np.array([[True, False, True, False], [False, True, False, True]], dtype=np.bool_),
+                np.zeros((4, 3), dtype=np.float32),
+                np.array([[0.0, 0.0, 0.0, 1.0]] * 4, dtype=np.float32),
+                source_builders,
             )
 
-        self.assertIs(result, builder)
-        self.assertEqual(shadow_entities, [])
-        self.assertEqual(registry_groups, [])
-        builder.add_usd.assert_called_once_with(stage, schema_resolvers=["newton", "physx"], ignore_paths=None)
-
-    def test_visualization_builder_disables_collision_pairs(self):
-        stage = Usd.Stage.CreateInMemory()
-        robot_path = "/World/envs/env_0/Robot"
-        self._define_xform(stage, "/World")
-        self._define_xform(stage, "/World/envs")
-        self._define_xform(stage, "/World/envs/env_0")
-        self._define_xform(stage, "/World/envs/env_1", (2.0, 0.0, 0.0))
-        robot = UsdGeom.Xform.Define(stage, robot_path).GetPrim()
-        UsdPhysics.ArticulationRootAPI.Apply(robot)
-        robot.CreateAttribute("physxArticulation:enabledSelfCollisions", Sdf.ValueTypeNames.Bool).Set(False)
-        for name, translation in (("A", 0.0), ("B", 1.0)):
-            body_path = f"{robot_path}/{name}"
-            body = UsdGeom.Xform.Define(stage, body_path)
-            body.AddTranslateOp().Set((translation, 0.0, 0.0))
-            UsdPhysics.RigidBodyAPI.Apply(body.GetPrim())
-            collision = UsdGeom.Cube.Define(stage, f"{body_path}/Collision")
-            collision.CreateSizeAttr(0.2)
-            UsdPhysics.CollisionAPI.Apply(collision.GetPrim())
-        joint = UsdPhysics.RevoluteJoint.Define(stage, f"{robot_path}/Joint")
-        joint.CreateBody0Rel().SetTargets([Sdf.Path(f"{robot_path}/A")])
-        joint.CreateBody1Rel().SetTargets([Sdf.Path(f"{robot_path}/B")])
-
-        clone_plan = ClonePlan(
-            sources=(robot_path,),
-            destinations=("/World/envs/env_{}/Robot",),
-            clone_mask=np.ones((1, 2), dtype=np.bool_),
-            env_ids=np.arange(2, dtype=np.int64),
-            positions=np.asarray(((0.0, 0.0, 0.0), (2.0, 0.0, 0.0)), dtype=np.float32),
-        )
-        for env_paths, plan, expected_shape_count in (
-            ([], None, 2),
-            ([(0, "/World/envs/env_0"), (1, "/World/envs/env_1")], clone_plan, 4),
-        ):
-            builder, _shadow_metadata = visualization_builder_module.build_visualization_builder_from_stage_envs(
-                stage, env_paths, plan
-            )
-            model = builder.finalize(device="cpu")
-
-            self.assertEqual(model.shape_count, expected_shape_count)
-            self.assertEqual(len(model.shape_collision_filter_pairs), 0)
-            self.assertEqual(model.shape_contact_pair_count, 0)
-
-    def test_visualization_builder_rejects_clone_plan_without_environment_paths(self):
-        """A cloned scene must not be cached as an incomplete single-world model."""
-        stage = Usd.Stage.CreateInMemory()
-        self._define_xform(stage, "/World")
-        clone_plan = ClonePlan(
-            sources=(),
-            destinations=(),
-            clone_mask=np.empty((0, 0), dtype=np.bool_),
-            env_ids=np.empty(0, dtype=np.int64),
-        )
-
-        with (
-            mock.patch.object(visualization_builder_module, "SchemaResolverNewton", lambda: object()),
-            mock.patch.object(visualization_builder_module, "SchemaResolverPhysx", lambda: object()),
-            self.assertRaisesRegex(ValueError, "requires at least one environment path"),
-        ):
-            visualization_builder_module.build_visualization_builder_from_stage_envs(stage, [], clone_plan)
-
-    def test_visualization_builder_uses_clone_plan_sources_and_rewrites_labels(self):
-        stage = Usd.Stage.CreateInMemory()
-        UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
-        self._define_xform(stage, "/World")
-        self._define_xform(stage, "/World/envs")
-        env_paths = [(env_id, f"/World/envs/env_{env_id}") for env_id in (0, 1)]
-        for env_id, env_path in env_paths:
-            self._define_xform(stage, env_path, (float(env_id) * 3.0, 0.0, 0.0))
-            self._define_xform(stage, f"{env_path}/Object")
-        self._define_xform(stage, "/World/envs/env_0/Object/source_0_visual")
-        self._define_xform(stage, "/World/envs/env_1/Object/source_1_visual")
-
-        clone_plan = ClonePlan(
-            sources=("/World/envs/env_0/Object", "/World/envs/env_1/Object"),
-            destinations=("/World/envs/env_{}/Object", "/World/envs/env_{}/Object"),
-            clone_mask=np.array([[True, False, True], [False, True, False]], dtype=np.bool_),
-            env_ids=np.array([0, 1, 2], dtype=np.int64),
-            positions=np.asarray(((0.0, 0.0, 0.0), (3.0, 0.0, 0.0), (6.0, 0.0, 0.0)), dtype=np.float32),
-        )
-
-        with (
-            mock.patch.object(visualization_builder_module, "ModelBuilder", _FakeVisualizationModelBuilder),
-            mock.patch.object(newton_clone_utils_module, "ModelBuilder", _FakeVisualizationModelBuilder),
-            mock.patch.object(visualization_builder_module, "SchemaResolverNewton", lambda: object()),
-            mock.patch.object(visualization_builder_module, "SchemaResolverPhysx", lambda: object()),
-            mock.patch.object(visualization_builder_module, "import_builder_visual_material_paths"),
-            mock.patch.object(newton_clone_utils_module, "import_builder_visual_material_paths"),
-            mock.patch.object(newton_clone_utils_module, "replace_newton_builder_shape_colors"),
-        ):
-            builder, _shadow_metadata = visualization_builder_module.build_visualization_builder_from_stage_envs(
-                stage, env_paths, clone_plan
-            )
-
-        self.assertEqual(
-            [builder.geometry_sources_for_world(i) for i in range(3)],
-            [["/World/envs/env_0/Object"], ["/World/envs/env_1/Object"], ["/World/envs/env_0/Object"]],
-        )
-        for attr, suffix in _VIS_LABEL_SUFFIXES.items():
-            self.assertEqual(
-                [builder.labels_for_world(i, attr) for i in range(3)],
-                [
-                    [f"/World/envs/env_0/Object/{suffix}"],
-                    [f"/World/envs/env_1/Object/{suffix}"],
-                    [f"/World/envs/env_2/Object/{suffix}"],
-                ],
-            )
+        replicate.assert_not_called()
 
 
 class TestReplicationNamesItsCopies(unittest.TestCase):

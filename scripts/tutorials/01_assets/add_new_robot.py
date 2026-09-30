@@ -23,6 +23,7 @@ simulation_app = app_launcher.app
 
 import numpy as np
 import torch
+from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
@@ -30,6 +31,7 @@ from isaaclab.assets import AssetBaseCfg
 from isaaclab.assets.articulation import ArticulationCfg
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
+from isaaclab.utils.configclass import configclass
 
 JETBOT_CONFIG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(usd_path=f"{ISAAC_NUCLEUS_DIR}/Robots/NVIDIA/Jetbot/jetbot.usd"),
@@ -98,6 +100,14 @@ class NewRobotsSceneCfg(InteractiveSceneCfg):
     Dofbot = DOFBOT_CONFIG.replace(prim_path="{ENV_REGEX_NS}/Dofbot")
 
 
+@configclass
+class TutorialCfg:
+    """Complete direct tutorial configuration."""
+
+    sim: sim_utils.SimulationCfg = sim_utils.SimulationCfg(physics=PhysxCfg(), device=args_cli.device)
+    scene: NewRobotsSceneCfg = NewRobotsSceneCfg(args_cli.num_envs, env_spacing=2.0)
+
+
 def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
     sim_dt = sim.get_physics_dt()
     sim_time = 0.0
@@ -105,8 +115,8 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
 
     # wheel-velocity templates allocated once on the simulation device; the joint
     # target setters dispatch to GPU Warp kernels and reject CPU tensors.
-    straight_action = torch.tensor([[10.0, 10.0]], device=sim.device).repeat(scene.num_envs, 1)
-    turn_action = torch.tensor([[5.0, -5.0]], device=sim.device).repeat(scene.num_envs, 1)
+    straight_action = torch.tensor([[10.0, 10.0]], device=sim.device)
+    turn_action = torch.tensor([[5.0, -5.0]], device=sim.device)
 
     while simulation_app.is_running():
         # reset
@@ -169,12 +179,11 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
 def main():
     """Main function."""
     # Initialize the simulation context
-    sim_cfg = sim_utils.SimulationCfg(device=args_cli.device)
-    sim = sim_utils.SimulationContext(sim_cfg)
+    cfg = TutorialCfg()
+    sim = sim_utils.SimulationContext(cfg.sim)
     sim.set_camera_view([3.5, 0.0, 3.2], [0.0, 0.0, 0.5])
     # Design scene
-    scene_cfg = NewRobotsSceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0)
-    scene = InteractiveScene(scene_cfg)
+    scene = cfg.scene.class_type(cfg.scene)
     # Play the simulator
     sim.reset()
     # Now we are ready!

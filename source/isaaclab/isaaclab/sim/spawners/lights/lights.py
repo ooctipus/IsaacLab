@@ -39,7 +39,7 @@ def spawn_light(
         translation: The translation of the prim. Defaults to None, in which case this is set to the origin.
         orientation: The orientation of the prim as (x, y, z, w). Defaults to None, in which case this
             is set to identity.
-        **kwargs: Additional keyword arguments, like ``clone_in_fabric``.
+        **kwargs: Additional keyword arguments.
 
     Raises:
         ValueError:  When a prim already exists at the specified prim path.
@@ -59,7 +59,7 @@ def spawn_light(
     # delete spawner func specific parameters
     del cfg["prim_type"]
     # delete custom attributes in the config that are not USD parameters
-    non_usd_cfg_param_names = ["func", "copy_from_source", "visible", "semantic_tags", "spawn_path"]
+    non_usd_cfg_param_names = ["func", "copy_from_source", "visible", "semantic_tags"]
     for param_name in non_usd_cfg_param_names:
         del cfg[param_name]
     # set into USD API

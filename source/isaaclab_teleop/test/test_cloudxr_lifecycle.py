@@ -111,6 +111,7 @@ from isaaclab_teleop.isaac_teleop_cfg import (  # noqa: E402
     CLOUDXR_AVP_ENV,
     CLOUDXR_JS_ENV,
     IsaacTeleopCfg,
+    TeleopPipelineCfg,
 )
 from isaaclab_teleop.session_lifecycle import TeleopSessionLifecycle  # noqa: E402
 
@@ -130,9 +131,9 @@ def _stub_heavy_dependencies():
 
 
 def _make_cfg() -> IsaacTeleopCfg:
-    """Build a minimal IsaacTeleopCfg with a dummy pipeline_builder."""
+    """Build a minimal IsaacTeleopCfg with a dummy pipeline."""
     return IsaacTeleopCfg(
-        pipeline_builder=lambda: MagicMock(),
+        pipeline_cfg=TeleopPipelineCfg(class_type=lambda _cfg: MagicMock()),
         control_channel_uuid=None,
     )
 

@@ -5,8 +5,7 @@ VBD Solver
 
 Vertex Block Descent (VBD) is a Newton solver for cloth and soft-body
 simulation. In Isaac Lab, VBD is enabled by selecting a
-:class:`~isaaclab_newton.physics.NewtonCfg` whose ``solver_cfg`` is a
-:class:`~isaaclab_newton.physics.VBDSolverCfg`.
+:class:`~isaaclab_newton.physics.VBDSolverCfg` directly.
 
 A task that works with PhysX or with Newton's MuJoCo-Warp solver may still need
 deformable assets, materials, contacts, and coupling tuned before it works well
@@ -79,7 +78,7 @@ Add a VBD Physics Preset
 
 Tasks that support multiple physics options usually store ``SimulationCfg.physics``
 as a :class:`~isaaclab_tasks.utils.hydra.PresetCfg`. For deformable Newton tasks,
-the preset is a plain :class:`~isaaclab_newton.physics.NewtonCfg`. Standalone
+the preset holds a concrete :class:`~isaaclab_newton.physics.NewtonSolverCfg` subclass. Standalone
 VBD and soft-contact configuration live in :mod:`isaaclab_newton.physics`, while
 proxy and ADMM coupling live in :mod:`isaaclab_contrib.coupling`.
 
@@ -87,15 +86,15 @@ The Franka soft-body and cloth tasks define task-specific proxy presets.
 
 The important pieces are:
 
-* Add a Newton physics preset whose value is a
-  :class:`~isaaclab_newton.physics.NewtonCfg`.
+* Add a Newton physics preset whose value is a concrete
+  :class:`~isaaclab_newton.physics.NewtonSolverCfg` subclass.
 * Use :class:`~isaaclab_contrib.coupling.CouplerProxyCfg` with named
   :class:`~isaaclab_contrib.coupling.CouplerEntryCfg` entries to partition the
   rigid bodies and deformable particles between MJWarp and VBD.
 * Add :class:`~isaaclab_contrib.coupling.CouplerProxyMappingCfg` entries for the
   collidable rigid bodies exposed to VBD. Leave
   ``integrate_with_external_rigid_solver=False`` for proxy-coupled VBD entries.
-* Set the outer :attr:`~isaaclab_newton.physics.NewtonCfg.soft_contact_cfg` to a
+* Set :attr:`~isaaclab_newton.physics.NewtonSolverCfg.soft_contact_cfg` to a
   :class:`~isaaclab_newton.physics.NewtonSoftContactCfg` when body-particle or
   self-contact values need task-level tuning.
 * Keep the preset at the same config path used by the task's
@@ -269,7 +268,7 @@ The core Franka soft-body task demonstrates the proxy configuration:
 
 .. literalinclude:: ../../../../../../source/isaaclab_tasks/isaaclab_tasks/core/lift/config/franka_soft/franka_soft_env_cfg.py
     :language: python
-    :start-at: newton_mjwarp_vbd_proxy: NewtonCfg
+    :start-at: newton_mjwarp_vbd_proxy: NewtonSolverCfg
     :end-before: isaacsim_physx: PhysxCfg = PhysxCfg(
     :dedent: 4
 
@@ -381,7 +380,7 @@ Contact Model
 
 :class:`~isaaclab_newton.physics.NewtonSoftContactCfg` applies contact parameters
 to the finalized Newton model through
-:attr:`~isaaclab_newton.physics.NewtonCfg.soft_contact_cfg`:
+:attr:`~isaaclab_newton.physics.NewtonSolverCfg.soft_contact_cfg`:
 
 .. list-table::
     :header-rows: 1
@@ -398,7 +397,7 @@ to the finalized Newton model through
 
 To set rigid collision-shape contact properties (``ke``, ``kd``, ``mu``) for
 shapes that lack an explicit per-asset material, use
-:class:`~isaaclab_newton.physics.NewtonShapeCfg` on ``NewtonCfg.default_shape_cfg``
+:class:`~isaaclab_newton.physics.NewtonShapeCfg` on ``NewtonSolverCfg.default_shape_cfg``
 instead. Per-asset materials override these defaults.
 
 

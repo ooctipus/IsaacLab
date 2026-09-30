@@ -19,7 +19,8 @@ simulation_app = AppLauncher(headless=True).app
 import pytest
 import torch
 from isaaclab_newton.assets import Articulation, RigidObject
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg, VBDSolverCfg
+from isaaclab_newton.assets.deformable_object import DeformableObject
+from isaaclab_newton.physics import MJWarpSolverCfg, VBDSolverCfg
 from isaaclab_newton.sim.schemas import NewtonDeformableBodyPropertiesCfg
 from isaaclab_newton.sim.spawners.materials import NewtonDeformableBodyMaterialCfg
 
@@ -29,7 +30,6 @@ from isaaclab.assets.deformable_object import DeformableObjectCfg
 from isaaclab.sim import SimulationCfg, build_simulation_context
 
 from isaaclab_contrib.custom_coupling import CoupledMJWarpVBDSolverCfg
-from isaaclab_contrib.deformable import DeformableObject
 
 from isaaclab_assets import FRANKA_PANDA_CFG  # isort:skip
 
@@ -51,14 +51,14 @@ def _make_coupled_cfg(coupling_mode: str) -> SimulationCfg:
     )
     return SimulationCfg(
         dt=1.0 / 60.0,
-        physics=NewtonCfg(solver_cfg=solver_cfg, num_substeps=5, use_cuda_graph=True),
+        physics=solver_cfg.replace(num_substeps=5, use_cuda_graph=True),
     )
 
 
 def _coupled_sim_context(cfg: SimulationCfg, device="cuda:0"):
     """Helper to create a coupled solver simulation context."""
     cfg.device = device
-    return build_simulation_context(device=device, sim_cfg=cfg, auto_add_lighting=True)
+    return build_simulation_context(device=device, sim_cfg=cfg)
 
 
 @pytest.fixture

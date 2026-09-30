@@ -39,102 +39,77 @@ simulation_app = app_launcher.app
 
 """Rest everything follows."""
 
-import numpy as np
 import torch
+from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
 import isaaclab.terrains as terrain_gen
 from isaaclab import cloner as lab_cloner
-from isaaclab.assets import RigidObject, RigidObjectCfg
-from isaaclab.sensors.ray_caster import RayCaster, RayCasterCfg, patterns
+from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
+from isaaclab.sensors.ray_caster import RayCasterCfg, patterns
 from isaaclab.sim import SimulationCfg, SimulationContext
 from isaaclab.terrains.config.rough import ROUGH_TERRAINS_CFG
-from isaaclab.terrains.terrain_importer import TerrainImporter
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
+from isaaclab.utils.configclass import configclass
 from isaaclab.utils.timer import Timer
 
 
-def design_scene(sim: SimulationContext, num_envs: int = 2048):
-    """Design the scene."""
-    # Create interface to clone the scene
-    # Create environment clones using Lab's cloner utilities
-    env_fmt = "/World/envs/env_{}"
-    env_ids = np.arange(num_envs, dtype=np.int64)
-    env_origins, _ = lab_cloner.grid_transforms(num_envs, spacing=2.0)
-    # Everything under the namespace "/World/envs/env_0" will be cloned
-    sim.stage.DefinePrim("/World/envs/env_0", "Xform")
-    # Define the scene
-    # -- Light
-    cfg = sim_utils.DistantLightCfg(intensity=2000)
-    cfg.func("/World/light", cfg)
-    # -- Balls
-    cfg = sim_utils.SphereCfg(
-        radius=0.25,
-        rigid_props=sim_utils.RigidBodyPropertiesCfg(),
-        mass_props=sim_utils.MassPropertiesCfg(mass=0.5),
-        collision_props=sim_utils.CollisionPropertiesCfg(),
-        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.0, 1.0)),
-    )
-    cfg.func("/World/envs/env_0/ball", cfg, translation=(0.0, 0.0, 5.0))
-    # Clone the scene
-    envs_prim_paths = [f"/World/envs/env_{i}" for i in range(num_envs)]
-    lab_cloner.usd_replicate(sim.stage, [env_fmt.format(0)], [env_fmt], env_ids, positions=env_origins)
-    # PhysX-only optimization: filter collisions across env clones. Skip on Newton —
-    # PhysxSceneAPI isn't applied there and the cloner helper is PhysX-specific.
-    physics_scene_path = None
-    for prim in sim.stage.Traverse():
-        if "PhysxSceneAPI" in prim.GetAppliedSchemas():
-            physics_scene_path = prim.GetPrimPath().pathString
-            break
-    if physics_scene_path is not None:
-        lab_cloner.filter_collisions(
-            sim.stage,
-            physics_scene_path,
-            "/World/collisions",
-            prim_paths=envs_prim_paths,
-            global_paths=["/World/ground"],
-        )
-
-
-def main():
-    """Main function."""
-
-    sim = SimulationContext(SimulationCfg())
-    # Set main camera
-    sim.set_camera_view([0.0, 30.0, 25.0], [0.0, 0.0, -2.5])
-
-    # Parameters
-    num_envs = args_cli.num_envs
-    # Design the scene
-    design_scene(sim=sim, num_envs=num_envs)
-    # Handler for terrains importing
-    terrain_importer_cfg = terrain_gen.TerrainImporterCfg(
+@configclass
+class DirectCfg:
+    sim: SimulationCfg = SimulationCfg(physics=PhysxCfg())
+    num_envs: int = args_cli.num_envs
+    env_spacing: float = 2.0
+    terrain: terrain_gen.TerrainImporterCfg = terrain_gen.TerrainImporterCfg(
         prim_path="/World/ground",
         terrain_type=args_cli.terrain_type,
         terrain_generator=ROUGH_TERRAINS_CFG,
         usd_path=f"{ISAAC_NUCLEUS_DIR}/Environments/Terrains/rough_plane.usd",
         max_init_terrain_level=None,
-        num_envs=1,
-        env_spacing=10.0,
     )
-    _ = TerrainImporter(terrain_importer_cfg)
-
-    # Create a ray-caster sensor
-    ray_caster_cfg = RayCasterCfg(
+    light: AssetBaseCfg = AssetBaseCfg(prim_path="/World/light", spawn=sim_utils.DistantLightCfg(intensity=2000))
+    ball: RigidObjectCfg = RigidObjectCfg(
+        prim_path="{ENV_REGEX_NS}/ball",
+        spawn=sim_utils.SphereCfg(
+            radius=0.25,
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(),
+            mass_props=sim_utils.MassPropertiesCfg(mass=0.5),
+            collision_props=sim_utils.CollisionPropertiesCfg(),
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.0, 1.0)),
+        ),
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 5.0)),
+    )
+    ray_caster: RayCasterCfg = RayCasterCfg(
         prim_path="{ENV_REGEX_NS}/ball",
         mesh_prim_paths=["/World/ground"],
         pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=(1.6, 1.0)),
         ray_alignment="yaw",
         debug_vis=not args_cli.headless,
     )
-    ray_caster = RayCaster(cfg=ray_caster_cfg)
-    # Create a view over all the balls
-    balls_cfg = RigidObjectCfg(
-        prim_path="{ENV_REGEX_NS}/ball",
-        spawn=None,
-        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 5.0)),
+
+
+def main():
+    """Main function."""
+
+    cfg = DirectCfg()
+    sim = SimulationContext(cfg.sim)
+    # Set main camera
+    sim.set_camera_view([0.0, 30.0, 25.0], [0.0, 0.0, -2.5])
+
+    # Parameters
+    with lab_cloner.ReplicateSession((cfg.terrain, cfg.light, cfg.ball, cfg.ray_caster), cfg.num_envs, cfg.env_spacing):
+        cfg.terrain.class_type(cfg.terrain)
+        (light_source,) = lab_cloner.query.cfg_source_paths(sim.get_clone_plan(), cfg.light)
+        cfg.light.spawn.func(light_source, cfg.light.spawn)
+        balls = cfg.ball.class_type(cfg.ball)
+        ray_caster = cfg.ray_caster.class_type(cfg.ray_caster)
+
+    lab_cloner.filter_collisions(
+        sim.stage,
+        sim.cfg.physics_prim_path,
+        "/World/collisions",
+        prim_paths=lab_cloner.query.env_root_paths(sim.get_clone_plan()),
+        global_paths=[cfg.terrain.prim_path],
     )
-    balls = RigidObject(cfg=balls_cfg)
 
     # Play simulator
     sim.reset()
@@ -163,10 +138,12 @@ def main():
         # Reset the scene
         if step_count % 500 == 0:
             # sample random indices to reset
-            reset_indices = torch.randint(0, num_envs, (num_envs // 2,), device=sim.device)
+            reset_indices = torch.randint(0, cfg.num_envs, (cfg.num_envs // 2,), device=sim.device)
             # reset the balls
-            balls.write_root_pose_to_sim(ball_initial_poses[reset_indices], env_ids=reset_indices)
-            balls.write_root_velocity_to_sim(ball_initial_velocities[reset_indices], env_ids=reset_indices)
+            balls.write_root_pose_to_sim_index(root_pose=ball_initial_poses[reset_indices], env_ids=reset_indices)
+            balls.write_root_velocity_to_sim_index(
+                root_velocity=ball_initial_velocities[reset_indices], env_ids=reset_indices
+            )
             balls.reset(reset_indices)
             # reset the sensor
             ray_caster.reset(reset_indices)
@@ -175,7 +152,7 @@ def main():
         # Step simulation
         sim.step()
         # Update the ray-caster
-        with Timer(f"Ray-caster update with {num_envs} x {ray_caster.num_rays} rays"):
+        with Timer(f"Ray-caster update with {cfg.num_envs} x {ray_caster.num_rays} rays"):
             ray_caster.update(dt=sim.get_physics_dt(), force_recompute=True)
         # Update counter
         step_count += 1

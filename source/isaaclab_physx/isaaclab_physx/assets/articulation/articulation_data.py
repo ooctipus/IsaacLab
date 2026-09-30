@@ -22,12 +22,13 @@ from isaaclab.utils.warp.launch_cache import _WarpLaunchCache
 
 from isaaclab_physx.assets import kernels as shared_kernels
 from isaaclab_physx.assets.articulation import kernels as articulation_kernels
-from isaaclab_physx.physics import PhysxManager as SimulationManager
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     import omni.physics.tensors as physx
+
+    from isaaclab_physx.physics import PhysxManager
 
 # import logger
 logger = logging.getLogger(__name__)
@@ -72,7 +73,7 @@ class ArticulationData(BaseArticulationData):
     __backend_name__: str = "physx"
     """The name of the backend for the articulation data."""
 
-    def __init__(self, root_view: physx.ArticulationView, device: str):
+    def __init__(self, root_view: physx.ArticulationView, device: str, physics_manager: PhysxManager):
         """Initializes the articulation data.
 
         Args:
@@ -80,6 +81,7 @@ class ArticulationData(BaseArticulationData):
             device: The device used for processing.
         """
         super().__init__(root_view, device)
+        self._physics_manager = physics_manager
         # Set the root articulation view
         # note: this is stored as a weak reference to avoid circular references between the asset class
         #  and the data container. This is important to avoid memory leaks.
@@ -88,13 +90,12 @@ class ArticulationData(BaseArticulationData):
         # Set initial time stamp
         self._sim_timestamp = 0.0
         self._is_primed = False
-        self._fk_timestamp = 0.0
         self._read_launch_cache = _WarpLaunchCache(device)
         self._joint_dof_signs = wp.ones(root_view.max_dofs, dtype=wp.int32, device=device)
         self._has_reversed_joints = False
 
         # obtain global simulation view
-        self._physics_sim_view = SimulationManager.get_physics_sim_view()
+        self._physics_sim_view = self._physics_manager.get_physics_sim_view()
         gravity = self._physics_sim_view.get_gravity()
         # Convert to direction vector
         gravity_dir = torch.tensor((gravity[0], gravity[1], gravity[2]), device=self.device)
@@ -138,22 +139,9 @@ class ArticulationData(BaseArticulationData):
         """
         # update the simulation timestamp
         self._sim_timestamp += dt
-        # FK is current after a sim step. Keep fk_timestamp in sync unless it was explicitly invalidated.
-        if self._fk_timestamp >= 0.0:
-            self._fk_timestamp = self._sim_timestamp
         # Trigger an update of the joint acceleration buffer at a higher frequency
         # since we do finite differencing.
         self.joint_acc
-
-    def _ensure_fk_fresh(self) -> None:
-        """Run forward kinematics if the joint / body state has changed since the last FK update.
-
-        Cheap to call repeatedly: the ``_fk_timestamp`` guard skips the recomputation when the
-        kinematic state is already up to date.
-        """
-        if self._fk_timestamp < self._sim_timestamp:
-            self._physics_sim_view.update_articulations_kinematic()
-            self._fk_timestamp = self._sim_timestamp
 
     def _reset_pose(self, from_link: bool = True) -> None:
         """Reset pose-dependent cached articulation properties.
@@ -189,7 +177,6 @@ class ArticulationData(BaseArticulationData):
                 self._mass_matrix,
             ]
         )
-        self._fk_timestamp = -1.0
 
     def _reset_velocity(self, from_com: bool = True) -> None:
         """Reset velocity-dependent cached articulation properties.
@@ -217,7 +204,6 @@ class ArticulationData(BaseArticulationData):
                 self._body_com_state_w,
             ]
         )
-        self._fk_timestamp = -1.0
 
     def _reset_body_com_pose_b_dependents(self) -> None:
         """Reset cached properties derived from body-frame center-of-mass offsets."""
@@ -859,8 +845,6 @@ class ArticulationData(BaseArticulationData):
         This quantity is the pose of the articulation links' actor frame relative to the world.
         The orientation is provided in (x, y, z, w) format.
         """
-        if self._body_link_pose_w.timestamp < self._sim_timestamp:
-            self._ensure_fk_fresh()
         self._refresh_body_state_user(
             self._body_link_pose_w, lambda: self._root_view.get_link_transforms().view(wp.transformf)
         )
@@ -935,8 +919,6 @@ class ArticulationData(BaseArticulationData):
         This quantity contains the linear and angular velocities of the articulation links' center of mass frame
         relative to the world.
         """
-        if self._body_com_vel_w.timestamp < self._sim_timestamp:
-            self._ensure_fk_fresh()
         self._refresh_body_state_user(
             self._body_com_vel_w, lambda: self._root_view.get_link_velocities().view(wp.spatial_vectorf)
         )
@@ -986,8 +968,6 @@ class ArticulationData(BaseArticulationData):
 
         PhysX provides a natively center-of-mass-referenced Jacobian. The view refreshes
         once per simulation timestamp and normalizes body and joint axes when needed.
-        No explicit :meth:`_ensure_fk_fresh` call is needed because PhysX
-        recomputes the Jacobian from the current joint state on query.
         """
         if self._body_com_jacobian_w.timestamp < self._sim_timestamp:
             backend_jacobian = self._root_view.get_jacobians()
@@ -1052,9 +1032,7 @@ class ArticulationData(BaseArticulationData):
 
         Reads the backend view once when stale for the current step and either aliases
         it or normalizes its joint axes into the owned public-order buffer with
-        :paramref:`reorder_kernel`. Unlike the world-frame pose
-        buffers this needs no explicit :meth:`_ensure_fk_fresh`, because PhysX recomputes
-        the quantity from the current joint state on query.
+        :paramref:`reorder_kernel`.
 
         Args:
             buf: Owned public-order buffer to refresh in place.

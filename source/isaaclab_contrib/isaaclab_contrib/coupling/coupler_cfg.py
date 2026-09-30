@@ -12,7 +12,6 @@ couple them. A coupler turns each entry's ownership selectors into a Newton
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import MISSING, field
 from typing import TYPE_CHECKING, Literal
 
@@ -22,8 +21,6 @@ from isaaclab.utils.configclass import configclass
 
 if TYPE_CHECKING:
     from isaaclab_newton.physics import NewtonManager
-    from newton import CollisionPipeline
-    from newton.solvers.experimental.coupled import ModelView
 
 
 @configclass
@@ -113,17 +110,13 @@ class CouplerProxyMappingCfg:
     collide_interval: int | None = None
     """Proxy-local collision refresh interval.
 
-    ``None`` refreshes contacts on every proxy pass. Explicit values must be
-    positive integers and require :attr:`collision_pipeline` to be a factory.
+    ``None`` refreshes contacts on every proxy pass. Explicit values must be positive integers.
     """
 
-    collision_pipeline: NewtonCollisionPipelineCfg | Callable[[ModelView], CollisionPipeline | None] | None = field(
-        default_factory=NewtonCollisionPipelineCfg
-    )
-    """Configuration or factory for the proxy destination collision pipeline.
+    collision_pipeline: NewtonCollisionPipelineCfg | None = field(default_factory=NewtonCollisionPipelineCfg)
+    """Configuration for the proxy destination collision pipeline.
 
-    Setting the field or returning ``None`` from the factory passes shared
-    outer contacts to the destination.
+    ``None`` passes shared outer contacts to the destination.
     """
 
 

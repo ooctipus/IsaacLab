@@ -52,7 +52,7 @@ MJWarp can slip more than PhysX under nominally similar material settings. Tune 
 3. Tune material friction against measured tangential slip; do not map PhysX static/dynamic settings numerically.
 4. Compare `cone="elliptic"` with `"pyramidal"` and use `impratio=10` as a grasping starting point only after the contact model is valid.
 
-For copy-ready code, set `spawn.collision_props=[UsdPhysicsCollisionCfg(...), MujocoCollisionCfg(condim=4)]`. The file-spawner override is recursive. `MujocoCollisionCfg` also exposes per-collider `priority`, `solmix`, `solref`, `solimp`, and MuJoCo `group`; reserve these for measured contact-model tuning. Set `NewtonCollisionCfg.contact_margin` and `contact_gap` for contact spacing, and set `NewtonMeshCollisionCfg.max_hull_vertices` for the convex-hull vertex limit. Set the global options with `NewtonCfg(solver_cfg=MJWarpSolverCfg(cone="elliptic", impratio=10.0))`.
+For copy-ready code, set `spawn.collision_props=[UsdPhysicsCollisionCfg(...), MujocoCollisionCfg(condim=4)]`. The file-spawner override is recursive. `MujocoCollisionCfg` also exposes per-collider `priority`, `solmix`, `solref`, `solimp`, and MuJoCo `group`; reserve these for measured contact-model tuning. Set `NewtonCollisionCfg.contact_margin` and `contact_gap` for contact spacing, and set `NewtonMeshCollisionCfg.max_hull_vertices` for the convex-hull vertex limit. Set the global options with `MJWarpSolverCfg(cone="elliptic", impratio=10.0)`.
 
 Track fixed-grasp displacement, contact count, effort, penetration, success, convergence, and runtime. Do not hide missing contacts, bad collision geometry, or insufficient effort with friction, `condim`, or `impratio`.
 
@@ -77,16 +77,16 @@ Retune damping after armature changes. Increasing effective inertia with fixed d
 
 ## Choose An MJWarp Starting Profile
 
-Keep `solver="newton"`, `integrator="implicitfast"`, `iterations=100`, `ls_iterations=50`, and `tolerance=1e-6` for the first explicit baseline. The profile's `integrator`, `njmax`, and `nconmax` values override the `MJWarpSolverCfg` defaults of `"euler"`, `300`, and `None`. Enable `NewtonCfg.debug_mode` while tuning.
+Keep `solver="newton"`, `integrator="implicitfast"`, `iterations=100`, `ls_iterations=50`, and `tolerance=1e-6` for the first explicit baseline. The profile's `integrator`, `njmax`, and `nconmax` values override the `MJWarpSolverCfg` defaults of `"euler"`, `300`, and `None`. Enable `MJWarpSolverCfg.debug_mode` while tuning.
 
-| Profile | `njmax` | `nconmax` | Cone / `impratio` | `NewtonCfg.num_substeps` |
+| Profile | `njmax` | `nconmax` | Cone / `impratio` | `MJWarpSolverCfg.num_substeps` |
 | --- | ---: | ---: | --- | ---: |
 | Simple articulation/reach | 50 | 20 | pyramidal / 1 | 1 |
 | Locomotion | 100 | 40 | pyramidal / 1 | 1 |
 | Dexterous manipulation | 200 | 70 | elliptic / 10 | 2 |
 | Dense manipulation | 300 | 200 | task-dependent | 2 |
 
-These are starting budgets, not fidelity guarantees. Use MuJoCo contacts by default. Set `use_mujoco_contacts=False` only when the task needs Newton's collision pipeline, then assign a `NewtonCollisionPipelineCfg` to `NewtonCfg.collision_cfg` and set `max_triangle_pairs` or `rigid_contact_max` on that pipeline config.
+These are starting budgets, not fidelity guarantees. Use MuJoCo contacts by default. Set `use_mujoco_contacts=False` only when the task needs Newton's collision pipeline, then assign a `NewtonCollisionPipelineCfg` to `MJWarpSolverCfg.collision_cfg` and set `max_triangle_pairs` or `rigid_contact_max` on that pipeline config.
 
 ### Task-Level Smoke And Reset Validation
 
@@ -109,7 +109,7 @@ actions. Classify it before tuning:
 - controlled motion: effort, gains, action scale, `dt`, substeps, damping, armature, limits; or
 - dense scenes: busiest-environment `nconmax` and `njmax` demand.
 
-Use `NewtonCfg.debug_mode` for iteration-cap evidence. Raise overflowing capacity first and change
+Use `MJWarpSolverCfg.debug_mode` for iteration-cap evidence. Raise overflowing capacity first and change
 convergence work only after the model, reset, controller, contact path, and capacities are valid.
 
 ## Cable Assets

@@ -5,6 +5,7 @@
 
 """Tests for the one-file Franka Pour reset generator."""
 
+import ast
 import subprocess
 import sys
 from pathlib import Path
@@ -22,6 +23,28 @@ def test_generator_help_starts_without_launching_simulation():
 
     assert result.returncode == 0, result.stderr
     assert "Generate the Franka Pour reset artifact" in result.stdout
+
+
+def test_generator_does_not_rediscover_table_geometry():
+    """The generator cannot rediscover its tabletop on the finished USD stage."""
+    script = Path(__file__).resolve().parents[1] / "generate_franka_pour_reset_dataset.py"
+    source = script.read_text(encoding="utf-8")
+
+    assert all(symbol not in source for symbol in ("BBoxCache", "GetPrimAtPath", "get_current_stage"))
+
+
+def test_generator_passes_registry_resource_to_clone_source_copies():
+    """Every retained-source copy must identify its simulation-owned Newton resource."""
+    script = Path(__file__).resolve().parents[1] / "generate_franka_pour_reset_dataset.py"
+    tree = ast.parse(script.read_text(encoding="utf-8"))
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "copy_newton_clone_source"
+    ]
+
+    assert len(calls) == 2
+    assert all(len(call.args) >= 2 for call in calls)
 
 
 def test_default_phase_counts_match_reference_artifact():

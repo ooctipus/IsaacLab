@@ -5,20 +5,38 @@
 
 from __future__ import annotations
 
+import ast
 import subprocess
 import sys
 import textwrap
+from pathlib import Path
 
 import numpy as np
 import pytest
 from isaaclab_newton.sim.spawners.mpm import MPMGridCfg, MPMParticleMaterialCfg, MPMPointsCfg
 from isaaclab_newton.sim.spawners.mpm.mpm import emit_mpm_particles
+from newton import ModelBuilder
+
+ROOT = Path(__file__).resolve().parents[4]
+MPM_DEMOS = (
+    "scripts/demos/mpm/newton_mpm_twoway_coupling.py",
+    "scripts/demos/mpm/newton_mpm_granular.py",
+    "scripts/demos/mpm/snowball_smash.py",
+    "scripts/demos/mpm/teapot_fill.py",
+)
 
 
 class _RecordingBuilder:
     def __init__(self):
+        self.attributes = ModelBuilder()
         self.grid_kwargs = None
         self.points_kwargs = None
+
+    def has_custom_attribute(self, name):
+        return self.attributes.has_custom_attribute(name)
+
+    def add_custom_attribute(self, attribute):
+        self.attributes.add_custom_attribute(attribute)
 
     def add_particle_grid(self, **kwargs):
         self.grid_kwargs = kwargs
@@ -49,6 +67,16 @@ def _emit_recorded_points(
     emit_mpm_particles(builder, cfg, position=position, orientation=orientation)
     assert builder.points_kwargs is not None
     return builder.points_kwargs
+
+
+def test_particle_emission_registers_solver_attributes_once():
+    builder = _RecordingBuilder()
+    cfg = MPMPointsCfg(positions=[(0.0, 0.0, 0.0)])
+
+    emit_mpm_particles(builder, cfg, position=(0.0, 0.0, 0.0), orientation=(0.0, 0.0, 0.0, 1.0))
+    emit_mpm_particles(builder, cfg, position=(0.0, 0.0, 0.0), orientation=(0.0, 0.0, 0.0, 1.0))
+
+    assert builder.has_custom_attribute("mpm:young_modulus")
 
 
 @pytest.mark.parametrize("particles_per_cell", [0.7, 1.3, 2.25])
@@ -169,6 +197,29 @@ def test_mpm_config_imports_do_not_load_pxr():
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+@pytest.mark.parametrize("relative_path", MPM_DEMOS)
+def test_mpm_demo_scene_uses_cfg_class_type(relative_path):
+    """MPM scenes use the common config construction convention."""
+    path = ROOT / relative_path
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+
+    assert not any(
+        isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "InteractiveScene"
+        for node in ast.walk(tree)
+    )
+    assert any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "class_type"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "scene_cfg"
+        and len(node.args) == 1
+        and isinstance(node.args[0], ast.Name)
+        and node.args[0].id == "scene_cfg"
+        for node in ast.walk(tree)
+    )
+
+
 @pytest.mark.parametrize(
     "module",
     [
@@ -184,9 +235,9 @@ def test_mpm_demo_configs_do_not_load_pxr_before_simulation_launch(module):
         import importlib
         import sys
 
-        sys.argv = ["demo.py", "--max_steps", "0", "--visualizer", "none", "--device", "cuda:0"]
+        sys.argv = ["demo.py", "--max_steps", "0", "--device", "cuda:0", "visualizer=newton_gl"]
         demo = importlib.import_module({module!r})
-        demo.create_sim_cfg()
+        demo.resolve_config(demo.create_sim_cfg(), demo.config_overrides)
 
         loaded_pxr_modules = [name for name in sys.modules if name == "pxr" or name.startswith("pxr.")]
         if loaded_pxr_modules:

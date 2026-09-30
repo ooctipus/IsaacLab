@@ -34,31 +34,28 @@ simulation_app = app_launcher.app
 """Rest everything follows."""
 
 import torch
+from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
 import isaaclab.utils.math as math_utils
-from isaaclab.assets import RigidObject, RigidObjectCfg
+from isaaclab import cloner
+from isaaclab.assets import AssetBaseCfg, RigidObject, RigidObjectCfg
 from isaaclab.sim import SimulationContext
+from isaaclab.utils import configclass
 
 
-def design_scene():
-    """Designs the scene."""
-    # Ground-plane
-    cfg = sim_utils.GroundPlaneCfg()
-    cfg.func("/World/defaultGroundPlane", cfg)
-    # Lights
-    cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.8, 0.8, 0.8))
-    cfg.func("/World/Light", cfg)
+@configclass
+class RigidObjectTutorialCfg:
+    """Complete declarative input for the direct clone lifecycle."""
 
-    # Create separate groups called "Origin1", "Origin2", "Origin3"
-    # Each group will have a robot in it
-    origins = [[0.25, 0.25, 0.0], [-0.25, 0.25, 0.0], [0.25, -0.25, 0.0], [-0.25, -0.25, 0.0]]
-    for i, origin in enumerate(origins):
-        sim_utils.create_prim(f"/World/Origin{i}", "Xform", translation=origin)
-
-    # Rigid Object
-    cone_cfg = RigidObjectCfg(
-        prim_path="/World/Origin.*/Cone",
+    sim: sim_utils.SimulationCfg = sim_utils.SimulationCfg(
+        physics=PhysxCfg(),
+    )
+    num_envs = 4
+    env_spacing = 0.5
+    ground = AssetBaseCfg(prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg())
+    cone: RigidObjectCfg = RigidObjectCfg(
+        prim_path="{ENV_REGEX_NS}/Cone",
         spawn=sim_utils.ConeCfg(
             radius=0.1,
             height=0.2,
@@ -69,11 +66,20 @@ def design_scene():
         ),
         init_state=RigidObjectCfg.InitialStateCfg(),
     )
-    cone_object = RigidObject(cfg=cone_cfg)
+    light = AssetBaseCfg(
+        prim_path="/World/Light", spawn=sim_utils.DomeLightCfg(intensity=2000.0, color=(0.8, 0.8, 0.8))
+    )
 
-    # return the scene information
-    scene_entities = {"cone": cone_object}
-    return scene_entities, origins
+
+def design_scene(sim: SimulationContext, cfg: RigidObjectTutorialCfg) -> tuple[dict[str, RigidObject], torch.Tensor]:
+    """Designs the scene."""
+    with cloner.ReplicateSession(
+        (cfg.ground, cfg.light, cfg.cone), num_clones=cfg.num_envs, env_spacing=cfg.env_spacing
+    ):
+        cfg.ground.class_type(cfg.ground)
+        cfg.light.class_type(cfg.light)
+        cone = cfg.cone.class_type(cfg.cone)
+    return {"cone": cone}, sim.get_clone_plan().positions
 
 
 def run_simulator(sim: sim_utils.SimulationContext, entities: dict[str, RigidObject], origins: torch.Tensor):
@@ -84,14 +90,12 @@ def run_simulator(sim: sim_utils.SimulationContext, entities: dict[str, RigidObj
     cone_object = entities["cone"]
     # Define simulation stepping
     sim_dt = sim.get_physics_dt()
-    sim_time = 0.0
     count = 0
     # Simulate physics
     while simulation_app.is_running():
         # reset
         if count % 250 == 0:
             # reset counters
-            sim_time = 0.0
             count = 0
             # reset root state
             root_pose = cone_object.data.default_root_pose.torch.clone()
@@ -112,8 +116,6 @@ def run_simulator(sim: sim_utils.SimulationContext, entities: dict[str, RigidObj
         cone_object.write_data_to_sim()
         # perform step
         sim.step()
-        # update sim-time
-        sim_time += sim_dt
         count += 1
         # update buffers
         cone_object.update(sim_dt)
@@ -124,14 +126,13 @@ def run_simulator(sim: sim_utils.SimulationContext, entities: dict[str, RigidObj
 
 def main():
     """Main function."""
-    # Load kit helper
-    sim_cfg = sim_utils.SimulationCfg(device=args_cli.device)
-    sim = SimulationContext(sim_cfg)
+    cfg = RigidObjectTutorialCfg()
+    cfg.sim.device = args_cli.device
+    sim = SimulationContext(cfg.sim)
     # Set main camera
     sim.set_camera_view(eye=[1.5, 0.0, 1.0], target=[0.0, 0.0, 0.0])
     # Design scene
-    scene_entities, scene_origins = design_scene()
-    scene_origins = torch.tensor(scene_origins, device=sim.device)
+    scene_entities, scene_origins = design_scene(sim, cfg)
     # Play the simulator
     sim.reset()
     # Now we are ready!

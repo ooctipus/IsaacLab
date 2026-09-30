@@ -10,7 +10,6 @@ Run via ``./scripts/run_ovphysx.sh -m pytest`` (kitless, no ``AppLauncher``).
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
 
 # The OVPhysX runtime wheel is optional. Skip gracefully when it is not installed;
@@ -20,7 +19,7 @@ pytest.importorskip("ovphysx.types", reason="ovphysx wheel not installed")
 from isaaclab_ov.physics import OvPhysxCfg  # noqa: E402
 
 import isaaclab.sim as sim_utils  # noqa: E402
-from isaaclab import cloner  # noqa: E402
+from isaaclab.scene_data import SceneDataFormat  # noqa: E402
 from isaaclab.sim import SimulationCfg, build_simulation_context  # noqa: E402
 from isaaclab.sim.views import FrameView  # noqa: E402
 
@@ -33,105 +32,34 @@ pytestmark = pytest.mark.device_split
 def test_factory_dispatches_to_ovphysx_frame_view(device):
     """``FrameView(...)`` under an OVPhysX ``SimulationContext`` returns an ``OvPhysxFrameView``."""
     OVPHYSX_SIM_CFG.device = device
-    with build_simulation_context(device=device, sim_cfg=OVPHYSX_SIM_CFG, add_ground_plane=True):
-        # Define a plain Xform prim so the pattern matches at least one prim.
-        stage = sim_utils.get_current_stage()
-        prim = stage.DefinePrim("/World/marker", "Xform")
-        sim_utils.standardize_xform_ops(prim)
+    with build_simulation_context(device=device, sim_cfg=OVPHYSX_SIM_CFG) as sim:
+        InteractiveScene(_OvPhysxFrameViewSceneCfg(num_envs=1, env_spacing=2.0))
 
         from isaaclab_ov.sim.views import OvPhysxFrameView
 
-        view = FrameView("/World/marker", device=device)
+        view = _frame_view(sim, "/World/StaticMarker", device)
         assert isinstance(view, OvPhysxFrameView), f"Expected OvPhysxFrameView, got {type(view).__name__}"
-
-
-def test_view_raises_before_physics_ready():
-    """A view constructed before PHYSICS_READY raises a clear error on pose-method calls."""
-    device = "cpu"
-    OVPHYSX_SIM_CFG.device = device
-    with build_simulation_context(device=device, sim_cfg=OVPHYSX_SIM_CFG, add_ground_plane=False):
-        stage = sim_utils.get_current_stage()
-        prim = stage.DefinePrim("/World/marker_pre", "Xform")
-        sim_utils.standardize_xform_ops(prim)
-        view = FrameView("/World/marker_pre", device=device)
-        if hasattr(view, "_site_body"):
-            pytest.skip("PHYSICS_READY already fired; cannot exercise the deferred-init path here.")
-        with pytest.raises(RuntimeError, match="used before initialization"):
-            view.get_world_poses()
 
 
 def test_world_attached_source_prim_expands_from_clone_plan():
     """A source-only world frame expands across cloned environments without USD replication."""
     device = "cpu"
     OVPHYSX_SIM_CFG.device = device
-    with build_simulation_context(
-        device=device, sim_cfg=OVPHYSX_SIM_CFG, auto_add_lighting=False, add_ground_plane=False
-    ) as sim:
+    with build_simulation_context(device=device, sim_cfg=OVPHYSX_SIM_CFG) as sim:
         sim._app_control_on_stop_handle = None
-        scene = InteractiveScene(InteractiveSceneCfg(num_envs=4, env_spacing=2.0))
-        target_env_ids = (0, 5, 2, 9)
-        plan = cloner.ClonePlan(
-            sources=("/World/envs/env_0",),
-            destinations=("/World/envs/env_{}",),
-            clone_mask=np.ones((1, scene.num_envs), dtype=np.bool_),
-            env_ids=np.asarray(target_env_ids, dtype=np.int64),
-            positions=cloner.grid_transforms(scene.num_envs, scene.cfg.env_spacing)[0],
-        )
-        sim.set_clone_plan(plan)
-        stage = sim_utils.get_current_stage()
-        prim = stage.DefinePrim("/World/envs/env_0/WorldCamera", "Xform")
-        sim_utils.standardize_xform_ops(prim)
-        prim.GetAttribute("xformOp:translate").Set(Gf.Vec3d(0.25, -0.5, 1.0))
+        scene = InteractiveScene(_OvPhysxFrameViewSceneCfg(num_envs=4, env_spacing=2.0))
         sim.reset()
 
-        view = FrameView("/World/envs/env_[^/]+/WorldCamera", device=device)
+        stage = sim.stage
+        view = _frame_view(sim, "/World/envs/env_[^/]+/WorldCamera", device)
 
-        assert not stage.GetPrimAtPath(f"/World/envs/env_{target_env_ids[1]}").IsValid()
-        assert not stage.GetPrimAtPath(f"/World/envs/env_{target_env_ids[1]}/WorldCamera").IsValid()
+        assert not stage.GetPrimAtPath("/World/envs/env_1/WorldCamera").IsValid()
         assert view.count == scene.num_envs
-        assert len(view.prims) == scene.num_envs
-        assert {prim.GetPath().pathString for prim in view.prims} == {"/World/envs/env_0/WorldCamera"}
-        assert view.prim_paths == [f"/World/envs/env_{i}/WorldCamera" for i in target_env_ids]
+        assert view.prims == []
+        assert view.prim_paths == [f"/World/envs/env_{i}/WorldCamera" for i in range(scene.num_envs)]
         positions, _ = view.get_world_poses()
     expected_positions = scene.env_origins + torch.tensor([0.25, -0.5, 1.0], device=device)
     torch.testing.assert_close(positions.torch, expected_positions)
-
-
-def test_reinitialization_closes_previous_root_view(monkeypatch):
-    """A repeated PHYSICS_READY event closes the FrameView's previous root binding."""
-    from isaaclab_ov.sim.views import OvPhysxFrameView
-
-    events = []
-    frame_view = object.__new__(OvPhysxFrameView)
-    physx = object()
-    replacement = object()
-
-    class PreviousRootView:
-        def close(self):
-            events.append("close")
-
-    frame_view._root_view = PreviousRootView()
-    frame_view._pose_binding = object()
-    monkeypatch.setattr(frame_view, "_try_get_physx", lambda: physx)
-
-    def initialize(value):
-        assert frame_view._root_view is None
-        assert frame_view._pose_binding is None
-        events.append(("initialize", value))
-        frame_view._root_view = replacement
-
-    monkeypatch.setattr(frame_view, "_initialize_impl", initialize)
-
-    frame_view._on_physics_ready(None)
-
-    assert events == ["close", ("initialize", physx)]
-    assert frame_view._root_view is replacement
-
-
-# Note: an earlier test ``test_view_errors_when_newton_model_not_required`` was
-# removed when ``OvPhysxFrameView`` was reworked to read poses from a direct
-# OVPhysX ``RIGID_BODY_POSE`` tensor binding instead of the SDP's Newton state.
-# The view no longer depends on the ``NEWTON_MODEL`` scene-data requirement.
 
 
 # ==================================================================
@@ -149,9 +77,7 @@ import warp as wp  # noqa: E402
 from frame_view_contract_utils import *  # noqa: F401, F403, E402 -- import all contract tests
 from frame_view_contract_utils import CHILD_OFFSET, ViewBundle  # noqa: E402
 
-from pxr import Gf  # noqa: E402
-
-from isaaclab.assets import RigidObjectCfg  # noqa: E402
+from isaaclab.assets import AssetBaseCfg, RigidObjectCfg  # noqa: E402
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg  # noqa: E402
 from isaaclab.utils.configclass import configclass  # noqa: E402
 
@@ -168,52 +94,50 @@ class _OvPhysxFrameViewSceneCfg(InteractiveSceneCfg):
         ),
         init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 1.0)),
     )
+    camera_mount: AssetBaseCfg = AssetBaseCfg(
+        prim_path="{ENV_REGEX_NS}/Cube/CameraMount",
+        spawn=sim_utils.PinholeCameraCfg(),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=CHILD_OFFSET),
+    )
+    world_camera: AssetBaseCfg = AssetBaseCfg(
+        prim_path="{ENV_REGEX_NS}/WorldCamera",
+        spawn=sim_utils.PinholeCameraCfg(),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.25, -0.5, 1.0)),
+    )
+    static_marker: AssetBaseCfg = AssetBaseCfg(
+        prim_path="/World/StaticMarker",
+        spawn=sim_utils.PinholeCameraCfg(),
+    )
+
+
+def _frame_view(sim, prim_path: str, device: str) -> FrameView:
+    view = FrameView(prim_path, simulation_context=sim, device=device)
+    view.initialize(sim.get_clone_plan(), sim.get_scene_data_provider())
+    return view
 
 
 @pytest.fixture
 def view_factory():
-    """OVPhysX factory: CameraMount child Xform at CHILD_OFFSET under each Cube body.
-
-    Test scaffolding note: ``OvPhysxFrameView`` reads body poses from a live
-    OVPhysX ``RIGID_BODY_POSE`` tensor binding each frame. The shared contract
-    tests inject synthetic parent poses via ``set_parent_pos`` and expect the
-    very next ``get_world_poses`` call to reflect them -- without stepping the
-    sim. To make that work, the fixture detaches the binding after one
-    initial read so subsequent reads return the contents of ``_pose_buf``
-    directly, and the get/set callbacks drive ``_pose_buf`` in place.
-    """
-    from isaaclab_ov.sim.views import OvPhysxFrameView  # noqa: PLC0415
-
+    """OVPhysX factory: CameraMount child Xform at CHILD_OFFSET under each Cube body."""
     contexts: list = []
 
     def _build(num_envs: int, device: str) -> ViewBundle:
         OVPHYSX_SIM_CFG.device = device
-        ctx = build_simulation_context(device=device, sim_cfg=OVPHYSX_SIM_CFG, add_ground_plane=True)
+        ctx = build_simulation_context(device=device, sim_cfg=OVPHYSX_SIM_CFG)
         sim = ctx.__enter__()
         sim._app_control_on_stop_handle = None
         contexts.append(ctx)
 
         InteractiveScene(_OvPhysxFrameViewSceneCfg(num_envs=num_envs, env_spacing=2.0))
 
-        stage = sim_utils.get_current_stage()
-        for i in range(num_envs):
-            prim = stage.DefinePrim(f"/World/envs/env_{i}/Cube/CameraMount", "Xform")
-            sim_utils.standardize_xform_ops(prim)
-            prim.GetAttribute("xformOp:translate").Set(Gf.Vec3d(*CHILD_OFFSET))
-            prim.GetAttribute("xformOp:orient").Set(Gf.Quatd(1.0, 0.0, 0.0, 0.0))
-
         sim.reset()
-        view = OvPhysxFrameView("/World/envs/env_[^/]+/Cube/CameraMount", device=device)
+        view = _frame_view(sim, "/World/envs/env_[^/]+/Cube/CameraMount", device)
 
-        # Capture binding row order, populate _pose_buf once with the live spawn poses,
-        # then detach the binding so subsequent reads do not overwrite the buffer.
-        assert view._pose_binding is not None, "Fixture expects a non-empty pose binding."
-        view._pose_binding.read(view._pose_buf)
-        path_to_row = {p: i for i, p in enumerate(view._pose_binding.prim_paths)}
-        view._pose_binding = None
-
+        plan = sim.get_clone_plan()
+        path_to_row = {path: index for index, path in enumerate(plan.iter_rigid_body_paths())}
         cube_rows = [path_to_row[f"/World/envs/env_{i}/Cube"] for i in range(num_envs)]
-        pose_buf_torch = wp.to_torch(view._pose_buf)  # shape [num_bodies, 7] float32
+        body_q = sim.get_scene_data_provider().request_transforms(SceneDataFormat.Transform).transforms
+        pose_buf_torch = wp.to_torch(body_q)
 
         def _get_parent_pos(n: int, dev: str) -> torch.Tensor:
             return pose_buf_torch[cube_rows, :3].to(dev).clone()

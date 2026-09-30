@@ -3,11 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-from isaaclab_newton.physics import (
-    KaminoPADMMSolverCfg,
-    MJWarpSolverCfg,
-    NewtonCfg,
-)
+from isaaclab_newton.physics import KaminoPADMMSolverCfg, MJWarpSolverCfg, NewtonSolverCfg
 from isaaclab_ov.physics import OvPhysxCfg
 from isaaclab_physx.physics import PhysxCfg
 
@@ -21,13 +17,13 @@ from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.physics import PhysxAutoCfg
-from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import JointWrenchSensorCfg
 from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils.configclass import configclass
 
 import isaaclab_tasks.core.locomotion.mdp as mdp
 from isaaclab_tasks.utils import PresetCfg
+from isaaclab_tasks.utils.presets import MultiBackendSceneCfg, MultiBackendSimulationCfg
 
 from isaaclab_assets.robots.ant import ANT_CFG
 
@@ -37,27 +33,25 @@ class AntPhysicsCfg(PresetCfg):
     isaacsim_physx: PhysxCfg = PhysxCfg(bounce_threshold_velocity=0.2)
     ovphysx: OvPhysxCfg = OvPhysxCfg()
     physx: PhysxAutoCfg = PhysxAutoCfg(isaacsim_physx=isaacsim_physx, ovphysx=ovphysx)
-    newton_mjwarp: NewtonCfg = NewtonCfg(
-        solver_cfg=MJWarpSolverCfg(
-            njmax=45,
-            nconmax=25,
-            cone="pyramidal",
-            integrator="implicitfast",
-            impratio=1,
-        ),
+    newton_mjwarp: NewtonSolverCfg = MJWarpSolverCfg(
+        njmax=45,
+        nconmax=25,
+        cone="pyramidal",
+        integrator="implicitfast",
+        impratio=1,
         num_substeps=1,
         debug_mode=False,
     )
-    newton_kamino: NewtonCfg = NewtonCfg(
-        solver_cfg=KaminoPADMMSolverCfg(sparse_jacobian=True),
+    newton_kamino: NewtonSolverCfg = KaminoPADMMSolverCfg(
+        sparse_jacobian=True,
         debug_mode=False,
         use_cuda_graph=True,
     )
-    default: NewtonCfg = newton_mjwarp
+    default: NewtonSolverCfg = newton_mjwarp
 
 
 @configclass
-class AntSceneCfg(InteractiveSceneCfg):
+class AntSceneCfg(MultiBackendSceneCfg):
     """Configuration for the terrain scene with an ant robot."""
 
     # terrain
@@ -209,8 +203,9 @@ class TerminationsCfg:
 class AntEnvCfg(ManagerBasedRLEnvCfg):
     """Configuration for the Ant walking environment."""
 
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg()
     # Scene settings
-    scene: AntSceneCfg = AntSceneCfg(num_envs=4096, env_spacing=5.0, clone_in_fabric=True)
+    scene: AntSceneCfg = AntSceneCfg(num_envs=4096, env_spacing=5.0)
     # Basic settings
     observations: AntObservationsCfg = AntObservationsCfg()
     actions: ActionsCfg = ActionsCfg()

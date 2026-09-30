@@ -5,21 +5,20 @@
 
 from __future__ import annotations
 
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
+from isaaclab_newton.physics import MJWarpSolverCfg, NewtonSolverCfg
 from isaaclab_ov.physics import OvPhysxCfg
 from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
-from isaaclab.assets import ArticulationCfg, AssetBaseCfg
+from isaaclab.assets import AssetBaseCfg
 from isaaclab.envs import DirectRLEnvCfg
 from isaaclab.physics import PhysxAutoCfg
-from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import JointWrenchSensorCfg
-from isaaclab.sim import SimulationCfg
 from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils.configclass import configclass
 
 from isaaclab_tasks.utils import PresetCfg
+from isaaclab_tasks.utils.presets import MultiBackendSceneCfg, MultiBackendSimulationCfg
 
 from isaaclab_assets.robots.humanoid import HUMANOID_CFG
 
@@ -29,19 +28,42 @@ class HumanoidPhysicsCfg(PresetCfg):
     isaacsim_physx: PhysxCfg = PhysxCfg(bounce_threshold_velocity=0.2)
     ovphysx: OvPhysxCfg = OvPhysxCfg()
     physx: PhysxAutoCfg = PhysxAutoCfg(isaacsim_physx=isaacsim_physx, ovphysx=ovphysx)
-    newton_mjwarp: NewtonCfg = NewtonCfg(
-        solver_cfg=MJWarpSolverCfg(
-            njmax=80,
-            nconmax=25,
-            cone="pyramidal",
-            update_data_interval=2,
-            integrator="implicitfast",
-            impratio=1,
-        ),
+    newton_mjwarp: NewtonSolverCfg = MJWarpSolverCfg(
+        njmax=80,
+        nconmax=25,
+        cone="pyramidal",
+        update_data_interval=2,
+        integrator="implicitfast",
+        impratio=1,
         num_substeps=2,
         debug_mode=False,
     )
     default = newton_mjwarp
+
+
+@configclass
+class HumanoidDirectSceneCfg(MultiBackendSceneCfg):
+    """Humanoid, terrain, sensor, and light constructed through one clone plan."""
+
+    terrain = TerrainImporterCfg(
+        prim_path="/World/ground",
+        terrain_type="plane",
+        collision_group=-1,
+        physics_material=sim_utils.RigidBodyMaterialCfg(
+            friction_combine_mode="average",
+            restitution_combine_mode="average",
+            static_friction=1.0,
+            dynamic_friction=1.0,
+            restitution=0.0,
+        ),
+        debug_vis=False,
+    )
+    robot = HUMANOID_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+    joint_wrench = JointWrenchSensorCfg(prim_path="{ENV_REGEX_NS}/Robot")
+    light = AssetBaseCfg(
+        prim_path="/World/Light",
+        spawn=sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75)),
+    )
 
 
 @configclass
@@ -57,28 +79,11 @@ class HumanoidEnvCfg(DirectRLEnvCfg):
     state_space = 0
 
     # simulation
-    sim: SimulationCfg = SimulationCfg(dt=1 / 120, render_interval=decimation, physics=HumanoidPhysicsCfg())
-    terrain = TerrainImporterCfg(
-        prim_path="/World/ground",
-        terrain_type="plane",
-        collision_group=-1,
-        physics_material=sim_utils.RigidBodyMaterialCfg(
-            friction_combine_mode="average",
-            restitution_combine_mode="average",
-            static_friction=1.0,
-            dynamic_friction=1.0,
-            restitution=0.0,
-        ),
-        debug_vis=False,
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(
+        dt=1 / 120, render_interval=decimation, physics=HumanoidPhysicsCfg()
     )
-
     # scene
-    scene: InteractiveSceneCfg = InteractiveSceneCfg(
-        num_envs=4096, env_spacing=5.0, replicate_physics=True, clone_in_fabric=True
-    )
-
-    # robot
-    robot: ArticulationCfg = HUMANOID_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+    scene: HumanoidDirectSceneCfg = HumanoidDirectSceneCfg(num_envs=4096, env_spacing=5.0, replicate_physics=True)
 
     # effort scale per joint, keyed by joint name expression
     joint_gears: dict[str, float] = {
@@ -93,14 +98,7 @@ class HumanoidEnvCfg(DirectRLEnvCfg):
         ".*_foot.*": 22.5,
     }
 
-    # sensors
-    joint_wrench: JointWrenchSensorCfg = JointWrenchSensorCfg(prim_path="{ENV_REGEX_NS}/Robot")
     feet_body_names: list[str] = ["left_foot", "right_foot"]
-
-    # lights
-    light_cfg: AssetBaseCfg = AssetBaseCfg(
-        prim_path="/World/Light", spawn=sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
-    )
 
     # walk target, relative to the environment origin
     target_pos: tuple[float, float, float] = (1000.0, 0.0, 0.0)

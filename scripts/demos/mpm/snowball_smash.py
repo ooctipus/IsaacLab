@@ -11,7 +11,8 @@ capture.
 
 .. code-block:: bash
 
-    uv run python scripts/demos/mpm/snowball_smash.py --device cuda:0 --visualizer newton
+    uv run python scripts/demos/mpm/snowball_smash.py --device cuda:0
+    uv run python scripts/demos/mpm/snowball_smash.py --device cuda:0 visualizer=viser
 
 Use ``--grid_type fixed`` to compare against the larger fixed-grid fallback.
 """
@@ -22,8 +23,15 @@ import argparse
 from typing import NamedTuple
 
 import numpy as np
+from isaaclab_visualizers.newton import NewtonGLVisualizerCfg
+from isaaclab_visualizers.rerun import RerunVisualizerCfg
+from isaaclab_visualizers.viser import ViserVisualizerCfg
 
 from isaaclab.app import add_launcher_args, launch_simulation
+from isaaclab.utils.configclass import configclass
+
+from isaaclab_tasks.utils import preset, resolve_config, setup_preset_cli
+from isaaclab_tasks.utils.presets import MultiBackendRendererCfg, MultiBackendSimulationCfg, MultiBackendVisualizerCfg
 
 
 class SnowballSpec(NamedTuple):
@@ -59,8 +67,7 @@ parser.add_argument("--mpm_iterations", type=int, default=100, help="Maximum MPM
 parser.add_argument("--rigid_substeps", type=int, default=4, help="MuJoCo-Warp substeps per coupled step.")
 parser.add_argument("--disable_cuda_graph", action="store_true", help="Disable CUDA graph capture for debugging.")
 add_launcher_args(parser)
-parser.set_defaults(visualizer=["newton"])
-args_cli = parser.parse_args()
+args_cli, config_overrides = setup_preset_cli(parser)
 
 
 FPS = 60.0
@@ -102,22 +109,6 @@ CAMERA_EYE = (-4.2, -3.2, 2.2)
 CAMERA_TARGET = (0.0, 0.0, 0.9)
 
 
-def create_visualizer_cfgs():
-    """Create demo-specific visualizer configs for the requested backends."""
-    if not any(v in (args_cli.visualizer or []) for v in ("newton", "newton_gl", "newton_rtx")):
-        return []
-
-    from isaaclab_visualizers.newton import NewtonGLVisualizerCfg, NewtonRTXVisualizerCfg
-
-    cfg_type = NewtonRTXVisualizerCfg if args_cli.visualizer == ["newton_rtx"] else NewtonGLVisualizerCfg
-    return [
-        cfg_type(
-            show_particles=True,
-            particle_color=SNOW_COLOR,
-        )
-    ]
-
-
 def create_snowball_points(radius: float, seed: int) -> np.ndarray:
     """Create jittered local-space sphere points."""
     dim = int(2.0 * radius / SNOW_SPACING) + 1
@@ -135,9 +126,7 @@ def create_snowball_points(radius: float, seed: int) -> np.ndarray:
 
 def create_sim_cfg():
     """Create the proxy-coupled Newton simulation configuration."""
-    from isaaclab_newton.physics import MJWarpSolverCfg, MPMSolverCfg, NewtonCfg
-
-    import isaaclab.sim as sim_utils
+    from isaaclab_newton.physics import MJWarpSolverCfg, MPMSolverCfg
 
     from isaaclab_contrib.coupling import CouplerEntryCfg, CouplerProxyCfg, CouplerProxyMappingCfg
 
@@ -199,13 +188,16 @@ def create_sim_cfg():
         iterations=1,
     )
 
-    return sim_utils.SimulationCfg(
+    return MultiBackendSimulationCfg(
         dt=1.0 / FPS,
         device=args_cli.device,
         gravity=(0.0, 0.0, -9.81),
-        visualizer_cfgs=create_visualizer_cfgs(),
-        physics=NewtonCfg(
-            solver_cfg=solver_cfg,
+        visualizer_cfgs=MultiBackendVisualizerCfg(
+            newton_gl=NewtonGLVisualizerCfg(show_particles=True, particle_color=SNOW_COLOR),
+            rerun=RerunVisualizerCfg(show_particles=True),
+            viser=ViserVisualizerCfg(show_particles=True),
+        ),
+        physics=solver_cfg.replace(
             num_substeps=1,
             use_cuda_graph=not args_cli.disable_cuda_graph,
         ),
@@ -220,7 +212,7 @@ def create_scene_cfg():
     import isaaclab.sim as sim_utils
     from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
     from isaaclab.scene import InteractiveSceneCfg
-    from isaaclab.utils.configclass import configclass
+    from isaaclab.sensors import CameraCfg
 
     particle_mass = SNOW_SPACING**3 * SNOW_DENSITY
     particle_radius = 0.5 * SNOW_SPACING
@@ -319,6 +311,22 @@ def create_scene_cfg():
         snowball_second = snowball_cfg(SNOWBALLS[1])
         snowball_third = snowball_cfg(SNOWBALLS[2])
 
+        camera = preset(
+            default=None,
+            newton_rtx=CameraCfg(
+                prim_path="{ENV_REGEX_NS}/Camera",
+                offset=CameraCfg.OffsetCfg(
+                    pos=CAMERA_EYE,
+                    rot=(0.5527416, -0.2737586, -0.3493345, 0.7053356),
+                    convention="opengl",
+                ),
+                spawn=sim_utils.PinholeCameraCfg(clipping_range=(0.1, 20.0)),
+                width=640,
+                height=480,
+                renderer_cfg=MultiBackendRendererCfg(),
+            ),
+        )
+
     return SnowballSmashSceneCfg(num_envs=1, env_spacing=0.0)
 
 
@@ -348,13 +356,13 @@ def run_simulator(sim, scene) -> None:
 
 def main() -> None:
     """Set up and run the Newton MPM snowball-smash demo."""
-    sim_cfg = create_sim_cfg()
-    with launch_simulation(sim_cfg, args_cli):
+    cfg = resolve_config({"sim": create_sim_cfg(), "scene": create_scene_cfg()}, config_overrides)
+    sim_cfg, scene_cfg = cfg["sim"], cfg["scene"]
+    with launch_simulation(cfg, args_cli):
         import isaaclab.sim as sim_utils
-        from isaaclab.scene import InteractiveScene
 
         sim = sim_utils.SimulationContext(sim_cfg)
-        scene = InteractiveScene(create_scene_cfg())
+        scene = scene_cfg.class_type(scene_cfg)
         sim.reset()
         sim.set_camera_view(eye=CAMERA_EYE, target=CAMERA_TARGET)
 

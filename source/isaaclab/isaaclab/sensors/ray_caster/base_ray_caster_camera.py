@@ -12,8 +12,6 @@ from typing import TYPE_CHECKING, ClassVar, Literal
 import torch
 import warp as wp
 
-from pxr import UsdGeom
-
 import isaaclab.utils.math as math_utils
 from isaaclab.sensors.camera import CameraData
 from isaaclab.utils.warp import ProxyArray
@@ -109,6 +107,14 @@ class BaseRayCasterCamera(BaseRayCaster):
     def image_shape(self) -> tuple[int, int]:
         """A tuple containing (height, width) of the camera sensor."""
         return (self.cfg.pattern_cfg.height, self.cfg.pattern_cfg.width)
+
+    @property
+    def output_shapes(self) -> dict[str, tuple[int, ...]]:
+        """Allocated ray-cast output shapes without updating the camera."""
+        outputs = self._data.output
+        if outputs is None:
+            raise RuntimeError("Ray-caster camera output buffers are not available. Please call 'sim.play()' first.")
+        return {name: buffer.shape for name, buffer in outputs.items()}
 
     @property
     def frame(self) -> torch.tensor:
@@ -259,13 +265,10 @@ class BaseRayCasterCamera(BaseRayCaster):
 
         Raises:
             RuntimeError: If the camera prim is not set. Need to call :meth:`initialize` method first.
-            NotImplementedError: If the stage up-axis is not "Y" or "Z".
         """
-        # get up axis of current stage
-        up_axis = UsdGeom.GetStageUpAxis(self.stage)
         # camera position and rotation in opengl convention
         orientations = math_utils.quat_from_matrix(
-            math_utils.create_rotation_matrix_from_view(eyes, targets, up_axis=up_axis, device=self._device)
+            math_utils.create_rotation_matrix_from_view(eyes, targets, up_axis="Z", device=self._device)
         )
         self.set_world_poses(eyes, orientations, env_ids, convention="opengl")
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import torch
 
-from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
+from isaaclab.markers import VisualizationMarkersCfg
 
 
 class ContactForceVisualizer:
@@ -35,7 +35,7 @@ class ContactForceVisualizer:
         if marker_scale is None or len(marker_scale) != 3:
             raise ValueError("Contact-force visualization requires an 'arrow' marker with a three-dimensional scale.")
 
-        self._visualizer = VisualizationMarkers(cfg)
+        self._visualizer = cfg.class_type(cfg)
         self._force_scale = force_scale
         self._prototype_length = marker_scale[2]
         self._tail_offset_ratio = tail_offset_ratio

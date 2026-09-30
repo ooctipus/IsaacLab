@@ -16,7 +16,6 @@ from isaaclab.sim.spawners.from_files.from_files_cfg import UsdFileCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR, retrieve_file_path
 from isaaclab.utils.configclass import configclass
 from isaaclab.utils.datasets import EpisodeData
-from isaaclab.visualizers import VisualizerCfg
 
 from isaaclab_mimic.locomanipulation_sdg.data_classes import LocomanipulationSDGInputData
 from isaaclab_mimic.locomanipulation_sdg.occupancy_map_utils import OccupancyMap
@@ -29,12 +28,10 @@ from isaaclab_tasks.contrib.locomanip_pick_place.locomanipulation_g1_env_cfg imp
     ObservationsCfg,
     manip_mdp,
 )
+from isaaclab_tasks.utils.presets import MultiBackendRendererCfg
 
 from .locomanipulation_sdg_env import LocomanipulationSDGEnv
 from .locomanipulation_sdg_env_cfg import LocomanipulationSDGEnvCfg, LocomanipulationSDGRecorderManagerCfg
-
-NUM_FORKLIFTS = 0
-NUM_BOXES = 0
 
 
 @configclass
@@ -52,54 +49,18 @@ class G1LocomanipulationSDGSceneCfg(LocomanipulationG1SceneCfg):
         ),
     )
 
-    def add_robot_pov_cam(self, height, width):
-        robot_pov_cam = CameraCfg(
-            prim_path="{ENV_REGEX_NS}/Robot/torso_link/d435_link/camera",
-            update_period=0.0,
-            height=height,
-            width=width,
-            data_types=["rgb"],
-            spawn=sim_utils.PinholeCameraCfg(focal_length=8.0, clipping_range=(0.1, 20.0)),
-            offset=CameraCfg.OffsetCfg(pos=(0.0, 0.0, 0.0), rot=(0.0, -0.1736482, 0.0, 0.9848078), convention="world"),
-        )
-        setattr(self, "robot_pov_cam", robot_pov_cam)
+    robot_pov_cam = CameraCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/torso_link/d435_link/camera",
+        update_period=0.0,
+        height=160,
+        width=256,
+        data_types=["rgb"],
+        spawn=sim_utils.PinholeCameraCfg(focal_length=8.0, clipping_range=(0.1, 20.0)),
+        offset=CameraCfg.OffsetCfg(pos=(0.0, 0.0, 0.0), rot=(0.0, -0.1736482, 0.0, 0.9848078), convention="world"),
+        renderer_cfg=MultiBackendRendererCfg(),
+    )
 
-    def add_background_asset(self, background_usd_path: str):
-        background = AssetBaseCfg(
-            prim_path="{ENV_REGEX_NS}/Background",
-            init_state=AssetBaseCfg.InitialStateCfg(
-                pos=[0, 0, 0],
-                rot=[0.0, 0.0, 0.0, 1.0],
-            ),
-            spawn=UsdFileCfg(
-                usd_path=background_usd_path,
-            ),
-        )
-
-        setattr(self, "background", background)
-
-    def add_forklifts(self, num_forklifts: int):
-        for i in range(num_forklifts):
-            forklift = AssetBaseCfg(
-                prim_path=f"/World/envs/env_[^/]+/Forklift{i}",
-                init_state=AssetBaseCfg.InitialStateCfg(pos=[0.0, 0.0, 0.0], rot=[0.0, 0.0, 0.0, 1.0]),
-                spawn=UsdFileCfg(
-                    usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Forklift/forklift.usd",
-                    rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
-                ),
-            )
-            setattr(self, f"forklift_{i}", forklift)
-
-    def add_boxes(self, num_boxes: int):
-        for i in range(num_boxes):
-            box = AssetBaseCfg(
-                prim_path=f"/World/envs/env_[^/]+/Box{i}",
-                init_state=AssetBaseCfg.InitialStateCfg(pos=[0.0, 0.0, 0.0], rot=[0.0, 0.0, 0.0, 1.0]),
-                spawn=UsdFileCfg(
-                    usd_path=f"{ISAAC_NUCLEUS_DIR}/Environments/Simple_Warehouse/Props/SM_CardBoxB_01_681.usd",
-                ),
-            )
-            setattr(self, f"box_{i}", box)
+    background: AssetBaseCfg | None = None
 
 
 @configclass
@@ -129,9 +90,7 @@ class G1LocomanipulationSDGEnvCfg(LocomanipulationG1EnvCfg, LocomanipulationSDGE
     recorders: LocomanipulationSDGRecorderManagerCfg = LocomanipulationSDGRecorderManagerCfg()
     observations: G1LocomanipulationSDGObservationsCfg = G1LocomanipulationSDGObservationsCfg()
 
-    background_usd_path: str | None = None
     background_occupancy_yaml_file: str | None = None
-    high_res_video: bool = False
 
     def __post_init__(self):
         """Post initialization."""
@@ -141,8 +100,6 @@ class G1LocomanipulationSDGEnvCfg(LocomanipulationG1EnvCfg, LocomanipulationSDGE
         # simulation settings
         self.sim.dt = 1 / 200  # 200Hz
         self.sim.render_interval = 6
-        self.sim.default_visualizer_cfg = VisualizerCfg(eye=(0.0, 3.0, 1.25), lookat=(0.0, 0.0, 0.5))
-
         # Set the URDF and mesh paths for the IK controller
         urdf_omniverse_path = f"{ISAACLAB_NUCLEUS_DIR}/Controllers/LocomanipulationAssets/unitree_g1_kinematics_asset/g1_29dof_with_hand_only_kinematics.urdf"  # noqa: E501
 
@@ -162,27 +119,6 @@ class G1LocomanipulationSDGEnvCfg(LocomanipulationG1EnvCfg, LocomanipulationSDGE
 
 class G1LocomanipulationSDGEnv(LocomanipulationSDGEnv):
     def __init__(self, cfg: G1LocomanipulationSDGEnvCfg, **kwargs):
-        if cfg.background_usd_path is not None:
-            self._num_forklifts = 0
-            self._num_boxes = 0
-            set_ground_invisible = True
-            cfg.scene.add_background_asset(cfg.background_usd_path)
-        else:
-            self._num_forklifts = NUM_FORKLIFTS
-            self._num_boxes = NUM_BOXES
-            set_ground_invisible = False
-
-        if cfg.high_res_video:
-            cfg.scene.add_robot_pov_cam(540, 960)
-        else:
-            cfg.scene.add_robot_pov_cam(160, 256)
-
-        cfg.scene.add_forklifts(self._num_forklifts)
-        cfg.scene.add_boxes(self._num_boxes)
-
-        if set_ground_invisible:
-            cfg.scene.ground.spawn.visible = False
-
         super().__init__(cfg)
         self.sim.set_camera_view([10.5, 10.5, 10.5], [0.0, 0.0, 0.5])
         self._upper_body_dim = self.action_manager.get_term("upper_body_ik").action_dim
@@ -312,27 +248,7 @@ class G1LocomanipulationSDGEnv(LocomanipulationSDGEnv):
         )
 
     def get_obstacle_fixtures(self):
-        obstacles = [
-            SceneFixture.from_boundary(
-                self.scene,
-                f"forklift_{i}",
-                np.array([[-1.0, -1.9], [1.0, -1.9], [1.0, 2.1], [-1.0, 2.1]]),
-                0.05,
-            )
-            for i in range(self._num_forklifts)
-        ]
-
-        obstacles += [
-            SceneFixture.from_boundary(
-                self.scene,
-                f"box_{i}",
-                np.array([[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]]),
-                0.05,
-            )
-            for i in range(self._num_boxes)
-        ]
-
-        return obstacles
+        return []
 
     def get_background_fixture(self) -> SceneFixture | None:
         if "background" not in self.scene.keys():

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import math
 
-from isaaclab_newton.physics import KaminoPADMMSolverCfg, MJWarpSolverCfg, NewtonCfg
+from isaaclab_newton.physics import KaminoPADMMSolverCfg, MJWarpSolverCfg
 from isaaclab_ov.physics import OvPhysxCfg
 from isaaclab_physx.physics import PhysxCfg
 
@@ -15,11 +15,10 @@ import isaaclab.sim as sim_utils
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 from isaaclab.envs import DirectMARLEnvCfg
 from isaaclab.physics import PhysxAutoCfg
-from isaaclab.scene import InteractiveSceneCfg
-from isaaclab.sim import SimulationCfg
 from isaaclab.utils.configclass import configclass
 
 from isaaclab_tasks.utils import PresetCfg
+from isaaclab_tasks.utils.presets import MultiBackendSceneCfg, MultiBackendSimulationCfg
 
 from isaaclab_assets.robots.cart_double_pendulum import CART_DOUBLE_PENDULUM_CFG
 
@@ -31,23 +30,33 @@ class PendulumPhysicsCfg(PresetCfg):
     isaacsim_physx: PhysxCfg = PhysxCfg()
     ovphysx: OvPhysxCfg = OvPhysxCfg()
     physx: PhysxAutoCfg = PhysxAutoCfg(isaacsim_physx=isaacsim_physx, ovphysx=ovphysx)
-    newton_mjwarp: NewtonCfg = NewtonCfg(
-        solver_cfg=MJWarpSolverCfg(
-            njmax=5,
-            nconmax=3,
-            cone="pyramidal",
-            impratio=1,
-            integrator="implicitfast",
-        ),
+    newton_mjwarp = MJWarpSolverCfg(
+        njmax=5,
+        nconmax=3,
+        cone="pyramidal",
+        impratio=1,
+        integrator="implicitfast",
         num_substeps=1,
         debug_mode=False,
         use_cuda_graph=True,
     )
-    default: NewtonCfg = newton_mjwarp
-    newton_kamino: NewtonCfg = NewtonCfg(
-        solver_cfg=KaminoPADMMSolverCfg(sparse_jacobian=True),
+    newton_kamino = KaminoPADMMSolverCfg(
+        sparse_jacobian=True,
         debug_mode=False,
         use_cuda_graph=True,
+    )
+    default = newton_mjwarp
+
+
+@configclass
+class PendulumSceneCfg(MultiBackendSceneCfg):
+    """Cart-double-pendulum assets constructed and cloned as one scene."""
+
+    ground = AssetBaseCfg(prim_path="/World/ground", spawn=sim_utils.GroundPlaneCfg())
+    robot: ArticulationCfg = CART_DOUBLE_PENDULUM_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+    robot.actuators["pendulum_actuator"].armature = 0.05
+    light = AssetBaseCfg(
+        prim_path="/World/Light", spawn=sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
     )
 
 
@@ -64,21 +73,15 @@ class PendulumMARLEnvCfg(DirectMARLEnvCfg):
     state_space = -1
 
     # simulation
-    sim: SimulationCfg = SimulationCfg(dt=1 / 120, render_interval=decimation, physics=PendulumPhysicsCfg())
-
-    # robot
-    robot_cfg: ArticulationCfg = CART_DOUBLE_PENDULUM_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-    robot_cfg.actuators["pendulum_actuator"].armature = 0.05
-    ground_cfg: AssetBaseCfg = AssetBaseCfg(prim_path="/World/ground", spawn=sim_utils.GroundPlaneCfg())
-    light_cfg: AssetBaseCfg = AssetBaseCfg(
-        prim_path="/World/Light", spawn=sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(
+        dt=1 / 120, render_interval=decimation, physics=PendulumPhysicsCfg()
     )
     cart_dof_name = "slider_to_cart"
     pole_dof_name = "cart_to_pole"
     pendulum_dof_name = "pole_to_pendulum"
 
     # scene
-    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=4096, env_spacing=4.0, replicate_physics=True)
+    scene: PendulumSceneCfg = PendulumSceneCfg(num_envs=4096, env_spacing=4.0, replicate_physics=True)
 
     # reset
     max_cart_pos = 3.0  # the cart is reset if it exceeds that position [m]

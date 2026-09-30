@@ -100,16 +100,16 @@ environment. This path is replaced by the scene object with ``/World/envs/env_{i
 Scene instantiation
 -------------------
 
-Unlike before where we called the ``design_scene`` function to create the scene, we now
-create an instance of the :class:`scene.InteractiveScene` class and pass in the configuration
-object to its constructor. While creating the configuration instance of ``CartpoleSceneCfg``
-we specify how many environment copies we want to create using the ``num_envs`` argument.
-This will be used to clone the scene for each environment.
+The top-level :class:`TutorialCfg` owns both simulation and scene configuration. The
+:class:`cloner.ReplicateSession` receives that complete configuration before the
+:class:`scene.InteractiveScene` is constructed, allowing one plan to cover every scene entity. The
+scene is then instantiated from the standard ``cfg.scene.class_type(cfg.scene)`` convention inside
+the cloning lifecycle. The ``num_envs`` and ``env_spacing`` fields determine the plan's clone layout.
 
 .. literalinclude:: ../../../../scripts/tutorials/02_scene/create_scene.py
    :language: python
-   :start-at: # Design scene
-   :end-at: scene = InteractiveScene(scene_cfg)
+   :start-at: with ReplicateSession(
+   :end-at: scene = cfg.scene.class_type(cfg.scene)
 
 Accessing scene elements
 ------------------------

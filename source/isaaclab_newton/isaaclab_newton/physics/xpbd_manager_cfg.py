@@ -35,9 +35,6 @@ class XPBDSolverCfg(NewtonSolverCfg):
     class_type: type[NewtonManager] | str = "{DIR}.xpbd_manager:NewtonXPBDManager"
     """Manager class for the XPBD solver."""
 
-    solver_type: str = "xpbd"
-    """Solver type. Can be "xpbd"."""
-
     iterations: int = 2
     """Number of solver iterations."""
 

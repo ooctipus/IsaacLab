@@ -37,11 +37,12 @@ simulation_app = app_launcher.app
 """Rest everything follows."""
 
 import torch
+from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import Articulation, AssetBaseCfg
 from isaaclab.controllers import OperationalSpaceController, OperationalSpaceControllerCfg
-from isaaclab.markers import VisualizationMarkers
+from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
 from isaaclab.markers.config import FRAME_MARKER_CFG
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
 from isaaclab.sensors import ContactSensorCfg
@@ -104,8 +105,26 @@ class SceneCfg(InteractiveSceneCfg):
     robot.actuators["panda_forearm"].damping = 0.0
     robot.spawn.rigid_props.disable_gravity = True
 
+    ee_marker: VisualizationMarkersCfg = FRAME_MARKER_CFG.replace(prim_path="/Visuals/ee_current")
+    goal_marker: VisualizationMarkersCfg = FRAME_MARKER_CFG.replace(prim_path="/Visuals/ee_goal")
+    ee_marker.markers["frame"].scale = (0.1, 0.1, 0.1)
+    goal_marker.markers["frame"].scale = (0.1, 0.1, 0.1)
 
-def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
+
+@configclass
+class TutorialCfg:
+    """Complete direct controller tutorial configuration."""
+
+    sim: sim_utils.SimulationCfg = sim_utils.SimulationCfg(physics=PhysxCfg(), dt=0.01, device=args_cli.device)
+    scene: SceneCfg = SceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0)
+
+
+def run_simulator(
+    sim: sim_utils.SimulationContext,
+    scene: InteractiveScene,
+    ee_marker: VisualizationMarkers,
+    goal_marker: VisualizationMarkers,
+):
     """Runs the simulation loop.
 
     Args:
@@ -137,12 +156,6 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
         nullspace_control="position",
     )
     osc = OperationalSpaceController(osc_cfg, num_envs=scene.num_envs, device=sim.device)
-
-    # Markers
-    frame_marker_cfg = FRAME_MARKER_CFG.copy()
-    frame_marker_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
-    ee_marker = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/ee_current"))
-    goal_marker = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/ee_goal"))
 
     # Define targets for the arm (x,y,z,qx,qy,qz,qw)
     ee_goal_pose_set_tilted_b = torch.tensor(
@@ -467,19 +480,20 @@ def convert_to_task_frame(osc: OperationalSpaceController, command: torch.tensor
 def main():
     """Main function."""
     # Load kit helper
-    sim_cfg = sim_utils.SimulationCfg(dt=0.01, device=args_cli.device)
-    sim = sim_utils.SimulationContext(sim_cfg)
+    cfg = TutorialCfg()
+    sim = sim_utils.SimulationContext(cfg.sim)
     # Set main camera
     sim.set_camera_view([2.5, 2.5, 2.5], [0.0, 0.0, 0.0])
     # Design scene
-    scene_cfg = SceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0)
-    scene = InteractiveScene(scene_cfg)
+    scene = cfg.scene.class_type(cfg.scene)
+    ee_marker = cfg.scene.ee_marker.class_type(cfg.scene.ee_marker)
+    goal_marker = cfg.scene.goal_marker.class_type(cfg.scene.goal_marker)
     # Play the simulator
     sim.reset()
     # Now we are ready!
     print("[INFO]: Setup complete...")
     # Run the simulator
-    run_simulator(sim, scene)
+    run_simulator(sim, scene, ee_marker, goal_marker)
 
 
 if __name__ == "__main__":

@@ -14,7 +14,6 @@ from __future__ import annotations
 import inspect
 import logging
 import sys
-import weakref
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
@@ -22,17 +21,12 @@ from typing import TYPE_CHECKING, Any
 import warp as wp
 
 import isaaclab.sim as sim_utils
-from isaaclab import cloner
 from isaaclab.cloner.cloner_cfg import expand_env_regex_ns
-from isaaclab.physics import PhysicsEvent, PhysicsManager
-from isaaclab.sim.utils.queries import get_first_matching_ancestor_prim
-from isaaclab.sim.utils.transforms import resolve_prim_pose
+from isaaclab.physics import PhysicsEvent
 
 from .kernels import reset_envs_kernel, update_outdated_envs_kernel, update_timestamp_kernel
 
 if TYPE_CHECKING:
-    from isaaclab.cloner import ClonePlan
-
     from .sensor_base_cfg import SensorBaseCfg
 
 logger = logging.getLogger(__name__)
@@ -60,14 +54,16 @@ class SensorBase(ABC):
         cfg.validate()
         cfg.prim_path = expand_env_regex_ns(cfg.prim_path)
         # store inputs
+        self._source_cfg = cfg
         self.cfg = cfg.copy()
         # flag for whether the sensor is initialized
         self._is_initialized = False
         # flag for whether the sensor is in visualization mode
         self._is_visualizing = False
-        # clone plan used for this sensor's latest initialization
-        self._clone_plan: ClonePlan | None = None
-        self.stage = sim_utils.get_current_stage()
+        sim = sim_utils.SimulationContext.instance()
+        if sim is None:
+            raise RuntimeError(f"Sensor at {self.cfg.prim_path!r} requires an active SimulationContext.")
+        self.stage = sim.stage
 
         # register various callback functions
         self._register_callbacks()
@@ -234,24 +230,11 @@ class SensorBase(ABC):
         self._device = sim.device
         self._backend = sim.backend
         self._sim_physics_dt = sim.get_physics_dt()
-        # Count number of environments. Prefer the active simulation's clone plan when USD
-        # only carries the env_0 prototype (e.g. Newton clones solver-side).
-        self._clone_plan = sim.get_clone_plan()
-        clone_plan = self._clone_plan
-        clone_plan_matches = ()
-        if clone_plan is not None:
-            clone_plan_matches = tuple(cloner.query.iter_sources(clone_plan, self.cfg.prim_path))
-        if clone_plan_matches:
-            self._parent_prims = []
-            self._num_envs = int(clone_plan.clone_mask.shape[1])
-        elif clone_plan is not None:
-            env_prim_path_expr = "/".join(sim_utils.split_path_expr(self.cfg.prim_path)[:-1])
-            self._parent_prims = sim_utils.find_matching_prims(env_prim_path_expr)
-            self._num_envs = int(clone_plan.env_ids.size)
-        else:
-            env_prim_path_expr = "/".join(sim_utils.split_path_expr(self.cfg.prim_path)[:-1])
-            self._parent_prims = sim_utils.find_matching_prims(env_prim_path_expr)
-            self._num_envs = len(self._parent_prims)
+        plan = sim.get_clone_plan()
+        if plan is None or not plan.is_complete or plan.env_ids is None:
+            raise RuntimeError(f"Sensor at {self.cfg.prim_path!r} requires a completed clone plan.")
+        self._clone_plan = plan
+        self._num_envs = int(plan.env_ids.size)
         # Create warp env mask arrays for "all envs" cases and resets.
         # Note: We use wp.to_torch() to create zero-copy torch tensor views of warp arrays.
         # This allows warp arrays to be passed to warp kernels while the corresponding torch
@@ -306,41 +289,22 @@ class SensorBase(ABC):
 
     def _register_callbacks(self):
         """Registers physics lifecycle callbacks via the current backend's physics manager."""
-        physics_mgr_cls = sim_utils.SimulationContext.instance().physics_manager
+        manager = self._physics_manager = sim_utils.SimulationContext.instance()._physics_manager
 
-        obj_ref = weakref.proxy(self)
-
-        def _invoke(callback_name, event):
-            getattr(obj_ref, callback_name)(event)
-
-        # Backend-agnostic: PHYSICS_READY (init) and STOP (invalidate)
-        self._initialize_handle = physics_mgr_cls.register_callback(
-            lambda payload: PhysicsManager.safe_callback_invoke(
-                _invoke, "_initialize_callback", payload, physics_manager=physics_mgr_cls
-            ),
+        self._initialize_handle = manager.register_callback(
+            self._initialize_callback,
             PhysicsEvent.PHYSICS_READY,
             order=10,
         )
-        self._invalidate_initialize_handle = physics_mgr_cls.register_callback(
-            lambda payload: PhysicsManager.safe_callback_invoke(
-                _invoke, "_invalidate_initialize_callback", payload, physics_manager=physics_mgr_cls
-            ),
+        self._invalidate_initialize_handle = manager.register_callback(
+            self._invalidate_initialize_callback,
             PhysicsEvent.STOP,
             order=10,
         )
-        # Optional: prim deletion (only supported by PhysX backend; the substring
-        # check would also match ``OvPhysxManager``, which does not expose
-        # ``IsaacEvents``, so use an exact class-name match).
-        self._prim_deletion_handle = None
-        if physics_mgr_cls.__name__ == "PhysxManager":
-            from isaaclab_physx.physics import IsaacEvents  # noqa: PLC0415
-
-            self._prim_deletion_handle = physics_mgr_cls.register_callback(
-                lambda event: PhysicsManager.safe_callback_invoke(
-                    _invoke, "_on_prim_deletion", event, physics_manager=physics_mgr_cls
-                ),
-                IsaacEvents.PRIM_DELETION,
-            )
+        self._prim_deletion_handle = manager.register_callback(
+            self._on_prim_deletion,
+            PhysicsEvent.PRIM_DELETION,
+        )
 
     def _initialize_callback(self, event):
         """Initializes the scene elements.
@@ -356,23 +320,15 @@ class SensorBase(ABC):
     def _invalidate_initialize_callback(self, event):
         """Invalidates the scene elements."""
         self._is_initialized = False
-        self._clone_plan = None
         sim_ctx = sim_utils.SimulationContext.instance()
         if sim_ctx is not None:
             sim_ctx.vis_marker_registry.clear_debug_vis_callback(self)
         else:
             self._debug_vis_handle = None
 
-    def _on_prim_deletion(self, event) -> None:
-        """Invalidates and deletes the callbacks when the prim is deleted.
-
-        Args:
-            event: The prim deletion event containing the prim path in payload.
-
-        Note:
-            This function is called when the prim is deleted.
-        """
-        prim_path = event.payload["prim_path"]
+    def _on_prim_deletion(self, payload: dict[str, str]) -> None:
+        """Invalidate and delete callbacks when the prim is deleted."""
+        prim_path = payload["prim_path"]
         if prim_path == "/":
             self._clear_callbacks()
             return
@@ -381,14 +337,17 @@ class SensorBase(ABC):
 
     def _clear_callbacks(self) -> None:
         """Clears the callbacks."""
-        if self._initialize_handle is not None:
-            self._initialize_handle.deregister()
+        initialize_handle = getattr(self, "_initialize_handle", None)
+        if initialize_handle is not None:
+            initialize_handle.deregister()
             self._initialize_handle = None
-        if self._invalidate_initialize_handle is not None:
-            self._invalidate_initialize_handle.deregister()
+        invalidate_handle = getattr(self, "_invalidate_initialize_handle", None)
+        if invalidate_handle is not None:
+            invalidate_handle.deregister()
             self._invalidate_initialize_handle = None
-        if self._prim_deletion_handle is not None:
-            self._prim_deletion_handle.deregister()
+        deletion_handle = getattr(self, "_prim_deletion_handle", None)
+        if deletion_handle is not None:
+            deletion_handle.deregister()
             self._prim_deletion_handle = None
         # Clear debug visualization
         sim_ctx = sim_utils.SimulationContext.instance()
@@ -433,30 +392,10 @@ class SensorBase(ABC):
     ) -> tuple[str, tuple[float, float, float] | None, tuple[float, float, float, float] | None]:
         """Resolve the rigid-body ancestor view expression and the sensor-to-body offset.
 
-        The sensor's :attr:`SensorBaseCfg.prim_path` may point to any frame
-        inside the asset. To create a physics view, this helper walks ancestors
-        from that prim until it finds one with ``UsdPhysics.RigidBodyAPI``,
-        builds the corresponding destination-side expression, and computes the
-        fixed transform from that body to the configured sensor frame.
+        The sensor's :attr:`SensorBaseCfg.prim_path` may point to any frame inside an asset. The
+        clone plan carries its rigid-body binding and fixed body-relative pose.
 
-        Combines two resolution paths:
-
-        1. When an active :class:`~isaaclab.cloner.ClonePlan` exists, the
-           source-side env path is taken from the plan via
-           :func:`~isaaclab.cloner.query.path_to_source`, the rigid-body ancestor
-           is located on that source env, and the destination expression is
-           reconstructed by trimming the sensor-relative suffix from the plan's
-           destination glob.
-        2. Otherwise (stage scan fallback for non-cloned setups), the first
-           matching env is located via
-           :func:`~isaaclab.sim.utils.queries.find_first_matching_prim`, the
-           rigid-body ancestor is located on that env, and the destination
-           expression is the configured :attr:`SensorBaseCfg.prim_path` minus
-           the sensor-relative suffix.
-
-        The returned expression may still contain regex-style wildcards (e.g.
-        ``.*``); callers are responsible for converting to glob form for their
-        physics view (e.g. via :func:`~isaaclab.sim.utils.path_expr_to_glob`).
+        The returned expression is the native-view pattern declared by the plan.
 
         Returns:
             A tuple of:
@@ -470,25 +409,13 @@ class SensorBase(ABC):
               quaternion ``(x, y, z, w)``, or ``None`` when the sensor is
               mounted directly at the body origin.
         """
-        prim, target_expr = sim_utils.resolve_matching_prims_from_source(self.cfg.prim_path)[0]
-        from pxr import UsdPhysics  # noqa: PLC0415
-
-        ancestor_prim = get_first_matching_ancestor_prim(
-            prim.GetPath(), predicate=lambda _prim: _prim.HasAPI(UsdPhysics.RigidBodyAPI)
-        )
-        if ancestor_prim is None:
+        sim = sim_utils.SimulationContext.instance()
+        plan = sim.get_clone_plan()
+        if plan is None or not plan.is_complete:
+            raise RuntimeError(f"Sensor at {self.cfg.prim_path!r} requires a completed clone plan.")
+        frame = plan.match_frames(self.cfg.prim_path)[0]
+        if frame.body_view_path is None:
             raise RuntimeError(f"Failed to find a rigid body ancestor prim at path expression: {self.cfg.prim_path}")
-
-        if ancestor_prim == prim:
-            return target_expr, None, None
-
-        relative_path = prim.GetPath().MakeRelativePath(ancestor_prim.GetPath()).pathString
-        suffix = "/" + relative_path
-        if not target_expr.endswith(suffix):
-            raise RuntimeError(
-                f"Failed to build rigid body ancestor expression: target expression {target_expr!r} does not end "
-                f"with relative path {relative_path!r}."
-            )
-        rigid_parent_expr = target_expr[: -len(suffix)]
-        fixed_pos_b, fixed_quat_b = resolve_prim_pose(prim, ancestor_prim)
-        return rigid_parent_expr, fixed_pos_b, fixed_quat_b
+        if frame.body_path == frame.path:
+            return frame.body_view_path, None, None
+        return frame.body_view_path, frame.pose[:3], frame.pose[3:]

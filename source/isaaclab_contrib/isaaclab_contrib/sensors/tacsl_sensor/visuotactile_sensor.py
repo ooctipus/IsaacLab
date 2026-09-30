@@ -15,12 +15,9 @@ import numpy as np
 import torch
 import warp as wp
 
-from pxr import Usd, UsdGeom, UsdPhysics
-
 import isaaclab.sim as sim_utils
 import isaaclab.utils.math as math_utils
-from isaaclab.markers import VisualizationMarkers
-from isaaclab.sensors.camera import Camera
+from isaaclab import cloner
 from isaaclab.sensors.sensor_base import SensorBase
 from isaaclab.sim import SimulationContext
 from isaaclab.utils.math import quat_apply, quat_inv
@@ -29,6 +26,8 @@ from .visuotactile_render import GelsightRender
 from .visuotactile_sensor_data import VisuoTactileSensorData
 
 if TYPE_CHECKING:
+    from isaaclab.sensors.camera import Camera
+
     from .visuotactile_sensor_cfg import VisuoTactileSensorCfg
 
 import trimesh
@@ -66,9 +65,8 @@ class VisuoTactileSensor(SensorBase):
         The following requirements must be satisfied for proper sensor operation:
 
         **Camera Tactile Imaging**
-            If ``enable_camera_tactile=True``, a valid ``camera_cfg``
-            (:class:`~isaaclab.sensors.CameraCfg`) must be
-            provided with appropriate camera parameters.
+            Provide ``camera_cfg`` (:class:`~isaaclab.sensors.CameraCfg`) with appropriate
+            camera parameters, or leave it as ``None`` to disable tactile imaging.
 
         **Force Field Computation**
             If ``enable_force_field=True``, the following parameters are required:
@@ -118,20 +116,32 @@ class VisuoTactileSensor(SensorBase):
         self._contact_object_body_view = None
 
         # Visualization
-        self._tactile_visualizer: VisualizationMarkers | None = None
+        self._tactile_visualizer = None
 
         # Tactile points count
         self.num_tactile_points: int = 0
 
         # Now call parent class constructor
         super().__init__(cfg)
-
-    def __del__(self):
-        """Unsubscribes from callbacks and detach from the replicator registry."""
-        if self._camera_sensor is not None:
-            self._camera_sensor.__del__()
-        # unsubscribe from callbacks
-        super().__del__()
+        camera_cfg = self._source_cfg.camera_cfg
+        if camera_cfg is not None:
+            if (
+                camera_cfg.height != self.cfg.render_cfg.image_height
+                or camera_cfg.width != self.cfg.render_cfg.image_width
+            ):
+                raise ValueError(
+                    "Camera image size does not match the tactile render config:"
+                    f" {camera_cfg.height}x{camera_cfg.width} !="
+                    f" {self.cfg.render_cfg.image_height}x{self.cfg.render_cfg.image_width}."
+                )
+            if not all(data_type in {"distance_to_image_plane", "depth"} for data_type in camera_cfg.data_types):
+                raise ValueError(f"Unsupported tactile camera data types: {camera_cfg.data_types}")
+            if camera_cfg.update_period != self.cfg.update_period:
+                raise ValueError(
+                    f"Tactile camera update period ({camera_cfg.update_period}) must equal the sensor update period"
+                    f" ({self.cfg.update_period})."
+                )
+            self._camera_sensor = camera_cfg.class_type(camera_cfg)
 
     def __str__(self) -> str:
         """Returns: A string containing information about the instance."""
@@ -139,7 +149,7 @@ class VisuoTactileSensor(SensorBase):
             f"Tactile sensor @ '{self.cfg.prim_path}': \n"
             f"\trender config     : {self.cfg.render_cfg.base_data_path}/{self.cfg.render_cfg.sensor_data_dir_name}\n"
             f"\tupdate period (s) : {self.cfg.update_period}\n"
-            f"\tcamera enabled    : {self.cfg.enable_camera_tactile}\n"
+            f"\tcamera enabled    : {self._camera_sensor is not None}\n"
             f"\tforce field enabled: {self.cfg.enable_force_field}\n"
             f"\tnum instances     : {self.num_instances}\n"
         )
@@ -181,14 +191,15 @@ class VisuoTactileSensor(SensorBase):
         super()._initialize_impl()
 
         # Obtain global simulation view
-        self._physics_sim_view = SimulationContext.instance().physics_manager.get_physics_sim_view()
+        self._physics_sim_view = SimulationContext.instance().physics_sim_view
 
         # Initialize camera-based tactile sensing
-        if self.cfg.enable_camera_tactile:
+        if self._camera_sensor is not None:
             self._initialize_camera_tactile()
 
         # Initialize force field tactile sensing
         if self.cfg.enable_force_field:
+            self._declare_force_field_layout()
             self._initialize_force_field()
 
         # Initialize visualization
@@ -215,13 +226,14 @@ class VisuoTactileSensor(SensorBase):
         Raises:
             RuntimeError: If camera sensor is not initialized or initial render fails.
         """
-        if not self.cfg.enable_camera_tactile:
+        camera_sensor = self._camera_sensor
+        if camera_sensor is None:
             return None
 
-        self._camera_sensor.update(dt=0.0)
+        camera_sensor.update(dt=0.0)
 
         # get the initial render
-        initial_render = self._camera_sensor.data.output
+        initial_render = camera_sensor.data.output
         if initial_render is None:
             raise RuntimeError("Initial render is None")
 
@@ -234,48 +246,18 @@ class VisuoTactileSensor(SensorBase):
 
     def _initialize_camera_tactile(self):
         """Initialize camera-based tactile sensing."""
-        if self.cfg.camera_cfg is None:
-            raise ValueError("Camera configuration is None. Please provide a valid camera configuration.")
-        # check image size is consistent with the render config
-        if (
-            self.cfg.camera_cfg.height != self.cfg.render_cfg.image_height
-            or self.cfg.camera_cfg.width != self.cfg.render_cfg.image_width
-        ):
-            raise ValueError(
-                "Camera configuration image size is not consistent with the render config. Camera size:"
-                f" {self.cfg.camera_cfg.height}x{self.cfg.camera_cfg.width}, Render config:"
-                f" {self.cfg.render_cfg.image_height}x{self.cfg.render_cfg.image_width}"
-            )
-        # check data types
-        if not all(data_type in ["distance_to_image_plane", "depth"] for data_type in self.cfg.camera_cfg.data_types):
-            raise ValueError(
-                f"Camera configuration data types are not supported. Data types: {self.cfg.camera_cfg.data_types}"
-            )
-        if self.cfg.camera_cfg.update_period != self.cfg.update_period:
-            logger.warning(
-                f"Camera configuration update period ({self.cfg.camera_cfg.update_period}) is not equal to sensor"
-                f" update period ({self.cfg.update_period}), changing camera update period to match sensor update"
-                " period"
-            )
-            self.cfg.camera_cfg.update_period = self.cfg.update_period
+        camera_cfg = self.cfg.camera_cfg
+        assert camera_cfg is not None
 
         # gelsightRender
         self._tactile_rgb_render = GelsightRender(self.cfg.render_cfg, device=self.device)
 
-        # Create camera sensor
-        self._camera_sensor = Camera(self.cfg.camera_cfg)
-
-        # Initialize camera
-        if not self._camera_sensor.is_initialized:
-            self._camera_sensor._initialize_impl()
-            self._camera_sensor._is_initialized = True
-
         # Initialize camera buffers
         self._data.tactile_rgb_image = torch.zeros(
-            (self._num_envs, self.cfg.camera_cfg.height, self.cfg.camera_cfg.width, 3), device=self._device
+            (self._num_envs, camera_cfg.height, camera_cfg.width, 3), device=self._device
         )
         self._data.tactile_depth_image = torch.zeros(
-            (self._num_envs, self.cfg.camera_cfg.height, self.cfg.camera_cfg.width, 1), device=self._device
+            (self._num_envs, camera_cfg.height, camera_cfg.width, 1), device=self._device
         )
 
         logger.info("Camera-based tactile sensing initialized.")
@@ -308,6 +290,71 @@ class VisuoTactileSensor(SensorBase):
         self._initialize_force_field_buffers()
         logger.info("Force field tactile sensing initialized.")
 
+    def _declare_force_field_layout(self) -> None:
+        """Record mesh and native-view facts from the completed clone plan."""
+        sim = SimulationContext.instance()
+        plan = sim.get_clone_plan()
+        if plan is None or not plan.is_complete:
+            raise RuntimeError("Visuo-tactile force fields require a completed clone plan.")
+
+        elastomer_expr = self.cfg.prim_path
+        elastomers = []
+        elastomer_bodies = {body.env_id: body for body in plan.match_rigid_body_subtrees(elastomer_expr)}
+        for target, geometries in plan.match_geometry_targets(elastomer_expr):
+            body = elastomer_bodies[target.env_id]
+            visual_meshes = tuple(
+                geometry for geometry in geometries if not geometry.collision and geometry.frame.body_path == body.path
+            )
+            if len(visual_meshes) != 1:
+                raise RuntimeError(
+                    f"Expected one planned visual mesh for elastomer {target.path!r}; found {len(visual_meshes)}."
+                )
+            geometry = visual_meshes[0]
+            frame = geometry.frame
+            rotation = math_utils.matrix_from_quat(torch.tensor(frame.pose[3:], dtype=torch.float64)).numpy()
+            points = geometry.vertices @ rotation.T + np.asarray(frame.pose[:3])
+            elastomers.append(
+                (
+                    body.view_path,
+                    geometry.view_path,
+                    points,
+                    geometry.faces,
+                )
+            )
+        first = elastomers[0]
+        if any(
+            body_path != first[0]
+            or mesh_path != first[1]
+            or not np.array_equal(points, first[2])
+            or not np.array_equal(indices, first[3])
+            for body_path, mesh_path, points, indices in elastomers[1:]
+        ):
+            raise ValueError("Visuo-tactile elastomer geometry differs across clone-plan sources.")
+        self._elastomer_body_view_path = first[0]
+        self._elastomer_mesh_view_path = first[1]
+        self._elastomer_mesh_points = first[2]
+        self._elastomer_mesh_face_indices = first[3]
+
+        if self.cfg.contact_object_prim_path_expr is None:
+            return
+        contact_expr = cloner.expand_env_regex_ns(self.cfg.contact_object_prim_path_expr)
+        contacts = []
+        for target, geometries in plan.match_geometry_targets(contact_expr):
+            sdf_meshes = tuple(geometry for geometry in geometries if geometry.collision_approximation == "sdf")
+            if not sdf_meshes:
+                raise RuntimeError(f"No planned SDF mesh found under contact object {target.path!r}.")
+            if len(sdf_meshes) != 1:
+                raise RuntimeError(
+                    f"Expected one planned SDF mesh under contact object {target.path!r}; found {len(sdf_meshes)}."
+                )
+            geometry = sdf_meshes[0]
+            if geometry.frame.body_view_path is None:
+                raise RuntimeError(f"Planned SDF mesh {geometry.path!r} has no rigid-body owner.")
+            contacts.append((geometry.view_path, geometry.frame.body_view_path))
+        if any(contact != contacts[0] for contact in contacts[1:]):
+            raise ValueError("Visuo-tactile contact geometry differs across clone-plan sources.")
+        self._contact_object_mesh_view_path, self._contact_object_body_view_path = contacts[0]
+
     def _create_physx_views(self) -> None:
         """Create PhysX views for contact object and elastomer bodies.
 
@@ -319,12 +366,7 @@ class VisuoTactileSensor(SensorBase):
             c. Creates rigid body view for object
 
         """
-        # Resolve the elastomer's destination expression (multi-env glob form for PhysX views).
-        # The sensor's cfg.prim_path lives under the elastomer; the parent expression is the
-        # elastomer body itself (matching :attr:`SensorBase._parent_prims`).
-        elastomer_expr = "/".join(sim_utils.split_path_expr(self.cfg.prim_path)[:-1])
-        elastomer_dest_expr = sim_utils.resolve_matching_prims_from_source(elastomer_expr)[0][1]
-        elastomer_pattern = sim_utils.path_expr_to_glob(elastomer_dest_expr)
+        elastomer_pattern = sim_utils.path_expr_to_glob(self._elastomer_body_view_path)
         self._elastomer_body_view = self._physics_sim_view.create_rigid_body_view([elastomer_pattern])
         # Get elastomer COM for velocity correction
         self._elastomer_com_b = (
@@ -334,79 +376,19 @@ class VisuoTactileSensor(SensorBase):
         if self.cfg.contact_object_prim_path_expr is None:
             return
 
-        contact_object_mesh, contact_object_rigid_body = self._find_contact_object_components()
         # Create SDF view for collision detection
         num_query_points = self.cfg.tactile_array_size[0] * self.cfg.tactile_array_size[1]
-        mesh_path_pattern = contact_object_mesh.GetPath().pathString.replace("env_0", "env_*")
         self._contact_object_sdf_view = self._physics_sim_view.create_sdf_shape_view(
-            mesh_path_pattern, num_query_points
+            sim_utils.path_expr_to_glob(self._contact_object_mesh_view_path), num_query_points
         )
 
         # Create rigid body views for contact object and elastomer
-        body_path_pattern = contact_object_rigid_body.GetPath().pathString.replace("env_0", "env_*")
-        self._contact_object_body_view = self._physics_sim_view.create_rigid_body_view([body_path_pattern])
+        body_pattern = sim_utils.path_expr_to_glob(self._contact_object_body_view_path)
+        self._contact_object_body_view = self._physics_sim_view.create_rigid_body_view([body_pattern])
         # Get contact object COM for velocity correction
         self._contact_object_com_b = (
             wp.to_torch(self._contact_object_body_view.get_coms()).to(self._device).split([3, 4], dim=-1)[0]
         )
-
-    def _find_contact_object_components(self) -> tuple[Any, Any]:
-        """Find and validate contact object SDF mesh and its parent rigid body.
-
-        This method searches for the contact object prim using the configured filter pattern,
-        then locates the first SDF collision mesh within that prim hierarchy and
-        identifies its parent rigid body for physics simulation.
-
-        Returns:
-            Tuple of (contact_object_mesh, contact_object_rigid_body)
-            Returns None if contact object components are not found.
-
-        Note:
-            Only SDF meshes are supported for optimal force field computation performance.
-            If no SDF mesh is found, the method will log a warning and return None.
-        """
-        # Find the contact object prim using the configured pattern
-        contact_object_prim = sim_utils.find_first_matching_prim(self.cfg.contact_object_prim_path_expr)
-        if contact_object_prim is None:
-            raise RuntimeError(
-                f"No contact object prim found matching pattern: {self.cfg.contact_object_prim_path_expr}"
-            )
-
-        def is_sdf_mesh(prim: Usd.Prim) -> bool:
-            """Check if a mesh prim is configured for SDF approximation."""
-            return (
-                prim.HasAPI(UsdPhysics.MeshCollisionAPI)
-                and UsdPhysics.MeshCollisionAPI(prim).GetApproximationAttr().Get() == "sdf"
-            )
-
-        # Find the SDF mesh within the contact object
-        contact_object_mesh = sim_utils.get_first_matching_child_prim(
-            contact_object_prim.GetPath(), predicate=is_sdf_mesh
-        )
-        if contact_object_mesh is None:
-            raise RuntimeError(
-                f"No SDF mesh found under contact object at path: {contact_object_prim.GetPath().pathString}"
-            )
-
-        def find_parent_rigid_body(prim: Usd.Prim) -> Usd.Prim | None:
-            """Find the first parent prim with RigidBodyAPI."""
-            current_prim = prim
-            while current_prim and current_prim.IsValid():
-                if current_prim.HasAPI(UsdPhysics.RigidBodyAPI):
-                    return current_prim
-                current_prim = current_prim.GetParent()
-                if current_prim.GetPath() == "/":
-                    break
-            return None
-
-        # Find the rigid body parent of the SDF mesh
-        contact_object_rigid_body = find_parent_rigid_body(contact_object_mesh)
-        if contact_object_rigid_body is None:
-            raise RuntimeError(
-                f"No contact object rigid body found for mesh at path: {contact_object_mesh.GetPath().pathString}"
-            )
-
-        return contact_object_mesh, contact_object_rigid_body
 
     def _generate_tactile_points(self, num_divs: list, margin: float, visualize: bool):
         """Generate tactile sensing points from elastomer mesh geometry.
@@ -421,26 +403,9 @@ class VisuoTactileSensor(SensorBase):
 
         """
 
-        # Resolve the elastomer's source-side env prim and use it as the walk root.
-        # The sensor's cfg.prim_path lives under the elastomer; the parent expression is the
-        # elastomer body itself (matching :attr:`SensorBase._parent_prims`).
-        elastomer_expr = "/".join(sim_utils.split_path_expr(self.cfg.prim_path)[:-1])
-        elastomer_prim_path = sim_utils.resolve_matching_prims_from_source(elastomer_expr)[0][0].GetPath().pathString
-
-        def is_visual_mesh(prim) -> bool:
-            """Check if a mesh prim has visual properties (visual mesh, not collision mesh)."""
-            return prim.IsA(UsdGeom.Mesh) and not prim.HasAPI(UsdPhysics.CollisionAPI)
-
-        elastomer_mesh_prim = sim_utils.get_first_matching_child_prim(elastomer_prim_path, predicate=is_visual_mesh)
-        if elastomer_mesh_prim is None:
-            raise RuntimeError(f"No visual mesh found under elastomer at path: {elastomer_prim_path}")
-
-        logger.info(f"Generating tactile points from USD mesh: {elastomer_mesh_prim.GetPath().pathString}")
-
-        # Extract mesh data
-        usd_mesh = UsdGeom.Mesh(elastomer_mesh_prim)
-        points = np.asarray(usd_mesh.GetPointsAttr().Get())
-        face_indices = np.asarray(usd_mesh.GetFaceVertexIndicesAttr().Get())
+        logger.info("Generating tactile points from planned mesh: %s", self._elastomer_mesh_view_path)
+        points = self._elastomer_mesh_points
+        face_indices = self._elastomer_mesh_face_indices
 
         # Simple triangulation
         faces = face_indices.reshape(-1, 3)
@@ -540,7 +505,7 @@ class VisuoTactileSensor(SensorBase):
     def _initialize_visualization(self):
         """Initialize visualization markers for tactile points."""
         if self.cfg.visualizer_cfg:
-            self._visualizer = VisualizationMarkers(self.cfg.visualizer_cfg)
+            self._visualizer = self.cfg.visualizer_cfg.class_type(self.cfg.visualizer_cfg)
 
     def _update_buffers_impl(self, env_mask: wp.array | None = None):
         """Fills the buffers of the sensor data.
@@ -558,7 +523,7 @@ class VisuoTactileSensor(SensorBase):
             internal_env_ids = env_ids
 
         # Update camera-based tactile data
-        if self.cfg.enable_camera_tactile:
+        if self._camera_sensor is not None:
             self._update_camera_tactile(internal_env_ids)
 
         # Update force field tactile data
@@ -579,10 +544,12 @@ class VisuoTactileSensor(SensorBase):
         if self._nominal_tactile is None:
             raise RuntimeError("Nominal tactile is not set. Please call get_initial_render() first.")
         # Update camera sensor
-        self._camera_sensor.update(self._sim_physics_dt)
+        camera_sensor = self._camera_sensor
+        assert camera_sensor is not None
+        camera_sensor.update(self._sim_physics_dt)
 
         # Get camera data
-        camera_data = self._camera_sensor.data
+        camera_data = camera_sensor.data
 
         # Check for either distance_to_image_plane or depth (they are equivalent)
         depth_key = None
@@ -882,7 +849,7 @@ class VisuoTactileSensor(SensorBase):
         if debug_vis:
             # create markers if necessary for the first time
             if self._tactile_visualizer is None:
-                self._tactile_visualizer = VisualizationMarkers(self.cfg.visualizer_cfg)
+                self._tactile_visualizer = self.cfg.visualizer_cfg.class_type(self.cfg.visualizer_cfg)
             # set their visibility to true
             self._tactile_visualizer.set_visibility(True)
         else:

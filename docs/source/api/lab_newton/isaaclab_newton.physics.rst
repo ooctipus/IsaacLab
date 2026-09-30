@@ -8,7 +8,6 @@
   .. autosummary::
 
     NewtonManager
-    NewtonCfg
     NewtonSoftContactCfg
     NewtonCollisionPipelineCfg
     NewtonFeatherstoneManager
@@ -47,11 +46,6 @@ Physics Manager
 
 Physics Configuration
 ---------------------
-
-.. autoclass:: NewtonCfg
-  :members:
-  :show-inheritance:
-  :exclude-members: __init__
 
 .. autoclass:: NewtonSoftContactCfg
   :members:

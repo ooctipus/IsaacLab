@@ -3,6 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
+import hashlib
 import importlib.metadata
 import os
 import subprocess
@@ -194,6 +195,15 @@ class VersionInfoRecorder(MeasurementDataRecorder):
             )
             if result.returncode == 0:
                 self._dev_info["dirty"] = len(result.stdout.strip()) > 0
+
+            result = subprocess.run(
+                ["git", "diff", "--binary", "HEAD"],
+                cwd=script_dir,
+                capture_output=True,
+                timeout=5,
+            )
+            if result.returncode == 0 and result.stdout:
+                self._dev_info["diff_sha256"] = hashlib.sha256(result.stdout).hexdigest()
 
         except Exception:
             pass

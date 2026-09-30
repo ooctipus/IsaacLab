@@ -10,13 +10,13 @@ from isaaclab_physx.physics import PhysxCfg
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.managers import ObservationGroupCfg, ObservationTermCfg, RewardTermCfg, SceneEntityCfg, TerminationTermCfg
 from isaaclab.physics import PhysxAutoCfg
-from isaaclab.sim import SimulationCfg
 from isaaclab.utils.configclass import configclass
 from isaaclab.utils.noise import UniformNoiseCfg as Unoise
 
 import isaaclab_tasks.core.velocity.mdp as mdp
 from isaaclab_tasks.core.velocity.velocity_env_cfg import LocomotionVelocityRoughEnvCfg
 from isaaclab_tasks.utils import PresetCfg
+from isaaclab_tasks.utils.presets import MultiBackendSimulationCfg
 
 from isaaclab_assets.robots.agility import ARM_JOINT_NAMES, DIGIT_V4_CFG, LEG_JOINT_NAMES
 
@@ -229,7 +229,7 @@ class DigitActionsCfg:
 
 @configclass
 class DigitRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
-    sim: SimulationCfg = SimulationCfg(physics=DigitPhysicsCfg())
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(physics=DigitPhysicsCfg())
     rewards: DigitRewards = DigitRewards()
     observations: DigitObservations = DigitObservations()
     terminations: DigitTerminationsCfg = DigitTerminationsCfg()

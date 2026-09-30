@@ -35,7 +35,7 @@ class ShadowHandCameraManagerSceneCfg(ShadowHandManagerSceneCfg):
 
     # does it not need ground? or is ground needed at all in general?
     ground = None
-    tiled_camera: ShadowHandTiledCameraCfg = ShadowHandTiledCameraCfg()
+    camera: ShadowHandTiledCameraCfg = ShadowHandTiledCameraCfg()
     joint_wrench = JointWrenchSensorCfg(prim_path="{ENV_REGEX_NS}/Robot")
 
 
@@ -61,7 +61,7 @@ class ShadowHandCameraObservationsCfg:
             func=mdp.ShadowHandCameraFeatures,
             params={
                 "feature_extractor_cfg": FeatureExtractorCfg(),
-                "sensor_cfg": SceneEntityCfg("tiled_camera"),
+                "sensor_cfg": SceneEntityCfg("camera"),
                 "object_cfg": SceneEntityCfg("object"),
             },
         )
@@ -105,13 +105,4 @@ class ShadowHandCameraManagerEnvCfg(ShadowHandManagerEnvCfg):
 
     def validate_config(self):
         """Check the camera pipeline against the feature extractor it feeds."""
-        validate_shadow_hand_camera_settings(self.scene.tiled_camera, self.feature_extractor)
-
-    def play_mode(self):
-        super().play_mode()
-        # the tiled camera needs more environments than the shared play default
-        self.scene.num_envs = 64
-        # mutate rather than replace: subclasses may have disabled the CNN
-        self.feature_extractor.train = False
-        self.feature_extractor.load_checkpoint = True
-        self.observations.policy.camera_features.params["feature_extractor_cfg"] = self.feature_extractor
+        validate_shadow_hand_camera_settings(self.scene.camera, self.feature_extractor)

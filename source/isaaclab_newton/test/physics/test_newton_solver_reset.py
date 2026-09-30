@@ -16,11 +16,11 @@ import pytest
 import torch
 import warp as wp
 from isaaclab_newton.assets import Articulation
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
-from isaaclab_newton.physics import NewtonManager as SimulationManager
+from isaaclab_newton.physics import MJWarpSolverCfg
 from newton.solvers import SolverMuJoCo
 
 import isaaclab.sim as sim_utils
+from isaaclab import cloner
 from isaaclab.actuators import IdealPDActuatorCfg
 from isaaclab.assets import ArticulationCfg
 from isaaclab.sim import SimulationCfg, build_simulation_context
@@ -29,10 +29,8 @@ from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
 def _generate_single_joint_articulations(num_articulations: int, device: str) -> Articulation:
     """Spawn ``num_articulations`` copies of the simple revolute articulation, one per env prim."""
-    for i in range(num_articulations):
-        sim_utils.create_prim(f"/World/Env_{i}", "Xform", translation=(i * 2.5, 0.0, 0.0))
     articulation_cfg = ArticulationCfg(
-        prim_path="/World/Env_[^/]*/Robot",
+        prim_path="{ENV_REGEX_NS}/Robot",
         spawn=sim_utils.UsdFileCfg(
             usd_path=f"{ISAAC_NUCLEUS_DIR}/Robots/IsaacSim/SimpleArticulation/revolute_articulation.usd",
             joint_drive_props=sim_utils.JointDrivePropertiesCfg(max_force=80.0, max_joint_velocity=5.0),
@@ -47,7 +45,8 @@ def _generate_single_joint_articulations(num_articulations: int, device: str) ->
             ),
         },
     )
-    return Articulation(articulation_cfg)
+    with cloner.ReplicateSession([articulation_cfg], num_clones=num_articulations, env_spacing=2.5):
+        return articulation_cfg.class_type(articulation_cfg)
 
 
 @pytest.mark.parametrize("device", ["cuda:0"])
@@ -61,12 +60,10 @@ def test_env_reset_clears_selected_mjwarp_solver_internals(device):
     """
     sim_cfg = SimulationCfg(
         dt=1 / 120,
-        physics=NewtonCfg(
-            solver_cfg=MJWarpSolverCfg(
-                njmax=20,
-                nconmax=20,
-                integrator="implicitfast",
-            ),
+        physics=MJWarpSolverCfg(
+            njmax=20,
+            nconmax=20,
+            integrator="implicitfast",
             num_substeps=1,
             use_cuda_graph=False,
         ),
@@ -76,7 +73,7 @@ def test_env_reset_clears_selected_mjwarp_solver_internals(device):
         articulation = _generate_single_joint_articulations(num_articulations=2, device=device)
         sim.reset()
 
-        solver = SimulationManager._solver
+        solver = sim._physics_manager._solver
         assert isinstance(solver, SolverMuJoCo)
         warm_start = wp.to_torch(solver.mjw_data.qacc_warmstart)
         assert warm_start.shape[0] == 2
@@ -91,7 +88,7 @@ def test_env_reset_clears_selected_mjwarp_solver_internals(device):
             env_ids=env_ids,
         )
 
-        state = SimulationManager._state_0
+        state = sim._physics_manager._newton._state_0
         joint_q_before = wp.to_torch(state.joint_q).clone()
         joint_qd_before = wp.to_torch(state.joint_qd).clone()
         warm_start[0].fill_(13.0)
@@ -118,8 +115,8 @@ def test_env_reset_clears_selected_mjwarp_solver_internals(device):
         wp.synchronize_device(device)
 
         with (
-            patch.object(SimulationManager, "_simulate_full", classmethod(lambda cls: None)),
-            patch.object(SimulationManager, "_simulate_physics_only", classmethod(lambda cls: None)),
+            patch.object(sim._physics_manager, "_simulate_full", lambda: None),
+            patch.object(sim._physics_manager, "_simulate_physics_only", lambda: None),
         ):
             sim.step(render=False)
         wp.synchronize_device(device)

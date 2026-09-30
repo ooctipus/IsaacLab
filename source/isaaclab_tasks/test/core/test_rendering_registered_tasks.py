@@ -63,7 +63,7 @@ def _collect_camera_outputs(env: object) -> dict[str, dict[str, torch.Tensor]]:
     return outputs
 
 
-# Task IDs that expose camera/tiled_camera image observations; each is validated for non-blank
+# Task IDs that expose camera image observations; each is validated for non-blank
 # rendering. The max different pixels percentage is set based on the screen space taken up by the
 # env. These golden baselines validate Isaac Sim PhysX with Isaac RTX. The ``presets`` column
 # selects one data-type preset or provides a test-local collection of compatible data types;
@@ -104,7 +104,7 @@ def test_rendering_registered_tasks(
         env_cfg.sim.device = "cuda:0"
         env_cfg.scene.num_envs = 4
         if allow_multiple_data_types:
-            env_cfg.tiled_camera.data_types = list(presets)
+            env_cfg.scene.camera.data_types = list(presets)
 
         env = make_cartpole_rendering_test_env(env_cfg) if allow_multiple_data_types else gym.make(task_id, cfg=env_cfg)
         unwrapped: Any = env.unwrapped

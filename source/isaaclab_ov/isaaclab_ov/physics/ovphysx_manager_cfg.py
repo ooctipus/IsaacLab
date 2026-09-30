@@ -13,7 +13,6 @@ import tempfile
 from isaaclab.physics import PhysicsCfg
 from isaaclab.utils.configclass import configclass
 
-# POSIX temp roots are shared between users; Windows already gives each user a private one.
 _CACHE_DIR_NAME = f"ovphysx_derived_data_cache_{os.getuid()}" if hasattr(os, "getuid") else "ovphysx_derived_data_cache"
 
 DEFAULT_COOKED_COLLIDER_CACHE_DIR: str = os.path.join(tempfile.gettempdir(), _CACHE_DIR_NAME)
@@ -31,14 +30,14 @@ class OvPhysxCfg(PhysicsCfg):
 
     class_type = "{DIR}.ovphysx_manager:OvPhysxManager"
 
-    cooked_collider_cache_dir: str | None = DEFAULT_COOKED_COLLIDER_CACHE_DIR
-    """Directory for the OVPhysX cooked-collider cache, defaulting to a per-user directory under the
-    system temporary directory. Set to ``None`` to use the runtime default.
+    backend: str = "ovphysx"
+    """Canonical physics backend identity."""
 
-    The datastore is created once per process, so the first OVPhysX construction fixes the location and a
-    later config does not relocate it. The runtime garbage collects the cache against a disk budget;
-    deleting the directory reclaims the space immediately, and a system temporary directory may also be
-    purged between boots.
+    cooked_collider_cache_dir: str | None = DEFAULT_COOKED_COLLIDER_CACHE_DIR
+    """Directory for the OVPhysX cooked-collider cache.
+
+    The default is a per-user directory under the system temporary directory. Set to ``None`` to
+    use the runtime default.
     """
 
     enable_enhanced_determinism: bool = False

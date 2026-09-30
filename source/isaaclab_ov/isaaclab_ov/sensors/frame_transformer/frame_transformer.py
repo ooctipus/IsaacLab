@@ -14,15 +14,11 @@ from typing import TYPE_CHECKING, Any
 import torch
 import warp as wp
 
-from pxr import UsdPhysics
-
-from isaaclab.markers import VisualizationMarkers
 from isaaclab.sensors.frame_transformer import BaseFrameTransformer
-from isaaclab.sim.utils.queries import path_expr_to_glob, resolve_matching_prims_from_source
+from isaaclab.sim.utils.queries import path_expr_to_glob
 from isaaclab.utils.math import is_identity_pose, normalize, quat_from_angle_axis
 
 import isaaclab_ov.tensor_types as TT
-from isaaclab_ov.physics import OvPhysxManager as SimulationManager
 from isaaclab_ov.sim.views.ovphysx_view import OvPhysxView
 
 from .frame_transformer_data import FrameTransformerData
@@ -169,21 +165,10 @@ class FrameTransformer(BaseFrameTransformer):
         # First element is None because source frame offset is handled separately
         frame_offsets = [None] + [target_frame.offset for target_frame in self.cfg.target_frames]
         frame_types = ["source"] + ["target"] * len(self.cfg.target_frames)
+        layout = self._clone_plan
         for frame, prim_path, offset, frame_type in zip(frames, frame_prim_paths, frame_offsets, frame_types):
-            # Resolve source-side env prims and destination expressions. This keeps discovery plan-aware when
-            # the active clone plan has physics clones without authored USD prims for every environment.
-            def has_rigid_body_api(prim) -> bool:
-                return bool(prim.HasAPI(UsdPhysics.RigidBodyAPI))
-
-            matches = resolve_matching_prims_from_source(
-                prim_path, predicate=has_rigid_body_api, raise_if_no_matches=False
-            )
-            if not matches:
-                raise ValueError(
-                    f"Failed to create frame transformer for frame '{frame}' with path '{prim_path}'."
-                    " No matching rigid-body prims were found."
-                )
-            for prim, matching_prim_path in matches:
+            body_paths = list(dict.fromkeys(body.view_path for body in layout.match_rigid_body_subtrees(prim_path)))
+            for matching_prim_path in body_paths:
                 # Get the name of the body: use relative prim path for unique identification
                 body_name = self._get_relative_body_path(matching_prim_path)
                 # Use leaf name of prim path if frame name isn't specified by user
@@ -230,7 +215,7 @@ class FrameTransformer(BaseFrameTransformer):
         tracked_body_names = [body_name for body_name in body_names_to_frames.keys()]
 
         # --- OVPhysX: create one TT.RIGID_BODY_POSE view per unique tracked body ---
-        physx_instance = SimulationManager.get_physx_instance()
+        physx_instance = self._physics_manager.get_physx_instance()
         if physx_instance is None:
             raise RuntimeError(
                 "OvPhysxManager has not been initialized yet."
@@ -244,7 +229,7 @@ class FrameTransformer(BaseFrameTransformer):
         num_unique_bodies = len(tracked_body_names)
 
         for body_slot, tracked_path in enumerate(tracked_prim_paths):
-            pattern = self._env_wildcardify(tracked_path)
+            pattern = path_expr_to_glob(tracked_path)
             view = OvPhysxView(physx_instance, pattern=pattern, device=self._device)
             try:
                 binding = view.binding_for(TT.RIGID_BODY_POSE)
@@ -255,23 +240,10 @@ class FrameTransformer(BaseFrameTransformer):
                 ) from exc
 
             if binding.count != self._num_envs:
-                # OVPhysX's InteractiveScene defaults to clone_usd=True on develop, so this branch is
-                # unexpected in current flows. Mirror ContactSensor's clone_usd=False fallback so the
-                # sensor stays correct if a future scene runs with clone_usd=False.
-                logger.warning(
-                    "FrameTransformer: binding.count=%d for pattern %r differs from self._num_envs=%d;"
-                    " overriding env count from binding (clone_usd=False scene).",
-                    binding.count,
-                    pattern,
-                    self._num_envs,
+                raise RuntimeError(
+                    f"OVPhysX frame binding {pattern!r} returned {binding.count} environments; "
+                    f"the clone plan declares {self._num_envs}."
                 )
-                self._num_envs = binding.count
-                self._ALL_ENV_MASK = wp.ones((self._num_envs,), dtype=wp.bool, device=self._device)
-                self._reset_mask = wp.zeros((self._num_envs,), dtype=wp.bool, device=self._device)
-                self._reset_mask_torch = wp.to_torch(self._reset_mask)
-                self._is_outdated = wp.ones(self._num_envs, dtype=wp.bool, device=self._device)
-                self._timestamp = wp.zeros(self._num_envs, dtype=wp.float32, device=self._device)
-                self._timestamp_last_update = wp.zeros_like(self._timestamp)
 
             read_buf = wp.zeros(self._num_envs, dtype=wp.transformf, device=self._device)
             dst_torch = torch.tensor(
@@ -290,7 +262,7 @@ class FrameTransformer(BaseFrameTransformer):
         # OVPhysX chooses the flat layout itself; _per_env_indices is the identity permutation.
         self._per_env_indices = list(range(self._num_envs * num_unique_bodies))
 
-        # tracked_prim_paths is already the env-0 representative list in insertion order.
+        # Planned view paths are already in body insertion order.
         sorted_prim_paths = tracked_prim_paths
 
         # -- target frames: use relative prim path for unique identification
@@ -466,7 +438,7 @@ class FrameTransformer(BaseFrameTransformer):
         # note: parent only deals with callbacks. not their visibility
         if debug_vis:
             if not hasattr(self, "frame_visualizer"):
-                self.frame_visualizer = VisualizationMarkers(self.cfg.visualizer_cfg)
+                self.frame_visualizer = self.cfg.visualizer_cfg.class_type(self.cfg.visualizer_cfg)
 
             # set their visibility to true
             self.frame_visualizer.set_visibility(True)
@@ -595,36 +567,6 @@ class FrameTransformer(BaseFrameTransformer):
         orientations = quat_from_angle_axis(angle, rotation_axis)
 
         return positions, orientations, lengths
-
-    @staticmethod
-    def _env_wildcardify(prim_path: str) -> str:
-        """Convert an env-0 prim path into an ovphysx fnmatch glob matching all envs.
-
-        Extends the two-substitution pattern used by
-        :class:`~isaaclab_ov.sensors.ContactSensor` with a third substitution
-        for concrete ``env_<N>`` paths produced by ``sim_utils.find_matching_prims``.
-        The three substitutions, in order:
-
-        1. ``{ENV_REGEX_NS}`` → ``*`` (placeholder form).
-        2. ``.*`` → ``*`` (IsaacLab regex form, e.g. ``env_.*``).
-        3. ``/envs/env_<digits>`` → ``/envs/env_*`` (concrete env-0 path form).
-
-        Args:
-            prim_path: An env-0 prim path (e.g. ``"/World/envs/env_0/Robot/LF_FOOT"``) or an
-                IsaacLab regex form (e.g. ``"{ENV_REGEX_NS}/Robot/LF_FOOT"`` or
-                ``"{ENV_REGEX_NS}/Robot/LF_FOOT"``).
-
-        Returns:
-            The same path with the env namespace replaced by an fnmatch wildcard
-            (``*`` for the ``{ENV_REGEX_NS}`` placeholder, ``env_*`` for concrete or
-            regex env paths). Assumes the standard IsaacLab ``/World/envs/env_<N>/...``
-            layout; non-standard scene structures will only get the first two
-            substitutions.
-        """
-        pattern = re.sub(r"\{ENV_REGEX_NS\}", "*", prim_path)
-        pattern = path_expr_to_glob(pattern)
-        pattern = re.sub(r"/envs/env_\d+(/|$)", r"/envs/env_*\1", pattern)
-        return pattern
 
     @staticmethod
     def _get_relative_body_path(prim_path: str) -> str:

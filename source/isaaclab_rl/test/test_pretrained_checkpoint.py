@@ -8,7 +8,7 @@
 from pathlib import Path
 
 import pytest
-from isaaclab_newton.physics import KaminoPADMMSolverCfg, MJWarpSolverCfg, NewtonCfg
+from isaaclab_newton.physics import KaminoPADMMSolverCfg, MJWarpSolverCfg
 from isaaclab_newton.renderers import NewtonWarpRendererCfg
 from isaaclab_physx.physics import PhysxCfg
 from isaaclab_physx.renderers import IsaacRtxRendererCfg
@@ -81,7 +81,7 @@ def test_get_pretrained_checkpoint_backend_names_identifies_physx_without_render
 def test_get_pretrained_checkpoint_backend_names_identifies_newton_renderer():
     """Test backend discovery for a Newton task using the Newton renderer."""
     env_cfg = _EnvCfg(
-        sim=SimulationCfg(physics=NewtonCfg(solver_cfg=MJWarpSolverCfg())),
+        sim=SimulationCfg(physics=MJWarpSolverCfg()),
         camera=_CameraCfg(renderer_cfg=NewtonWarpRendererCfg()),
     )
 
@@ -90,7 +90,7 @@ def test_get_pretrained_checkpoint_backend_names_identifies_newton_renderer():
 
 def test_get_pretrained_checkpoint_backend_names_rejects_other_newton_solvers():
     """Test that a non-MJWarp Newton solver is not mislabeled as MJWarp."""
-    env_cfg = _EnvCfg(sim=SimulationCfg(physics=NewtonCfg(solver_cfg=KaminoPADMMSolverCfg())))
+    env_cfg = _EnvCfg(sim=SimulationCfg(physics=KaminoPADMMSolverCfg()))
 
     with pytest.raises(ValueError, match="Unsupported Newton solver"):
         pretrained_checkpoint.get_pretrained_checkpoint_backend_names(env_cfg)

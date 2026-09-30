@@ -5,32 +5,20 @@
 
 import argparse
 
-from isaaclab.app import AppLauncher
+from isaaclab.app import add_launcher_args, launch_simulation
+
+from isaaclab_tasks.utils import preset, resolve_config, setup_preset_cli
+from isaaclab_tasks.utils.presets import MultiBackendSimulationCfg
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Example on using the raycaster sensor.")
 parser.add_argument("--num_envs", type=int, default=1, help="Number of environments to spawn.")
-parser.add_argument(
-    "--physics",
-    default="isaacsim_physx",
-    choices=["isaacsim_physx"],
-    help="Physics backend.",
-)
-# append AppLauncher cli args
-AppLauncher.add_app_launcher_args(parser)
-# demos should open Kit visualizer by default
-parser.set_defaults(visualizer=["kit"])
-# parse the arguments
-args_cli = parser.parse_args()
-
-# launch omniverse app
-app_launcher = AppLauncher(args_cli)
-simulation_app = app_launcher.app
-
-"""Rest everything follows."""
+add_launcher_args(parser)
+args_cli, config_overrides = setup_preset_cli(parser)
 
 import numpy as np
 import torch
+from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import AssetBaseCfg
@@ -75,8 +63,20 @@ class RaycasterSensorSceneCfg(InteractiveSceneCfg):
         pattern_cfg=patterns.LidarPatternCfg(
             channels=100, vertical_fov_range=[-90, 90], horizontal_fov_range=[-90, 90], horizontal_res=1.0
         ),
-        debug_vis=not args_cli.headless,
+        debug_vis=True,
     )
+
+
+@configclass
+class DemoCfg:
+    """Ray-caster demo configuration."""
+
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(
+        dt=0.005,
+        device=args_cli.device,
+        physics=preset(default=PhysxCfg(), isaacsim_physx=PhysxCfg()),
+    )
+    scene: RaycasterSensorSceneCfg = RaycasterSensorSceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0)
 
 
 def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
@@ -90,7 +90,7 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
     countdown = 42
 
     # Simulate physics
-    while simulation_app.is_running():
+    while sim.is_headless_or_exist_active_visualizer():
         if count % 500 == 0:
             # reset counter
             count = 0
@@ -147,25 +147,15 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
 
 def main():
     """Main function."""
-
-    # Initialize the simulation context
-    sim_cfg = sim_utils.SimulationCfg(dt=0.005, device=args_cli.device)
-    sim = sim_utils.SimulationContext(sim_cfg)
-    # Set main camera
-    sim.set_camera_view(eye=[3.5, 3.5, 3.5], target=[0.0, 0.0, 0.0])
-    # design scene
-    scene_cfg = RaycasterSensorSceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0)
-    scene = InteractiveScene(scene_cfg)
-    # Play the simulator
-    sim.reset()
-    # Now we are ready!
-    print("[INFO]: Setup complete...")
-    # Run the simulator
-    run_simulator(sim, scene)
+    cfg = resolve_config(DemoCfg(), config_overrides)
+    with launch_simulation(cfg.sim, args_cli):
+        sim = sim_utils.SimulationContext(cfg.sim)
+        sim.set_camera_view(eye=[3.5, 3.5, 3.5], target=[0.0, 0.0, 0.0])
+        scene = cfg.scene.class_type(cfg.scene)
+        sim.reset()
+        print("[INFO]: Setup complete...")
+        run_simulator(sim, scene)
 
 
 if __name__ == "__main__":
-    # run the main function
     main()
-    # close sim app
-    simulation_app.close()

@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import contextlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 import torch
@@ -15,7 +15,17 @@ import isaaclab.sim as sim_utils
 import isaaclab.utils.math as PoseUtils
 from isaaclab.devices.device_base import DeviceBase
 from isaaclab.devices.retargeter_base import RetargeterBase, RetargeterCfg
-from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
+from isaaclab.markers import VisualizationMarkersCfg
+
+_MARKER_CFG = VisualizationMarkersCfg(
+    prim_path="/Visuals/markers",
+    markers={
+        "joint": sim_utils.SphereCfg(
+            radius=0.005,
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
+        )
+    },
+)
 
 # This import exception is suppressed because g1_dex_retargeting_utils
 # depends on pinocchio which is not available on Windows.
@@ -53,16 +63,7 @@ class UnitreeG1Retargeter(RetargeterBase):
         self._num_open_xr_hand_joints = cfg.num_open_xr_hand_joints
         self._sim_device = cfg.sim_device
         if self._enable_visualization:
-            marker_cfg = VisualizationMarkersCfg(
-                prim_path="/Visuals/markers",
-                markers={
-                    "joint": sim_utils.SphereCfg(
-                        radius=0.005,
-                        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
-                    ),
-                },
-            )
-            self._markers = VisualizationMarkers(marker_cfg)
+            self._markers = cfg.visualizer_cfg.class_type(cfg.visualizer_cfg)
 
     def retarget(self, data: dict) -> torch.Tensor:
         """Convert hand joint poses to robot end-effector commands.
@@ -159,6 +160,7 @@ class UnitreeG1RetargeterCfg(RetargeterCfg):
     """Configuration for the UnitreeG1 retargeter."""
 
     enable_visualization: bool = False
+    visualizer_cfg: VisualizationMarkersCfg = field(default_factory=lambda: _MARKER_CFG.copy())
     num_open_xr_hand_joints: int = 100
     hand_joint_names: list[str] | None = None  # List of robot hand joint names
     retargeter_type: type[RetargeterBase] = UnitreeG1Retargeter

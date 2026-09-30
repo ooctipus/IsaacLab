@@ -19,11 +19,12 @@ from isaaclab.utils.warp import ProxyArray
 from isaaclab.utils.warp.utils import capture_unsafe
 
 from isaaclab_newton.assets import kernels as shared_kernels
-from isaaclab_newton.physics import NewtonManager as SimulationManager
 
 if TYPE_CHECKING:
     import torch
     from newton.selection import ArticulationView
+
+    from isaaclab_newton.physics import NewtonManager
 
 
 # import logger
@@ -61,7 +62,7 @@ class RigidObjectData(BaseRigidObjectData):
     __backend_name__: str = "newton"
     """The name of the backend for the rigid object data."""
 
-    def __init__(self, root_view: ArticulationView, device: str):
+    def __init__(self, root_view: ArticulationView, device: str, physics_manager: NewtonManager):
         """Initializes the rigid object data.
 
         Args:
@@ -69,6 +70,7 @@ class RigidObjectData(BaseRigidObjectData):
             device: The device used for processing.
         """
         super().__init__(root_view, device)
+        self._physics_manager = physics_manager
         # Set the root rigid body view
         # note: this is stored as a weak reference to avoid circular references between the asset class
         #  and the data container. This is important to avoid memory leaks.
@@ -77,13 +79,12 @@ class RigidObjectData(BaseRigidObjectData):
         # Set initial time stamp
         self._sim_timestamp = 0.0
         self._is_primed = False
-        self._fk_timestamp = 0.0
 
         # Bind ``GRAVITY_VEC_W`` to Newton's per-env ``model.gravity`` (m/s^2) so
         # per-env gravity randomization stays live; consumers normalize on read.
         # The final entry is reserved for Newton's global world and is not an
         # Isaac Lab environment.
-        model = SimulationManager.get_model()
+        model = self._physics_manager.get_model()
         self.GRAVITY_VEC_W = ProxyArray(model.gravity[: model.world_count])
         forward_vec = np.full((self._root_view.count, 3), (1.0, 0.0, 0.0), dtype=np.float32)
         self.FORWARD_VEC_B = ProxyArray(wp.array(forward_vec, dtype=wp.vec3f, device=self.device))
@@ -121,26 +122,9 @@ class RigidObjectData(BaseRigidObjectData):
         """
         # update the simulation timestamp
         self._sim_timestamp += dt
-        # FK is current after a sim step — keep fk_timestamp in sync unless it was explicitly invalidated
-        if self._fk_timestamp >= 0.0:
-            self._fk_timestamp = self._sim_timestamp
         # Trigger an update of the body com acceleration buffer at a higher frequency
         # since we do finite differencing.
         self.body_com_acc_w
-
-    def _ensure_fk_fresh(self) -> None:
-        """Run forward kinematics if the root state has changed since the last FK update.
-
-        Newton's ``state.body_q`` (per-body world transforms) is updated by ``eval_fk``,
-        invoked here through ``SimulationManager.forward()``. After a manual root write
-        that bypassed the sim step (``write_*_to_sim_*``), ``_fk_timestamp`` is set to
-        ``-1.0`` to force a refresh on the next read of any property that depends on
-        body poses (``body_link_pose_w``, ``body_com_pose_w`` and the composite body
-        state buffers).
-        """
-        if self._fk_timestamp < self._sim_timestamp:
-            SimulationManager.forward()
-            self._fk_timestamp = self._sim_timestamp
 
     def _reset_pose(
         self,
@@ -175,8 +159,7 @@ class RigidObjectData(BaseRigidObjectData):
                 self._root_com_state_w,
             ]
         )
-        self._fk_timestamp = -1.0
-        SimulationManager.invalidate_fk(
+        self._physics_manager.invalidate_fk(
             env_mask=env_mask, env_ids=env_ids, articulation_ids=self._root_view.articulation_ids
         )
 
@@ -207,8 +190,7 @@ class RigidObjectData(BaseRigidObjectData):
                 self._root_com_state_w,
             ]
         )
-        self._fk_timestamp = -1.0
-        SimulationManager.invalidate_fk(
+        self._physics_manager.invalidate_fk(
             env_mask=env_mask, env_ids=env_ids, articulation_ids=self._root_view.articulation_ids
         )
 
@@ -395,7 +377,6 @@ class RigidObjectData(BaseRigidObjectData):
         This quantity is the pose of the actor frame of the rigid body relative to the world.
         The orientation is provided in (x, y, z, w) format.
         """
-        self._ensure_fk_fresh()
         return self._body_link_pose_w_ta
 
     @property
@@ -420,10 +401,6 @@ class RigidObjectData(BaseRigidObjectData):
         This quantity is the pose of the center of mass frame of the rigid body relative to the world.
         The orientation is provided in (x, y, z, w) format.
         """
-        # Refresh FK and re-derive the root com pose so a stale cache is recomputed after a write.
-        # The reshape cached below is a view of ``root_com_pose_w``'s buffer, so once that buffer is
-        # refreshed in place the cached view reflects the fresh data without reallocation.
-        self._ensure_fk_fresh()
         root_com_pose_w = self.root_com_pose_w
         if self._body_com_pose_w_ta is None:
             self._body_com_pose_w_ta = ProxyArray(root_com_pose_w.warp.reshape((self._num_instances, 1)))
@@ -437,7 +414,6 @@ class RigidObjectData(BaseRigidObjectData):
         This quantity contains the linear and angular velocities of the root rigid body's center of mass frame
         relative to the world.
         """
-        self._ensure_fk_fresh()
         return self._body_com_vel_w_ta
 
     @property
@@ -454,7 +430,7 @@ class RigidObjectData(BaseRigidObjectData):
                 device=self.device,
                 inputs=[
                     self._sim_bind_body_com_vel_w,
-                    SimulationManager.get_dt(),
+                    self._physics_manager.get_physics_dt(),
                     self._previous_body_com_vel,
                 ],
                 outputs=[
@@ -912,33 +888,37 @@ class RigidObjectData(BaseRigidObjectData):
 
         # -- root properties
         if self._root_view.is_fixed_base:
-            self._sim_bind_root_link_pose_w = self._root_view.get_root_transforms(SimulationManager.get_state_0())[
+            self._sim_bind_root_link_pose_w = self._root_view.get_root_transforms(self._physics_manager.get_state_0())[
                 :, 0, 0
             ]
         else:
-            self._sim_bind_root_link_pose_w = self._root_view.get_root_transforms(SimulationManager.get_state_0())[:, 0]
-        self._sim_bind_root_com_vel_w = self._root_view.get_root_velocities(SimulationManager.get_state_0())
+            self._sim_bind_root_link_pose_w = self._root_view.get_root_transforms(self._physics_manager.get_state_0())[
+                :, 0
+            ]
+        self._sim_bind_root_com_vel_w = self._root_view.get_root_velocities(self._physics_manager.get_state_0())
         if self._sim_bind_root_com_vel_w is not None:
             if self._root_view.is_fixed_base:
                 self._sim_bind_root_com_vel_w = self._sim_bind_root_com_vel_w[:, 0, 0]
             else:
                 self._sim_bind_root_com_vel_w = self._sim_bind_root_com_vel_w[:, 0]
         # -- body properties
-        self._sim_bind_body_com_pos_b = self._root_view.get_attribute("body_com", SimulationManager.get_model())[:, 0]
-        self._sim_bind_body_link_pose_w = self._root_view.get_link_transforms(SimulationManager.get_state_0())[:, 0]
-        self._sim_bind_body_com_vel_w = self._root_view.get_link_velocities(SimulationManager.get_state_0())[:, 0]
-        self._sim_bind_body_mass = self._root_view.get_attribute("body_mass", SimulationManager.get_model())[:, 0]
-        self._sim_bind_body_inv_mass = self._root_view.get_attribute("body_inv_mass", SimulationManager.get_model())[
+        self._sim_bind_body_com_pos_b = self._root_view.get_attribute("body_com", self._physics_manager.get_model())[
             :, 0
         ]
+        self._sim_bind_body_link_pose_w = self._root_view.get_link_transforms(self._physics_manager.get_state_0())[:, 0]
+        self._sim_bind_body_com_vel_w = self._root_view.get_link_velocities(self._physics_manager.get_state_0())[:, 0]
+        self._sim_bind_body_mass = self._root_view.get_attribute("body_mass", self._physics_manager.get_model())[:, 0]
+        self._sim_bind_body_inv_mass = self._root_view.get_attribute(
+            "body_inv_mass", self._physics_manager.get_model()
+        )[:, 0]
         self._sim_bind_body_inv_inertia = self._root_view.get_attribute(
-            "body_inv_inertia", SimulationManager.get_model()
+            "body_inv_inertia", self._physics_manager.get_model()
         )[:, 0]
         # Newton stores body_inertia as (N, 1, 1) mat33f — the [:, 0] removes the padding dim
         # giving (N, 1) mat33f. Reinterpret as (N, 1, 9) float32 via pointer aliasing.
         # Each mat33f element is 9 contiguous float32 values (36 bytes), so the inner stride is 4.
         # The slice may be non-contiguous in the outer dims, so we preserve those strides.
-        _body_inertia_raw = self._root_view.get_attribute("body_inertia", SimulationManager.get_model())[:, 0]
+        _body_inertia_raw = self._root_view.get_attribute("body_inertia", self._physics_manager.get_model())[:, 0]
         self._sim_bind_body_inertia = wp.array(
             ptr=_body_inertia_raw.ptr,
             dtype=wp.float32,
@@ -947,9 +927,9 @@ class RigidObjectData(BaseRigidObjectData):
             device=_body_inertia_raw.device,
             copy=False,
         )
-        self._sim_bind_body_external_wrench = self._root_view.get_attribute("body_f", SimulationManager.get_state_0())[
-            :, 0
-        ]
+        self._sim_bind_body_external_wrench = self._root_view.get_attribute(
+            "body_f", self._physics_manager.get_state_0()
+        )[:, 0]
 
         # Re-pin ProxyArray wrappers to the newly created sim bindings.
         # On first init, _create_buffers() handles this after all buffers exist.
@@ -962,7 +942,7 @@ class RigidObjectData(BaseRigidObjectData):
         self._num_instances = self._root_view.count
         # Initialize history for finite differencing. If the rigid object is fixed, the root com velocity is not
         # available, so we use zeros.
-        if self._root_view.get_root_velocities(SimulationManager.get_state_0()) is None:
+        if self._root_view.get_root_velocities(self._physics_manager.get_state_0()) is None:
             logger.warning(
                 "Failed to get root com velocity. If the rigid object is fixed, this is expected. "
                 "Setting root com velocity to zeros."
@@ -979,9 +959,9 @@ class RigidObjectData(BaseRigidObjectData):
         self._default_root_state = None  # lazily allocated by deprecated default_root_state property
 
         # Initialize history for finite differencing
-        self._previous_body_com_vel = wp.clone(self._root_view.get_link_velocities(SimulationManager.get_state_0()))[
-            :, 0
-        ]
+        self._previous_body_com_vel = wp.clone(
+            self._root_view.get_link_velocities(self._physics_manager.get_state_0())
+        )[:, 0]
 
         # Initialize the lazy buffers.
         # -- link frame w.r.t. world frame

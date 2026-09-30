@@ -67,7 +67,6 @@ if not _MISSING_MODULES:
         render_synthetic_gaussian_scene_with_static_ppisp_attrs,
     )
     from isaaclab_newton.physics.mjwarp_manager_cfg import MJWarpSolverCfg  # noqa: E402
-    from isaaclab_newton.physics.newton_manager_cfg import NewtonCfg  # noqa: E402
     from isaaclab_newton.renderers import NewtonWarpRendererCfg  # noqa: E402
 
     from isaaclab.sim import SimulationCfg  # noqa: E402
@@ -87,7 +86,7 @@ else:
     render_synthetic_gaussian_scene_with_static_ppisp_attrs = None
     SimulationCfg = None
     MJWarpSolverCfg = None
-    NewtonCfg = None
+    NewtonSolverCfg = None
     NewtonWarpRendererCfg = None
 
 SIM_DT = 1.0 / 60.0
@@ -115,7 +114,7 @@ def _center_probed_scene() -> SyntheticGaussianScene:
 def _newton_sim_cfg(device: str) -> SimulationCfg:
     return SimulationCfg(
         dt=SIM_DT,
-        physics=NewtonCfg(solver_cfg=MJWarpSolverCfg(), num_substeps=1),
+        physics=MJWarpSolverCfg(num_substeps=1),
         device=device,
     )
 

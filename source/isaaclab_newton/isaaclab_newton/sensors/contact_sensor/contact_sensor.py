@@ -21,8 +21,6 @@ from isaaclab.sensors.contact_sensor.base_contact_sensor import BaseContactSenso
 from isaaclab.sensors.contact_sensor.contact_force_marker import ContactForceVisualizer
 from isaaclab.utils.warp import ProxyArray
 
-from isaaclab_newton.physics import NewtonManager
-
 from .contact_sensor_data import ContactSensorData
 from .contact_sensor_kernels import (
     compute_first_transition_kernel,
@@ -33,8 +31,6 @@ from .contact_sensor_kernels import (
 
 if TYPE_CHECKING:
     from isaaclab.sensors.contact_sensor.contact_sensor_cfg import ContactSensorCfg as BaseContactSensorCfg
-
-    from .contact_sensor_cfg import ContactSensorCfg
 
 logger = logging.getLogger(__name__)
 
@@ -56,25 +52,19 @@ class ContactSensor(BaseContactSensor):
     .. _Newton SensorContact: https://newton-physics.github.io/newton/api/_generated/newton.sensors.SensorContact.html
     """
 
-    cfg: ContactSensorCfg
+    cfg: BaseContactSensorCfg
     """The configuration parameters."""
 
-    def __init__(self, cfg: BaseContactSensorCfg | ContactSensorCfg):
+    def __init__(self, cfg: BaseContactSensorCfg):
         """Initializes the contact sensor object.
 
         Args:
             cfg: The configuration parameters.
         """
-        from isaaclab.sensors.contact_sensor.contact_sensor_cfg import ContactSensorCfg as BaseContactSensorCfg
-
-        from .contact_sensor_cfg import ContactSensorCfg
-
-        if isinstance(cfg, ContactSensorCfg):
-            pass
-        elif isinstance(cfg, BaseContactSensorCfg):
-            cfg = ContactSensorCfg.from_base_cfg(cfg)
-        else:
-            raise TypeError(f"Invalid config: {cfg}")
+        if cfg.max_contact_data_count_per_prim is not None or cfg.track_friction_forces:
+            raise ValueError(
+                "Newton contact sensors do not support max_contact_data_count_per_prim or track_friction_forces."
+            )
 
         super().__init__(cfg)
 
@@ -134,7 +124,7 @@ class ContactSensor(BaseContactSensor):
     @property
     def contact_view(self) -> NewtonContactSensor:
         """View for the contact forces captured (Newton)."""
-        return NewtonManager._newton_contact_sensors[self._sensor_key]
+        return self._physics_manager._newton_contact_sensors[self._sensor_key]
 
     """
     Operations
@@ -297,7 +287,7 @@ class ContactSensor(BaseContactSensor):
         self._generate_force_matrix = bool(self.cfg.filter_prim_paths_expr or self.cfg.filter_shape_prim_expr)
 
         try:
-            self._sensor_key = NewtonManager.add_contact_sensor(
+            self._sensor_key = self._physics_manager.add_contact_sensor(
                 body_names_expr=self.cfg.prim_path if not self.cfg.sensor_shape_prim_expr else None,
                 shape_names_expr=self.cfg.sensor_shape_prim_expr or None,
                 contact_partners_body_expr=self.cfg.filter_prim_paths_expr or None,
@@ -448,7 +438,7 @@ class ContactSensor(BaseContactSensor):
 
     def _get_model_labels(self, kind: str) -> list[str]:
         """Return Newton model labels in a version-compatible way."""
-        model = NewtonManager._model
+        model = self._physics_manager._newton._model
         primary = f"{kind}_label"
         fallback = f"{kind}_key"
         labels = getattr(model, primary, None)

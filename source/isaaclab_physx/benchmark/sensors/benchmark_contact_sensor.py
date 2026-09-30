@@ -56,21 +56,23 @@ simulation_app = app_launcher.app
 """Rest everything follows."""
 
 import warp as wp
+from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
-from isaaclab.scene import InteractiveScene
 
 
 def main():
     sim_dt = 1.0 / 120.0
-    sim_cfg = sim_utils.SimulationCfg(dt=sim_dt, device=args_cli.device)
+    sim_cfg = sim_utils.SimulationCfg(physics=PhysxCfg(), dt=sim_dt, device=args_cli.device)
     sim = sim_utils.SimulationContext(sim_cfg)
 
     scene_cfg = create_contact_sensor_scene_cfg(
         history_length=args_cli.history_length,
         num_envs=args_cli.num_envs,
     )
-    scene = InteractiveScene(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
+    if scene_cfg.filter_collisions:
+        scene.filter_collisions()
     sim.reset()
     scene.reset()
 

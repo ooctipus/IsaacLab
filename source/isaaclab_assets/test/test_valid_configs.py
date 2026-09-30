@@ -19,9 +19,10 @@ simulation_app = app_launcher.app
 
 # Define a fixture to replace setUpClass
 import pytest
+from isaaclab_physx.physics import PhysxCfg
 
 from isaaclab.assets import AssetBase, AssetBaseCfg
-from isaaclab.sim import build_simulation_context
+from isaaclab.sim import SimulationCfg, build_simulation_context
 
 import isaaclab_assets as lab_assets  # noqa: F401
 
@@ -48,7 +49,7 @@ def test_asset_configs(registered_entities, device):
     # iterate over all registered assets
     for asset_name, entity_cfg in registered_entities.items():
         # Use pytest's subtests
-        with build_simulation_context(device=device, auto_add_lighting=True) as sim:
+        with build_simulation_context(sim_cfg=SimulationCfg(physics=PhysxCfg()), device=device) as sim:
             sim._app_control_on_stop_handle = None
             # print the asset name
             print(f">>> Testing entity {asset_name} on device {device}")

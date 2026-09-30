@@ -17,6 +17,7 @@ from isaaclab.utils.configclass import configclass
 
 import isaaclab_tasks.contrib.navigation.mdp as mdp
 from isaaclab_tasks.contrib.velocity.config.anymal_c.flat_env_cfg import AnymalCFlatEnvCfg
+from isaaclab_tasks.utils.presets import MultiBackendSimulationCfg
 
 LOW_LEVEL_ENV_CFG = AnymalCFlatEnvCfg()
 
@@ -123,6 +124,7 @@ class TerminationsCfg:
 class NavigationEnvCfg(ManagerBasedRLEnvCfg):
     """Configuration for the navigation environment."""
 
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg()
     # environment settings
     scene: SceneEntityCfg = LOW_LEVEL_ENV_CFG.scene
     actions: ActionsCfg = ActionsCfg()

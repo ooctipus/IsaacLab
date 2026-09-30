@@ -21,7 +21,10 @@
 
 import argparse
 
-from isaaclab.app import AppLauncher
+from isaaclab.app import add_launcher_args, launch_simulation
+
+from isaaclab_tasks.utils import preset, resolve_config, setup_preset_cli
+from isaaclab_tasks.utils.presets import MultiBackendSimulationCfg
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Example on using the multi-mesh raycaster sensor.")
@@ -33,30 +36,11 @@ parser.add_argument(
     help="Asset type to use.",
     choices=["allegro_hand", "anymal_d", "objects"],
 )
-parser.add_argument(
-    "--physics",
-    default="isaacsim_physx",
-    choices=["isaacsim_physx"],
-    help="Physics backend.",
-)
-# append AppLauncher cli args
-AppLauncher.add_app_launcher_args(parser)
-# demos should open Kit visualizer by default
-parser.set_defaults(visualizer=["kit"])
-# parse the arguments
-args_cli = parser.parse_args()
-
-# launch omniverse app
-app_launcher = AppLauncher(args_cli)
-simulation_app = app_launcher.app
-
-"""Rest everything follows."""
-
-import random
+add_launcher_args(parser)
+args_cli, config_overrides = setup_preset_cli(parser)
 
 import torch
-
-from pxr import Gf, Sdf
+from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import Articulation, AssetBaseCfg, RigidObjectCfg
@@ -104,7 +88,7 @@ if args_cli.asset_type == "allegro_hand":
             height=120,
             width=240,
         ),
-        debug_vis=not args_cli.headless,
+        debug_vis=True,
         visualizer_cfg=RAY_CASTER_MARKER_CFG.replace(prim_path="/Visuals/RayCaster"),
     )
 
@@ -128,7 +112,7 @@ elif args_cli.asset_type == "anymal_d":
             height=120,
             width=240,
         ),
-        debug_vis=not args_cli.headless,
+        debug_vis=True,
         visualizer_cfg=RAY_CASTER_MARKER_CFG.replace(prim_path="/Visuals/RayCaster"),
     )
 
@@ -164,7 +148,6 @@ elif args_cli.asset_type == "objects":
                     visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 1.0), metallic=0.2),
                 ),
             ],
-            random_choice=True,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 solver_position_iteration_count=4, solver_velocity_iteration_count=0
             ),
@@ -187,7 +170,7 @@ elif args_cli.asset_type == "objects":
             height=120,
             width=240,
         ),
-        debug_vis=not args_cli.headless,
+        debug_vis=True,
         visualizer_cfg=RAY_CASTER_MARKER_CFG.replace(prim_path="/Visuals/RayCaster"),
     )
 else:
@@ -218,29 +201,18 @@ class RaycasterSensorSceneCfg(InteractiveSceneCfg):
     ray_caster = ray_caster_cfg
 
 
-def randomize_shape_color(prim_path_expr: str):
-    """Randomize the color of the geometry."""
+@configclass
+class DemoCfg:
+    """Multi-mesh ray-caster camera demo configuration."""
 
-    stage = sim_utils.get_current_stage()
-    # resolve prim paths for spawning and cloning
-    prim_paths = sim_utils.find_matching_prim_paths(prim_path_expr)
-    # manually clone prims if the source prim path is a regex expression
-
-    with Sdf.ChangeBlock():
-        for prim_path in prim_paths:
-            print("Applying prim scale to:", prim_path)
-            # spawn single instance
-            prim_spec = Sdf.CreatePrimInLayer(stage.GetRootLayer(), prim_path)
-
-            # DO YOUR OWN OTHER KIND OF RANDOMIZATION HERE!
-            # Note: Just need to acquire the right attribute about the property you want to set
-            # Here is an example on setting color randomly
-            color_spec = prim_spec.GetAttributeAtPath(prim_path + "/geometry/material/Shader.inputs:diffuseColor")
-            color_spec.default = Gf.Vec3f(random.random(), random.random(), random.random())
-
-            # randomize scale
-            scale_spec = prim_spec.GetAttributeAtPath(prim_path + ".xformOp:scale")
-            scale_spec.default = Gf.Vec3f(random.uniform(0.5, 1.5), random.uniform(0.5, 1.5), random.uniform(0.5, 1.5))
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(
+        dt=0.005,
+        device=args_cli.device,
+        physics=preset(default=PhysxCfg(), isaacsim_physx=PhysxCfg()),
+    )
+    scene: RaycasterSensorSceneCfg = RaycasterSensorSceneCfg(
+        num_envs=args_cli.num_envs, env_spacing=2.0, replicate_physics=True
+    )
 
 
 def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
@@ -254,7 +226,7 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
     countdown = 42
 
     # Simulate physics
-    while simulation_app.is_running():
+    while sim.is_headless_or_exist_active_visualizer():
         if count % 500 == 0:
             # reset counter
             count = 0
@@ -308,29 +280,15 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
 
 def main():
     """Main function."""
-
-    # Initialize the simulation context
-    sim_cfg = sim_utils.SimulationCfg(dt=0.005, device=args_cli.device)
-    sim = sim_utils.SimulationContext(sim_cfg)
-    # Set main camera
-    sim.set_camera_view(eye=[3.5, 3.5, 3.5], target=[0.0, 0.0, 0.0])
-    # design scene
-    scene_cfg = RaycasterSensorSceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0, replicate_physics=True)
-    scene = InteractiveScene(scene_cfg)
-
-    if args_cli.asset_type == "objects":
-        randomize_shape_color(scene_cfg.asset.prim_path.format(ENV_REGEX_NS="/World/envs/env_.*"))
-
-    # Play the simulator
-    sim.reset()
-    # Now we are ready!
-    print("[INFO]: Setup complete...")
-    # Run the simulator
-    run_simulator(sim, scene)
+    cfg = resolve_config(DemoCfg(), config_overrides)
+    with launch_simulation(cfg.sim, args_cli):
+        sim = sim_utils.SimulationContext(cfg.sim)
+        sim.set_camera_view(eye=[3.5, 3.5, 3.5], target=[0.0, 0.0, 0.0])
+        scene = cfg.scene.class_type(cfg.scene)
+        sim.reset()
+        print("[INFO]: Setup complete...")
+        run_simulator(sim, scene)
 
 
 if __name__ == "__main__":
-    # run the main function
     main()
-    # close sim app
-    simulation_app.close()

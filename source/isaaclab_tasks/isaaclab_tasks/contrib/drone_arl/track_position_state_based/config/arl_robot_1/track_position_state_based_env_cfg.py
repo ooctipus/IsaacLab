@@ -17,7 +17,6 @@ from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
-from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.configclass import configclass
 from isaaclab.utils.noise import UniformNoiseCfg as Unoise
@@ -32,13 +31,14 @@ from isaaclab_tasks.contrib.drone_arl.mdp.rewards import (
     lin_vel_xyz_exp,
     yaw_aligned,
 )
+from isaaclab_tasks.utils.presets import MultiBackendSceneCfg, MultiBackendSimulationCfg
 
 
 ##
 # Scene definition
 ##
 @configclass
-class ArlTrackPositionStateBasedSceneCfg(InteractiveSceneCfg):
+class ArlTrackPositionStateBasedSceneCfg(MultiBackendSceneCfg):
     """Configuration for the terrain scene with a flying robot."""
 
     # robots
@@ -210,6 +210,7 @@ class TerminationsCfg:
 class TrackPositionNoObstaclesEnvCfg(ManagerBasedRLEnvCfg):
     """Configuration for the state-based drone pose-control environment."""
 
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg()
     # Scene settings
     scene: ArlTrackPositionStateBasedSceneCfg = ArlTrackPositionStateBasedSceneCfg(num_envs=4096, env_spacing=2.5)
     # Basic settings

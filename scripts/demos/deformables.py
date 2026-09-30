@@ -7,233 +7,167 @@
 
 .. code-block:: bash
 
-    # Usage with default PhysX physics and default kit visualizer.
+    # Usage with default PhysX physics and no visualizer.
     uv run --extra isaacsim --extra tetrahedralization python scripts/demos/deformables.py
 
-    # Usage with Newton VBD backend and default kit visualizer.
-    uv run --extra isaacsim --extra tetrahedralization python scripts/demos/deformables.py --physics newton_vbd
+    # Usage with Newton VBD backend and no visualizer.
+    uv run --extra isaacsim --extra tetrahedralization python scripts/demos/deformables.py physics=newton_vbd
 
-    # Install the optional dependencies for the legacy launcher.
+    # Install the optional dependencies for the repository launcher.
     ./isaaclab.sh -i tetrahedralization
 
     # Usage with OvPhysX backend without a visualizer.
-    ./isaaclab.sh -p scripts/demos/deformables.py --physics ovphysx
+    ./isaaclab.sh -p scripts/demos/deformables.py physics=ovphysx sim.visualizer_cfgs=[]
 
 """
-
-"""Parse CLI first so we can decide whether to launch Isaac Sim Kit."""
-
 
 import argparse
 from typing import TYPE_CHECKING
 
 from isaaclab.app import add_launcher_args, launch_simulation
 
+from isaaclab_tasks.utils import preset, resolve_config, setup_preset_cli
+from isaaclab_tasks.utils.presets import MultiBackendCameraCfg, MultiBackendSimulationCfg
+
 # create argparser
 parser = argparse.ArgumentParser(
     description="This script demonstrates how to spawn deformable prims into the scene.",
     conflict_handler="resolve",
 )
-parser.add_argument(
-    "--physics",
-    default="isaacsim_physx",
-    choices=["isaacsim_physx", "newton_vbd", "ovphysx"],
-    help="Physics backend.",
-)
 add_launcher_args(parser)
-backend_args, _ = parser.parse_known_args()
-parser.set_defaults(visualizer=None if backend_args.physics == "ovphysx" else ["kit"])
-args_cli = parser.parse_args()
+args_cli, config_overrides = setup_preset_cli(parser)
 
-if args_cli.visualizer and "newton" in args_cli.visualizer and args_cli.physics != "newton_vbd":
-    raise ValueError(
-        "Newton visualizer is only compatible with newton physics backend for deformables. "
-        "Please use --physics newton_vbd."
-    )
-
-import random
-
-import numpy as np
-import torch
-import tqdm
 
 import isaaclab.sim as sim_utils
+from isaaclab.assets import AssetBaseCfg
+from isaaclab.cloner import (
+    CloneCfg,
+    InclusionSet,
+    ReplicateSession,
+    make_valid_clone_combinations,
+    num_spawn_variants,
+)
 
 ##
 # Pre-defined configs
 ##
 from isaaclab.assets import DeformableObjectCfg  # isort:skip
-from isaaclab.physics import PhysicsCfg  # isort:skip
-from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR  # isort:skip
+from isaaclab.utils.configclass import configclass  # isort:skip
+
+from isaaclab_newton.physics import NewtonSoftContactCfg, VBDSolverCfg  # isort:skip
+from isaaclab_newton.sim.schemas import NewtonDeformableBodyPropertiesCfg  # isort:skip
+from isaaclab_newton.sim.spawners.materials import (  # isort:skip
+    NewtonDeformableBodyMaterialCfg,
+    NewtonSurfaceDeformableBodyMaterialCfg,
+)
+from isaaclab_ov.physics import OvPhysxCfg  # isort:skip
+from isaaclab_physx.physics import PhysxCfg  # isort:skip
+from isaaclab_physx.sim.schemas import PhysxDeformableBodyPropertiesCfg  # isort:skip
+from isaaclab_physx.sim.spawners.materials import (  # isort:skip
+    PhysxDeformableBodyMaterialCfg,
+    PhysxSurfaceDeformableBodyMaterialCfg,
+)
 
 if TYPE_CHECKING:
     from isaaclab.assets import DeformableObject
 
-if args_cli.physics == "newton_vbd":
-    from isaaclab_newton.physics import NewtonSoftContactCfg  # isort:skip
-    from isaaclab_newton.sim.schemas import NewtonDeformableBodyPropertiesCfg as DeformableBodyPropertiesCfg
-    from isaaclab_newton.sim.spawners.materials import (
-        NewtonDeformableBodyMaterialCfg as VolumeDeformableMaterialCfg,
-    )
-    from isaaclab_newton.sim.spawners.materials import (
-        NewtonSurfaceDeformableBodyMaterialCfg as SurfaceDeformableMaterialCfg,
-    )
-else:
-    from isaaclab_physx.sim.schemas import PhysxDeformableBodyPropertiesCfg as DeformableBodyPropertiesCfg
-    from isaaclab_physx.sim.spawners.materials import (
-        PhysxDeformableBodyMaterialCfg as VolumeDeformableMaterialCfg,
-    )
-    from isaaclab_physx.sim.spawners.materials import (
-        PhysxSurfaceDeformableBodyMaterialCfg as SurfaceDeformableMaterialCfg,
-    )
+_PHYSX_ASSET_CFGS = (
+    PhysxDeformableBodyPropertiesCfg(),
+    PhysxDeformableBodyMaterialCfg(),
+    PhysxSurfaceDeformableBodyMaterialCfg(),
+)
 
 
-def define_origins(num_origins: int, radius: float = 2.0, center_height: float = 3.0) -> list[list[float]]:
-    """Defines origins distributed on the surface of a sphere, sampled according to a Fibonacci lattice.
+@configclass
+class DemoCfg:
+    """Deformable demo configuration."""
 
-    Args:
-        num_origins: Number of points to place.
-        radius: Radius of the sphere [m].
-        center_height: Height of the sphere center above ground [m].
-    """
-    golden_ratio = (1 + np.sqrt(5)) / 2
-    env_origins = torch.zeros(num_origins, 3)
-    for i in range(num_origins):
-        theta = 2 * np.pi * i / golden_ratio
-        phi = np.arccos(1 - 2 * (i + 0.5) / num_origins)
-        env_origins[i, 0] = radius * np.cos(theta) * np.sin(phi)
-        env_origins[i, 1] = radius * np.sin(theta) * np.sin(phi)
-        env_origins[i, 2] = radius * np.cos(phi) + center_height
-    return env_origins.tolist()
-
-
-def design_scene() -> tuple[dict, list[list[float]]]:
-    """Designs the scene."""
-    # Ground-plane
-    cfg_ground = sim_utils.GroundPlaneCfg()
-    cfg_ground.func("/World/defaultGroundPlane", cfg_ground)
-
-    # spawn distant light
-    cfg_light = sim_utils.DomeLightCfg(
-        intensity=3000.0,
-        color=(0.75, 0.75, 0.75),
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(
+        dt=0.01,
+        device=args_cli.device,
+        physics=preset(
+            default=PhysxCfg(),
+            isaacsim_physx=PhysxCfg(),
+            newton_vbd=VBDSolverCfg(
+                iterations=5,
+                particle_enable_self_contact=True,
+                particle_self_contact_radius=0.0001,
+                particle_self_contact_margin=0.1,
+                num_substeps=4,
+                soft_contact_cfg=NewtonSoftContactCfg(
+                    soft_contact_ke=1.0e5,
+                    soft_contact_kd=1.0e0,
+                    soft_contact_mu=0.01,
+                ),
+            ),
+            ovphysx=OvPhysxCfg(),
+        ),
     )
-    cfg_light.func("/World/light", cfg_light)
-
-    # spawn a red cone
-    cfg_sphere = sim_utils.MeshSphereCfg(
-        radius=0.4,
-        deformable_props=DeformableBodyPropertiesCfg(),
-        visual_material=sim_utils.PreviewSurfaceCfg(),
-        physics_material=VolumeDeformableMaterialCfg(),
+    camera: MultiBackendCameraCfg = MultiBackendCameraCfg()
+    asset_backend: tuple[object, object, object] = preset(
+        default=_PHYSX_ASSET_CFGS,
+        isaacsim_physx=_PHYSX_ASSET_CFGS,
+        newton_vbd=(
+            NewtonDeformableBodyPropertiesCfg(),
+            NewtonDeformableBodyMaterialCfg(),
+            NewtonSurfaceDeformableBodyMaterialCfg(),
+        ),
+        ovphysx=_PHYSX_ASSET_CFGS,
     )
-    cfg_cuboid = sim_utils.MeshCuboidCfg(
-        size=(0.6, 0.6, 0.6),
-        deformable_props=DeformableBodyPropertiesCfg(),
-        visual_material=sim_utils.PreviewSurfaceCfg(),
-        physics_material=VolumeDeformableMaterialCfg(),
+    num_envs: int = 12
+    env_spacing: float = 1.0
+    clone_cfg: CloneCfg = CloneCfg(
+        clone_combinations=[
+            InclusionSet(assets=[name]) for name in ("sphere", "cuboid", "cylinder", "capsule", "cone", "surface")
+        ],
     )
-    cfg_cylinder = sim_utils.MeshCylinderCfg(
-        radius=0.25,
-        height=0.5,
-        deformable_props=DeformableBodyPropertiesCfg(),
-        visual_material=sim_utils.PreviewSurfaceCfg(),
-        physics_material=VolumeDeformableMaterialCfg(),
+    ground: AssetBaseCfg = AssetBaseCfg(prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg())
+    light: AssetBaseCfg = AssetBaseCfg(
+        prim_path="/World/light",
+        spawn=sim_utils.DomeLightCfg(intensity=3000.0, color=(0.75, 0.75, 0.75)),
     )
-    cfg_capsule = sim_utils.MeshCapsuleCfg(
-        radius=0.35,
-        height=0.5,
-        deformable_props=DeformableBodyPropertiesCfg(),
-        visual_material=sim_utils.PreviewSurfaceCfg(),
-        physics_material=VolumeDeformableMaterialCfg(),
+    sphere: DeformableObjectCfg = DeformableObjectCfg(
+        prim_path="{ENV_REGEX_NS}/Sphere",
+        spawn=sim_utils.MeshSphereCfg(radius=0.4),
+        init_state=DeformableObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 2.0)),
     )
-    cfg_cone = sim_utils.MeshConeCfg(
-        radius=0.35,
-        height=0.75,
-        deformable_props=DeformableBodyPropertiesCfg(),
-        visual_material=sim_utils.PreviewSurfaceCfg(),
-        physics_material=VolumeDeformableMaterialCfg(),
+    sphere.visualizer_cfg.prim_path = "/Visuals/SphereDeformableTarget"
+    cuboid: DeformableObjectCfg = DeformableObjectCfg(
+        prim_path="{ENV_REGEX_NS}/Cuboid",
+        spawn=sim_utils.MeshCuboidCfg(size=(0.6, 0.6, 0.6)),
+        init_state=DeformableObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 2.0)),
     )
-    cfg_cloth = sim_utils.MeshRectangleCfg(
-        size=(1.5, 1.0),
-        edge_refinement=21,
-        deformable_props=DeformableBodyPropertiesCfg(),
-        visual_material=sim_utils.PreviewSurfaceCfg(),
-        physics_material=SurfaceDeformableMaterialCfg(),
+    cuboid.visualizer_cfg.prim_path = "/Visuals/CuboidDeformableTarget"
+    cylinder: DeformableObjectCfg = DeformableObjectCfg(
+        prim_path="{ENV_REGEX_NS}/Cylinder",
+        spawn=sim_utils.MeshCylinderCfg(radius=0.25, height=0.5),
+        init_state=DeformableObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 2.0)),
     )
-    cfg_usd = sim_utils.UsdFileCfg(
-        usd_path=f"{ISAACLAB_NUCLEUS_DIR}/Objects/Teddy_Bear/teddy_bear.usd",
-        deformable_props=DeformableBodyPropertiesCfg(),
-        visual_material=sim_utils.PreviewSurfaceCfg(),
-        physics_material=VolumeDeformableMaterialCfg(),
-        scale=[0.05, 0.05, 0.05],
+    cylinder.visualizer_cfg.prim_path = "/Visuals/CylinderDeformableTarget"
+    capsule: DeformableObjectCfg = DeformableObjectCfg(
+        prim_path="{ENV_REGEX_NS}/Capsule",
+        spawn=sim_utils.MeshCapsuleCfg(radius=0.35, height=0.5),
+        init_state=DeformableObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 2.0)),
     )
-    # create a dictionary of all the objects to be spawned
-    objects_cfg = {
-        "sphere": cfg_sphere,
-        "cuboid": cfg_cuboid,
-        "cylinder": cfg_cylinder,
-        "capsule": cfg_capsule,
-        "cone": cfg_cone,
-        "cloth": cfg_cloth,
-        "usd": cfg_usd,
-    }
-
-    # Create separate groups of deformable objects
-    origins = define_origins(num_origins=12, radius=1.5, center_height=2.0)
-    print("[INFO]: Spawning objects...")
-    # Iterate over all the origins, spawn objects, and create a view for all the deformables
-    # note: since we manually spawned random deformable meshes above, we don't need to
-    #   specify the spawn configuration for the deformable object
-    scene_entities = {}
-    for idx, origin in tqdm.tqdm(enumerate(origins), total=len(origins)):
-        # randomly select an object to spawn
-        obj_name = random.choice(list(objects_cfg.keys()))
-        obj_cfg = objects_cfg[obj_name]
-        # randomize the deformable material stiffness
-        if args_cli.physics == "newton_vbd" and obj_name == "cloth":
-            obj_cfg.physics_material.tri_ke = random.uniform(5e3, 5e4)
-            obj_cfg.physics_material.tri_ka = random.uniform(5e3, 5e4)
-        else:
-            youngs_modulus = random.uniform(5e5, 1e8)
-            poissons_ratio = random.uniform(0.25, 0.45)
-            if args_cli.physics == "newton_vbd":
-                obj_cfg.physics_material.k_mu = youngs_modulus / (2.0 * (1.0 + poissons_ratio))
-                obj_cfg.physics_material.k_lambda = (
-                    youngs_modulus * poissons_ratio / ((1.0 + poissons_ratio) * (1.0 - 2.0 * poissons_ratio))
-                )
-            else:
-                obj_cfg.physics_material.youngs_modulus = youngs_modulus
-                obj_cfg.physics_material.poissons_ratio = poissons_ratio
-        # randomize the color
-        obj_cfg.visual_material.diffuse_color = (random.random(), random.random(), random.random())
-        # spawn the object, separate groups for surface and volume deformables
-        if obj_name in ["cloth"]:
-            prim_path = f"/World/Origin/Surface{idx:02d}"
-            cfg = DeformableObjectCfg(
-                prim_path=prim_path,
-                spawn=obj_cfg,
-                init_state=DeformableObjectCfg.InitialStateCfg(pos=origin),
-            )
-            scene_entities[f"Surface{idx:02d}"] = cfg.class_type(cfg)
-        else:
-            prim_path = f"/World/Origin/Volume{idx:02d}"
-            cfg = DeformableObjectCfg(
-                prim_path=prim_path,
-                spawn=obj_cfg,
-                init_state=DeformableObjectCfg.InitialStateCfg(pos=origin),
-            )
-            scene_entities[f"Volume{idx:02d}"] = cfg.class_type(cfg)
-
-    # return the scene information
-    return scene_entities, origins
+    capsule.visualizer_cfg.prim_path = "/Visuals/CapsuleDeformableTarget"
+    cone: DeformableObjectCfg = DeformableObjectCfg(
+        prim_path="{ENV_REGEX_NS}/Cone",
+        spawn=sim_utils.MeshConeCfg(radius=0.35, height=0.75),
+        init_state=DeformableObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 2.0)),
+    )
+    cone.visualizer_cfg.prim_path = "/Visuals/ConeDeformableTarget"
+    surface: DeformableObjectCfg = DeformableObjectCfg(
+        prim_path="{ENV_REGEX_NS}/Surface",
+        spawn=sim_utils.MeshRectangleCfg(size=(1.5, 1.0), resolution=(21, 21)),
+        init_state=DeformableObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 2.0)),
+    )
+    surface.visualizer_cfg.prim_path = "/Visuals/SurfaceDeformableTarget"
 
 
-def run_simulator(sim: "sim_utils.SimulationContext", entities: dict[str, "DeformableObject"]):
+def run_simulator(sim: "sim_utils.SimulationContext", objects: tuple["DeformableObject", ...]):
     """Runs the simulation loop."""
     # Define simulation stepping
     sim_dt = sim.get_physics_dt()
-    sim_time = 0.0
     count = 0
 
     # Step while a visualizer window is still open (or none exist, e.g. headless); works for kit and newton.
@@ -243,51 +177,69 @@ def run_simulator(sim: "sim_utils.SimulationContext", entities: dict[str, "Defor
             # reset counters
             count = 0
             # reset deformable object state
-            for _, deform_body in enumerate(entities.values()):
-                # root state
-                nodal_state = deform_body.data.default_nodal_state_w.torch.clone()
-                deform_body.write_nodal_state_to_sim_index(nodal_state)
-                # reset the internal state
-                deform_body.reset()
+            for deformable in objects:
+                nodal_state = deformable.data.default_nodal_state_w.torch.clone()
+                deformable.write_nodal_state_to_sim_index(nodal_state)
+                deformable.reset()
             print("[INFO]: Resetting deformable object state...")
         # perform step
         sim.step()
-        # update sim-time
-        sim_time += sim_dt
         count += 1
         # update buffers
-        for deform_body in entities.values():
-            deform_body.update(sim_dt)
+        for deformable in objects:
+            deformable.update(sim_dt)
 
 
 def main():
     """Main function."""
-    with launch_simulation(cfg=PhysicsCfg(), launcher_args=args_cli) as physics_cfg:
-        # tune the CLI-selected backend for this demo
-        if args_cli.physics == "newton_vbd":
-            physics_cfg.solver_cfg.iterations = 5
-            physics_cfg.solver_cfg.particle_enable_self_contact = True
-            physics_cfg.solver_cfg.particle_self_contact_radius = 0.0001
-            physics_cfg.solver_cfg.particle_self_contact_margin = 0.1
-            physics_cfg.num_substeps = 4
-            physics_cfg.soft_contact_cfg = NewtonSoftContactCfg(
-                soft_contact_ke=1.0e5,
-                soft_contact_kd=1.0e0,
-                soft_contact_mu=0.01,
-            )
+    cfg = resolve_config(DemoCfg(), config_overrides)
+    deformable_props, volume_material, surface_material = cfg.asset_backend
+    volume_cfgs = (cfg.sphere, cfg.cuboid, cfg.cylinder, cfg.capsule, cfg.cone)
+    deformable_cfgs = (*volume_cfgs, cfg.surface)
+    for object_cfg in volume_cfgs:
+        object_cfg.spawn.deformable_props = deformable_props.copy()
+        object_cfg.spawn.visual_material = sim_utils.PreviewSurfaceCfg()
+        object_cfg.spawn.physics_material = volume_material.copy()
+    cfg.surface.spawn.deformable_props = deformable_props.copy()
+    cfg.surface.spawn.visual_material = sim_utils.PreviewSurfaceCfg()
+    cfg.surface.spawn.physics_material = surface_material.copy()
+    with launch_simulation(cfg, args_cli):
         # Initialize the simulation context
-        sim_cfg = sim_utils.SimulationCfg(dt=0.01, device=args_cli.device, physics=physics_cfg)
-        sim = sim_utils.SimulationContext(sim_cfg)
+        sim = sim_utils.SimulationContext(cfg.sim)
         # Set main camera
         sim.set_camera_view([4.0, 4.0, 3.0], [0.5, 0.5, 0.0])
 
-        # Design scene by adding assets to it
-        scene_entities, _ = design_scene()
+        asset_names = ("sphere", "cuboid", "cylinder", "capsule", "cone", "surface")
+        valid_set = make_valid_clone_combinations(
+            asset_names,
+            tuple(num_spawn_variants(object_cfg.spawn) for object_cfg in deformable_cfgs),
+            cfg.clone_cfg.clone_combinations,
+        )
+        asset_cfgs = (
+            cfg.ground,
+            cfg.light,
+            *deformable_cfgs,
+            *(object_cfg.visualizer_cfg for object_cfg in deformable_cfgs),
+            *((cfg.camera,) if cfg.camera is not None else ()),
+        )
+        with ReplicateSession(
+            asset_cfgs,
+            cfg.num_envs,
+            cfg.env_spacing,
+            clone_strategy=cfg.clone_cfg.clone_strategy,
+            valid_set=valid_set,
+            env_template=cfg.clone_cfg.clone_template,
+            replicate_physics=cfg.clone_cfg.replicate_physics,
+        ):
+            _camera = cfg.camera.class_type(cfg.camera) if cfg.camera is not None else None
+            cfg.ground.class_type(cfg.ground)
+            cfg.light.class_type(cfg.light)
+            objects = tuple(object_cfg.class_type(object_cfg) for object_cfg in deformable_cfgs)
         # Play the simulator
         sim.reset()
         # Now we are ready!
         print("[INFO]: Setup complete...")
-        run_simulator(sim, scene_entities)
+        run_simulator(sim, objects)
         print("[INFO]: Simulation complete...")
 
 

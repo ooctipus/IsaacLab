@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg, NewtonCollisionPipelineCfg, NewtonShapeCfg
+from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCollisionPipelineCfg, NewtonShapeCfg
 from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
@@ -17,15 +17,14 @@ from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.physics import PhysxAutoCfg
-from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import ContactSensorCfg
-from isaaclab.sim import MultiAssetSpawnerCfg, SimulationCfg
+from isaaclab.sim import MultiAssetSpawnerCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.configclass import configclass
 from isaaclab.utils.noise import UniformNoiseCfg as Unoise
-from isaaclab.visualizers import VisualizerCfg
 
 from isaaclab_tasks.utils import PresetCfg, preset
+from isaaclab_tasks.utils.presets import MultiBackendSceneCfg, MultiBackendSimulationCfg
 
 from . import mdp
 from .keyboards import TYPING_KEYBOARD_POOL
@@ -50,7 +49,7 @@ class KeyboardAssetCfg(PresetCfg):
     default = ArticulationCfg(
         prim_path="{ENV_REGEX_NS}/Keyboard",
         articulation_root_prim_path="/parts/part_.*",
-        spawn=MultiAssetSpawnerCfg(assets_cfg=list(TYPING_KEYBOARD_POOL.spawners_partitioned), random_choice=False),
+        spawn=MultiAssetSpawnerCfg(assets_cfg=list(TYPING_KEYBOARD_POOL.spawners_partitioned)),
         init_state=ArticulationCfg.InitialStateCfg(
             # Pose used by the training checkpoint: centered in the SO-101 workspace and rotated -90 degrees.
             pos=(0.285, 0.0, 0.01),
@@ -64,7 +63,7 @@ class KeyboardAssetCfg(PresetCfg):
     # ArticulationData reads only the first articulation per env, so separate parts would be invisible).
     newton_mjwarp = default.replace(
         articulation_root_prim_path=None,
-        spawn=MultiAssetSpawnerCfg(assets_cfg=list(TYPING_KEYBOARD_POOL.spawners_single), random_choice=False),
+        spawn=MultiAssetSpawnerCfg(assets_cfg=list(TYPING_KEYBOARD_POOL.spawners_single)),
     )
     isaacsim_physx = default
     physx = default
@@ -72,7 +71,7 @@ class KeyboardAssetCfg(PresetCfg):
 
 
 @configclass
-class SO101SceneCfg(InteractiveSceneCfg):
+class SO101SceneCfg(MultiBackendSceneCfg):
     """SO-101 keyboard-typing scene."""
 
     robot: ArticulationCfg = SO101_CFG.replace(
@@ -280,19 +279,17 @@ class PhysicsCfg(PresetCfg):
         gpu_found_lost_pairs_capacity=2**27,
         gpu_total_aggregate_pairs_capacity=2**27,
     )
-    newton_mjwarp = NewtonCfg(
-        solver_cfg=MJWarpSolverCfg(
-            solver="newton",
-            integrator="implicitfast",
-            njmax=600,
-            nconmax=600,
-            impratio=1.0,
-            cone="pyramidal",
-            update_data_interval=2,
-            iterations=100,
-            ls_iterations=15,
-            use_mujoco_contacts=False,
-        ),
+    newton_mjwarp = MJWarpSolverCfg(
+        solver="newton",
+        integrator="implicitfast",
+        njmax=600,
+        nconmax=600,
+        impratio=1.0,
+        cone="pyramidal",
+        update_data_interval=2,
+        iterations=100,
+        ls_iterations=15,
+        use_mujoco_contacts=False,
         collision_cfg=NewtonCollisionPipelineCfg(),
         default_shape_cfg=NewtonShapeCfg(),
         num_substeps=2,
@@ -311,18 +308,9 @@ class SO101KeyboardEnvCfg(ManagerBasedRLEnvCfg):
     rewards: SO101ReorientRewardCfg = SO101ReorientRewardCfg()
     terminations: TerminationsCfg = TerminationsCfg()
     events: EventCfg = EventCfg()
-    sim: SimulationCfg = SimulationCfg(physics=PhysicsCfg(), dt=0.01)
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(physics=PhysicsCfg(), dt=0.01)
 
     def __post_init__(self):
         self.decimation = 4  # 100 Hz sim -> 25 Hz control
         self.episode_length_s = 6.0
         self.sim.render_interval = self.decimation
-        self.sim.default_visualizer_cfg = VisualizerCfg(
-            eye=(0.85, -0.75, 1.0), lookat=(0.25, 0.0, 0.1), focal_length=28.0
-        )
-
-    def play_mode(self):
-        """Enable typing markers for every playback environment."""
-        super().play_mode()
-        self.num_envs = 36
-        self.commands.typing.debug_vis = True

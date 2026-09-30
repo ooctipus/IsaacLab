@@ -22,7 +22,6 @@ if TYPE_CHECKING:
     from isaacteleop.cloudxr import CloudXRLauncher
     from isaacteleop.oxr import OpenXRSessionHandles
     from isaacteleop.retargeting_engine.interface.execution_events import ExecutionEvents
-    from isaacteleop.retargeting_engine_ui import MultiRetargeterTuningUIImGui
     from isaacteleop.teleop_session_manager import TeleopSession
 
 from .control_events import _NO_OP_EVENTS, ControlEvents
@@ -162,7 +161,6 @@ class TeleopSessionLifecycle:
     5. Creating, entering, and exiting the ``TeleopSession``
     6. Building external inputs for pipeline leaf nodes (e.g. world-to-anchor transform)
     7. Stepping the session and extracting the flattened action tensor
-    8. Managing the optional retargeting tuning UI
     """
 
     WORLD_T_ANCHOR_INPUT_NAME = "world_T_anchor"
@@ -273,7 +271,7 @@ class TeleopSessionLifecycle:
         # Haptic feedback (optional): when configured, start() builds a
         # HapticSink subgraph and step() feeds the latest per-hand output
         # vector into it via the external-input mechanism.
-        self._haptic_cfg = haptic_cfg
+        self._haptic = haptic_cfg.class_type(haptic_cfg) if haptic_cfg is not None else None
         self._haptic_sink = None
         self._haptic_tracker = None
         self._haptic_num_taxels = haptic_cfg.num_taxels if haptic_cfg is not None else 0
@@ -304,10 +302,6 @@ class TeleopSessionLifecycle:
 
         # CloudXR runtime launcher (created in start if configured, stopped in stop)
         self._cloudxr_launcher: CloudXRLauncher | None = None
-
-        # Retargeting tuning UI (created in start, closed in stop)
-        self._retargeting_ui_ctx: MultiRetargeterTuningUIImGui | None = None
-        self._retargeting_ui = None
 
         # Replay sessions never talk to Kit's XR system, and standalone sessions
         # (``use_kit_xr_bridge=False``) deliberately bypass it, so skip all XR
@@ -493,8 +487,7 @@ class TeleopSessionLifecycle:
         Builds the retargeting pipeline, wraps it with a parallel
         ``ControllersSource`` for button-state access, builds the optional
         ``teleop_control_pipeline`` for message-channel control, attempts
-        to acquire OpenXR handles, and opens the retargeting tuning UI if
-        retargeters are configured.
+        to acquire OpenXR handles.
 
         If the OpenXR handles are not yet available (e.g. user hasn't clicked
         "Start AR"), session creation is deferred and will be retried on each
@@ -520,7 +513,8 @@ class TeleopSessionLifecycle:
         if self._cloudxr_env_file is not None:
             self._ensure_cloudxr_runtime()
 
-        user_pipeline = self._cfg.pipeline_builder()
+        pipeline_cfg = self._cfg.pipeline_cfg
+        user_pipeline = pipeline_cfg.class_type(pipeline_cfg)
         self._session_start_deferred_logged = False
         self._last_right_controller = None
         self._last_left_controller = None
@@ -534,7 +528,7 @@ class TeleopSessionLifecycle:
         # there is no live controller to vibrate during scripted MCAP playback.
         self._haptic_sink = (
             self._build_haptic_sink(self._button_controllers)
-            if self._haptic_cfg is not None and not self._is_replay
+            if self._haptic is not None and not self._is_replay
             else None
         )
 
@@ -554,20 +548,10 @@ class TeleopSessionLifecycle:
         # Try to start the session now; it may be deferred
         self._try_start_session()
 
-        # Open the retargeting tuning UI and keep it alive until stop()
-        retargeters = self._cfg.retargeters_to_tune() if self._cfg.retargeters_to_tune else []
-        if retargeters:
-            from isaacteleop.retargeting_engine_ui import MultiRetargeterTuningUIImGui
-
-            print("Opening Retargeting UI...")
-            self._retargeting_ui_ctx = MultiRetargeterTuningUIImGui(retargeters, title="Hand Retargeting Tuning")
-            self._retargeting_ui = self._retargeting_ui_ctx.__enter__()
-
     def stop(self, exc_type=None, exc_val=None, exc_tb=None) -> None:
         """Shut down the session and clean up resources.
 
-        Closes the retargeting tuning UI and exits the ``TeleopSession``
-        context manager.  If the underlying OpenXR session was already torn
+        Exits the ``TeleopSession`` context manager. If the underlying OpenXR session was already torn
         down externally (e.g. "Stop AR"), cleanup errors are suppressed.
 
         Args:
@@ -575,12 +559,6 @@ class TeleopSessionLifecycle:
             exc_val: Exception value.
             exc_tb: Exception traceback.
         """
-        # Close the retargeting tuning UI first
-        if self._retargeting_ui_ctx is not None:
-            self._retargeting_ui_ctx.__exit__(exc_type, exc_val, exc_tb)
-            self._retargeting_ui_ctx = None
-            self._retargeting_ui = None
-
         if self._session is not None:
             try:
                 self._session.__exit__(exc_type, exc_val, exc_tb)
@@ -631,7 +609,7 @@ class TeleopSessionLifecycle:
 
         Args:
             user_pipeline: The pipeline returned by the configured
-                ``pipeline_builder()``.
+                configured pipeline implementation.
 
         Returns:
             An ``OutputCombiner`` ready for ``TeleopSessionConfig``.
@@ -663,7 +641,7 @@ class TeleopSessionLifecycle:
         when a ``target_T_world`` rebase is active in the pipeline.
 
         Args:
-            user_pipeline: The pipeline returned by ``pipeline_builder()``.
+            user_pipeline: The configured retargeting pipeline.
             pipeline_outputs: Mutable mapping of output name to
                 ``OutputSelector`` being assembled for the ``OutputCombiner``.
         """
@@ -741,10 +719,8 @@ class TeleopSessionLifecycle:
 
         The lifecycle owns the generic part: per hand, a ``ValueInput`` carrying a
         ``TactileVector(num_taxels)`` fed each step from :attr:`_haptic_forces`.
-        The device-specific part -- the retargeter (signal -> device format) and
-        the ``IHapticDevice`` behind the ``HapticSink`` -- is delegated to the
-        concrete :meth:`~isaaclab_teleop.HapticFeedbackCfg.build_sink`, so the
-        lifecycle stays backend-agnostic (controller, glove, ...).
+        The config-selected runtime owns the retargeter and ``IHapticDevice``
+        behind the ``HapticSink``.
 
         The *controllers_source* tracker is offered to backends that need one
         (e.g. a controller reuses it, avoiding a second OpenXR action set);
@@ -773,7 +749,7 @@ class TeleopSessionLifecycle:
         # so _on_request_required_extensions can request the device's OpenXR
         # extensions (e.g. a glove's push-tensor extensions); the connected sink
         # (a subgraph) does not expose the device.
-        sink, self._haptic_tracker = self._haptic_cfg.build_sink(force_inputs, controllers_source.get_tracker)
+        sink, self._haptic_tracker = self._haptic.build_sink(force_inputs, controllers_source.get_tracker)
         return sink
 
     def push_haptic(self, endpoint: str, values) -> None:

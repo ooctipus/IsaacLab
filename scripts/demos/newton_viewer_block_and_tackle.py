@@ -15,16 +15,19 @@ import math
 
 from isaaclab.app import add_launcher_args, launch_simulation
 
+from isaaclab_tasks.utils import preset, resolve_config, setup_preset_cli
+from isaaclab_tasks.utils.presets import MultiBackendSimulationCfg
+
 parser = argparse.ArgumentParser(description="Newton block-and-tackle viewer dragging demo.")
 parser.add_argument("--max_steps", type=int, default=-1, help="Stop after this many steps; negative runs forever.")
 add_launcher_args(parser)
-parser.set_defaults(visualizer=["newton_gl"])
-args_cli = parser.parse_args()
+args_cli, config_overrides = setup_preset_cli(parser)
 
 import newton
 import newton.utils
 import warp as wp
-from isaaclab_newton.physics import NewtonCfg, NewtonManager, NewtonShapeCfg, VBDSolverCfg
+from isaaclab_newton.cloner import NewtonReplicateContext
+from isaaclab_newton.physics import NewtonShapeCfg, VBDSolverCfg
 
 import isaaclab.sim as sim_utils
 from isaaclab.utils.configclass import configclass
@@ -55,6 +58,24 @@ class _BlockAndTackleVBDSolverCfg(VBDSolverCfg):
 
     rigid_contact_hard: bool = False
     rigid_body_contact_buffer_size: int = 512
+
+
+_PHYSICS_CFG = _BlockAndTackleVBDSolverCfg(
+    num_substeps=16,
+    collision_decimation=1,
+    default_shape_cfg=NewtonShapeCfg(gap=CABLE_GAP, ke=1.0e5, kd=20.0, mu=0.5),
+)
+
+
+@configclass
+class DemoCfg:
+    """Block-and-tackle demo configuration."""
+
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(
+        dt=1.0 / 60.0,
+        device=args_cli.device,
+        physics=preset(default=_PHYSICS_CFG, newton_vbd=_PHYSICS_CFG),
+    )
 
 
 def _append_arc(points: list[wp.vec3], center: wp.vec3, start: float, end: float) -> None:
@@ -283,16 +304,16 @@ def _build_system(builder: newton.ModelBuilder) -> tuple[int, list[wp.transform]
     return cable_bodies[0], wrapped_xforms
 
 
-def _initialize_wrapped_cable(cable_body_start: int, wrapped_xforms: list[wp.transform]) -> None:
+def _initialize_wrapped_cable(resource, solver, cable_body_start: int, wrapped_xforms: list[wp.transform]) -> None:
     """Restore model defaults and wrap the structurally straight cable."""
-    model = NewtonManager.get_model()
+    model = resource.get_model()
     wrapped = wp.array(wrapped_xforms, dtype=wp.transform, device=model.device)
-    for state in (NewtonManager.get_state_0(), NewtonManager.get_state_1()):
+    for state in (resource.get_state_0(), resource.get_state_1()):
         wp.copy(state.body_q, model.body_q)
         wp.copy(state.body_qd, model.body_qd)
         wp.copy(state.body_q, wrapped, dest_offset=cable_body_start, count=len(wrapped_xforms))
         state.body_f.zero_()
-    NewtonManager._solver.reset(NewtonManager.get_state_0(), flags=0)
+    solver.reset(resource.get_state_0(), flags=0)
 
 
 def run_simulator(sim: sim_utils.SimulationContext) -> None:
@@ -305,23 +326,18 @@ def run_simulator(sim: sim_utils.SimulationContext) -> None:
 
 def main() -> None:
     """Launch the block-and-tackle dragging demo."""
-    physics_cfg = NewtonCfg(
-        num_substeps=16,
-        collision_decimation=1,
-        default_shape_cfg=NewtonShapeCfg(gap=CABLE_GAP, ke=1.0e5, kd=20.0, mu=0.5),
-        solver_cfg=_BlockAndTackleVBDSolverCfg(),
-    )
-    with launch_simulation(cfg=physics_cfg, launcher_args=args_cli) as resolved_physics_cfg:
-        sim_cfg = sim_utils.SimulationCfg(dt=1.0 / 60.0, device=args_cli.device, physics=resolved_physics_cfg)
-        sim = sim_utils.SimulationContext(sim_cfg)
+    cfg = resolve_config(DemoCfg(), config_overrides)
+    with launch_simulation(cfg, args_cli):
+        sim = sim_utils.SimulationContext(cfg.sim)
+        resource = sim.get_or_create_backend(NewtonReplicateContext, sim)
         sim.set_camera_view(eye=(1.35, -2.1, 1.25), target=(0.50, 0.0, 0.72))
-        builder = NewtonManager.create_builder()
+        builder = resource.create_builder()
         builder.rigid_gap = CABLE_GAP
         cable_body_start, wrapped_xforms = _build_system(builder)
         builder.color(balance_colors=False)
-        NewtonManager.set_builder(builder)
+        resource.set_builder(builder)
         sim.reset()
-        _initialize_wrapped_cable(cable_body_start, wrapped_xforms)
+        _initialize_wrapped_cable(resource, sim._physics_manager._solver, cable_body_start, wrapped_xforms)
         print("[INFO]: Setup complete. Right-drag the yellow cable handle downward to lift the red load.", flush=True)
         run_simulator(sim)
 

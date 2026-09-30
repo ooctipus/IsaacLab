@@ -109,6 +109,8 @@ class VisuoTactileSensorCfg(SensorBaseCfg):
 
     This sensor provides both camera-based tactile sensing and force field tactile sensing.
     It can capture tactile RGB/depth images and compute penalty-based contact forces.
+
+    :attr:`prim_path` names the exact elastomer rigid-body prim covered by the clone plan.
     """
 
     class_type: type[VisuoTactileSensor] | str = "{DIR}.visuotactile_sensor:VisuoTactileSensor"
@@ -125,9 +127,6 @@ class VisuoTactileSensorCfg(SensorBaseCfg):
     - :attr:`isaaclab_assets.sensors.GELSIGHT_MINI_CFG`
 
     """
-
-    enable_camera_tactile: bool = True
-    """Whether to enable camera-based tactile sensing."""
 
     enable_force_field: bool = True
     """Whether to enable force field tactile sensing."""
@@ -161,6 +160,9 @@ class VisuoTactileSensorCfg(SensorBaseCfg):
         The sensor will search for the first SDF mesh within the specified prim hierarchy.
     """
 
+    mesh_prim_paths: list[str] = []
+    """Elastomer and contact-object roots whose geometry the clone plan must declare."""
+
     # Force field physics parameters
     normal_contact_stiffness: float = 1.0
     """Normal contact stiffness for penalty-based force computation."""
@@ -172,10 +174,7 @@ class VisuoTactileSensorCfg(SensorBaseCfg):
     """Tangential stiffness for shear forces."""
 
     camera_cfg: CameraCfg | None = None
-    """Camera configuration for tactile RGB/depth sensing.
-
-    If None, camera-based sensing will be disabled even if :attr:`enable_camera_tactile` is True.
-    """
+    """Camera configuration for tactile RGB/depth sensing, or ``None`` to disable it."""
 
     # Visualization
     visualizer_cfg: VisualizationMarkersCfg = VISUO_TACTILE_SENSOR_MARKER_CFG.replace(

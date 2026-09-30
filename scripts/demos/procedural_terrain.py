@@ -29,12 +29,12 @@ Example usage:
 
 from __future__ import annotations
 
-"""Parse CLI first so we can decide whether to launch Isaac Sim Kit."""
-
 import argparse
-from typing import TYPE_CHECKING
 
 from isaaclab.app import add_launcher_args, launch_simulation
+
+from isaaclab_tasks.utils import preset, resolve_config, setup_preset_cli
+from isaaclab_tasks.utils.presets import MultiBackendCameraCfg, MultiBackendSimulationCfg
 
 # add argparse arguments
 parser = argparse.ArgumentParser(
@@ -60,118 +60,106 @@ parser.add_argument(
     default=False,
     help="Whether to show the flat patches computed during the terrain generation.",
 )
-parser.add_argument("--physics", default="isaacsim_physx", choices=["isaacsim_physx"], help="Physics backend.")
 add_launcher_args(parser)
-parser.set_defaults(visualizer=["kit"])
-args_cli = parser.parse_args()
+args_cli, config_overrides = setup_preset_cli(parser)
 
 import random
 
 import torch
 
 import isaaclab.sim as sim_utils
+from isaaclab import cloner
+from isaaclab.assets import AssetBaseCfg
 
 ##
 # Pre-defined configs
 ##
-from isaaclab.markers.visualization_markers_cfg import VisualizationMarkersCfg
-from isaaclab.physics import PhysicsCfg
+from isaaclab.markers import VisualizationMarkersCfg
 from isaaclab.terrains.sub_terrain_cfg import FlatPatchSamplingCfg
 from isaaclab.terrains.terrain_importer_cfg import TerrainImporterCfg
+from isaaclab.utils.configclass import configclass
 
+from isaaclab_physx.physics import PhysxCfg  # isort:skip
 from isaaclab.terrains.config.rough import ROUGH_TERRAINS_CFG  # isort:skip
 
-if TYPE_CHECKING:
-    from isaaclab.assets import AssetBase
+_TERRAIN_GENERATOR_CFG = ROUGH_TERRAINS_CFG.replace(
+    curriculum=args_cli.use_curriculum, color_scheme=args_cli.color_scheme
+)
+if args_cli.show_flat_patches:
+    for name, sub_terrain_cfg in _TERRAIN_GENERATOR_CFG.sub_terrains.items():
+        sub_terrain_cfg.flat_patch_sampling = {
+            name: FlatPatchSamplingCfg(num_patches=10, patch_radius=0.5, max_height_diff=0.05)
+        }
+
+_FLAT_PATCH_MARKERS = {
+    name: sim_utils.CylinderCfg(
+        radius=0.5,
+        height=0.1,
+        visual_material=sim_utils.GlassMdlCfg(glass_color=(random.random(), random.random(), random.random())),
+    )
+    for name in _TERRAIN_GENERATOR_CFG.sub_terrains
+}
 
 
-def design_scene() -> tuple[dict, torch.Tensor]:
-    """Designs the scene."""
-    # Lights
-    cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
-    cfg.func("/World/Light", cfg)
+@configclass
+class DemoCfg:
+    """Procedural-terrain demo configuration."""
 
-    # Parse terrain generation
-    terrain_gen_cfg = ROUGH_TERRAINS_CFG.replace(curriculum=args_cli.use_curriculum, color_scheme=args_cli.color_scheme)
-
-    # Add flat patch configuration
-    # Note: To have separate colors for each sub-terrain type, we set the flat patch sampling configuration name
-    #   to the sub-terrain name. However, this is not how it should be used in practice. The key name should be
-    #   the intention of the flat patch. For instance, "source" or "target" for spawn and command related flat patches.
-    if args_cli.show_flat_patches:
-        for sub_terrain_name, sub_terrain_cfg in terrain_gen_cfg.sub_terrains.items():
-            sub_terrain_cfg.flat_patch_sampling = {
-                sub_terrain_name: FlatPatchSamplingCfg(num_patches=10, patch_radius=0.5, max_height_diff=0.05)
-            }
-
-    # Handler for terrains importing
-    terrain_importer_cfg = TerrainImporterCfg(
-        num_envs=2048,
-        env_spacing=3.0,
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(
+        dt=0.01,
+        device=args_cli.device,
+        physics=preset(default=PhysxCfg(), isaacsim_physx=PhysxCfg()),
+    )
+    camera: MultiBackendCameraCfg = MultiBackendCameraCfg()
+    num_envs: int = 2048
+    env_spacing: float = 3.0
+    light: AssetBaseCfg = AssetBaseCfg(
+        prim_path="/World/Light",
+        spawn=sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75)),
+    )
+    terrain: TerrainImporterCfg = TerrainImporterCfg(
         prim_path="/World/ground",
         max_init_terrain_level=None,
         terrain_type="generator",
-        terrain_generator=terrain_gen_cfg,
+        terrain_generator=_TERRAIN_GENERATOR_CFG,
         debug_vis=True,
     )
-    # Remove visual material for height and random color schemes to use the default material
-    if args_cli.color_scheme in ["height", "random"]:
-        terrain_importer_cfg.visual_material = None
-    # Create terrain importer
-    terrain_importer = terrain_importer_cfg.class_type(terrain_importer_cfg)
-
-    # Show the flat patches computed
-    if args_cli.show_flat_patches:
-        # Configure the flat patches
-        vis_cfg = VisualizationMarkersCfg(prim_path="/Visuals/TerrainFlatPatches", markers={})
-        for name in terrain_importer.flat_patches:
-            vis_cfg.markers[name] = sim_utils.CylinderCfg(
-                radius=0.5,  # note: manually set to the patch radius for visualization
-                height=0.1,
-                visual_material=sim_utils.GlassMdlCfg(glass_color=(random.random(), random.random(), random.random())),
-            )
-        flat_patches_visualizer = vis_cfg.class_type(vis_cfg)
-
-        # Visualize the flat patches
-        all_patch_locations = []
-        all_patch_indices = []
-        for i, patch_locations in enumerate(terrain_importer.flat_patches.values()):
-            num_patch_locations = patch_locations.view(-1, 3).shape[0]
-            # store the patch locations and indices
-            all_patch_locations.append(patch_locations.view(-1, 3))
-            all_patch_indices += [i] * num_patch_locations
-        # combine the patch locations and indices
-        flat_patches_visualizer.visualize(torch.cat(all_patch_locations), marker_indices=all_patch_indices)
-
-    # return the scene information
-    scene_entities = {"terrain": terrain_importer}
-    return scene_entities, terrain_importer.env_origins
-
-
-def run_simulator(sim: sim_utils.SimulationContext, entities: dict[str, AssetBase], origins: torch.Tensor):
-    """Runs the simulation loop."""
-    # Step while a visualizer window is still open (or none exist, e.g. headless); works for kit and newton.
-    while sim.is_headless_or_exist_active_visualizer():
-        # perform step
-        sim.step()
+    terrain.visual_material = None if args_cli.color_scheme in ("height", "random") else terrain.visual_material
+    flat_patches: VisualizationMarkersCfg | None = (
+        VisualizationMarkersCfg(prim_path="/Visuals/TerrainFlatPatches", markers=_FLAT_PATCH_MARKERS)
+        if args_cli.show_flat_patches
+        else None
+    )
 
 
 def main():
     """Main function."""
-    with launch_simulation(cfg=PhysicsCfg(), launcher_args=args_cli) as physics_cfg:
+    cfg = resolve_config(DemoCfg(), config_overrides)
+    with launch_simulation(cfg, args_cli):
         # Initialize the simulation context
-        sim_cfg = sim_utils.SimulationCfg(dt=0.01, device=args_cli.device, physics=physics_cfg)
-        sim = sim_utils.SimulationContext(sim_cfg)
+        sim = sim_utils.SimulationContext(cfg.sim)
         # Set main camera
         sim.set_camera_view(eye=[15.0, 15.0, 15.0], target=[0.0, 0.0, 0.0])
-        # design scene
-        scene_entities, scene_origins = design_scene()
+        asset_cfgs = tuple(
+            asset_cfg
+            for asset_cfg in (cfg.light, cfg.terrain, cfg.terrain.visualizer_cfg, cfg.flat_patches, cfg.camera)
+            if asset_cfg is not None
+        )
+        with cloner.ReplicateSession(asset_cfgs, cfg.num_envs, cfg.env_spacing):
+            _camera = cfg.camera.class_type(cfg.camera) if cfg.camera is not None else None
+            terrain = cfg.terrain.class_type(cfg.terrain)
+            cfg.light.class_type(cfg.light)
+            flat_patches = cfg.flat_patches.class_type(cfg.flat_patches) if cfg.flat_patches is not None else None
+        if flat_patches is not None:
+            patch_locations = [locations.view(-1, 3) for locations in terrain.flat_patches.values()]
+            patch_indices = [i for i, locations in enumerate(patch_locations) for _ in range(len(locations))]
+            flat_patches.visualize(torch.cat(patch_locations), marker_indices=patch_indices)
         # Play the simulator
         sim.reset()
         # Now we are ready!
         print("[INFO]: Setup complete...")
-        # Run the simulator
-        run_simulator(sim, scene_entities, scene_origins)
+        while sim.is_headless_or_exist_active_visualizer():
+            sim.step()
 
 
 if __name__ == "__main__":

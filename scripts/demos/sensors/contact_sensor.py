@@ -3,36 +3,25 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Launch Isaac Sim Simulator first."""
-
 import argparse
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from isaaclab.app import add_launcher_args, launch_simulation
+
+from isaaclab_tasks.utils import preset, resolve_config, setup_preset_cli
+from isaaclab_tasks.utils.presets import MultiBackendSimulationCfg
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Example on using the contact sensor.")
 parser.add_argument("--num_envs", type=int, default=1, help="Number of environments to spawn.")
-parser.add_argument(
-    "--physics",
-    default="isaacsim_physx",
-    choices=["isaacsim_physx", "newton_mjwarp"],
-    help="Physics backend.",
-)
-# append launcher CLI args
 add_launcher_args(parser)
-# demos should open Kit visualizer by default
-parser.set_defaults(visualizer=["kit"])
-# parse the arguments
-args_cli = parser.parse_args()
-
-"""Rest everything follows."""
+args_cli, config_overrides = setup_preset_cli(parser)
 
 import torch
+from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
-from isaaclab.physics import PhysicsCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import ContactSensorCfg
 from isaaclab.utils.configclass import configclass
@@ -41,6 +30,7 @@ from isaaclab.utils.configclass import configclass
 # Pre-defined configs
 ##
 from isaaclab_assets.robots.anymal import ANYMAL_C_CFG  # isort: skip
+from isaaclab_newton.physics import MJWarpSolverCfg  # isort: skip
 
 if TYPE_CHECKING:
     from isaaclab.scene import InteractiveScene
@@ -81,8 +71,11 @@ class ContactSensorSceneCfg(InteractiveSceneCfg):
         history_length=6,
         debug_vis=True,
         filter_prim_paths_expr=["{ENV_REGEX_NS}/Cube"],
-        track_friction_forces=args_cli.physics == "newton_mjwarp",
+        track_friction_forces=preset(default=False, newton_mjwarp=True),
     )
+    contact_forces_LF.visualizer_cfg.prim_path += "/LF"
+    contact_forces_LF.normal_force_visualizer_cfg.prim_path += "/LF"
+    contact_forces_LF.friction_force_visualizer_cfg.prim_path += "/LF"
 
     contact_forces_RF = ContactSensorCfg(
         prim_path="{ENV_REGEX_NS}/Robot/RF_FOOT",
@@ -90,16 +83,34 @@ class ContactSensorSceneCfg(InteractiveSceneCfg):
         history_length=6,
         debug_vis=True,
         filter_prim_paths_expr=["{ENV_REGEX_NS}/Cube"],
-        track_friction_forces=args_cli.physics == "newton_mjwarp",
+        track_friction_forces=preset(default=False, newton_mjwarp=True),
     )
+    contact_forces_RF.visualizer_cfg.prim_path += "/RF"
+    contact_forces_RF.normal_force_visualizer_cfg.prim_path += "/RF"
+    contact_forces_RF.friction_force_visualizer_cfg.prim_path += "/RF"
 
     contact_forces_H = ContactSensorCfg(
         prim_path="{ENV_REGEX_NS}/Robot/.*H_FOOT",
         update_period=0.0,
         history_length=6,
         debug_vis=True,
-        track_friction_forces=args_cli.physics == "newton_mjwarp",
+        track_friction_forces=preset(default=False, newton_mjwarp=True),
     )
+    contact_forces_H.visualizer_cfg.prim_path += "/H"
+    contact_forces_H.normal_force_visualizer_cfg.prim_path += "/H"
+    contact_forces_H.friction_force_visualizer_cfg.prim_path += "/H"
+
+
+@configclass
+class DemoCfg:
+    """Contact-sensor demo configuration."""
+
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(
+        dt=0.005,
+        device=args_cli.device,
+        physics=preset(default=PhysxCfg(), isaacsim_physx=PhysxCfg(), newton_mjwarp=MJWarpSolverCfg()),
+    )
+    scene: ContactSensorSceneCfg = ContactSensorSceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0)
 
 
 def run_simulator(sim: sim_utils.SimulationContext, scene: "InteractiveScene"):
@@ -162,31 +173,21 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: "InteractiveScene"):
         print(scene["contact_forces_H"])
         print("Received force matrix of: ", scene["contact_forces_H"].data.normal_force_matrix_w)
         print("Received contact force of: ", scene["contact_forces_H"].data.net_normal_forces_w)
-        if args_cli.physics == "newton_mjwarp":
+        if scene["contact_forces_H"].cfg.track_friction_forces:
             print("Received friction force of: ", scene["contact_forces_H"].data.net_friction_forces_w)
 
 
 def main():
     """Main function."""
-
-    with launch_simulation(cfg=PhysicsCfg(), launcher_args=args_cli) as physics_cfg:
-        # Initialize the simulation context
-        sim_cfg = sim_utils.SimulationCfg(dt=0.005, device=args_cli.device, physics=physics_cfg)
-        sim = sim_utils.SimulationContext(sim_cfg)
-        # Set main camera
-        sim.set_camera_view(eye=(3.5, 3.5, 3.5), target=(0.0, 0.0, 0.0))
-        # design scene
-        scene_cfg = ContactSensorSceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0)
-        scene_class = cast(type["InteractiveScene"], scene_cfg.class_type)
-        scene = scene_class(scene_cfg)
-        # Play the simulator
+    cfg = resolve_config(DemoCfg(), config_overrides)
+    with launch_simulation(cfg.sim, args_cli):
+        sim = sim_utils.SimulationContext(cfg.sim)
+        sim.set_camera_view(eye=[3.5, 3.5, 3.5], target=[0.0, 0.0, 0.0])
+        scene = cfg.scene.class_type(cfg.scene)
         sim.reset()
-        # Now we are ready!
         print("[INFO]: Setup complete...")
-        # Run the simulator
         run_simulator(sim, scene)
 
 
 if __name__ == "__main__":
-    # run the main function
     main()

@@ -12,15 +12,10 @@ from typing import TYPE_CHECKING
 import torch
 import warp as wp
 
-from pxr import UsdGeom
-
 import isaaclab.utils.math as math_utils
-from isaaclab.markers import VisualizationMarkers
 from isaaclab.sensors.pva import BasePva
-from isaaclab.sim.utils.queries import path_expr_to_glob
 
 import isaaclab_ov.tensor_types as TT
-from isaaclab_ov.physics import OvPhysxManager as SimulationManager
 from isaaclab_ov.sim.views.ovphysx_view import OvPhysxView
 
 from .kernels import pva_reset_kernel, pva_update_kernel
@@ -130,14 +125,13 @@ class Pva(BasePva):
         """
         super()._initialize_impl()
 
-        physx_instance = SimulationManager.get_physx_instance()
+        physx_instance = self._physics_manager.get_physx_instance()
         if physx_instance is None:
             raise RuntimeError("OvPhysxManager has not been initialized yet.")
 
         self._rigid_parent_expr, fixed_pos_b, fixed_quat_b = self._resolve_rigid_body_ancestor_expr()
 
-        # Translate the regex-style path expression to an ovphysx fnmatch glob.
-        pattern = path_expr_to_glob(self._rigid_parent_expr)
+        pattern = self._rigid_parent_expr
 
         self._root_view = OvPhysxView(physx_instance, pattern=pattern, device=self._device)
         self._num_bodies = self._root_view.binding_for(TT.RIGID_BODY_POSE).count
@@ -186,7 +180,7 @@ class Pva(BasePva):
         re-filled in place rather than reallocated: consumers (and any recorded launch) hold
         the array pointer, and a fresh allocation would freeze the sensor on the old value.
         """
-        gravity = SimulationManager.get_gravity()
+        gravity = self._physics_manager.get_gravity()
         gravity = (float(gravity[0]), float(gravity[1]), float(gravity[2]))
         if gravity == self._gravity_w:
             return
@@ -262,7 +256,7 @@ class Pva(BasePva):
     def _set_debug_vis_impl(self, debug_vis: bool):
         if debug_vis:
             if not hasattr(self, "acceleration_visualizer"):
-                self.acceleration_visualizer = VisualizationMarkers(self.cfg.visualizer_cfg)
+                self.acceleration_visualizer = self.cfg.visualizer_cfg.class_type(self.cfg.visualizer_cfg)
             self.acceleration_visualizer.set_visibility(True)
         else:
             if hasattr(self, "acceleration_visualizer"):
@@ -279,8 +273,6 @@ class Pva(BasePva):
         # -- resolve the scales
         default_scale = self.acceleration_visualizer.cfg.markers["arrow"].scale
         arrow_scale = torch.tensor(default_scale, device=self.device).repeat(self._data.lin_acc_b.torch.shape[0], 1)
-        # get up axis of current stage
-        up_axis = UsdGeom.GetStageUpAxis(self.stage)
         # arrow-direction; filter out bodies with effectively zero accel (no defined direction)
         pos_w_torch = self._data.pos_w.torch
         accel_w = math_utils.quat_apply(self._data.quat_w.torch, self._data.lin_acc_b.torch)
@@ -292,7 +284,7 @@ class Pva(BasePva):
         rotation_matrix = math_utils.create_rotation_matrix_from_view(
             pos_filtered,
             pos_filtered + accel_filtered,
-            up_axis=up_axis,
+            up_axis="Z",
             device=self._device,
         )
         quat_opengl = math_utils.quat_from_matrix(rotation_matrix)

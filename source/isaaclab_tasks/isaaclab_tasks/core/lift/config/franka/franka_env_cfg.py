@@ -92,14 +92,16 @@ class FrankaSceneCfg(lift.SceneCfg):
         # keep action targets off the hard stops: the policy must not learn to ride
         # joint limits (a compliant-limit affordance that does not transfer across engines)
         for link_name in FINGERTIP_LIST:
+            sensor_cfg = ContactSensorCfg(
+                prim_path="{ENV_REGEX_NS}/Robot/Geometry/panda_link0/panda_link1/panda_link2/panda_link3/panda_link4/panda_link5/panda_link6/panda_link7/panda_hand/"
+                + link_name,
+                filter_prim_paths_expr=["{ENV_REGEX_NS}/Object"],
+            )
+            sensor_cfg.visualizer_cfg.prim_path = f"/Visuals/ContactSensor/{link_name}"
             setattr(
                 self,
                 f"{link_name}_object_s",
-                ContactSensorCfg(
-                    prim_path="{ENV_REGEX_NS}/Robot/Geometry/panda_link0/panda_link1/panda_link2/panda_link3/panda_link4/panda_link5/panda_link6/panda_link7/panda_hand/"
-                    + link_name,
-                    filter_prim_paths_expr=["{ENV_REGEX_NS}/Object"],
-                ),
+                sensor_cfg,
             )
         graspable_shape_assets_cfg = [
             MeshCuboidCfg(size=(0.05, 0.05, 0.05), **lift.OBJECT_PHYSICS),
@@ -197,7 +199,7 @@ class FrankaEventCfg(lift.EventCfg):
             params={"position_range": [-0.04, 0.0], "asset_cfg": fingers},
         )
         # spawn-in-hand: the grasp center sits ~0.10 m along the hand z-axis (fingertip plane)
-        to_target = reset_terms["reset_object_to_target"].params
+        to_target = self.conditional_reset.params["state_dependent_terms"]["reset_object_to_target"].params
         to_target["target_cfg"] = SceneEntityCfg("robot", body_names="panda_hand")
         to_target["pose_range"] = {"x": [-0.02, 0.02], "y": [-0.02, 0.02], "z": [0.08, 0.12]}
         # every link but the ground-mounted base (a base-link ground check is unsatisfiable)
@@ -229,21 +231,9 @@ class FrankaMixinCfg:
 
 @configclass
 class FrankaReorientEnvCfg(FrankaMixinCfg, lift.ReorientEnvCfg):
-    def play_mode(self):
-        # play-mode overrides of parent
-        super().play_mode()
-
-        # deploy/eval at the datasheet gripper speed: no closing-speed randomization, and
-        # the hand kd=175 caps closing at 0.2 m/s (the real hand's jaw-speed limit)
-        self.events.gripper_closing_speed = None
+    pass
 
 
 @configclass
 class FrankaLiftEnvCfg(FrankaMixinCfg, lift.LiftEnvCfg):
-    def play_mode(self):
-        # play-mode overrides of parent
-        super().play_mode()
-
-        # deploy/eval at the datasheet gripper speed: no closing-speed randomization, and
-        # the hand kd=175 caps closing at 0.2 m/s (the real hand's jaw-speed limit)
-        self.events.gripper_closing_speed = None
+    pass

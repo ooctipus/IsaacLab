@@ -16,9 +16,10 @@ from collections import namedtuple
 
 import pytest
 import torch
+from isaaclab_physx.physics import PhysxCfg
 
 from isaaclab.managers import RewardManager, RewardTermCfg
-from isaaclab.sim import SimulationContext
+from isaaclab.sim import SimulationCfg, SimulationContext
 from isaaclab.utils.configclass import configclass
 
 pytestmark = pytest.mark.integration
@@ -42,7 +43,7 @@ def grilled_chicken_with_yoghurt(env, hot: bool, bland: float):
 
 @pytest.fixture
 def env():
-    sim = SimulationContext()
+    sim = SimulationContext(SimulationCfg(physics=PhysxCfg()))
     return namedtuple("ManagerBasedRLEnv", ["num_envs", "dt", "device", "sim"])(20, 0.1, "cpu", sim)
 
 

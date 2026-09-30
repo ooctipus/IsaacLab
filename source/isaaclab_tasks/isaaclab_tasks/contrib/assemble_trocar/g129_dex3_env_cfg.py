@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 from isaaclab_physx.physics import PhysxCfg
+from isaaclab_physx.renderers import IsaacRtxRendererCfg, IsaacRtxRendererGlobalSettingsCfg
 
 import isaaclab.envs.mdp as base_mdp
 import isaaclab.sim as sim_utils
@@ -14,18 +15,14 @@ from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import TerminationTermCfg as DoneTerm
-from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.sensors import CameraCfg, FrameTransformerCfg
 from isaaclab.sim.spawners.from_files.from_files_cfg import UsdFileCfg
 from isaaclab.utils.configclass import configclass
-from isaaclab.visualizers import VisualizerCfg
 
 from isaaclab_tasks.contrib.assemble_trocar import mdp
 
-from isaaclab_tasks.contrib.assemble_trocar.config import (  # isort: skip
-    CameraPresets,
-    G1RobotPresets,
-)
-from isaaclab_tasks.utils.presets import set_isaac_rtx_global_settings
+from isaaclab_tasks.contrib.assemble_trocar.config import G1_29DOF_DEX3_CFG  # isort: skip
+from isaaclab_tasks.utils.presets import MultiBackendRendererCfg, MultiBackendSceneCfg, MultiBackendSimulationCfg
 
 joint_names = [
     "left_hip_pitch_joint",
@@ -79,20 +76,64 @@ offset_dict = {
 
 HEALTHCARE_S3 = "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/Healthcare/0.5.0/132c82d"
 USD_ROOT = f"{HEALTHCARE_S3}/Props/LightWheel"
+_ISAAC_RTX_CFG = IsaacRtxRendererCfg(
+    global_settings=IsaacRtxRendererGlobalSettingsCfg(
+        enable_translucency=True,
+        carb_settings={"rtx.raytracing.fractionalCutoutOpacity": True},
+        antialiasing_mode="DLAA",
+    )
+)
+_RTX_RENDERER_CFG = MultiBackendRendererCfg(default=_ISAAC_RTX_CFG, isaacsim_rtx=_ISAAC_RTX_CFG)
 
 
 @configclass
-class AssembleTrocarSceneCfg(InteractiveSceneCfg):
+class AssembleTrocarSceneCfg(MultiBackendSceneCfg):
     """Scene configuration for the assemble_trocar task (robot + objects + lights)."""
 
     # humanoid robot configuration
-    robot: ArticulationCfg = G1RobotPresets.g1_29dof_dex3_base_fix(
-        init_pos=(-1.84919, 1.94, 0.81168), init_rot=(0.0, 0.0, 0.0, 1.0)
+    robot: ArticulationCfg = G1_29DOF_DEX3_CFG.replace(
+        init_state=G1_29DOF_DEX3_CFG.init_state.replace(pos=(-1.84919, 1.94, 0.81168), rot=(0.0, 0.0, 0.0, 1.0))
     )
-    # add camera configuration
-    front_camera = CameraPresets.g1_front_camera()
-    left_wrist_camera = CameraPresets.left_dex3_wrist_camera()
-    right_wrist_camera = CameraPresets.right_dex3_wrist_camera()
+    front_camera = CameraCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/d435_link/front_cam",
+        update_period=0.02,
+        height=224,
+        width=224,
+        data_types=["rgb"],
+        spawn=sim_utils.PinholeCameraCfg(
+            focal_length=10.5, focus_distance=400.0, horizontal_aperture=14.25, clipping_range=(0.1, 1.0e5)
+        ),
+        offset=CameraCfg.OffsetCfg(rot=(0.5, -0.5, 0.5, -0.5), convention="ros"),
+        renderer_cfg=_RTX_RENDERER_CFG,
+    )
+    left_wrist_camera = CameraCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/left_hand_camera_base_link/left_wrist_camera",
+        update_period=0.02,
+        height=224,
+        width=224,
+        data_types=["rgb"],
+        spawn=sim_utils.PinholeCameraCfg(
+            focal_length=12.0, focus_distance=400.0, horizontal_aperture=14.25, clipping_range=(0.1, 1.0e5)
+        ),
+        offset=CameraCfg.OffsetCfg(
+            pos=(-0.04012, -0.07441, 0.15711), rot=(0.00539, 0.86024, 0.0424, 0.50809), convention="ros"
+        ),
+        renderer_cfg=_RTX_RENDERER_CFG,
+    )
+    right_wrist_camera = CameraCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/right_hand_camera_base_link/right_wrist_camera",
+        update_period=0.02,
+        height=224,
+        width=224,
+        data_types=["rgb"],
+        spawn=sim_utils.PinholeCameraCfg(
+            focal_length=12.0, focus_distance=400.0, horizontal_aperture=14.25, clipping_range=(0.1, 1.0e5)
+        ),
+        offset=CameraCfg.OffsetCfg(
+            pos=(-0.04012, 0.07441, 0.15711), rot=(0.00539, 0.86024, 0.0424, 0.50809), convention="ros"
+        ),
+        renderer_cfg=_RTX_RENDERER_CFG,
+    )
 
     scene = AssetBaseCfg(
         prim_path="{ENV_REGEX_NS}/Scene",
@@ -133,6 +174,16 @@ class AssembleTrocarSceneCfg(InteractiveSceneCfg):
         init_state=RigidObjectCfg.InitialStateCfg(
             rot=[-0.71475, -0.000243, 0.05853, 0.69692], pos=[-1.50635, 1.90997, 0.8631]
         ),
+    )
+    trocar_tips = FrameTransformerCfg(
+        prim_path="{ENV_REGEX_NS}/trocar_1",
+        target_frames=[
+            FrameTransformerCfg.FrameCfg(prim_path="{ENV_REGEX_NS}/trocar_1/Trocar002/White_pos", name="trocar_1_tip"),
+            FrameTransformerCfg.FrameCfg(
+                prim_path=("{ENV_REGEX_NS}/trocar_2/DisposableLaparoscopicPunctureDevice001/Red_pos"),
+                name="trocar_2_tip",
+            ),
+        ],
     )
     tray = ArticulationCfg(
         prim_path="{ENV_REGEX_NS}/surgical_tray",
@@ -264,6 +315,7 @@ class RewardsCfg:
         params={
             "asset_cfg1": SceneEntityCfg("trocar_1"),
             "asset_cfg2": SceneEntityCfg("trocar_2"),
+            "tip_frames_cfg": SceneEntityCfg("trocar_tips"),
             "table_height": 0.85483,
             "lift_threshold": 0.15,
             "tip_align_threshold": 0.015,
@@ -299,6 +351,7 @@ class RewardsCfg:
             "tip_dist_std": 0.02,  # Std for tip distance reward shaping
             "asset_cfg1": SceneEntityCfg("trocar_1"),
             "asset_cfg2": SceneEntityCfg("trocar_2"),
+            "tip_frames_cfg": SceneEntityCfg("trocar_tips"),
             "use_sparse_reward": True,
             "print_log": False,
         },
@@ -365,6 +418,7 @@ class G1AssembleTrocarEnvCfg(ManagerBasedRLEnvCfg):
     inherits from ManagerBasedRLEnvCfg, defines all configuration parameters for the entire environment
     """
 
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg()
     # scene settings
     scene: AssembleTrocarSceneCfg = AssembleTrocarSceneCfg(
         num_envs=1,
@@ -392,18 +446,6 @@ class G1AssembleTrocarEnvCfg(ManagerBasedRLEnvCfg):
         self.sim.dt = 1 / 200
         self.sim.render_interval = self.decimation
         self.sim.physics = PhysxCfg(bounce_threshold_velocity=0.01)
-        self.sim.default_visualizer_cfg = VisualizerCfg(eye=(-0.5, 2.4, 1.6), lookat=(-5.4, 0.2, -1.2))
-        for camera_cfg in (
-            self.scene.front_camera,
-            self.scene.left_wrist_camera,
-            self.scene.right_wrist_camera,
-        ):
-            set_isaac_rtx_global_settings(
-                camera_cfg.renderer_cfg,
-                enable_translucency=True,
-                carb_settings={"rtx.raytracing.fractionalCutoutOpacity": True},
-                antialiasing_mode="DLAA",
-            )
 
 
 @configclass

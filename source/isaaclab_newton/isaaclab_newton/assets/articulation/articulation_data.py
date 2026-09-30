@@ -22,10 +22,11 @@ from isaaclab.utils.warp.utils import capture_unsafe
 
 from isaaclab_newton.assets import kernels as shared_kernels
 from isaaclab_newton.assets.articulation import kernels as articulation_kernels
-from isaaclab_newton.physics import NewtonManager as SimulationManager
 
 if TYPE_CHECKING:
     from newton.selection import ArticulationView
+
+    from isaaclab_newton.physics import NewtonManager
 
 # import logger
 logger = logging.getLogger(__name__)
@@ -59,7 +60,7 @@ class ArticulationData(BaseArticulationData):
     __backend_name__: str = "newton"
     """The name of the backend for the articulation data."""
 
-    def __init__(self, root_view: ArticulationView, device: str):
+    def __init__(self, root_view: ArticulationView, device: str, physics_manager: NewtonManager):
         """Initializes the articulation data.
 
         Args:
@@ -67,6 +68,7 @@ class ArticulationData(BaseArticulationData):
             device: The device used for processing.
         """
         super().__init__(root_view, device)
+        self._physics_manager = physics_manager
         # Set the root articulation view
         # note: this is stored as a weak reference to avoid circular references between the asset class
         #  and the data container. This is important to avoid memory leaks.
@@ -75,14 +77,13 @@ class ArticulationData(BaseArticulationData):
         # Set initial time stamp
         self._sim_timestamp = 0.0
         self._is_primed = False
-        self._fk_timestamp = 0.0
         self._read_launch_cache = _WarpLaunchCache(device)
 
         # Bind ``GRAVITY_VEC_W`` to Newton's per-env ``model.gravity`` (m/s^2) so
         # per-env gravity randomization stays live; consumers normalize on read.
         # The final entry is reserved for Newton's global world and is not an
         # Isaac Lab environment.
-        model = SimulationManager.get_model()
+        model = self._physics_manager.get_model()
         self.GRAVITY_VEC_W = ProxyArray(model.gravity[: model.world_count])
         forward_vec = np.full((self._root_view.count, 3), (1.0, 0.0, 0.0), dtype=np.float32)
         self.FORWARD_VEC_B = ProxyArray(wp.array(forward_vec, dtype=wp.vec3f, device=self.device))
@@ -120,33 +121,10 @@ class ArticulationData(BaseArticulationData):
         """
         # update the simulation timestamp
         self._sim_timestamp += dt
-        # FK is current after a sim step — keep fk_timestamp in sync unless it was explicitly invalidated
-        if self._fk_timestamp >= 0.0:
-            self._fk_timestamp = self._sim_timestamp
         # Trigger an update of the joint and body com acceleration buffers at a higher frequency
         # since we do finite differencing.
         self.joint_acc
         self.body_com_acc_w
-
-    def _ensure_fk_fresh(self) -> None:
-        """Run forward kinematics if joint state has changed since the last FK update.
-
-        Newton's ``state.body_q`` (per-body world transforms) is updated by the active
-        solver manager's ``forward()``, which calls a solver-specialized FK hook.
-        After a manual joint or root write that bypassed the sim step (``write_*_to_sim_*``),
-        ``_fk_timestamp`` is set to ``-1.0`` to force a refresh on the next read of any
-        property that depends on body poses (``body_link_pose_w``, the Jacobian properties,
-        ``mass_matrix``).
-
-        This out-of-band FK path also republishes the user-order body-state shadows via
-        :meth:`_refresh_user_order_body_state`: the post-step callback only fires inside a
-        sim step, so a manual write followed by an FK refresh would otherwise leave the
-        passthrough ``body_link_pose_w`` / ``body_com_vel_w`` shadows stale.
-        """
-        if self._fk_timestamp < self._sim_timestamp:
-            SimulationManager.forward()
-            self._refresh_user_order_body_state()
-            self._fk_timestamp = self._sim_timestamp
 
     def _reset_pose(
         self, from_link: bool = True, *, env_ids: wp.array | None = None, env_mask: wp.array | None = None
@@ -185,11 +163,7 @@ class ArticulationData(BaseArticulationData):
                 self._body_com_state_w,
             ]
         )
-        # NOTE: _fk_timestamp and invalidate_fk serve two distinct roles. _fk_timestamp is on the
-        # data side and forces a refresh on the next outdated read. invalidate_fk is on the
-        # simulation-manager side and lets the solver know state changed before its next step.
-        self._fk_timestamp = -1.0
-        SimulationManager.invalidate_fk(
+        self._physics_manager.invalidate_fk(
             env_mask=env_mask, env_ids=env_ids, articulation_ids=self._root_view.articulation_ids
         )
 
@@ -226,11 +200,7 @@ class ArticulationData(BaseArticulationData):
                 self._body_com_state_w,
             ]
         )
-        # NOTE: _fk_timestamp and invalidate_fk serve two distinct roles. _fk_timestamp is on the
-        # data side and forces a refresh on the next outdated read. invalidate_fk is on the
-        # simulation-manager side and lets the solver know state changed before its next step.
-        self._fk_timestamp = -1.0
-        SimulationManager.invalidate_fk(
+        self._physics_manager.invalidate_fk(
             env_mask=env_mask, env_ids=env_ids, articulation_ids=self._root_view.articulation_ids
         )
 
@@ -730,7 +700,6 @@ class ArticulationData(BaseArticulationData):
         This quantity is the pose of the articulation links' actor frame relative to the world.
         The orientation is provided in (x, y, z, w) format.
         """
-        self._ensure_fk_fresh()
         return self._body_link_pose_w_ta
 
     @property
@@ -773,7 +742,6 @@ class ArticulationData(BaseArticulationData):
         This quantity is the pose of the center of mass frame of the articulation links relative to the world.
         The orientation is provided in (x, y, z, w) format.
         """
-        self._ensure_fk_fresh()
         if self._body_com_pose_w.timestamp < self._sim_timestamp:
             self._read_launch_cache.launch(
                 "body_com_pose_w",
@@ -801,7 +769,6 @@ class ArticulationData(BaseArticulationData):
         This quantity contains the linear and angular velocities of the articulation links' center of mass frame
         relative to the world.
         """
-        self._ensure_fk_fresh()
         return self._body_com_vel_w_ta
 
     @property
@@ -824,7 +791,7 @@ class ArticulationData(BaseArticulationData):
                     self._previous_body_com_vel,
                     body_ordering.user_to_backend if body_ordering is not None else None,
                     body_ordering is not None,
-                    SimulationManager.get_dt(),
+                    self._physics_manager.get_physics_dt(),
                 ],
                 outputs=[self._body_com_acc_w.data],
             )
@@ -886,15 +853,12 @@ class ArticulationData(BaseArticulationData):
         gather kernel extracts this view's rows. ``link_offset`` drops Newton's fixed-
         root row for fixed-base; the DoF axis is preserved in full.
         """
-        # Newton's eval_jacobian reads ``state.body_q`` (link poses); refresh FK if stale.
-        # Matches the convention in ``body_link_pose_w`` — Python-guarded lazy refresh.
-        self._ensure_fk_fresh()
         # eval_jacobian writes every articulation in the model; gather kernel extracts this
         # view's rows. ``link_offset`` skips Newton's fixed-root row for fixed-base; the DoF
         # axis is preserved in full (free-root joint's 6 columns up front for floating-base),
         # matching the PhysX layout and the cross-library industry convention.
         self._root_view.eval_jacobian(
-            SimulationManager.get_state_0(),
+            self._physics_manager.get_state_0(),
             J=self._jacobian_buf_flat,
             joint_S_s=self._joint_S_s_buf,
         )
@@ -922,10 +886,6 @@ class ArticulationData(BaseArticulationData):
         Newton implementation: applies the COM→origin shift kernel to
         :attr:`body_com_jacobian_w` (Newton's ``eval_jacobian`` is COM-referenced).
         """
-        # ``body_link_pose_w`` accessor triggers ``SimulationManager.forward()`` if FK is
-        # stale (after a manual joint / root write that bypassed the sim step). Reading the
-        # property here — not ``_sim_bind_body_link_pose_w`` directly — keeps the shift
-        # kernel from using stale link rotations during reset / IK-warm-start paths.
         link_pose_w = self.body_link_pose_w.warp
         com_jac = self.body_com_jacobian_w
         self._read_launch_cache.launch(
@@ -949,14 +909,11 @@ class ArticulationData(BaseArticulationData):
         Newton implementation: ``eval_mass_matrix`` (writes the model-wide buffer) then a
         gather kernel extracts this view's rows.
         """
-        # eval_jacobian / eval_mass_matrix read ``state.body_q``; refresh FK if stale.
-        # Matches the convention in ``body_link_pose_w`` — Python-guarded lazy refresh.
-        self._ensure_fk_fresh()
         # eval_mass_matrix treats ``J`` as an input (skips its own jacobian compute when
         # provided), so we must populate the scratch first via eval_jacobian. Reusing
         # ``_jacobian_buf_flat`` (same shape) avoids a second allocation. All scratch buffers
         # are pre-allocated for CUDA-graph capture safety.
-        state = SimulationManager.get_state_0()
+        state = self._physics_manager.get_state_0()
         self._root_view.eval_jacobian(
             state,
             J=self._jacobian_buf_flat,
@@ -992,9 +949,6 @@ class ArticulationData(BaseArticulationData):
         Newton implementation: ``eval_inverse_dynamics_passive`` (writes the model-wide
         flat DoF buffer) then a gather kernel extracts this view's DoF segment.
         """
-        # eval_inverse_dynamics_passive reads ``state.body_q``; refresh FK if stale.
-        # Matches the convention in ``body_link_pose_w`` — Python-guarded lazy refresh.
-        self._ensure_fk_fresh()
         # eval_inverse_dynamics_passive writes every articulation in the model-wide flat
         # buffer (zeros outside the view); the gather kernel extracts this view's DoF
         # segments. Newton allocates its RNEA scratch internally on every call through
@@ -1002,7 +956,7 @@ class ArticulationData(BaseArticulationData):
         # enabled (validated by Newton's own graph-capture test) — so only the output
         # and gather buffers need pre-allocation here.
         self._root_view.eval_inverse_dynamics_passive(
-            SimulationManager.get_state_0(),
+            self._physics_manager.get_state_0(),
             gravity_force=self._gravity_force_full_buf,
         )
         # Topology arrays come from the same Model object the eval above computed
@@ -1516,34 +1470,36 @@ class ArticulationData(BaseArticulationData):
         self._num_spatial_tendons = 0  # spatial tendons not supported
 
         # -- root properties
-        self._sim_bind_root_link_pose_w = self._root_view.get_root_transforms(SimulationManager.get_state_0())[:, 0]
+        self._sim_bind_root_link_pose_w = self._root_view.get_root_transforms(self._physics_manager.get_state_0())[:, 0]
         # ``get_root_velocities`` returns ``None`` for fixed-base articulations; the
         # ``wp.zeros`` fallback set by :meth:`_create_buffers` must survive subsequent
         # resets, so only overwrite when the solver actually exposes the binding.
-        root_vel_w = self._root_view.get_root_velocities(SimulationManager.get_state_0())
+        root_vel_w = self._root_view.get_root_velocities(self._physics_manager.get_state_0())
         if root_vel_w is not None:
             if self._root_view.is_fixed_base:
                 self._sim_bind_root_com_vel_w = root_vel_w[:, 0, 0]
             else:
                 self._sim_bind_root_com_vel_w = root_vel_w[:, 0]
         # -- body properties
-        self._sim_bind_body_com_pos_b = self._root_view.get_attribute("body_com", SimulationManager.get_model())[:, 0]
-        self._sim_bind_body_link_pose_w = self._root_view.get_link_transforms(SimulationManager.get_state_0())[:, 0]
-        body_com_vel_w = self._root_view.get_link_velocities(SimulationManager.get_state_0())
-        if body_com_vel_w is not None:
-            self._sim_bind_body_com_vel_w = body_com_vel_w[:, 0]
-        self._sim_bind_body_mass = self._root_view.get_attribute("body_mass", SimulationManager.get_model())[:, 0]
-        self._sim_bind_body_inv_mass = self._root_view.get_attribute("body_inv_mass", SimulationManager.get_model())[
+        self._sim_bind_body_com_pos_b = self._root_view.get_attribute("body_com", self._physics_manager.get_model())[
             :, 0
         ]
+        self._sim_bind_body_link_pose_w = self._root_view.get_link_transforms(self._physics_manager.get_state_0())[:, 0]
+        body_com_vel_w = self._root_view.get_link_velocities(self._physics_manager.get_state_0())
+        if body_com_vel_w is not None:
+            self._sim_bind_body_com_vel_w = body_com_vel_w[:, 0]
+        self._sim_bind_body_mass = self._root_view.get_attribute("body_mass", self._physics_manager.get_model())[:, 0]
+        self._sim_bind_body_inv_mass = self._root_view.get_attribute(
+            "body_inv_mass", self._physics_manager.get_model()
+        )[:, 0]
         self._sim_bind_body_inv_inertia = self._root_view.get_attribute(
-            "body_inv_inertia", SimulationManager.get_model()
+            "body_inv_inertia", self._physics_manager.get_model()
         )[:, 0]
         # Newton stores body_inertia as (N, 1, B) mat33f — the [:, 0] removes the padding dim
         # giving (N, B) mat33f. Reinterpret as (N, B, 9) float32 via pointer aliasing.
         # Each mat33f element is 9 contiguous float32 values (36 bytes), so the inner stride is 4.
         # The slice may be non-contiguous in the outer dims, so we preserve those strides.
-        _body_inertia_raw = self._root_view.get_attribute("body_inertia", SimulationManager.get_model())[:, 0]
+        _body_inertia_raw = self._root_view.get_attribute("body_inertia", self._physics_manager.get_model())[:, 0]
         self._sim_bind_body_inertia = wp.array(
             ptr=_body_inertia_raw.ptr,
             dtype=wp.float32,
@@ -1552,57 +1508,59 @@ class ArticulationData(BaseArticulationData):
             device=_body_inertia_raw.device,
             copy=False,
         )
-        self._sim_bind_body_external_wrench = self._root_view.get_attribute("body_f", SimulationManager.get_state_0())[
-            :, 0
-        ]
+        self._sim_bind_body_external_wrench = self._root_view.get_attribute(
+            "body_f", self._physics_manager.get_state_0()
+        )[:, 0]
         try:
             self._sim_bind_body_parent_f = self._root_view.get_attribute(
-                "body_parent_f", SimulationManager.get_state_0()
+                "body_parent_f", self._physics_manager.get_state_0()
             )[:, 0]
         except Exception:
             self._sim_bind_body_parent_f = None
         # -- joint properties
         if self._num_joints > 0:
             self._sim_bind_joint_pos_limits_lower = self._root_view.get_attribute(
-                "joint_limit_lower", SimulationManager.get_model()
+                "joint_limit_lower", self._physics_manager.get_model()
             )[:, 0]
             self._sim_bind_joint_pos_limits_upper = self._root_view.get_attribute(
-                "joint_limit_upper", SimulationManager.get_model()
+                "joint_limit_upper", self._physics_manager.get_model()
             )[:, 0]
             self._sim_bind_joint_stiffness_sim = self._root_view.get_attribute(
-                "joint_target_ke", SimulationManager.get_model()
+                "joint_target_ke", self._physics_manager.get_model()
             )[:, 0]
             self._sim_bind_joint_damping_sim = self._root_view.get_attribute(
-                "joint_target_kd", SimulationManager.get_model()
+                "joint_target_kd", self._physics_manager.get_model()
             )[:, 0]
             self._sim_bind_joint_viscous_friction_coeff = self._root_view.get_attribute(
-                "joint_damping", SimulationManager.get_model()
+                "joint_damping", self._physics_manager.get_model()
             )[:, 0]
             self._sim_bind_joint_armature = self._root_view.get_attribute(
-                "joint_armature", SimulationManager.get_model()
+                "joint_armature", self._physics_manager.get_model()
             )[:, 0]
             self._sim_bind_joint_friction_coeff = self._root_view.get_attribute(
-                "joint_friction", SimulationManager.get_model()
+                "joint_friction", self._physics_manager.get_model()
             )[:, 0]
             self._sim_bind_joint_vel_limits_sim = self._root_view.get_attribute(
-                "joint_velocity_limit", SimulationManager.get_model()
+                "joint_velocity_limit", self._physics_manager.get_model()
             )[:, 0]
             self._sim_bind_joint_effort_limits_sim = self._root_view.get_attribute(
-                "joint_effort_limit", SimulationManager.get_model()
+                "joint_effort_limit", self._physics_manager.get_model()
             )[:, 0]
             # -- joint states
-            self._sim_bind_joint_pos = self._root_view.get_dof_positions(SimulationManager.get_state_0())[:, 0]
-            self._sim_bind_joint_vel = self._root_view.get_dof_velocities(SimulationManager.get_state_0())[:, 0]
+            self._sim_bind_joint_pos = self._root_view.get_dof_positions(self._physics_manager.get_state_0())[:, 0]
+            self._sim_bind_joint_vel = self._root_view.get_dof_velocities(self._physics_manager.get_state_0())[:, 0]
             # -- joint commands (sent to the simulation)
-            self._sim_bind_joint_effort = self._root_view.get_attribute("joint_f", SimulationManager.get_control())[
-                :, 0
-            ]
-            self._sim_bind_joint_act = self._root_view.get_attribute("joint_act", SimulationManager.get_control())[:, 0]
+            self._sim_bind_joint_effort = self._root_view.get_attribute(
+                "joint_f", self._physics_manager._newton.get_control()
+            )[:, 0]
+            self._sim_bind_joint_act = self._root_view.get_attribute(
+                "joint_act", self._physics_manager._newton.get_control()
+            )[:, 0]
             self._sim_bind_joint_position_target = self._root_view.get_attribute(
-                "joint_target_q", SimulationManager.get_control()
+                "joint_target_q", self._physics_manager._newton.get_control()
             )[:, 0]
             self._sim_bind_joint_velocity_target = self._root_view.get_attribute(
-                "joint_target_qd", SimulationManager.get_control()
+                "joint_target_qd", self._physics_manager._newton.get_control()
             )[:, 0]
         else:
             # No joints (e.g., free-floating rigid body) - set bindings to empty arrays
@@ -1643,15 +1601,15 @@ class ArticulationData(BaseArticulationData):
         # assumes all tendons are fixed and only one arti in scene
         if self._root_view.tendon_count > 0:
             self._sim_bind_fixed_tendon_stiffness = self._root_view.get_attribute(
-                "mujoco.tendon_stiffness", SimulationManager.get_model()
+                "mujoco.tendon_stiffness", self._physics_manager.get_model()
             )[:, 0]
             self._sim_bind_fixed_tendon_damping = self._root_view.get_attribute(
                 "mujoco.tendon_damping",
-                SimulationManager.get_model(),
+                self._physics_manager.get_model(),
             )[:, 0]
             self._sim_bind_fixed_tendon_pos_limits = self._root_view.get_attribute(
                 "mujoco.tendon_range",
-                SimulationManager.get_model(),
+                self._physics_manager.get_model(),
             )[:, 0]
         else:
             self._sim_bind_fixed_tendon_stiffness = wp.zeros(
@@ -1689,7 +1647,7 @@ class ArticulationData(BaseArticulationData):
 
         # Initialize history for finite differencing. If the articulation is fixed, the root com velocity is not
         # available, so we use zeros.
-        if self._root_view.get_root_velocities(SimulationManager.get_state_0()) is None:
+        if self._root_view.get_root_velocities(self._physics_manager.get_state_0()) is None:
             logger.warning(
                 "Failed to get root com velocity. If the articulation is fixed, this is expected. "
                 "Setting root com velocity to zeros."
@@ -1701,7 +1659,7 @@ class ArticulationData(BaseArticulationData):
         # still report link velocities); fall back to zeros only when the view genuinely cannot
         # provide them. Zeroing this binding together with the root velocity silently zeroes
         # every body-velocity read for fixed-base robots.
-        if self._root_view.get_link_velocities(SimulationManager.get_state_0()) is None:
+        if self._root_view.get_link_velocities(self._physics_manager.get_state_0()) is None:
             logger.warning("Failed to get body com velocities. Setting body com velocities to zeros.")
             self._sim_bind_body_com_vel_w = wp.zeros(
                 (self._num_instances, self._num_bodies), dtype=wp.spatial_vectorf, device=self.device
@@ -1742,7 +1700,7 @@ class ArticulationData(BaseArticulationData):
         # Initialize history for finite differencing
         if self._num_joints > 0:
             self._previous_joint_vel = wp.clone(
-                self._root_view.get_dof_velocities(SimulationManager.get_state_0())[:, 0]
+                self._root_view.get_dof_velocities(self._physics_manager.get_state_0())[:, 0]
             )
         else:
             self._previous_joint_vel = wp.zeros((self._num_instances, 0), dtype=wp.float32, device=self.device)
@@ -1814,7 +1772,7 @@ class ArticulationData(BaseArticulationData):
         self._joint_vel_limits_user: wp.array | None = None
         self._joint_effort_limits_user: wp.array | None = None
         # -- dynamics quantities for task-space controllers
-        self._create_jacobian_buffers(SimulationManager.get_model())
+        self._create_jacobian_buffers(self._physics_manager.get_model())
         # Empty memory pre-allocations
         self._root_link_lin_vel_b = None
         self._root_link_ang_vel_b = None
@@ -1866,7 +1824,7 @@ class ArticulationData(BaseArticulationData):
         library industry convention (PhysX, Pinocchio, Drake, MuJoCo, RBDL, OCS2, iDynTree).
 
         Args:
-            model: Newton ``Model`` from :meth:`SimulationManager.get_model`. Read for
+            model: Newton ``Model`` from :meth:`self._physics_manager.get_model`. Read for
                 ``articulation_count``, ``max_joints_per_articulation``,
                 ``max_dofs_per_articulation``, ``joint_dof_count``, ``body_count``.
         """

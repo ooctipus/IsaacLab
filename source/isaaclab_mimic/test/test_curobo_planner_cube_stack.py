@@ -3,10 +3,6 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# Copyright (c) 2024-2025, The Isaac Lab Project Developers.
-# All rights reserved.
-#
-# SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
 import random
@@ -30,12 +26,12 @@ import torch
 
 import isaaclab.utils.math as math_utils
 from isaaclab.assets import Articulation, RigidObject
+from isaaclab.cloner import expand_env_regex_ns
 from isaaclab.envs.manager_based_env import ManagerBasedEnv
 from isaaclab.markers import FRAME_MARKER_CFG, VisualizationMarkers
 
 import isaaclab_mimic.envs  # noqa: F401
 from isaaclab_mimic.motion_planners.curobo.curobo_planner import CuroboPlanner
-from isaaclab_mimic.motion_planners.curobo.curobo_planner_cfg import CuroboPlannerCfg
 
 from isaaclab_tasks.utils import parse_env_cfg
 
@@ -95,40 +91,45 @@ def cube_stack_test_env() -> Generator[dict[str, Any], None, None]:
     random.seed(SEED)
     torch.manual_seed(SEED)
 
-    env_cfg = parse_env_cfg("Isaac-Stack-Cube-Franka-IK-Rel-Mimic-v0", num_envs=1)
+    env_cfg = parse_env_cfg("IsaacContrib-Stack-Cube-Franka-IK-Rel-Skillgen", num_envs=1)
+    env_cfg.motion_planner.debug_planner = True
+    env_cfg.motion_planner.retreat_distance = 0.05
+    env_cfg.motion_planner.approach_distance = 0.05
+    env_cfg.motion_planner.time_dilation_factor = 1.0
     for frame in env_cfg.scene.ee_frame.target_frames:
         if frame.name == "end_effector":
             print(f"Setting end effector offset from {frame.offset.pos} to (0.0, 0.0, 0.0) for SkillGen parity")
             frame.offset.pos = (0.0, 0.0, 0.0)
 
     env: ManagerBasedEnv = gym.make(
-        "Isaac-Stack-Cube-Franka-IK-Rel-Mimic-v0",
+        "IsaacContrib-Stack-Cube-Franka-IK-Rel-Skillgen",
         cfg=env_cfg,
         headless=headless,
     ).unwrapped
     env.reset()
 
     robot: Articulation = env.scene["robot"]
-    planner_cfg = CuroboPlannerCfg.franka_stack_cube_config()
-    planner_cfg.visualize_plan = False
-    planner_cfg.visualize_spheres = False
-    planner_cfg.debug_planner = True
-    planner_cfg.retreat_distance = 0.05
-    planner_cfg.approach_distance = 0.05
-    planner_cfg.time_dilation_factor = 1.0
-
-    planner = CuroboPlanner(
-        env=env,
-        robot=robot,
-        config=planner_cfg,
-        env_id=0,
-    )
+    planner_cfg = env.cfg.motion_planner
+    planner = planner_cfg.class_type(planner_cfg, env, 0)
+    assert planner._object_obstacles == {
+        target.scene_entity: target.name for target in planner_cfg.mesh_prim_paths if target.scene_entity is not None
+    }
+    layout = env.sim.get_clone_plan()
+    assert layout is not None
+    env_template = env.scene.cfg.clone_cfg.clone_template
+    for target in planner_cfg.mesh_prim_paths:
+        matches = tuple(
+            match
+            for match in layout.match_geometry_targets(expand_env_regex_ns(target.prim_expr, env_template))
+            if match[0].env_id == planner.env_id
+        )
+        assert len(matches) == 1 and any(geometry.collision for geometry in matches[0][1])
 
     goal_pose_visualizer = None
     if not headless:
         marker_cfg = FRAME_MARKER_CFG.replace(prim_path="/World/Visuals/goal_pose")
         marker_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
-        goal_pose_visualizer = VisualizationMarkers(marker_cfg)
+        goal_pose_visualizer = marker_cfg.class_type(marker_cfg)
 
     yield {
         "env": env,

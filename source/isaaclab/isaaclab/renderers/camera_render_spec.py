@@ -22,16 +22,19 @@ class CameraRenderSpec:
     Args:
         cfg: Camera configuration (data types, resolution, filters, etc.).
         device: Torch device string (e.g. ``"cuda:0"``) used by GPU annotators and Warp.
-        num_instances: Number of tiled camera instances (environments).
-        camera_prim_paths: Absolute USD paths for each environment's camera prim.
-        view_count: Number of camera prims (must match ``len(camera_prim_paths)``).
-        camera_path_relative_to_env_0: Camera prim path with ``/World/envs/env_0/`` prefix
-            stripped; required by OVRTX. Empty string if the first camera is not under env 0.
+        camera_source_prim_paths: Absolute USD paths of the camera prototypes named by the clone
+            plan, in plan row order.
+        camera_prim_paths: Absolute USD paths for each environment's camera prim, in ascending
+            environment order. A heterogeneous scene populates only the environments its clone
+            plan row covers, so the first path is not necessarily in environment 0.
     """
 
     cfg: CameraCfg
     device: str
-    num_instances: int
+    camera_source_prim_paths: tuple[str, ...]
     camera_prim_paths: tuple[str, ...]
-    view_count: int
-    camera_path_relative_to_env_0: str
+
+    @property
+    def num_instances(self) -> int:
+        """Number of tiled camera instances, one per environment the camera is cloned to."""
+        return len(self.camera_prim_paths)

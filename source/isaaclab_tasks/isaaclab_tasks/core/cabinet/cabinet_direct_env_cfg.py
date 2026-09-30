@@ -9,7 +9,6 @@ from dataclasses import MISSING
 
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 from isaaclab.envs import DirectRLEnvCfg
-from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils.configclass import configclass
 
 from isaaclab_tasks.core.cabinet.cabinet_env_cfg import (
@@ -20,10 +19,11 @@ from isaaclab_tasks.core.cabinet.cabinet_env_cfg import (
     CabinetSimCfg,
     EventCfg,
 )
+from isaaclab_tasks.utils.presets import MultiBackendSceneCfg
 
 
 @configclass
-class CabinetDirectSceneCfg(InteractiveSceneCfg):
+class CabinetDirectSceneCfg(MultiBackendSceneCfg):
     """Scene configuration shared by direct-workflow cabinet tasks."""
 
     robot: ArticulationCfg = MISSING

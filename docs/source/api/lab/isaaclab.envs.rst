@@ -26,7 +26,6 @@
     MimicEnvCfg
     SubTaskConfig
     SubTaskConstraintConfig
-    ViewerCfg
 
 Manager Based Environment
 -------------------------
@@ -105,13 +104,6 @@ Mimic Environment
     :inherited-members:
     :show-inheritance:
     :exclude-members: __init__, class_type
-
-Common
-------
-
-.. autoclass:: ViewerCfg
-    :members:
-    :exclude-members: __init__
 
 Additional Public Classes
 -------------------------

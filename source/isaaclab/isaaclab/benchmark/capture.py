@@ -157,6 +157,7 @@ def capture_versions(bm: Any) -> Versions:
         git_commit=dev.get("commit_hash"),
         git_branch=dev.get("branch"),
         git_dirty=dev.get("dirty", False),
+        git_diff_sha256=dev.get("diff_sha256"),
         numpy=md.get("numpy_version"),
         isaaclab_newton=md.get("isaaclab_newton_version"),
         isaaclab_physx=md.get("isaaclab_physx_version"),
@@ -233,9 +234,7 @@ def _backends_from_env_cfg(env_cfg: object) -> tuple[str | None, str | None]:
     physics_cfg = getattr(getattr(env_cfg, "sim", None), "physics", None)
     physics_type = type(physics_cfg)
     physics_descriptor = (
-        "physx"
-        if physics_cfg is None
-        else f"{physics_type.__module__}.{physics_type.__name__} {getattr(physics_cfg, 'class_type', '')}".lower()
+        f"{physics_type.__module__}.{physics_type.__name__} {getattr(physics_cfg, 'class_type', '')}".lower()
     )
     physics = next(
         (

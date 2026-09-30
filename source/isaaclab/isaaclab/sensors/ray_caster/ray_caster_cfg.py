@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Literal
 
 from isaaclab.markers import VisualizationMarkersCfg
 from isaaclab.markers.config import RAY_CASTER_MARKER_CFG
-from isaaclab.sim.spawners.sensors.sensors_cfg import SensorFrameCfg
 from isaaclab.utils.configclass import configclass
 
 from ..sensor_base_cfg import SensorBaseCfg
@@ -36,21 +35,6 @@ class RayCasterCfg(SensorBaseCfg):
         """Quaternion rotation (x, y, z, w) w.r.t. the parent frame. Defaults to (0.0, 0.0, 0.0, 1.0)."""
 
     class_type: type[RayCaster] | str = "{DIR}.ray_caster:RayCaster"
-
-    spawn: SensorFrameCfg | None = SensorFrameCfg()
-    """Spawn configuration for the sensor Xform prim.
-
-    A plain USD Xform is created at :attr:`prim_path` before initialization, matching the
-    pattern used by :class:`~isaaclab.sensors.camera.camera_cfg.CameraCfg` (which spawns a
-    Camera prim). The :attr:`prim_path` can be either:
-
-    - A **new** child path under a parent link (e.g. ``{ENV_REGEX_NS}/Robot/base``).
-    - A **physics body** path (e.g. ``{ENV_REGEX_NS}/Robot/base``). In this case, the sensor
-      will automatically create a child Xform at ``{prim_path}``.
-
-    If ``None``, the prim at :attr:`prim_path` must already exist on the USD stage and must
-    **not** be a physics body.
-    """
 
     mesh_prim_paths: list[str] = MISSING
     """The list of mesh primitive paths to ray cast against.

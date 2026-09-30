@@ -15,6 +15,7 @@ simulation_app = AppLauncher(headless=True).app
 import math
 
 import pytest
+from isaaclab_physx.physics import PhysxCfg
 
 from pxr import UsdGeom, UsdPhysics
 
@@ -74,7 +75,7 @@ def test_apply_drive_revolute_converts_rad_to_deg():
     from isaaclab.sim.schemas import UsdPhysicsDriveCfg, apply_drive
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     prim = _make_revolute_joint(stage)
     assert apply_drive(
@@ -99,7 +100,7 @@ def test_apply_drive_prismatic_writes_linear_unchanged():
     from isaaclab.sim.schemas import UsdPhysicsDriveCfg, apply_drive
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     prim = _make_prismatic_joint(stage)
     assert apply_drive(
@@ -119,7 +120,7 @@ def test_apply_drive_returns_false_on_non_joint():
     from isaaclab.sim.schemas import UsdPhysicsDriveCfg, apply_drive
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     UsdGeom.Xform.Define(stage, "/World/NotAJoint")
     assert apply_drive(UsdPhysicsDriveCfg(stiffness=1.0), "/World/NotAJoint", stage) is False
@@ -134,7 +135,7 @@ def test_physx_joint_fragment_converts_max_velocity_by_joint_type():
     from isaaclab_physx.sim.schemas import PhysxJointCfg, apply_physx_joint
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     # angular (revolute) joint: rad/s -> deg/s conversion
     rev = _make_revolute_joint(stage)
@@ -166,7 +167,7 @@ def test_mujoco_joint_fragment_writes_mjc_namespace():
     from isaaclab.sim.schemas import apply_namespaced
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     prim = _make_revolute_joint(stage)
     apply_namespaced(MujocoJointCfg(actuatorgravcomp=True), prim.GetPath().pathString, stage)
@@ -181,7 +182,7 @@ def test_mujoco_joint_applier_does_not_write_actuatorgravcomp_when_none():
     from isaaclab_newton.sim.schemas import MujocoJointCfg, apply_mujoco_joint
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     prim = _make_revolute_joint(stage)
     apply_mujoco_joint(MujocoJointCfg(), prim.GetPath().pathString, stage)
@@ -196,7 +197,7 @@ def test_mujoco_joint_actuatorgravcomp_enables_child_body_gravcomp():
     from isaaclab.sim.schemas import apply_joint_drive_properties
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     prim = _make_revolute_joint(stage)
     UsdPhysics.RevoluteJoint(prim).CreateBody1Rel().SetTargets(["/World/Articulation/body1"])
@@ -213,7 +214,7 @@ def test_mujoco_joint_without_actuatorgravcomp_leaves_body_gravcomp_untouched():
     from isaaclab.sim.schemas import apply_joint_drive_properties
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     prim = _make_revolute_joint(stage)
     UsdPhysics.RevoluteJoint(prim).CreateBody1Rel().SetTargets(["/World/Articulation/body1"])
@@ -229,7 +230,7 @@ def test_mujoco_joint_actuatorgravcomp_enables_gravcomp_on_every_joint_body():
     from isaaclab.sim.schemas import apply_joint_drive_properties
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     UsdGeom.Xform.Define(stage, "/World/Articulation")
     for link in ("link_a", "link_b"):
@@ -252,7 +253,7 @@ def test_mujoco_joint_actuatorgravcomp_preserves_authored_body_gravcomp():
     from isaaclab.sim.utils import safe_set_attribute_on_usd_prim
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     prim = _make_revolute_joint(stage)
     UsdPhysics.RevoluteJoint(prim).CreateBody1Rel().SetTargets(["/World/Articulation/body1"])
@@ -274,7 +275,7 @@ def test_apply_joint_drive_properties_composes_namespaces():
     from isaaclab.sim.schemas import UsdPhysicsDriveCfg, apply_joint_drive_properties
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     prim = _make_revolute_joint(stage)
     apply_joint_drive_properties(
@@ -300,7 +301,7 @@ def test_apply_joint_drive_properties_without_drive_does_not_apply_drive_api():
     from isaaclab.sim.schemas import apply_joint_drive_properties
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     prim = _make_revolute_joint(stage)
     apply_joint_drive_properties("/World/Articulation(/.*)?", [PhysxJointCfg(max_joint_velocity=5.0)], stage)
@@ -321,7 +322,7 @@ def test_apply_joint_drive_properties_skips_tendon_child_joint():
     from isaaclab.sim.schemas import UsdPhysicsDriveCfg, apply_joint_drive_properties
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     joint = _make_revolute_joint(stage)
     PhysxSchema.PhysxTendonAxisAPI.Apply(joint, "axis0")  # tendon child: axis API, no root API
@@ -354,7 +355,7 @@ def test_apply_joint_drive_properties_skips_joint_via_registered_predicate(monke
     _backend_hooks.register_joint_drive_skip_predicate(lambda prim: True)  # exclude every joint
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     joint = _make_revolute_joint(stage)
     apply_joint_drive_properties("/World/Articulation(/.*)?", [UsdPhysicsDriveCfg(stiffness=10.0)], stage)
@@ -368,7 +369,7 @@ def test_apply_joint_drive_properties_authors_when_no_skip_predicate(monkeypatch
     monkeypatch.setattr(_backend_hooks, "_JOINT_DRIVE_SKIP_PREDICATES", [])
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     joint = _make_revolute_joint(stage)
     apply_joint_drive_properties("/World/Articulation(/.*)?", [UsdPhysicsDriveCfg(stiffness=10.0)], stage)
@@ -379,7 +380,7 @@ def test_apply_joint_drive_properties_ensure_drives_exist_seeds_stiffness():
     from isaaclab.sim.schemas import UsdPhysicsDriveCfg, apply_joint_drive_properties
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     prim = _make_revolute_joint(stage)
     # neither stiffness nor damping authored -> ensure_drives_exist seeds a minimal stiffness

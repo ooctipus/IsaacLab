@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import logging
-import warnings
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -82,22 +81,13 @@ class SurfaceGripper(AssetBase):
         Args:
             cfg: A configuration instance.
         """
-        # copy the configuration
-        self._cfg = cfg.copy()
-
         # checks for Isaac Sim v5.0 to ensure that the surface gripper is supported
         if has_kit() and get_isaac_sim_version().major < 5:
             raise NotImplementedError(
                 "SurfaceGrippers are only supported by IsaacSim 5.0 and newer. Current version is"
                 f" '{get_isaac_sim_version()}'. Please update to IsaacSim 5.0 or newer to use this feature."
             )
-
-        # flag for whether the sensor is initialized
-        self._is_initialized = False
-        self._debug_vis_handle = None
-
-        # register various callback functions
-        self._register_callbacks()
+        super().__init__(cfg)
 
     """
     Properties
@@ -451,29 +441,16 @@ class SurfaceGripper(AssetBase):
         sim_utils.enable_extension("isaacsim.robot.surface_gripper")
         from isaacsim.robot.surface_gripper import GripperView
 
-        def is_surface_gripper(prim) -> bool:
-            return prim.GetTypeName() == "IsaacSurfaceGripper"
-
-        resolve_kwargs = {"raise_if_no_matches": False, "traverse_instance_prims": False}
-        gripper_matches = sim_utils.resolve_matching_prims_from_source(
-            self._cfg.prim_path, is_surface_gripper, **resolve_kwargs
-        )
-        if len(gripper_matches) != 1:
-            matched = [prim.GetPath().pathString for prim, _ in gripper_matches]
-            raise RuntimeError(
-                f"Expected exactly one IsaacSurfaceGripper prim under '{self._cfg.prim_path}', "
-                f"found {len(gripper_matches)}: {matched}."
-            )
-        _, self._prim_expr = gripper_matches[0]
-        env_prim_path_expr = "/".join(sim_utils.split_path_expr(self._prim_expr)[:-1])
-        self._parent_prims = sim_utils.find_matching_prims(env_prim_path_expr)
-        self._num_envs = len(self._parent_prims)
+        layout = sim_utils.SimulationContext.instance().get_clone_plan()
+        grippers = layout.match_surface_grippers(self.cfg.prim_path)
+        self._prim_expr = grippers[0].view_path
+        self._num_envs = len(grippers)
 
         # Create buffers
         self._create_buffers()
 
         # Process the configuration
-        self._process_cfg()
+        self._process_cfg(grippers)
 
         # Initialize gripper view and set properties.
         # ``GripperView`` (XformPrim.resolve_paths) matches one regex per path segment, so a
@@ -490,7 +467,7 @@ class SurfaceGripper(AssetBase):
         )
 
         # log information about the surface gripper
-        logger.info(f"Surface gripper initialized at: {self._cfg.prim_path} with root '{self._prim_expr}'.")
+        logger.info(f"Surface gripper initialized at: {self.cfg.prim_path} with root '{self._prim_expr}'.")
         logger.info(f"Number of instances: {self._num_envs}")
 
         # Reset grippers
@@ -507,46 +484,20 @@ class SurfaceGripper(AssetBase):
         self._shear_force_limit = wp.zeros(self._num_envs, dtype=wp.float32, device=self._device)
         self._retry_interval = wp.zeros(self._num_envs, dtype=wp.float32, device=self._device)
 
-    def _process_cfg(self) -> None:
+    def _process_cfg(self, grippers) -> None:
         """Process the configuration for the gripper properties."""
-        # Get one of the grippers as defined in the default stage
-        gripper_prim = self._parent_prims[0]
-        try:
-            max_grip_distance = gripper_prim.GetAttribute("isaac:maxGripDistance").Get()
-        except Exception as e:
-            warnings.warn(
-                f"Failed to retrieve max_grip_distance from stage, defaulting to user provided cfg. Exception: {e}"
-            )
-            max_grip_distance = None
-
-        try:
-            coaxial_force_limit = gripper_prim.GetAttribute("isaac:coaxialForceLimit").Get()
-        except Exception as e:
-            warnings.warn(
-                f"Failed to retrieve coaxial_force_limit from stage, defaulting to user provided cfg. Exception: {e}"
-            )
-            coaxial_force_limit = None
-
-        try:
-            shear_force_limit = gripper_prim.GetAttribute("isaac:shearForceLimit").Get()
-        except Exception as e:
-            warnings.warn(
-                f"Failed to retrieve shear_force_limit from stage, defaulting to user provided cfg. Exception: {e}"
-            )
-            shear_force_limit = None
-
-        try:
-            retry_interval = gripper_prim.GetAttribute("isaac:retryInterval").Get()
-        except Exception as e:
-            warnings.warn(
-                f"Failed to retrieve retry_interval from stage defaulting to user provided cfg. Exception: {e}"
-            )
-            retry_interval = None
-
-        self._max_grip_distance = self.parse_gripper_parameter(self._cfg.max_grip_distance, max_grip_distance)
-        self._coaxial_force_limit = self.parse_gripper_parameter(self._cfg.coaxial_force_limit, coaxial_force_limit)
-        self._shear_force_limit = self.parse_gripper_parameter(self._cfg.shear_force_limit, shear_force_limit)
-        self._retry_interval = self.parse_gripper_parameter(self._cfg.retry_interval, retry_interval)
+        self._max_grip_distance = self.parse_gripper_parameter(
+            self.cfg.max_grip_distance, tuple(gripper.max_grip_distance for gripper in grippers)
+        )
+        self._coaxial_force_limit = self.parse_gripper_parameter(
+            self.cfg.coaxial_force_limit, tuple(gripper.coaxial_force_limit for gripper in grippers)
+        )
+        self._shear_force_limit = self.parse_gripper_parameter(
+            self.cfg.shear_force_limit, tuple(gripper.shear_force_limit for gripper in grippers)
+        )
+        self._retry_interval = self.parse_gripper_parameter(
+            self.cfg.retry_interval, tuple(gripper.retry_interval for gripper in grippers)
+        )
 
     """
     Helper functions.
@@ -607,7 +558,9 @@ class SurfaceGripper(AssetBase):
             if isinstance(default_value, (float, int)):
                 param[:] = float(default_value)
             elif isinstance(default_value, tuple):
-                assert len(default_value) == ndim, f"Expected {ndim} values, got {len(default_value)}"
+                expected = self._num_envs if ndim == 0 else ndim
+                if len(default_value) != expected or any(value is None for value in default_value):
+                    raise ValueError(f"Expected {expected} authored values, got {default_value!r}.")
                 param[:] = torch.tensor(default_value, dtype=torch.float, device=self._device)
             else:
                 raise TypeError(

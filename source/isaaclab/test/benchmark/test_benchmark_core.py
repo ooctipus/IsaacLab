@@ -137,7 +137,7 @@ def _minimal_startup_bundle():
                 ],
             )
         },
-        config=StartupConfig(top_n=1, whitelist=None),
+        config=StartupConfig(measurement_mode="wall_time", top_n=None, whitelist=None),
     )
 
 
@@ -303,11 +303,17 @@ def test_formatter_selection_and_output_filenames(tmp_path):
 
 
 def test_attached_bundles_are_projected_to_flat_formatters(tmp_path):
+    from isaaclab.benchmark.schema import StartupConfig
+
+    profiled_startup = replace(
+        _minimal_startup_bundle(), config=StartupConfig(measurement_mode="cprofile", top_n=1, whitelist=None)
+    )
     cases = [
         (_minimal_runtime_bundle(), "runtime", "Mean Total FPS", 100.0),
         (_minimal_training_bundle(), "train", "Last Reward", 3.0),
         (_minimal_play_bundle(), "play", "Mean Reward", 4.0),
         (_minimal_startup_bundle(), "python_imports", "Wall Clock Time", 0.25),
+        (profiled_startup, "python_imports", "Profiled Wall Clock Time", 0.25),
     ]
 
     for index, (bundle, phase, metric, expected) in enumerate(cases):

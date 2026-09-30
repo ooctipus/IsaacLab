@@ -18,10 +18,11 @@ from isaaclab.utils.buffers import reset_timestamps
 from isaaclab.utils.warp import ProxyArray
 
 from isaaclab_newton.assets import kernels as shared_kernels
-from isaaclab_newton.physics import NewtonManager as SimulationManager
 
 if TYPE_CHECKING:
     from newton.selection import ArticulationView
+
+    from isaaclab_newton.physics import NewtonManager
 
 # import logger
 logger = logging.getLogger(__name__)
@@ -51,7 +52,7 @@ class RigidObjectCollectionData(BaseRigidObjectCollectionData):
     __backend_name__: str = "newton"
     """The name of the backend for the rigid object collection data."""
 
-    def __init__(self, root_view: ArticulationView, num_bodies: int, device: str):
+    def __init__(self, root_view: ArticulationView, num_bodies: int, device: str, physics_manager: NewtonManager):
         """Initializes the rigid object collection data.
 
         Args:
@@ -61,6 +62,7 @@ class RigidObjectCollectionData(BaseRigidObjectCollectionData):
             device: The device used for processing.
         """
         super().__init__(root_view, num_bodies, device)
+        self._physics_manager = physics_manager
         self.num_bodies = num_bodies
         # Store the view as a weak reference to avoid circular references
         self._root_view: ArticulationView = weakref.proxy(root_view)
@@ -69,13 +71,12 @@ class RigidObjectCollectionData(BaseRigidObjectCollectionData):
         # Set initial time stamp
         self._sim_timestamp = 0.0
         self._is_primed = False
-        self._fk_timestamp = 0.0
 
         # Bind ``GRAVITY_VEC_W`` to Newton's per-env ``model.gravity`` (m/s^2); the
         # projected_gravity_b kernel broadcasts each env's vector across its bodies.
         # The final entry is reserved for Newton's global world and is not an
         # Isaac Lab environment.
-        model = SimulationManager.get_model()
+        model = self._physics_manager.get_model()
         self.GRAVITY_VEC_W = ProxyArray(model.gravity[: model.world_count])
         forward_vec = np.full((self.num_instances, self.num_bodies, 3), (1.0, 0.0, 0.0), dtype=np.float32)
         self.FORWARD_VEC_B = ProxyArray(wp.array(forward_vec, dtype=wp.vec3f, device=self.device))
@@ -113,26 +114,9 @@ class RigidObjectCollectionData(BaseRigidObjectCollectionData):
         """
         # update the simulation timestamp
         self._sim_timestamp += dt
-        # FK is current after a sim step — keep fk_timestamp in sync unless it was explicitly invalidated
-        if self._fk_timestamp >= 0.0:
-            self._fk_timestamp = self._sim_timestamp
         # Trigger an update of the body com acceleration buffer at a higher frequency
         # since we do finite differencing.
         self.body_com_acc_w
-
-    def _ensure_fk_fresh(self) -> None:
-        """Run forward kinematics if the root state has changed since the last FK update.
-
-        Newton's ``state.body_q`` (per-body world transforms) is updated by ``eval_fk``,
-        invoked here through ``SimulationManager.forward()``. After a manual root write
-        that bypassed the sim step (``write_*_to_sim_*``), ``_fk_timestamp`` is set to
-        ``-1.0`` to force a refresh on the next read of any property that depends on
-        body poses (``body_link_pose_w``, ``body_com_pose_w`` and the composite body
-        state buffers).
-        """
-        if self._fk_timestamp < self._sim_timestamp:
-            SimulationManager.forward()
-            self._fk_timestamp = self._sim_timestamp
 
     def _reset_pose(
         self,
@@ -167,8 +151,7 @@ class RigidObjectCollectionData(BaseRigidObjectCollectionData):
                 self._body_com_state_w,
             ]
         )
-        self._fk_timestamp = -1.0
-        SimulationManager.invalidate_fk(
+        self._physics_manager.invalidate_fk(
             env_mask=env_mask, env_ids=env_ids, articulation_ids=self._root_view.articulation_ids
         )
 
@@ -202,8 +185,7 @@ class RigidObjectCollectionData(BaseRigidObjectCollectionData):
                 self._body_com_state_w,
             ]
         )
-        self._fk_timestamp = -1.0
-        SimulationManager.invalidate_fk(
+        self._physics_manager.invalidate_fk(
             env_mask=env_mask, env_ids=env_ids, articulation_ids=self._root_view.articulation_ids
         )
 
@@ -296,7 +278,6 @@ class RigidObjectCollectionData(BaseRigidObjectCollectionData):
         This quantity is the pose of the actor frame of the rigid body relative to the world.
         The orientation is provided in (x, y, z, w) format.
         """
-        self._ensure_fk_fresh()
         return self._body_link_pose_w_ta
 
     @property
@@ -361,7 +342,6 @@ class RigidObjectCollectionData(BaseRigidObjectCollectionData):
         This quantity contains the linear and angular velocities of the root rigid body's center of mass frame
         relative to the world.
         """
-        self._ensure_fk_fresh()
         return self._body_com_vel_w_ta
 
     @property
@@ -379,7 +359,7 @@ class RigidObjectCollectionData(BaseRigidObjectCollectionData):
                 device=self.device,
                 inputs=[
                     self.body_com_vel_w.warp,
-                    SimulationManager.get_dt(),
+                    self._physics_manager.get_physics_dt(),
                     self._previous_body_com_vel,
                 ],
                 outputs=[
@@ -718,8 +698,8 @@ class RigidObjectCollectionData(BaseRigidObjectCollectionData):
         # A full reset replaces simulation arrays.
         self._read_launch_cache.clear()
 
-        state_0 = SimulationManager.get_state_0()
-        model = SimulationManager.get_model()
+        state_0 = self._physics_manager.get_state_0()
+        model = self._physics_manager.get_model()
 
         # Root transforms/velocities are (num_envs, num_bodies) — direct 2D bindings
         self._sim_bind_body_link_pose_w = self._root_view.get_root_transforms(state_0)

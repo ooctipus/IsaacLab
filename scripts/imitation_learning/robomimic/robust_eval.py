@@ -21,7 +21,6 @@ Args:
     output_vis_file: File path to export recorded episodes.
     norm_factor_min: If provided, minimum value of the action space normalization factor.
     norm_factor_max: If provided, maximum value of the action space normalization factor.
-    disable_fabric: Whether to disable fabric and use USD I/O operations.
 """
 
 """Launch Isaac Sim Simulator first."""
@@ -32,9 +31,6 @@ from isaaclab.app import AppLauncher
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Evaluate robomimic policy for Isaac Lab environment.")
-parser.add_argument(
-    "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
-)
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument("--input_dir", type=str, default=None, help="Directory containing models to evaluate.")
 parser.add_argument(

@@ -9,7 +9,6 @@ import torch
 import carb
 
 import isaaclab.sim as sim_utils
-from isaaclab import cloner
 from isaaclab.envs import DirectRLEnv
 from isaaclab.utils import math as torch_utils
 
@@ -30,7 +29,7 @@ class FactoryEnv(DirectRLEnv):
 
         super().__init__(cfg, render_mode, **kwargs)
 
-        factory_utils.set_body_inertias(self._robot)
+        factory_utils.set_body_inertias(self.scene["robot"])
         self._init_tensors()
         self._set_default_dynamics_parameters()
 
@@ -48,14 +47,16 @@ class FactoryEnv(DirectRLEnv):
         )
 
         # Set masses and frictions.
-        factory_utils.set_friction(self._held_asset, self.cfg_task.held_asset_cfg.friction, self.scene.num_envs)
-        factory_utils.set_friction(self._fixed_asset, self.cfg_task.fixed_asset_cfg.friction, self.scene.num_envs)
-        factory_utils.set_friction(self._robot, self.cfg_task.robot_cfg.friction, self.scene.num_envs)
+        factory_utils.set_friction(self.scene["held_asset"], self.cfg_task.held_asset_cfg.friction, self.scene.num_envs)
+        factory_utils.set_friction(
+            self.scene["fixed_asset"], self.cfg_task.fixed_asset_cfg.friction, self.scene.num_envs
+        )
+        factory_utils.set_friction(self.scene["robot"], self.cfg_task.robot_cfg.friction, self.scene.num_envs)
 
     def _init_tensors(self):
         """Initialize tensors once."""
         # Control targets.
-        self.ctrl_target_joint_pos = torch.zeros((self.num_envs, self._robot.num_joints), device=self.device)
+        self.ctrl_target_joint_pos = torch.zeros((self.num_envs, self.scene["robot"].num_joints), device=self.device)
         self.ema_factor = self.cfg.ctrl.ema_factor
         self.dead_zone_thresholds = None
 
@@ -64,9 +65,9 @@ class FactoryEnv(DirectRLEnv):
         self.init_fixed_pos_obs_noise = torch.zeros((self.num_envs, 3), device=self.device)
 
         # Computer body indices.
-        self.left_finger_body_idx = self._robot.body_names.index("panda_leftfinger")
-        self.right_finger_body_idx = self._robot.body_names.index("panda_rightfinger")
-        self.fingertip_body_idx = self._robot.body_names.index("panda_fingertip_centered")
+        self.left_finger_body_idx = self.scene["robot"].body_names.index("panda_leftfinger")
+        self.right_finger_body_idx = self.scene["robot"].body_names.index("panda_rightfinger")
+        self.fingertip_body_idx = self.scene["robot"].body_names.index("panda_fingertip_centered")
 
         # Tensors for finite-differencing.
         self.last_update_timestamp = 0.0  # Note: This is for finite differencing body velocities.
@@ -79,58 +80,30 @@ class FactoryEnv(DirectRLEnv):
         self.ep_succeeded = torch.zeros((self.num_envs,), dtype=torch.long, device=self.device)
         self.ep_success_times = torch.zeros((self.num_envs,), dtype=torch.long, device=self.device)
 
-    def _setup_scene(self):
-        asset_cfgs = self.cfg.ground, self.cfg.table, self.cfg.light, self.cfg.robot
-        asset_cfgs += self.cfg_task.fixed_asset, self.cfg_task.held_asset
-        if self.cfg_task.name == "gear_mesh":
-            asset_cfgs += self.cfg_task.small_gear_cfg, self.cfg_task.large_gear_cfg
-        plan = cloner.clone_plan_from_env_0(
-            self.cfg.scene.clone_cfg, asset_cfgs, self.cfg.scene.num_envs, self.cfg.scene.env_spacing
-        )
-        for cfg in (self.cfg.ground, self.cfg.table, self.cfg.light):
-            cfg.spawn.func(cfg.spawn.spawn_path, cfg.spawn, cfg.init_state.pos, cfg.init_state.rot)
-        self._robot = self.cfg.robot.class_type(self.cfg.robot)
-        self._fixed_asset = self.cfg_task.fixed_asset.class_type(self.cfg_task.fixed_asset)
-        self._held_asset = self.cfg_task.held_asset.class_type(self.cfg_task.held_asset)
-        if self.cfg_task.name == "gear_mesh":
-            self._small_gear_asset = self.cfg_task.small_gear_cfg.class_type(self.cfg_task.small_gear_cfg)
-            self._large_gear_asset = self.cfg_task.large_gear_cfg.class_type(self.cfg_task.large_gear_cfg)
-
-        self.scene.articulations["robot"] = self._robot
-        self.scene.articulations["fixed_asset"] = self._fixed_asset
-        self.scene.articulations["held_asset"] = self._held_asset
-        if self.cfg_task.name == "gear_mesh":
-            self.scene.articulations["small_gear"] = self._small_gear_asset
-            self.scene.articulations["large_gear"] = self._large_gear_asset
-        cloner.replicate(plan, replicate_physics=self.cfg.scene.replicate_physics)
-
-        if "physx" in self.scene.physics_backend:
-            self.scene.filter_collisions()
-
     def _compute_intermediate_values(self, dt):
         """Get values computed from raw tensors. This includes adding noise."""
         # TODO: A lot of these can probably only be set once?
-        self.fixed_pos = self._fixed_asset.data.root_pos_w.torch - self.scene.env_origins
-        self.fixed_quat = self._fixed_asset.data.root_quat_w.torch
+        self.fixed_pos = self.scene["fixed_asset"].data.root_pos_w.torch - self.scene.env_origins
+        self.fixed_quat = self.scene["fixed_asset"].data.root_quat_w.torch
 
-        self.held_pos = self._held_asset.data.root_pos_w.torch - self.scene.env_origins
-        self.held_quat = self._held_asset.data.root_quat_w.torch
+        self.held_pos = self.scene["held_asset"].data.root_pos_w.torch - self.scene.env_origins
+        self.held_quat = self.scene["held_asset"].data.root_quat_w.torch
 
         self.fingertip_midpoint_pos = (
-            self._robot.data.body_pos_w.torch[:, self.fingertip_body_idx] - self.scene.env_origins
+            self.scene["robot"].data.body_pos_w.torch[:, self.fingertip_body_idx] - self.scene.env_origins
         )
-        self.fingertip_midpoint_quat = self._robot.data.body_quat_w.torch[:, self.fingertip_body_idx]
-        self.fingertip_midpoint_linvel = self._robot.data.body_lin_vel_w.torch[:, self.fingertip_body_idx]
-        self.fingertip_midpoint_angvel = self._robot.data.body_ang_vel_w.torch[:, self.fingertip_body_idx]
+        self.fingertip_midpoint_quat = self.scene["robot"].data.body_quat_w.torch[:, self.fingertip_body_idx]
+        self.fingertip_midpoint_linvel = self.scene["robot"].data.body_lin_vel_w.torch[:, self.fingertip_body_idx]
+        self.fingertip_midpoint_angvel = self.scene["robot"].data.body_ang_vel_w.torch[:, self.fingertip_body_idx]
 
-        jacobians = self._robot.data.body_link_jacobian_w.torch
+        jacobians = self.scene["robot"].data.body_link_jacobian_w.torch
 
         self.left_finger_jacobian = jacobians[:, self.left_finger_body_idx - 1, 0:6, 0:7]
         self.right_finger_jacobian = jacobians[:, self.right_finger_body_idx - 1, 0:6, 0:7]
         self.fingertip_midpoint_jacobian = (self.left_finger_jacobian + self.right_finger_jacobian) * 0.5
-        self.arm_mass_matrix = self._robot.data.mass_matrix.torch[:, 0:7, 0:7]
-        self.joint_pos = self._robot.data.joint_pos.torch.clone()
-        self.joint_vel = self._robot.data.joint_vel.torch.clone()
+        self.arm_mass_matrix = self.scene["robot"].data.mass_matrix.torch[:, 0:7, 0:7]
+        self.joint_pos = self.scene["robot"].data.joint_pos.torch.clone()
+        self.joint_vel = self.scene["robot"].data.joint_vel.torch.clone()
 
         # Finite-differencing results in more reliable velocity estimates.
         self.ee_linvel_fd = (self.fingertip_midpoint_pos - self.prev_fingertip_pos) / dt
@@ -149,7 +122,7 @@ class FactoryEnv(DirectRLEnv):
         self.joint_vel_fd = joint_diff / dt
         self.prev_joint_pos = self.joint_pos[:, 0:7].clone()
 
-        self.last_update_timestamp = self._robot._data._sim_timestamp
+        self.last_update_timestamp = self.scene["robot"]._data._sim_timestamp
 
     def _get_factory_obs_state_dict(self):
         """Populate dictionaries for the policy and critic."""
@@ -248,7 +221,7 @@ class FactoryEnv(DirectRLEnv):
         """Apply actions for policy as delta targets from current position."""
         # Note: We use finite-differenced velocities for control and observations.
         # Check if we need to re-compute velocities within the decimation loop.
-        if self.last_update_timestamp < self._robot._data._sim_timestamp:
+        if self.last_update_timestamp < self.scene["robot"]._data._sim_timestamp:
             self._compute_intermediate_values(dt=self.physics_dt)
 
         # Interpret actions as target pos displacements and set pos target
@@ -321,8 +294,8 @@ class FactoryEnv(DirectRLEnv):
         self.ctrl_target_joint_pos[:, 7:9] = ctrl_target_gripper_dof_pos
         self.joint_torque[:, 7:9] = 0.0
 
-        self._robot.set_joint_position_target_index(target=self.ctrl_target_joint_pos)
-        self._robot.set_joint_effort_target_index(target=self.joint_torque)
+        self.scene["robot"].set_joint_position_target_index(target=self.ctrl_target_joint_pos)
+        self.scene["robot"].set_joint_effort_target_index(target=self.joint_torque)
 
     def _get_dones(self):
         """Check which environments are terminated.
@@ -493,21 +466,21 @@ class FactoryEnv(DirectRLEnv):
 
     def _set_assets_to_default_pose(self, env_ids):
         """Move assets to default pose before randomization."""
-        held_pose = self._held_asset.data.default_root_pose.torch.clone()[env_ids]
-        held_vel = self._held_asset.data.default_root_vel.torch.clone()[env_ids]
+        held_pose = self.scene["held_asset"].data.default_root_pose.torch.clone()[env_ids]
+        held_vel = self.scene["held_asset"].data.default_root_vel.torch.clone()[env_ids]
         held_pose[:, 0:3] += self.scene.env_origins[env_ids]
         held_vel[:] = 0.0
-        self._held_asset.write_root_pose_to_sim_index(root_pose=held_pose, env_ids=env_ids)
-        self._held_asset.write_root_velocity_to_sim_index(root_velocity=held_vel, env_ids=env_ids)
-        self._held_asset.reset()
+        self.scene["held_asset"].write_root_pose_to_sim_index(root_pose=held_pose, env_ids=env_ids)
+        self.scene["held_asset"].write_root_velocity_to_sim_index(root_velocity=held_vel, env_ids=env_ids)
+        self.scene["held_asset"].reset()
 
-        fixed_pose = self._fixed_asset.data.default_root_pose.torch.clone()[env_ids]
-        fixed_vel = self._fixed_asset.data.default_root_vel.torch.clone()[env_ids]
+        fixed_pose = self.scene["fixed_asset"].data.default_root_pose.torch.clone()[env_ids]
+        fixed_vel = self.scene["fixed_asset"].data.default_root_vel.torch.clone()[env_ids]
         fixed_pose[:, 0:3] += self.scene.env_origins[env_ids]
         fixed_vel[:] = 0.0
-        self._fixed_asset.write_root_pose_to_sim_index(root_pose=fixed_pose, env_ids=env_ids)
-        self._fixed_asset.write_root_velocity_to_sim_index(root_velocity=fixed_vel, env_ids=env_ids)
-        self._fixed_asset.reset()
+        self.scene["fixed_asset"].write_root_pose_to_sim_index(root_pose=fixed_pose, env_ids=env_ids)
+        self.scene["fixed_asset"].write_root_velocity_to_sim_index(root_velocity=fixed_vel, env_ids=env_ids)
+        self.scene["fixed_asset"].reset()
 
     def set_pos_inverse_kinematics(
         self, ctrl_target_fingertip_midpoint_pos, ctrl_target_fingertip_midpoint_quat, env_ids
@@ -539,9 +512,9 @@ class FactoryEnv(DirectRLEnv):
 
             self.ctrl_target_joint_pos[env_ids, 0:7] = self.joint_pos[env_ids, 0:7]
             # Update dof state.
-            self._robot.write_joint_position_to_sim_index(position=self.joint_pos)
-            self._robot.write_joint_velocity_to_sim_index(velocity=self.joint_vel)
-            self._robot.set_joint_position_target_index(target=self.ctrl_target_joint_pos)
+            self.scene["robot"].write_joint_position_to_sim_index(position=self.joint_pos)
+            self.scene["robot"].write_joint_velocity_to_sim_index(velocity=self.joint_vel)
+            self.scene["robot"].set_joint_position_target_index(target=self.ctrl_target_joint_pos)
 
             # Simulate and update tensors.
             self.step_sim_no_action()
@@ -586,17 +559,17 @@ class FactoryEnv(DirectRLEnv):
     def _set_franka_to_default_pose(self, joints, env_ids):
         """Return Franka to its default joint position."""
         gripper_width = self.cfg_task.held_asset_cfg.diameter / 2 * 1.25
-        joint_pos = self._robot.data.default_joint_pos.torch[env_ids]
+        joint_pos = self.scene["robot"].data.default_joint_pos.torch[env_ids]
         joint_pos[:, 7:] = gripper_width  # MIMIC
         joint_pos[:, :7] = torch.tensor(joints, device=self.device)[None, :]
         joint_vel = torch.zeros_like(joint_pos)
         joint_effort = torch.zeros_like(joint_pos)
         self.ctrl_target_joint_pos[env_ids, :] = joint_pos
-        self._robot.set_joint_position_target_index(target=self.ctrl_target_joint_pos[env_ids], env_ids=env_ids)
-        self._robot.write_joint_position_to_sim_index(position=joint_pos, env_ids=env_ids)
-        self._robot.write_joint_velocity_to_sim_index(velocity=joint_vel, env_ids=env_ids)
-        self._robot.reset()
-        self._robot.set_joint_effort_target_index(target=joint_effort, env_ids=env_ids)
+        self.scene["robot"].set_joint_position_target_index(target=self.ctrl_target_joint_pos[env_ids], env_ids=env_ids)
+        self.scene["robot"].write_joint_position_to_sim_index(position=joint_pos, env_ids=env_ids)
+        self.scene["robot"].write_joint_velocity_to_sim_index(velocity=joint_vel, env_ids=env_ids)
+        self.scene["robot"].reset()
+        self.scene["robot"].set_joint_effort_target_index(target=joint_effort, env_ids=env_ids)
 
         self.step_sim_no_action()
 
@@ -618,8 +591,8 @@ class FactoryEnv(DirectRLEnv):
         physics_sim_view.set_gravity(carb.Float3(0.0, 0.0, 0.0))
 
         # (1.) Randomize fixed asset pose.
-        fixed_pose = self._fixed_asset.data.default_root_pose.torch.clone()[env_ids]
-        fixed_vel = self._fixed_asset.data.default_root_vel.torch.clone()[env_ids]
+        fixed_pose = self.scene["fixed_asset"].data.default_root_pose.torch.clone()[env_ids]
+        fixed_vel = self.scene["fixed_asset"].data.default_root_vel.torch.clone()[env_ids]
         # (1.a.) Position
         rand_sample = torch.rand((len(env_ids), 3), dtype=torch.float32, device=self.device)
         fixed_pos_init_rand = 2 * (rand_sample - 0.5)  # [-1, 1]
@@ -641,9 +614,9 @@ class FactoryEnv(DirectRLEnv):
         # (1.c.) Velocity
         fixed_vel[:] = 0.0  # vel
         # (1.d.) Update values.
-        self._fixed_asset.write_root_pose_to_sim_index(root_pose=fixed_pose, env_ids=env_ids)
-        self._fixed_asset.write_root_velocity_to_sim_index(root_velocity=fixed_vel, env_ids=env_ids)
-        self._fixed_asset.reset()
+        self.scene["fixed_asset"].write_root_pose_to_sim_index(root_pose=fixed_pose, env_ids=env_ids)
+        self.scene["fixed_asset"].write_root_velocity_to_sim_index(root_velocity=fixed_vel, env_ids=env_ids)
+        self.scene["fixed_asset"].reset()
 
         # (1.e.) Noisy position observation.
         fixed_asset_pos_noise = torch.randn((len(env_ids), 3), dtype=torch.float32, device=self.device)
@@ -726,21 +699,21 @@ class FactoryEnv(DirectRLEnv):
 
         # Add flanking gears after servo (so arm doesn't move them).
         if self.cfg_task.name == "gear_mesh" and self.cfg_task.add_flanking_gears:
-            small_gear_pose = self._small_gear_asset.data.default_root_pose.torch.clone()[env_ids]
-            small_gear_vel = self._small_gear_asset.data.default_root_vel.torch.clone()[env_ids]
+            small_gear_pose = self.scene["small_gear"].data.default_root_pose.torch.clone()[env_ids]
+            small_gear_vel = self.scene["small_gear"].data.default_root_vel.torch.clone()[env_ids]
             small_gear_pose[:, 0:7] = fixed_pose[:, 0:7]
             small_gear_vel[:] = 0.0  # vel
-            self._small_gear_asset.write_root_pose_to_sim_index(root_pose=small_gear_pose, env_ids=env_ids)
-            self._small_gear_asset.write_root_velocity_to_sim_index(root_velocity=small_gear_vel, env_ids=env_ids)
-            self._small_gear_asset.reset()
+            self.scene["small_gear"].write_root_pose_to_sim_index(root_pose=small_gear_pose, env_ids=env_ids)
+            self.scene["small_gear"].write_root_velocity_to_sim_index(root_velocity=small_gear_vel, env_ids=env_ids)
+            self.scene["small_gear"].reset()
 
-            large_gear_pose = self._large_gear_asset.data.default_root_pose.torch.clone()[env_ids]
-            large_gear_vel = self._large_gear_asset.data.default_root_vel.torch.clone()[env_ids]
+            large_gear_pose = self.scene["large_gear"].data.default_root_pose.torch.clone()[env_ids]
+            large_gear_vel = self.scene["large_gear"].data.default_root_vel.torch.clone()[env_ids]
             large_gear_pose[:, 0:7] = fixed_pose[:, 0:7]
             large_gear_vel[:] = 0.0  # vel
-            self._large_gear_asset.write_root_pose_to_sim_index(root_pose=large_gear_pose, env_ids=env_ids)
-            self._large_gear_asset.write_root_velocity_to_sim_index(root_velocity=large_gear_vel, env_ids=env_ids)
-            self._large_gear_asset.reset()
+            self.scene["large_gear"].write_root_pose_to_sim_index(root_pose=large_gear_pose, env_ids=env_ids)
+            self.scene["large_gear"].write_root_velocity_to_sim_index(root_velocity=large_gear_vel, env_ids=env_ids)
+            self.scene["large_gear"].reset()
 
         # (3) Randomize asset-in-gripper location.
         # flip gripper z orientation
@@ -777,14 +750,14 @@ class FactoryEnv(DirectRLEnv):
             torch.tensor([0.0, 0.0, 0.0, 1.0], device=self.device).unsqueeze(0).repeat(self.num_envs, 1),
         )
 
-        held_pose = self._held_asset.data.default_root_pose.torch.clone()
-        held_vel = self._held_asset.data.default_root_vel.torch.clone()
+        held_pose = self.scene["held_asset"].data.default_root_pose.torch.clone()
+        held_vel = self.scene["held_asset"].data.default_root_vel.torch.clone()
         held_pose[:, 0:3] = translated_held_asset_pos + self.scene.env_origins
         held_pose[:, 3:7] = translated_held_asset_quat
         held_vel[:] = 0.0
-        self._held_asset.write_root_pose_to_sim_index(root_pose=held_pose)
-        self._held_asset.write_root_velocity_to_sim_index(root_velocity=held_vel)
-        self._held_asset.reset()
+        self.scene["held_asset"].write_root_pose_to_sim_index(root_pose=held_pose)
+        self.scene["held_asset"].write_root_velocity_to_sim_index(root_velocity=held_vel)
+        self.scene["held_asset"].reset()
 
         #  Close hand
         # Set gains to use for quick resets.

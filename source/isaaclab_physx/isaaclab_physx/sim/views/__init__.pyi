@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 __all__ = [
-    "FabricFrameView",
+    "PhysxFrameView",
 ]
 
-from .fabric_frame_view import FabricFrameView
+from .physx_frame_view import PhysxFrameView

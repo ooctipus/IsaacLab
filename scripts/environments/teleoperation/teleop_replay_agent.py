@@ -127,7 +127,6 @@ Stats output:
               "dt": 0.016666...,
               "render_interval": 2,
               "device": "cuda:0",
-              "use_fabric": true,
               "antialiasing_mode": "DLSS"
             },
             "derived": {
@@ -405,9 +404,8 @@ from isaaclab_physx.renderers import IsaacRtxRendererGlobalSettingsCfg
 from isaaclab_physx.renderers.isaac_rtx_renderer_utils import (
     apply_isaac_rtx_global_settings,
 )
-from isaaclab_teleop import IsaacTeleopDevice, create_isaac_teleop_device, poll_control_events
+from isaaclab_teleop import IsaacTeleopDevice, create_isaac_teleop_device, poll_control_events, remove_camera_configs
 
-from isaaclab.devices.openxr import remove_camera_configs
 from isaaclab.envs import ManagerBasedRLEnvCfg
 
 import isaaclab_tasks  # noqa: F401
@@ -737,7 +735,6 @@ def _extract_env_perf_cfg(env_cfg) -> dict:
             "dt": sim_dt,
             "render_interval": render_interval,
             "device": _safe(sim, "device", str),
-            "use_fabric": _safe(sim, "use_fabric", bool),
             "antialiasing_mode": _safe(render, "antialiasing_mode"),
         },
         "derived": {
@@ -1303,6 +1300,7 @@ def _run_single_replay(
     # its IPC connection.
     teleop_interface = create_isaac_teleop_device(
         isaac_teleop_cfg,
+        env.unwrapped.cfg.scene.xr_anchor,
         sim_device=args_cli.device,
         callbacks={},
         cloudxr_env_file=None,

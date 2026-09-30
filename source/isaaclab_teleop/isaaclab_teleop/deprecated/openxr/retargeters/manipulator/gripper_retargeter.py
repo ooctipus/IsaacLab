@@ -49,8 +49,7 @@ class GripperRetargeter(RetargeterBase):
         """Convert hand joint poses to gripper command.
 
         Args:
-            data: Dictionary mapping tracking targets to joint data dictionaries.
-                The joint names are defined in isaaclab.devices.openxr.common.HAND_JOINT_NAMES
+            data: Dictionary mapping tracking targets to OpenXR joint data dictionaries.
 
         Returns:
             torch.Tensor: Tensor containing a single bool value where True = close gripper, False = open gripper

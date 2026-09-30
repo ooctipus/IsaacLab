@@ -19,7 +19,8 @@ import math
 
 import pytest
 import torch
-import warp as wp
+from isaaclab_physx.physics import PhysxCfg
+from isaaclab_physx.renderers import IsaacRtxRendererCfg
 from isaaclab_physx.sim.schemas import (
     PhysxArticulationRootPropertiesCfg,
     PhysxCollisionPropertiesCfg,
@@ -29,13 +30,14 @@ from isaaclab_physx.sim.schemas import (
 import omni.replicator.core as rep
 
 import isaaclab.sim as sim_utils
-from isaaclab.assets import Articulation, ArticulationCfg, RigidObject, RigidObjectCfg
+from isaaclab import cloner
+from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
 from isaaclab.sensors.camera import CameraCfg
 from isaaclab.terrains.trimesh.utils import make_plane
 from isaaclab.terrains.utils import create_prim_from_mesh
 from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR
 
-from isaaclab_contrib.sensors.tacsl_sensor import VisuoTactileSensor, VisuoTactileSensorCfg
+from isaaclab_contrib.sensors.tacsl_sensor import VisuoTactileSensorCfg
 from isaaclab_contrib.sensors.tacsl_sensor.visuotactile_sensor_cfg import GelSightRenderCfg
 
 # Sample sensor poses
@@ -46,6 +48,8 @@ TEST_RENDER_CFG = GelSightRenderCfg(
     image_width=240,
     mm_per_pixel=0.0877,
 )
+
+_GROUND_CFG = AssetBaseCfg(prim_path="/World/defaultGroundPlane", spawn=None)
 
 
 def get_sensor_cfg_by_type(sensor_type: str) -> VisuoTactileSensorCfg:
@@ -63,8 +67,7 @@ def get_sensor_cfg_by_type(sensor_type: str) -> VisuoTactileSensorCfg:
 
     if sensor_type == "minimum_config":
         return VisuoTactileSensorCfg(
-            prim_path="/World/Robot/elastomer/sensor_minimum_config",
-            enable_camera_tactile=False,
+            prim_path="/World/Robot/elastomer",
             enable_force_field=False,
             render_cfg=TEST_RENDER_CFG,
             tactile_array_size=(10, 10),
@@ -72,7 +75,7 @@ def get_sensor_cfg_by_type(sensor_type: str) -> VisuoTactileSensorCfg:
         )
     elif sensor_type == "tactile_cam":
         return VisuoTactileSensorCfg(
-            prim_path="/World/Robot/elastomer/tactile_cam",
+            prim_path="/World/Robot/elastomer",
             enable_force_field=False,
             camera_cfg=CameraCfg(
                 height=320,
@@ -81,6 +84,7 @@ def get_sensor_cfg_by_type(sensor_type: str) -> VisuoTactileSensorCfg:
                 update_period=0,
                 data_types=["distance_to_image_plane"],
                 spawn=None,
+                renderer_cfg=IsaacRtxRendererCfg(),
             ),
             render_cfg=TEST_RENDER_CFG,
             tactile_array_size=(10, 10),
@@ -89,10 +93,9 @@ def get_sensor_cfg_by_type(sensor_type: str) -> VisuoTactileSensorCfg:
 
     elif sensor_type == "nut_rgb_ff":
         return VisuoTactileSensorCfg(
-            prim_path="/World/Robot/elastomer/sensor_nut",
+            prim_path="/World/Robot/elastomer",
             update_period=0,
             debug_vis=False,
-            enable_camera_tactile=True,
             enable_force_field=True,
             camera_cfg=CameraCfg(
                 height=320,
@@ -101,17 +104,31 @@ def get_sensor_cfg_by_type(sensor_type: str) -> VisuoTactileSensorCfg:
                 update_period=0,
                 data_types=["distance_to_image_plane"],
                 spawn=None,
+                renderer_cfg=IsaacRtxRendererCfg(),
             ),
             render_cfg=TEST_RENDER_CFG,
             tactile_array_size=(5, 10),
             tactile_margin=0.003,
             contact_object_prim_path_expr="/World/Nut",
+            mesh_prim_paths=["/World/Robot/elastomer", "/World/Nut"],
         )
 
     else:
         raise ValueError(
             f"Unsupported sensor type: {sensor_type}. Supported types: 'minimum_config', 'tactile_cam', 'nut_rgb_ff'"
         )
+
+
+def _assets_in_plan(*cfgs):
+    """Open a clone plan covering these configs.
+
+    Every asset the scene draws is declared to a plan and copied by the cloning pass, sensors and
+    the cameras they build included: an asset reads where its copies land from the plan, so the
+    plan has to exist before it is built.
+    """
+    cfgs = tuple(cfg for cfg in cfgs if cfg is not None)
+    cameras = tuple(cfg.camera_cfg for cfg in cfgs if getattr(cfg, "camera_cfg", None) is not None)
+    return cloner.ReplicateSession((_GROUND_CFG, *cfgs, *cameras), num_clones=1, env_spacing=0.0)
 
 
 def setup(sensor_type: str = "cube"):
@@ -130,7 +147,7 @@ def setup(sensor_type: str = "cube"):
     dt = 0.01
 
     # Load kit helper
-    sim_cfg = sim_utils.SimulationCfg(dt=dt)
+    sim_cfg = sim_utils.SimulationCfg(physics=PhysxCfg(), dt=dt)
     sim = sim_utils.SimulationContext(sim_cfg)
 
     # Ground-plane
@@ -228,8 +245,9 @@ def setup_nut_rgb_ff():
 def test_sensor_minimum_config(setup_minimum_config):
     """Test sensor with minimal configuration (no camera, no force field)."""
     sim, sensor_cfg, dt, robot_cfg, object_cfg, nut_cfg = setup_minimum_config
-    _ = Articulation(cfg=robot_cfg)
-    sensor_minimum = VisuoTactileSensor(cfg=sensor_cfg)
+    with _assets_in_plan(sensor_cfg, robot_cfg):
+        _ = robot_cfg.class_type(robot_cfg)
+        sensor_minimum = sensor_cfg.class_type(sensor_cfg)
     sim.reset()
     # Simulate physics
     for _ in range(10):
@@ -256,32 +274,33 @@ def test_sensor_minimum_config(setup_minimum_config):
 
 @pytest.mark.isaacsim_ci
 def test_sensor_cam_size_false(setup_tactile_cam):
-    """Test sensor initialization fails with incorrect camera image size."""
+    """Test sensor construction fails with an inconsistent camera image size."""
     sim, sensor_cfg, dt, robot_cfg, object_cfg, nut_cfg = setup_tactile_cam
     sensor_cfg.camera_cfg.height = 80
-    _ = VisuoTactileSensor(cfg=sensor_cfg)
     with pytest.raises(ValueError) as excinfo:
-        sim.reset()
-    assert "Camera configuration image size is not consistent with the render config" in str(excinfo.value)
+        with _assets_in_plan(sensor_cfg):
+            _ = sensor_cfg.class_type(sensor_cfg)
+    assert "Camera image size does not match the tactile render config" in str(excinfo.value)
 
 
 @pytest.mark.isaacsim_ci
 def test_sensor_cam_type_false(setup_tactile_cam):
-    """Test sensor initialization fails with unsupported camera data types."""
+    """Test sensor construction fails with unsupported camera data types."""
     sim, sensor_cfg, dt, robot_cfg, object_cfg, nut_cfg = setup_tactile_cam
     sensor_cfg.camera_cfg.data_types = ["rgb"]
-    _ = VisuoTactileSensor(cfg=sensor_cfg)
     with pytest.raises(ValueError) as excinfo:
-        sim.reset()
-    assert "Camera configuration data types are not supported" in str(excinfo.value)
+        with _assets_in_plan(sensor_cfg):
+            _ = sensor_cfg.class_type(sensor_cfg)
+    assert "Unsupported tactile camera data types" in str(excinfo.value)
 
 
 @pytest.mark.isaacsim_ci
 def test_sensor_cam_set(setup_tactile_cam):
     """Test sensor with camera configuration using existing camera prim."""
     sim, sensor_cfg, dt, robot_cfg, object_cfg, nut_cfg = setup_tactile_cam
-    robot = Articulation(cfg=robot_cfg)
-    sensor = VisuoTactileSensor(cfg=sensor_cfg)
+    with _assets_in_plan(sensor_cfg, robot_cfg):
+        robot = robot_cfg.class_type(robot_cfg)
+        sensor = sensor_cfg.class_type(sensor_cfg)
     sim.reset()
     sensor.get_initial_render()
     for _ in range(10):
@@ -303,17 +322,15 @@ def test_sensor_cam_set(setup_tactile_cam):
 
 @pytest.mark.isaacsim_ci
 def test_sensor_cam_set_wrong_prim(setup_tactile_cam):
-    """Test sensor initialization fails with invalid camera prim path."""
+    """Test sensor construction fails with an invalid camera prim path."""
     sim, sensor_cfg, dt, robot_cfg, object_cfg, nut_cfg = setup_tactile_cam
     sensor_cfg.camera_cfg.prim_path = "/World/Robot/elastomer_tip/cam_wrong"
-    robot = Articulation(cfg=robot_cfg)
-    sensor = VisuoTactileSensor(cfg=sensor_cfg)
     with pytest.raises(RuntimeError) as excinfo:
-        sim.reset()
-        robot.update(dt)
-        sensor.update(dt)
+        with _assets_in_plan(sensor_cfg, robot_cfg):
+            _ = robot_cfg.class_type(robot_cfg)
+            _ = sensor_cfg.class_type(sensor_cfg)
     err_msg = str(excinfo.value)
-    assert "Could not find prim with path" in err_msg or "does not match the number of environments" in err_msg
+    assert "Clone-plan camera source is not a UsdGeom.Camera" in err_msg
 
 
 @pytest.mark.isaacsim_ci
@@ -324,8 +341,9 @@ def test_sensor_cam_new_spawn(setup_tactile_cam):
     sensor_cfg.camera_cfg.spawn = sim_utils.PinholeCameraCfg(
         focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.01, 1.0e5)
     )
-    robot = Articulation(cfg=robot_cfg)
-    sensor = VisuoTactileSensor(cfg=sensor_cfg)
+    with _assets_in_plan(sensor_cfg, robot_cfg):
+        robot = robot_cfg.class_type(robot_cfg)
+        sensor = sensor_cfg.class_type(sensor_cfg)
     sim.reset()
     sensor.get_initial_render()
     for _ in range(10):
@@ -346,9 +364,10 @@ def test_sensor_cam_new_spawn(setup_tactile_cam):
 def test_sensor_rgb_forcefield(setup_nut_rgb_ff):
     """Test sensor with both camera and force field enabled, detecting contact forces."""
     sim, sensor_cfg, dt, robot_cfg, cube_cfg, nut_cfg = setup_nut_rgb_ff
-    robot = Articulation(cfg=robot_cfg)
-    sensor = VisuoTactileSensor(cfg=sensor_cfg)
-    nut = RigidObject(cfg=nut_cfg)
+    with _assets_in_plan(sensor_cfg, robot_cfg, nut_cfg):
+        robot = robot_cfg.class_type(robot_cfg)
+        nut = nut_cfg.class_type(nut_cfg)
+        sensor = sensor_cfg.class_type(sensor_cfg)
     sim.reset()
     sensor.get_initial_render()
     for _ in range(10):
@@ -378,9 +397,10 @@ def test_sensor_no_contact_object(setup_nut_rgb_ff):
     """Test sensor with force field but no contact object specified."""
     sim, sensor_cfg, dt, robot_cfg, cube_cfg, nut_cfg = setup_nut_rgb_ff
     sensor_cfg.contact_object_prim_path_expr = None
-    robot = Articulation(cfg=robot_cfg)
-    sensor = VisuoTactileSensor(cfg=sensor_cfg)
-    nut = RigidObject(cfg=nut_cfg)
+    with _assets_in_plan(sensor_cfg, robot_cfg, nut_cfg):
+        robot = robot_cfg.class_type(robot_cfg)
+        nut = nut_cfg.class_type(nut_cfg)
+        sensor = sensor_cfg.class_type(sensor_cfg)
     sim.reset()
     sensor.get_initial_render()
     for _ in range(10):
@@ -402,56 +422,40 @@ def test_sensor_no_contact_object(setup_nut_rgb_ff):
 @pytest.mark.isaacsim_ci
 def test_sensor_force_field_contact_object_not_found(setup_nut_rgb_ff):
     """Test sensor initialization fails when contact object prim path is not found."""
-    sim, sensor_cfg, dt, robot_cfg, cube_cfg, NutCfg = setup_nut_rgb_ff
+    sim, sensor_cfg, dt, robot_cfg, cube_cfg, nut_cfg = setup_nut_rgb_ff
 
-    sensor_cfg.enable_camera_tactile = False
+    sensor_cfg.camera_cfg = None
     sensor_cfg.contact_object_prim_path_expr = "/World/Nut/wrong_prim"
-    robot = Articulation(cfg=robot_cfg)
-    sensor = VisuoTactileSensor(cfg=sensor_cfg)
-    with pytest.raises(RuntimeError) as excinfo:
+    with _assets_in_plan(sensor_cfg, robot_cfg):
+        _ = robot_cfg.class_type(robot_cfg)
+        _ = sensor_cfg.class_type(sensor_cfg)
+    with pytest.raises(ValueError, match="is not covered by the clone plan"):
         sim.reset()
-        robot.update(dt)
-        sensor.update(dt)
-    assert "No contact object prim found matching pattern" in str(excinfo.value)
 
 
 @pytest.mark.isaacsim_ci
 def test_sensor_force_field_contact_object_no_sdf(setup_nut_rgb_ff):
     """Test sensor initialization fails when contact object has no SDF mesh."""
-    sim, sensor_cfg, dt, robot_cfg, cube_cfg, NutCfg = setup_nut_rgb_ff
-    sensor_cfg.enable_camera_tactile = False
+    sim, sensor_cfg, dt, robot_cfg, cube_cfg, nut_cfg = setup_nut_rgb_ff
+    sensor_cfg.camera_cfg = None
     sensor_cfg.contact_object_prim_path_expr = "/World/Cube"
-    robot = Articulation(cfg=robot_cfg)
-    sensor = VisuoTactileSensor(cfg=sensor_cfg)
-    cube = RigidObject(cfg=cube_cfg)
-    with pytest.raises(RuntimeError) as excinfo:
+    sensor_cfg.mesh_prim_paths[-1] = "/World/Cube"
+    with _assets_in_plan(sensor_cfg, robot_cfg, cube_cfg):
+        _ = robot_cfg.class_type(robot_cfg)
+        _ = cube_cfg.class_type(cube_cfg)
+        _ = sensor_cfg.class_type(sensor_cfg)
+    with pytest.raises(RuntimeError, match="No planned SDF mesh found under contact object"):
         sim.reset()
-        robot.update(dt)
-        sensor.update(dt)
-        cube.update(dt)
-    assert "No SDF mesh found under contact object at path" in str(excinfo.value)
 
 
 @pytest.mark.isaacsim_ci
 def test_sensor_update_period_mismatch(setup_nut_rgb_ff):
-    """Test sensor with both camera and force field enabled, detecting contact forces."""
+    """Test tactile camera and parent sensor reject divergent update periods."""
     sim, sensor_cfg, dt, robot_cfg, cube_cfg, nut_cfg = setup_nut_rgb_ff
     sensor_cfg.update_period = dt
     sensor_cfg.camera_cfg.update_period = dt * 2
-    robot = Articulation(cfg=robot_cfg)
-    sensor = VisuoTactileSensor(cfg=sensor_cfg)
-    nut = RigidObject(cfg=nut_cfg)
-    sim.reset()
-    sensor.get_initial_render()
-    assert sensor.cfg.camera_cfg.update_period == sensor.cfg.update_period
-    for i in range(10):
-        sim.step()
-        sensor.update(dt, force_recompute=True)
-        robot.update(dt)
-        nut.update(dt)
-        assert torch.allclose(
-            wp.to_torch(sensor._timestamp_last_update), torch.tensor((i + 1) * dt, device=sensor.device)
-        )
-        assert torch.allclose(
-            wp.to_torch(sensor._camera_sensor._timestamp_last_update), torch.tensor((i + 1) * dt, device=sensor.device)
-        )
+    with pytest.raises(ValueError, match="must equal the sensor update period"):
+        with _assets_in_plan(sensor_cfg, robot_cfg, nut_cfg):
+            _ = robot_cfg.class_type(robot_cfg)
+            _ = nut_cfg.class_type(nut_cfg)
+            _ = sensor_cfg.class_type(sensor_cfg)

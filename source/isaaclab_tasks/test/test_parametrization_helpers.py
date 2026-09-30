@@ -136,24 +136,19 @@ def test_motion_history_steps(renderer: str, expected_steps: int) -> None:
     assert env.step.call_count == expected_steps
 
 
-def test_make_kitless_rendering_params_expands_only_ovrtx() -> None:
-    """OVStage variants should be emitted only for the OVRTX renderer."""
+def test_make_kitless_rendering_params_uses_one_clone_plan_stage_path() -> None:
+    """Kitless rendering must not duplicate cases across redundant stage-export paths."""
     params = [
         pytest.param("newton", "ovrtx_renderer", "rgb", id="newton-ovrtx-rgb"),
         pytest.param("newton", "newton_renderer", "rgb", id="newton-newton_warp-rgb"),
     ]
 
-    expanded = make_kitless_rendering_params(params)
+    selected = make_kitless_rendering_params(params)
 
-    assert [param.id for param in expanded] == [
-        "legacy-newton-ovrtx-rgb",
-        "ovstage-newton-ovrtx-rgb",
-        "legacy-newton-newton_warp-rgb",
-    ]
-    assert [tuple(param.values) for param in expanded] == [
-        ("legacy", "newton", "ovrtx_renderer", "rgb"),
-        ("ovstage", "newton", "ovrtx_renderer", "rgb"),
-        ("legacy", "newton", "newton_renderer", "rgb"),
+    assert [param.id for param in selected] == ["newton-ovrtx-rgb", "newton-newton_warp-rgb"]
+    assert [tuple(param.values) for param in selected] == [
+        ("newton", "ovrtx_renderer", "rgb"),
+        ("newton", "newton_renderer", "rgb"),
     ]
 
 
@@ -161,11 +156,10 @@ def test_make_xfail_rendering_params_replaces_flaky_and_xfail_marks() -> None:
     """Expected failures should run once with one current reason."""
     params = [
         pytest.param(
-            "ovstage",
             "newton",
             "ovrtx_renderer",
             "albedo",
-            id="ovstage-newton-ovrtx-albedo",
+            id="newton-ovrtx-albedo",
             marks=[
                 pytest.mark.flaky(max_runs=3, min_passes=1),
                 pytest.mark.xfail(reason="Obsolete rendering regression.", strict=False),
@@ -175,7 +169,7 @@ def test_make_xfail_rendering_params_replaces_flaky_and_xfail_marks() -> None:
 
     marked = make_xfail_rendering_params(
         params,
-        {("ovstage", "newton", "ovrtx_renderer", "albedo"): "Known rendering regression."},
+        {("newton", "ovrtx_renderer", "albedo"): "Known rendering regression."},
     )
 
     assert [mark.name for mark in marked[0].marks] == ["xfail"]
@@ -188,11 +182,10 @@ def test_make_skip_rendering_params_overrides_xfail_and_flaky_marks() -> None:
     """Native-crash skips should override inherited retry and xfail marks."""
     params = [
         pytest.param(
-            "legacy",
             "newton",
             "ovrtx_renderer",
             "simple_shading_full_mdl",
-            id="legacy-newton-ovrtx-simple_shading_full_mdl",
+            id="newton-ovrtx-simple_shading_full_mdl",
             marks=[
                 pytest.mark.flaky(max_runs=3, min_passes=1),
                 pytest.mark.xfail(reason="Known image mismatch.", strict=False),
@@ -202,7 +195,7 @@ def test_make_skip_rendering_params_overrides_xfail_and_flaky_marks() -> None:
 
     marked = make_skip_rendering_params(
         params,
-        {("legacy", "newton", "ovrtx_renderer", "simple_shading_full_mdl"): "Native renderer crash."},
+        {("newton", "ovrtx_renderer", "simple_shading_full_mdl"): "Native renderer crash."},
     )
 
     assert [mark.name for mark in marked[0].marks] == ["skip"]
@@ -218,53 +211,51 @@ def test_kitless_matrix_has_no_ovrtx_041_xfails() -> None:
             param = params[f"{physics_backend}-ovrtx-{data_type}"]
             assert "xfail" not in [mark.name for mark in param.marks]
 
-    expanded = {param.id: param for param in make_kitless_rendering_params(list(params.values()))}
-    assert "xfail" not in [mark.name for mark in expanded["ovstage-ovphysx-ovrtx-motion_vectors"].marks]
+    selected = {param.id: param for param in make_kitless_rendering_params(list(params.values()))}
+    assert "xfail" not in [mark.name for mark in selected["ovphysx-ovrtx-motion_vectors"].marks]
 
 
-def test_lift_factory_retains_retries_without_native_crash_skips() -> None:
-    """Lift OVRTX MDL cases should run with the shared retry policy."""
+def test_lift_factory_applies_shared_native_crash_policy() -> None:
+    """Both backends skip crash-prone MDL AOVs that xfail cannot contain."""
     params = {param.id: param for param in make_kitless_rendering_params_lift()}
 
-    for variant in ("legacy", "ovstage"):
-        for physics_backend in ("newton", "ovphysx"):
-            for data_type in ("simple_shading_diffuse_mdl", "simple_shading_full_mdl"):
-                param = params[f"{variant}-{physics_backend}-ovrtx-{data_type}"]
-                assert [mark.name for mark in param.marks] == ["flaky"]
+    for physics_backend in ("newton", "ovphysx"):
+        for data_type in ("simple_shading_diffuse_mdl", "simple_shading_full_mdl"):
+            param = params[f"{physics_backend}-ovrtx-{data_type}"]
+            assert [mark.name for mark in param.marks] == ["skip"]
+            assert "NVBUG#6524987" in param.marks[0].kwargs["reason"]
 
-    # Lift OVPhysX albedo passes, so it must not inherit an unrelated exemption.
-    assert "xfail" not in [mark.name for mark in params["legacy-ovphysx-ovrtx-albedo"].marks]
+    # Lift OVPhysX albedo passes, so it must not inherit an exemption from the MDL policy.
+    assert "xfail" not in [mark.name for mark in params["ovphysx-ovrtx-albedo"].marks]
 
 
 def test_franka_factory_marks_only_unsupported_instance_segmentation() -> None:
     """Franka OVRTX grouping should isolate unsupported instance segmentation from valid AOVs."""
     params = {param.id: param for param in make_kitless_rendering_params_franka()}
 
-    for variant in ("legacy", "ovstage"):
-        for physics_backend in ("newton", "ovphysx"):
-            motion_id = f"{variant}-{physics_backend}-ovrtx-motion_vectors"
-            assert [mark.name for mark in params[motion_id].marks] == ["flaky"]
+    for physics_backend in ("newton", "ovphysx"):
+        motion_id = f"{physics_backend}-ovrtx-motion_vectors"
+        assert [mark.name for mark in params[motion_id].marks] == ["flaky"]
 
-            instance_id = f"{variant}-{physics_backend}-ovrtx-instance_segmentation"
-            assert [mark.name for mark in params[instance_id].marks] == ["skip"]
+        instance_id = f"{physics_backend}-ovrtx-instance_segmentation"
+        assert [mark.name for mark in params[instance_id].marks] == ["skip"]
 
     grouped = {param.id: param for param in group_rendering_params(list(params.values()))}
-    for variant in ("legacy", "ovstage"):
-        valid_static = grouped[f"{variant}-newton-ovrtx_renderer-static"]
-        assert valid_static.values[-1] == [
-            "rgb",
-            "albedo",
-            "semantic_segmentation",
-            "depth",
-            "distance_to_camera",
-            "distance_to_image_plane",
-            "normals",
-        ]
-        assert [mark.name for mark in valid_static.marks] == ["flaky"]
+    valid_static = grouped["newton-ovrtx_renderer-static"]
+    assert valid_static.values[-1] == [
+        "rgb",
+        "albedo",
+        "semantic_segmentation",
+        "depth",
+        "distance_to_camera",
+        "distance_to_image_plane",
+        "normals",
+    ]
+    assert [mark.name for mark in valid_static.marks] == ["flaky"]
 
-        unsupported = grouped[f"{variant}-newton-ovrtx-instance_segmentation"]
-        assert unsupported.values[-1] == ["instance_segmentation"]
-        assert [mark.name for mark in unsupported.marks] == ["skip"]
+    unsupported = grouped["newton-ovrtx-instance_segmentation"]
+    assert unsupported.values[-1] == ["instance_segmentation"]
+    assert [mark.name for mark in unsupported.marks] == ["skip"]
 
 
 def test_html_report_labels_xfail_and_xpass_outcomes(monkeypatch, tmp_path: Path) -> None:
@@ -275,7 +266,6 @@ def test_html_report_labels_xfail_and_xpass_outcomes(monkeypatch, tmp_path: Path
             "test": "cartpole",
             "backend": "newton",
             "renderer": "ovrtx_renderer",
-            "ovstage_variant": "Yes",
             "aov": "albedo",
             "diff_pct": 12.5,
             "threshold": 1.5,
@@ -288,7 +278,6 @@ def test_html_report_labels_xfail_and_xpass_outcomes(monkeypatch, tmp_path: Path
             "test": "cartpole",
             "backend": "newton",
             "renderer": "ovrtx_renderer",
-            "ovstage_variant": "Yes",
             "aov": "rgb",
             "diff_pct": 0.0,
             "threshold": 1.5,
@@ -309,7 +298,6 @@ def test_html_report_labels_xfail_and_xpass_outcomes(monkeypatch, tmp_path: Path
             "test": "shadow_hand",
             "backend": "newton",
             "renderer": "ovrtx_renderer",
-            "ovstage_variant": "Yes",
             "aov": "albedo",
             "diff_pct": 0.0,
             "threshold": 5.0,
@@ -325,7 +313,6 @@ def test_html_report_labels_xfail_and_xpass_outcomes(monkeypatch, tmp_path: Path
             "test": "ordinary",
             "backend": "newton",
             "renderer": "ovrtx_renderer",
-            "ovstage_variant": "Yes",
             "aov": "depth",
             "diff_pct": 50.0,
             "threshold": 5.0,

@@ -6,21 +6,15 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import weakref
-from datetime import datetime
 from typing import TYPE_CHECKING
 
-from pxr import Sdf, Usd, UsdGeom, UsdPhysics
-
-from isaaclab.sim.utils.stage import resolve_paths
 from isaaclab.ui.widgets import ManagerLiveVisualizer
 from isaaclab.ui.widgets.ui_visualizer_base import UiVisualizerBase
 from isaaclab.utils.version import has_kit
 
 if has_kit():
     import isaacsim
-    import omni.kit.commands
 
 
 if TYPE_CHECKING:
@@ -131,23 +125,6 @@ class BaseEnvWindow:
             with self.ui_window_elements["sim_vstack"]:
                 # create rendering mode dropdown if visualizer supports it
                 self._build_render_mode_dropdown()
-
-                # create animation recording box
-                record_animate_cfg = {
-                    "label": "Record Animation",
-                    "type": "state_button",
-                    "a_text": "START",
-                    "b_text": "STOP",
-                    "tooltip": "Record the animation of the scene. Only effective if fabric is disabled.",
-                    "on_clicked_fn": lambda value: self._toggle_recording_animation_fn(value),
-                }
-                self.ui_window_elements["record_animation"] = isaacsim.gui.components.ui_utils.state_btn_builder(
-                    **record_animate_cfg
-                )
-                # disable the button if fabric is not enabled
-                self.ui_window_elements["record_animation"].enabled = not self.env.sim.get_setting(
-                    "/isaaclab/fabric_enabled"
-                )
 
                 # create reset episode button
                 reset_cfg = {
@@ -326,84 +303,6 @@ class BaseEnvWindow:
     Custom callbacks for UI elements.
     """
 
-    def _toggle_recording_animation_fn(self, value: bool):
-        """Toggles the animation recording."""
-        if value:
-            # log directory to save the recording
-            if not hasattr(self, "animation_log_dir"):
-                # create a new log directory
-                log_dir = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-                self.animation_log_dir = os.path.join(os.getcwd(), "recordings", log_dir)
-            # start the recording
-            _ = omni.kit.commands.execute(
-                "StartRecording",
-                target_paths=[("/World", True)],
-                live_mode=True,
-                use_frame_range=False,
-                start_frame=0,
-                end_frame=0,
-                use_preroll=False,
-                preroll_frame=0,
-                record_to="FILE",
-                fps=0,
-                apply_root_anim=False,
-                increment_name=True,
-                record_folder=self.animation_log_dir,
-                take_name="TimeSample",
-            )
-        else:
-            # stop the recording
-            _ = omni.kit.commands.execute("StopRecording")
-            # save the current stage
-            source_layer = self.stage.GetRootLayer()
-            # output the stage to a file
-            stage_usd_path = os.path.join(self.animation_log_dir, "Stage.usd")
-            source_prim_path = "/"
-            # creates empty anon layer
-            temp_layer = Sdf.Find(stage_usd_path)
-            if temp_layer is None:
-                temp_layer = Sdf.Layer.CreateNew(stage_usd_path)
-            temp_stage = Usd.Stage.Open(temp_layer)
-            # update stage data
-            UsdGeom.SetStageUpAxis(temp_stage, UsdGeom.GetStageUpAxis(self.stage))
-            UsdGeom.SetStageMetersPerUnit(temp_stage, UsdGeom.GetStageMetersPerUnit(self.stage))
-            # copy the prim
-            Sdf.CreatePrimInLayer(temp_layer, source_prim_path)
-            Sdf.CopySpec(source_layer, source_prim_path, temp_layer, source_prim_path)
-            # set the default prim
-            temp_layer.defaultPrim = Sdf.Path(source_prim_path).name
-            # remove all physics from the stage
-            for prim in temp_stage.TraverseAll():
-                # skip if the prim is an instance
-                if prim.IsInstanceable():
-                    continue
-                # if prim has articulation then disable it
-                if prim.HasAPI(UsdPhysics.ArticulationRootAPI):
-                    prim.RemoveAPI(UsdPhysics.ArticulationRootAPI)
-                    prim.RemoveAppliedSchema("PhysxArticulationAPI")
-                # if prim has rigid body then disable it
-                if prim.HasAPI(UsdPhysics.RigidBodyAPI):
-                    prim.RemoveAPI(UsdPhysics.RigidBodyAPI)
-                    prim.RemoveAppliedSchema("PhysxRigidBodyAPI")
-                # if prim is a joint type then disable it
-                if prim.IsA(UsdPhysics.Joint):
-                    prim.GetAttribute("physics:jointEnabled").Set(False)
-            # resolve paths so asset references remain valid from the new location
-            resolve_paths(source_layer.identifier, temp_layer.identifier)
-            # save the stage
-            temp_layer.Save()
-            # print the path to the saved stage
-            print("Recording completed.")
-            print(f"\tSaved recorded stage to    : {stage_usd_path}")
-            print(f"\tSaved recorded animation to: {os.path.join(self.animation_log_dir, 'TimeSample_tk001.usd')}")
-            print("\nTo play the animation, check the instructions in the following link:")
-            print(
-                "\thttps://docs.omniverse.nvidia.com/extensions/latest/ext_animation_stage-recorder.html#using-the-captured-timesamples"
-            )
-            print("\n")
-            # reset the log directory
-            self.animation_log_dir = None
-
     def _get_kit_visualizer(self):
         """Return the first KitVisualizer active on the simulation, or None."""
         try:
@@ -429,7 +328,7 @@ class BaseEnvWindow:
             fancy_names = [name.replace("_", " ").title() for name in self._viewer_assets_options]
             viewer_asset_name = self._viewer_assets_options[fancy_names.index(value)]
             viz.cfg.origin_type = "asset"
-            viz.cfg.origin_track_path = viewer_asset_name
+            viz.cfg.origin_track_path = self.env.scene[viewer_asset_name].cfg.prim_path
 
         # Reposition the viewport camera immediately so the new origin is reflected
         # without waiting for the next env.step() call.

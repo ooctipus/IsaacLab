@@ -3,16 +3,11 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""OpenXR teleoperation devices (legacy).
+"""Legacy OpenXR retargeter imports.
 
 .. deprecated::
-    This package has moved to :mod:`isaaclab_teleop.deprecated.openxr`.
-    Please migrate to :mod:`isaaclab_teleop` which provides the
-    :class:`~isaaclab_teleop.IsaacTeleopDevice` as a replacement.
-
-    Imports from this package will continue to work for backwards
-    compatibility.  Individual class constructors emit
-    :class:`DeprecationWarning` at instantiation time.
+    Import retargeters from :mod:`isaaclab_teleop`. The legacy OpenXR and
+    Manus/Vive device implementations have been removed.
 """
 
 from isaaclab.utils.module import lazy_export

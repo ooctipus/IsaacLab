@@ -12,6 +12,7 @@ import sys
 import warnings
 from abc import abstractmethod
 from collections.abc import Sequence
+from copy import deepcopy
 from dataclasses import MISSING
 from typing import Any, ClassVar
 
@@ -20,14 +21,13 @@ import numpy as np
 import torch
 
 from isaaclab.managers import EventManager
-from isaaclab.scene import InteractiveScene
 from isaaclab.sim import SimulationContext
 from isaaclab.sim.utils.stage import use_stage
 from isaaclab.utils.noise import NoiseModel
 from isaaclab.utils.seed import configure_seed
 from isaaclab.utils.timer import Timer
 
-from .common import VecEnvObs, VecEnvStepReturn, _apply_deprecated_viewer_cfg
+from .common import VecEnvObs, VecEnvStepReturn
 from .direct_rl_env_cfg import DirectRLEnvCfg
 from .utils.spaces import sample_space, spec_to_gym_space
 from .utils.video_recorder import VideoRecorder
@@ -93,16 +93,6 @@ class DirectRLEnv(gym.Env):
         # initialize internal variables
         self._physics_handles_decimation = False
 
-        # set the seed for the environment
-        if self.cfg.seed is not None:
-            self.cfg.seed = self.seed(self.cfg.seed)
-        else:
-            logger.warning("Seed not set for the environment. The environment creation may not be deterministic.")
-
-        # Backwards-compat: if the deprecated viewer field has non-default eye/lookat, apply
-        # them to sim.default_visualizer_cfg so the scene camera still matches user intent.
-        _apply_deprecated_viewer_cfg(self.cfg)
-
         # create a simulation context to control the simulator
         if SimulationContext.instance() is None:
             self.sim: SimulationContext = SimulationContext(self.cfg.sim)
@@ -112,6 +102,10 @@ class DirectRLEnv(gym.Env):
         # From this point on, if __init__ fails we must tear down the SimulationContext
         # singleton so that callers (tests, training loops) can retry or proceed.
         try:
+            if self.cfg.seed is not None:
+                self.cfg.seed = self.seed(self.cfg.seed)
+            else:
+                logger.warning("Seed not set for the environment. The environment creation may not be deterministic.")
             self._init_sim(render_mode, **kwargs)
         except Exception:
             self.sim.clear_instance()
@@ -148,9 +142,10 @@ class DirectRLEnv(gym.Env):
         with Timer("[INFO]: Time taken for scene creation", "scene_creation", activity="Creating scene"):
             # set the stage context for scene creation steps which use the stage
             with use_stage(self.sim.stage):
-                self.scene = InteractiveScene(self.cfg.scene)
+                self.scene = self.cfg.scene.class_type(self.cfg.scene)
                 self._setup_scene()
-            self.sim.register_interactive_scene(self.scene)
+                if self.sim.get_clone_plan() is None:
+                    raise RuntimeError("The configured direct scene must publish and replicate one ClonePlan.")
         print("[INFO]: Scene manager: ", self.scene)
 
         # create event manager
@@ -181,8 +176,7 @@ class DirectRLEnv(gym.Env):
             self.scene.update(dt=self.physics_dt)
         # let the physics backend know about the env decimation so it can
         # fold the full loop into a single step() when possible
-        self.sim.physics_manager.set_decimation(self.cfg.decimation)
-        self._physics_handles_decimation = self.sim.physics_manager.handles_decimation()
+        self._physics_handles_decimation = self.sim._configure_decimation(self.cfg.decimation)
 
         # check if debug visualization is has been implemented by the environment
         source_code = inspect.getsource(self._set_debug_vis_impl)
@@ -343,17 +337,12 @@ class DirectRLEnv(gym.Env):
         # update articulation kinematics
         self.scene.write_data_to_sim()
         self.sim.forward()
+        self._refresh_task_state()
 
         # if sensors are added to the scene, make sure we render to reflect changes in reset
         if self.has_rtx_sensors and self.cfg.num_rerenders_on_reset > 0:
             for _ in range(self.cfg.num_rerenders_on_reset):
                 self.sim.render()
-
-        if self.cfg.wait_for_textures and self.has_rtx_sensors:
-            # Wait for assets to finish loading (PhysX-specific)
-            if hasattr(self.sim.physics_manager, "assets_loading"):
-                while self.sim.physics_manager.assets_loading():
-                    self.sim.render()
 
         # return observations
         # store the buffer like step() does, so consumers can read the latest observations
@@ -436,6 +425,8 @@ class DirectRLEnv(gym.Env):
                 # update buffers at sim dt
                 self.scene.update(dt=self.physics_dt)
 
+        self._refresh_task_state()
+
         # post-step:
         # -- update env counters (used for curriculum generation)
         self.episode_length_buf += 1  # step in current episode (per env)
@@ -447,20 +438,12 @@ class DirectRLEnv(gym.Env):
 
         # -- reset envs that terminated/timed-out and log the episode information
         reset_env_ids = self._reset_envs_from_buffer()
+        reset_occurred = reset_env_ids is None or len(reset_env_ids) > 0
         if reset_env_ids is None:
             if self.cfg.compute_final_obs:
                 raise RuntimeError(
                     "Mask-native reset overrides must return reset indices when compute_final_obs is enabled."
                 )
-            if self.render_enabled and is_rendering and self.has_rtx_sensors and self.cfg.num_rerenders_on_reset > 0:
-                raise RuntimeError(
-                    "Mask-native reset overrides must return reset indices when RTX reset rerenders are enabled."
-                )
-        elif len(reset_env_ids) > 0:
-            # if sensors are added to the scene, make sure we render to reflect changes in reset
-            if self.render_enabled and is_rendering and self.has_rtx_sensors and self.cfg.num_rerenders_on_reset > 0:
-                for _ in range(self.cfg.num_rerenders_on_reset):
-                    self.sim.render()
 
         # -- handle episode reset requested from visualizer UI controls
         if self.sim.consume_reset_request():
@@ -474,6 +457,15 @@ class DirectRLEnv(gym.Env):
             if len(manual_reset_ids) > 0:
                 self.reset_terminated[manual_reset_ids] = True
                 self._reset_idx(manual_reset_ids)
+                reset_occurred = True
+
+        if reset_occurred:
+            self.scene.write_data_to_sim()
+            self.sim.forward()
+            self._refresh_task_state()
+            if self.render_enabled and is_rendering and self.has_rtx_sensors and self.cfg.num_rerenders_on_reset > 0:
+                for _ in range(self.cfg.num_rerenders_on_reset):
+                    self.sim.render()
 
         # post-step: step interval event
         if self.cfg.events:
@@ -505,15 +497,14 @@ class DirectRLEnv(gym.Env):
         Returns:
             The seed used for random generator.
         """
-        # set seed for replicator
+        seed = configure_seed(seed)
         try:
             import omni.replicator.core as rep
 
             rep.set_global_seed(seed)
         except ModuleNotFoundError:
             pass
-        # set seed for torch and other libraries
-        return configure_seed(seed)
+        return seed
 
     def render(self, recompute: bool = False) -> np.ndarray | None:
         """Run rendering without stepping through the physics.
@@ -572,9 +563,11 @@ class DirectRLEnv(gym.Env):
         """
         scalars = {
             "episode": {
-                "mean_reward": lambda: float(getattr(self, "reward_buf", None).mean())
-                if getattr(self, "reward_buf", None) is not None
-                else 0.0,
+                "mean_reward": lambda: (
+                    float(getattr(self, "reward_buf", None).mean())
+                    if getattr(self, "reward_buf", None) is not None
+                    else 0.0
+                ),
                 "episode_length": lambda: float(self.episode_length_buf.float().mean()),
             }
         }
@@ -659,7 +652,12 @@ class DirectRLEnv(gym.Env):
 
     def _configure_gym_env_spaces(self):
         """Configure the action and observation spaces for the Gym environment."""
-        # show deprecation message and overwrite configuration
+
+        def batch_space(spec, space):
+            if isinstance(space, gym.spaces.Box) and not isinstance(spec, gym.spaces.Space):
+                return gym.spaces.Box(-np.inf, np.inf, (self.num_envs, *space.shape), seed=deepcopy(space.np_random))
+            return gym.vector.utils.batch_space(space, self.num_envs)
+
         if self.cfg.num_actions is not None:
             logger.warning("DirectRLEnvCfg.num_actions is deprecated. Use DirectRLEnvCfg.action_space instead.")
             if isinstance(self.cfg.action_space, type(MISSING)):
@@ -675,22 +673,17 @@ class DirectRLEnv(gym.Env):
             if isinstance(self.cfg.state_space, type(MISSING)):
                 self.cfg.state_space = self.cfg.num_states
 
-        # set up spaces
         self.single_observation_space = gym.spaces.Dict()
         self.single_observation_space["policy"] = spec_to_gym_space(self.cfg.observation_space)
         self.single_action_space = spec_to_gym_space(self.cfg.action_space)
+        self.observation_space = batch_space(self.cfg.observation_space, self.single_observation_space["policy"])
+        self.action_space = batch_space(self.cfg.action_space, self.single_action_space)
 
-        # batch the spaces for vectorized environments
-        self.observation_space = gym.vector.utils.batch_space(self.single_observation_space["policy"], self.num_envs)
-        self.action_space = gym.vector.utils.batch_space(self.single_action_space, self.num_envs)
-
-        # optional state space for asymmetric actor-critic architectures
         self.state_space = None
         if self.cfg.state_space:
             self.single_observation_space["critic"] = spec_to_gym_space(self.cfg.state_space)
-            self.state_space = gym.vector.utils.batch_space(self.single_observation_space["critic"], self.num_envs)
+            self.state_space = batch_space(self.cfg.state_space, self.single_observation_space["critic"])
 
-        # instantiate actions (needed for tasks for which the observations computation is dependent on the actions)
         self.actions = sample_space(self.single_action_space, self.sim.device, batch_size=self.num_envs, fill_value=0)
 
     def _reset_envs_from_buffer(self) -> torch.Tensor | None:
@@ -699,9 +692,9 @@ class DirectRLEnv(gym.Env):
         The default implementation compacts the reset mask into environment indices. CUDA
         environments synchronize while determining the dynamic output size of
         ``torch.Tensor.nonzero``. Tasks with backend-native mask reset support may
-        override this hook and return None to avoid that synchronization. Returning None
-        is only supported when terminal-observation capture and RTX reset rerenders are
-        disabled. Overrides must delegate to this implementation in those configurations.
+        override this hook and return None to avoid that synchronization. Such overrides
+        must delegate here when terminal-observation capture is enabled; otherwise the outer
+        lifecycle conservatively forwards their device-authored reset before observations.
 
         Returns:
             Reset environment indices, or None when an override completed reset
@@ -743,22 +736,20 @@ class DirectRLEnv(gym.Env):
         # reset the episode length buffer
         self.episode_length_buf[env_ids] = 0
 
-        self.sim.render_context.reset_scene_state_cadence()
-
     """
     Implementation-specific functions.
     """
 
     def _setup_scene(self):
-        """Setup the scene for the environment.
+        """Perform optional task-specific setup after the configured scene is constructed.
 
-        This function is responsible for creating the scene objects and setting up the scene for the environment.
-        The scene creation can happen through :class:`isaaclab.scene.InteractiveSceneCfg` or through
-        directly creating the scene objects and registering them with the scene manager.
-
-        We leave the implementation of this function to the derived classes. If the environment does not require
-        any explicit scene setup, the function can be left empty.
+        Assets and sensors belong on :attr:`DirectRLEnvCfg.scene`; implementations must not construct,
+        spawn, or clone them here.
         """
+        pass
+
+    def _refresh_task_state(self):
+        """Refresh derived task state after a simulation lifecycle boundary."""
         pass
 
     @abstractmethod

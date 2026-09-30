@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Literal
 
 from isaaclab.utils.configclass import configclass
 
@@ -75,7 +75,7 @@ class NewtonCollisionPipelineCfg:
     """Configuration for Newton collision pipeline.
 
     Full-featured collision pipeline with GJK/MPR narrow phase and pluggable broad phase.
-    When this config is set on :attr:`NewtonCfg.collision_cfg`:
+    When this config is set on :attr:`NewtonSolverCfg.collision_cfg`:
 
     - **MJWarpSolverCfg**: Newton's collision pipeline replaces MuJoCo's internal contact solver.
     - **Other solvers** (XPBD, Featherstone, etc.): Configures the collision pipeline parameters
@@ -177,21 +177,3 @@ class NewtonCollisionPipelineCfg:
 
     Defaults to ``None`` (hydroelastic disabled, same as Newton's default).
     """
-
-    def to_pipeline_args(self) -> dict[str, Any]:
-        """Build keyword arguments for :class:`newton.CollisionPipeline`.
-
-        Converts this configuration into the dict expected by
-        ``CollisionPipeline.__init__``, handling nested config conversion
-        (e.g. :class:`HydroelasticSDFCfg` → ``HydroelasticSDF.Config``).
-
-        Returns:
-            Keyword arguments suitable for ``CollisionPipeline(model, **args)``.
-        """
-        from newton.geometry import HydroelasticSDF
-
-        cfg_dict = self.to_dict()
-        hydro_cfg = cfg_dict.pop("sdf_hydroelastic_config", None)
-        if hydro_cfg is not None:
-            cfg_dict["sdf_hydroelastic_config"] = HydroelasticSDF.Config(**hydro_cfg)
-        return cfg_dict

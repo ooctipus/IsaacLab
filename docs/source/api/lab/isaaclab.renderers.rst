@@ -40,7 +40,6 @@ The following classes are part of the public :mod:`isaaclab.renderers` API.
    CameraRenderSpec
    RenderBufferKind
    RenderBufferSpec
-   RenderContext
 
 .. autoclass:: CameraRenderSpec
    :show-inheritance:
@@ -49,7 +48,4 @@ The following classes are part of the public :mod:`isaaclab.renderers` API.
    :show-inheritance:
 
 .. autoclass:: RenderBufferSpec
-   :show-inheritance:
-
-.. autoclass:: RenderContext
    :show-inheritance:

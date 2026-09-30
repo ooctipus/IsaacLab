@@ -8,7 +8,7 @@
 The robot must keep its pelvis upright at a target height.
 """
 
-from isaaclab_newton.physics import KaminoPADMMCfg, KaminoPADMMSolverCfg, NewtonCfg, NewtonShapeCfg
+from isaaclab_newton.physics import KaminoPADMMCfg, KaminoPADMMSolverCfg, NewtonShapeCfg, NewtonSolverCfg
 from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
@@ -21,13 +21,11 @@ from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.physics import PhysxAutoCfg
-from isaaclab.scene import InteractiveSceneCfg
-from isaaclab.sim import SimulationCfg
 from isaaclab.utils.configclass import configclass
-from isaaclab.visualizers import VisualizerCfg
 
 import isaaclab_tasks.contrib.dr_legs.mdp as mdp
 from isaaclab_tasks.utils import PresetCfg
+from isaaclab_tasks.utils.presets import MultiBackendSceneCfg, MultiBackendSimulationCfg
 
 from isaaclab_assets.robots.dr_legs import DR_LEGS_ACTUATED_JOINTS, DR_LEGS_IMPLICIT_PD_CFG
 
@@ -48,19 +46,17 @@ _PHYSICS_MATERIAL = sim_utils.RigidBodyMaterialCfg(
 )
 
 
-def _kamino_newton_cfg() -> NewtonCfg:
+def _kamino_newton_cfg() -> NewtonSolverCfg:
     """Kamino P-ADMM solver preset for DR Legs."""
-    return NewtonCfg(
-        solver_cfg=KaminoPADMMSolverCfg(
-            use_fk_solver=True,
-            max_contacts_per_world=32,
-            sparse_jacobian=True,
-            dynamics_solver_cfg=KaminoPADMMCfg(
-                primal_tolerance=1.0e-5,
-                dual_tolerance=1.0e-5,
-                compl_tolerance=1.0e-5,
-                rho_0=0.02,
-            ),
+    return KaminoPADMMSolverCfg(
+        use_fk_solver=True,
+        max_contacts_per_world=32,
+        sparse_jacobian=True,
+        dynamics_solver_cfg=KaminoPADMMCfg(
+            primal_tolerance=1.0e-5,
+            dual_tolerance=1.0e-5,
+            compl_tolerance=1.0e-5,
+            rho_0=0.02,
         ),
         use_cuda_graph=True,
         default_shape_cfg=NewtonShapeCfg(margin=0.0, gap=0.001),
@@ -71,8 +67,8 @@ def _kamino_newton_cfg() -> NewtonCfg:
 class DrLegsPhysicsCfg(PresetCfg):
     """Physics backend presets for DR Legs."""
 
-    default: NewtonCfg = _kamino_newton_cfg()
-    newton_kamino: NewtonCfg = _kamino_newton_cfg()
+    default: NewtonSolverCfg = _kamino_newton_cfg()
+    newton_kamino: NewtonSolverCfg = _kamino_newton_cfg()
     isaacsim_physx: PhysxCfg = PhysxCfg()
     physx: PhysxAutoCfg = PhysxAutoCfg(isaacsim_physx=isaacsim_physx)
 
@@ -83,7 +79,7 @@ class DrLegsPhysicsCfg(PresetCfg):
 
 
 @configclass
-class HoldPoseSceneCfg(InteractiveSceneCfg):
+class HoldPoseSceneCfg(MultiBackendSceneCfg):
     ground = AssetBaseCfg(
         prim_path="/World/ground",
         spawn=sim_utils.GroundPlaneCfg(size=(100.0, 100.0), physics_material=_PHYSICS_MATERIAL),
@@ -296,7 +292,7 @@ class DrLegsHoldPoseEnvCfg(ManagerBasedRLEnvCfg):
     events: DrLegsEventCfg = DrLegsEventCfg()
     rewards: RewardsCfg = RewardsCfg()
     terminations: TerminationsCfg = TerminationsCfg()
-    sim: SimulationCfg = SimulationCfg(
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(
         dt=1 / 150,
         render_interval=3,
         physics=DrLegsPhysicsCfg(),
@@ -306,4 +302,3 @@ class DrLegsHoldPoseEnvCfg(ManagerBasedRLEnvCfg):
     def __post_init__(self) -> None:
         self.decimation = 3
         self.episode_length_s = 10.0
-        self.sim.default_visualizer_cfg = VisualizerCfg(eye=(1.5, 0.5, 0.5), lookat=(0.0, 0.0, 0.265))

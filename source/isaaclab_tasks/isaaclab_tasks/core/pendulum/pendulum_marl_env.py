@@ -10,7 +10,6 @@ from collections.abc import Sequence
 
 import torch
 
-from isaaclab import cloner
 from isaaclab.envs import DirectMARLEnv
 from isaaclab.utils.math import sample_uniform
 
@@ -29,38 +28,27 @@ class PendulumMARLEnv(DirectMARLEnv):
     def __init__(self, cfg: PendulumMARLEnvCfg, render_mode: str | None = None, **kwargs):
         super().__init__(cfg, render_mode, **kwargs)
 
-        self._cart_dof_idx, _ = self.robot.find_joints(self.cfg.cart_dof_name)
-        self._pole_dof_idx, _ = self.robot.find_joints(self.cfg.pole_dof_name)
-        self._pendulum_dof_idx, _ = self.robot.find_joints(self.cfg.pendulum_dof_name)
+        self._cart_dof_idx, _ = self.scene["robot"].find_joints(self.cfg.cart_dof_name)
+        self._pole_dof_idx, _ = self.scene["robot"].find_joints(self.cfg.pole_dof_name)
+        self._pendulum_dof_idx, _ = self.scene["robot"].find_joints(self.cfg.pendulum_dof_name)
 
-        self.joint_pos = self.robot.data.joint_pos.torch
-        self.joint_vel = self.robot.data.joint_vel.torch
         self._success_required_steps = round(self.cfg.success_duration_s / self.step_dt)
         self._consecutive_upright_steps = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
-
-    def _setup_scene(self):
-        asset_cfgs = self.cfg.robot_cfg, self.cfg.ground_cfg, self.cfg.light_cfg
-        plan = cloner.clone_plan_from_env_0(
-            self.cfg.scene.clone_cfg, asset_cfgs, self.cfg.scene.num_envs, self.cfg.scene.env_spacing
-        )
-        self.robot = self.cfg.robot_cfg.class_type(self.cfg.robot_cfg)
-        for cfg in (self.cfg.ground_cfg, self.cfg.light_cfg):
-            cfg.spawn.func(cfg.spawn.spawn_path, cfg.spawn, cfg.init_state.pos, cfg.init_state.rot)
-        cloner.replicate(plan, replicate_physics=self.cfg.scene.replicate_physics)
-        if "physx" in self.scene.physics_backend:
-            self.scene.filter_collisions()
-        self.scene.articulations["robot"] = self.robot
 
     def _pre_physics_step(self, actions: dict[str, torch.Tensor]) -> None:
         self.actions = actions
 
     def _apply_action(self) -> None:
-        self.robot.set_joint_effort_target_index(
+        self.scene["robot"].set_joint_effort_target_index(
             target=self.actions["cart"] * self.cfg.cart_action_scale, joint_ids=self._cart_dof_idx
         )
-        self.robot.set_joint_effort_target_index(
+        self.scene["robot"].set_joint_effort_target_index(
             target=self.actions["pendulum"] * self.cfg.pendulum_action_scale, joint_ids=self._pendulum_dof_idx
         )
+
+    def _refresh_task_state(self) -> None:
+        self.joint_pos = self.scene["robot"].data.joint_pos.torch
+        self.joint_vel = self.scene["robot"].data.joint_vel.torch
 
     def _get_observations(self) -> dict[str, torch.Tensor]:
         pole_joint_pos = normalize_angle(self.joint_pos[:, self._pole_dof_idx[0]].unsqueeze(dim=1))
@@ -115,9 +103,6 @@ class PendulumMARLEnv(DirectMARLEnv):
         return {agent: team_reward for agent in self.cfg.possible_agents}
 
     def _get_dones(self) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
-        self.joint_pos = self.robot.data.joint_pos.torch
-        self.joint_vel = self.robot.data.joint_vel.torch
-
         time_out = self.episode_length_buf >= self.max_episode_length - 1
         out_of_bounds = torch.any(torch.abs(self.joint_pos[:, self._cart_dof_idx]) > self.cfg.max_cart_pos, dim=1)
         out_of_bounds = out_of_bounds | torch.any(torch.abs(self.joint_pos[:, self._pole_dof_idx]) > math.pi / 2, dim=1)
@@ -134,7 +119,7 @@ class PendulumMARLEnv(DirectMARLEnv):
 
     def _reset_idx(self, env_ids: Sequence[int] | None):
         if env_ids is None:
-            env_ids = self.robot._ALL_INDICES
+            env_ids = self.scene["robot"]._ALL_INDICES
         if hasattr(self, "_consecutive_upright_steps") and hasattr(self, "time_out_dict"):
             agent = self.cfg.possible_agents[0]
             success = compute_success(
@@ -147,7 +132,7 @@ class PendulumMARLEnv(DirectMARLEnv):
             self._consecutive_upright_steps[env_ids] = 0
         super()._reset_idx(env_ids)
 
-        joint_pos = self.robot.data.default_joint_pos.torch[env_ids]
+        joint_pos = self.scene["robot"].data.default_joint_pos.torch[env_ids]
         joint_pos[:, self._pole_dof_idx] += sample_uniform(
             self.cfg.initial_pole_angle_range[0] * math.pi,
             self.cfg.initial_pole_angle_range[1] * math.pi,
@@ -160,19 +145,16 @@ class PendulumMARLEnv(DirectMARLEnv):
             joint_pos[:, self._pendulum_dof_idx].shape,
             joint_pos.device,
         )
-        joint_vel = self.robot.data.default_joint_vel.torch[env_ids]
+        joint_vel = self.scene["robot"].data.default_joint_vel.torch[env_ids]
 
-        default_root_pose = self.robot.data.default_root_pose.torch[env_ids]
-        default_root_vel = self.robot.data.default_root_vel.torch[env_ids]
+        default_root_pose = self.scene["robot"].data.default_root_pose.torch[env_ids]
+        default_root_vel = self.scene["robot"].data.default_root_vel.torch[env_ids]
         default_root_pose[:, :3] += self.scene.env_origins[env_ids]
 
-        self.joint_pos[env_ids] = joint_pos
-        self.joint_vel[env_ids] = joint_vel
-
-        self.robot.write_root_pose_to_sim_index(root_pose=default_root_pose, env_ids=env_ids)
-        self.robot.write_root_velocity_to_sim_index(root_velocity=default_root_vel, env_ids=env_ids)
-        self.robot.write_joint_position_to_sim_index(position=joint_pos, env_ids=env_ids)
-        self.robot.write_joint_velocity_to_sim_index(velocity=joint_vel, env_ids=env_ids)
+        self.scene["robot"].write_root_pose_to_sim_index(root_pose=default_root_pose, env_ids=env_ids)
+        self.scene["robot"].write_root_velocity_to_sim_index(root_velocity=default_root_vel, env_ids=env_ids)
+        self.scene["robot"].write_joint_position_to_sim_index(position=joint_pos, env_ids=env_ids)
+        self.scene["robot"].write_joint_velocity_to_sim_index(velocity=joint_vel, env_ids=env_ids)
 
 
 @torch.jit.script

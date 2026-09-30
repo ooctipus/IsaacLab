@@ -46,7 +46,7 @@ Standalone URDF/MJCF importers
 The URDF and MJCF converter scripts run without Isaac Sim. The standalone
 importers are optional; install them with the ``isaaclab[importers]`` command in
 :ref:`installation-importers-extra` before running these scripts.
-Optionally pass ``--viz newton`` (or ``rerun`` / ``viser``) to preview the converted asset in a
+Optionally pass ``--viz newton_gl`` (or ``rerun`` / ``viser``) to preview the converted asset in a
 kit-less Isaac Lab visualizer:
 
 .. code-block:: bash
@@ -226,7 +226,7 @@ is derived automatically from the robot name in the URDF):
    want them to accumulate on disk.
 
 The examples above pass ``--viz kit`` to open the converted asset in the Isaac Sim viewport, which
-requires a full Isaac Sim installation. Name a kitless backend instead -- ``--viz newton``,
+requires a full Isaac Sim installation. Name a kitless backend instead -- ``--viz newton_gl``,
 ``--viz rerun``, or ``--viz viser`` -- to preview the asset without Kit. Omit ``--viz`` to exit
 after the conversion completes.
 
@@ -375,7 +375,7 @@ Executing the above script will create the USD file inside the
    want them to accumulate on disk.
 
 The examples above pass ``--viz kit`` to open the converted asset in the Isaac Sim viewport, which
-requires a full Isaac Sim installation. Name a kitless backend instead -- ``--viz newton``,
+requires a full Isaac Sim installation. Name a kitless backend instead -- ``--viz newton_gl``,
 ``--viz rerun``, or ``--viz viser`` -- to preview the asset without Kit. Omit ``--viz`` to exit
 after the conversion completes.
 

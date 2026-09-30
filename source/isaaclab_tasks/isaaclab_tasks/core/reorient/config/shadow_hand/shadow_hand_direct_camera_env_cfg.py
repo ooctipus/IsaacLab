@@ -7,54 +7,34 @@ from __future__ import annotations
 
 import isaaclab.sim as sim_utils
 from isaaclab.renderers import RendererCfg
-from isaaclab.scene import InteractiveSceneCfg
-from isaaclab.sensors import CameraCfg
+from isaaclab.sensors import CameraCfg, JointWrenchSensorCfg
 from isaaclab.utils.configclass import configclass
 
 from isaaclab_tasks.core.reorient.config.shadow_hand.feature_extractor import FeatureExtractorCfg
-from isaaclab_tasks.core.reorient.config.shadow_hand.shadow_hand_direct_env_cfg import ShadowHandEnvCfg
+from isaaclab_tasks.core.reorient.config.shadow_hand.shadow_hand_common import PhysicsCfg, ShadowHandRobotCfg
+from isaaclab_tasks.core.reorient.config.shadow_hand.shadow_hand_direct_env_cfg import (
+    ShadowHandEnvCfg,
+    ShadowHandSceneCfg,
+)
 from isaaclab_tasks.utils import PresetCfg
 from isaaclab_tasks.utils.presets import MultiBackendRendererCfg
 
 
 def validate_shadow_hand_camera_settings(
-    tiled_camera: CameraCfg,
+    camera: CameraCfg,
     feature_extractor: FeatureExtractorCfg,
 ) -> None:
     """Validate one concrete Shadow Hand camera pipeline."""
-    if not isinstance(tiled_camera, CameraCfg):
+    if not isinstance(camera, CameraCfg):
+        raise TypeError(f"Shadow Hand camera validation requires a concrete CameraCfg, got {type(camera).__name__}.")
+    if camera.renderer_cfg is not None and not isinstance(camera.renderer_cfg, RendererCfg):
         raise TypeError(
-            f"Shadow Hand camera validation requires a concrete CameraCfg, got {type(tiled_camera).__name__}."
-        )
-    renderer_cfg = tiled_camera.renderer_cfg
-    if renderer_cfg is not None and not isinstance(renderer_cfg, RendererCfg):
-        raise TypeError(
-            f"Shadow Hand camera validation requires a concrete RendererCfg or None, got {type(renderer_cfg).__name__}."
+            "Shadow Hand camera validation requires a concrete RendererCfg or None, got "
+            f"{type(camera.renderer_cfg).__name__}."
         )
 
-    renderer_type = getattr(renderer_cfg, "renderer_type", None)
-    warp_supported = {
-        "rgb",
-        "depth",
-        "distance_to_camera",
-        "distance_to_image_plane",
-        "normals",
-        "semantic_segmentation",
-        "instance_segmentation",
-    }
-    if renderer_type == "newton_warp":
-        unsupported = set(tiled_camera.data_types) - warp_supported
-        if unsupported:
-            raise ValueError(
-                f"Warp renderer only supports data types {sorted(warp_supported)}, "
-                f"but the camera is configured with unsupported types: {sorted(unsupported)}. "
-                "Choose a compatible preset, e.g. presets=newton_renderer,rgb."
-            )
-
-    non_depth_data_types = set(tiled_camera.data_types).difference(
-        {"depth", "distance_to_image_plane", "distance_to_camera"}
-    )
-    if tiled_camera.data_types and not non_depth_data_types and feature_extractor.enabled:
+    non_depth_data_types = set(camera.data_types).difference({"depth", "distance_to_image_plane", "distance_to_camera"})
+    if camera.data_types and not non_depth_data_types and feature_extractor.enabled:
         raise ValueError(
             "Depth-only camera data type is intended for benchmarking only. "
             "The keypoint-regression CNN cannot be meaningfully trained from depth alone. "
@@ -80,7 +60,6 @@ class _ShadowHandBaseTiledCameraCfg(CameraCfg):
     )
     data_types: list[str] = []
     spawn: sim_utils.PinholeCameraCfg = sim_utils.PinholeCameraCfg(
-        spawn_path="/World/envs/env_0/Camera",
         focal_length=24.0,
         focus_distance=400.0,
         horizontal_aperture=20.955,
@@ -160,12 +139,22 @@ class ShadowHandTiledCameraCfg(PresetCfg):
 
 
 @configclass
-class ShadowHandCameraEnvCfg(ShadowHandEnvCfg):
-    # scene
-    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=1225, env_spacing=2.0, replicate_physics=True)
+class ShadowHandCameraSceneCfg(ShadowHandSceneCfg):
+    """Shadow hand scene with the sensors consumed by the camera task."""
 
-    # camera — data-type and renderer backend selectable via CLI presets
-    tiled_camera: ShadowHandTiledCameraCfg = ShadowHandTiledCameraCfg()
+    num_envs = 1225
+    env_spacing = 2.0
+    ground = None
+    robot: ShadowHandRobotCfg = ShadowHandRobotCfg(default=ShadowHandRobotCfg().isaacsim_physx)
+    camera: ShadowHandTiledCameraCfg = ShadowHandTiledCameraCfg()
+    joint_wrench = JointWrenchSensorCfg(prim_path="{ENV_REGEX_NS}/Robot")
+
+
+@configclass
+class ShadowHandCameraEnvCfg(ShadowHandEnvCfg):
+    sim = ShadowHandEnvCfg().sim.replace(physics=PhysicsCfg(default=PhysicsCfg().isaacsim_physx))
+    scene: ShadowHandCameraSceneCfg = ShadowHandCameraSceneCfg()
+
     feature_extractor: FeatureExtractorCfg = FeatureExtractorCfg()
 
     # env
@@ -174,14 +163,4 @@ class ShadowHandCameraEnvCfg(ShadowHandEnvCfg):
 
     def validate_config(self):
         """Check renderer/data-type and feature-extractor compatibility."""
-        validate_shadow_hand_camera_settings(self.tiled_camera, self.feature_extractor)
-
-    def play_mode(self):
-        # play-mode overrides of parent
-        super().play_mode()
-
-        # scene
-        self.scene.num_envs = 64
-        # inference for CNN
-        self.feature_extractor.train = False
-        self.feature_extractor.load_checkpoint = True
+        validate_shadow_hand_camera_settings(self.scene.camera, self.feature_extractor)

@@ -121,9 +121,9 @@ from isaaclab_physx.renderers import IsaacRtxRendererGlobalSettingsCfg
 from isaaclab_physx.renderers.isaac_rtx_renderer_utils import (
     apply_isaac_rtx_global_settings,
 )
+from isaaclab_teleop import remove_camera_configs
 
 from isaaclab.devices import Se3Gamepad, Se3GamepadCfg, Se3Keyboard, Se3KeyboardCfg, Se3SpaceMouse, Se3SpaceMouseCfg
-from isaaclab.devices.openxr import remove_camera_configs
 from isaaclab.devices.teleop_device_factory import create_teleop_device
 from isaaclab.envs import ManagerBasedRLEnvCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
@@ -304,14 +304,7 @@ def main() -> None:  # noqa: C901
     if _rtx_rendering_requested(args_cli):
         _ensure_replicator_loaded()
         apply_isaac_rtx_global_settings(
-            IsaacRtxRendererGlobalSettingsCfg(
-                antialiasing_mode="DLSS",
-                carb_settings=(
-                    {"/rtx/dldenoiser/responsiveDenoising": True}
-                    if camera_feed_session.requires_responsive_denoising
-                    else None
-                ),
-            ),
+            IsaacRtxRendererGlobalSettingsCfg(antialiasing_mode="DLSS"),
         )
 
     try:
@@ -399,6 +392,7 @@ def main() -> None:  # noqa: C901
 
             teleop_interface = create_isaac_teleop_device(
                 env_cfg.isaac_teleop,
+                env_cfg.scene.xr_anchor,
                 sim_device=args_cli.device,
                 callbacks=teleoperation_callbacks,
                 cloudxr_env_file=_resolve_cloudxr_env(args_cli.cloudxr_env, args_cli.xr),

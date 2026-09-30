@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
+from isaaclab_newton.physics import MJWarpSolverCfg, NewtonSolverCfg
 from isaaclab_ov.physics import OvPhysxCfg
 from isaaclab_physx.physics import PhysxCfg
 
@@ -17,13 +17,13 @@ from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.physics import PhysxAutoCfg
-from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import JointWrenchSensorCfg
 from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils.configclass import configclass
 
 import isaaclab_tasks.core.locomotion.mdp as mdp
 from isaaclab_tasks.utils import PresetCfg
+from isaaclab_tasks.utils.presets import MultiBackendSceneCfg, MultiBackendSimulationCfg
 
 from isaaclab_assets.robots.humanoid import HUMANOID_CFG
 
@@ -49,19 +49,17 @@ class HumanoidPhysicsCfg(PresetCfg):
     isaacsim_physx: PhysxCfg = PhysxCfg(bounce_threshold_velocity=0.2)
     ovphysx: OvPhysxCfg = OvPhysxCfg()
     physx: PhysxAutoCfg = PhysxAutoCfg(isaacsim_physx=isaacsim_physx, ovphysx=ovphysx)
-    newton_mjwarp: NewtonCfg = NewtonCfg(
-        solver_cfg=MJWarpSolverCfg(
-            njmax=80,
-            nconmax=25,
-            cone="pyramidal",
-            update_data_interval=2,
-            integrator="implicitfast",
-            impratio=1,
-        ),
+    newton_mjwarp: NewtonSolverCfg = MJWarpSolverCfg(
+        njmax=80,
+        nconmax=25,
+        cone="pyramidal",
+        update_data_interval=2,
+        integrator="implicitfast",
+        impratio=1,
         num_substeps=2,
         debug_mode=False,
     )
-    default: NewtonCfg = newton_mjwarp
+    default: NewtonSolverCfg = newton_mjwarp
 
 
 ##
@@ -70,7 +68,7 @@ class HumanoidPhysicsCfg(PresetCfg):
 
 
 @configclass
-class HumanoidSceneCfg(InteractiveSceneCfg):
+class HumanoidSceneCfg(MultiBackendSceneCfg):
     """Configuration for the terrain scene with a humanoid robot."""
 
     # terrain
@@ -215,8 +213,9 @@ class TerminationsCfg:
 class HumanoidEnvCfg(ManagerBasedRLEnvCfg):
     """Configuration for the Humanoid walking environment."""
 
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg()
     # Scene settings
-    scene: HumanoidSceneCfg = HumanoidSceneCfg(num_envs=4096, env_spacing=5.0, clone_in_fabric=True)
+    scene: HumanoidSceneCfg = HumanoidSceneCfg(num_envs=4096, env_spacing=5.0)
     # Basic settings
     observations: HumanoidObservationsCfg = HumanoidObservationsCfg()
     actions: ActionsCfg = ActionsCfg()

@@ -4,9 +4,8 @@ MJWarp Solver
 =============
 
 The MuJoCo-Warp solver from Google DeepMind is the primary, validated solver
-for the Newton backend in Isaac Lab. It is enabled by setting
-:attr:`~isaaclab_newton.physics.NewtonCfg.solver_cfg` to a
-:class:`~isaaclab_newton.physics.MJWarpSolverCfg`, usually exposed as the
+for the Newton backend in Isaac Lab. It is enabled by passing a
+:class:`~isaaclab_newton.physics.MJWarpSolverCfg` directly as the physics config, usually exposed as the
 ``newton_mjwarp`` physics preset on a task configuration. Newton ships with
 support for other solvers as well — see :doc:`kamino-solver` and
 :ref:`hydra-backend-solver-presets` for how presets are selected. For details
@@ -24,7 +23,7 @@ explains the MuJoCo constraint model and contact-parameter mapping.
 
 
 The mechanical scene still comes from USD, but solver configuration is backend-specific.
-:class:`~isaaclab_newton.physics.NewtonCfg` replaces
+:class:`~isaaclab_newton.physics.MJWarpSolverCfg` replaces
 :class:`~isaaclab_physx.physics.PhysxCfg` inside an MJWarp physics preset; the simulation ``dt``
 remains on :class:`~isaaclab.sim.SimulationCfg`.
 
@@ -83,9 +82,9 @@ better starting point for stiff drives and contact than the Isaac Lab configurat
 .. code-block:: python
 
     from isaaclab.sim import SimulationCfg
-    from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
+    from isaaclab_newton.physics import MJWarpSolverCfg
 
-    solver_cfg = MJWarpSolverCfg(
+    newton_cfg = MJWarpSolverCfg(
         solver="newton",
         integrator="implicitfast",
         njmax=50,
@@ -95,9 +94,6 @@ better starting point for stiff drives and contact than the Isaac Lab configurat
         iterations=100,
         ls_iterations=50,
         tolerance=1.0e-6,
-    )
-    newton_cfg = NewtonCfg(
-        solver_cfg=solver_cfg,
         num_substeps=1,
         debug_mode=False,  # Set True during tuning, False for production.
     )
@@ -221,13 +217,13 @@ Contact path: ``use_mujoco_contacts`` and ``collision_cfg``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Keep ``use_mujoco_contacts=True`` for the simplest baseline. This uses MuJoCo's internal collision
-detection and forbids setting :attr:`~isaaclab_newton.physics.NewtonCfg.collision_cfg`.
+detection and forbids setting :attr:`~isaaclab_newton.physics.MJWarpSolverCfg.collision_cfg`.
 
 Set ``use_mujoco_contacts=False`` when the task specifically needs Newton's collision pipeline,
 for example non-convex meshes, SDF or hydroelastic contacts, or the maintained rough-terrain and
 dense-manipulation patterns. Then configure
 :class:`~isaaclab_newton.physics.NewtonCollisionPipelineCfg` on
-:class:`~isaaclab_newton.physics.NewtonCfg`. The maintained rough-terrain presets use
+:class:`~isaaclab_newton.physics.MJWarpSolverCfg`. The maintained rough-terrain presets use
 ``default_shape_cfg.margin=0.01`` and raise ``max_triangle_pairs`` from ``1_000_000`` to
 ``2_500_000``; the Lift pattern raises ``rigid_contact_max`` for its unusually dense scene.
 Increase those capacities only in response to the matching overflow or missing-contact evidence.

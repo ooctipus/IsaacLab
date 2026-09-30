@@ -21,7 +21,6 @@ from isaaclab.utils.warp import ProxyArray
 
 from isaaclab_ov import tensor_types as TT
 from isaaclab_ov.assets import kernels as shared_kernels
-from isaaclab_ov.physics import OvPhysxManager as SimulationManager
 from isaaclab_ov.sim.views.ovphysx_view import OvPhysxView
 
 
@@ -63,6 +62,7 @@ class RigidObjectData(BaseRigidObjectData):
         self,
         view: OvPhysxView,
         device: str,
+        physics_manager,
         check_shapes: bool = True,
     ):
         """Initializes the rigid object data.
@@ -79,6 +79,7 @@ class RigidObjectData(BaseRigidObjectData):
                 from :attr:`~isaaclab.assets.AssetBaseCfg.disable_shape_checks`.
         """
         super().__init__(view, device)
+        self._physics_manager = physics_manager
         # The view owns the per-tensor-type bindings and the CPU/GPU device policy.
         self._view = view
         self._check_shapes = check_shapes
@@ -89,10 +90,7 @@ class RigidObjectData(BaseRigidObjectData):
         self._num_instances = root_pose.count
         self._num_bodies = 1
 
-        if SimulationManager._sim is not None and hasattr(SimulationManager._sim, "cfg"):
-            gravity = SimulationManager._sim.cfg.gravity
-        else:
-            gravity = (0.0, 0.0, -9.81)
+        gravity = self._physics_manager.get_gravity()
 
         gravity_dir = torch.tensor((gravity[0], gravity[1], gravity[2]), device=self.device)
         # When gravity is disabled (cfg.gravity == (0, 0, 0)), normalize() would NaN.
@@ -459,7 +457,7 @@ class RigidObjectData(BaseRigidObjectData):
                 device=self.device,
                 inputs=[
                     self.body_com_vel_w.warp,
-                    SimulationManager.get_physics_dt(),
+                    self._physics_manager.get_physics_dt(),
                     self._previous_body_com_vel,
                 ],
                 outputs=[

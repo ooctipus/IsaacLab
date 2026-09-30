@@ -29,14 +29,14 @@ import unittest
 import numpy as np
 import torch
 import warp as wp
-from isaaclab_newton.assets import Articulation
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
-from isaaclab_newton.physics import NewtonManager as SimulationManager
+from isaaclab_newton.physics import MJWarpSolverCfg, NewtonSolverCfg
 
 import isaaclab.sim as sim_utils
+from isaaclab import cloner
 from isaaclab.actuators import IdealPDActuatorCfg
 from isaaclab.actuators.newton import read_group_parameter
 from isaaclab.actuators.newton.kernels import sync_torque_telemetry
+from isaaclab.assets import AssetBaseCfg
 from isaaclab.sim import SimulationCfg, build_simulation_context
 from isaaclab.test.utils.actuator_equivalence import (
     CARTPOLE_EXPLICIT_ACTUATORS,
@@ -57,6 +57,11 @@ from isaaclab.test.utils.articulation_ordering import assert_articulation_orderi
 from isaaclab_assets import ANYMAL_C_CFG
 from isaaclab_assets.robots.spot import joint_parameter_lookup as SPOT_KNEE_LOOKUP
 
+
+def _manager():
+    return sim_utils.SimulationContext.instance()._physics_manager
+
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -65,16 +70,15 @@ NUM_ENVS = 2
 NUM_STEPS = 10
 DT = 1.0 / 120.0
 TARGET_OFFSET = 0.1  # [rad] added to initial joint positions
+GROUND_CFG = AssetBaseCfg(prim_path="/World/ground", spawn=sim_utils.GroundPlaneCfg(), collision_group=-1)
 
-NEWTON_CFG = NewtonCfg(
-    solver_cfg=MJWarpSolverCfg(
-        njmax=500,
-        nconmax=500,
-        ls_iterations=20,
-        cone="pyramidal",
-        impratio=1,
-        integrator="implicitfast",
-    ),
+NEWTON_CFG = MJWarpSolverCfg(
+    njmax=500,
+    nconmax=500,
+    ls_iterations=20,
+    cone="pyramidal",
+    impratio=1,
+    integrator="implicitfast",
     num_substeps=1,
     debug_mode=False,
     use_cuda_graph=False,
@@ -90,7 +94,7 @@ def _run_simulation(
     use_newton_actuators: bool,
     *,
     dt: float = DT,
-    newton_cfg: NewtonCfg = NEWTON_CFG,
+    newton_cfg: NewtonSolverCfg = NEWTON_CFG,
     num_steps: int = NUM_STEPS,
     decimation: int = 1,
     feedforward: float | None = None,
@@ -125,30 +129,26 @@ def _run_simulation(
     sim_cfg = SimulationCfg(dt=dt, physics=newton_cfg, use_newton_actuators=use_newton_actuators)
     with build_simulation_context(
         device="cuda:0",
-        gravity_enabled=True,
-        add_ground_plane=True,
         sim_cfg=sim_cfg,
     ) as sim:
         sim._app_control_on_stop_handle = None
-        for i in range(NUM_ENVS):
-            sim_utils.create_prim(f"/World/Env_{i}", "Xform", translation=(i * 3.0, 0, 0))
         art_cfg = ANYMAL_C_CFG.replace(
             actuators=actuators,
-            prim_path="/World/Env_[^/]*/Robot",
+            prim_path="{ENV_REGEX_NS}/Robot",
             joint_ordering=joint_ordering,
         )
-        articulation = Articulation(art_cfg)
+        with cloner.ReplicateSession([GROUND_CFG, art_cfg], num_clones=NUM_ENVS, env_spacing=3.0):
+            (ground_path,) = cloner.query.cfg_source_paths(sim.get_clone_plan(), GROUND_CFG)
+            GROUND_CFG.spawn.func(ground_path, GROUND_CFG.spawn)
+            articulation = art_cfg.class_type(art_cfg)
         sim.reset()
         assert articulation.is_initialized
 
         if use_newton_actuators and decimation > 1:
-            SimulationManager.set_decimation(decimation)
+            _manager().set_decimation(decimation)
 
         handles_dec = (
-            use_newton_actuators
-            and decimation > 1
-            and SimulationManager._is_all_graphable()
-            and SimulationManager._decimation > 1
+            use_newton_actuators and decimation > 1 and _manager()._is_all_graphable() and _manager()._decimation > 1
         )
 
         joint_names = tuple(articulation.joint_names)
@@ -262,7 +262,7 @@ class _EquivalenceTestBase(EquivalenceAssertionsMixin, unittest.TestCase):
     actuators: dict = {}
     feedforward: float | None = None
     dt: float = DT
-    newton_cfg: NewtonCfg = NEWTON_CFG
+    newton_cfg: NewtonSolverCfg = NEWTON_CFG
     num_steps: int = NUM_STEPS
     decimation: int = 1
 
@@ -339,25 +339,27 @@ def _run_anymal_and_cartpole(use_newton_actuators: bool, *, num_steps: int = NUM
     sim_cfg = SimulationCfg(dt=DT, physics=NEWTON_CFG, use_newton_actuators=use_newton_actuators)
     with build_simulation_context(
         device="cuda:0",
-        gravity_enabled=True,
-        add_ground_plane=True,
         sim_cfg=sim_cfg,
     ) as sim:
         sim._app_control_on_stop_handle = None
 
-        for i in range(NUM_ENVS):
-            sim_utils.create_prim(f"/World/Env_{i}", "Xform", translation=(i * 6.0, 0, 0))
-
-        anymal_cfg = ANYMAL_C_CFG.replace(actuators=IDEAL_PD_ACTUATORS, prim_path="/World/Env_[^/]*/Anymal")
+        anymal_cfg = ANYMAL_C_CFG.replace(actuators=IDEAL_PD_ACTUATORS, prim_path="{ENV_REGEX_NS}/Anymal")
         cartpole_cfg = CARTPOLE_CFG.replace(
             actuators=CARTPOLE_EXPLICIT_ACTUATORS,
-            prim_path="/World/Env_[^/]*/Cartpole",
+            prim_path="{ENV_REGEX_NS}/Cartpole",
         )
         # Stand the cartpole well clear of the anymal.
         cartpole_cfg.init_state = cartpole_cfg.init_state.replace(pos=(0.0, 3.0, 2.0))
 
-        anymal = Articulation(anymal_cfg)
-        cartpole = Articulation(cartpole_cfg)
+        with cloner.ReplicateSession(
+            [GROUND_CFG, anymal_cfg, cartpole_cfg],
+            num_clones=NUM_ENVS,
+            env_spacing=6.0,
+        ):
+            (ground_path,) = cloner.query.cfg_source_paths(sim.get_clone_plan(), GROUND_CFG)
+            GROUND_CFG.spawn.func(ground_path, GROUND_CFG.spawn)
+            anymal = anymal_cfg.class_type(anymal_cfg)
+            cartpole = cartpole_cfg.class_type(cartpole_cfg)
         sim.reset()
         assert anymal.is_initialized and cartpole.is_initialized
 
@@ -445,21 +447,20 @@ class TestRandomizeActuatorGainsViaEventsNewton(unittest.TestCase):
         sim_cfg = SimulationCfg(dt=DT, physics=NEWTON_CFG, use_newton_actuators=True)
         with build_simulation_context(
             device="cuda:0",
-            gravity_enabled=True,
-            add_ground_plane=True,
             sim_cfg=sim_cfg,
         ) as sim:
             sim._app_control_on_stop_handle = None
-            for i in range(NUM_ENVS):
-                sim_utils.create_prim(f"/World/Env_{i}", "Xform", translation=(i * 3.0, 0, 0))
             art_cfg = ANYMAL_C_CFG.replace(
                 actuators=IDEAL_PD_ACTUATORS,
-                prim_path="/World/Env_[^/]*/Robot",
+                prim_path="{ENV_REGEX_NS}/Robot",
             )
-            anymal = Articulation(art_cfg)
+            with cloner.ReplicateSession([GROUND_CFG, art_cfg], num_clones=NUM_ENVS, env_spacing=3.0):
+                (ground_path,) = cloner.query.cfg_source_paths(sim.get_clone_plan(), GROUND_CFG)
+                GROUND_CFG.spawn.func(ground_path, GROUND_CFG.spawn)
+                anymal = art_cfg.class_type(art_cfg)
             sim.reset()
 
-            adapter = SimulationManager._adapter
+            adapter = _manager()._adapter
             self.assertIsNotNone(adapter, "Newton adapter should exist with use_newton_actuators=True")
             read = functools.partial(read_group_parameter, anymal.actuators)
             n = anymal.num_joints
@@ -506,25 +507,27 @@ class TestRandomizeActuatorGainsViaEventsNewton(unittest.TestCase):
         sim_cfg = SimulationCfg(dt=DT, physics=NEWTON_CFG, use_newton_actuators=True)
         with build_simulation_context(
             device="cuda:0",
-            gravity_enabled=True,
-            add_ground_plane=True,
             sim_cfg=sim_cfg,
         ) as sim:
             sim._app_control_on_stop_handle = None
-            for i in range(NUM_ENVS):
-                sim_utils.create_prim(f"/World/Env_{i}", "Xform", translation=(i * 6.0, 0, 0))
-
-            anymal_cfg = ANYMAL_C_CFG.replace(actuators=IDEAL_PD_ACTUATORS, prim_path="/World/Env_[^/]*/Anymal")
+            anymal_cfg = ANYMAL_C_CFG.replace(actuators=IDEAL_PD_ACTUATORS, prim_path="{ENV_REGEX_NS}/Anymal")
             cartpole_cfg = CARTPOLE_CFG.replace(
                 actuators=CARTPOLE_EXPLICIT_ACTUATORS,
-                prim_path="/World/Env_[^/]*/Cartpole",
+                prim_path="{ENV_REGEX_NS}/Cartpole",
             )
             cartpole_cfg.init_state = cartpole_cfg.init_state.replace(pos=(0.0, 3.0, 2.0))
-            anymal = Articulation(anymal_cfg)
-            cartpole = Articulation(cartpole_cfg)
+            with cloner.ReplicateSession(
+                [GROUND_CFG, anymal_cfg, cartpole_cfg],
+                num_clones=NUM_ENVS,
+                env_spacing=6.0,
+            ):
+                (ground_path,) = cloner.query.cfg_source_paths(sim.get_clone_plan(), GROUND_CFG)
+                GROUND_CFG.spawn.func(ground_path, GROUND_CFG.spawn)
+                anymal = anymal_cfg.class_type(anymal_cfg)
+                cartpole = cartpole_cfg.class_type(cartpole_cfg)
             sim.reset()
 
-            self.assertIsNotNone(SimulationManager._adapter)
+            self.assertIsNotNone(_manager()._adapter)
 
             anymal_read = functools.partial(read_group_parameter, anymal.actuators)
             cartpole_read = functools.partial(read_group_parameter, cartpole.actuators)
@@ -562,11 +565,69 @@ class TestRandomizeActuatorGainsViaEventsNewton(unittest.TestCase):
             # Cartpole's other envs are also untouched (env_ids=[0] only).
             for env_idx in range(1, NUM_ENVS):
                 torch.testing.assert_close(
-                    cartpole_read("all_joints", "controller", "kp")[env_idx], cartpole_stiffness_before[env_idx]
+                    cartpole_read("all_joints", "controller", "kp")[env_idx],
+                    cartpole_stiffness_before[env_idx],
                 )
                 torch.testing.assert_close(
                     cartpole_read("all_joints", "controller", "kd")[env_idx], cartpole_damping_before[env_idx]
                 )
+
+
+class TestNewtonActuatorGainSnapshotEnvStride(unittest.TestCase):
+    """Regression: the init-time kp/kd snapshot must be correct for every env.
+
+    ``build_newton_actuator_defaults`` scatters each Newton actuator's
+    ``controller.kp`` / ``controller.kd`` into a per-articulation
+    ``(num_envs, num_joints)`` tensor (``newton_default_stiffness`` /
+    ``newton_default_damping``), which ``randomize_actuator_gains`` reads as
+    its DR baseline. On a floating-base articulation the actuator ``indices``
+    are laid out env-major with a per-env stride equal to the *whole model's*
+    per-env DOF count (free-root DOFs + joints), which exceeds
+    ``articulation.num_joints``. If the scatter decodes the env with
+    ``num_joints`` instead of that stride, env 1's DOFs alias to the wrong
+    rows (and partly out of bounds), corrupting the snapshot for every env
+    past the first.
+
+    ANYmal-C is floating base (6 free-root DOFs + 12 actuated joints -> a
+    per-env stride of 18 vs. ``num_joints == 12``), so the bug manifests here
+    with ``NUM_ENVS == 2``: without the fix, ``newton_default_stiffness[1]``
+    is not uniformly the configured gain (its leading entries stay zero, as
+    they are never written).
+    """
+
+    def test_snapshot_matches_config_for_all_envs(self):
+        sim_cfg = SimulationCfg(dt=DT, physics=NEWTON_CFG, use_newton_actuators=True)
+        with build_simulation_context(
+            device="cuda:0",
+            sim_cfg=sim_cfg,
+        ) as sim:
+            sim._app_control_on_stop_handle = None
+            art_cfg = ANYMAL_C_CFG.replace(
+                actuators=IDEAL_PD_ACTUATORS,
+                prim_path="{ENV_REGEX_NS}/Robot",
+            )
+            with cloner.ReplicateSession([GROUND_CFG, art_cfg], num_clones=NUM_ENVS, env_spacing=3.0):
+                (ground_path,) = cloner.query.cfg_source_paths(sim.get_clone_plan(), GROUND_CFG)
+                GROUND_CFG.spawn.func(ground_path, GROUND_CFG.spawn)
+                anymal = art_cfg.class_type(art_cfg)
+            sim.reset()
+            assert anymal.is_initialized
+
+            stiffness = anymal.newton_default_stiffness
+            damping = anymal.newton_default_damping
+            self.assertIsNotNone(stiffness, "expected a Newton kp snapshot with use_newton_actuators=True")
+            self.assertIsNotNone(damping, "expected a Newton kd snapshot with use_newton_actuators=True")
+
+            n_j = anymal.num_joints
+            self.assertEqual(tuple(stiffness.shape), (NUM_ENVS, n_j))
+            self.assertEqual(tuple(damping.shape), (NUM_ENVS, n_j))
+
+            # IDEAL_PD_ACTUATORS covers all 12 joints with constant gains, so
+            # every cell of both env rows must equal the configured value.
+            expected_kp = torch.full((NUM_ENVS, n_j), 40.0, device=anymal.device)
+            expected_kd = torch.full((NUM_ENVS, n_j), 5.0, device=anymal.device)
+            torch.testing.assert_close(stiffness, expected_kp)
+            torch.testing.assert_close(damping, expected_kd)
 
 
 # ---------------------------------------------------------------------------
@@ -605,15 +666,13 @@ class TestDelayedPDAuthoring(unittest.TestCase):
 # Decimation tests: re-run equivalence with decimation > 1 + CUDA graph capture
 # ---------------------------------------------------------------------------
 
-NEWTON_CFG_DEC = NewtonCfg(
-    solver_cfg=MJWarpSolverCfg(
-        njmax=500,
-        nconmax=500,
-        ls_iterations=20,
-        cone="pyramidal",
-        impratio=1,
-        integrator="implicitfast",
-    ),
+NEWTON_CFG_DEC = MJWarpSolverCfg(
+    njmax=500,
+    nconmax=500,
+    ls_iterations=20,
+    cone="pyramidal",
+    impratio=1,
+    integrator="implicitfast",
     num_substeps=2,
     debug_mode=False,
     use_cuda_graph=True,
@@ -653,11 +712,112 @@ class TestActuatorStateReset(ActuatorStateResetBase, unittest.TestCase):
     def _make_sim_cfg(self, use_newton_actuators: bool) -> SimulationCfg:
         return SimulationCfg(dt=DT, physics=NEWTON_CFG, use_newton_actuators=use_newton_actuators)
 
-    def _make_articulation(self) -> Articulation:
-        return Articulation(ANYMAL_C_CFG.replace(actuators=DELAYED_PD_ACTUATORS, prim_path="/World/Env_.*/Robot"))
+    def _build_and_warm(self, *, use_newton_actuators: bool):
+        ctx = build_simulation_context(
+            device="cuda:0",
+            sim_cfg=self._make_sim_cfg(use_newton_actuators),
+        )
+        sim = ctx.__enter__()
+        sim._app_control_on_stop_handle = None
+        art_cfg = ANYMAL_C_CFG.replace(
+            actuators=DELAYED_PD_ACTUATORS,
+            prim_path="{ENV_REGEX_NS}/Robot",
+        )
+        with cloner.ReplicateSession([GROUND_CFG, art_cfg], num_clones=self.NUM_ENVS, env_spacing=3.0):
+            (ground_path,) = cloner.query.cfg_source_paths(sim.get_clone_plan(), GROUND_CFG)
+            GROUND_CFG.spawn.func(ground_path, GROUND_CFG.spawn)
+            articulation = art_cfg.class_type(art_cfg)
+        sim.reset()
 
-    def _get_adapter(self, articulation):
-        return SimulationManager._adapter
+        init_pos = articulation.data.joint_pos.torch.clone()
+        target_pos = init_pos + self.TARGET_OFFSET
+        target_vel = torch.zeros_like(init_pos)
+        articulation.actuators.target_command.set_position_index(value=target_pos)
+        articulation.actuators.target_command.set_velocity_index(value=target_vel)
+        for _ in range(self.RESET_WARMUP_STEPS):
+            articulation.write_data_to_sim()
+            sim.step()
+            articulation.update(self.DT)
+        return ctx, sim, articulation
+
+    def test_newton_state_reset_isolated_to_reset_env(self):
+        """Newton: ``num_pushes`` zeroes for env 0's DOFs only after reset of [0]."""
+        ctx, sim, articulation = self._build_and_warm(use_newton_actuators=True)
+        try:
+            adapter = _manager()._adapter
+            self.assertIsNotNone(adapter)
+            # Find a DelayedPD actuator (it's the only one with delay_state).
+            stateful_pairs = [
+                (act, st)
+                for act, st in zip(adapter.actuators, adapter._states_a)
+                if st is not None and getattr(st, "delay_state", None) is not None
+            ]
+            self.assertGreater(len(stateful_pairs), 0, "expected at least one DelayedPD actuator with delay_state")
+
+            # Per-DOF entry layout inside each actuator's state: ``act.indices``
+            # is the flat global DOF id; envs are stacked so env 0's DOFs come first.
+            for act, state in stateful_pairs:
+                pushes_before = state.delay_state.num_pushes.numpy()
+                self.assertTrue(
+                    (pushes_before > 0).all(),
+                    "expected non-zero num_pushes for all DOFs after warmup",
+                )
+
+            articulation.reset(env_ids=torch.tensor([self.RESET_ENV], device=articulation.device, dtype=torch.long))
+
+            # Map each entry of ``act.indices`` to its env via the adapter's full
+            # per-env DOF count (model.joint_dof_count // num_envs — includes free
+            # joint DOFs on floating-base articulations, unlike articulation.num_joints
+            # which counts only actuated DOFs).
+            for act, state in stateful_pairs:
+                pushes_after = state.delay_state.num_pushes.numpy()
+                indices_np = act.indices.numpy()
+                for i, global_dof in enumerate(indices_np):
+                    env = int(global_dof) // adapter.num_joints
+                    if env == self.RESET_ENV:
+                        self.assertEqual(
+                            int(pushes_after[i]),
+                            0,
+                            f"DOF {i} (env {env}) should be reset to 0, got {pushes_after[i]}",
+                        )
+                    else:
+                        self.assertGreater(
+                            int(pushes_after[i]),
+                            0,
+                            f"DOF {i} (env {env}) was NOT in reset env_ids but num_pushes is 0",
+                        )
+        finally:
+            ctx.__exit__(None, None, None)
+
+    def test_lab_state_reset_isolated_to_reset_env(self):
+        """Lab: DelayedPDActuator circular buffer zeroed for env 0 only."""
+        ctx, sim, articulation = self._build_and_warm(use_newton_actuators=False)
+        try:
+            from isaaclab.actuators import DelayedPDActuator  # noqa: PLC0415
+
+            delayed = [a for a in articulation.actuators.values() if isinstance(a, DelayedPDActuator)]
+            self.assertGreater(len(delayed), 0, "expected at least one Lab DelayedPDActuator")
+            actuator = delayed[0]
+            buf = actuator.positions_delay_buffer._circular_buffer._buffer
+            # ``_buffer`` shape: (max_length, batch_size, num_joints).
+            self.assertIsNotNone(buf, "delay buffer should be populated after warmup")
+            self.assertTrue(
+                (buf[:, self.UNCHANGED_ENV] != 0).any().item(),
+                "expected non-zero buffer entries for env 1 after warmup",
+            )
+
+            articulation.reset(env_ids=torch.tensor([self.RESET_ENV], device=articulation.device, dtype=torch.long))
+
+            self.assertTrue(
+                torch.all(buf[:, self.RESET_ENV] == 0).item(),
+                f"Lab: env {self.RESET_ENV} buffer not zeroed after reset.",
+            )
+            self.assertTrue(
+                (buf[:, self.UNCHANGED_ENV] != 0).any().item(),
+                f"Lab: env {self.UNCHANGED_ENV} buffer was zeroed — reset leaked into an unselected env.",
+            )
+        finally:
+            ctx.__exit__(None, None, None)
 
 
 # ---------------------------------------------------------------------------
@@ -701,24 +861,22 @@ def _run_authoring_introspection(actuator_cfgs: dict) -> dict:
 
     with build_simulation_context(
         device="cuda:0",
-        gravity_enabled=True,
-        add_ground_plane=True,
         sim_cfg=sim_cfg,
     ) as sim:
         sim._app_control_on_stop_handle = None
 
-        for i in range(NUM_ENVS):
-            sim_utils.create_prim(f"/World/Env_{i}", "Xform", translation=(i * 3.0, 0, 0))
-
         art_cfg = ANYMAL_C_CFG.replace(
             actuators=actuator_cfgs,
-            prim_path="/World/Env_[^/]*/Robot",
+            prim_path="{ENV_REGEX_NS}/Robot",
         )
-        articulation = Articulation(art_cfg)
+        with cloner.ReplicateSession([GROUND_CFG, art_cfg], num_clones=NUM_ENVS, env_spacing=3.0):
+            (ground_path,) = cloner.query.cfg_source_paths(sim.get_clone_plan(), GROUND_CFG)
+            GROUND_CFG.spawn.func(ground_path, GROUND_CFG.spawn)
+            articulation = art_cfg.class_type(art_cfg)
         sim.reset()
         assert articulation.is_initialized
 
-        model = SimulationManager.get_model()
+        model = _manager().get_model()
 
         actuator_info = []
         for act in model.actuators:

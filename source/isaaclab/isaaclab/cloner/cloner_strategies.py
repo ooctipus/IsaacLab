@@ -25,10 +25,10 @@ def random(combinations: np.ndarray, num_clones: int) -> np.ndarray:
 
 
 def sequential(combinations: np.ndarray, num_clones: int) -> np.ndarray:
-    """Deterministically assign prototypes to environments in round-robin fashion.
+    """Deterministically assign prototypes to contiguous environment blocks.
 
-    Each environment is assigned a prototype combination based on its index modulo the
-    number of available combinations.
+    Combinations receive balanced contiguous ranges of environments, which lets clone
+    backends replicate each homogeneous range as one native batch.
 
     Args:
         combinations: Array of shape (num_combos, num_prototypes) containing all possible
@@ -39,4 +39,4 @@ def sequential(combinations: np.ndarray, num_clones: int) -> np.ndarray:
         Array of shape (num_clones, num_prototypes) containing the chosen prototype
         combination for each environment.
     """
-    return combinations[np.arange(num_clones) % len(combinations)]
+    return combinations[np.arange(num_clones) * len(combinations) // max(num_clones, 1)]

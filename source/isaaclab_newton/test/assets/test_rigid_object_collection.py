@@ -23,11 +23,11 @@ import pytest
 import torch
 import warp as wp
 from isaaclab_newton.assets import RigidObjectCollection
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
-from isaaclab_newton.physics import NewtonManager as SimulationManager
+from isaaclab_newton.physics import MJWarpSolverCfg
 from newton import ModelFlags
 
 import isaaclab.sim as sim_utils
+from isaaclab import cloner
 from isaaclab.assets import RigidObjectCfg, RigidObjectCollectionCfg
 from isaaclab.sim import SimulationCfg, build_simulation_context
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
@@ -42,14 +42,17 @@ from isaaclab.utils.math import (
     subtract_frame_transforms,
 )
 
+
+def _manager():
+    return sim_utils.SimulationContext.instance()._physics_manager
+
+
 NEWTON_SIM_CFG = SimulationCfg(
-    physics=NewtonCfg(
-        solver_cfg=MJWarpSolverCfg(),
-    ),
+    physics=MJWarpSolverCfg(),
 )
 
 
-def _newton_sim_context(device, gravity_enabled=True, dt=None, **kwargs):
+def _newton_sim_context(device, gravity_enabled=True, dt=None):
     """Helper to create a Newton simulation context with the correct device.
 
     When sim_cfg is provided to build_simulation_context, the device, gravity_enabled, and dt
@@ -59,7 +62,7 @@ def _newton_sim_context(device, gravity_enabled=True, dt=None, **kwargs):
     NEWTON_SIM_CFG.gravity = (0.0, 0.0, -9.81) if gravity_enabled else (0.0, 0.0, 0.0)
     if dt is not None:
         NEWTON_SIM_CFG.dt = dt
-    return build_simulation_context(device=device, sim_cfg=NEWTON_SIM_CFG, **kwargs)
+    return build_simulation_context(device=device, sim_cfg=NEWTON_SIM_CFG)
 
 
 def generate_cubes_scene(
@@ -86,11 +89,6 @@ def generate_cubes_scene(
         A tuple containing the rigid object collection representing the cubes and the origins of the cubes.
 
     """
-    origins = torch.tensor([(i * 3.0, 0, height) for i in range(num_envs)]).to(device)
-    # Create Top-level Xforms, one for each cube
-    for i, origin in enumerate(origins):
-        sim_utils.create_prim(f"/World/Env_{i}", "Xform", translation=origin)
-
     # Resolve spawn configuration
     if has_api:
         spawn_cfg = sim_utils.UsdFileCfg(
@@ -108,22 +106,39 @@ def generate_cubes_scene(
     cube_config_dict = {}
     for i in range(num_cubes):
         cube_object_cfg = RigidObjectCfg(
-            prim_path=f"/World/Env_[^/]*/Object_{i}",
+            prim_path=f"{{ENV_REGEX_NS}}/Object_{i}",
             spawn=spawn_cfg,
             init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 3 * i, height)),
         )
         cube_config_dict[f"cube_{i}"] = cube_object_cfg
-    if spawn_unrelated_sibling:
-        spawn_cfg.func(
-            "/World/Env_[^/]*/UnrelatedObject",
-            spawn_cfg,
-            translation=(0.0, -3.0, height),
+    unrelated_cfg = (
+        RigidObjectCfg(
+            prim_path="{ENV_REGEX_NS}/UnrelatedObject",
+            spawn=spawn_cfg,
+            init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, -3.0, height)),
         )
+        if spawn_unrelated_sibling
+        else None
+    )
     # create the rigid object collection
     cube_object_collection_cfg = RigidObjectCollectionCfg(rigid_objects=cube_config_dict)
-    cube_object_collection = RigidObjectCollection(cfg=cube_object_collection_cfg)
+    sim = sim_utils.SimulationContext.instance()
+    scene_cfgs = [
+        *cube_object_collection_cfg.rigid_objects.values(),
+        *(() if unrelated_cfg is None else (unrelated_cfg,)),
+    ]
+    with cloner.ReplicateSession(scene_cfgs, num_clones=num_envs, env_spacing=3.0):
+        if unrelated_cfg is not None:
+            (source_path,) = cloner.query.cfg_source_paths(sim.get_clone_plan(), unrelated_cfg)
+            unrelated_cfg.spawn.func(
+                source_path,
+                unrelated_cfg.spawn,
+                translation=unrelated_cfg.init_state.pos,
+                orientation=unrelated_cfg.init_state.rot,
+            )
+        cube_object_collection = cube_object_collection_cfg.class_type(cube_object_collection_cfg)
 
-    return cube_object_collection, origins
+    return cube_object_collection, sim.get_clone_plan().positions
 
 
 @pytest.mark.parametrize("device", test_devices())
@@ -131,7 +146,7 @@ def test_initialization_ignores_unrelated_sibling_rigid_objects(device):
     """Test that a collection view selects only its configured rigid objects."""
     num_envs = 2
     num_cubes = 3
-    with _newton_sim_context(device, auto_add_lighting=True) as sim:
+    with _newton_sim_context(device) as sim:
         sim._app_control_on_stop_handle = None
         object_collection, _ = generate_cubes_scene(
             num_envs=num_envs,
@@ -151,7 +166,7 @@ def test_initialization_ignores_unrelated_sibling_rigid_objects(device):
 @pytest.mark.parametrize("device", test_devices())
 def test_initialization(num_envs, num_cubes, device):
     """Test initialization for prim with rigid body API at the provided prim path."""
-    with _newton_sim_context(device, auto_add_lighting=True) as sim:
+    with _newton_sim_context(device) as sim:
         sim._app_control_on_stop_handle = None
         object_collection, _ = generate_cubes_scene(num_envs=num_envs, num_cubes=num_cubes, device=device)
 
@@ -182,37 +197,33 @@ def test_set_body_inertial_properties_updates_inverses(device):
     """Masked inertial-property writes update only selected Newton inverse entries."""
     num_envs = 2
     num_cubes = 3
-    with _newton_sim_context(device, gravity_enabled=False, auto_add_lighting=True) as sim:
+    with _newton_sim_context(device, gravity_enabled=False) as sim:
         sim._app_control_on_stop_handle = None
-        for env_index in range(num_envs):
-            sim_utils.create_prim(f"/World/Env_{env_index}", "Xform", translation=(float(env_index), 0.0, 1.0))
         spawn_cfg = sim_utils.CuboidCfg(
             size=(0.2, 0.2, 0.2),
             rigid_props=sim_utils.RigidBodyPropertiesCfg(disable_gravity=True),
             mass_props=sim_utils.MassPropertiesCfg(mass=1.0),
             collision_props=sim_utils.CollisionPropertiesCfg(),
         )
-        object_collection = RigidObjectCollection(
-            RigidObjectCollectionCfg(
-                rigid_objects={
-                    f"cube_{body_index}": RigidObjectCfg(
-                        prim_path=f"/World/Env_[^/]*/Object_{body_index}",
-                        spawn=spawn_cfg,
-                        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, float(body_index), 0.0)),
-                    )
-                    for body_index in range(num_cubes)
-                }
-            )
+        collection_cfg = RigidObjectCollectionCfg(
+            rigid_objects={
+                f"cube_{body_index}": RigidObjectCfg(
+                    prim_path=f"{{ENV_REGEX_NS}}/Object_{body_index}",
+                    spawn=spawn_cfg,
+                    init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, float(body_index), 0.0)),
+                )
+                for body_index in range(num_cubes)
+            }
         )
+        with cloner.ReplicateSession(collection_cfg.rigid_objects.values(), num_clones=num_envs, env_spacing=1.0):
+            object_collection = collection_cfg.class_type(collection_cfg)
         sim.reset()
 
         env_mask = wp.array([True, False], dtype=wp.bool, device=device)
         body_mask = wp.array([False, True, False], dtype=wp.bool, device=device)
         selected = (0, 1)
 
-        raw_model_inv_mass = object_collection.root_view.get_attribute("body_inv_mass", SimulationManager.get_model())[
-            :, :, 0
-        ]
+        raw_model_inv_mass = object_collection.root_view.get_attribute("body_inv_mass", _manager().get_model())[:, :, 0]
         assert object_collection.data._sim_bind_body_inv_mass.ptr == raw_model_inv_mass.ptr
         model_inv_mass = object_collection.data._sim_bind_body_inv_mass
         original_inv_mass = wp.to_torch(model_inv_mass).clone()
@@ -226,9 +237,9 @@ def test_set_body_inertial_properties_updates_inverses(device):
         unselected[selected] = False
         torch.testing.assert_close(updated_inv_mass[unselected], original_inv_mass[unselected])
 
-        raw_model_inv_inertia = object_collection.root_view.get_attribute(
-            "body_inv_inertia", SimulationManager.get_model()
-        )[:, :, 0]
+        raw_model_inv_inertia = object_collection.root_view.get_attribute("body_inv_inertia", _manager().get_model())[
+            :, :, 0
+        ]
         assert object_collection.data._sim_bind_body_inv_inertia.ptr == raw_model_inv_inertia.ptr
         model_inv_inertia = object_collection.data._sim_bind_body_inv_inertia
         original_inv_inertia = wp.to_torch(model_inv_inertia).clone()
@@ -249,7 +260,7 @@ def test_set_body_inertial_properties_updates_inverses(device):
 @pytest.mark.parametrize("device", test_devices())
 def test_initialization_with_kinematic_enabled(num_envs, num_cubes, device):
     """Test that initialization for prim with kinematic flag enabled."""
-    with _newton_sim_context(device, auto_add_lighting=True) as sim:
+    with _newton_sim_context(device) as sim:
         sim._app_control_on_stop_handle = None
         object_collection, origins = generate_cubes_scene(
             num_envs=num_envs, num_cubes=num_cubes, kinematic_enabled=True, device=device
@@ -285,7 +296,7 @@ def test_initialization_with_kinematic_enabled(num_envs, num_cubes, device):
 @pytest.mark.parametrize("device", test_devices())
 def test_initialization_with_no_rigid_body(num_cubes, device):
     """Test that initialization fails when no rigid body is found at the provided prim path."""
-    with _newton_sim_context(device, auto_add_lighting=True) as sim:
+    with _newton_sim_context(device) as sim:
         sim._app_control_on_stop_handle = None
         object_collection, _ = generate_cubes_scene(num_cubes=num_cubes, has_api=False, device=device)
 
@@ -300,7 +311,7 @@ def test_initialization_with_no_rigid_body(num_cubes, device):
 @pytest.mark.parametrize("device", test_devices())
 def test_external_force_buffer(device):
     """Test if external force buffer correctly updates in the force value is zero case."""
-    with _newton_sim_context(device, auto_add_lighting=True) as sim:
+    with _newton_sim_context(device) as sim:
         sim._app_control_on_stop_handle = None
         num_envs = 2
         num_cubes = 1
@@ -356,7 +367,7 @@ def test_external_force_buffer(device):
 @pytest.mark.parametrize("device", test_devices())
 def test_external_force_on_single_body(num_envs, num_cubes, device):
     """Test application of external force on the base of the object."""
-    with _newton_sim_context(device, auto_add_lighting=True) as sim:
+    with _newton_sim_context(device) as sim:
         sim._app_control_on_stop_handle = None
         object_collection, origins = generate_cubes_scene(num_envs=num_envs, num_cubes=num_cubes, device=device)
         sim.reset()
@@ -379,6 +390,7 @@ def test_external_force_on_single_body(num_envs, num_cubes, device):
             object_collection.write_body_com_velocity_to_sim_index(body_velocities=body_vel)
             # reset object
             object_collection.reset()
+            sim.forward()
 
             is_global = False
             if i % 2 == 0:
@@ -423,7 +435,7 @@ def test_external_force_on_single_body_at_position(num_envs, num_cubes, device):
     one of the objects at 1m in the Y direction, we check that the object rotates around it's X axis.
     For the other object, we do not apply any force and check that it falls down.
     """
-    with _newton_sim_context(device, auto_add_lighting=True) as sim:
+    with _newton_sim_context(device) as sim:
         sim._app_control_on_stop_handle = None
         object_collection, origins = generate_cubes_scene(num_envs=num_envs, num_cubes=num_cubes, device=device)
         sim.reset()
@@ -451,6 +463,7 @@ def test_external_force_on_single_body_at_position(num_envs, num_cubes, device):
             object_collection.write_body_com_velocity_to_sim_index(body_velocities=body_vel)
             # reset object
             object_collection.reset()
+            sim.forward()
 
             is_global = False
             if i % 2 == 0:
@@ -506,7 +519,7 @@ def test_set_object_state(num_envs, num_cubes, device):
         Turn off gravity for this test as we don't want any external forces acting on the object
         to ensure state remains static
     """
-    with _newton_sim_context(device, gravity_enabled=False, auto_add_lighting=True) as sim:
+    with _newton_sim_context(device, gravity_enabled=False) as sim:
         sim._app_control_on_stop_handle = None
         object_collection, origins = generate_cubes_scene(num_envs=num_envs, num_cubes=num_cubes, device=device)
         sim.reset()
@@ -573,7 +586,7 @@ def test_set_object_state(num_envs, num_cubes, device):
 @pytest.mark.parametrize("device", test_devices())
 def test_reset_object_collection(num_envs, num_cubes, device):
     """Test resetting the state of the rigid object."""
-    with _newton_sim_context(device, gravity_enabled=True, auto_add_lighting=True) as sim:
+    with _newton_sim_context(device, gravity_enabled=True) as sim:
         sim._app_control_on_stop_handle = None
         object_collection, _ = generate_cubes_scene(num_envs=num_envs, num_cubes=num_cubes, device=device)
         sim.reset()
@@ -608,14 +621,14 @@ def test_reset_object_collection(num_envs, num_cubes, device):
 @pytest.mark.parametrize("device", test_devices())
 def test_set_material_properties(num_envs, num_cubes, device):
     """Test getting and setting material properties of rigid object collection via view-level APIs."""
-    with _newton_sim_context(device, auto_add_lighting=True) as sim:
+    with _newton_sim_context(device) as sim:
         sim._app_control_on_stop_handle = None
         object_collection, _ = generate_cubes_scene(num_envs=num_envs, num_cubes=num_cubes, device=device)
         sim.reset()
 
         # Get friction/restitution bindings via view-level API
         # The collection's _root_view stores data in flat view order: (num_envs * num_cubes, ...)
-        model = SimulationManager.get_model()
+        model = _manager().get_model()
         friction_raw = object_collection._root_view.get_attribute("shape_material_mu", model)
         restitution_raw = object_collection._root_view.get_attribute("shape_material_restitution", model)
 
@@ -629,7 +642,7 @@ def test_set_material_properties(num_envs, num_cubes, device):
 
         wp.to_torch(friction_binding)[:] = friction
         wp.to_torch(restitution_binding)[:] = restitution
-        SimulationManager.add_model_change(ModelFlags.SHAPE_PROPERTIES)
+        _manager().add_model_change(ModelFlags.SHAPE_PROPERTIES)
 
         # Perform simulation
         sim.step()
@@ -648,7 +661,7 @@ def test_set_material_properties(num_envs, num_cubes, device):
 @pytest.mark.parametrize("gravity_enabled", [True, False])
 def test_gravity_vec_w(num_envs, num_cubes, device, gravity_enabled):
     """Test that gravity vector direction is set correctly for the rigid object."""
-    with _newton_sim_context(device, gravity_enabled=gravity_enabled, auto_add_lighting=True) as sim:
+    with _newton_sim_context(device, gravity_enabled=gravity_enabled) as sim:
         sim._app_control_on_stop_handle = None
         object_collection, _ = generate_cubes_scene(num_envs=num_envs, num_cubes=num_cubes, device=device)
 
@@ -689,13 +702,13 @@ def test_gravity_vec_w_tracks_model_gravity(num_envs, num_cubes, device):
     gravity broadcast to every env and body, hiding per-env gravity
     randomization (e.g. :class:`~isaaclab.envs.mdp.randomize_physics_scene_gravity`).
     """
-    with _newton_sim_context(device, gravity_enabled=True, auto_add_lighting=True) as sim:
+    with _newton_sim_context(device, gravity_enabled=True) as sim:
         sim._app_control_on_stop_handle = None
         object_collection, _ = generate_cubes_scene(num_envs=num_envs, num_cubes=num_cubes, device=device)
         sim.reset()
 
         # GRAVITY_VEC_W must share storage with Newton's per-env gravity array.
-        model = SimulationManager.get_model()
+        model = _manager().get_model()
         model_gravity_arr = model.gravity[: model.world_count]
         global_gravity = wp.to_torch(model.gravity)[-1].clone()
         assert object_collection.data.GRAVITY_VEC_W.warp.ptr == model_gravity_arr.ptr
@@ -708,7 +721,7 @@ def test_gravity_vec_w_tracks_model_gravity(num_envs, num_cubes, device):
             dtype=torch.float32,
         )
         wp.to_torch(model_gravity_arr).copy_(new_gravity)
-        SimulationManager.add_model_change(ModelFlags.MODEL_PROPERTIES)
+        _manager().add_model_change(ModelFlags.MODEL_PROPERTIES)
         torch.testing.assert_close(wp.to_torch(model.gravity)[-1], global_gravity)
 
         # Recompute the lazily-cached projected_gravity_b without sim.step: bodies stay
@@ -725,7 +738,7 @@ def test_gravity_vec_w_tracks_model_gravity(num_envs, num_cubes, device):
 @pytest.mark.parametrize("with_offset", [True, False])
 def test_object_state_properties(num_envs, num_cubes, device, with_offset):
     """Test the object_com_state_w and object_link_state_w properties."""
-    with _newton_sim_context(device, gravity_enabled=False, auto_add_lighting=True) as sim:
+    with _newton_sim_context(device, gravity_enabled=False) as sim:
         sim._app_control_on_stop_handle = None
         cube_object, env_pos = generate_cubes_scene(num_envs=num_envs, num_cubes=num_cubes, height=0.0, device=device)
 
@@ -745,7 +758,7 @@ def test_object_state_properties(num_envs, num_cubes, device, with_offset):
         cube_object.set_coms_index(coms=wp.from_torch(offset, dtype=wp.vec3f))
         # Flush the model change immediately so it takes effect before the next step
         with wp.ScopedDevice(device):
-            SimulationManager._solver.notify_model_changed(ModelFlags.BODY_INERTIAL_PROPERTIES)
+            _manager()._solver.notify_model_changed(ModelFlags.BODY_INERTIAL_PROPERTIES)
 
         # check center of mass has been set
         torch.testing.assert_close(cube_object.data.body_com_pos_b.torch, offset)
@@ -817,7 +830,7 @@ def test_object_state_properties(num_envs, num_cubes, device, with_offset):
 @pytest.mark.parametrize("state_location", ["com", "link"])
 def test_write_object_state(num_envs, num_cubes, device, with_offset, state_location):
     """Test the setters for object_state using both the link frame and center of mass as reference frame."""
-    with _newton_sim_context(device, gravity_enabled=False, auto_add_lighting=True) as sim:
+    with _newton_sim_context(device, gravity_enabled=False) as sim:
         sim._app_control_on_stop_handle = None
         # Create a scene with random cubes
         cube_object, env_pos = generate_cubes_scene(num_envs=num_envs, num_cubes=num_cubes, height=0.0, device=device)
@@ -840,7 +853,7 @@ def test_write_object_state(num_envs, num_cubes, device, with_offset, state_loca
         cube_object.set_coms_index(coms=wp.from_torch(offset, dtype=wp.vec3f))
         # Flush the model change immediately so it takes effect before the next step
         with wp.ScopedDevice(device):
-            SimulationManager._solver.notify_model_changed(ModelFlags.BODY_INERTIAL_PROPERTIES)
+            _manager()._solver.notify_model_changed(ModelFlags.BODY_INERTIAL_PROPERTIES)
 
         # check center of mass has been set
         torch.testing.assert_close(cube_object.data.body_com_pos_b.torch, offset)
@@ -880,6 +893,8 @@ def test_write_object_state(num_envs, num_cubes, device, with_offset, state_loca
                         body_velocities=rand_state[..., 7:], env_ids=env_ids, body_ids=object_ids
                     )
 
+            sim.forward()
+
             if state_location == "com":
                 torch.testing.assert_close(rand_state[..., :7], cube_object.data.body_com_pose_w.torch)
                 torch.testing.assert_close(rand_state[..., 7:], cube_object.data.body_com_vel_w.torch)
@@ -895,7 +910,7 @@ def test_write_object_state(num_envs, num_cubes, device, with_offset, state_loca
 @pytest.mark.parametrize("state_location", ["com", "link", "root"])
 def test_write_object_state_functions_data_consistency(num_envs, num_cubes, device, with_offset, state_location):
     """Test the setters for object_state using both the link frame and center of mass as reference frame."""
-    with _newton_sim_context(device, gravity_enabled=False, auto_add_lighting=True) as sim:
+    with _newton_sim_context(device, gravity_enabled=False) as sim:
         sim._app_control_on_stop_handle = None
         # Create a scene with random cubes
         cube_object, env_pos = generate_cubes_scene(num_envs=num_envs, num_cubes=num_cubes, height=0.0, device=device)
@@ -918,7 +933,7 @@ def test_write_object_state_functions_data_consistency(num_envs, num_cubes, devi
         cube_object.set_coms_index(coms=wp.from_torch(offset, dtype=wp.vec3f))
         # Flush the model change immediately so it takes effect before the next step
         with wp.ScopedDevice(device):
-            SimulationManager._solver.notify_model_changed(ModelFlags.BODY_INERTIAL_PROPERTIES)
+            _manager()._solver.notify_model_changed(ModelFlags.BODY_INERTIAL_PROPERTIES)
 
         # check center of mass has been set
         torch.testing.assert_close(cube_object.data.body_com_pos_b.torch, offset)
@@ -963,6 +978,8 @@ def test_write_object_state_functions_data_consistency(num_envs, num_cubes, devi
             cube_object.write_body_com_velocity_to_sim_index(
                 body_velocities=rand_state[..., 7:], env_ids=env_ids, body_ids=object_ids
             )
+
+        sim.forward()
 
         if state_location == "com":
             com_pose_w = cube_object.data.body_com_pose_w.torch
@@ -1033,22 +1050,19 @@ def test_write_object_state_functions_data_consistency(num_envs, num_cubes, devi
 def test_body_pose_write_marks_fk_reset_mask(device, writer):
     """Regression: ``write_body_{link,com}_pose_to_sim_{index,mask}`` must mark FK dirty.
 
-    For a collection, ``_sim_bind_body_link_pose_w`` is bound directly to the simulator's root-transforms
-    buffer, so the property read is not what becomes stale — the simulator's internal ``body_q`` used by
-    collision detection is. The write methods must therefore call :meth:`SimulationManager.invalidate_fk`
-    so downstream consumers re-run forward kinematics before the next step. Without the fix,
-    ``_fk_reset_mask`` remains unset after an explicit pose write. The buffer-aliasing invariant is
-    also pinned: a refactor that decouples ``_sim_bind_body_link_pose_w`` from the write target would
-    silently make the property stale, so we check the post-write pose matches the written value.
+    The write methods must invalidate Newton FK so the explicit
+    :meth:`SimulationContext.forward` lifecycle boundary reconciles the simulator's internal
+    ``body_q`` before downstream consumers read it. Without the fix, ``_fk_reset_mask`` remains
+    unset after an explicit pose write.
     """
 
     def _fk_reset_mask_dirty() -> bool:
-        assert SimulationManager._fk_reset_mask is not None
-        return bool(wp.to_torch(SimulationManager._fk_reset_mask).any().item())
+        assert _manager()._fk_reset_mask is not None
+        return bool(wp.to_torch(_manager()._fk_reset_mask).any().item())
 
     num_envs = 2
     num_cubes = 2
-    with _newton_sim_context(device, gravity_enabled=False, auto_add_lighting=True) as sim:
+    with _newton_sim_context(device, gravity_enabled=False) as sim:
         sim._app_control_on_stop_handle = None
         cube_object, _ = generate_cubes_scene(num_envs=num_envs, num_cubes=num_cubes, height=0.5, device=device)
 
@@ -1059,7 +1073,7 @@ def test_body_pose_write_marks_fk_reset_mask(device, writer):
         cube_object.update(sim.cfg.dt)
 
         # Clear the dirty flag so we can observe that the write sets it.
-        SimulationManager.forward()
+        _manager().forward()
         assert not _fk_reset_mask_dirty()
 
         pre_write_pose = wp.to_torch(cube_object.data.body_link_pose_w).clone()
@@ -1078,13 +1092,13 @@ def test_body_pose_write_marks_fk_reset_mask(device, writer):
         elif writer == "com_mask":
             cube_object.write_body_com_pose_to_sim_mask(body_poses=target_pose)
 
-        assert _fk_reset_mask_dirty(), "pose write must call SimulationManager.invalidate_fk()"
+        assert _fk_reset_mask_dirty(), "pose write must invalidate Newton FK"
+        sim.forward()
+        assert not _fk_reset_mask_dirty()
 
-        # body_link_pose_w must reflect the write immediately — its underlying buffer is the write
-        # target. A regression that moves this property to a separate cached buffer (mirroring the
-        # single-object case) would silently break this invariant.
+        # The reconciled body pose must reflect the authored state.
         body_link = wp.to_torch(cube_object.data.body_link_pose_w)
         assert not torch.allclose(body_link[..., :3], pre_write_pose[..., :3], rtol=1e-4, atol=1e-4), (
-            "body_link_pose_w still aliases the pre-write pose; the underlying buffer was not written"
+            "body_link_pose_w returned the pre-write pose after sim.forward()"
         )
         torch.testing.assert_close(body_link[..., :3], target_pose[..., :3], rtol=1e-4, atol=1e-4)

@@ -14,7 +14,6 @@ import torch
 
 import isaaclab.utils.math as math_utils
 from isaaclab.managers import CommandTerm
-from isaaclab.markers import VisualizationMarkers
 from isaaclab.utils.leapp import POSE7_ELEMENT_NAMES
 
 from isaaclab_tasks.core.reorient.utils import SuccessTracker
@@ -153,7 +152,9 @@ class ReorientCommand(CommandTerm):
         if debug_vis:
             # create markers if necessary for the first time
             if not hasattr(self, "goal_pose_visualizer"):
-                self.goal_pose_visualizer = VisualizationMarkers(self.cfg.goal_pose_visualizer_cfg)
+                self.goal_pose_visualizer = self.cfg.goal_pose_visualizer_cfg.class_type(
+                    self.cfg.goal_pose_visualizer_cfg
+                )
             # set visibility
             self.goal_pose_visualizer.set_visibility(True)
         else:

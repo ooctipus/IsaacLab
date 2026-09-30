@@ -3,8 +3,11 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Visualizer configurations and implementations."""
+"""Visualizer base and configuration entrypoints."""
 
-from isaaclab.utils.module import lazy_export
+from __future__ import annotations
 
-lazy_export()
+from .base_visualizer import BaseVisualizer
+from .visualizer_cfg import VisualizerCfg
+
+__all__ = ["BaseVisualizer", "VisualizerCfg"]

@@ -9,6 +9,7 @@ import pytest
 
 import isaaclab_contrib.custom_coupling.tasks  # noqa: F401
 from isaaclab_contrib.custom_coupling.franka_soft_env_cfg import PhysicsCfg
+from isaaclab_contrib.custom_coupling.newton_manager_cfg import CoupledMJWarpVBDSolverCfg
 
 from isaaclab_tasks.core.lift.config.franka_soft.franka_soft_env_cfg import PhysicsCfg as CorePhysicsCfg
 from isaaclab_tasks.utils import resolve_task_config
@@ -21,7 +22,10 @@ def test_example_default_preset_uses_the_manual_coupler() -> None:
     """Importing the example must select its own manual coupling preset."""
     env_cfg, _ = resolve_task_config("IsaacContrib-Lift-Soft-Franka-Custom-Coupling", "", overrides=())
 
-    assert env_cfg.sim.physics.class_type == MANUAL_MANAGER
+    physics = env_cfg.sim.physics
+    assert isinstance(physics, CoupledMJWarpVBDSolverCfg)
+    assert not hasattr(physics, "solver_cfg")
+    assert physics.class_type == MANUAL_MANAGER
 
 
 def test_core_declares_only_the_proxy_preset() -> None:

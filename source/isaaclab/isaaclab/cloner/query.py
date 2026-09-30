@@ -39,10 +39,36 @@ if TYPE_CHECKING:
 
 def _row_env_ids(plan: ClonePlan, row: int) -> tuple[int, ...]:
     """Env ids populated from a plan row: the plan's env ids at the row's ``True`` columns."""
+    if "{}" not in plan.destinations[row]:
+        return tuple(range(plan.clone_mask.shape[1])) if plan.env_ids is None else tuple(map(int, plan.env_ids))
     columns = np.flatnonzero(plan.clone_mask[row])
     if plan.env_ids is None:
         return tuple(map(int, columns))
     return tuple(map(int, plan.env_ids[columns]))
+
+
+def _row_populated(plan: ClonePlan, row: int) -> bool:
+    """Return whether a replicated row reaches an environment or a shared row exists once."""
+    return "{}" not in plan.destinations[row] or bool(plan.clone_mask[row].any())
+
+
+def cfg_source_paths(plan: ClonePlan, cfg: object) -> tuple[str | None, ...]:
+    """Return the authored source path for each plan row owned by ``cfg``."""
+    rows = plan.cfg_rows.get(id(cfg))
+    if rows is None:
+        raise ValueError(f"Cfg {type(cfg).__name__} owns no row in the active clone plan.")
+    return tuple(plan.sources[row] if _row_populated(plan, row) else None for row in rows)
+
+
+def env_root_paths(plan: ClonePlan | None) -> list[str]:
+    """Return the plan's environment root paths in environment-id order."""
+    if plan is None or plan.env_ids is None:
+        return []
+    prefixes = {pth.split(destination)[0] for destination in plan.destinations if "{}" in destination}
+    if len(prefixes) != 1:
+        return []
+    prefix = prefixes.pop()
+    return [f"{prefix}{int(env_id)}" for env_id in plan.env_ids]
 
 
 def _column_for_env_id(plan: ClonePlan, env_id: int) -> int | None:
@@ -82,9 +108,7 @@ def _clone_rows(plan: ClonePlan, path_expr: str, *, populated_only: bool) -> lis
     """
     candidates: list[tuple[str, pth.TemplateMatch, int]] = []
     for row, template in enumerate(plan.destinations):
-        if "{}" not in template:
-            continue
-        if populated_only and not plan.clone_mask[row].any():
+        if populated_only and not _row_populated(plan, row):
             continue
         matched = pth.match(path_expr, template)
         if matched is None:
@@ -197,7 +221,7 @@ def path_to_source(plan: ClonePlan, path_expr: str, env_id: int | None = None) -
     # Resolution must walk a prototype that exists on stage, so rows populating no env at all
     # are skipped rather than reported.
     if env_id is None:
-        rows = [row for row in rows if plan.clone_mask[row].any()]
+        rows = [row for row in rows if _row_populated(plan, row)]
     else:
         column = _column_for_env_id(plan, env_id)
         if column is None:
@@ -233,3 +257,12 @@ def iter_sources(plan: ClonePlan, path_expr: str) -> Iterator[tuple[str, str, st
         source_root = plan.sources[row].rstrip("/") or "/"
         source_path = source_root + matched.suffix if source_root != "/" else matched.suffix or "/"
         yield source_root, template_norm, source_path, _row_env_ids(plan, row)
+
+
+def destination_paths(plan: ClonePlan, path_expr: str) -> dict[int, str]:
+    """Return exact destination paths keyed by the environments populated by ``path_expr``."""
+    return {
+        env_id: pth.rebase(source_path, source_root, destination.format(env_id))
+        for source_root, destination, source_path, env_ids in iter_sources(plan, path_expr)
+        for env_id in env_ids
+    }

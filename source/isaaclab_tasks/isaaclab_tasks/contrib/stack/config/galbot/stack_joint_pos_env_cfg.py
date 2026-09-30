@@ -5,7 +5,7 @@
 
 
 from isaaclab_physx.assets import SurfaceGripperCfg
-from isaaclab_teleop import IsaacTeleopCfg
+from isaaclab_teleop import IsaacTeleopCfg, TeleopPipelineCfg
 
 from isaaclab.assets import RigidObjectCfg
 from isaaclab.envs.mdp.actions.actions_cfg import SurfaceGripperBinaryActionCfg
@@ -19,7 +19,6 @@ from isaaclab.sim.schemas.schemas_cfg import CollisionPropertiesCfg, RigidBodyPr
 from isaaclab.sim.spawners.from_files.from_files_cfg import UsdFileCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.configclass import configclass
-from isaaclab.visualizers import VisualizerCfg
 
 from isaaclab_tasks.contrib.stack import mdp
 from isaaclab_tasks.contrib.stack.mdp import franka_stack_events
@@ -40,7 +39,12 @@ from isaaclab.markers.config import FRAME_MARKER_CFG  # isort: skip
 from isaaclab_assets.robots.galbot import GALBOT_ONE_CHARLIE_CFG  # isort: skip
 
 
-def _build_se3_abs_gripper_pipeline(hand_side="left"):
+@configclass
+class _Se3AbsGripperPipelineCfg(TeleopPipelineCfg):
+    hand_side: str = "left"
+
+
+def _build_se3_abs_gripper_pipeline(cfg: _Se3AbsGripperPipelineCfg):
     """Build an IsaacTeleop Se3Abs + Gripper pipeline for single-arm manipulator teleoperation.
 
     Creates a Se3AbsRetargeter for end-effector absolute pose tracking and
@@ -63,7 +67,7 @@ def _build_se3_abs_gripper_pipeline(hand_side="left"):
     transform_input = ValueInput("world_T_anchor", TransformMatrix())
     transformed_hands = hands.transformed(transform_input.output(ValueInput.VALUE))
 
-    hand_key = HandsSource.LEFT if hand_side == "left" else HandsSource.RIGHT
+    hand_key = HandsSource.LEFT if cfg.hand_side == "left" else HandsSource.RIGHT
 
     # SE3 Absolute Pose Retargeter
     se3_cfg = Se3RetargeterConfig(
@@ -79,13 +83,13 @@ def _build_se3_abs_gripper_pipeline(hand_side="left"):
     connected_se3 = se3.connect({hand_key: transformed_hands.output(hand_key)})
 
     # Gripper Retargeter (pinch-based)
-    gripper_cfg = GripperRetargeterConfig(hand_side=hand_side)
+    gripper_cfg = GripperRetargeterConfig(hand_side=cfg.hand_side)
     gripper = GripperRetargeter(gripper_cfg, name="gripper")
-    controller_key = ControllersSource.LEFT if hand_side == "left" else ControllersSource.RIGHT
+    controller_key = ControllersSource.LEFT if cfg.hand_side == "left" else ControllersSource.RIGHT
     connected_gripper = gripper.connect(
         {
-            f"hand_{hand_side}": hands.output(hand_key),
-            f"controller_{hand_side}": controllers.output(controller_key),
+            f"hand_{cfg.hand_side}": hands.output(hand_key),
+            f"controller_{cfg.hand_side}": controllers.output(controller_key),
         }
     )
 
@@ -112,8 +116,7 @@ def _build_se3_abs_gripper_pipeline(hand_side="left"):
         }
     )
 
-    pipeline = OutputCombiner({"action": connected_reorderer.output("output")})
-    return pipeline
+    return OutputCombiner({"action": connected_reorderer.output("output")})
 
 
 @configclass
@@ -219,24 +222,8 @@ class ObservationGalbotLeftArmGripperCfg:
         def __post_init__(self):
             super().__post_init__()
 
-    @configclass
-    class RGBCameraPolicyCfg(ObsGroup):
-        """Observations for policy group with RGB images."""
-
-        table_cam = ObsTerm(
-            func=mdp.image, params={"sensor_cfg": SceneEntityCfg("table_cam"), "data_type": "rgb", "normalize": False}
-        )
-        wrist_cam = ObsTerm(
-            func=mdp.image, params={"sensor_cfg": SceneEntityCfg("wrist_cam"), "data_type": "rgb", "normalize": False}
-        )
-
-        def __post_init__(self):
-            self.enable_corruption = False
-            self.concatenate_terms = False
-
     subtask_terms: SubtaskCfg = SubtaskCfg()
     policy: PolicyCfg = PolicyCfg()
-    rgb_camera: RGBCameraPolicyCfg = RGBCameraPolicyCfg()
 
 
 @configclass
@@ -245,9 +232,6 @@ class GalbotLeftArmCubeStackEnvCfg(StackEnvCfg):
         # post init of parent
         super().__post_init__()
         # MDP settings
-
-        # visualizer camera settings
-        self.sim.default_visualizer_cfg = VisualizerCfg(eye=(1.8, 0.0, 1.8), lookat=(0.3, 0.0, 0.8))
 
         # Set events
         self.events = EventCfg()
@@ -316,14 +300,14 @@ class GalbotLeftArmCubeStackEnvCfg(StackEnvCfg):
         )
 
         # Listens to the required transforms
-        self.marker_cfg = FRAME_MARKER_CFG.copy()
-        self.marker_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
-        self.marker_cfg.prim_path = "/Visuals/FrameTransformer"
+        marker_cfg = FRAME_MARKER_CFG.copy()
+        marker_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
+        marker_cfg.prim_path = "/Visuals/FrameTransformer"
 
         self.scene.ee_frame = FrameTransformerCfg(
             prim_path="{ENV_REGEX_NS}/Robot/base_link",
             debug_vis=False,
-            visualizer_cfg=self.marker_cfg,
+            visualizer_cfg=marker_cfg,
             target_frames=[
                 FrameTransformerCfg.FrameCfg(
                     prim_path="{ENV_REGEX_NS}/Robot/left_gripper_tcp_link",
@@ -337,9 +321,8 @@ class GalbotLeftArmCubeStackEnvCfg(StackEnvCfg):
 
         # IsaacTeleop-based teleoperation pipeline (left hand)
         self.isaac_teleop = IsaacTeleopCfg(
-            pipeline_builder=lambda: _build_se3_abs_gripper_pipeline(hand_side="left"),
+            pipeline_cfg=_Se3AbsGripperPipelineCfg(class_type=_build_se3_abs_gripper_pipeline, hand_side="left"),
             sim_device=self.sim.device,
-            xr_cfg=self.xr,
         )
 
 
@@ -382,7 +365,6 @@ class GalbotRightArmCubeStackEnvCfg(GalbotLeftArmCubeStackEnvCfg):
 
         # IsaacTeleop-based teleoperation pipeline (right hand)
         self.isaac_teleop = IsaacTeleopCfg(
-            pipeline_builder=lambda: _build_se3_abs_gripper_pipeline(hand_side="right"),
+            pipeline_cfg=_Se3AbsGripperPipelineCfg(class_type=_build_se3_abs_gripper_pipeline, hand_side="right"),
             sim_device=self.sim.device,
-            xr_cfg=self.xr,
         )

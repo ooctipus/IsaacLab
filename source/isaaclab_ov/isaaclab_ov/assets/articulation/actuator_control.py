@@ -20,8 +20,6 @@ from isaaclab.actuators.newton.adapter import LightArticulationView, NewtonActua
 from isaaclab.actuators.newton.physx_runtime import PhysxActuatorRuntime
 from isaaclab.assets.articulation import ordering_kernels
 from isaaclab.sim.schemas.schemas_actuators import _validate_newton_native_actuator_cfgs
-from isaaclab.sim.utils.queries import find_first_matching_prim
-from isaaclab.sim.utils.stage import get_current_stage
 
 from isaaclab_ov import tensor_types as TT
 
@@ -61,13 +59,10 @@ class OvPhysxActuatorControl(ArticulationActuatorControl):
         native_group_names = {
             name for name, actuator_cfg in actuator_cfgs.items() if not _is_implicit_actuator_cfg(actuator_cfg)
         }
-        first_prim = find_first_matching_prim(articulation.cfg.prim_path)
-        articulation_prim_path = str(first_prim.GetPath()) if first_prim is not None else None
         self._actuator_runtime = PhysxActuatorRuntime(articulation, logger=logger)
         self._actuator_runtime.prepare(
             collection,
-            stage=get_current_stage(),
-            articulation_prim_path=articulation_prim_path,
+            layout=articulation._articulation_layout,
             adapt_usd_actuators=bool(native_group_names),
         )
         articulation._physx_actuator_wrapper = self._actuator_runtime.wrapper

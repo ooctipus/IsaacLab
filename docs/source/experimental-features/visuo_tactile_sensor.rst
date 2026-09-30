@@ -24,16 +24,16 @@ Tactile sensors require specific configuration parameters to define their behavi
 
     from isaaclab.sensors import CameraCfg
     from isaaclab_assets.sensors import GELSIGHT_R15_CFG
+    from isaaclab_tasks.utils.presets import MultiBackendRendererCfg
     import isaaclab.sim as sim_utils
 
     from isaaclab_contrib.sensors.tacsl_sensor import VisuoTactileSensorCfg
 
     # Tactile sensor configuration
     tactile_sensor = VisuoTactileSensorCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/elastomer/tactile_sensor",
+        prim_path="{ENV_REGEX_NS}/Robot/elastomer",
         ## Sensor configuration
         render_cfg=GELSIGHT_R15_CFG,
-        enable_camera_tactile=True,
         enable_force_field=True,
         ## Elastomer configuration
         tactile_array_size=(20, 25),
@@ -52,6 +52,7 @@ Tactile sensors require specific configuration parameters to define their behavi
             width=240,
             data_types=["distance_to_image_plane"],
             spawn=None,  # camera already spawned in USD file
+            renderer_cfg=MultiBackendRendererCfg(),
         ),
     )
 
@@ -60,7 +61,7 @@ The configuration supports customization of:
 * **Render Configuration**: Specify the GelSight sensor rendering parameters using predefined configs
   (e.g., ``GELSIGHT_R15_CFG``, ``GELSIGHT_MINI_CFG`` from ``isaaclab_assets.sensors``)
 * **Tactile Modalities**:
-    * ``enable_camera_tactile`` - Enable tactile RGB imaging through camera sensors
+    * ``camera_cfg`` - Configure tactile RGB imaging, or set it to ``None`` to disable it
     * ``enable_force_field`` - Enable force field computation and visualization
 * **Force Field Grid**: Set tactile grid dimensions (``tactile_array_size``) and margins, which directly affects the spatial resolution of the computed force field
 * **Contact Object Configuration**: Define properties of interacting objects using prim path expressions to locate objects with SDF collision meshes
@@ -77,7 +78,7 @@ Configuration Requirements
    The following requirements must be satisfied for proper sensor operation:
 
    **Camera Tactile Imaging**
-      If ``enable_camera_tactile=True``, a valid ``camera_cfg`` (CameraCfg) must be provided with appropriate camera parameters.
+      Set ``camera_cfg`` to a valid ``CameraCfg`` with appropriate camera parameters, or ``None`` to disable tactile imaging.
 
    **Force Field Computation**
       If ``enable_force_field=True``, the following parameters are required:
@@ -91,8 +92,8 @@ Configuration Requirements
       * An SDFView must be defined during initialization, therefore interacting objects should be specified before simulation.
 
    **Elastomer Configuration**
-      The sensor's ``prim_path`` must be configured as a child of the elastomer prim in the USD hierarchy.
-      The query points for the force field computation is computed from the surface of the elastomer mesh, which is searched for under the prim path of the elastomer.
+      The sensor's ``prim_path`` must name the exact elastomer rigid-body prim covered by the clone plan.
+      Force-field query points are computed from the elastomer's planned visual mesh.
 
    **Physics Materials**
       The sensor uses physics materials to configure the compliant contact properties of the elastomer.

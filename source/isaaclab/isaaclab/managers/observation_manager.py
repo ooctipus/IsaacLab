@@ -558,8 +558,15 @@ class ObservationManager(ManagerBase):
                 self._group_obs_term_names[group_name].append(term_name)
                 self._group_obs_term_cfgs[group_name].append(term_cfg)
 
-                # call function the first time to fill up dimensions
-                obs_dims = tuple(term_cfg.func(self._env, **term_cfg.params).shape)
+                # Prefer implementation-owned shape metadata; pure legacy terms retain one-call inference.
+                output_shape = getattr(term_cfg.func, "_output_shape", None)
+                output_shape = output_shape(self._env, **term_cfg.params) if callable(output_shape) else output_shape
+                inferred_output_shape = output_shape is None
+                obs_dims = (
+                    tuple(term_cfg.func(self._env, **term_cfg.params).shape)
+                    if inferred_output_shape
+                    else (self._env.num_envs, *output_shape)
+                )
 
                 # if scale is set, check if single float or tuple
                 if term_cfg.scale is not None:
@@ -655,7 +662,8 @@ class ObservationManager(ManagerBase):
                 # add term in a separate list if term is a class
                 if isinstance(term_cfg.func, ManagerTermBase):
                     self._group_obs_class_term_cfgs[group_name].append(term_cfg)
-                    # call reset (in-case above call to get obs dims changed the state)
-                    term_cfg.func.reset()
+                    if inferred_output_shape:
+                        # Undo fallback shape-inference side effects.
+                        term_cfg.func.reset()
             # add history buffers for each group
             self._group_obs_term_history_buffer[group_name] = group_entry_history_buffer

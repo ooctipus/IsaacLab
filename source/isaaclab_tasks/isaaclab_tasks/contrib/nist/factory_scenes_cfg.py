@@ -11,20 +11,21 @@ Each scene class inherits from :class:`FactorySceneBase` and specifies the
 """
 
 from isaaclab.assets import ArticulationCfg, RigidObjectCfg
-from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils.configclass import configclass
 
 from isaaclab_tasks.contrib.nist import factory_assets_cfg as assets
 from isaaclab_tasks.utils import PresetCfg, preset
+from isaaclab_tasks.utils.presets import MultiBackendSceneCfg
 
 _FRANKA_PANDA_PHYSX_CFG = assets.FRANKA_PANDA_PHYSX_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
 
 
 @configclass
-class FactorySceneBase(InteractiveSceneCfg):
+class FactorySceneBase(MultiBackendSceneCfg):
     """Shared scene assets for all Factory tasks."""
 
     num_envs: int = 4096
+    geometry_prim_paths: tuple[str, ...] = ("{ENV_REGEX_NS}/[^/]+",)
     ground = assets.GROUND_CFG
     table = assets.TABLE_CFG
     nistboard = assets.NISTBOARD_CFG

@@ -16,7 +16,6 @@ import torch
 import isaaclab.utils.math as math_utils
 from isaaclab.assets import Articulation
 from isaaclab.managers import CommandTerm
-from isaaclab.markers import VisualizationMarkers
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedEnv
@@ -204,9 +203,11 @@ class UniformVelocityCommand(CommandTerm):
             # create markers if necessary for the first time
             if not hasattr(self, "goal_vel_visualizer"):
                 # -- goal
-                self.goal_vel_visualizer = VisualizationMarkers(self.cfg.goal_vel_visualizer_cfg)
+                self.goal_vel_visualizer = self.cfg.goal_vel_visualizer_cfg.class_type(self.cfg.goal_vel_visualizer_cfg)
                 # -- current
-                self.current_vel_visualizer = VisualizationMarkers(self.cfg.current_vel_visualizer_cfg)
+                self.current_vel_visualizer = self.cfg.current_vel_visualizer_cfg.class_type(
+                    self.cfg.current_vel_visualizer_cfg
+                )
             # set their visibility to true
             self.goal_vel_visualizer.set_visibility(True)
             self.current_vel_visualizer.set_visibility(True)

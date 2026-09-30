@@ -15,16 +15,15 @@ import torch
 import warp as wp
 
 import omni.physics.tensors as physx
-from pxr import UsdPhysics
 
 import isaaclab.sim as sim_utils
 import isaaclab.utils.string as string_utils
+from isaaclab import cloner
 from isaaclab.assets.rigid_object_collection.base_rigid_object_collection import BaseRigidObjectCollection
 from isaaclab.utils.warp import ProxyArray
 from isaaclab.utils.wrench_composer import WrenchComposer
 
 from isaaclab_physx.assets import kernels as shared_kernels
-from isaaclab_physx.physics import PhysxManager as SimulationManager
 
 from .kernels import resolve_view_ids_kernel
 from .rigid_object_collection_data import RigidObjectCollectionData
@@ -77,21 +76,24 @@ class RigidObjectCollection(BaseRigidObjectCollection):
         self.cfg = cfg.copy()
         # flag for whether the asset is initialized
         self._is_initialized = False
-        # spawn the rigid objects
-        for rigid_body_cfg in self.cfg.rigid_objects.values():
-            # spawn the asset
+        sim = sim_utils.SimulationContext.instance()
+        if sim is None or (plan := sim.get_clone_plan()) is None:
+            raise RuntimeError("RigidObjectCollection requires an active clone plan.")
+        for source_cfg, rigid_body_cfg in zip(cfg.rigid_objects.values(), self.cfg.rigid_objects.values(), strict=True):
+            rigid_body_cfg.prim_path = cloner.expand_env_regex_ns(rigid_body_cfg.prim_path)
             if rigid_body_cfg.spawn is not None:
-                spawn_path = rigid_body_cfg.spawn.spawn_path or rigid_body_cfg.prim_path
+                source_paths = cloner.query.cfg_source_paths(plan, source_cfg)
+                spawn_path = (
+                    source_paths
+                    if isinstance(rigid_body_cfg.spawn, (sim_utils.MultiAssetSpawnerCfg, sim_utils.MultiUsdFileCfg))
+                    else next(path for path in source_paths if path is not None)
+                )
                 rigid_body_cfg.spawn.func(
                     spawn_path,
                     rigid_body_cfg.spawn,
                     translation=rigid_body_cfg.init_state.pos,
                     orientation=rigid_body_cfg.init_state.rot,
                 )
-            # check that spawn was successful
-            matching_prims = sim_utils.find_matching_prims(rigid_body_cfg.prim_path)
-            if len(matching_prims) == 0:
-                raise RuntimeError(f"Could not find prim with path {rigid_body_cfg.prim_path}.")
         # stores object names
         self._body_names_list = []
 
@@ -1342,16 +1344,13 @@ class RigidObjectCollection(BaseRigidObjectCollection):
         # clear body names list to prevent double counting on re-initialization
         self._body_names_list.clear()
         # obtain global simulation view
-        self._physics_sim_view = SimulationManager.get_physics_sim_view()
+        self._physics_sim_view = self._physics_manager.get_physics_sim_view()
 
-        def has_rigid_body_api(prim) -> bool:
-            return bool(prim.HasAPI(UsdPhysics.RigidBodyAPI))
-
-        resolve_kwargs = {"predicate": has_rigid_body_api, "expected_num_matches": 1}
+        layout = sim_utils.SimulationContext.instance().get_clone_plan()
         root_prim_path_exprs = []
         for name, obj_cfg in self.cfg.rigid_objects.items():
-            _, root_expr = sim_utils.resolve_matching_prims_from_source(obj_cfg.prim_path, **resolve_kwargs)[0]
-            root_prim_path_exprs.append(sim_utils.path_expr_to_glob(root_expr))
+            view_path = layout.match_rigid_body(obj_cfg.prim_path).view_path
+            root_prim_path_exprs.append(sim_utils.path_expr_to_glob(view_path))
             self._body_names_list.append(name)
 
         # -- object view
@@ -1367,7 +1366,7 @@ class RigidObjectCollection(BaseRigidObjectCollection):
         logger.info(f"Body names: {self.body_names}")
 
         # container for data access
-        self._data = RigidObjectCollectionData(self.root_view, self.num_bodies, self.device)
+        self._data = RigidObjectCollectionData(self.root_view, self.num_bodies, self.device, self._physics_manager)
 
         # create buffers
         self._create_buffers()

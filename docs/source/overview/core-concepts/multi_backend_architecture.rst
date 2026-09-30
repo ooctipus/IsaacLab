@@ -17,24 +17,15 @@ This page explains how the backend system works and how to extend it.
 Overview
 --------
 
-Instead of hard-coding a single physics engine, Isaac Lab uses a **factory pattern** to
-dispatch object creation to backend-specific implementations at runtime. When you write:
+Instead of hard-coding a single physics engine, Isaac Lab makes configuration the composition
+boundary. Every configurable component exposes ``class_type``; its owner invokes it with the same
+convention:
 
 .. code-block:: python
 
-    from isaaclab.assets import Articulation
+    component = cfg.class_type(cfg)
 
-    robot = Articulation(cfg)
-
-The ``Articulation`` class is a factory that automatically creates an instance of
-the active backend implementation, such as
-:class:`PhysX Articulation <isaaclab_physx.assets.Articulation>`,
-:class:`Newton Articulation <isaaclab_newton.assets.Articulation>`, or
-:class:`OvPhysX Articulation <isaaclab_ov.assets.Articulation>`. Your code never
-needs to import backend-specific modules directly.
-
-This pattern applies across simulation components, though not every backend implements every
-component yet:
+This applies across simulation components, though not every backend implements every component yet:
 
 .. list-table::
    :header-rows: 1
@@ -63,7 +54,7 @@ component yet:
      - :class:`~isaaclab.assets.DeformableObject`
      - :class:`~isaaclab_physx.assets.DeformableObject`
      - :class:`~isaaclab_newton.assets.DeformableObject`
-     - Not supported
+     - :class:`~isaaclab_ov.assets.DeformableObject`
    * - Cable Object
      - :class:`~isaaclab.assets.CableObject`
      - Not supported
@@ -78,62 +69,38 @@ component yet:
      - :class:`~isaaclab.renderers.BaseRenderer`
      - :class:`~isaaclab_physx.renderers.IsaacRtxRenderer`
      - :class:`~isaaclab_newton.renderers.NewtonWarpRenderer`
-     - Not supported
+     - :class:`~isaaclab_ov.renderers.OVRTXRenderer`
    * - Scene Data Backend
      - :class:`~isaaclab.scene_data.SceneDataBackend`
      - ``PhysxSceneDataBackend`` (in :mod:`isaaclab_physx.physics`)
      - ``NewtonSceneDataBackend`` (in :mod:`isaaclab_newton.physics`)
      - ``OvPhysxSceneDataBackend`` (in :mod:`isaaclab_ov.physics`)
    * - Cloner
-     - :func:`~isaaclab.cloner.usd_replicate`
-     - :func:`~isaaclab_physx.cloner.physx_replicate`
-     - :func:`~isaaclab_newton.cloner.newton_physics_replicate`
-     - :func:`~isaaclab_ov.cloner.ovphysx_replicate`
+     - :class:`~isaaclab.cloner.UsdReplicateContext`
+     - ``PhysxReplicateContext``
+     - ``NewtonReplicateContext``
+     - ``OvReplicateContext`` (shared by OVPhysX and OVRTX)
 
-The Factory Pattern
--------------------
+Configuration-Driven Construction
+---------------------------------
 
-All factories inherit from :class:`~isaaclab.utils.backend_utils.FactoryBase`, which uses a
-**convention-over-configuration** approach to locate backend implementations:
-
-1. The active physics backend is determined by inspecting
-   ``SimulationContext.physics_manager``.
-2. The factory's module path is used to derive the backend module path. For example,
-   ``isaaclab.assets.articulation`` maps to ``isaaclab_physx.assets.articulation``,
-   ``isaaclab_newton.assets.articulation``, or ``isaaclab_ov.assets.articulation``.
-   The OVPhysX backend key maps to the shared ``isaaclab_ov`` integration package.
-3. The backend module is lazily imported and the implementation class is cached in a registry.
-
-.. code-block:: text
-
-    User code: Articulation(cfg)
-        │
-        ▼
-    FactoryBase.__new__()
-        │
-        ├─ _get_backend()       → "physx", "newton", or "ovphysx"
-        │    (reads SimulationContext.physics_manager)
-        │
-        ├─ _get_module_name()   → "isaaclab_physx.assets.articulation"
-        │    (OVPhysX maps to the shared isaaclab_ov package)
-        │
-        ├─ importlib.import_module()
-        │    (lazy load — only on first use)
-        │
-        └─ Return backend-specific instance
-
-Renderers and visualizers do not use this physics factory. Their concrete configs own the
-implementation class, and their composition roots construct it with the same convention used by
-other declarative configs:
+The resolved config owns the implementation choice for physics managers, renderers, and visualizers.
+:class:`~isaaclab.scene.InteractiveScene` invokes the same config entry point for declared assets
+and sensors:
 
 .. code-block:: python
 
+    physics_manager = physics_cfg.class_type(physics_cfg)
+    asset = asset_cfg.class_type(asset_cfg)
+    sensor = sensor_cfg.class_type(sensor_cfg)
     renderer = renderer_cfg.class_type(renderer_cfg)
     visualizer = visualizer_cfg.class_type(visualizer_cfg)
 
-The config determines the implementation independently of the physics backend. ``RenderContext``
-retains one renderer for each equal renderer config, while ``SimulationContext`` owns visualizer
-construction and initialization.
+``class_type`` may be a lazy ``"{DIR}.module:Class"`` string in source; ``configclass`` resolves it
+before construction. Physics, renderer, and visualizer configs name their concrete implementations.
+Most core asset and sensor configs still name thin ``FactoryBase`` dispatch classes; removing that
+extra runtime discovery is remaining migration debt. Configs contain data, not custom ``build()`` or
+``build_visualizer()`` methods. Backend packages never import one another.
 
 Backend Selection
 -----------------
@@ -144,24 +111,25 @@ The physics backend is selected via the ``physics`` field in
 .. code-block:: python
 
     from isaaclab.sim import SimulationCfg
-    from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
+    from isaaclab_newton.physics import MJWarpSolverCfg
     from isaaclab_ov.physics import OvPhysxCfg
     from isaaclab_physx.physics import PhysxCfg
 
-    # Use PhysX (default)
+    # Use PhysX
     sim_cfg = SimulationCfg(physics=PhysxCfg())
 
     # Use Newton with MuJoCo-Warp solver
-    sim_cfg = SimulationCfg(physics=NewtonCfg(
-        solver_cfg=MJWarpSolverCfg(),
+    sim_cfg = SimulationCfg(physics=MJWarpSolverCfg(
         num_substeps=4,
     ))
 
     # Use OvPhysX
     sim_cfg = SimulationCfg(physics=OvPhysxCfg())
 
-Once the :class:`~isaaclab.sim.SimulationContext` is initialized, all subsequent factory
-instantiations automatically use the selected backend.
+The :class:`~isaaclab.sim.SimulationContext` resolves this config and constructs exactly one manager
+instance from it. :class:`~isaaclab.scene.InteractiveScene` likewise invokes each declared asset and
+sensor config; most core asset and sensor configs currently reach their concrete implementation
+through the dispatch layer described below.
 
 Multi-Backend Environments with Presets
 ---------------------------------------
@@ -176,7 +144,7 @@ variant. The example below shows only the physics-related fields:
     from isaaclab.physics import PhysxAutoCfg
     from isaaclab.sim import SimulationCfg
     from isaaclab.utils.configclass import configclass
-    from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
+    from isaaclab_newton.physics import MJWarpSolverCfg
     from isaaclab_ov.physics import OvPhysxCfg
     from isaaclab_physx.physics import PhysxCfg
     from isaaclab_tasks.utils import PresetCfg
@@ -190,9 +158,7 @@ variant. The example below shows only the physics-related fields:
             ovphysx=ovphysx,
         )
         default: PhysxCfg = isaacsim_physx
-        newton_mjwarp: NewtonCfg = NewtonCfg(
-            solver_cfg=MJWarpSolverCfg(njmax=5, nconmax=3)
-        )
+        newton_mjwarp: MJWarpSolverCfg = MJWarpSolverCfg(njmax=5, nconmax=3)
 
     @configclass
     class CartpoleEnvCfg(DirectRLEnvCfg):
@@ -251,59 +217,43 @@ that drives the simulation loop:
 .. code-block:: python
 
     class PhysicsManager(ABC):
-        @classmethod
+        def __init__(self, cfg) -> None: ...
+
         @abstractmethod
-        def initialize(cls, sim_context: SimulationContext) -> None: ...
+        def _bind_context(self, sim_context: SimulationContext) -> None: ...
 
-        @classmethod
         @abstractmethod
-        def reset(cls, soft: bool = False) -> None: ...
+        def reset(self, soft: bool = False) -> None: ...
 
-        @classmethod
         @abstractmethod
-        def forward(cls) -> None: ...
+        def forward(self) -> None: ...
 
-        @classmethod
         @abstractmethod
-        def step(cls) -> None: ...
+        def step(self) -> None: ...
 
-        @classmethod
-        def close(cls) -> None: ...  # concrete; dispatches STOP event
+        def close(self) -> None: ...  # concrete; dispatches STOP
 
-The physics manager also provides a **callback system** via
-:class:`~isaaclab.physics.PhysicsEvent` for cross-backend event handling:
-
-.. code-block:: python
-
-    from isaaclab.physics import PhysicsManager, PhysicsEvent
-
-    handle = PhysicsManager.register_callback(
-        callback=my_setup_fn,
-        event=PhysicsEvent.PHYSICS_READY,
-        order=0,
-        name="my_callback",
-    )
-
-Available events: ``MODEL_INIT`` (during scene building), ``PHYSICS_READY`` (after physics
-initialization), and ``STOP`` (on simulation shutdown).
+The lifecycle is construction, private pre-clone ``_bind_context()``, one shared clone session,
+post-clone hard ``reset()``, repeated stepping, and ``close()``. During binding, each consumer derives
+its backend class from the resolved config and calls
+:meth:`~isaaclab.sim.SimulationContext.get_or_create_backend`. Physics, renderers, and visualizers
+that resolve the same backend class share one native resource rather than copying state between
+resources. The class is the complete registry key. The simulation owns that shared resource's
+lifetime; consumers close only their own state.
 
 Asset and Sensor Interfaces
 ---------------------------
 
-Assets and sensors follow the same pattern. Each has:
+Asset and sensor configs carry ``class_type`` and
+:class:`~isaaclab.scene.InteractiveScene` constructs each declared entity as
+``asset_cfg.class_type(asset_cfg)``. Most core configs currently target a thin ``FactoryBase`` class,
+which reads ``SimulationContext.physics_backend`` and loads the same-named implementation from
+``isaaclab_<backend>`` (or ``isaaclab_ov`` for OvPhysX). This dispatch is migration debt and is not
+used for physics managers, renderers, or visualizers.
 
-1. **A base class** in ``isaaclab`` defining the interface (e.g., ``BaseArticulation``,
-   ``BaseContactSensor``)
-2. **A factory class** that inherits from both ``FactoryBase`` and the base class
-3. **Backend implementations** in ``isaaclab_physx``, ``isaaclab_newton``, and
-   ``isaaclab_ov`` where supported
-
-The base classes define the public API contract — properties, methods, and data accessors
-that all backends must provide. Current backend implementations use ``wp.array``
-(Warp arrays) as their primary data type for asset and sensor data.
-
-Data classes follow the same pattern with their own factories (e.g.,
-``ArticulationData(FactoryBase, BaseArticulationData)``).
+Core base classes define the portable API contract; the PhysX, Newton, and OvPhysX packages
+independently implement it where supported. Current implementations use ``wp.array`` (Warp arrays)
+as their primary data type.
 
 These base interfaces define the portable contract. Advanced code can also use
 each engine's native low-level data API, but those APIs deliberately retain
@@ -330,19 +280,8 @@ the established conventions:
         │   ├── mybackend_manager.py
         │   └── mybackend_manager_cfg.py
         ├── assets/
-        │   ├── articulation/
-        │   │   ├── __init__.py
-        │   │   ├── __init__.pyi
-        │   │   ├── articulation.py
-        │   │   └── articulation_data.py
-        │   ├── rigid_object/
-        │   │   └── ...
-        │   ├── deformable_object/
-        │   │   └── ...
-        │   └── rigid_object_collection/
-        │       └── ...
+        │   └── ...
         ├── sensors/
-        │   ├── contact_sensor/
         │   └── ...
         ├── renderers/
         │   └── ...
@@ -351,68 +290,72 @@ the established conventions:
 
 **2. Implement the physics manager:**
 
-The manager must expose a :class:`~isaaclab.scene_data.SceneDataBackend` so that
-:class:`~isaaclab.scene_data.SceneDataProvider` can read your backend's body
-transforms in a Warp-native format that renderers and visualizers consume directly.
+The manager exposes a :class:`~isaaclab.scene_data.SceneDataBackend` that publishes a pointer,
+format, and dirty latch. A matching request passes the pointer through; another format is converted
+once per dirty generation by :class:`~isaaclab.scene_data.SceneDataProvider`.
 
 .. code-block:: python
 
     # isaaclab_mybackend/physics/mybackend_manager.py
-    from isaaclab.physics import PhysicsManager
-    from isaaclab.scene_data import SceneDataBackend, SceneDataFormat
+    from isaaclab.physics import PhysicsEvent, PhysicsManager
+    from isaaclab.scene_data import SceneDataBackend, SceneDataFormat, SceneDataPublication
 
 
     class MyBackendSceneDataBackend(SceneDataBackend):
-        def __init__(self):
-            self._scene_data = SceneDataFormat.Transform()
+        def __init__(self, backend):
+            self._backend = backend
+            self._publication = SceneDataPublication(SceneDataFormat.Transform(), True)
 
         @property
-        def transforms(self) -> SceneDataFormat.Transform:
-            # Return current world-space body transforms as a Warp ``transformf`` array.
-            self._scene_data.transforms = ...  # backend-native tensor view
-            return self._scene_data
+        def transform_publication(self) -> SceneDataPublication:
+            return self._publication
 
         @property
-        def transform_count(self) -> int:
-            ...
+        def point_publications(self) -> dict[str, SceneDataPublication]:
+            return {}
 
-        @property
-        def transform_paths(self) -> list[str]:
-            # Prim path per row of ``transforms``; used by ``SceneDataProvider.create_mapping``.
-            ...
+        def publish(self) -> None:
+            self._publication.data.transforms = self._backend.transforms  # native pointer
+            self._publication.dirty = True
 
 
     class MyBackendManager(PhysicsManager):
-        _scene_data_backend: ClassVar[MyBackendSceneDataBackend | None] = None
+        def __init__(self, cfg):
+            super().__init__(cfg)
+            self._backend = None
+            self._state = None
+            self._scene_data_backend = None
 
-        @classmethod
-        def initialize(cls, sim_context):
-            super().initialize(sim_context)
-            cls._scene_data_backend = MyBackendSceneDataBackend()
-            # Initialize your physics engine
+        def _bind_context(self, sim_context):
+            super()._bind_context(sim_context)
+            self._backend = sim_context.get_or_create_backend(
+                MyBackendRuntime,
+                self.cfg.runtime_variant,
+                sim_context.stage,
+                clone_role="physics",
+            )
+            self._scene_data_backend = MyBackendSceneDataBackend(self._backend)
 
-        @classmethod
-        def get_scene_data_backend(cls) -> SceneDataBackend:
-            return cls._scene_data_backend
+        def get_scene_data_backend(self) -> SceneDataBackend:
+            return self._scene_data_backend
 
-        @classmethod
-        def step(cls):
-            # Advance simulation by one timestep
-
-        @classmethod
-        def forward(cls):
-            # Update kinematics without stepping
-
-        @classmethod
-        def reset(cls, soft=False):
+        def reset(self, soft=False):
             if not soft:
-                cls.dispatch_event(PhysicsEvent.PHYSICS_READY)
-            # Reset simulation state
+                self._state = self._backend.initialize_after_clone()
+                self.dispatch_event(PhysicsEvent.PHYSICS_READY)
 
-        @classmethod
-        def close(cls):
+        def step(self):
+            self._backend.step(self._state)
+            self._scene_data_backend.publish()
+
+        def forward(self):
+            self._backend.forward(self._state)
+            self._scene_data_backend.publish()
+
+        def close(self):
             super().close()
-            # Clean up resources
+            self._state = None
+            self._backend = None
 
 **3. Create the physics config:**
 
@@ -425,13 +368,15 @@ transforms in a Warp-native format that renderers and visualizers consume direct
     @configclass
     class MyBackendCfg(PhysicsCfg):
         class_type = "{DIR}.mybackend_manager:MyBackendManager"
-        # Backend-specific settings here
+        runtime_variant: str = "default"
 
 **4. Implement assets and sensors:**
 
-Each asset/sensor must extend the corresponding base class from ``isaaclab``. The class name
-must match the factory's expected name (by convention, the same name as the factory class).
-Use ``lazy_export()`` in ``__init__.py`` files — no manual registration needed.
+Each asset or sensor extends the corresponding base class from ``isaaclab``. Until core asset and
+sensor configs move off ``FactoryBase``, the implementation must use the module path and class name
+expected by its core dispatch class. For example, ``isaaclab.assets.articulation.Articulation``
+resolves ``isaaclab_mybackend.assets.articulation.Articulation``. Keep implementations inside this
+package; do not import one from another backend package.
 
 .. code-block:: python
 
@@ -443,25 +388,49 @@ Use ``lazy_export()`` in ``__init__.py`` files — no manual registration needed
             super().__init__(cfg)
             # Set up backend-specific simulation structures
 
-**5. Module discovery is automatic.** The ``FactoryBase`` convention maps
-``isaaclab.assets.articulation`` to ``isaaclab_mybackend.assets.articulation`` based on the
-active physics manager name. As long as you follow the package structure above, your backend
-classes will be discovered automatically.
+Audit the Backend Lifecycle
+---------------------------
+
+``scripts/benchmarks/benchmark_backend_lifecycle.py`` builds a minimal direct configuration without
+an interactive scene, constructs every declared asset inside one
+:class:`~isaaclab.cloner.ReplicateSession`, and records construction time, initialization order,
+registry sharing, clone/export counts, scene-data pointers, dirty generations, and conversions.
+
+.. code-block:: bash
+
+    # Inspect all 90 combinations and the 17 unsupported OV/Kit mixtures.
+    uv run --extra all python scripts/benchmarks/benchmark_backend_lifecycle.py --list
+
+    # Run all 73 supported rigid combinations in isolated worker processes.
+    uv run --extra all python scripts/benchmarks/benchmark_backend_lifecycle.py \
+        --output /tmp/backend_lifecycle.json
+
+    # Exercise native and converted deformable-point publications across all visualizers.
+    uv run --extra all python scripts/benchmarks/benchmark_backend_lifecycle.py \
+        --points --output /tmp/backend_point_lifecycle.json
+
+Each passing worker proves exact ``cfg.class_type(cfg)`` construction, one completed plan before
+initialization, stable registry identities, shared Newton ``Model``/``State``/``Control`` objects
+where applicable, and zero native-format conversions or exactly one non-native conversion per dirty
+generation. The only excluded combinations mix OV components with Kit or Isaac Sim components in
+one process.
 
 Key Design Principles
 ---------------------
 
-- **Lazy loading**: Backend modules are imported only when first instantiated, keeping startup
-  fast and avoiding hard dependencies on unused backends.
-- **Convention over configuration**: Backend module paths mirror the ``isaaclab.X.Y``
-  structure. OVPhysX maps to ``isaaclab_ov.X.Y``; other backends use their
-  ``isaaclab_<backend>.X.Y`` package, so no manual registration is needed.
-- **Independent selection**: Physics backend, renderer, and visualizer are selected
-  independently — you can use any combination.
-- **Warp-native data types**: Backend implementations return ``wp.array`` for asset and
-  sensor data. Use ``wp.to_torch()`` when interoperating with PyTorch-based code.
-- **Zero runtime overhead**: Backend selection happens at instantiation time. There are no
-  if-statements or dispatch logic on the hot path.
+- **Declarative construction**: Every runtime component is constructed as ``cfg.class_type(cfg)``.
+- **Explicit migration boundary**: Asset and sensor ``class_type`` values still use thin backend
+  dispatch classes; physics, renderer, and visualizer configs do not.
+- **Instance ownership**: Managers own instance state; matching backend classes share one native resource through
+  the simulation registry.
+- **One clone lifecycle**: Physics, renderers, and visualizers consume one clone plan and initialize
+  after cloning.
+- **One data boundary**: Physics publishes pointers, formats, and dirty state through the scene data
+  provider; render consumers request their required format.
+- **Independent packages**: Backend packages do not import one another, even when implementations
+  are deliberately duplicated.
+- **Independent selection**: Physics, renderer, and visualizer configs resolve independently;
+  unsupported combinations fail explicitly.
 
 See Also
 --------

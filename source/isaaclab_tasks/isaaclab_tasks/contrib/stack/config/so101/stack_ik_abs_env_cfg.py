@@ -6,7 +6,7 @@
 from dataclasses import MISSING
 
 import numpy as np
-from isaaclab_teleop import IsaacTeleopCfg
+from isaaclab_teleop import IsaacTeleopCfg, TeleopPipelineCfg
 
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.utils.configclass import configclass
@@ -64,7 +64,7 @@ _SO101_ORIENTATION_OFFSET_XYZW: tuple[float, float, float, float] | None = (
 )
 
 
-def _build_so101_stack_pipeline():
+def _build_so101_stack_pipeline(_cfg: TeleopPipelineCfg):
     """Build an IsaacTeleop retargeting pipeline for SO-101 cube stacking.
 
     Creates a SO101ClutchRetargeter for right-hand clutch-rebased full-pose tracking and a
@@ -294,9 +294,8 @@ class SO101CubeStackEnvCfg(stack_joint_pos_env_cfg.SO101CubeStackEnvCfg):
 
         # IsaacTeleop-based teleoperation pipeline
         self.isaac_teleop = IsaacTeleopCfg(
-            pipeline_builder=_build_so101_stack_pipeline,
+            pipeline_cfg=TeleopPipelineCfg(class_type=_build_so101_stack_pipeline),
             sim_device=self.sim.device,
-            xr_cfg=self.xr,
             # Rebase all teleop output poses into the robot base frame: the device reads this
             # prim's world transform each frame and left-multiplies its inverse onto the XR
             # anchor (``base_T_world @ world_T_anchor``), so the clutch retargeter works

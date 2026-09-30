@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import pytest
 import torch
 import warp as wp
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
+from isaaclab_newton.physics import MJWarpSolverCfg
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import RigidObject, RigidObjectCfg
@@ -54,8 +54,7 @@ def sim():
     """Create a simulation context with Newton physics."""
     sim_cfg = SimulationCfg(
         dt=1.0 / 200.0,
-        physics=NewtonCfg(
-            solver_cfg=MJWarpSolverCfg(),
+        physics=MJWarpSolverCfg(
             num_substeps=1,
         ),
     )

@@ -41,6 +41,7 @@ app.folder = "${exe-path}/"
 app.name = "IsaacLab"
 app.version = "3.0.0"
 app.enableDeveloperWarnings = false # disable developer warnings to reduce log noise
+app.viewport.forceHideFps = true # disable invisible viewport HUD frame observers
 
 ### FSD
 app.useFabricSceneDelegate = true
@@ -141,12 +142,6 @@ updateForceSensorsToUsd = false
 outputVelocitiesLocalSpace = false
 useFastCache = false
 visualizationDisplayJoints = false
-fabricUpdateTransformations = false
-fabricUpdateVelocities = false
-fabricUpdateForceSensors = false
-fabricUpdateJointStates = false
-### When Direct GPU mode is enabled (suppressReadback=true) use direct interop between PhysX GPU and Fabric
-fabricUseGPUInterop = true
 
 # Register extension folder from this repo in kit
 [settings.app.exts]
@@ -164,7 +159,7 @@ folders = [
 ]
 
 [settings.persistent]
-UJITSO.geometry = true
+UJITSO.geometry = false
 UJITSO.enabled = true
 
 # Asset path

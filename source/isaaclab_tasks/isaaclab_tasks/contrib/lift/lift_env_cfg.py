@@ -18,13 +18,13 @@ from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
-from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors.frame_transformer.frame_transformer_cfg import FrameTransformerCfg
 from isaaclab.sim.spawners.from_files.from_files_cfg import GroundPlaneCfg, UsdFileCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.configclass import configclass
 
 from isaaclab_tasks.contrib.lift import mdp
+from isaaclab_tasks.utils.presets import MultiBackendSceneCfg, MultiBackendSimulationCfg
 
 ##
 # Scene definition
@@ -32,7 +32,7 @@ from isaaclab_tasks.contrib.lift import mdp
 
 
 @configclass
-class ObjectTableSceneCfg(InteractiveSceneCfg):
+class ObjectTableSceneCfg(MultiBackendSceneCfg):
     """Configuration for the lift scene with a robot and a object."""
 
     # robots: will be populated by agent env cfg
@@ -194,6 +194,18 @@ class CurriculumCfg:
 class LiftEnvCfg(ManagerBasedRLEnvCfg):
     """Configuration for the lifting environment."""
 
+    decimation = 2
+    episode_length_s = 5.0
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(
+        dt=0.01,
+        render_interval=decimation,
+        physics=PhysxCfg(
+            bounce_threshold_velocity=0.01,
+            gpu_found_lost_aggregate_pairs_capacity=1024 * 1024 * 4,
+            gpu_total_aggregate_pairs_capacity=16 * 1024,
+            friction_correlation_distance=0.00625,
+        ),
+    )
     # Scene settings
     scene: ObjectTableSceneCfg = ObjectTableSceneCfg(num_envs=4096, env_spacing=2.5)
     # Basic settings
@@ -205,19 +217,3 @@ class LiftEnvCfg(ManagerBasedRLEnvCfg):
     terminations: TerminationsCfg = TerminationsCfg()
     events: EventCfg = EventCfg()
     curriculum: CurriculumCfg = CurriculumCfg()
-
-    def __post_init__(self):
-        """Post initialization."""
-        # general settings
-        self.decimation = 2
-        self.episode_length_s = 5.0
-        # simulation settings
-        self.sim.dt = 0.01  # 100Hz
-        self.sim.render_interval = self.decimation
-
-        self.sim.physics = PhysxCfg(
-            bounce_threshold_velocity=0.01,
-            gpu_found_lost_aggregate_pairs_capacity=1024 * 1024 * 4,
-            gpu_total_aggregate_pairs_capacity=16 * 1024,
-            friction_correlation_distance=0.00625,
-        )

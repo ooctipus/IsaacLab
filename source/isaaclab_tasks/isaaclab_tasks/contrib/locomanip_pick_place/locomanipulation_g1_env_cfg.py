@@ -6,6 +6,7 @@
 from isaaclab_teleop import (
     ControllerHapticFeedbackCfg,
     IsaacTeleopCfg,
+    TeleopPipelineCfg,
     XrAnchorRotationMode,
     XrCameraFeedCfg,
     XrCfg,
@@ -19,7 +20,6 @@ from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
-from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import ContactSensorCfg
 from isaaclab.sim.spawners.from_files.from_files_cfg import GroundPlaneCfg, UsdFileCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
@@ -39,8 +39,10 @@ from isaaclab_tasks.contrib.locomanip_pick_place.configs.pink_controller_cfg imp
 )
 from isaaclab_tasks.contrib.robot_pov_camera_cfg import robot_pov_camera_cfg  # isort: skip
 
+from isaaclab_tasks.utils.presets import MultiBackendSceneCfg, MultiBackendSimulationCfg
 
-def _build_g1_locomanipulation_pipeline():
+
+def _build_g1_locomanipulation_pipeline(_cfg: TeleopPipelineCfg):
     """Build an IsaacTeleop retargeting pipeline for G1 locomanipulation teleoperation.
 
     Creates two Se3AbsRetargeters for left and right wrist pose tracking,
@@ -266,7 +268,7 @@ def _build_g1_locomanipulation_pipeline():
 # Scene definition
 ##
 @configclass
-class LocomanipulationG1SceneCfg(InteractiveSceneCfg):
+class LocomanipulationG1SceneCfg(MultiBackendSceneCfg):
     """Scene configuration for locomanipulation environment with G1 robot.
 
     This configuration sets up the G1 humanoid robot for locomanipulation tasks,
@@ -317,11 +319,13 @@ class LocomanipulationG1SceneCfg(InteractiveSceneCfg):
         update_period=0.0,
         history_length=3,
     )
+    left_hand_contact.visualizer_cfg.prim_path = "/Visuals/ContactSensor/left_hand"
     right_hand_contact = ContactSensorCfg(
         prim_path="{ENV_REGEX_NS}/Robot/right_hand_[^/]*_link",
         update_period=0.0,
         history_length=3,
     )
+    right_hand_contact.visualizer_cfg.prim_path = "/Visuals/ContactSensor/right_hand"
 
     # Ground plane
     ground = AssetBaseCfg(
@@ -449,6 +453,7 @@ class LocomanipulationG1EnvCfg(ManagerBasedRLEnvCfg):
     behaviors.
     """
 
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg()
     # Scene settings
     scene: LocomanipulationG1SceneCfg = LocomanipulationG1SceneCfg(num_envs=1, env_spacing=2.5, replicate_physics=True)
     # MDP settings
@@ -474,23 +479,20 @@ class LocomanipulationG1EnvCfg(ManagerBasedRLEnvCfg):
         # Set the URDF path for the IK controller. Path resolution (Nucleus → local) happens at runtime.
         self.actions.upper_body_ik.controller.urdf_path = f"{ISAACLAB_NUCLEUS_DIR}/Controllers/LocomanipulationAssets/unitree_g1_kinematics_asset/g1_29dof_with_hand_only_kinematics.urdf"  # noqa: E501
 
-        self.xr = XrCfg(
+        self.scene.xr_anchor = XrCfg(
             anchor_pos=(0.0, 0.0, -0.95),
             anchor_rot=(0.0, 0.0, 0.0, 1.0),
         )
-        self.xr.anchor_prim_path = "/World/envs/env_0/Robot/pelvis"
-        self.xr.fixed_anchor_height = True
-        self.xr.anchor_rotation_mode = XrAnchorRotationMode.FOLLOW_PRIM_SMOOTHED
+        self.scene.xr_anchor.anchor_prim_path = "/World/envs/env_0/Robot/pelvis"
+        self.scene.xr_anchor.fixed_anchor_height = True
+        self.scene.xr_anchor.anchor_rotation_mode = XrAnchorRotationMode.FOLLOW_PRIM_SMOOTHED
 
         self.isaac_teleop = IsaacTeleopCfg(
-            pipeline_builder=_build_g1_locomanipulation_pipeline,
+            pipeline_cfg=TeleopPipelineCfg(class_type=_build_g1_locomanipulation_pipeline),
             sim_device=self.sim.device,
-            xr_cfg=self.xr,
             xr_camera_feeds=[
                 XrCameraFeedCfg(
                     camera_name="robot_pov_cam",
-                    enable_dlss_ray_reconstruction=True,
-                    dlss_exec_mode="quality",
                     offset_m=(0.0, -0.15),
                     max_update_hz=0.0,
                 )

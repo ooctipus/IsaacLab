@@ -21,7 +21,6 @@ The renderer actually rendering *through* the distortion is a backend-specific c
 from __future__ import annotations
 
 import importlib.util
-import logging
 from types import SimpleNamespace
 
 import numpy as np
@@ -188,6 +187,7 @@ def _read_back_intrinsics(cam, width, height):
 
     fake = Camera.__new__(Camera)
     fake._sensor_prims = [cam]
+    fake._prototype_sensor_prims = [cam]
     fake._device = "cpu"
     fake.cfg = SimpleNamespace(height=height, width=width)
     fake._resolve_env_ids_np = lambda env_ids: np.array([0])
@@ -199,6 +199,9 @@ def _read_back_intrinsics(cam, width, height):
     fake._debug_vis_handle = None
     fake._renderer = None
     fake._render_data = None
+    fake._scene_data_provider = None
+    fake._render_pose_publication = None
+    fake._view = None
 
     Camera._update_intrinsic_matrices(fake)
     return captured["K"][0]
@@ -234,6 +237,40 @@ def test_readback_preserves_non_square_and_off_center():
     assert k[1, 2] != pytest.approx(height / 2)
 
 
+def test_initial_readback_queries_each_clone_plan_source_once():
+    """Equivalent clone destinations share one read of their plan prototype's calibration."""
+    width, height = 640, 480
+    _stage, cam = _camera_prim_with_pinhole_distortion(339.0, 338.0, 323.0, 250.0, width, height)
+    fake = Camera.__new__(Camera)
+    fake._sensor_prims = [cam] * 4096
+    fake._prototype_sensor_prims = [cam] * 4096
+    fake._device = "cpu"
+    fake.cfg = SimpleNamespace(height=height, width=width)
+    fake._resolve_env_ids_np = lambda env_ids: np.arange(4096)
+    fake._update_camera_state = lambda **_kwargs: None
+    reads = 0
+
+    def read_intrinsics(*args):
+        nonlocal reads
+        reads += 1
+        return Camera._read_authored_opencv_intrinsics(fake, *args)
+
+    fake._read_authored_opencv_intrinsics = read_intrinsics
+    fake._initialize_handle = None
+    fake._invalidate_initialize_handle = None
+    fake._prim_deletion_handle = None
+    fake._debug_vis_handle = None
+    fake._renderer = None
+    fake._render_data = None
+    fake._scene_data_provider = None
+    fake._render_pose_publication = None
+    fake._view = None
+
+    Camera._update_intrinsic_matrices(fake)
+
+    assert reads == 1
+
+
 def _camera_prim_with_model_token_only():
     """Build a camera prim that declares the distortion model token but authors no fx/fy/cx/cy."""
     stage = Usd.Stage.CreateInMemory()
@@ -242,79 +279,37 @@ def _camera_prim_with_model_token_only():
     return stage, cam
 
 
-def test_readback_missing_intrinsics_falls_back_to_focal_length():
-    """A model token without fx/fy/cx/cy falls back to the focal-length projection instead of raising."""
+def test_readback_rejects_incomplete_distortion_calibration():
+    """A declared distortion model must carry its complete calibration."""
     width, height = 640, 480
     _stage, cam = _camera_prim_with_model_token_only()
 
-    k = _read_back_intrinsics(cam, width, height)
-
-    # focal-length/aperture projection: square pixels, centered principal point
-    assert k[0, 0] == pytest.approx(k[1, 1])
-    assert k[0, 2] == pytest.approx(width / 2)
-    assert k[1, 2] == pytest.approx(height / 2)
-    assert k[2, 2] == pytest.approx(1.0)
+    with pytest.raises(ValueError, match="without complete fx/fy/cx/cy"):
+        _read_back_intrinsics(cam, width, height)
 
 
-def test_readback_distinct_image_size_mismatches_each_warn():
-    """Distinct authored image sizes across a camera's prims each warn, not only the first."""
+@pytest.mark.parametrize("authored_size", [(640, 480), (1280, 720)])
+def test_readback_rejects_distortion_image_size_mismatch(authored_size):
+    """Distortion calibration and render resolution must describe the same image."""
     width, height = 320, 240
-    _stage_a, cam_a = _camera_prim_with_pinhole_distortion(300.0, 300.0, 160.0, 120.0, 640, 480)
-    _stage_b, cam_b = _camera_prim_with_pinhole_distortion(300.0, 300.0, 160.0, 120.0, 1280, 720)
+    _stage, cam = _camera_prim_with_pinhole_distortion(300.0, 300.0, 160.0, 120.0, *authored_size)
 
-    fake = Camera.__new__(Camera)
-    fake._sensor_prims = [cam_a, cam_b]
-    fake._device = "cpu"
-    fake.cfg = SimpleNamespace(height=height, width=width)
-    fake._resolve_env_ids_np = lambda env_ids: np.array([0, 1])
-    fake._update_camera_state = lambda **kwargs: None
-    # attributes touched by ``__del__``/``_clear_callbacks`` when the fake object is garbage collected
-    fake._initialize_handle = None
-    fake._invalidate_initialize_handle = None
-    fake._prim_deletion_handle = None
-    fake._debug_vis_handle = None
-    fake._renderer = None
-    fake._render_data = None
-
-    messages: list[str] = []
-    handler = logging.Handler()
-    handler.emit = lambda record: messages.append(record.getMessage())
-    cam_logger = logging.getLogger("isaaclab.sensors.camera.camera")
-    cam_logger.addHandler(handler)
-    try:
-        Camera._update_intrinsic_matrices(fake)
-    finally:
-        cam_logger.removeHandler(handler)
-
-    mismatch_warnings = [message for message in messages if "imageSize" in message]
-    assert len(mismatch_warnings) == 2
-    assert any("(640, 480)" in message for message in mismatch_warnings)
-    assert any("(1280, 720)" in message for message in mismatch_warnings)
+    with pytest.raises(ValueError, match="does not match render resolution"):
+        _read_back_intrinsics(cam, width, height)
 
 
-def test_set_intrinsic_matrices_skips_only_distortion_cameras_in_batch():
-    """In a mixed batch only the distortion camera is skipped (with a warning); a plain camera is updated.
-
-    The authored ``omni:lensdistortion:*`` fx/fy/cx/cy are the readback's source of truth, so the
-    focal-length/aperture write would be discarded for a distortion camera. Skipping the whole call would
-    also drop ordinary selected cameras; only the distortion entries must be left untouched.
-    """
+def test_set_intrinsic_matrices_rejects_distortion_batch_atomically():
+    """A mixed calibration write fails before mutating any selected camera."""
     width, height = 640, 480
     _stage_d, distortion_cam = _camera_prim_with_pinhole_distortion(339.0, 338.0, 323.0, 250.0, width, height)
     plain_stage = Usd.Stage.CreateInMemory()
     plain_cam = UsdGeom.Camera.Define(plain_stage, "/PlainCamera")
-
-    captured = {}
-
-    def _capture_state(env_ids=None, intrinsics_src=None, update_intrinsics=False):
-        captured["K"] = intrinsics_src.numpy()
 
     fake = Camera.__new__(Camera)
     fake._sensor_prims = [distortion_cam, plain_cam]
     fake._device = "cpu"
     fake.cfg = SimpleNamespace(height=height, width=width)
     fake._resolve_env_ids_np = lambda env_ids: np.array([0, 1])
-    fake._update_camera_state = _capture_state
     # attributes touched by ``__del__``/``_clear_callbacks`` when the fake object is garbage collected
     fake._initialize_handle = None
     fake._invalidate_initialize_handle = None
@@ -322,13 +317,11 @@ def test_set_intrinsic_matrices_skips_only_distortion_cameras_in_batch():
     fake._debug_vis_handle = None
     fake._renderer = None
     fake._render_data = None
+    fake._scene_data_provider = None
+    fake._render_pose_publication = None
+    fake._view = None
 
-    messages: list[str] = []
-    handler = logging.Handler()
-    handler.emit = lambda record: messages.append(record.getMessage())
-    cam_logger = logging.getLogger("isaaclab.sensors.camera.camera")
-    cam_logger.addHandler(handler)
-    # row 0 targets the distortion camera (skipped); row 1 recalibrates the plain camera to fx = fy = 500
+    original_focal_length = plain_cam.GetFocalLengthAttr().Get()
     requested = torch.tensor(
         [
             [[999.0, 0.0, 111.0], [0.0, 999.0, 222.0], [0.0, 0.0, 1.0]],
@@ -336,14 +329,6 @@ def test_set_intrinsic_matrices_skips_only_distortion_cameras_in_batch():
         ],
         dtype=torch.float32,
     )
-    try:
+    with pytest.raises(ValueError, match=r"cannot override.*\[0\]"):
         Camera.set_intrinsic_matrices(fake, requested, env_ids=[0, 1])
-    finally:
-        cam_logger.removeHandler(handler)
-
-    k = captured["K"]
-    # the distortion camera keeps its authored calibration (skipped, request ignored)
-    assert k[0, 0, 0] == pytest.approx(339.0, abs=1e-2)
-    # the plain camera reflects the requested focal length (updated, not over-skipped)
-    assert k[1, 0, 0] == pytest.approx(500.0, abs=1e-2)
-    assert any("skipped" in message.lower() for message in messages)
+    assert plain_cam.GetFocalLengthAttr().Get() == original_focal_length

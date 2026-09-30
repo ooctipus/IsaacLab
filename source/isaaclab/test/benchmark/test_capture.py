@@ -46,7 +46,10 @@ def test_capture_versions_renames_and_defaults():
         StringMetadata(name="torch_version", data="2.5.1"),
         StringMetadata(name="mujoco_warp_version", data="0.0.4"),
         StringMetadata(name="stable_baselines3_version", data="2.3.0"),
-        DictMetadata(name="dev", data={"commit_hash": "abc123", "branch": "develop", "dirty": True}),
+        DictMetadata(
+            name="dev",
+            data={"commit_hash": "abc123", "branch": "develop", "dirty": True, "diff_sha256": "f00d"},
+        ),
     ]
     bm = _Bm({"VersionInfo": _Rec(MeasurementData(measurements=[], metadata=md, artefacts=[]))})
     v = capture_versions(bm)
@@ -55,6 +58,7 @@ def test_capture_versions_renames_and_defaults():
     assert v.mjwarp == "0.0.4"
     assert v.sb3 == "2.3.0"
     assert v.git_commit == "abc123" and v.git_branch == "develop" and v.git_dirty is True
+    assert v.git_diff_sha256 == "f00d"
     assert v.isaacsim is None
 
 
@@ -221,11 +225,9 @@ def test_run_config_uses_concrete_backend_configuration():
     cfg = run_config_from_env_cfg(physx_env_cfg)
     assert cfg.physics_backend == "physx"
 
-    default_env_cfg = SimpleNamespace(sim=SimpleNamespace(physics=None))
-    assert run_config_from_env_cfg(default_env_cfg).physics_backend == "physx"
-
-    with pytest.raises(ValueError, match="Unsupported concrete physics config"):
-        run_config_from_env_cfg(SimpleNamespace(sim=SimpleNamespace(physics=object())))
+    for physics in (None, object()):
+        with pytest.raises(ValueError, match="Unsupported concrete physics config"):
+            run_config_from_env_cfg(SimpleNamespace(sim=SimpleNamespace(physics=physics)))
 
 
 def test_capture_resources_peak_clamped_to_mean_when_peak_row_absent():

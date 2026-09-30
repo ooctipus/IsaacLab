@@ -16,8 +16,6 @@
     Se2SpaceMouse
     Se3SpaceMouse
     HaplyDevice
-    OpenXRDevice
-    ManusVive
     openxr.retargeters.GripperRetargeter
     openxr.retargeters.Se3AbsRetargeter
     openxr.retargeters.Se3RelRetargeter
@@ -90,24 +88,6 @@ Haply
 -----
 
 .. autoclass:: HaplyDevice
-    :members:
-    :inherited-members:
-    :show-inheritance:
-    :noindex:
-
-OpenXR
-------
-
-.. autoclass:: OpenXRDevice
-    :members:
-    :inherited-members:
-    :show-inheritance:
-    :noindex:
-
-Manus + Vive
-------------
-
-.. autoclass:: ManusVive
     :members:
     :inherited-members:
     :show-inheritance:

@@ -7,7 +7,6 @@
 
 from __future__ import annotations
 
-import warnings
 from typing import TYPE_CHECKING
 
 from isaaclab.utils.configclass import configclass
@@ -30,9 +29,6 @@ class MJWarpSolverCfg(NewtonSolverCfg):
 
     class_type: type[NewtonManager] | str = "{DIR}.mjwarp_manager:NewtonMJWarpManager"
     """Manager class for the MuJoCo Warp solver."""
-
-    solver_type: str = "mujoco_warp"
-    """Solver type. Can be "mujoco_warp"."""
 
     njmax: int = 300
     """Number of constraints per environment (world)."""
@@ -61,7 +57,7 @@ class MJWarpSolverCfg(NewtonSolverCfg):
     disable_sensors: bool = False
     """Whether to disable MuJoCo Warp's internal sensor computation.
 
-    This must be ``True`` when :attr:`NewtonCfg.deterministic_mode` requests a
+    This must be ``True`` when :attr:`deterministic_mode` requests a
     determinism guarantee. Isaac Lab sensors use Newton state directly and do
     not depend on MuJoCo Warp's internal sensor data.
     """
@@ -97,21 +93,13 @@ class MJWarpSolverCfg(NewtonSolverCfg):
     which typically occurs with complex collision geometries (e.g. multi-finger hands).
     """
 
-    ls_parallel: bool = False
-    """Deprecated parallel line search option.
-
-    Setting this to ``True`` emits a :class:`DeprecationWarning` and is ignored.
-    MuJoCo Warp is dropping support for parallel line search; Isaac Lab uses
-    iterative line search for performance.
-    """
-
     use_mujoco_contacts: bool = True
     """Whether to use MuJoCo's internal contact solver.
 
     If ``True`` (default), MuJoCo handles collision detection and contact resolution internally.
     If ``False``, Newton's :class:`CollisionPipeline` is used instead.  A default pipeline
-    (``broad_phase="explicit"``) is created automatically when :attr:`NewtonCfg.collision_cfg`
-    is ``None``.  Set :attr:`NewtonCfg.collision_cfg` to a :class:`NewtonCollisionPipelineCfg`
+    (``broad_phase="explicit"``) is created automatically when :attr:`collision_cfg`
+    is ``None``. Set :attr:`collision_cfg` to a :class:`NewtonCollisionPipelineCfg`
     to customize pipeline parameters (broad phase, contact limits, hydroelastic, etc.).
 
     .. note::
@@ -127,15 +115,3 @@ class MJWarpSolverCfg(NewtonSolverCfg):
     satisfaction at the cost of more iterations.  MuJoCo default is ``1e-8``;
     Newton default is ``1e-6``.
     """
-
-    def __post_init__(self):
-        if self.ls_parallel:
-            warnings.warn(
-                "MJWarpSolverCfg.ls_parallel is deprecated and ignored. "
-                "Isaac Lab uses iterative line search for performance because "
-                "MuJoCo Warp is dropping parallel line search support. Tune "
-                "MJWarpSolverCfg.ls_iterations instead.",
-                DeprecationWarning,
-                stacklevel=5,
-            )
-            self.ls_parallel = False

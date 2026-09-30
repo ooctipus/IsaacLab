@@ -5,7 +5,7 @@
 
 from dataclasses import MISSING
 
-from isaaclab_teleop import IsaacTeleopCfg
+from isaaclab_teleop import IsaacTeleopCfg, TeleopPipelineCfg
 
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.utils.configclass import configclass
@@ -33,7 +33,7 @@ _SO101_JOINTS = _SO101_ARM_JOINTS + ["gripper"]
 _SO101_LEADER_COLLECTION_ID = "so101_leader"
 
 
-def _build_so101_joint_teleop_pipeline():
+def _build_so101_joint_teleop_pipeline(_cfg: TeleopPipelineCfg):
     """Build an IsaacTeleop joint-space pipeline driven by the SO-101 leader arm.
 
     Unlike the XR-controller IK pipeline (see :mod:`.stack_ik_abs_env_cfg`), this path mirrors the
@@ -150,13 +150,12 @@ class SO101CubeStackEnvCfg(stack_joint_pos_env_cfg.SO101CubeStackEnvCfg):
         # IsaacTeleop joint-space pipeline. Unlike the IK env this needs no ``target_frame_prim_path``
         # (there is no pose to rebase into the base frame) and does not read the XR anchor -- the
         # leader plugin streams joint state over the OpenXR tensor transport, which the session still
-        # provides. ``xr_cfg`` is forwarded only to satisfy the session's XR bootstrap. Launch the
-        # ``so101_leader`` device (collection id ``so101_leader``) alongside the sim; it is not
-        # spawned here as a plugin so operators can point at real or synthetic hardware.
+        # provides. Launch the ``so101_leader`` device (collection id ``so101_leader``) alongside
+        # the sim; it is not spawned here as a plugin so operators can point at real or synthetic
+        # hardware.
         self.isaac_teleop = IsaacTeleopCfg(
-            pipeline_builder=_build_so101_joint_teleop_pipeline,
+            pipeline_cfg=TeleopPipelineCfg(class_type=_build_so101_joint_teleop_pipeline),
             sim_device=self.sim.device,
-            xr_cfg=self.xr,
         )
 
         # Relax the gripper-open check in the success termination. The default atol=0.0001 rad

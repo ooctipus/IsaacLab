@@ -26,6 +26,8 @@ import pytest
 if _USE_KIT:
     import omni.kit.app
 
+from isaaclab_physx.physics import PhysxCfg
+
 import isaaclab
 import isaaclab.sim as sim_utils
 from isaaclab.sim import SimulationCfg, SimulationContext
@@ -63,7 +65,7 @@ def sim_config():
         extension_path = manager.get_extension_path(extension_id)
         asset_path = f"{extension_path}/data/urdf/robots/franka_description/robots/panda_arm_hand.urdf"
         # Load kit helper
-        sim = SimulationContext(SimulationCfg(dt=0.01))
+        sim = SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     else:
         # Kitless path: the converter loads the importer from the standalone wheel. Spawning and
         # inspecting prims needs a USD stage but neither physics nor Kit, so the plain stage above

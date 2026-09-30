@@ -129,7 +129,7 @@ not authored. ``impratio`` and ``cone`` are global MJWarp solver options; ``impr
 .. code-block:: python
 
     import isaaclab.sim as sim_utils
-    from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
+    from isaaclab_newton.physics import MJWarpSolverCfg
     from isaaclab_newton.sim.schemas import MujocoCollisionCfg
 
 
@@ -141,11 +141,9 @@ not authored. ``impratio`` and ``cone`` are global MJWarp solver options; ``impr
         ],
     )
 
-    newton_mjwarp_cfg = NewtonCfg(
-        solver_cfg=MJWarpSolverCfg(
-            cone="elliptic",
-            impratio=10.0,
-        ),
+    newton_mjwarp_cfg = MJWarpSolverCfg(
+        cone="elliptic",
+        impratio=10.0,
     )
 
 ``MujocoCollisionCfg`` exposes the per-collider custom attributes registered by MJWarp:
@@ -311,15 +309,15 @@ per-environment ``njmax`` or ``nconmax`` budgets. Start from the nearest profile
 
 For a new articulation with light contact, the common starting point is
 ``MJWarpSolverCfg(integrator="implicitfast", njmax=50, nconmax=20, cone="pyramidal", impratio=1)``
-with ``NewtonCfg.num_substeps=1``. These values override the :class:`~isaaclab_newton.physics.MJWarpSolverCfg`
+with ``MJWarpSolverCfg.num_substeps=1``. These values override the :class:`~isaaclab_newton.physics.MJWarpSolverCfg`
 defaults of ``integrator="euler"``, ``njmax=300``, and ``nconmax=None``. Maintained locomotion tasks
 commonly need constraint/contact budgets near ``100``/``40``. Dexterous hand tasks commonly start
-near ``200``/``70`` with ``NewtonCfg.num_substeps=2``, an elliptic cone, and ``impratio=10``. Dense
+near ``200``/``70`` with ``MJWarpSolverCfg.num_substeps=2``, an elliptic cone, and ``impratio=10``. Dense
 manipulation can require ``300``/``200``. These are capacity and formulation profiles, not fidelity
 guarantees.
 
 Keep ``iterations=100``, ``ls_iterations=50``, and ``tolerance=1e-6`` for the first explicit
-baseline. Enable ``NewtonCfg.debug_mode`` and change convergence work only after capacity is sufficient
+baseline. Enable ``MJWarpSolverCfg.debug_mode`` and change convergence work only after capacity is sufficient
 and the iteration report or a recorded task metric identifies a convergence problem. Some dense
 manipulation tasks reduce ``ls_iterations`` to ``15`` for measured performance; do not copy that
 optimization before validating the larger default.
@@ -327,7 +325,7 @@ optimization before validating the larger default.
 Use MuJoCo contacts by default. Switch to ``use_mujoco_contacts=False`` only when the task needs
 Newton's collision pipeline, such as the rough-terrain, SDF or hydroelastic, and some
 dense-manipulation patterns. Only then assign a
-:class:`~isaaclab_newton.physics.NewtonCollisionPipelineCfg` to ``NewtonCfg.collision_cfg`` and set
+:class:`~isaaclab_newton.physics.NewtonCollisionPipelineCfg` to ``MJWarpSolverCfg.collision_cfg`` and set
 ``max_triangle_pairs`` or ``rigid_contact_max`` on that pipeline config; tune per-shape margins on
 the corresponding shape config. See :doc:`mjwarp-solver` for the complete PhysX mapping table,
 starting profiles, parameter semantics, and tuning sequence.
@@ -413,7 +411,7 @@ behavior, or insufficient solver capacity that PhysX tolerated.
 #. For failures that appear only with dense scenes or many environments, compare the busiest
    environment against the per-environment contact and constraint capacities.
 
-Enable ``NewtonCfg.debug_mode`` to inspect iteration-cap usage. Increase capacity when contacts or
+Enable ``MJWarpSolverCfg.debug_mode`` to inspect iteration-cap usage. Increase capacity when contacts or
 constraints overflow; sweep iterations, line-search work, or tolerance only after the asset,
 reset, controller, contact model, and capacities are valid. Keep the smallest fixed-state
 reproduction and record the first non-finite quantity so later changes can be compared one at a

@@ -11,74 +11,53 @@ This script demonstrates how to run the RL environment for the cartpole balancin
     uv run python scripts/tutorials/03_envs/run_cartpole_rl_env.py --num_envs 32
 
 Trailing ``key=value`` arguments (e.g. ``physics=isaacsim_physx``) are forwarded as Hydra-style
-overrides to the task configuration; see :func:`~isaaclab_tasks.utils.parse_env_cfg`.
+overrides to the task configuration; see :func:`~isaaclab_tasks.utils.resolve_task_config`.
 
 """
 
-"""Launch Isaac Sim Simulator first."""
-
 import argparse
 
-from isaaclab.app import AppLauncher
+from isaaclab.app import add_launcher_args, launch_simulation
+
+from isaaclab_tasks.utils import resolve_task_config, setup_preset_cli
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Tutorial on running the cartpole RL environment.")
 parser.add_argument("--num_envs", type=int, default=16, help="Number of environments to spawn.")
 
-# append AppLauncher cli args
-AppLauncher.add_app_launcher_args(parser)
-# tutorials should open Kit visualizer by default
-parser.set_defaults(visualizer=["kit"])
-# parse the arguments, forwarding unrecognized ones as Hydra-style task config overrides
-args_cli, hydra_overrides = parser.parse_known_args()
-
-# launch omniverse app
-app_launcher = AppLauncher(args_cli)
-simulation_app = app_launcher.app
-
-"""Rest everything follows."""
+add_launcher_args(parser)
+args_cli, config_overrides = setup_preset_cli(parser)
 
 import torch
 
 from isaaclab.envs import ManagerBasedRLEnv
 
-from isaaclab_tasks.utils import parse_env_cfg
-
 
 def main():
     """Main function."""
     # create environment configuration
-    env_cfg = parse_env_cfg(
-        "Isaac-Cartpole", device=args_cli.device, num_envs=args_cli.num_envs, overrides=hydra_overrides
-    )
-    # setup RL environment
-    env = ManagerBasedRLEnv(cfg=env_cfg)
+    env_cfg, _ = resolve_task_config("Isaac-Cartpole", None, overrides=config_overrides)
+    env_cfg.scene.num_envs = args_cli.num_envs
+    env_cfg.sim.device = args_cli.device
 
-    # simulate physics
-    count = 0
-    while simulation_app.is_running():
-        with torch.inference_mode():
-            # reset
-            if count % 300 == 0:
-                count = 0
-                env.reset()
-                print("-" * 80)
-                print("[INFO]: Resetting environment...")
-            # sample random actions
-            joint_efforts = torch.randn_like(env.action_manager.action)
-            # step the environment
-            obs, rew, terminated, truncated, info = env.step(joint_efforts)
-            # print current orientation of pole
-            print("[Env 0]: Pole joint: ", obs["policy"][0][1].item())
-            # update counter
-            count += 1
+    with launch_simulation(env_cfg, args_cli):
+        env = ManagerBasedRLEnv(cfg=env_cfg)
 
-    # close the environment
-    env.close()
+        count = 0
+        while env.sim.is_headless_or_exist_active_visualizer():
+            with torch.inference_mode():
+                if count % 300 == 0:
+                    count = 0
+                    env.reset()
+                    print("-" * 80)
+                    print("[INFO]: Resetting environment...")
+                joint_efforts = torch.randn_like(env.action_manager.action)
+                obs, rew, terminated, truncated, info = env.step(joint_efforts)
+                print("[Env 0]: Pole joint: ", obs["policy"][0][1].item())
+                count += 1
+
+        env.close()
 
 
 if __name__ == "__main__":
-    # run the main function
     main()
-    # close sim app
-    simulation_app.close()

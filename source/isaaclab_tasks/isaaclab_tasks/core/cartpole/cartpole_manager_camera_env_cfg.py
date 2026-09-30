@@ -11,7 +11,6 @@ from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.sensors import CameraCfg
 from isaaclab.utils.configclass import configclass
-from isaaclab.visualizers import VisualizerCfg
 
 import isaaclab_tasks.core.cartpole.mdp as mdp
 from isaaclab_tasks.core.cartpole.cartpole_manager_env_cfg import CartpoleEnvCfg, CartpoleSceneCfg, ObservationsCfg
@@ -65,7 +64,7 @@ class CartpoleTiledCameraCfg(PresetCfg):
 class CartpoleCameraSceneCfg(CartpoleSceneCfg):
     """Cartpole scene with a selectable tiled camera."""
 
-    tiled_camera: CartpoleTiledCameraCfg = CartpoleTiledCameraCfg()
+    camera: CartpoleTiledCameraCfg = CartpoleTiledCameraCfg()
 
 
 ##
@@ -89,7 +88,7 @@ def image_observations_cfg(data_type: str):
         class PolicyCfg(ObsGroup):
             image = ObsTerm(
                 func=mdp.CameraImageStack,
-                params={"sensor_cfg": SceneEntityCfg("tiled_camera"), "data_type": data_type},
+                params={"sensor_cfg": SceneEntityCfg("camera"), "data_type": data_type},
             )
 
             def __post_init__(self):
@@ -112,7 +111,7 @@ class ResNet18ObservationCfg:
 
         image = ObsTerm(
             func=mdp.image_features,
-            params={"sensor_cfg": SceneEntityCfg("tiled_camera"), "data_type": "rgb", "model_name": "resnet18"},
+            params={"sensor_cfg": SceneEntityCfg("camera"), "data_type": "rgb", "model_name": "resnet18"},
         )
 
     policy: ObsGroup = ResNet18FeaturesCameraPolicyCfg()
@@ -129,7 +128,7 @@ class TheiaTinyObservationCfg:
         image = ObsTerm(
             func=mdp.image_features,
             params={
-                "sensor_cfg": SceneEntityCfg("tiled_camera"),
+                "sensor_cfg": SceneEntityCfg("camera"),
                 "data_type": "rgb",
                 "model_name": "theia-tiny-patch16-224-cddsv",
                 "model_device": "cuda:0",
@@ -149,7 +148,7 @@ class CartpoleCameraEnvCfg(PresetCfg):
     """Cartpole environment with a selectable camera observation pipeline.
 
     A single ``presets=`` selector cascades through this preset: it picks the observation pipeline
-    here and, via :attr:`CartpoleCameraSceneCfg.tiled_camera`, the matching camera data type and
+    here and, via :attr:`CartpoleCameraSceneCfg.camera`, the matching camera data type and
     rendering backend. The feature-extractor variants (``resnet18``, ``theia_tiny``) operate on RGB
     images, so they fall back to the default camera.
     """
@@ -172,8 +171,6 @@ class CartpoleCameraEnvCfg(PresetCfg):
             # remove ground as it obstructs the camera
             self.scene.ground = None
             self.events.reset_pole_position.params["position_range"] = (-0.125 * math.pi, 0.125 * math.pi)
-            # visualizer camera settings
-            self.sim.default_visualizer_cfg = VisualizerCfg(eye=(20.0, 20.0, 20.0), lookat=(0.0, 0.0, 0.0))
 
     rgb = BaseCartpoleCameraEnvCfg(observations=image_observations_cfg("rgb"))
     depth = BaseCartpoleCameraEnvCfg(observations=image_observations_cfg("depth"))

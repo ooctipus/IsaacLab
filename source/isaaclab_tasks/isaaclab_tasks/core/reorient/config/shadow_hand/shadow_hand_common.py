@@ -10,7 +10,7 @@ domain-randomization presets, and the sim mixins. No task tunables: reward
 scales and thresholds live inline in the workflow configuration files.
 """
 
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
+from isaaclab_newton.physics import MJWarpSolverCfg
 from isaaclab_ov.physics import OvPhysxCfg
 from isaaclab_physx.physics import PhysxCfg
 
@@ -161,15 +161,8 @@ class ShadowHandRobotCfg(PresetCfg):
     that needs a per-engine value is a defect to fix in the asset, not a preset to add.
     """
 
-    # `spawn_path` authors only the prototype env; the scene clone plan replicates the rest (#7036).
-    newton_mjwarp = SHADOW_HAND_NEWTON_CFG.replace(
-        prim_path="{ENV_REGEX_NS}/Robot",
-        spawn=SHADOW_HAND_NEWTON_CFG.spawn.replace(spawn_path="/World/envs/env_0/Robot"),
-    )
-    isaacsim_physx = SHADOW_HAND_PHYSX_CFG.replace(
-        prim_path="{ENV_REGEX_NS}/Robot",
-        spawn=SHADOW_HAND_PHYSX_CFG.spawn.replace(spawn_path="/World/envs/env_0/Robot"),
-    )
+    newton_mjwarp = SHADOW_HAND_NEWTON_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+    isaacsim_physx = SHADOW_HAND_PHYSX_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
     physx = isaacsim_physx
     ovphysx = isaacsim_physx
     default = newton_mjwarp
@@ -178,7 +171,6 @@ class ShadowHandRobotCfg(PresetCfg):
 CUBE_CFG = RigidObjectCfg(
     prim_path="{ENV_REGEX_NS}/object",
     spawn=sim_utils.UsdFileCfg(
-        spawn_path="/World/envs/env_0/object",
         usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd",
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             kinematic_enabled=False,
@@ -213,15 +205,13 @@ class PhysicsCfg(PresetCfg):
         gpu_max_rigid_contact_count=2**23,
         gpu_max_rigid_patch_count=2**23,
     )
-    newton_mjwarp = NewtonCfg(
-        solver_cfg=MJWarpSolverCfg(
-            integrator="implicitfast",
-            njmax=200,
-            nconmax=70,
-            impratio=10.0,
-            cone="elliptic",
-            update_data_interval=2,
-        ),
+    newton_mjwarp = MJWarpSolverCfg(
+        integrator="implicitfast",
+        njmax=200,
+        nconmax=70,
+        impratio=10.0,
+        cone="elliptic",
+        update_data_interval=2,
         num_substeps=2,
     )
     ovphysx = OvPhysxCfg()

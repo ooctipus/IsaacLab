@@ -14,24 +14,26 @@ across all rows.
 """
 
 import argparse
+from dataclasses import MISSING
 from pathlib import Path
 
 from isaaclab.app import add_launcher_args, launch_simulation
 
+from isaaclab_tasks.utils import preset, resolve_config, setup_preset_cli
+from isaaclab_tasks.utils.presets import MultiBackendSimulationCfg
+
 parser = argparse.ArgumentParser(description="NVIDIA-logo domino dragging demo (XPBD).")
 parser.add_argument("--max_steps", type=int, default=-1, help="Stop after this many steps; negative runs forever.")
 add_launcher_args(parser)
-parser.set_defaults(visualizer=["newton_gl"])
-args_cli = parser.parse_args()
+args_cli, config_overrides = setup_preset_cli(parser)
 
 import torch
-from isaaclab_newton.physics import NewtonCfg, NewtonManager, NewtonShapeCfg, XPBDSolverCfg
-
-from pxr import Gf, UsdGeom
+from isaaclab_newton.cloner import NewtonReplicateContext
+from isaaclab_newton.physics import NewtonShapeCfg, XPBDSolverCfg
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import AssetBaseCfg, RigidObjectCfg, RigidObjectCollectionCfg
-from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
+from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils.configclass import configclass
 
 DOMINO_SIZE = (0.12, 0.032, 0.36)
@@ -43,11 +45,25 @@ _POSES_PATH = Path(__file__).with_name("assets") / "nvidia_logo_domino_poses.pth
 _POSES = torch.load(_POSES_PATH, map_location="cpu", weights_only=True).tolist()
 LOGO_DOMINO_POSES = [(tuple(pose[:3]), tuple(pose[3:])) for pose in _POSES]
 
+_PHYSICS_CFG = XPBDSolverCfg(
+    num_substeps=10,
+    collision_decimation=1,
+    default_shape_cfg=NewtonShapeCfg(gap=0.001, ke=1.0e4, kd=0.0, mu=1.0),
+    iterations=20,
+    enable_restitution=True,
+)
 
-def _set_display_color(prim_path: str, color: tuple[float, float, float]) -> None:
-    """Set a mesh display color for the Newton model builder."""
-    mesh = sim_utils.get_current_stage().GetPrimAtPath(f"{prim_path}/geometry/mesh")
-    UsdGeom.Gprim(mesh).CreateDisplayColorAttr().Set([Gf.Vec3f(*color)])
+
+@configclass
+class DemoCfg:
+    """Domino demo configuration."""
+
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(
+        dt=1.0 / 120.0,
+        device=args_cli.device,
+        physics=preset(default=_PHYSICS_CFG, newton_xpbd=_PHYSICS_CFG),
+    )
+    scene: InteractiveSceneCfg = MISSING
 
 
 def _domino_cfg(position: tuple[float, float, float], orientation: tuple[float, float, float, float]) -> RigidObjectCfg:
@@ -59,6 +75,7 @@ def _domino_cfg(position: tuple[float, float, float], orientation: tuple[float, 
             rigid_props=sim_utils.RigidBodyPropertiesCfg(),
             mass_props=sim_utils.MassPropertiesCfg(density=580.0),
             collision_props=sim_utils.CollisionPropertiesCfg(),
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=NVIDIA_GREEN),
             physics_material=sim_utils.RigidBodyMaterialCfg(
                 static_friction=1.0,
                 dynamic_friction=1.0,
@@ -79,6 +96,7 @@ def _trigger_cfg() -> RigidObjectCfg:
             rigid_props=sim_utils.RigidBodyPropertiesCfg(),
             mass_props=sim_utils.MassPropertiesCfg(density=20.0),
             collision_props=sim_utils.CollisionPropertiesCfg(),
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.02, 0.02, 0.02)),
             physics_material=sim_utils.RigidBodyMaterialCfg(
                 static_friction=1.0,
                 dynamic_friction=1.0,
@@ -98,6 +116,7 @@ class DominoSceneCfg(InteractiveSceneCfg):
         spawn=sim_utils.CuboidCfg(
             size=(LOGO_FOOTPRINT[0] + 4.0, LOGO_FOOTPRINT[1] + 4.0, 0.10),
             collision_props=sim_utils.CollisionPropertiesCfg(),
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 1.0, 1.0)),
             physics_material=sim_utils.RigidBodyMaterialCfg(
                 static_friction=1.0,
                 dynamic_friction=1.0,
@@ -117,14 +136,6 @@ class DominoSceneCfg(InteractiveSceneCfg):
     trigger: RigidObjectCfg = _trigger_cfg()
 
 
-def _apply_display_colors() -> None:
-    """Apply viewer colors after InteractiveScene has authored the prims."""
-    _set_display_color("/World/Floor", (1.0, 1.0, 1.0))
-    for index in range(len(LOGO_DOMINO_POSES)):
-        _set_display_color(f"/World/Dominoes/Domino{index:04d}", NVIDIA_GREEN)
-    _set_display_color("/World/Dominoes/Trigger", (0.02, 0.02, 0.02))
-
-
 def run_simulator(sim: sim_utils.SimulationContext) -> None:
     """Run until the viewer closes or the optional step limit is reached."""
     step_count = 0
@@ -135,21 +146,13 @@ def run_simulator(sim: sim_utils.SimulationContext) -> None:
 
 def main() -> None:
     """Launch the Newton XPBD domino dragging demo."""
-    physics_cfg = NewtonCfg(
-        num_substeps=10,
-        collision_decimation=1,
-        default_shape_cfg=NewtonShapeCfg(gap=0.001, ke=1.0e4, kd=0.0, mu=1.0),
-        solver_cfg=XPBDSolverCfg(iterations=20, enable_restitution=True),
-    )
-    with launch_simulation(cfg=physics_cfg, launcher_args=args_cli) as resolved_physics_cfg:
-        sim_cfg = sim_utils.SimulationCfg(dt=1.0 / 120.0, device=args_cli.device, physics=resolved_physics_cfg)
-        sim = sim_utils.SimulationContext(sim_cfg)
+    cfg = resolve_config(DemoCfg(scene=DominoSceneCfg(num_envs=1, env_spacing=1.0)), config_overrides)
+    with launch_simulation(cfg, args_cli):
+        sim = sim_utils.SimulationContext(cfg.sim)
+        resource = sim.get_or_create_backend(NewtonReplicateContext, sim)
         sim.set_camera_view(eye=(0.0, -18.0, 15.0), target=(0.0, 0.0, 0.0))
-        _scene = InteractiveScene(DominoSceneCfg(num_envs=1, env_spacing=1.0))
-        _apply_display_colors()
-        if NewtonManager._builder is None:
-            NewtonManager.instantiate_builder_from_stage()
-        NewtonManager._builder.rigid_gap = 0.001
+        _scene = cfg.scene.class_type(cfg.scene)
+        resource._builder.rigid_gap = 0.001
         sim.reset()
         print(
             f"[INFO]: Setup complete with {len(LOGO_DOMINO_POSES)} green dominoes. "

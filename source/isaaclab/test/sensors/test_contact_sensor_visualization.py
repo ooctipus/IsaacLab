@@ -28,10 +28,10 @@ class _FakeVisualizationMarkers:
         type(self).last_values = (positions, orientations, scales)
 
 
-def test_contact_force_visualizer(monkeypatch):
+def test_contact_force_visualizer():
     """Test arrow direction, scaling, thresholding, and tail offset."""
-    monkeypatch.setattr(contact_force_marker, "VisualizationMarkers", _FakeVisualizationMarkers)
     cfg = BLUE_ARROW_X_MARKER_CFG.copy()
+    cfg.class_type = _FakeVisualizationMarkers
     cfg.markers["arrow"].scale = (0.04, 0.04, 0.2)
     visualizer = contact_force_marker.ContactForceVisualizer(cfg, force_scale=0.5)
 

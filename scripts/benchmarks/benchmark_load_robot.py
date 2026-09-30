@@ -75,7 +75,7 @@ if TYPE_CHECKING:
 # Pre-defined configs
 ##
 from isaaclab_assets import ANYMAL_D_CFG, G1_MINIMAL_CFG, H1_MINIMAL_CFG  # isort:skip
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg  # isort:skip
+from isaaclab_newton.physics import MJWarpSolverCfg, NewtonSolverCfg  # isort:skip
 
 
 # Stop the timer for imports
@@ -171,23 +171,21 @@ def main(
     """Main function."""
     # Import runtime classes only now that the simulation app has been launched. These modules import
     # USD/``omni`` bindings at import time, so importing them before the app is running crashes the simulator.
-    from isaaclab.scene import InteractiveScene
     from isaaclab.sim import SimulationContext
 
     # Load kit helper
     # The default MJWarp configuration needs additional constraint capacity and solver tuning for bipeds.
     if (
         args_cli.robot in ("h1", "g1")
-        and isinstance(physics_cfg, NewtonCfg)
-        and isinstance(physics_cfg.solver_cfg, MJWarpSolverCfg)
+        and isinstance(physics_cfg, NewtonSolverCfg)
+        and isinstance(physics_cfg, MJWarpSolverCfg)
     ):
-        physics_cfg.solver_cfg.njmax = 70
-        physics_cfg.solver_cfg.nconmax = 70
-        physics_cfg.solver_cfg.ls_iterations = 40
-        physics_cfg.solver_cfg.cone = "elliptic"
-        physics_cfg.solver_cfg.impratio = 100
-        physics_cfg.solver_cfg.ls_parallel = False
-        physics_cfg.solver_cfg.integrator = "implicitfast"
+        physics_cfg.njmax = 70
+        physics_cfg.nconmax = 70
+        physics_cfg.ls_iterations = 40
+        physics_cfg.cone = "elliptic"
+        physics_cfg.impratio = 100
+        physics_cfg.integrator = "implicitfast"
         physics_cfg.num_substeps = 2
 
     sim_cfg = sim_utils.SimulationCfg(device=args_cli.device, physics=physics_cfg)
@@ -198,7 +196,7 @@ def main(
     # Start the timer for creating the scene
     setup_time_begin = time.perf_counter_ns()
     # Design scene
-    scene = InteractiveScene(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
     # Stop the timer for creating the scene
     setup_time_end = time.perf_counter_ns()
 

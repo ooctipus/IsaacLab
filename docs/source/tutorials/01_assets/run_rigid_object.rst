@@ -54,26 +54,22 @@ the asset's spawning strategy, default initial state, and other meta-information
 the :class:`assets.RigidObject` class, it spawns the object and initializes the corresponding physics handles
 when the simulation is played.
 
-As an example on spawning the rigid object prim multiple times, we create its parent Xform prims,
-``/World/Origin{i}``, that correspond to different spawn locations. When the regex expression
-``/World/Origin.*/Cone`` is passed to the :class:`assets.RigidObject` class, it spawns the rigid object prim at
-each of the ``/World/Origin{i}`` locations. For instance, if ``/World/Origin1`` and ``/World/Origin2`` are
-present in the scene, the rigid object prims are spawned at the locations ``/World/Origin1/Cone`` and
-``/World/Origin2/Cone`` respectively.
+The clone layout and all scene assets are declared on :class:`RigidObjectTutorialCfg`. The cone's
+``{ENV_REGEX_NS}/Cone`` path marks it as a per-environment asset; the clone plan resolves that namespace for every
+environment, so the script does not create parent Xforms procedurally.
 
 .. literalinclude:: ../../../../scripts/tutorials/01_assets/run_rigid_object.py
    :language: python
-   :start-at: # Create separate groups called "Origin1", "Origin2", "Origin3"
-   :end-at: cone_object = RigidObject(cfg=cone_cfg)
+   :pyobject: RigidObjectTutorialCfg
 
-Since we want to interact with the rigid object, we pass this entity back to the main function. This entity
-is then used to interact with the rigid object in the simulation loop. In later tutorials, we will see a more
-convenient way to handle multiple scene entities using the :class:`scene.InteractiveScene` class.
+The ``design_scene`` function gives the complete configuration to a :class:`cloner.ReplicateSession`, constructs
+the cone through its standard ``class_type`` while the clone lifecycle is active, and obtains the environment origins
+from that same plan. It returns the constructed entity for use in the simulation loop. In later tutorials,
+:class:`scene.InteractiveScene` manages these entities as a collection.
 
 .. literalinclude:: ../../../../scripts/tutorials/01_assets/run_rigid_object.py
    :language: python
-   :start-at: # return the scene information
-   :end-at: return scene_entities, origins
+   :pyobject: design_scene
 
 
 Running the simulation loop

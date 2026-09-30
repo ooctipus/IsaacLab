@@ -14,13 +14,35 @@ import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 from isaaclab.envs import DirectRLEnvCfg
-from isaaclab.scene import InteractiveSceneCfg
-from isaaclab.sim import SimulationCfg
 from isaaclab.utils.configclass import configclass
+
+from isaaclab_tasks.utils.presets import MultiBackendSceneCfg, MultiBackendSimulationCfg
 
 from isaaclab_assets import HUMANOID_28_CFG
 
 MOTIONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "motions")
+
+
+@configclass
+class HumanoidAmpSceneCfg(MultiBackendSceneCfg):
+    """Humanoid, ground, and light constructed through one clone plan."""
+
+    ground = AssetBaseCfg(
+        prim_path="/World/ground",
+        spawn=sim_utils.GroundPlaneCfg(
+            physics_material=sim_utils.RigidBodyMaterialCfg(static_friction=1.0, dynamic_friction=1.0, restitution=0.0)
+        ),
+    )
+    robot: ArticulationCfg = HUMANOID_28_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot").replace(
+        actuators={
+            "body": ImplicitActuatorCfg(
+                joint_names_expr=[".*"], stiffness=None, damping=None, joint_velocity_limit={".*": 100.0}
+            ),
+        },
+    )
+    light = AssetBaseCfg(
+        prim_path="/World/Light", spawn=sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
+    )
 
 
 @configclass
@@ -52,41 +74,14 @@ class HumanoidAmpEnvCfg(DirectRLEnvCfg):
     """
 
     # simulation
-    sim: SimulationCfg = SimulationCfg(
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(
         dt=1 / 60,
         render_interval=decimation,
         physics=PhysxCfg(gpu_found_lost_pairs_capacity=2**23, gpu_total_aggregate_pairs_capacity=2**23),
     )
 
     # scene
-    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=4096, env_spacing=10.0, replicate_physics=True)
-
-    # robot
-    robot: ArticulationCfg = HUMANOID_28_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot").replace(
-        actuators={
-            "body": ImplicitActuatorCfg(
-                joint_names_expr=[".*"],
-                stiffness=None,
-                damping=None,
-                joint_velocity_limit={
-                    ".*": 100.0,
-                },
-            ),
-        },
-    )
-    ground: AssetBaseCfg = AssetBaseCfg(
-        prim_path="/World/ground",
-        spawn=sim_utils.GroundPlaneCfg(
-            physics_material=sim_utils.RigidBodyMaterialCfg(
-                static_friction=1.0,
-                dynamic_friction=1.0,
-                restitution=0.0,
-            )
-        ),
-    )
-    light: AssetBaseCfg = AssetBaseCfg(
-        prim_path="/World/Light", spawn=sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
-    )
+    scene: HumanoidAmpSceneCfg = HumanoidAmpSceneCfg(num_envs=4096, env_spacing=10.0, replicate_physics=True)
 
 
 @configclass

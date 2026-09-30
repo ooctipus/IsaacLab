@@ -41,18 +41,18 @@ class CartpoleCameraShowcaseEnv(CartpoleCameraEnv):
             raise NotImplementedError(f"Action space {type(self.single_action_space)} not implemented")
 
         # set target
-        self.cartpole.set_joint_effort_target_index(target=target, joint_ids=self._cart_dof_idx)
+        self.scene["robot"].set_joint_effort_target_index(target=target, joint_ids=self._cart_dof_idx)
 
     def _get_observations(self) -> dict:
         # get camera data
-        data_type = "rgb" if "rgb" in self.cfg.tiled_camera.data_types else "depth"
-        if "rgb" in self.cfg.tiled_camera.data_types:
-            camera_data = self._tiled_camera.data.output[data_type] / 255.0
+        data_type = "rgb" if "rgb" in self.cfg.scene.camera.data_types else "depth"
+        if "rgb" in self.cfg.scene.camera.data_types:
+            camera_data = self.scene["camera"].data.output[data_type] / 255.0
             # normalize the camera data for better training results
             mean_tensor = torch.mean(camera_data, dim=(1, 2), keepdim=True)
             camera_data -= mean_tensor
-        elif "depth" in self.cfg.tiled_camera.data_types:
-            camera_data = self._tiled_camera.data.output[data_type]
+        elif "depth" in self.cfg.scene.camera.data_types:
+            camera_data = self.scene["camera"].data.output[data_type]
             camera_data[camera_data == float("inf")] = 0
 
         # fundamental spaces

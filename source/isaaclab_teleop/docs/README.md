@@ -8,8 +8,8 @@ XR anchor synchronization, retargeting pipelines, and action-tensor generation.
 
 - **`IsaacTeleopDevice`** -- unified device that wraps an IsaacTeleop `TeleopSession` behind a
   context-manager interface. Returns a flat `torch.Tensor` action each frame.
-- **`IsaacTeleopCfg` / `XrCfg`** -- declarative configuration for retargeting pipelines, XR anchor
-  placement, rotation modes, and tuning UI.
+- **`IsaacTeleopCfg` / `XrCfg`** -- declarative configuration for retargeting pipelines and XR anchor
+  placement and rotation modes.
 - **Deferred session creation** -- if OpenXR handles are not yet available (e.g. the user has not
   clicked *Start AR*), the session is created transparently on the first `advance()` call once
   handles appear.
@@ -17,10 +17,8 @@ XR anchor synchronization, retargeting pipelines, and action-tensor generation.
   XR controller buttons or the Carbonite message bus.
 - **XR anchor rotation modes** -- `FIXED`, `FOLLOW_PRIM`, `FOLLOW_PRIM_SMOOTHED`, and `CUSTOM`
   modes for controlling how the anchor orientation tracks the reference prim.
-- **Retargeting tuning UI** -- optional ImGui window for real-time adjustment of retargeter
-  parameters when `retargeters_to_tune` is provided.
-- **XR camera feedback** -- selected scene cameras can be shown through Kit Scene UI using a
-  feed-owned CUDA view of their existing RTX render product, with camera-buffer fallback.
+- **XR camera feedback** -- selected scene cameras can be shown through Kit Scene UI directly from
+  their public RGBA buffers.
 
 ## Architecture
 
@@ -41,6 +39,7 @@ Add an `isaac_teleop` attribute to your environment config:
 ```python
 from isaaclab_teleop import (
     IsaacTeleopCfg,
+    TeleopPipelineCfg,
     XrCameraFeedCfg,
     XrCfg,
 )
@@ -50,29 +49,23 @@ class MyEnvCfg(ManagerBasedRLEnvCfg):
     def __post_init__(self):
         super().__post_init__()
 
-        pipeline, retargeters = my_pipeline_builder()
+        self.scene.xr_anchor = XrCfg(
+            anchor_pos=(0.5, 0.0, 0.5),
+            anchor_prim_path="{ENV_REGEX_NS}/Robot/base_link",
+        )
         self.isaac_teleop = IsaacTeleopCfg(
-            xr_cfg=XrCfg(
-                anchor_pos=(0.5, 0.0, 0.5),
-                anchor_prim_path="{ENV_REGEX_NS}/Robot/base_link",
-            ),
-            pipeline_builder=lambda: pipeline,
-            retargeters_to_tune=lambda: retargeters,
+            pipeline_cfg=TeleopPipelineCfg(class_type=create_pipeline),
             xr_camera_feeds=[
                 XrCameraFeedCfg(camera_name="robot_pov_cam"),
             ],
         )
 ```
 
-> Both `pipeline_builder` and `retargeters_to_tune` must be **callables** (lambdas or functions)
-> because `@configclass` deep-copies mutable attributes and retargeter objects often contain
-> non-picklable handles.
-
 ### 2. Define a Pipeline Builder
 
 Create a function that builds your IsaacTeleop retargeting pipeline. The builder should return an
 `OutputCombiner` with an `"action"` key containing the flattened action tensor (typically via
-`TensorReorderer`). Optionally return a list of retargeters to expose in the tuning UI:
+`TensorReorderer`). It receives its declarative pipeline config:
 
 ```python
 from isaacteleop.retargeting_engine.deviceio_source_nodes import ControllersSource
@@ -81,12 +74,11 @@ from isaacteleop.retargeters import (
 )
 from isaacteleop.retargeting_engine.interface import OutputCombiner
 
-def my_pipeline_builder():
+def create_pipeline(_cfg: TeleopPipelineCfg):
     controllers = ControllersSource(name="controllers")
     se3 = Se3AbsRetargeter(cfg, name="ee_pose")
     # ... connect retargeters and flatten with TensorReorderer ...
-    pipeline = OutputCombiner({"action": reorderer.output("output")})
-    return pipeline, [se3]
+    return OutputCombiner({"action": reorderer.output("output")})
 ```
 
 ### 3. Run Teleoperation
@@ -106,11 +98,11 @@ reference tasks, camera selection, layout, placement, renderer, disable, and kit
 `IsaacTeleopDevice` supports Python's context-manager protocol:
 
 ```python
-from isaaclab_teleop import IsaacTeleopCfg, IsaacTeleopDevice
+from isaaclab_teleop import IsaacTeleopCfg, IsaacTeleopDevice, TeleopPipelineCfg
 
-cfg = IsaacTeleopCfg(pipeline_builder=my_pipeline_builder)
+cfg = IsaacTeleopCfg(pipeline_cfg=TeleopPipelineCfg(class_type=create_pipeline))
 
-with IsaacTeleopDevice(cfg) as device:
+with IsaacTeleopDevice(cfg, env.cfg.scene.xr_anchor) as device:
     device.add_callback("RESET", env.reset)
     while running:
         action = device.advance()
@@ -127,11 +119,9 @@ rendering without blocking.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `xr_cfg` | `XrCfg` | `XrCfg()` | XR anchor position, rotation, and dynamic-anchoring settings |
 | `xr_camera_feeds` | `list[XrCameraFeedCfg]` | `[]` | Existing task scene cameras shown as image panels |
 | `xr_camera_feed_layout` | `XrCameraFeedLayoutCfg` | viewer-start manual layout | Placement reference and ordered multi-feed packing |
-| `pipeline_builder` | `Callable[[], OutputCombiner]` | *required* | Builds the retargeting pipeline |
-| `retargeters_to_tune` | `Callable[[], list[BaseRetargeter]] \| None` | `None` | Retargeters to expose in the tuning UI |
+| `pipeline_cfg` | `TeleopPipelineCfg` | *required* | Selects and configures the retargeting pipeline |
 | `plugins` | `list[PluginConfig]` | `[]` | IsaacTeleop plugin configurations |
 | `sim_device` | `str` | `"cuda:0"` | Torch device for output action tensors |
 | `retargeting_execution` | `RetargetingExecutionConfig \| None` | `None` (resolved at session start to `mode="pipelined", pacing=DeadlinePacingConfig(safety_margin_s=0.025)`) | IsaacTeleop retargeting execution settings; deferred so the config imports without `isaacteleop` |
@@ -143,6 +133,10 @@ step Python, giving native work such as rendering time to overlap instead of hav
 contend for the GIL at the start of the step.
 
 ### `XrCfg`
+
+`XrCfg` is an `AssetBaseCfg` owned by the scene (normally `scene.xr_anchor`). The clone plan authors
+its anchor before simulation initialization; it is not embedded in `IsaacTeleopCfg` or constructed
+by the device.
 
 | Field | Type | Default | Description |
 |---|---|---|---|

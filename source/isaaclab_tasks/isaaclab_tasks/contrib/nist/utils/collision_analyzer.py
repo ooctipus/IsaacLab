@@ -5,14 +5,14 @@
 
 from __future__ import annotations
 
+import re
 import time
 from typing import TYPE_CHECKING
 
-import numpy as np
 import torch
 import warp as wp
 
-from isaaclab.sim.utils import resolve_matching_prims_from_source
+from isaaclab.utils.warp import convert_to_warp_mesh
 
 from isaaclab_tasks.contrib.nist.utils import mesh_ops as _mesh_ops
 from isaaclab_tasks.contrib.nist.utils.rigid_object_hasher import RigidObjectHasher
@@ -35,8 +35,6 @@ class CollisionAnalyzer:
     cfg: CollisionAnalyzerCfg
 
     def __init__(self, cfg: CollisionAnalyzerCfg, env: ManagerBasedRLEnv):
-        from pxr import UsdGeom, UsdPhysics
-
         self.cfg = cfg
         self.asset: RigidObject = env.scene[cfg.asset_cfg.name]
         self.obstacles: list[RigidObject] = [env.scene[cfg.name] for cfg in cfg.obstacle_cfgs]
@@ -48,15 +46,22 @@ class CollisionAnalyzer:
         )
         if isinstance(body_names, str):
             body_names = [body_names]
+        layout = env.scene.clone_plan
+        if layout is None:
+            raise RuntimeError("CollisionAnalyzer requires a completed clone plan.")
+        planned_bodies = (
+            layout.match_rigid_body_subtrees(self.asset.cfg.prim_path)
+            if len(self.asset.body_names) == 1
+            else layout.match_articulation(self.asset.cfg.prim_path).bodies
+        )
 
         self.body_ids = []
         self.local_pts = []
         for body_name in body_names:
-            _, prim_path_pattern = resolve_matching_prims_from_source(
-                self.asset.cfg.prim_path,
-                predicate=lambda p: p.GetName() == body_name and p.HasAPI(UsdPhysics.RigidBodyAPI),
-                expected_num_matches=1,
-            )[0]
+            view_paths = {body.view_path for body in planned_bodies if body.name == body_name}
+            if len(view_paths) != 1:
+                raise ValueError(f"Body {body_name!r} has {len(view_paths)} clone-plan view paths; expected one.")
+            prim_path_pattern = re.escape(view_paths.pop()).replace(r"\*", r"[^/]+")
             local_pts = _mesh_ops.sample_object_point_cloud(
                 num_envs=env.num_envs,
                 num_points=cfg.num_points,
@@ -89,7 +94,7 @@ class CollisionAnalyzer:
         # owning body link and its static BODY-relative transform. The runtime pass
         # recomposes world transforms from live body poses instead of the root pose.
         art_flat: dict[int, dict[str, torch.Tensor]] = {}
-        self._meshes: dict[int, wp.Mesh] = {}
+        self._meshes: dict[str, wp.Mesh] = {}
 
         for i, obstacle in enumerate(self.obstacles):
             start = time.perf_counter()
@@ -99,16 +104,15 @@ class CollisionAnalyzer:
             rel_mat_cpu = obs_h.collider_rel_mat
             rel_mat_inv_cpu = obs_h.collider_rel_mat_inv
             env_ids_cpu = obs_h.collider_prim_env_ids
-            hashes_cpu = obs_h.collider_prim_hashes
+            collider_keys = obs_h.collider_keys
 
             handles_flat: list[int] = []
-            for j, prim in enumerate(obs_h.collider_prims):
-                p_hash = hashes_cpu[j].item()
-                if p_hash in self._meshes:
-                    handles_flat.append(self._meshes[p_hash].id)
+            for key, geometry in zip(collider_keys, obs_h.collider_geometries, strict=True):
+                if key in self._meshes:
+                    handles_flat.append(self._meshes[key].id)
                 else:
-                    wp_mesh = _mesh_ops.prim_to_warp_mesh(prim, device=device, relative_to_world=False)
-                    self._meshes[p_hash] = wp_mesh
+                    wp_mesh = convert_to_warp_mesh(geometry.vertices, geometry.faces, device=device)
+                    self._meshes[key] = wp_mesh
                     handles_flat.append(wp_mesh.id)
 
             obs_flat_pos.append(rel_pos_cpu)
@@ -121,37 +125,20 @@ class CollisionAnalyzer:
             obstacle_root_scales[i] = obs_h.root_prim_scales.to(device)
 
             if len(obstacle.body_names) > 1:
-                xform_cache = UsdGeom.XformCache()
-                per_prim: dict[str, tuple[int, torch.Tensor, torch.Tensor]] = {}
                 body_ids_flat: list[int] = []
                 rel_pos_body: list[torch.Tensor] = []
                 rel_mat_body: list[torch.Tensor] = []
-                for prim in obs_h.collider_prims:
-                    key = str(prim.GetPath())
-                    cached = per_prim.get(key)
-                    if cached is None:
-                        link = prim
-                        while link.IsValid() and not link.HasAPI(UsdPhysics.RigidBodyAPI):
-                            link = link.GetParent()
-                        if not link.IsValid() or link.GetName() not in obstacle.body_names:
-                            raise RuntimeError(
-                                f"Collider '{key}' of articulated obstacle '{obstacle.cfg.prim_path}' has no"
-                                " rigid-body ancestor matching one of its body links."
-                            )
-                        rel4 = np.array(
-                            xform_cache.GetLocalToWorldTransform(prim)
-                            * xform_cache.GetLocalToWorldTransform(link).GetInverse(),
-                            dtype=np.float64,
+                for body_name, rel_pos, rel_mat in zip(
+                    obs_h.collider_body_names, obs_h.collider_rel_pos, obs_h.collider_rel_mat, strict=True
+                ):
+                    if body_name not in obstacle.body_names:
+                        raise RuntimeError(
+                            f"Planned collider body {body_name!r} is absent from articulated obstacle"
+                            f" {obstacle.cfg.prim_path!r}."
                         )
-                        cached = (
-                            obstacle.body_names.index(link.GetName()),
-                            torch.tensor(rel4[3, :3], dtype=torch.float32),
-                            torch.tensor(rel4[:3, :3].T, dtype=torch.float32),
-                        )
-                        per_prim[key] = cached
-                    body_ids_flat.append(cached[0])
-                    rel_pos_body.append(cached[1])
-                    rel_mat_body.append(cached[2])
+                    body_ids_flat.append(obstacle.body_names.index(body_name))
+                    rel_pos_body.append(rel_pos)
+                    rel_mat_body.append(rel_mat)
                 art_flat[i] = {
                     "body_ids": torch.tensor(body_ids_flat, dtype=torch.int32),
                     "rel_pos": torch.stack(rel_pos_body),
@@ -162,7 +149,7 @@ class CollisionAnalyzer:
                 obstacle_root_scales[i] = 1.0
 
             pc_time = time.perf_counter() - start
-            print(f"Sampled {len(obs_h.collider_prims)} wp meshes at '{obstacle.cfg.prim_path}' in {pc_time:.3f}s")
+            print(f"Sampled {len(obs_h.collider_geometries)} wp meshes at '{obstacle.cfg.prim_path}' in {pc_time:.3f}s")
 
         max_prims = int(torch.max(num_coll_per_obs_env).item())
         self.max_prims = max_prims

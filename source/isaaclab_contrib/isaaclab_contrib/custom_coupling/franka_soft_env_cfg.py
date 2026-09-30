@@ -5,7 +5,7 @@
 
 """Franka soft lifting environment using the custom coupling manager."""
 
-from isaaclab_newton.physics import MJWarpSolverCfg, VBDSolverCfg
+from isaaclab_newton.physics import MJWarpSolverCfg, NewtonSoftContactCfg, NewtonSolverCfg, VBDSolverCfg
 
 from isaaclab.utils.configclass import configclass
 
@@ -19,21 +19,21 @@ from .newton_manager_cfg import CoupledMJWarpVBDSolverCfg
 class PhysicsCfg(CorePhysicsCfg):
     """Adds the manual MJWarp and VBD coupling preset on top of the core proxy presets."""
 
-    newton_mjwarp_vbd = CorePhysicsCfg().newton_mjwarp_vbd_proxy.replace(
-        # Required: ``NewtonCfg.__post_init__`` rejects a preset class_type and re-derives it.
-        class_type=None,
-        solver_cfg=CoupledMJWarpVBDSolverCfg(
-            rigid_solver_cfg=MJWarpSolverCfg(
-                njmax=40,
-                nconmax=20,
-                ls_iterations=20,
-                integrator="implicitfast",
-                ccd_iterations=100,
-            ),
-            soft_solver_cfg=VBDSolverCfg(
-                integrate_with_external_rigid_solver=True,
-            ),
+    newton_mjwarp_vbd: NewtonSolverCfg = CoupledMJWarpVBDSolverCfg(
+        rigid_solver_cfg=MJWarpSolverCfg(
+            njmax=40,
+            nconmax=20,
+            ls_iterations=20,
+            integrator="implicitfast",
+            ccd_iterations=100,
         ),
+        soft_solver_cfg=VBDSolverCfg(integrate_with_external_rigid_solver=True),
+        soft_contact_cfg=NewtonSoftContactCfg(
+            soft_contact_ke=8.0e3,
+            soft_contact_kd=1.0e-2,
+            soft_contact_mu=10.0,
+        ),
+        num_substeps=2,
     )
 
     default = newton_mjwarp_vbd

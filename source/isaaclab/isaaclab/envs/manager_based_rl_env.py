@@ -261,6 +261,7 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
 
         # -- reset envs that terminated/timed-out and log the episode information
         reset_env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1).int()
+        manual_reset_ids = reset_env_ids[:0]
         if len(reset_env_ids) > 0:
             # capture the terminal observation before reset and expose it for Same-Step autoreset.
             if self.cfg.compute_final_obs:
@@ -269,14 +270,6 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
             self.recorder_manager.record_pre_reset(reset_env_ids)
 
             self._reset_idx(reset_env_ids)
-
-            # if sensors are added to the scene, make sure we render to reflect changes in reset
-            if self.render_enabled and is_rendering and self.has_rtx_sensors and self.cfg.num_rerenders_on_reset > 0:
-                for _ in range(self.cfg.num_rerenders_on_reset):
-                    self.sim.render()
-
-            # trigger recorder terms for post-reset calls
-            self.recorder_manager.record_post_reset(reset_env_ids)
 
         # -- handle episode reset requested from visualizer UI controls
         if self.sim.consume_reset_request():
@@ -290,7 +283,15 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
                 # mirror the recorder lifecycle used for normal resets
                 self.recorder_manager.record_pre_reset(manual_reset_ids)
                 self._reset_idx(manual_reset_ids)
-                self.recorder_manager.record_post_reset(manual_reset_ids)
+
+        if reset_env_ids.numel() + manual_reset_ids.numel() > 0:
+            self.sim.forward()
+            if self.render_enabled and is_rendering and self.has_rtx_sensors and self.cfg.num_rerenders_on_reset > 0:
+                for _ in range(self.cfg.num_rerenders_on_reset):
+                    self.sim.render()
+            for env_ids in (reset_env_ids, manual_reset_ids):
+                if len(env_ids) > 0:
+                    self.recorder_manager.record_post_reset(env_ids)
 
         # -- update command
         self.command_manager.compute(dt=self.step_dt)
@@ -379,29 +380,29 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
         """Configure the action and observation spaces for the Gym environment."""
         # observation space (unbounded since we don't impose any limits)
         self.single_observation_space = gym.spaces.Dict()
+        self.observation_space = gym.spaces.Dict()
         for group_name, group_term_names in self.observation_manager.active_terms.items():
-            # extract quantities about the group
-            has_concatenated_obs = self.observation_manager.group_obs_concatenate[group_name]
             group_dim = self.observation_manager.group_obs_dim[group_name]
-            # check if group is concatenated or not
             # if not concatenated, then we need to add each term separately as a dictionary
-            if has_concatenated_obs:
+            if self.observation_manager.group_obs_concatenate[group_name]:
                 self.single_observation_space[group_name] = gym.spaces.Box(low=-np.inf, high=np.inf, shape=group_dim)
+                self.observation_space[group_name] = gym.spaces.Box(
+                    low=-np.inf, high=np.inf, shape=(self.num_envs, *group_dim)
+                )
             else:
                 group_term_cfgs = self.observation_manager._group_obs_term_cfgs[group_name]
-                term_dict = {}
+                single_terms, batched_terms = {}, {}
                 for term_name, term_dim, term_cfg in zip(group_term_names, group_dim, group_term_cfgs):
                     low = -np.inf if term_cfg.clip is None else term_cfg.clip[0]
                     high = np.inf if term_cfg.clip is None else term_cfg.clip[1]
-                    term_dict[term_name] = gym.spaces.Box(low=low, high=high, shape=term_dim)
-                self.single_observation_space[group_name] = gym.spaces.Dict(term_dict)
+                    single_terms[term_name] = gym.spaces.Box(low=low, high=high, shape=term_dim)
+                    batched_terms[term_name] = gym.spaces.Box(low=low, high=high, shape=(self.num_envs, *term_dim))
+                self.single_observation_space[group_name] = gym.spaces.Dict(single_terms)
+                self.observation_space[group_name] = gym.spaces.Dict(batched_terms)
         # action space (unbounded since we don't impose any limits)
         action_dim = sum(self.action_manager.action_term_dim)
         self.single_action_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(action_dim,))
-
-        # batch the spaces for vectorized environments
-        self.observation_space = gym.vector.utils.batch_space(self.single_observation_space, self.num_envs)
-        self.action_space = gym.vector.utils.batch_space(self.single_action_space, self.num_envs)
+        self.action_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(self.num_envs, action_dim))
 
     def _reset_idx(self, env_ids: Sequence[int]):
         """Reset environments based on specified indices.
@@ -449,5 +450,3 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
 
         # reset the episode length buffer
         self.episode_length_buf[env_ids] = 0
-
-        self.sim.render_context.reset_scene_state_cadence()

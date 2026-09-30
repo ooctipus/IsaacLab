@@ -17,19 +17,11 @@ import numpy as np
 import torch
 import warp as wp
 
-from pxr import Usd, UsdPhysics
-
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import ActuatorCollection
 from isaaclab.assets.articulation import ordering_kernels
 from isaaclab.assets.articulation.articulation_cfg import ArticulationCfg
 from isaaclab.assets.articulation.base_articulation import BaseArticulation
-from isaaclab.assets.articulation.ordering_resolvers import (
-    _BODY_KIND,
-    _JOINT_KIND,
-    _canonical_joint_dof_name,
-)
-from isaaclab.physics import PhysicsManager
 from isaaclab.utils.buffers import TimestampedBufferWarp
 from isaaclab.utils.string import resolve_matching_names
 from isaaclab.utils.warp import ProxyArray
@@ -38,7 +30,6 @@ from isaaclab.utils.wrench_composer import WrenchComposer
 
 from isaaclab_ov import tensor_types as TT
 from isaaclab_ov.assets import kernels as shared_kernels
-from isaaclab_ov.physics import OvPhysxManager
 from isaaclab_ov.sim.views.ovphysx_view import OvPhysxView
 
 from .actuator_control import OvPhysxActuatorControl
@@ -93,6 +84,8 @@ class Articulation(BaseArticulation):
     __backend_native_orderings__: tuple[str, ...] = ("physx",)
     """OVPhysX tensor-view order already matches the ``"physx"`` convention."""
 
+    """OVPhysX tensor-view order already matches the ``"physx"`` convention."""
+
     def __init__(self, cfg: ArticulationCfg):
         """Initialize the articulation.
 
@@ -100,8 +93,6 @@ class Articulation(BaseArticulation):
             cfg: A configuration instance.
         """
         super().__init__(cfg)
-        # the binding manager is created in ``_initialize_impl``; it owns all
-        # TensorBinding creation, caching, and the CPU/GPU device policy.
         self._root_view: OvPhysxView | None = None
 
     """
@@ -268,7 +259,7 @@ class Articulation(BaseArticulation):
                 inst.reset()
 
         # apply actuator models and submit processed commands.
-        self.actuators.compute(OvPhysxManager.get_physics_dt())
+        self.actuators.compute(self._physics_manager.get_physics_dt())
         self.actuators.submit_commands()
 
         # tendon targets are applied as the offset property, so a commanded target rides the same
@@ -3854,71 +3845,31 @@ class Articulation(BaseArticulation):
     def _initialize_impl(self) -> None:
         """Initialize the articulation from the OVPhysX simulation backend."""
         # obtain global simulation view
-        physx_instance = OvPhysxManager.get_physx_instance()
+        physx_instance = self._physics_manager.get_physx_instance()
         if physx_instance is None:
             raise RuntimeError("OvPhysxManager has not been initialized yet.")
         self._ovphysx = physx_instance
-        self._device = OvPhysxManager.get_device()
+        self._device = self._physics_manager.get_device()
 
-        # Resolve the articulation root expression.
-        if self.cfg.articulation_root_prim_path is not None:
-            root_prim_path_expr = self.cfg.prim_path + self.cfg.articulation_root_prim_path
-        else:
-
-            def has_articulation_root_api(prim) -> bool:
-                return bool(prim.HasAPI(UsdPhysics.ArticulationRootAPI))
-
-            resolve_kwargs = {"predicate": has_articulation_root_api, "expected_num_matches": 1}
-            root_matches = sim_utils.resolve_matching_prims_from_source(self.cfg.prim_path, **resolve_kwargs)
-            _, root_prim_path_expr = root_matches[0]
-        # Validate the prim exists on the live stage -- ``create_tensor_binding`` silently
-        # returns a 0-count binding when the pattern matches nothing, surfacing as obscure
-        # AttributeErrors deep in property accessors. Also stash the concrete source-side
-        # root path for tendon discovery downstream.
-        stage = PhysicsManager._sim.stage
-        first_match = sim_utils.find_first_matching_prim(root_prim_path_expr, stage=stage)
-        if first_match is None:
-            raise RuntimeError(f"Failed to find articulation root prim at '{root_prim_path_expr}'.")
-        self._articulation_root_path = first_match.GetPath().pathString
-
-        # IsaacLab paths may use ``.*`` regex or ``{ENV_REGEX_NS}`` placeholder; ovphysx
-        # ``create_tensor_binding`` expects fnmatch globs.
-        pattern = re.sub(r"\{ENV_REGEX_NS\}", "*", root_prim_path_expr)
-        pattern = sim_utils.path_expr_to_glob(pattern)
+        path_expr = self.cfg.prim_path + (self.cfg.articulation_root_prim_path or "")
+        layout = sim_utils.SimulationContext.instance().get_clone_plan()
+        articulation = layout.match_articulation(path_expr)
+        self._articulation_layout = articulation
+        self._fixed_tendon_names = [joint.name for joint in articulation.joints if joint.tendon_type == "fixed"]
+        self._spatial_tendon_names = [joint.name for joint in articulation.joints if joint.tendon_type == "spatial"]
+        body_names = {body.path: body.name for body in articulation.bodies}
+        self._joint_body_names = {
+            joint.name: (
+                "" if joint.parent_path is None else body_names[joint.parent_path],
+                body_names[joint.child_path],
+            )
+            for joint in articulation.joints
+        }
+        pattern = sim_utils.path_expr_to_glob(articulation.view_path)
         self._binding_pattern = pattern
 
-        # eagerly create every binding the data container reads at init, so
-        # failures surface here rather than as KeyError downstream
-        eager_types = [
-            TT.ROOT_POSE,
-            TT.ROOT_VELOCITY,
-            TT.LINK_POSE,
-            TT.LINK_VELOCITY,
-            TT.LINK_ACCELERATION,
-            TT.DOF_POSITION,
-            TT.DOF_VELOCITY,
-            TT.JACOBIAN,
-            TT.MASS_MATRIX,
-            TT.GRAVITY_FORCE,
-            TT.DOF_STIFFNESS,
-            TT.DOF_DAMPING,
-            TT.DOF_LIMIT,
-            TT.DOF_MAX_VELOCITY,
-            TT.DOF_MAX_FORCE,
-            TT.DOF_ARMATURE,
-            TT.DOF_FRICTION_PROPERTIES,
-            TT.BODY_MASS,
-            TT.BODY_COM_POSE,
-            TT.BODY_INERTIA,
-        ]
         self._root_view = OvPhysxView(self._ovphysx, pattern=pattern, device=self._device)
-        # ``try_binding_for`` creates and caches each binding, returning ``None`` for tensor
-        # types that do not apply to these prims (so a minimal articulation that lacks some
-        # of these types is skipped rather than failing the whole init).
-        for tt in eager_types:
-            self._root_view.try_binding_for(tt)
-
-        if not self._root_view.available_attributes:
+        if self._root_view.try_binding_for(TT.ROOT_POSE) is None:
             raise RuntimeError(
                 f"OVPhysX could not create any articulation bindings for pattern {pattern!r}. "
                 f"Check that prim_path={self.cfg.prim_path!r} matches at least one "
@@ -3958,8 +3909,8 @@ class Articulation(BaseArticulation):
                 self._root_view.try_binding_for(tt)
 
         # construct the data container; counts come from the view's bindings
-        joint_dof_signs = self._resolve_joint_dof_signs(stage)
-        self._data = ArticulationData(self._root_view, self._device)
+        joint_dof_signs = self._resolve_joint_dof_signs()
+        self._data = ArticulationData(self._root_view, self._device, self._physics_manager)
         if -1 in joint_dof_signs:
             self._data._joint_dof_signs = wp.array(joint_dof_signs, dtype=wp.int32, device=self.device)
             self._data._has_reversed_joints = True
@@ -3990,35 +3941,21 @@ class Articulation(BaseArticulation):
         # mark data as ready
         self._data.is_primed = True
 
-    def _resolve_joint_dof_signs(self, stage: Usd.Stage) -> tuple[int, ...]:
-        """Resolve joint directions once from the source USD."""
-        source_prim = sim_utils.find_first_matching_prim(self.cfg.prim_path, stage=stage)
-        if source_prim is None:
-            return (1,) * self.num_joints
-        joint_prims_by_name = {}
-        for prim in Usd.PrimRange(source_prim, Usd.TraverseInstanceProxies()):
-            if not prim.IsA(UsdPhysics.Joint):
-                continue
-            joint_prims_by_name[_JOINT_KIND.resolve_target_name(prim)] = prim
-
+    def _resolve_joint_dof_signs(self) -> tuple[int, ...]:
+        """Resolve runtime joint directions from clone-time body relationships."""
         body_indices = {name: index for index, name in enumerate(self._body_names)}
         signs = []
         for dof_name in self._joint_names:
-            canonical_dof_name = _canonical_joint_dof_name(dof_name)
+            canonical_dof_name = dof_name.replace(":", "_")
             matches = [
-                (name, prim)
-                for name, prim in joint_prims_by_name.items()
-                if canonical_dof_name == _canonical_joint_dof_name(name)
-                or canonical_dof_name.startswith(_canonical_joint_dof_name(name) + "_")
+                (name, bodies)
+                for name, bodies in self._joint_body_names.items()
+                if canonical_dof_name == name.replace(":", "_")
+                or canonical_dof_name.startswith(name.replace(":", "_") + "_")
             ]
             if not matches:
-                signs.append(1)
-                continue
-            joint = UsdPhysics.Joint(max(matches, key=lambda item: len(item[0]))[1])
-            body0 = joint.GetBody0Rel().GetTargets()
-            body1 = joint.GetBody1Rel().GetTargets()
-            body0_name = _BODY_KIND.resolve_target_name(stage.GetPrimAtPath(body0[0])) if body0 else ""
-            body1_name = _BODY_KIND.resolve_target_name(stage.GetPrimAtPath(body1[0])) if body1 else ""
+                raise ValueError(f"OVPhysX DOF {dof_name!r} is absent from the clone-plan articulation joints.")
+            body0_name, body1_name = max(matches, key=lambda item: len(item[0]))[1]
             body0_index = body_indices.get(body0_name)
             body1_index = body_indices.get(body1_name)
             signs.append(-1 if body0_index is not None and body1_index is not None and body0_index > body1_index else 1)
@@ -4105,71 +4042,9 @@ class Articulation(BaseArticulation):
             )
 
     def _process_tendons(self) -> None:
-        """Discover tendon counts from binding metadata and names from USD.
-
-        Tendon counts come from the ovphysx binding metadata. Tendon names are
-        recovered from the in-memory USD articulation subtree because ovphysx
-        exposes joint names/counts, but not the per-joint USD paths that the
-        PhysX backend can query directly.
-        """
-        self._fixed_tendon_names = []
-        self._spatial_tendon_names = []
-
+        """Read tendon counts while retaining names declared with the clone prototype."""
         self._num_fixed_tendons = self._root_view.fixed_tendon_count
         self._num_spatial_tendons = self._root_view.spatial_tendon_count
-
-        if self._num_fixed_tendons > 0 or self._num_spatial_tendons > 0:
-            stage_usda = OvPhysxManager._stage_usda
-            if stage_usda is not None:
-                try:
-                    from pxr import Sdf, Usd
-
-                    from isaaclab.sim.utils.queries import get_all_matching_child_prims
-
-                    layer = Sdf.Layer.CreateAnonymous("isaaclab_ov.usda")
-                    if not layer.ImportFromString(stage_usda):
-                        raise RuntimeError("Failed to import the serialized OVPhysX stage.")
-                    stage = Usd.Stage.Open(layer)
-
-                    articulation_root_path = getattr(self, "_articulation_root_path", None)
-                    if articulation_root_path is None:
-                        joint_prims = stage.Traverse()
-                    else:
-                        joint_prims = get_all_matching_child_prims(
-                            articulation_root_path,
-                            predicate=lambda p: p.IsA(UsdPhysics.Joint),
-                            stage=stage,
-                            traverse_instance_prims=False,
-                        )
-                    for prim in joint_prims:
-                        if not prim.IsA(UsdPhysics.Joint):
-                            continue
-                        schema_names = list(prim.GetAppliedSchemas())
-                        metadata = prim.GetMetadata("apiSchemas")
-                        if metadata is not None:
-                            for field in ("prependedItems", "appendedItems", "explicitItems"):
-                                items = getattr(metadata, field, None)
-                                if items:
-                                    schema_names.extend(str(item) for item in items)
-                        # GetAppliedSchemas() and the apiSchemas metadata report the same items; dedupe
-                        schema_names = list(dict.fromkeys(schema_names))
-                        # a fixed tendon is named after its PhysxTendonAxisRootAPI instance, not the joint carrying it
-                        root_instances = [
-                            schema_name.removeprefix("PhysxTendonAxisRootAPI:")
-                            for schema_name in schema_names
-                            if schema_name.startswith("PhysxTendonAxisRootAPI:")
-                        ]
-                        name = prim.GetPath().name
-                        if root_instances:
-                            self._fixed_tendon_names.extend(root_instances)
-                        elif any(
-                            "PhysxTendonAttachmentRootAPI" in schema_name
-                            or "PhysxTendonAttachmentLeafAPI" in schema_name
-                            for schema_name in schema_names
-                        ):
-                            self._spatial_tendon_names.append(name)
-                except Exception:
-                    logger.debug("Could not parse in-memory USD stage for tendon names", exc_info=True)
 
     def _get_binding(self, tensor_type: int):
         """Return a cached TensorBinding, creating it on first access.

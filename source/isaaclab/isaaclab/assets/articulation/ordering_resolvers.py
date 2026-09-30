@@ -25,6 +25,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_ResolvedConventionNames = dict[tuple[ArticulationOrderingConvention, Literal["joint", "body"]], tuple[str, ...]]
+
 
 @dataclass(frozen=True)
 class _ArticulationElementKind:
@@ -110,26 +112,6 @@ def _backend_matches_ordering_convention(
     if articulation is None:
         return False
     return convention.value in getattr(articulation, "__backend_native_orderings__", ())
-
-
-def _get_cached_convention_names(
-    articulation: BaseArticulation,
-    convention: ArticulationOrderingConvention,
-    kind: _ArticulationElementKind,
-) -> tuple[str, ...] | None:
-    """Return cached convention names, if present."""
-    return articulation._ordering_convention_name_cache.get((convention, kind.label))
-
-
-def _cache_convention_names(
-    articulation: BaseArticulation,
-    convention: ArticulationOrderingConvention,
-    names_by_kind: dict[_ArticulationElementKind, tuple[str, ...]],
-) -> None:
-    """Cache convention names on the articulation."""
-    cache = articulation._ordering_convention_name_cache
-    for kind, names in names_by_kind.items():
-        cache[(convention, kind.label)] = tuple(names)
 
 
 def _get_prim_path_string(prim: Usd.Prim) -> str:
@@ -593,20 +575,21 @@ def _resolve_articulation_convention_name_ordering(
     articulation: BaseArticulation,
     convention: str | ArticulationOrderingConvention,
     kind: Literal["joint", "body"] | _ArticulationElementKind,
+    resolved_names: _ResolvedConventionNames | None = None,
 ) -> tuple[str, ...]:
     """Resolve a symbolic convention to names for the public articulation axis.
 
     A convention matching the active backend returns backend names without
-    discovery. Cross-backend resolution uses a validated per-articulation cache,
-    authored robot-schema relationships for robot_schema, or a temporary Newton
-    USD view. PhysX discovery uses breadth-first joint ordering and MJWarp
-    discovery uses depth-first ordering. Builder results are cached only when
-    both joint and body names are complete permutations.
+    discovery. Cross-backend resolution uses authored robot-schema relationships
+    for robot_schema or a temporary Newton USD view. PhysX discovery uses
+    breadth-first joint ordering and MJWarp discovery uses depth-first ordering.
 
     Args:
         articulation: Articulation whose configured source asset is resolved.
         convention: Convention alias or ArticulationOrderingConvention member.
         kind: Element kind, either joint or body.
+        resolved_names: Optional names already resolved in the current
+            articulation-initialization lifecycle.
 
     Returns:
         Names to expose on the requested public joint or body axis.
@@ -633,15 +616,14 @@ def _resolve_articulation_convention_name_ordering(
 
     backend_names = kind.get_backend_names(articulation)
     resolution_failures: list[str] = []
-
-    cached_names = _get_cached_convention_names(articulation, parsed_convention, kind)
-    cached_names = _get_complete_convention_names(
-        kind=kind,
-        names=cached_names,
-        backend_names=backend_names,
-    )
-    if cached_names is not None:
-        return cached_names
+    if resolved_names is not None:
+        names = _get_complete_convention_names(
+            kind=kind,
+            names=resolved_names.get((parsed_convention, kind.label)),
+            backend_names=backend_names,
+        )
+        if names is not None:
+            return names
 
     if parsed_convention is ArticulationOrderingConvention.ROBOT_SCHEMA:
         raw_robot_schema_names, robot_schema_failure_reason = _get_robot_schema_names(articulation, kind)
@@ -651,7 +633,8 @@ def _resolve_articulation_convention_name_ordering(
             backend_names=backend_names,
         )
         if robot_schema_names is not None:
-            _cache_convention_names(articulation, parsed_convention, {kind: robot_schema_names})
+            if resolved_names is not None:
+                resolved_names[(parsed_convention, kind.label)] = robot_schema_names
             return robot_schema_names
         resolution_failures.append(robot_schema_failure_reason)
 
@@ -668,8 +651,11 @@ def _resolve_articulation_convention_name_ordering(
         builder_names = provider(articulation)
         if builder_names is not None:
             complete_names = _get_complete_convention_names_by_kind(articulation, builder_names)
-            if len(complete_names) == 2:
-                _cache_convention_names(articulation, parsed_convention, complete_names)
+            if resolved_names is not None and len(complete_names) == len(_ArticulationElementKind.all()):
+                resolved_names.update(
+                    ((parsed_convention, candidate_kind.label), names)
+                    for candidate_kind, names in complete_names.items()
+                )
             if kind in complete_names:
                 return complete_names[kind]
             reason = _describe_incomplete_convention_names(kind, builder_names.get(kind.label), backend_names)
@@ -713,8 +699,7 @@ def get_articulation_name_ordering(
       of active-backend names.
 
     Cross-backend discovery through the temporary Newton USD view requires a
-    source USD readable by the optional Newton and PXR dependencies, and a
-    complete joint-and-body result is cached per articulation.
+    source USD readable by the optional Newton and PXR dependencies.
 
     The result defines the public axis only; backend views remain in native order.
 
@@ -753,6 +738,7 @@ def _resolve_articulation_ordering_names(
     ordering: list[str] | tuple[str, ...] | str | ArticulationOrderingConvention | None,
     active_backend_name: str,
     articulation: BaseArticulation | None = None,
+    resolved_names: _ResolvedConventionNames | None = None,
 ) -> tuple[str, ...]:
     """Resolve configured public articulation ordering to concrete names.
 
@@ -762,9 +748,8 @@ def _resolve_articulation_ordering_names(
     :func:`build_articulation_name_map`.
 
     Cross-backend conventions delegate to
-    :func:`_resolve_articulation_convention_name_ordering` and reuse its
-    per-articulation discovery cache. Joint names are normalized to active-backend
-    spelling when Newton multi-DoF separators differ.
+    :func:`_resolve_articulation_convention_name_ordering`. Joint names are
+    normalized to active-backend spelling when Newton multi-DoF separators differ.
 
     The returned tuple defines public order. :paramref:`backend_names` and
     solver-view arrays remain in backend order. Supported discovery failures may
@@ -778,8 +763,10 @@ def _resolve_articulation_ordering_names(
             enum member, or ``None``.
         active_backend_name: Name of the backend exposing
             :paramref:`backend_names`.
-        articulation: Articulation used for cached cross-backend discovery when
-            a symbolic convention differs from the active backend.
+        articulation: Articulation used for cross-backend discovery when a
+            symbolic convention differs from the active backend.
+        resolved_names: Optional names already resolved in the current
+            articulation-initialization lifecycle.
 
     Returns:
         Concrete names for the public joint or body axis.
@@ -816,6 +803,7 @@ def _resolve_articulation_ordering_names(
             articulation=articulation,
             convention=convention,
             kind=kind,
+            resolved_names=resolved_names,
         )
         return kind.match_backend_spellings(convention_names, backend_names)
 

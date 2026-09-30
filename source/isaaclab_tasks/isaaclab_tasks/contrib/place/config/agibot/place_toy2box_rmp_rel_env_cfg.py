@@ -6,7 +6,7 @@
 import os
 from dataclasses import MISSING
 
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg, NewtonCollisionPipelineCfg, NewtonShapeCfg
+from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCollisionPipelineCfg, NewtonShapeCfg, NewtonSolverCfg
 from isaaclab_physx.physics import PhysxCfg
 
 from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
@@ -26,7 +26,6 @@ from isaaclab.sim.schemas.schemas_cfg import MassPropertiesCfg, RigidBodyPropert
 from isaaclab.sim.spawners.from_files.from_files_cfg import UsdFileCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
 from isaaclab.utils.configclass import configclass
-from isaaclab.visualizers import VisualizerCfg
 
 from isaaclab_tasks.contrib.place import mdp as place_mdp
 from isaaclab_tasks.contrib.stack import mdp
@@ -40,6 +39,8 @@ from isaaclab_tasks.utils import PresetCfg
 from isaaclab.markers.config import FRAME_MARKER_CFG  # isort: skip
 from isaaclab_assets.robots.agibot import AGIBOT_A2D_CFG  # isort: skip
 from isaaclab.controllers.config.rmp_flow import AGIBOT_RIGHT_ARM_RMPFLOW_CFG  # isort: skip
+
+from isaaclab_tasks.utils.presets import MultiBackendSimulationCfg
 
 ##
 # Event settings
@@ -184,21 +185,18 @@ class PhysicsCfg(PresetCfg):
         gpu_total_aggregate_pairs_capacity=16 * 1024,
         friction_correlation_distance=0.00625,
     )
-    newton_mjwarp = NewtonCfg(
-        solver_cfg=MJWarpSolverCfg(
-            solver="newton",
-            integrator="implicitfast",
-            njmax=300,
-            nconmax=200,
-            impratio=10.0,
-            cone="elliptic",
-            update_data_interval=2,
-            iterations=100,
-            ls_iterations=15,
-            ls_parallel=False,
-            use_mujoco_contacts=False,
-            ccd_iterations=35,
-        ),
+    newton_mjwarp = MJWarpSolverCfg(
+        solver="newton",
+        integrator="implicitfast",
+        njmax=300,
+        nconmax=200,
+        impratio=10.0,
+        cone="elliptic",
+        update_data_interval=2,
+        iterations=100,
+        ls_iterations=15,
+        use_mujoco_contacts=False,
+        ccd_iterations=35,
         collision_cfg=NewtonCollisionPipelineCfg(),
         default_shape_cfg=NewtonShapeCfg(),
         num_substeps=2,
@@ -227,7 +225,7 @@ def raise_if_reversed_joints_on_newton(env_cfg) -> None:
     """
     robot_cfg = getattr(env_cfg.scene, "robot", None)
     usd_path = getattr(getattr(robot_cfg, "spawn", None), "usd_path", None)
-    if usd_path is None or not isinstance(env_cfg.sim.physics, NewtonCfg):
+    if usd_path is None or not isinstance(env_cfg.sim.physics, NewtonSolverCfg):
         return
     if any(marker in usd_path for marker in _NEWTON_REVERSED_JOINT_ASSETS):
         raise ValueError(
@@ -241,6 +239,7 @@ def raise_if_reversed_joints_on_newton(env_cfg) -> None:
 class PlaceToy2BoxEnvCfg(ManagerBasedRLEnvCfg):
     """Configuration for the stacking environment."""
 
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg()
     # Scene settings
     scene: ObjectTableSceneCfg = ObjectTableSceneCfg(num_envs=4096, env_spacing=3.0, replicate_physics=False)
     # Basic settings
@@ -261,9 +260,6 @@ class PlaceToy2BoxEnvCfg(ManagerBasedRLEnvCfg):
         self.sim.render_interval = self.decimation
 
         self.sim.physics = PhysicsCfg()
-
-        # visualizer camera settings
-        self.sim.default_visualizer_cfg = VisualizerCfg(eye=(1.5, -1.0, 1.5), lookat=(0.5, 0.0, 0.0))
 
     def validate_config(self):
         """Reject backend combinations that the configured robot cannot run on."""
@@ -361,14 +357,14 @@ class RmpFlowAgibotPlaceToy2BoxEnvCfg(PlaceToy2BoxEnvCfg):
         )
 
         # Listens to the required transforms
-        self.marker_cfg = FRAME_MARKER_CFG.copy()
-        self.marker_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
-        self.marker_cfg.prim_path = "/Visuals/FrameTransformer"
+        marker_cfg = FRAME_MARKER_CFG.copy()
+        marker_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
+        marker_cfg.prim_path = "/Visuals/FrameTransformer"
 
         self.scene.ee_frame = FrameTransformerCfg(
             prim_path="{ENV_REGEX_NS}/Robot/base_link",
             debug_vis=False,
-            visualizer_cfg=self.marker_cfg,
+            visualizer_cfg=marker_cfg,
             target_frames=[
                 FrameTransformerCfg.FrameCfg(
                     prim_path="{ENV_REGEX_NS}/Robot/right_gripper_center",

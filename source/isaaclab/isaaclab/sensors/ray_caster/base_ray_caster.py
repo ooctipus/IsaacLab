@@ -13,12 +13,8 @@ import numpy as np
 import torch
 import warp as wp
 
-from pxr import Gf, Usd, UsdGeom
-
-import isaaclab.sim as sim_utils
 import isaaclab.utils.math as math_utils
-from isaaclab.markers import VisualizationMarkers
-from isaaclab.terrains.trimesh.utils import make_plane
+from isaaclab.sim.simulation_context import SimulationContext
 from isaaclab.utils.warp import ProxyArray, convert_to_warp_mesh
 from isaaclab.utils.warp.kernels import raycast_mesh_masked_kernel
 
@@ -32,6 +28,27 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _transform_vertices(vertices: np.ndarray, pose: tuple[float, ...]) -> np.ndarray:
+    """Transform vertices by an ``(x, y, z, qx, qy, qz, qw)`` pose."""
+    x, y, z, w = pose[3:]
+    two_s = 2.0 / (x * x + y * y + z * z + w * w)
+    rotation = np.array(
+        [
+            [1.0 - two_s * (y * y + z * z), two_s * (x * y - z * w), two_s * (x * z + y * w)],
+            [two_s * (x * y + z * w), 1.0 - two_s * (x * x + z * z), two_s * (y * z - x * w)],
+            [two_s * (x * z - y * w), two_s * (y * z + x * w), 1.0 - two_s * (x * x + y * y)],
+        ],
+        dtype=np.float64,
+    )
+    return vertices @ rotation.T + np.asarray(pose[:3])
+
+
+def _inverse_transform_vertices(vertices: np.ndarray, pose: tuple[float, ...]) -> np.ndarray:
+    """Transform world vertices into the local frame of ``pose``."""
+    rotation_transpose = _transform_vertices(np.eye(3), (0.0, 0.0, 0.0, *pose[3:]))
+    return (vertices - np.asarray(pose[:3])) @ rotation_transpose.T
+
+
 class BaseRayCaster(SensorBase):
     """A ray-casting sensor.
 
@@ -39,9 +56,8 @@ class BaseRayCaster(SensorBase):
     defined in the sensor's local coordinate frame. The sensor can be configured to ray-cast against
     a set of meshes with a given ray pattern.
 
-    The meshes are parsed from the list of primitive paths provided in the configuration. These are then
-    converted to warp meshes and stored in the :attr:`meshes` dictionary. The ray-caster then ray-casts
-    against these warp meshes using the ray pattern provided in the configuration.
+    Mesh geometry declared by the clone plan is converted to Warp meshes and stored in the
+    :attr:`meshes` dictionary. The ray-caster casts the configured ray pattern against those meshes.
 
     .. note::
         Currently, only static meshes are supported. Extending the warp mesh to support dynamic meshes
@@ -141,7 +157,6 @@ class BaseRayCaster(SensorBase):
             raise RuntimeError(f"Unsupported ray_alignment type: {self.cfg.ray_alignment}.")
         self._alignment_mode = alignment_map[self.cfg.ray_alignment]
 
-        # load the meshes by parsing the stage
         self._initialize_warp_meshes()
         self._initialize_rays_impl()
 
@@ -152,52 +167,35 @@ class BaseRayCaster(SensorBase):
         through either ``_view.get_world_poses(indices=None)`` or an override of
         :meth:`_get_view_transforms_wp`. They must also set ``_offset_pos_wp``
         and ``_offset_quat_wp`` to the sensor-frame offset relative to the
-        tracked backend body/site.
+        tracked backend body.
         """
         raise NotImplementedError(f"{self.__class__.__name__} must initialize backend pose tracking.")
 
     def _initialize_warp_meshes(self):
-        # check number of mesh prims provided
         if len(self.cfg.mesh_prim_paths) != 1:
             raise NotImplementedError(
                 f"RayCaster currently only supports one mesh prim. Received: {len(self.cfg.mesh_prim_paths)}"
             )
-
-        # read prims to ray-cast
+        plan = SimulationContext.instance().get_clone_plan()
+        if plan is None or not plan.is_complete:
+            raise RuntimeError(f"RayCaster at {self.cfg.prim_path!r} requires a completed clone plan.")
         for mesh_prim_path in self.cfg.mesh_prim_paths:
             mesh_key = (mesh_prim_path, self._device)
             if mesh_key in BaseRayCaster.meshes:
                 continue
-
-            mesh_prim = sim_utils.get_first_matching_child_prim(
-                mesh_prim_path, lambda prim: prim.GetTypeName() == "Plane"
-            )
-            if mesh_prim is None:
-                mesh_prim = sim_utils.get_first_matching_child_prim(
-                    mesh_prim_path, lambda prim: prim.GetTypeName() == "Mesh"
-                )
-                if mesh_prim is None or not mesh_prim.IsValid():
-                    raise RuntimeError(f"Invalid mesh prim path: {mesh_prim_path}")
-                mesh_prim = UsdGeom.Mesh(mesh_prim)
-                points = np.asarray(mesh_prim.GetPointsAttr().Get())
-                xformable = UsdGeom.Xformable(mesh_prim)
-                world_transform: Gf.Matrix4d = xformable.ComputeLocalToWorldTransform(Usd.TimeCode.Default())
-                transform_matrix = np.array(world_transform).T
-                points = np.matmul(points, transform_matrix[:3, :3].T)
-                points += transform_matrix[:3, 3]
-                indices = np.asarray(mesh_prim.GetFaceVertexIndicesAttr().Get())
-                wp_mesh = convert_to_warp_mesh(points, indices, device=self._device)
-                logger.info(
-                    f"Read mesh prim: {mesh_prim.GetPath()} with {len(points)} vertices and {len(indices)} faces."
-                )
-            else:
-                mesh = make_plane(size=(2e6, 2e6), height=0.0, center_zero=True)
-                wp_mesh = convert_to_warp_mesh(mesh.vertices, mesh.faces, device=self._device)
-                logger.info(f"Created infinite plane mesh prim: {mesh_prim.GetPath()}.")
-            BaseRayCaster.meshes[mesh_key] = wp_mesh
-
-        if all((path, self._device) not in BaseRayCaster.meshes for path in self.cfg.mesh_prim_paths):
-            raise RuntimeError(f"No meshes found for ray-casting! Please check paths: {self.cfg.mesh_prim_paths}")
+            vertices, faces, offset = [], [], 0
+            for _, geometries in plan.match_geometry_targets(mesh_prim_path):
+                for geometry in geometries:
+                    frame = geometry.frame
+                    if frame.body_path is not None:
+                        raise ValueError(f"Static ray-cast target {geometry.path!r} is bound to a rigid body.")
+                    vertices.append(_transform_vertices(geometry.vertices, frame.pose))
+                    faces.append(geometry.faces + offset)
+                    offset += len(geometry.vertices)
+            points = np.concatenate(vertices)
+            indices = np.concatenate(faces)
+            BaseRayCaster.meshes[mesh_key] = convert_to_warp_mesh(points, indices, device=self._device)
+            logger.info(f"Loaded {len(points)} planned vertices below ray-cast target {mesh_prim_path!r}.")
 
     def _initialize_rays_impl(self):
         # Compute ray starts and directions from pattern (torch, init-time only)
@@ -322,7 +320,7 @@ class BaseRayCaster(SensorBase):
     def _set_debug_vis_impl(self, debug_vis: bool):
         if debug_vis:
             if not hasattr(self, "ray_visualizer"):
-                self.ray_visualizer = VisualizationMarkers(self.cfg.visualizer_cfg)
+                self.ray_visualizer = self.cfg.visualizer_cfg.class_type(self.cfg.visualizer_cfg)
             self.ray_visualizer.set_visibility(True)
         else:
             if hasattr(self, "ray_visualizer"):

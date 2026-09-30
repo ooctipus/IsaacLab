@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from omni.physx import get_physx_replicator_interface
-from pxr import Sdf, Usd, UsdUtils
+from pxr import Usd, UsdUtils
 
 from isaaclab import cloner
 
@@ -43,17 +43,17 @@ class PhysxReplicateContext:
         """
         if plan.env_ids is None:
             raise ValueError("ClonePlan.env_ids is required for replication.")
-        rows = plan.context_rows[type(self)]
-        native_rows = set(rows)
-        other_rows = {
-            row for context, routed in plan.context_rows.items() if context is not type(self) for row in routed
-        }
+        rows = tuple(
+            row
+            for row, destination in enumerate(plan.destinations)
+            if "{}" in destination and bool(plan.clone_mask[row].any())
+        )
         self._replicate_mapping(
             sources=tuple(plan.sources[row] for row in rows),
             destinations=tuple(plan.destinations[row] for row in rows),
             env_ids=plan.env_ids,
             mapping=plan.clone_mask[list(rows)],
-            has_usd_only_rows=bool(other_rows - native_rows),
+            has_usd_only_rows=False,
             exclude_self_replication=True,
         )
 
@@ -98,10 +98,6 @@ class PhysxReplicateContext:
         # and PhysX can parse them from the stage without any replicator registration.
         if all(len(envs) == 1 and src == destination.format(envs[0]) for src, destination, envs in physx_queue):
             return
-
-        physics_scene_prim = self.stage.GetPrimAtPath("/physicsScene")
-        if physics_scene_prim.IsValid():
-            physics_scene_prim.CreateAttribute("physxScene:envIdInBoundsBitCount", Sdf.ValueTypeNames.Int).Set(4)
 
         current_worlds: list[int] = []
         current_template: str = ""

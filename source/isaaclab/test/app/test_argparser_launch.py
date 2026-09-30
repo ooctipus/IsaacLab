@@ -4,12 +4,16 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 import argparse
+import ast
+from pathlib import Path
 
 import pytest
 
 from isaaclab.app import AppLauncher
 
 pytestmark = pytest.mark.integration
+
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
 
 
 @pytest.mark.usefixtures("mocker")
@@ -34,16 +38,6 @@ def test_livestream_launch_with_argparser(mocker):
 
     # close the app on exit
     app.close()
-
-
-def test_visualizer_alias_parsing():
-    """Test that --viz alias maps to visualizer values."""
-    parser = argparse.ArgumentParser()
-    AppLauncher.add_app_launcher_args(parser)
-
-    args = parser.parse_args(["--viz", "kit,newton"])
-    assert args.visualizer == ["kit", "newton"]
-    assert args.visualizer_explicit is True
 
 
 @pytest.mark.parametrize("deprecated_arg", ["--headless", "--enable_cameras"])
@@ -72,8 +66,10 @@ def test_help_on_parser_with_required_positionals(monkeypatch: pytest.MonkeyPatc
 
     # the probe's own usage line must not leak to stderr ahead of the real help output
     assert capsys.readouterr().err == ""
-    assert "--visualizer" in parser._option_string_actions
     assert "--device" in parser._option_string_actions
+    assert "--visualizer" not in parser._option_string_actions
+    assert "--viz" not in parser._option_string_actions
+    assert "--max_visible_envs" not in parser._option_string_actions
 
     with pytest.raises(SystemExit) as excinfo:
         parser.parse_args(["--help"])
@@ -81,10 +77,41 @@ def test_help_on_parser_with_required_positionals(monkeypatch: pytest.MonkeyPatc
     assert "app_launcher arguments" in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("value", ["none", "None"])
-def test_visualizer_none_parsing(value: str):
+@pytest.mark.parametrize("option", ["--visualizer", "--viz", "--max_visible_envs"])
+def test_visualizer_selection_is_not_an_app_launcher_argument(option: str):
+    """Visualizer choice belongs to the resolved simulation config."""
     parser = argparse.ArgumentParser()
     AppLauncher.add_app_launcher_args(parser)
-    args = parser.parse_args(["--viz", value])
-    assert args.visualizer is None
-    assert args.visualizer_explicit is True
+
+    with pytest.raises(SystemExit):
+        parser.parse_args([option, "kit"])
+
+
+@pytest.mark.parametrize("script_name", ["convert_urdf.py", "convert_mjcf.py"])
+def test_asset_converters_are_headless_without_legacy_visualizer_state(script_name: str):
+    """Asset conversion has no visualizer lifecycle or legacy launcher selector."""
+    path = _REPOSITORY_ROOT / "scripts" / "tools" / script_name
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    cli_attributes = {
+        node.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "args_cli"
+    }
+    headless_assignments = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Attribute)
+            and isinstance(target.value, ast.Name)
+            and target.value.id == "args_cli"
+            and target.attr == "headless"
+            for target in node.targets
+        )
+    ]
+
+    assert "visualizer" not in cli_attributes
+    assert not any(isinstance(node, ast.FunctionDef) and node.name == "preview" for node in ast.walk(tree))
+    assert len(headless_assignments) == 1
+    assert isinstance(headless_assignments[0].value, ast.Constant)
+    assert headless_assignments[0].value.value is True

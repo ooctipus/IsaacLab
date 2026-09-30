@@ -184,9 +184,8 @@ class reset_accumulator(ManagerTermBase):
         if env_ids.numel() > 0 and monitor_exclude_terms:
             exclude_mask = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
             for term_name in monitor_exclude_terms:
-                if term_name in env.termination_manager._term_names:
-                    term_idx = env.termination_manager._term_name_to_term_idx[term_name]
-                    exclude_mask |= env.termination_manager._last_episode_dones[:, term_idx]
+                if term_name in env.termination_manager.active_terms:
+                    exclude_mask |= env.termination_manager.get_term(term_name)
             monitor_ids = env_ids[~exclude_mask[env_ids]]
         if monitor_ids.numel() > 0:
             self.success_monitor.success_update(self.sampled_slots[monitor_ids], progress.is_success[monitor_ids])

@@ -58,7 +58,7 @@ Use these current import paths before searching for alternatives:
 | Preset config | `from isaaclab_tasks.utils import PresetCfg` |
 | Simulation config | `from isaaclab.sim import SimulationCfg` |
 | PhysX physics config | `from isaaclab_physx.physics import PhysxCfg` |
-| Newton physics config | `from isaaclab_newton.physics import NewtonCfg` |
+| Newton physics config | `from isaaclab_newton.physics import MJWarpSolverCfg` |
 | Base contact sensor config | `from isaaclab.sensors import ContactSensorCfg` |
 | PhysX contact sensor config | `from isaaclab_physx.sensors import ContactSensorCfg as PhysXContactSensorCfg` |
 | Newton contact sensor config | `from isaaclab_newton.sensors import ContactSensorCfg as NewtonContactSensorCfg` |

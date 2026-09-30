@@ -33,7 +33,7 @@ an explicit Newton or other backend default when adding more variants.
 from isaaclab.physics import PhysxAutoCfg
 from isaaclab.sim import SimulationCfg
 from isaaclab.utils.configclass import configclass
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
+from isaaclab_newton.physics import MJWarpSolverCfg
 from isaaclab_ov.physics import OvPhysxCfg
 from isaaclab_physx.physics import PhysxCfg
 from isaaclab_tasks.utils import PresetCfg
@@ -45,8 +45,9 @@ class PhysicsCfg(PresetCfg):
     ovphysx = OvPhysxCfg()
     physx = PhysxAutoCfg(isaacsim_physx=isaacsim_physx, ovphysx=ovphysx)
     default = isaacsim_physx
-    newton_mjwarp = NewtonCfg(
-        solver_cfg=MJWarpSolverCfg(njmax=120, nconmax=15),
+    newton_mjwarp = MJWarpSolverCfg(
+        njmax=120,
+        nconmax=15,
         num_substeps=1,
     )
 

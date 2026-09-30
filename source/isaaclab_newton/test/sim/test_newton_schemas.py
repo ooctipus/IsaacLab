@@ -24,6 +24,7 @@ from isaaclab_newton.sim.schemas import (
     NewtonRigidBodyPropertiesCfg,
     NewtonSDFCollisionPropertiesCfg,
 )
+from isaaclab_physx.physics import PhysxCfg
 
 from pxr import UsdPhysics
 
@@ -37,7 +38,7 @@ from isaaclab.sim.spawners.materials import spawn_rigid_body_material
 def setup_sim():
     """Fixture to set up and tear down the simulation context."""
     sim_utils.create_new_stage()
-    sim = SimulationContext(SimulationCfg(dt=0.1))
+    sim = SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.1))
     yield sim
     sim._disable_app_control_on_stop_handle = True
     sim.stop()

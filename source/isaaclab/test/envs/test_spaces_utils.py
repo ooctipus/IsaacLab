@@ -8,11 +8,15 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+import gymnasium as gym
 import numpy as np
 import pytest
 import torch
 from gymnasium.spaces import Box, Dict, Discrete, MultiDiscrete, Tuple
 
+from isaaclab.envs import DirectRLEnv
 from isaaclab.envs.utils.spaces import (
     deserialize_space,
     replace_strings_with_env_cfg_spaces,
@@ -67,6 +71,35 @@ def test_spec_to_gym_space():
     assert isinstance(space["multi_discrete"], MultiDiscrete)
     space = spec_to_gym_space(Dict({"box": Box(-1, 1, shape=(1,)), "discrete": Discrete(2)}))
     assert isinstance(space, Dict)
+
+
+def test_direct_env_batches_box_specs_without_dense_copy(monkeypatch):
+    """Direct Box specifications avoid Gym's temporary tiled bounds."""
+    gym_batch_space = gym.vector.utils.batch_space
+
+    def batch_space(space, batch_size):
+        if isinstance(space, Box) and space.shape == (3, 4, 5):
+            pytest.fail("dense observation bounds copy")
+        return gym_batch_space(space, batch_size)
+
+    monkeypatch.setattr(gym.vector.utils, "batch_space", batch_space)
+    env = object.__new__(DirectRLEnv)
+    env._is_closed = True
+    env.scene = SimpleNamespace(num_envs=2)
+    env.sim = SimpleNamespace(device="cpu")
+    env.cfg = SimpleNamespace(
+        num_actions=None,
+        num_observations=None,
+        num_states=None,
+        observation_space=[3, 4, 5],
+        action_space=7,
+        state_space=None,
+    )
+
+    env._configure_gym_env_spaces()
+
+    assert env.observation_space.shape == (2, 3, 4, 5)
+    assert env.action_space.shape == (2, 7)
 
 
 def test_sample_space():

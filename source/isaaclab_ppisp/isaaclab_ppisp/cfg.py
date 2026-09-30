@@ -89,9 +89,6 @@ class PpispCfg:
     samples are ignored.
     """
 
-    camera_prim_path: str | None = None
-    """Optional USD camera prim path used to import PPISP camera attributes."""
-
     inputs: dict[str, float | tuple[float, float]] = field(default_factory=default_ppisp_inputs)
     """Flat PPISP values keyed by PPISP parameter name.
 
@@ -128,28 +125,17 @@ class PpispCfg:
     """
 
 
-def normalize_ppisp_cfg(
-    ppisp_cfg: PpispCfg | None,
-    stage: Any | None = None,
-) -> PpispCfg | None:
+def normalize_ppisp_cfg(ppisp_cfg: PpispCfg | None) -> PpispCfg | None:
     """Normalise a :class:`PpispCfg` for downstream consumption.
 
     * If ``ppisp_cfg`` is ``None``, returns ``None``.
-    * If ``ppisp_cfg.camera_prim_path`` is set, requires ``stage`` and merges
-      camera-authored USD values with the cfg's explicit overrides (see
-      :func:`_merge_camera_attrs_with_cfg`).
     * Otherwise validates ``ppisp_cfg.inputs`` and fills in defaults.
     """
     if ppisp_cfg is None:
         return None
     if not isinstance(ppisp_cfg, PpispCfg):
         raise TypeError(f"Unsupported PPISP configuration type: {type(ppisp_cfg)!r}")
-    input_overrides = dict(ppisp_cfg.inputs)
-    if ppisp_cfg.camera_prim_path:
-        if stage is None:
-            raise ValueError("PpispCfg.camera_prim_path requires a USD stage for normalization.")
-        return _merge_camera_attrs_with_cfg(ppisp_cfg, stage, input_overrides)
-    ppisp_cfg.inputs = _normalized_inputs(input_overrides)
+    ppisp_cfg.inputs = _normalized_inputs(ppisp_cfg.inputs)
     _finalize_ppisp_cfg(ppisp_cfg)
     return ppisp_cfg
 
@@ -160,13 +146,6 @@ def ppisp_cfg_from_usd_camera(camera_prim: Any) -> PpispCfg:
     PPISP values are read from camera ``ppisp:*`` attributes. Animated
     attributes are collapsed to their first authored time sample.
     """
-    cfg = _ppisp_cfg_from_usd_camera(camera_prim)
-    _finalize_ppisp_cfg(cfg)
-    cfg.camera_prim_path = None
-    return cfg
-
-
-def _ppisp_cfg_from_usd_camera(camera_prim: Any) -> PpispCfg:
     values = _read_ppisp_inputs_from_camera(camera_prim)
     controller_weights = _read_controller_weights_from_camera(camera_prim)
     if values is None and controller_weights is None:
@@ -175,65 +154,15 @@ def _ppisp_cfg_from_usd_camera(camera_prim: Any) -> PpispCfg:
             f"PPISP camera attributes were not found on camera {camera_path}; expected ppisp:* attributes."
         )
 
-    cfg = PpispCfg(camera_prim_path=str(camera_prim.GetPath()))
-    if values is None:
-        values = default_ppisp_inputs()
-    cfg.inputs = values
-    if controller_weights is not None:
-        cfg.controller_weights = controller_weights
+    cfg = PpispCfg(inputs=values or default_ppisp_inputs(), controller_weights=controller_weights)
+    _finalize_ppisp_cfg(cfg)
     return cfg
-
-
-def ppisp_cfg_from_usd_stage(stage: Any, camera_prim_path: str) -> PpispCfg:
-    """Create :class:`PpispCfg` from a camera prim path in a USD stage."""
-
-    return ppisp_cfg_from_usd_camera(_get_camera_prim_at_path(stage, camera_prim_path))
-
-
-def _get_camera_prim_at_path(stage: Any, camera_prim_path: str) -> Any:
-    camera_prim = stage.GetPrimAtPath(camera_prim_path)
-    if not camera_prim or not camera_prim.IsValid():
-        raise ValueError(f"PPISP camera prim not found at path: {camera_prim_path}")
-    if camera_prim.GetTypeName() != "Camera":
-        raise ValueError(f"PPISP prim is not a Camera: {camera_prim_path} ({camera_prim.GetTypeName()})")
-    return camera_prim
 
 
 def _normalized_inputs(inputs: dict[str, Any]) -> dict[str, float | tuple[float, float]]:
     values = default_ppisp_inputs()
     for input_name, value in inputs.items():
         if input_name not in values:
-            raise ValueError(f"Unknown PPISP input: {input_name}")
-        values[input_name] = _normalize_input_value(input_name, value)
-    return values
-
-
-def _merge_camera_attrs_with_cfg(
-    ppisp_cfg: PpispCfg,
-    stage: Any,
-    input_overrides: dict[str, Any],
-) -> PpispCfg:
-    assert ppisp_cfg.camera_prim_path is not None
-    parsed_cfg = _ppisp_cfg_from_usd_camera(_get_camera_prim_at_path(stage, ppisp_cfg.camera_prim_path))
-    normalized_overrides = _normalized_input_overrides(input_overrides)
-    if normalized_overrides != PPISP_DEFAULT_INPUTS:
-        parsed_cfg.inputs.update(normalized_overrides)
-    if ppisp_cfg.controller_weights is not None:
-        parsed_cfg.controller_prior_exposure = ppisp_cfg.controller_prior_exposure
-        parsed_cfg.controller_weights = ppisp_cfg.controller_weights
-    elif ppisp_cfg.controller_prior_exposure != 0.0:
-        parsed_cfg.controller_prior_exposure = ppisp_cfg.controller_prior_exposure
-    if ppisp_cfg.controller_responsivity is not None:
-        parsed_cfg.controller_responsivity = ppisp_cfg.controller_responsivity
-    _finalize_ppisp_cfg(parsed_cfg)
-    parsed_cfg.camera_prim_path = None
-    return parsed_cfg
-
-
-def _normalized_input_overrides(inputs: dict[str, Any]) -> dict[str, float | tuple[float, float]]:
-    values = {}
-    for input_name, value in inputs.items():
-        if input_name not in PPISP_DEFAULT_INPUTS:
             raise ValueError(f"Unknown PPISP input: {input_name}")
         values[input_name] = _normalize_input_value(input_name, value)
     return values
@@ -297,17 +226,6 @@ def _read_controller_weights_from_camera(camera_prim: Any | None) -> tuple[float
     return weights
 
 
-def _has_ppisp_camera_attrs(camera_prim: Any | None) -> bool:
-    if camera_prim is None or not camera_prim.IsValid() or camera_prim.GetTypeName() != "Camera":
-        return False
-    for input_name in PPISP_DEFAULT_INPUTS:
-        attr = camera_prim.GetAttribute(f"{PPISP_ATTR_NAMESPACE}{input_name}")
-        if attr and attr.IsValid() and _read_first_authored_value(attr) is not None:
-            return True
-    weights_attr = camera_prim.GetAttribute(f"{PPISP_ATTR_NAMESPACE}{PPISP_CONTROLLER_WEIGHTS_CAMERA_ATTR}")
-    return bool(weights_attr and weights_attr.IsValid() and _read_first_authored_value(weights_attr) is not None)
-
-
 def has_ppisp_camera_attrs(camera_prim: Any | None) -> bool:
     """Return whether a USD camera prim contains recognized PPISP camera attributes.
 
@@ -318,91 +236,12 @@ def has_ppisp_camera_attrs(camera_prim: Any | None) -> bool:
         True when ``camera_prim`` is a camera with at least one recognized
         ``ppisp:*`` attribute, otherwise false.
     """
-    return _has_ppisp_camera_attrs(camera_prim)
-
-
-def resolve_and_normalize(isp_cfg: Any, stage: Any, camera_prim_path: str | None = None) -> PpispCfg | None:
-    """Resolve a Camera sensor batch's ``isp_cfg`` to a normalised cfg or ``None``.
-
-    Handles all three legal forms of :attr:`~isaaclab.sensors.camera.CameraCfg.isp_cfg`:
-
-    * ``None`` → returns ``None``.
-    * :class:`~isaaclab.sensors.camera.CameraISPMode` sentinel — checks the
-      target camera via :func:`auto_camera_ppisp_cfg` (and uses
-      :func:`auto_any_ppisp_cfg` for ``AUTO_ANY`` or when no camera path is
-      supplied) to discover a PPISP camera. Returns the parsed + normalised
-      :class:`PpispCfg`, or ``None`` if no PPISP camera matched.
-    * Concrete :class:`PpispCfg` — normalises in place (validates input keys,
-      fills defaults, and merges camera-authored USD values when
-      ``camera_prim_path`` is set).
-
-    This is the single entry point renderer backends call inside their
-    ``prepare_cameras`` hook so :mod:`isaaclab.sensors.camera` does not need
-    to know about PPISP types at all. The returned cfg applies to the whole
-    Camera sensor batch; callers pass the first matched camera prim path for
-    the camera-local discovery phase.
-
-    Args:
-        isp_cfg: The Camera sensor's :attr:`isp_cfg` value (``None``, ``CameraISPMode``, or :class:`PpispCfg`).
-        stage: USD stage used for sentinel discovery and camera-path resolution.
-        camera_prim_path: Optional absolute path of the first matched camera
-            prim in the Camera sensor batch. When omitted, discovery uses the
-            first camera on the stage with PPISP camera attributes.
-
-    Returns:
-        A fully-normalised :class:`PpispCfg`, or ``None`` if the batch has no ISP.
-    """
-    # Local import avoids a top-of-module dep on isaaclab.sensors.
-    from isaaclab.sensors.camera.camera_isp import CameraISPMode
-
-    if isp_cfg is None:
-        return None
-    if isinstance(isp_cfg, CameraISPMode):
-        resolved = auto_camera_ppisp_cfg(stage, camera_prim_path) if camera_prim_path else None
-        if resolved is None and (isp_cfg == CameraISPMode.AUTO_ANY or not camera_prim_path):
-            resolved = auto_any_ppisp_cfg(stage)
-        if resolved is None:
-            return None
-        return normalize_ppisp_cfg(resolved)
-    return normalize_ppisp_cfg(isp_cfg, stage=stage)
-
-
-def auto_camera_ppisp_cfg(stage: Any, camera_prim_path: str) -> PpispCfg | None:
-    """Find PPISP camera attributes for ``camera_prim_path`` on ``stage``.
-
-    Checks only the target camera itself. Use :func:`auto_any_ppisp_cfg` when
-    the caller intentionally wants a stage-wide fallback.
-
-    Args:
-        stage: USD stage to search.
-        camera_prim_path: Absolute camera prim path to match.
-
-    Returns:
-        Parsed :class:`PpispCfg` if a matching camera was found, else ``None``.
-    """
-    camera_prim = stage.GetPrimAtPath(camera_prim_path)
-    if not _has_ppisp_camera_attrs(camera_prim):
-        return None
-    cfg = ppisp_cfg_from_usd_camera(camera_prim)
-    cfg.camera_prim_path = None
-    return cfg
-
-
-def auto_any_ppisp_cfg(stage: Any) -> PpispCfg | None:
-    """Find the first camera with PPISP attributes anywhere on ``stage``.
-
-    Used as a fallback when no camera is provided, or when the caller requests
-    the first available PPISP camera attributes regardless of camera binding.
-
-    Args:
-        stage: USD stage to search.
-
-    Returns:
-        Parsed :class:`PpispCfg` for the first matching camera, else ``None``.
-    """
-    for prim in stage.Traverse():
-        if _has_ppisp_camera_attrs(prim):
-            cfg = ppisp_cfg_from_usd_camera(prim)
-            cfg.camera_prim_path = None
-            return cfg
-    return None
+    if camera_prim is None or not camera_prim.IsValid() or camera_prim.GetTypeName() != "Camera":
+        return False
+    names = (*PPISP_DEFAULT_INPUTS, PPISP_CONTROLLER_WEIGHTS_CAMERA_ATTR)
+    return any(
+        (attr := camera_prim.GetAttribute(f"{PPISP_ATTR_NAMESPACE}{name}"))
+        and attr.IsValid()
+        and _read_first_authored_value(attr) is not None
+        for name in names
+    )

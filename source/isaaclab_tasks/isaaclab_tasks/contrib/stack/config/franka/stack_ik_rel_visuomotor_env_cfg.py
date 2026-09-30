@@ -3,6 +3,8 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
+from isaaclab_physx.renderers import IsaacRtxRendererCfg, IsaacRtxRendererGlobalSettingsCfg
+
 import isaaclab.sim as sim_utils
 from isaaclab.assets import ArticulationCfg, RigidObjectCfg
 from isaaclab.controllers.differential_ik_cfg import DifferentialIKControllerCfg
@@ -21,7 +23,7 @@ from isaaclab.utils.configclass import configclass
 from isaaclab_tasks.contrib.stack import mdp
 from isaaclab_tasks.contrib.stack.mdp import franka_stack_events
 from isaaclab_tasks.contrib.stack.stack_env_cfg import StackEnvCfg
-from isaaclab_tasks.utils.presets import set_isaac_rtx_global_settings
+from isaaclab_tasks.utils.presets import MultiBackendRendererCfg
 
 ##
 # Pre-defined configs
@@ -158,10 +160,12 @@ class ObservationsCfg:
         eef_quat = ObsTerm(func=mdp.ee_frame_quat)
         gripper_pos = ObsTerm(func=mdp.gripper_pos)
         table_cam = ObsTerm(
-            func=mdp.image, params={"sensor_cfg": SceneEntityCfg("table_cam"), "data_type": "rgb", "normalize": False}
+            func=mdp.image,
+            params={"sensor_cfg": SceneEntityCfg("table_cam"), "data_type": "rgb", "normalize": False},
         )
         wrist_cam = ObsTerm(
-            func=mdp.image, params={"sensor_cfg": SceneEntityCfg("wrist_cam"), "data_type": "rgb", "normalize": False}
+            func=mdp.image,
+            params={"sensor_cfg": SceneEntityCfg("wrist_cam"), "data_type": "rgb", "normalize": False},
         )
 
         def __post_init__(self):
@@ -333,6 +337,10 @@ class FrankaCubeStackVisuomotorEnvCfg(StackEnvCfg):
         )
 
         # Set cameras
+        rtx_renderer_cfg = IsaacRtxRendererCfg(
+            global_settings=IsaacRtxRendererGlobalSettingsCfg(antialiasing_mode="DLAA")
+        )
+        renderer_cfg = MultiBackendRendererCfg(default=rtx_renderer_cfg, isaacsim_rtx=rtx_renderer_cfg)
         # Set wrist camera
         self.scene.wrist_cam = CameraCfg(
             prim_path="{ENV_REGEX_NS}/Robot/panda_hand/wrist_cam",
@@ -346,6 +354,7 @@ class FrankaCubeStackVisuomotorEnvCfg(StackEnvCfg):
             offset=CameraCfg.OffsetCfg(
                 pos=(0.13, 0.0, -0.15), rot=(0.03701, 0.03701, -0.70614, -0.70614), convention="ros"
             ),
+            renderer_cfg=renderer_cfg,
         )
 
         # Set table view camera
@@ -361,12 +370,10 @@ class FrankaCubeStackVisuomotorEnvCfg(StackEnvCfg):
             offset=CameraCfg.OffsetCfg(
                 pos=(1.0, 0.0, 0.4), rot=(-0.61237, -0.61237, 0.35355, 0.35355), convention="ros"
             ),
+            renderer_cfg=renderer_cfg,
         )
 
-        # Set settings for camera rendering
         self.num_rerenders_on_reset = 3
-        for camera_cfg in (self.scene.table_cam, self.scene.wrist_cam):
-            set_isaac_rtx_global_settings(camera_cfg.renderer_cfg, antialiasing_mode="DLAA")
 
         # List of image observations in policy observations
         self.image_obs_list = ["table_cam", "wrist_cam"]

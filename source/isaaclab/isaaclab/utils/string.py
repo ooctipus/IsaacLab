@@ -102,8 +102,7 @@ def is_lambda_expression(name: str) -> bool:
         Whether the input string is a lambda expression.
     """
     try:
-        tree = ast.parse(name, mode="eval")
-        return isinstance(tree.body, ast.Lambda)
+        return "lambda" in name and isinstance(ast.parse(name, mode="eval").body, ast.Lambda)
     except SyntaxError:
         return False
 

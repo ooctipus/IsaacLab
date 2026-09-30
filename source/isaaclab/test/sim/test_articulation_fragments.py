@@ -15,6 +15,7 @@ simulation_app = AppLauncher(headless=True).app
 import os
 
 import pytest
+from isaaclab_physx.physics import PhysxCfg
 
 from pxr import Gf, Sdf, Usd, UsdGeom, UsdPhysics
 
@@ -56,7 +57,7 @@ def test_physx_articulation_fragment_writes_physx_namespace():
     from isaaclab.sim.schemas import apply_namespaced
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     prim = _make_xform(stage, "/World/A1")
     UsdPhysics.ArticulationRootAPI.Apply(prim)
@@ -81,7 +82,7 @@ def test_newton_articulation_fragment_writes_newton_namespace():
     from isaaclab.sim.schemas import apply_namespaced
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     prim = _make_xform(stage, "/World/A2")
     UsdPhysics.ArticulationRootAPI.Apply(prim)
@@ -101,7 +102,7 @@ def test_apply_articulation_root_properties_composes_namespaces():
     from isaaclab.sim.schemas import apply_articulation_root_properties
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     _make_xform(stage, "/World/A3")
     apply_articulation_root_properties(
@@ -135,7 +136,7 @@ def test_apply_articulation_root_properties_tunes_existing_child_root():
     from isaaclab.sim.schemas import apply_articulation_root_properties
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     top = _make_xform(stage, "/World/Asset")
     child = _make_xform(stage, "/World/Asset/base")
@@ -165,7 +166,7 @@ def test_apply_articulation_root_properties_processes_siblings_and_aggregates_re
     from isaaclab.sim.schemas import apply_articulation_root_properties
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     for path in ("/World/A", "/World/B"):
         root = _make_xform(stage, path)
@@ -242,7 +243,7 @@ def test_apply_articulation_root_properties_does_not_duplicate_instance_proxy_ro
     from isaaclab.sim.schemas import apply_articulation_root_properties
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     source = _make_xform(stage, "/World/Source")
     source_base = _make_xform(stage, "/World/Source/base")
@@ -276,7 +277,7 @@ def test_apply_articulation_root_properties_toggles_existing_fixed_joint():
     from isaaclab.sim.schemas import apply_articulation_root_properties
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     # root prim with a rigid body and an articulation root
     root = _make_xform(stage, "/World/A4")
@@ -301,7 +302,7 @@ def test_apply_articulation_root_properties_enables_existing_joint_and_relocates
     from isaaclab.sim.schemas import apply_articulation_root_properties
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     parent = _make_xform(stage, "/World/ExistingJointRobot")
     root = _make_xform(stage, "/World/ExistingJointRobot/base")
@@ -335,7 +336,7 @@ def test_apply_articulation_root_properties_creates_fixed_joint_and_reparents_ro
     from isaaclab.sim.schemas import apply_articulation_root_properties
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     # parent xform + a rigid-body root link carrying the articulation root
     _make_xform(stage, "/World/Robot")
@@ -368,7 +369,7 @@ def test_apply_articulation_root_properties_fix_root_link_requires_rigid_body():
     from isaaclab.sim.schemas import apply_articulation_root_properties
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     root = _make_xform(stage, "/World/Robot2")
     UsdPhysics.ArticulationRootAPI.Apply(root)  # articulation root but NOT a rigid body
@@ -390,7 +391,7 @@ def test_apply_articulation_root_properties_fix_root_link_without_active_simulat
     from isaaclab.sim.schemas import apply_articulation_root_properties
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     root = _make_xform(stage, "/World/Robot3")
     UsdPhysics.RigidBodyAPI.Apply(root)
@@ -416,7 +417,7 @@ def test_physx_and_newton_fragments_fix_root_link_keeps_single_root():
     from isaaclab.sim.schemas import apply_articulation_root_properties
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     _make_xform(stage, "/World/Robot5")
     child = _make_xform(stage, "/World/Robot5/base")
@@ -457,7 +458,7 @@ def test_physx_fix_root_link_migrates_preauthored_newton_root_api():
     from isaaclab.sim.schemas import apply_articulation_root_properties
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     _make_xform(stage, "/World/UrdfBot")
     child = _make_xform(stage, "/World/UrdfBot/base")
@@ -487,7 +488,7 @@ def test_physx_fix_root_link_preserves_complete_authored_property_spec():
     from isaaclab.sim.schemas import apply_articulation_root_properties
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     _make_xform(stage, "/World/UsdBot")
     child = _make_xform(stage, "/World/UsdBot/base")
@@ -530,7 +531,7 @@ def test_apply_articulation_root_properties_rejects_non_fragment_items():
     from isaaclab.sim.schemas import apply_articulation_root_properties
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     _make_xform(stage, "/World/BadList")
     with pytest.raises(TypeError, match="ArticulationRootFragment"):
@@ -548,7 +549,7 @@ def test_apply_articulation_root_properties_topology_only_does_not_stamp_root():
     from isaaclab.sim.schemas import apply_articulation_root_properties
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     prim = _make_xform(stage, "/World/NoRoot")
     UsdPhysics.RigidBodyAPI.Apply(prim)
@@ -566,7 +567,7 @@ def test_apply_articulation_root_properties_honors_explicit_stage():
     from isaaclab.sim.schemas import apply_articulation_root_properties
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     current_stage = sim_utils.get_current_stage()
     current_root = _make_xform(current_stage, "/World/AltStageRoot")
     UsdPhysics.ArticulationRootAPI.Apply(current_root)
@@ -605,7 +606,7 @@ def test_base_manager_fix_articulation_root_is_world_anchored_and_idempotent():
     from isaaclab.physics import PhysicsManager
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     _make_xform(stage, "/World/BaseRobot")
     root = _make_xform(stage, "/World/BaseRobot/base")
@@ -632,7 +633,7 @@ def test_base_manager_fix_articulation_root_requires_rigid_body():
     from isaaclab.physics import PhysicsManager
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     root = _make_xform(stage, "/World/BaseNoRB")
     UsdPhysics.ArticulationRootAPI.Apply(root)  # articulation root but NOT a rigid body
@@ -670,7 +671,7 @@ def test_newton_legacy_cfg_matches_equivalent_fragment_composition():
     from isaaclab.sim.schemas import apply_articulation_root_properties, modify_articulation_root_properties
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     stage = sim_utils.get_current_stage()
     legacy = _make_xform(stage, "/World/LegacyNewton")
     fragments = _make_xform(stage, "/World/FragmentNewton")
@@ -719,7 +720,7 @@ def test_spawn_from_usd_file_topology_only_honors_fix_root_link(tmp_path, articu
     from isaaclab.sim.spawners.from_files.from_files_cfg import UsdFileCfg
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     usd_path = os.path.join(tmp_path, "articulation.usda")
     _author_articulation_usd(usd_path)
 
@@ -741,7 +742,7 @@ def test_spawn_from_usd_file_applies_composed_fragment_list(tmp_path):
     from isaaclab.sim.spawners.from_files.from_files_cfg import UsdFileCfg
 
     sim_utils.create_new_stage()
-    SimulationContext(SimulationCfg(dt=0.01))
+    SimulationContext(SimulationCfg(physics=PhysxCfg(), dt=0.01))
     usd_path = os.path.join(tmp_path, "fragment_articulation.usda")
     _author_articulation_usd(usd_path)
     cfg = UsdFileCfg(

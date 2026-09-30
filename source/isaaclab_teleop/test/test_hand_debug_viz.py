@@ -161,7 +161,7 @@ def _restore_stubs():
 
 _install_stubs()
 
-from isaaclab_teleop.isaac_teleop_cfg import IsaacTeleopCfg  # noqa: E402
+from isaaclab_teleop.isaac_teleop_cfg import IsaacTeleopCfg, TeleopPipelineCfg  # noqa: E402
 from isaaclab_teleop.session_lifecycle import TeleopSessionLifecycle  # noqa: E402
 from isaaclab_teleop.visualizers.controller_aim_visualizer import _aim_world_pose  # noqa: E402
 from isaaclab_teleop.visualizers.hand_joint_visualizer import _extract_world_joint_positions  # noqa: E402
@@ -242,7 +242,9 @@ class TestChainHandDebugOutputs:
 class TestStartChaining:
     def _start(self, enable_debug_visualization: bool) -> TeleopSessionLifecycle:
         pipeline = _FakePipeline([_FakeHandsSource("hands")])
-        cfg = IsaacTeleopCfg(pipeline_builder=lambda: pipeline, control_channel_uuid=None)
+        cfg = IsaacTeleopCfg(
+            pipeline_cfg=TeleopPipelineCfg(class_type=lambda _cfg: pipeline), control_channel_uuid=None
+        )
         lifecycle = TeleopSessionLifecycle(cfg, enable_debug_visualization=enable_debug_visualization)
         with patch.object(lifecycle, "_try_start_session", return_value=True):
             lifecycle.start()

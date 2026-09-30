@@ -23,6 +23,9 @@ _CALLABLE_STR_WITH_DIR_RE = re.compile(r"^\{DIR\}(?:\.[A-Za-z_][A-Za-z0-9_]*)*:[
 _CONFIGCLASS_METHODS = ["to_dict", "from_dict", "replace", "copy", "validate"]
 """List of class methods added at runtime to dataclass."""
 
+_POST_INIT_ACTIVE = "__configclass_post_init_active__"
+_DEFERRED_COPY = "_configclass_deferred_copy"
+
 """
 Wrapper around dataclass.
 """
@@ -101,9 +104,9 @@ def configclass(cls, **kwargs):
     _process_mutable_types(cls)
     # copy mutable members
     # note: we check if user defined __post_init__ function exists and augment it with our own
-    if hasattr(cls, "__post_init__"):
-        setattr(cls, "__post_init__", _combined_function(cls.__post_init__, _custom_post_init))
-    else:
+    if "__post_init__" in cls.__dict__:
+        setattr(cls, "__post_init__", _combined_function(cls.__post_init__))
+    elif not hasattr(cls, "__post_init__"):
         setattr(cls, "__post_init__", _custom_post_init)
     # add helper functions for dictionary conversion
     setattr(cls, "to_dict", _class_to_dict)
@@ -211,6 +214,8 @@ def _field_module_dir(obj: Any, key: str | None = None) -> str | None:
 
 def _wrap_resolvable_strings(value: Any, module_dir: str | None = None, _seen: set[int] | None = None) -> Any:
     """Recursively wrap callable-like strings with :class:`ResolvableString`."""
+    if getattr(type(value), _DEFERRED_COPY, False):
+        return value
     if isinstance(value, str) and (_CALLABLE_STR_RE.match(value) or _CALLABLE_STR_WITH_DIR_RE.match(value)):
         if "{DIR}" in value:
             if module_dir is None:
@@ -481,46 +486,72 @@ def _process_mutable_types(cls):
             setattr(cls, key, value)
         elif not isinstance(value, type):
             # create field factory for mutable types
-            value = field(default_factory=_return_f(value))
+            value = field(default_factory=lambda value=value: value)
             setattr(cls, key, value)
 
 
 def _custom_post_init(obj):
-    """Deepcopy all elements to avoid shared memory issues for mutable objects in dataclasses initialization.
+    """Detach declared configuration fields and wrap resolvable strings."""
+    if getattr(obj, _POST_INIT_ACTIVE, False):
+        return
+    _copy_config_fields(obj)
+    _wrap_resolvable_strings(obj, module_dir=_field_module_dir(obj))
 
-    This function is called explicitly instead of as a part of :func:`_process_mutable_types()` to prevent mapping
-    proxy type i.e. a read only proxy for mapping objects. The error is thrown when using hierarchical data-classes
-    for configuration.
-    """
-    for key in dir(obj):
-        # skip dunder members
-        if key.startswith("__"):
+
+def _copy_config_fields(obj):
+    """Detach declared configuration fields from their defaults."""
+    if getattr(type(obj), _DEFERRED_COPY, False):
+        return
+    for data_field in dataclasses.fields(obj):
+        setattr(obj, data_field.name, _copy_config_value(getattr(obj, data_field.name)))
+
+
+def _copy_config_value(value: Any) -> Any:
+    """Deep-copy a config value without entering deferred choice nodes."""
+    memo: dict[int, Any] = {}
+    seen: set[int] = set()
+    pending = [value]
+    while pending:
+        item = pending.pop()
+        item_id = id(item)
+        if item_id in seen:
             continue
-        # get data member
-        value = getattr(obj, key)
-        # check annotation
-        ann = obj.__class__.__dict__.get(key)
-        # duplicate data members that are mutable
-        if not callable(value) and not isinstance(ann, property):
-            copied_value = deepcopy(value)
-            setattr(obj, key, _wrap_resolvable_strings(copied_value, module_dir=_field_module_dir(obj, key)))
+        seen.add(item_id)
+        if getattr(type(item), _DEFERRED_COPY, False):
+            memo[item_id] = item
+        elif hasattr(item, "__dataclass_fields__") and hasattr(item, "__dict__"):
+            pending.extend(vars(item).values())
+        elif isinstance(item, dict):
+            pending.extend(item.values())
+        elif isinstance(item, (list, tuple)):
+            pending.extend(item)
+    return deepcopy(value, memo)
 
 
-def _combined_function(f1: Callable, f2: Callable) -> Callable:
-    """Combine two functions into one.
+def _combined_function(func: Callable) -> Callable:
+    """Copy once before an inherited post-init chain and wrap strings after it.
 
     Args:
-        f1: The first function.
-        f2: The second function.
+        func: The user-defined post-initialization function.
 
     Returns:
         The combined function.
     """
 
     def _combined(*args, **kwargs):
-        # call both functions
-        f1(*args, **kwargs)
-        f2(*args, **kwargs)
+        obj = args[0]
+        active = getattr(obj, _POST_INIT_ACTIVE, False)
+        if not active:
+            _copy_config_fields(obj)
+            setattr(obj, _POST_INIT_ACTIVE, True)
+        try:
+            result = func(*args, **kwargs)
+        finally:
+            if not active:
+                delattr(obj, _POST_INIT_ACTIVE)
+        if not active:
+            _wrap_resolvable_strings(obj, module_dir=_field_module_dir(obj))
+        return result
 
     return _combined
 
@@ -579,31 +610,6 @@ def _skippable_class_member(key: str, value: Any, hints: dict | None = None) -> 
         return True
     # Otherwise, don't skip
     return False
-
-
-def _return_f(f: Any) -> Callable[[], Any]:
-    """Returns default factory function for creating mutable/immutable variables.
-
-    This function should be used to create default factory functions for variables.
-
-    Example:
-
-        .. code-block:: python
-
-            value = field(default_factory=_return_f(value))
-            setattr(cls, key, value)
-    """
-
-    def _wrap():
-        if isinstance(f, Field):
-            if f.default_factory is MISSING:
-                return deepcopy(f.default)
-            else:
-                return f.default_factory
-        else:
-            return deepcopy(f)
-
-    return _wrap
 
 
 def checked_apply(src: Any, target: Any) -> None:

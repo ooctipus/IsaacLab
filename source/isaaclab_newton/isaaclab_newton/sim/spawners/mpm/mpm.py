@@ -10,8 +10,9 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import warp as wp
+from newton.solvers import SolverImplicitMPM
 
-from isaaclab.sim.utils import clone, create_prim
+from isaaclab.sim.utils import bind_visual_material, clone, create_prim, set_prim_visibility
 
 if TYPE_CHECKING:
     from newton import ModelBuilder
@@ -29,11 +30,11 @@ def spawn_mpm_particles(
     orientation: tuple[float, float, float, float] | None = None,
     **kwargs: object,
 ) -> Usd.Prim:
-    """Create a lightweight placeholder prim for a Newton MPM particle object.
+    """Declare a Newton MPM particle object as planned USD point geometry.
 
     MPM particles are inserted directly into the Newton model builder during
-    Newton replication. The USD prim exists so Isaac Lab's normal asset spawning
-    and clone-planning machinery can reason about the scene entity.
+    Newton replication. The point prim is the renderer-facing geometry cloned by
+    the same plan; its positions are updated from the physics point publication.
 
     Args:
         prim_path: Prim path or pattern at which to create the placeholder.
@@ -46,9 +47,24 @@ def spawn_mpm_particles(
             decorator.
 
     Returns:
-        The created placeholder prim.
+        The created ``UsdGeom.Points`` prim.
     """
-    return create_prim(prim_path, prim_type="Xform", translation=translation, orientation=orientation)
+    from pxr import Gf, Sdf, UsdGeom, Vt  # noqa: PLC0415
+
+    positions, widths = _particle_visual_geometry(cfg)
+    prim = create_prim(prim_path, prim_type="Points", translation=translation, orientation=orientation)
+    set_prim_visibility(prim, cfg.visible)
+    points = UsdGeom.Points(prim)
+    with Sdf.ChangeBlock():
+        points.CreatePointsAttr(Vt.Vec3fArray.FromNumpy(np.ascontiguousarray(positions)))
+        points.CreateWidthsAttr(Vt.FloatArray.FromNumpy(np.ascontiguousarray(widths)))
+        points.CreateDisplayColorAttr(Vt.Vec3fArray([Gf.Vec3f(*map(float, cfg.visual_color))]))
+
+    if cfg.visual_material is not None:
+        material_path = f"{prim_path}/Looks/visualMaterial"
+        cfg.visual_material.func(material_path, cfg.visual_material)
+        bind_visual_material(prim_path, material_path)
+    return prim
 
 
 def _material_custom_attributes(material: MPMParticleMaterialCfg) -> dict[str, float]:
@@ -91,12 +107,12 @@ def emit_mpm_particles(
         TypeError: If :paramref:`cfg` is not a supported MPM particle spawner configuration.
         ValueError: If the configuration contains invalid particle geometry or physical values.
     """
+    if not isinstance(cfg, (MPMGridCfg, MPMPointsCfg)):
+        raise TypeError(f"Unsupported MPM particle spawner config type: {type(cfg).__name__}")
     if isinstance(cfg, MPMGridCfg):
         _emit_grid(builder, cfg, position=position, orientation=orientation)
-    elif isinstance(cfg, MPMPointsCfg):
-        _emit_points(builder, cfg, position=position, orientation=orientation)
     else:
-        raise TypeError(f"Unsupported MPM particle spawner config type: {type(cfg).__name__}")
+        _emit_points(builder, cfg, position=position, orientation=orientation)
 
 
 def _emit_grid(
@@ -106,6 +122,29 @@ def _emit_grid(
     position: tuple[float, float, float],
     orientation: tuple[float, float, float, float],
 ) -> None:
+    first_particle, cell_size, dimensions, mass, radius, jitter = _grid_data(cfg)
+    world_pos = _transform_point(first_particle, position, orientation)
+    if not builder.has_custom_attribute("mpm:young_modulus"):
+        SolverImplicitMPM.register_custom_attributes(builder)
+    builder.add_particle_grid(
+        pos=wp.vec3(*world_pos.tolist()),
+        rot=wp.quat(*orientation),
+        vel=wp.vec3(0.0, 0.0, 0.0),
+        dim_x=int(dimensions[0]),
+        dim_y=int(dimensions[1]),
+        dim_z=int(dimensions[2]),
+        cell_x=float(cell_size[0]),
+        cell_y=float(cell_size[1]),
+        cell_z=float(cell_size[2]),
+        mass=mass,
+        jitter=jitter,
+        radius_mean=radius,
+        custom_attributes=_material_custom_attributes(cfg.material),
+    )
+
+
+def _grid_data(cfg: MPMGridCfg) -> tuple[np.ndarray, np.ndarray, np.ndarray, float, float, float]:
+    """Validate a grid cfg and return its local lattice parameters."""
     lower = _as_finite_vector3(cfg.lower, "lower")
     upper = _as_finite_vector3(cfg.upper, "upper")
     extent = upper - lower
@@ -155,23 +194,7 @@ def _emit_grid(
         # Preserve the historical boundary-placement behavior.
         radius = 0.5 * float(np.max(cell_size))
     _validate_positive_finite(radius, "radius")
-
-    world_pos = _transform_point(first_particle, position, orientation)
-    builder.add_particle_grid(
-        pos=wp.vec3(*world_pos.tolist()),
-        rot=wp.quat(*orientation),
-        vel=wp.vec3(0.0, 0.0, 0.0),
-        dim_x=int(dimensions[0]),
-        dim_y=int(dimensions[1]),
-        dim_z=int(dimensions[2]),
-        cell_x=float(cell_size[0]),
-        cell_y=float(cell_size[1]),
-        cell_z=float(cell_size[2]),
-        mass=mass,
-        jitter=jitter,
-        radius_mean=radius,
-        custom_attributes=_material_custom_attributes(cfg.material),
-    )
+    return first_particle, cell_size, dimensions, mass, radius, jitter
 
 
 def _emit_points(
@@ -181,6 +204,23 @@ def _emit_points(
     position: tuple[float, float, float],
     orientation: tuple[float, float, float, float],
 ) -> None:
+    points, velocities, mass, radius = _points_data(cfg)
+    world_points = _transform_points(points, position, orientation)
+    world_velocities = _rotate_vectors(velocities, orientation)
+
+    if not builder.has_custom_attribute("mpm:young_modulus"):
+        SolverImplicitMPM.register_custom_attributes(builder)
+    builder.add_particles(
+        pos=world_points.tolist(),
+        vel=world_velocities.tolist(),
+        mass=mass,
+        radius=radius,
+        custom_attributes=_material_custom_attributes(cfg.material),
+    )
+
+
+def _points_data(cfg: MPMPointsCfg) -> tuple[np.ndarray, np.ndarray, list[float], list[float]]:
+    """Validate an explicit-points cfg and return its local particle values."""
     points = np.asarray(cfg.positions, dtype=np.float32)
     if points.ndim != 2 or points.shape[1] != 3:
         raise ValueError(f"MPMPointsCfg positions must have shape (N, 3). Got {points.shape}.")
@@ -197,17 +237,21 @@ def _emit_points(
 
     mass = _expand_scalar_or_sequence(cfg.mass, points.shape[0], "mass")
     radius = _expand_scalar_or_sequence(cfg.radius, points.shape[0], "radius")
+    return points, velocities, mass, radius
 
-    world_points = _transform_points(points, position, orientation)
-    world_velocities = _rotate_vectors(velocities, orientation)
 
-    builder.add_particles(
-        pos=world_points.tolist(),
-        vel=world_velocities.tolist(),
-        mass=mass,
-        radius=radius,
-        custom_attributes=_material_custom_attributes(cfg.material),
-    )
+def _particle_visual_geometry(cfg: MPMParticleSpawnerCfg) -> tuple[np.ndarray, np.ndarray]:
+    """Return local seed positions and display widths for the planned point prim."""
+    if isinstance(cfg, MPMGridCfg):
+        first, spacing, dimensions, _mass, radius, _jitter = _grid_data(cfg)
+        indices = np.indices(tuple(dimensions), dtype=np.float32).reshape(3, -1).T
+        positions = first + indices * spacing
+        widths = np.full(len(positions), 2.0 * radius, dtype=np.float32)
+        return positions.astype(np.float32, copy=False), widths
+    if isinstance(cfg, MPMPointsCfg):
+        positions, _velocities, _mass, radius = _points_data(cfg)
+        return positions, 2.0 * np.asarray(radius, dtype=np.float32)
+    raise TypeError(f"Unsupported MPM particle spawner config type: {type(cfg).__name__}")
 
 
 def _expand_scalar_or_sequence(value: float | Sequence[float], count: int, name: str) -> list[float]:

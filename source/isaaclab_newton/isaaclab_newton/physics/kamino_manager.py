@@ -8,14 +8,22 @@
 from __future__ import annotations
 
 import logging
+from typing import ClassVar
 
 import warp as wp
 from newton import Model, eval_fk
-from newton.solvers import SolverKamino
+from newton._src.solvers.kamino.config import (
+    CollisionDetectorConfig,
+    ConstrainedDynamicsConfig,
+    ConstraintStabilizationConfig,
+    DVISolverConfig,
+    ForwardKinematicsSolverConfig,
+    MaterialManagerConfig,
+    PADMMSolverConfig,
+)
+from newton.solvers import SolverBase, SolverKamino
 
-from isaaclab.physics import PhysicsManager
-
-from .kamino_manager_cfg import _KaminoSolverCfgBase
+from .kamino_manager_cfg import KaminoDVISolverCfg, KaminoPADMMSolverCfg, _KaminoSolverCfgBase
 from .newton_manager import NewtonManager
 
 logger = logging.getLogger(__name__)
@@ -56,21 +64,17 @@ class NewtonKaminoManager(NewtonManager):
 
     # Annotate the concrete solver type.
     _solver: SolverKamino
+    _builder_attribute_solvers: ClassVar[tuple[type[SolverBase], ...]] = (SolverKamino,)
 
-    _builder_attribute_solvers = (SolverKamino,)
-
-    @classmethod
-    def _get_kamino_solver_cfg(cls) -> _KaminoSolverCfgBase:
-        cfg = PhysicsManager._cfg
+    def _get_kamino_solver_cfg(self) -> _KaminoSolverCfgBase:
+        cfg = self._cfg
         if cfg is None:
             raise RuntimeError("Physics manager is not initialized.")
-        solver_cfg = getattr(cfg, "solver_cfg", None)
-        if not isinstance(solver_cfg, _KaminoSolverCfgBase):
-            raise TypeError(f"Expected a Kamino solver configuration, got {type(solver_cfg).__name__}.")
-        return solver_cfg
+        if not isinstance(cfg, _KaminoSolverCfgBase):
+            raise TypeError(f"Expected a Kamino solver configuration, got {type(cfg).__name__}.")
+        return cfg
 
-    @classmethod
-    def _eval_fk_impl(cls, world_reset_mask: wp.array | None, fk_mask: wp.array | None) -> None:
+    def _eval_fk_impl(self, world_reset_mask: wp.array | None, fk_mask: wp.array | None) -> None:
         """Update body states from joint coordinates.
 
         For the Kamino (maximal-coordinate) solver, body poses/velocities are the authoritative
@@ -86,24 +90,29 @@ class NewtonKaminoManager(NewtonManager):
             world_reset_mask: Per-world mask passed to :meth:`SolverKamino.reset` (``None`` means all).
             fk_mask: Per-articulation mask of articulations to update (``None`` means all).
         """
-        if cls._get_kamino_solver_cfg().use_fk_solver:
-            cls._solver.reset(
-                cls._state_0,
+        if self._get_kamino_solver_cfg().use_fk_solver:
+            self._solver.reset(
+                self._newton._state_0,
                 world_mask=world_reset_mask,
                 config=SolverKamino.ResetConfig.from_joints(),
             )
         else:
-            eval_fk(cls._model, cls._state_0.joint_q, cls._state_0.joint_qd, cls._state_0, fk_mask)
+            eval_fk(
+                self._newton._model,
+                self._newton._state_0.joint_q,
+                self._newton._state_0.joint_qd,
+                self._newton._state_0,
+                fk_mask,
+            )
 
             # Reset solver internals without performing Kamino's FK.
-            cls._solver.reset(
-                cls._state_0,
+            self._solver.reset(
+                self._newton._state_0,
                 world_mask=world_reset_mask,
                 config=SolverKamino.ResetConfig.preserve(),
             )
 
-    @classmethod
-    def _reset_solver_internals(cls, world_mask: wp.array | None) -> None:
+    def _reset_solver_internals(self, world_mask: wp.array | None) -> None:
         """Skip the generic solver reset.
 
         :meth:`_eval_fk_impl` already performs the masked
@@ -113,22 +122,59 @@ class NewtonKaminoManager(NewtonManager):
             world_mask: Unused; accepted to match the base hook signature.
         """
 
-    @classmethod
-    def _create_solver(cls, model: Model, solver_cfg: _KaminoSolverCfgBase) -> SolverKamino:
+    def _create_solver(self, model: Model, solver_cfg: _KaminoSolverCfgBase) -> SolverKamino:
         """Construct the configured Kamino solver."""
-        return SolverKamino(model, solver_cfg.to_solver_config())
+        collision_detector = None
+        if solver_cfg.use_collision_detector:
+            collision_detector = CollisionDetectorConfig(
+                **{key: value for key, value in solver_cfg.collision_detector.to_dict().items() if value is not None}
+            )
 
-    @classmethod
-    def _build_solver(cls, model: Model, solver_cfg: _KaminoSolverCfgBase) -> None:
+        padmm = PADMMSolverConfig()
+        dvi = DVISolverConfig()
+        if isinstance(solver_cfg, KaminoPADMMSolverCfg):
+            dynamics_solver = "padmm"
+            padmm = PADMMSolverConfig(**solver_cfg.dynamics_solver_cfg.to_dict())
+        elif isinstance(solver_cfg, KaminoDVISolverCfg):
+            dynamics_solver = "dvi"
+            dvi = DVISolverConfig(**solver_cfg.dynamics_solver_cfg.to_dict())
+        else:
+            raise TypeError(f"Expected a concrete Kamino solver configuration, got {type(solver_cfg).__name__}.")
+
+        config = SolverKamino.Config(
+            dynamics_solver=dynamics_solver,
+            integrator=solver_cfg.integrator,
+            use_collision_detector=solver_cfg.use_collision_detector,
+            use_fk_solver=True if solver_cfg.use_fk_solver is None else solver_cfg.use_fk_solver,
+            sparse_jacobian=solver_cfg.sparse_jacobian,
+            sparse_dynamics=solver_cfg.sparse_dynamics,
+            rotation_correction=solver_cfg.rotation_correction,
+            angular_velocity_damping=solver_cfg.angular_velocity_damping,
+            collect_solver_info=solver_cfg.collect_solver_info,
+            compute_solution_metrics=solver_cfg.compute_solution_metrics,
+            collision_detector=collision_detector,
+            fk=ForwardKinematicsSolverConfig(**solver_cfg.fk.to_dict()),
+            constraints=ConstraintStabilizationConfig(**solver_cfg.constraints.to_dict()),
+            dynamics=(
+                None if solver_cfg.dynamics is None else ConstrainedDynamicsConfig(**solver_cfg.dynamics.to_dict())
+            ),
+            materials=MaterialManagerConfig(**solver_cfg.materials.to_dict()),
+            padmm=padmm,
+            dvi=dvi,
+        )
+        config.validate()
+        return SolverKamino(model, config)
+
+    def _build_solver(self, model: Model, solver_cfg: _KaminoSolverCfgBase) -> None:
         """Construct :class:`SolverKamino` and populate the base-class slots.
 
-        Sets :attr:`NewtonManager._needs_collision_pipeline` to ``True`` only
+        Sets :attr:`self._needs_collision_pipeline` to ``True`` only
         when ``use_collision_detector=False`` (Kamino's internal detector
         handles contacts otherwise).
 
         Kamino treats body state as authoritative. The shared pre-step
-        :meth:`NewtonManager.forward` boundary reconciles authored joint state
-        only for worlds selected by :attr:`NewtonManager._world_reset_mask`.
+        :meth:`self.forward` boundary reconciles authored joint state
+        only for worlds selected by :attr:`self._world_reset_mask`.
 
         Raises:
             RuntimeError: If the model has more than one articulation per environment. The Kamino
@@ -155,7 +201,7 @@ class NewtonKaminoManager(NewtonManager):
                 " Multiple articulations per environment are not yet supported in Kamino's FK solver."
             )
 
-        NewtonManager._solver = cls._create_solver(model, solver_cfg)
-        NewtonManager._use_single_state = False
-        NewtonManager._needs_collision_pipeline = not solver_cfg.use_collision_detector
-        NewtonManager._supports_rigid_body_force_input = True
+        self._solver = self._create_solver(model, solver_cfg)
+        self._use_single_state = False
+        self._needs_collision_pipeline = not solver_cfg.use_collision_detector
+        self._newton._supports_rigid_body_force_input = True

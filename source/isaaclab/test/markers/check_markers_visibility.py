@@ -38,9 +38,11 @@ simulation_app = app_launcher.app
 
 """Rest everything follows."""
 
+from isaaclab_physx.physics import PhysxCfg
+
 import isaaclab.sim as sim_utils
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
-from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
+from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import RayCasterCfg, patterns
 from isaaclab.utils.configclass import configclass
 
@@ -79,7 +81,7 @@ class SensorsSceneCfg(InteractiveSceneCfg):
 
 def run_simulator(
     sim: sim_utils.SimulationContext,
-    scene: InteractiveScene,
+    scene,
 ):
     """Run the simulator."""
 
@@ -129,13 +131,13 @@ def main():
     """Main function."""
 
     # Initialize the simulation context
-    sim_cfg = sim_utils.SimulationCfg(dt=0.005)
+    sim_cfg = sim_utils.SimulationCfg(physics=PhysxCfg(), dt=0.005)
     sim = sim_utils.SimulationContext(sim_cfg)
     # Set main camera
     sim.set_camera_view(eye=[3.5, 3.5, 3.5], target=[0.0, 0.0, 0.0])
     # design scene
     scene_cfg = SensorsSceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0)
-    scene = InteractiveScene(scene_cfg)
+    scene = scene_cfg.class_type(scene_cfg)
     # Play the simulator
     sim.reset()
     # Now we are ready!

@@ -6,7 +6,14 @@
 from dataclasses import MISSING
 
 from isaaclab.managers import ActionTermCfg, ObservationGroupCfg
+from isaaclab.markers import VisualizationMarkersCfg
+from isaaclab.markers.config import BLUE_ARROW_X_MARKER_CFG, GREEN_ARROW_X_MARKER_CFG
 from isaaclab.utils.configclass import configclass
+
+_GOAL_MARKER_CFG = GREEN_ARROW_X_MARKER_CFG.replace(prim_path="/Visuals/Actions/velocity_goal")
+_GOAL_MARKER_CFG.markers["arrow"].scale = (0.5, 0.5, 0.5)
+_CURRENT_MARKER_CFG = BLUE_ARROW_X_MARKER_CFG.replace(prim_path="/Visuals/Actions/velocity_current")
+_CURRENT_MARKER_CFG.markers["arrow"].scale = (0.5, 0.5, 0.5)
 
 
 @configclass
@@ -36,3 +43,9 @@ class PreTrainedPolicyActionCfg(ActionTermCfg):
 
     debug_vis: bool = True
     """Whether to visualize debug information. Defaults to False."""
+
+    goal_visualizer_cfg: VisualizationMarkersCfg = _GOAL_MARKER_CFG
+    """Marker configuration for the commanded velocity."""
+
+    current_visualizer_cfg: VisualizationMarkersCfg = _CURRENT_MARKER_CFG
+    """Marker configuration for the measured velocity."""

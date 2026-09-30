@@ -14,11 +14,11 @@ import warp as wp
 pytest.importorskip("newton")
 
 from isaaclab_newton.assets import CableObject as NewtonCableObject
-from isaaclab_newton.physics import NewtonCfg, VBDSolverCfg, XPBDSolverCfg
-from isaaclab_newton.physics import NewtonManager as SimulationManager
+from isaaclab_newton.physics import VBDSolverCfg, XPBDSolverCfg
 
 import isaaclab.sim as sim_utils
-from isaaclab.assets import CableObjectCfg, RigidObjectCfg
+from isaaclab import cloner
+from isaaclab.assets import AssetBaseCfg, CableObjectCfg, RigidObjectCfg
 from isaaclab.envs.mdp.events import reset_scene_to_default
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
 from isaaclab.sim import GroundPlaneCfg, SimulationCfg, UsdPhysicsCollisionCfg, build_simulation_context
@@ -28,6 +28,10 @@ from isaaclab.test.utils import DeviceScope, test_devices
 from isaaclab.utils.configclass import configclass
 
 from isaaclab_contrib.coupling import CouplerEntryCfg, CouplerProxyCfg, CouplerProxyMappingCfg
+
+
+def _manager():
+    return sim_utils.SimulationContext.instance()._physics_manager
 
 
 @configclass
@@ -73,39 +77,41 @@ def test_cable_collides_with_ground():
     sim_cfg = SimulationCfg(
         dt=0.01,
         device="cpu",
-        physics=NewtonCfg(
-            solver_cfg=VBDSolverCfg(iterations=20),
+        physics=VBDSolverCfg(
+            iterations=20,
             num_substeps=8,
             use_cuda_graph=False,
         ),
     )
 
+    ground_cfg = AssetBaseCfg(prim_path="/World/Ground", spawn=GroundPlaneCfg())
+    cable_cfg = CableObjectCfg(
+        prim_path="{ENV_REGEX_NS}/Cable",
+        spawn=CableCfg(
+            positions=[(0.05 * index, 0.0, 0.0) for index in range(11)],
+            physics_material=CableMaterialCfg(
+                thickness=0.01,
+                density=100.0,
+                stretch_stiffness=3.18309886e8,
+                bend_stiffness=2.03718327e9,
+            ),
+            collision_props=[UsdPhysicsCollisionCfg(collision_enabled=True)],
+        ),
+        init_state=CableObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 0.8)),
+    )
+
     with build_simulation_context(sim_cfg=sim_cfg) as sim:
-        ground_cfg = GroundPlaneCfg()
-        ground_cfg.func("/World/Ground", ground_cfg)
-        cable = NewtonCableObject(
-            CableObjectCfg(
-                prim_path="/World/Env_0/Cable",
-                spawn=CableCfg(
-                    positions=[(0.05 * index, 0.0, 0.0) for index in range(11)],
-                    physics_material=CableMaterialCfg(
-                        thickness=0.01,
-                        density=100.0,
-                        stretch_stiffness=3.18309886e8,
-                        bend_stiffness=2.03718327e9,
-                    ),
-                    collision_props=[UsdPhysicsCollisionCfg(collision_enabled=True)],
-                ),
-                init_state=CableObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 0.8)),
-            )
-        )
+        with cloner.ReplicateSession((ground_cfg, cable_cfg), num_clones=1, env_spacing=0.0):
+            (ground_path,) = cloner.query.cfg_source_paths(sim.get_clone_plan(), ground_cfg)
+            ground_cfg.spawn.func(ground_path, ground_cfg.spawn)
+            cable = cable_cfg.class_type(cable_cfg)
         sim.reset()
 
         contact_seen = False
         for _ in range(120):
             sim.step(render=False)
             cable.update(sim_cfg.dt)
-            contact_seen |= bool(SimulationManager._contacts.rigid_contact_count.numpy()[0])
+            contact_seen |= bool(_manager()._newton._contacts.rigid_contact_count.numpy()[0])
 
         segment_z = cable.data.segment_pose_w.torch[..., 2]
         assert contact_seen
@@ -117,7 +123,7 @@ def test_cable_collides_with_ground():
         default_velocity = cable.data.default_segment_velocity_w.torch.clone()
         cable.write_segment_pose_to_sim_index(segment_pose=default_pose)
         cable.write_segment_velocity_to_sim_index(segment_velocity=default_velocity)
-        assert wp.to_torch(SimulationManager._world_reset_mask).tolist() == [True, False]
+        assert wp.to_torch(_manager()._world_reset_mask).tolist() == [True, False]
 
         sim.step(render=False)
         cable.update(sim_cfg.dt)
@@ -132,15 +138,16 @@ def test_interactive_scene_manages_newton_cables():
         dt=1.0 / 120.0,
         device="cpu",
         gravity=(0.0, 0.0, -9.81),
-        physics=NewtonCfg(
-            solver_cfg=VBDSolverCfg(iterations=2),
+        physics=VBDSolverCfg(
+            iterations=2,
             num_substeps=1,
             use_cuda_graph=False,
         ),
     )
 
     with build_simulation_context(sim_cfg=sim_cfg) as sim:
-        scene = InteractiveScene(_CableSceneCfg(num_envs=2, env_spacing=1.0))
+        scene_cfg = _CableSceneCfg(num_envs=2, env_spacing=1.0)
+        scene = InteractiveScene(scene_cfg)
         sim.reset()
         scene.update(0.0)
 
@@ -153,8 +160,8 @@ def test_interactive_scene_manages_newton_cables():
         assert cable.data.segment_pose_w.torch.shape == (2, 3, 7)
         assert cable.data.segment_velocity_w.torch.shape == (2, 3, 6)
 
-        model = SimulationManager.get_model()
-        state = SimulationManager.get_state_0()
+        model = _manager().get_model()
+        state = _manager().get_state_0()
         expected_pose, expected_velocity = _expected_segment_state(cable, state, model)
         torch.testing.assert_close(cable.data.segment_pose_w.torch, expected_pose)
         torch.testing.assert_close(cable.data.segment_velocity_w.torch, expected_velocity)
@@ -178,7 +185,7 @@ def test_interactive_scene_manages_newton_cables():
         assert torch.isfinite(cable.data.segment_velocity_w.torch).all()
         assert torch.any(cable.data.segment_pose_w.torch[..., 2] < initial_pose[..., 2])
         expected_pose, expected_velocity = _expected_segment_state(
-            cable, SimulationManager.get_state_0(), SimulationManager.get_model()
+            cable, _manager().get_state_0(), _manager().get_model()
         )
         torch.testing.assert_close(cable.data.segment_pose_w.torch, expected_pose)
         torch.testing.assert_close(cable.data.segment_velocity_w.torch, expected_velocity)
@@ -196,10 +203,10 @@ def test_interactive_scene_manages_newton_cables():
         assert torch.isfinite(cable.data.segment_velocity_w.torch).all()
 
         state_0_pose, state_0_velocity = _expected_segment_state(
-            cable, SimulationManager.get_state_0(), SimulationManager.get_model()
+            cable, _manager().get_state_0(), _manager().get_model()
         )
         state_1_pose, state_1_velocity = _expected_segment_state(
-            cable, SimulationManager.get_state_1(), SimulationManager.get_model()
+            cable, _manager()._newton.get_state_1(), _manager().get_model()
         )
         env_ids = torch.tensor([0], device=sim.device, dtype=torch.long)
         reset_scene_to_default(SimpleNamespace(scene=scene), env_ids)
@@ -209,16 +216,16 @@ def test_interactive_scene_manages_newton_cables():
         torch.testing.assert_close(cable.data.segment_pose_w.torch[1], state_0_pose[1])
         torch.testing.assert_close(cable.data.segment_velocity_w.torch[1], state_0_velocity[1])
         for reset_state, other_pose, other_velocity in (
-            (SimulationManager.get_state_0(), state_0_pose, state_0_velocity),
-            (SimulationManager.get_state_1(), state_1_pose, state_1_velocity),
+            (_manager().get_state_0(), state_0_pose, state_0_velocity),
+            (_manager()._newton.get_state_1(), state_1_pose, state_1_velocity),
         ):
             reset_pose, reset_velocity = _expected_segment_state(cable, reset_state, model)
             torch.testing.assert_close(reset_pose[0], default_pose[0])
             torch.testing.assert_close(reset_velocity[0], default_velocity[0])
             torch.testing.assert_close(reset_pose[1], other_pose[1])
             torch.testing.assert_close(reset_velocity[1], other_velocity[1])
-        assert wp.to_torch(SimulationManager._world_reset_mask).tolist() == [True, False, False]
-        assert not wp.to_torch(SimulationManager._fk_reset_mask).any()
+        assert wp.to_torch(_manager()._world_reset_mask).tolist() == [True, False, False]
+        assert not wp.to_torch(_manager()._fk_reset_mask).any()
 
         scene.write_data_to_sim()
         sim.step(render=False)
@@ -228,9 +235,9 @@ def test_interactive_scene_manages_newton_cables():
 
         sim.reset()
         scene.update(0.0)
-        state = SimulationManager.get_state_0()
+        state = _manager().get_state_0()
 
-        expected_pose, expected_velocity = _expected_segment_state(cable, state, SimulationManager.get_model())
+        expected_pose, expected_velocity = _expected_segment_state(cable, state, _manager().get_model())
         torch.testing.assert_close(cable.data.segment_pose_w.torch, expected_pose)
         torch.testing.assert_close(cable.data.segment_velocity_w.torch, expected_velocity)
 
@@ -244,16 +251,17 @@ def test_interactive_scene_manages_newton_cables():
 def test_cable_mask_writes_update_selected_environments():
     sim_cfg = SimulationCfg(
         device="cpu",
-        physics=NewtonCfg(
-            solver_cfg=VBDSolverCfg(iterations=2),
+        physics=VBDSolverCfg(
+            iterations=2,
             use_cuda_graph=False,
         ),
     )
 
     with build_simulation_context(sim_cfg=sim_cfg) as sim:
-        scene = InteractiveScene(_CableSceneCfg(num_envs=3, env_spacing=1.0))
+        scene_cfg = _CableSceneCfg(num_envs=3, env_spacing=1.0)
+        scene = InteractiveScene(scene_cfg)
         sim.reset()
-        SimulationManager.forward()
+        _manager().forward()
         scene.update(0.0)
         cable = scene["cable"]
 
@@ -273,19 +281,19 @@ def test_cable_mask_writes_update_selected_environments():
         expected_pose[1] = original_pose[1]
         expected_velocity = target_velocity.clone()
         expected_velocity[1] = original_velocity[1]
-        for state in (SimulationManager.get_state_0(), SimulationManager.get_state_1()):
-            state_pose, state_velocity = _expected_segment_state(cable, state, SimulationManager.get_model())
+        for state in (_manager().get_state_0(), _manager()._newton.get_state_1()):
+            state_pose, state_velocity = _expected_segment_state(cable, state, _manager().get_model())
             torch.testing.assert_close(state_pose, expected_pose)
             torch.testing.assert_close(state_velocity, expected_velocity)
         torch.testing.assert_close(cable.data.segment_pose_w.torch, expected_pose)
         torch.testing.assert_close(cable.data.segment_velocity_w.torch, expected_velocity)
         assert torch.equal(cable.data.segment_pose_w.torch[1], original_pose[1])
         assert torch.equal(cable.data.segment_velocity_w.torch[1], original_velocity[1])
-        assert wp.to_torch(SimulationManager._world_reset_mask).tolist() == [True, False, True, False]
+        assert wp.to_torch(_manager()._world_reset_mask).tolist() == [True, False, True, False]
         other_env_mask = wp.array([False, True, False], dtype=wp.bool, device=sim.device)
-        SimulationManager.invalidate_body_state(env_mask=other_env_mask)
-        assert wp.to_torch(SimulationManager._world_reset_mask).tolist() == [True, True, True, False]
-        assert not wp.to_torch(SimulationManager._fk_reset_mask).any()
+        _manager().invalidate_body_state(env_mask=other_env_mask)
+        assert wp.to_torch(_manager()._world_reset_mask).tolist() == [True, True, True, False]
+        assert not wp.to_torch(_manager()._fk_reset_mask).any()
 
 
 def test_proxy_coupler_runs_cable_in_vbd_entry():
@@ -315,11 +323,12 @@ def test_proxy_coupler_runs_cable_in_vbd_entry():
         dt=1.0 / 120.0,
         device="cpu",
         gravity=(0.0, 0.0, -9.81),
-        physics=NewtonCfg(solver_cfg=solver_cfg, num_substeps=1, use_cuda_graph=False),
+        physics=solver_cfg.replace(num_substeps=1, use_cuda_graph=False),
     )
 
     with build_simulation_context(sim_cfg=sim_cfg) as sim:
-        scene = InteractiveScene(_ProxyCableSceneCfg(num_envs=1, env_spacing=1.0))
+        scene_cfg = _ProxyCableSceneCfg(num_envs=1, env_spacing=1.0)
+        scene = InteractiveScene(scene_cfg)
         sim.reset()
         scene.update(0.0)
 
@@ -337,14 +346,15 @@ def test_proxy_coupler_runs_cable_in_vbd_entry():
 def test_cable_mask_writes_are_cuda_graph_capturable(device):
     sim_cfg = SimulationCfg(
         device=device,
-        physics=NewtonCfg(
-            solver_cfg=VBDSolverCfg(iterations=2),
+        physics=VBDSolverCfg(
+            iterations=2,
             use_cuda_graph=False,
         ),
     )
 
     with build_simulation_context(sim_cfg=sim_cfg) as sim:
-        scene = InteractiveScene(_CableSceneCfg(num_envs=3, env_spacing=1.0))
+        scene_cfg = _CableSceneCfg(num_envs=3, env_spacing=1.0)
+        scene = InteractiveScene(scene_cfg)
         sim.reset()
         scene.update(0.0)
         cable = scene["cable"]
@@ -362,7 +372,7 @@ def test_cable_mask_writes_are_cuda_graph_capturable(device):
             cable.write_segment_pose_to_sim_mask(segment_pose=pose_buffer, env_mask=env_mask)
             cable.write_segment_velocity_to_sim_mask(segment_velocity=velocity_buffer, env_mask=env_mask)
 
-        SimulationManager.forward()
+        _manager().forward()
         offsets = torch.tensor([0.4, 0.5, 0.6], device=device).unsqueeze(1)
         pose_buffer[..., 1] += offsets
         velocity_buffer[..., 1] += 10.0 * offsets
@@ -373,27 +383,28 @@ def test_cable_mask_writes_are_cuda_graph_capturable(device):
         expected_pose[1] = original_pose[1]
         expected_velocity = velocity_buffer.clone()
         expected_velocity[1] = original_velocity[1]
-        for state in (SimulationManager.get_state_0(), SimulationManager.get_state_1()):
-            state_pose, state_velocity = _expected_segment_state(cable, state, SimulationManager.get_model())
+        for state in (_manager().get_state_0(), _manager()._newton.get_state_1()):
+            state_pose, state_velocity = _expected_segment_state(cable, state, _manager().get_model())
             torch.testing.assert_close(state_pose, expected_pose)
             torch.testing.assert_close(state_velocity, expected_velocity)
         torch.testing.assert_close(cable.data.segment_pose_w.torch, expected_pose)
         torch.testing.assert_close(cable.data.segment_velocity_w.torch, expected_velocity)
-        assert wp.to_torch(SimulationManager._world_reset_mask).tolist() == [True, False, True, False]
-        assert not wp.to_torch(SimulationManager._fk_reset_mask).any()
+        assert wp.to_torch(_manager()._world_reset_mask).tolist() == [True, False, True, False]
+        assert not wp.to_torch(_manager()._fk_reset_mask).any()
 
 
 def test_cable_callback_does_not_retain_asset():
     sim_cfg = SimulationCfg(
         device="cpu",
-        physics=NewtonCfg(
-            solver_cfg=VBDSolverCfg(iterations=2),
+        physics=VBDSolverCfg(
+            iterations=2,
             use_cuda_graph=False,
         ),
     )
 
     with build_simulation_context(sim_cfg=sim_cfg) as sim:
-        scene = InteractiveScene(_CableSceneCfg(num_envs=1, env_spacing=1.0))
+        scene_cfg = _CableSceneCfg(num_envs=1, env_spacing=1.0)
+        scene = InteractiveScene(scene_cfg)
         sim.reset()
         cable = scene["cable"]
         callback_id = cable._physics_ready_handle.id
@@ -404,4 +415,4 @@ def test_cable_callback_does_not_retain_asset():
         gc.collect()
 
         assert cable_ref() is None
-        assert callback_id not in SimulationManager._callbacks
+        assert callback_id not in _manager()._callbacks

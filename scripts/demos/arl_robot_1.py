@@ -7,80 +7,91 @@
 
 .. code-block:: bash
 
-    # Usage with default PhysX physics and default kit visualizer.
+    # Usage with default PhysX physics and no visualizer.
     uv run python scripts/demos/arl_robot_1.py
 
     # Usage with Newton visualizer and default PhysX physics.
-    uv run python scripts/demos/arl_robot_1.py --visualizer newton
+    uv run python scripts/demos/arl_robot_1.py visualizer=newton_gl
 
 """
-
-"""Parse CLI first so we can decide whether to launch Isaac Sim Kit."""
 
 import argparse
 
 from isaaclab.app import add_launcher_args, launch_simulation
 
+from isaaclab_tasks.utils import preset, resolve_config, setup_preset_cli
+from isaaclab_tasks.utils.presets import MultiBackendSimulationCfg
+
 parser = argparse.ArgumentParser(
     description="View ARL Robot 1 with Lee Position Controller.",
     conflict_handler="resolve",
 )
-parser.add_argument("--physics", default="isaacsim_physx", choices=["isaacsim_physx"], help="Physics backend.")
 add_launcher_args(parser)
-parser.set_defaults(visualizer=["kit"])
-args_cli = parser.parse_args()
+args_cli, config_overrides = setup_preset_cli(parser)
 
 import torch
+from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
+from isaaclab.assets import ArticulationCfg, AssetBaseCfg
+from isaaclab.cloner import ReplicateSession
 
 ##
 # Pre-defined configs
 ##
-from isaaclab.physics import PhysicsCfg
+from isaaclab.utils.configclass import configclass
 
-from isaaclab_contrib.controllers.lee_position_control import LeePosController
 from isaaclab_contrib.controllers.lee_position_control_cfg import LeePosControllerCfg
 
 from isaaclab_assets.robots.arl_robot_1 import ARL_ROBOT_1_CFG
 
 
+@configclass
+class DemoCfg:
+    """ARL Robot 1 demo configuration."""
+
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(
+        dt=0.01,
+        device=args_cli.device,
+        physics=preset(default=PhysxCfg(), isaacsim_physx=PhysxCfg()),
+    )
+    light: AssetBaseCfg = AssetBaseCfg(
+        prim_path="/World/DomeLight",
+        spawn=sim_utils.DomeLightCfg(intensity=1000.0, color=(0.53, 0.81, 0.92)),
+    )
+    ground: AssetBaseCfg = AssetBaseCfg(prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg())
+    robot: ArticulationCfg = ARL_ROBOT_1_CFG.replace(prim_path="/World/Robot")
+    controller: LeePosControllerCfg = LeePosControllerCfg(
+        K_pos_range=((2.5, 2.5, 1.5), (3.5, 3.5, 2.0)),
+        K_vel_range=((2.5, 2.5, 1.5), (3.5, 3.5, 2.0)),
+        K_rot_range=((1.6, 1.6, 0.25), (1.85, 1.85, 0.4)),
+        K_angvel_range=((0.4, 0.4, 0.075), (0.5, 0.5, 0.09)),
+        max_inclination_angle_rad=1.0471975511965976,
+        max_yaw_rate=1.0471975511965976,
+    )
+
+
 def main():
     """Main function to spawn arl_robot_1."""
-    with launch_simulation(cfg=PhysicsCfg(), launcher_args=args_cli) as physics_cfg:
+    cfg = resolve_config(DemoCfg(), config_overrides)
+    with launch_simulation(cfg, args_cli):
         # Create simulation context
-        sim_cfg = sim_utils.SimulationCfg(dt=0.01, device=args_cli.device, physics=physics_cfg)
-        sim = sim_utils.SimulationContext(sim_cfg)
+        sim = sim_utils.SimulationContext(cfg.sim)
 
-        # Create a dome light with light blue color
-        light_cfg = sim_utils.DomeLightCfg(intensity=1000.0, color=(0.53, 0.81, 0.92))
-        light_cfg.func("/World/DomeLight", light_cfg)
-
-        # Spawn ground plane
-        ground_cfg = sim_utils.GroundPlaneCfg()
-        ground_cfg.func("/World/defaultGroundPlane", ground_cfg)
-
-        # Spawn robot
-        robot_cfg = ARL_ROBOT_1_CFG.replace(prim_path="/World/Robot")
-        robot_cfg.actuators["thrusters"].dt = sim_cfg.dt
-        robot = robot_cfg.class_type(robot_cfg)
+        cfg.robot.actuators["thrusters"].dt = cfg.sim.dt
+        with ReplicateSession((cfg.light, cfg.ground, cfg.robot), 1, 0.0):
+            cfg.light.class_type(cfg.light)
+            cfg.ground.class_type(cfg.ground)
+            robot = cfg.robot.class_type(cfg.robot)
 
         # Play the simulator
         sim.reset()
 
         # Create Lee position controller
-        controller_cfg = LeePosControllerCfg(
-            K_pos_range=((2.5, 2.5, 1.5), (3.5, 3.5, 2.0)),
-            K_vel_range=((2.5, 2.5, 1.5), (3.5, 3.5, 2.0)),
-            K_rot_range=((1.6, 1.6, 0.25), (1.85, 1.85, 0.4)),
-            K_angvel_range=((0.4, 0.4, 0.075), (0.5, 0.5, 0.09)),
-            max_inclination_angle_rad=1.0471975511965976,
-            max_yaw_rate=1.0471975511965976,
-        )
-        controller = LeePosController(controller_cfg, robot, num_envs=1, device=str(sim.device))
+        controller = cfg.controller.class_type(cfg.controller, robot, num_envs=1, device=str(sim.device))
 
         # Get allocation matrix and compute pseudoinverse
-        allocation_matrix = torch.tensor(robot_cfg.allocation_matrix, device=sim.device, dtype=torch.float32)
+        allocation_matrix = torch.tensor(cfg.robot.allocation_matrix, device=sim.device, dtype=torch.float32)
         # allocation_matrix is (6, num_thrusters), we need pseudoinverse for wrench -> thrust
         alloc_pinv = torch.linalg.pinv(allocation_matrix)  # Shape: (num_thrusters, 6)
 
@@ -108,7 +119,7 @@ def main():
             sim.step()
 
             # Update robot
-            robot.update(sim_cfg.dt)
+            robot.update(cfg.sim.dt)
 
 
 if __name__ == "__main__":

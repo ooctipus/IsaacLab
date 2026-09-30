@@ -23,8 +23,10 @@ import pytest
 import torch
 import warp as wp
 from isaaclab_physx.assets import RigidObjectCollection
+from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
+from isaaclab import cloner
 from isaaclab.assets import RigidObjectCfg, RigidObjectCollectionCfg
 from isaaclab.sim import build_simulation_context
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
@@ -62,11 +64,6 @@ def generate_cubes_scene(
         A tuple containing the rigid object representing the cubes and the origins of the cubes.
 
     """
-    origins = torch.tensor([(i * 3.0, 0, height) for i in range(num_envs)]).to(device)
-    # Create Top-level Xforms, one for each cube
-    for i, origin in enumerate(origins):
-        sim_utils.create_prim(f"/World/Table_{i}", "Xform", translation=origin)
-
     # Resolve spawn configuration
     if has_api:
         spawn_cfg = sim_utils.UsdFileCfg(
@@ -84,16 +81,20 @@ def generate_cubes_scene(
     cube_config_dict = {}
     for i in range(num_cubes):
         cube_object_cfg = RigidObjectCfg(
-            prim_path=f"/World/Table_[^/]*/Object_{i}",
+            prim_path=f"{{ENV_REGEX_NS}}/Object_{i}",
             spawn=spawn_cfg,
             init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 3 * i, height)),
         )
         cube_config_dict[f"cube_{i}"] = cube_object_cfg
     # create the rigid object collection
     cube_object_collection_cfg = RigidObjectCollectionCfg(rigid_objects=cube_config_dict)
-    cube_object_colection = RigidObjectCollection(cfg=cube_object_collection_cfg)
+    sim = sim_utils.SimulationContext.instance()
+    with cloner.ReplicateSession(
+        cube_object_collection_cfg.rigid_objects.values(), num_clones=num_envs, env_spacing=3.0
+    ):
+        cube_object_collection = cube_object_collection_cfg.class_type(cube_object_collection_cfg)
 
-    return cube_object_colection, origins
+    return cube_object_collection, sim.get_clone_plan().positions
 
 
 @pytest.fixture
@@ -104,7 +105,12 @@ def sim(request):
         gravity_enabled = request.getfixturevalue("gravity_enabled")
     else:
         gravity_enabled = True  # default to gravity enabled
-    with build_simulation_context(device=device, auto_add_lighting=True, gravity_enabled=gravity_enabled) as sim:
+    with build_simulation_context(
+        sim_cfg=sim_utils.SimulationCfg(
+            physics=PhysxCfg(), gravity=(0.0, 0.0, -9.81) if gravity_enabled else (0.0, 0.0, 0.0)
+        ),
+        device=device,
+    ) as sim:
         sim._app_control_on_stop_handle = None
         yield sim
 

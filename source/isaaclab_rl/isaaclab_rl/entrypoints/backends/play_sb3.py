@@ -26,12 +26,11 @@ from isaaclab_rl.entrypoints.common import (
     add_frontend_args,
     apply_video_recording,
     create_isaaclab_env,
-    pre_launch_video_config,
     request_determinism,
     resolve_checkpoint_selector,
-    resolve_play_task_name,
     show_run_summary,
     startup_screen,
+    validate_video_config,
 )
 from isaaclab_rl.sb3 import Sb3VecEnvWrapper, process_sb3_cfg
 from isaaclab_rl.utils.pretrained_checkpoint import (
@@ -65,9 +64,6 @@ parser.add_argument(
     default=None,
     help="Interval between video clips in env steps. Overrides the value in VideoRecorderCfg.",
 )
-parser.add_argument(
-    "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
-)
 parser.add_argument("--num_envs", type=int, default=None, help="Number of environments to simulate.")
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument(
@@ -91,7 +87,6 @@ parser.add_argument(
 add_launcher_args(parser)
 add_frontend_args(parser)
 args_cli, hydra_args = setup_preset_cli(parser, agent_library="sb3")
-args_cli.task = resolve_play_task_name(args_cli.task)
 
 if args_cli.video:
     args_cli.enable_cameras = True
@@ -102,7 +97,7 @@ sys.argv = [sys.argv[0]] + hydra_args
 def main():
     """Play with stable-baselines agent."""
     env_cfg, agent_cfg = resolve_task_config(args_cli.task, args_cli.agent, play_mode=not args_cli.train_env_cfg)
-    pre_launch_video_config(env_cfg, args_cli=args_cli)
+    validate_video_config(env_cfg, args_cli)
     with startup_screen(args_cli, num_stages=3) as screen:
         show_run_summary(screen, args_cli, env_cfg, library="sb3", action="play")
         screen.stage("Launching simulation")

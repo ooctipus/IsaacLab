@@ -22,15 +22,12 @@ import pytest
 import torch
 import warp as wp
 from isaaclab_physx.assets import SurfaceGripper, SurfaceGripperCfg
+from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
+from isaaclab import cloner
 from isaaclab.actuators import ImplicitActuatorCfg
-from isaaclab.assets import (
-    Articulation,
-    ArticulationCfg,
-    RigidObject,
-    RigidObjectCfg,
-)
+from isaaclab.assets import Articulation, ArticulationCfg
 from isaaclab.sim import build_simulation_context
 from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR
 from isaaclab.utils.version import get_isaac_sim_version, has_kit
@@ -110,35 +107,19 @@ def generate_surface_gripper(
     Returns:
         A tuple containing the surface gripper, the articulation, and the translations of the surface grippers.
     """
-    # Generate translations of 2.5 m in x for each articulation
-    translations = torch.zeros(num_surface_grippers, 3, device=device)
-    translations[:, 0] = torch.arange(num_surface_grippers) * 2.5
+    articulation_cfg = articulation_cfg.replace(prim_path="/World/Env_[^/]+/Robot")
+    surface_gripper_cfg = surface_gripper_cfg.replace(prim_path="/World/Env_[^/]+/Robot/Gripper/SurfaceGripper")
+    sim = sim_utils.SimulationContext.instance()
+    with cloner.ReplicateSession(
+        [articulation_cfg, surface_gripper_cfg],
+        num_clones=num_surface_grippers,
+        env_spacing=2.5,
+        env_template="/World/Env_{}",
+    ):
+        articulation = articulation_cfg.class_type(articulation_cfg)
+        surface_gripper = surface_gripper_cfg.class_type(surface_gripper_cfg)
 
-    # Create Top-level Xforms, one for each articulation
-    for i in range(num_surface_grippers):
-        sim_utils.create_prim(f"/World/Env_{i}", "Xform", translation=translations[i][:3])
-    articulation = Articulation(articulation_cfg.replace(prim_path="/World/Env_[^/]*/Robot"))
-    surface_gripper_cfg = surface_gripper_cfg.replace(prim_path="/World/Env_[^/]*/Robot/Gripper/SurfaceGripper")
-    surface_gripper = SurfaceGripper(surface_gripper_cfg)
-
-    return surface_gripper, articulation, translations
-
-
-def generate_grippable_object(sim, num_grippable_objects: int):
-    object_cfg = RigidObjectCfg(
-        prim_path="/World/Env_[^/]*/Object",
-        spawn=sim_utils.CuboidCfg(
-            size=(1.0, 1.0, 1.0),
-            rigid_props=sim_utils.RigidBodyPropertiesCfg(),
-            mass_props=sim_utils.MassPropertiesCfg(mass=1.0),
-            collision_props=sim_utils.CollisionPropertiesCfg(),
-            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0)),
-        ),
-        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 0.5)),
-    )
-    grippable_object = RigidObject(object_cfg)
-
-    return grippable_object
+    return surface_gripper, articulation, sim.get_clone_plan().positions
 
 
 @pytest.fixture
@@ -149,12 +130,11 @@ def sim(request):
         gravity_enabled = request.getfixturevalue("gravity_enabled")
     else:
         gravity_enabled = True  # default to gravity enabled
-    if "add_ground_plane" in request.fixturenames:
-        add_ground_plane = request.getfixturevalue("add_ground_plane")
-    else:
-        add_ground_plane = False  # default to no ground plane
     with build_simulation_context(
-        device=device, auto_add_lighting=True, gravity_enabled=gravity_enabled, add_ground_plane=add_ground_plane
+        sim_cfg=sim_utils.SimulationCfg(
+            physics=PhysxCfg(), gravity=(0.0, 0.0, -9.81) if gravity_enabled else (0.0, 0.0, 0.0)
+        ),
+        device=device,
     ) as sim:
         sim._app_control_on_stop_handle = None
         yield sim
@@ -162,13 +142,12 @@ def sim(request):
 
 @pytest.mark.parametrize("num_articulations", [1])
 @pytest.mark.parametrize("device", ["cpu"])
-@pytest.mark.parametrize("add_ground_plane", [True])
 @pytest.mark.isaacsim_ci
 @pytest.mark.skipif(
     _RUNNING_CI,
     reason="Isaac Sim SurfaceGripperView initialization can deadlock in CI; keep CUDA fail-fast coverage only.",
 )
-def test_initialization(sim, num_articulations, device, add_ground_plane) -> None:
+def test_initialization(sim, num_articulations, device) -> None:
     """Test initialization for articulation with a surface gripper.
 
     This test verifies that:
@@ -179,7 +158,6 @@ def test_initialization(sim, num_articulations, device, add_ground_plane) -> Non
     Args:
         num_articulations: The number of articulations to initialize.
         device: The device to run the test on.
-        add_ground_plane: Whether to add a ground plane to the simulation.
     """
     if has_kit() and get_isaac_sim_version().major < 5:
         return
@@ -212,13 +190,12 @@ def test_initialization(sim, num_articulations, device, add_ground_plane) -> Non
 
 @pytest.mark.parametrize("num_articulations", [1])
 @pytest.mark.parametrize("device", ["cpu"])
-@pytest.mark.parametrize("add_ground_plane", [True])
 @pytest.mark.isaacsim_ci
 @pytest.mark.skipif(
     _RUNNING_CI,
     reason="Isaac Sim SurfaceGripperView initialization can deadlock in CI; keep CUDA fail-fast coverage only.",
 )
-def test_close_and_open_command(sim, num_articulations, device, add_ground_plane) -> None:
+def test_close_and_open_command(sim, num_articulations, device) -> None:
     """Test that the close/open commands actually drive the surface gripper status.
 
     This is a regression test for the command plumbing: a single ``close`` command must move the
@@ -234,7 +211,6 @@ def test_close_and_open_command(sim, num_articulations, device, add_ground_plane
     Args:
         num_articulations: The number of articulations to initialize.
         device: The device to run the test on.
-        add_ground_plane: Whether to add a ground plane to the simulation.
     """
     if has_kit() and get_isaac_sim_version().major < 5:
         return
@@ -276,9 +252,8 @@ def test_close_and_open_command(sim, num_articulations, device, add_ground_plane
 
 
 @pytest.mark.parametrize("device", ["cuda:0"])
-@pytest.mark.parametrize("add_ground_plane", [True])
 @pytest.mark.isaacsim_ci
-def test_raise_error_if_not_cpu(sim, device, add_ground_plane) -> None:
+def test_raise_error_if_not_cpu(sim, device) -> None:
     """Test that the SurfaceGripper raises an error if the device is not CPU."""
     if has_kit() and get_isaac_sim_version().major < 5:
         return

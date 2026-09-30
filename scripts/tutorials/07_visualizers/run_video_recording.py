@@ -43,7 +43,6 @@ from __future__ import annotations
 import argparse
 import contextlib
 import os
-import sys
 
 import gymnasium as gym
 import torch
@@ -84,9 +83,9 @@ def _output_dir(example: int) -> str:
 
 def _shadow_env_cfg(num_envs: int, env_spacing: float = _SHADOW_ENV_SPACING):
     """Build a base Shadow Hand camera env cfg shared by all examples."""
-    env_cfg, _ = resolve_task_config(_TASK_SHADOW, "", overrides=(*sys.argv[1:], "env.tiled_camera=rgb"))
-    env_cfg.tiled_camera.height = 256
-    env_cfg.tiled_camera.width = 256
+    env_cfg, _ = resolve_task_config(_TASK_SHADOW, None, overrides=(*config_overrides, "env.scene.camera=rgb"))
+    env_cfg.scene.camera.height = 256
+    env_cfg.scene.camera.width = 256
     env_cfg.scene.num_envs = num_envs
     env_cfg.scene.env_spacing = env_spacing
     return env_cfg
@@ -126,7 +125,7 @@ def _build_env_cfg_example_2(num_envs: int):
     out = _output_dir(2)
     env_cfg.video_recorders = [
         VideoRecorderCfg(
-            source="sensor:tiled_camera",
+            source="sensor:camera",
             output_dir=out,
             output_filename_prefix="sensor",
             video_length=_VIDEO_LENGTH,
@@ -139,7 +138,7 @@ def _build_env_cfg_example_2(num_envs: int):
 def _build_env_cfg_example_3(num_envs: int):
     """Shadow Hand + Kit viewport + Kit tiled grid + Newton viewport + sensor: four simultaneous streams.
 
-    Note: ``source='visualizer:newton'`` captures the full Newton GL window. When
+    Note: ``source='visualizer:newton_gl'`` captures the full Newton GL window. When
     ``streaming_view=True`` is set on :class:`~isaaclab_visualizers.newton.NewtonGLVisualizerCfg`,
     the GL window displays the per-environment camera panel, so this effectively records
     a Newton streaming view without a separate ``render_tiled_rgb_array()`` call.
@@ -153,9 +152,8 @@ def _build_env_cfg_example_3(num_envs: int):
         lookat=_SHADOW_LOOKAT,
         streaming_view=True,
         streaming_envs=min(num_envs, 16),
-        # No streaming_sensor_prim_path/streaming_cam_target_prim_path: adopts the existing
-        # tiled_camera sensor automatically, so the streaming panel shows the same
-        # RTX-rendered views as source="sensor:tiled_camera".
+        # The streaming panel adopts the existing scene camera and shows the same
+        # RTX-rendered views as source="sensor:camera".
     )
     newton_cfg = NewtonGLVisualizerCfg(
         eye=_SHADOW_EYE,
@@ -185,14 +183,14 @@ def _build_env_cfg_example_3(num_envs: int):
             step_offset=_KIT_STEP_OFFSET,
         ),
         VideoRecorderCfg(
-            source="visualizer:newton",
+            source="visualizer:newton_gl",
             output_dir=out,
             output_filename_prefix="newton_viewport",
             video_length=_VIDEO_LENGTH,
             fps=30,
         ),
         VideoRecorderCfg(
-            source="sensor:tiled_camera",
+            source="sensor:camera",
             output_dir=out,
             output_filename_prefix="sensor",
             video_length=_VIDEO_LENGTH,
@@ -217,8 +215,7 @@ parser.add_argument(
 )
 parser.add_argument("--num_envs", type=int, default=None, help="Number of environments to simulate.")
 add_launcher_args(parser)
-args_cli, hydra_args = setup_preset_cli(parser)
-sys.argv = [sys.argv[0]] + hydra_args
+args_cli, config_overrides = setup_preset_cli(parser)
 
 
 def main():

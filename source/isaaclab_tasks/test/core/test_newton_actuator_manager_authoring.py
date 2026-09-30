@@ -17,8 +17,7 @@ simulation_app = AppLauncher(headless=True).app
 
 import unittest  # noqa: E402
 
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg  # noqa: E402
-from isaaclab_newton.physics import NewtonManager as SimulationManager  # noqa: E402
+from isaaclab_newton.physics import MJWarpSolverCfg  # noqa: E402
 
 from isaaclab.actuators import DCMotorCfg  # noqa: E402
 from isaaclab.envs import ManagerBasedRLEnv  # noqa: E402
@@ -27,14 +26,12 @@ from isaaclab.sim import SimulationCfg  # noqa: E402
 import isaaclab_tasks  # noqa: F401, E402
 from isaaclab_tasks.core.velocity.config.g1.flat_env_cfg import G1FlatEnvCfg  # noqa: E402
 
-_NEWTON_CFG = NewtonCfg(
-    solver_cfg=MJWarpSolverCfg(
-        njmax=95,
-        nconmax=10,
-        cone="pyramidal",
-        impratio=1,
-        integrator="implicitfast",
-    ),
+_NEWTON_CFG = MJWarpSolverCfg(
+    njmax=95,
+    nconmax=10,
+    cone="pyramidal",
+    impratio=1,
+    integrator="implicitfast",
     num_substeps=1,
     debug_mode=False,
 )
@@ -74,7 +71,7 @@ class TestManagerBasedSceneNewtonActuatorAuthoring(unittest.TestCase):
                 "Expected authored NewtonActuator prims in manager-based scene workflow.",
             )
             self.assertGreater(
-                len(SimulationManager.get_model().actuators),
+                len(env.unwrapped.sim._physics_manager.get_model().actuators),
                 0,
                 "Expected Newton model actuators to be non-empty with use_newton_actuators=True.",
             )

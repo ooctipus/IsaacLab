@@ -15,12 +15,13 @@ simulation_app = AppLauncher(headless=True).app
 
 import pytest
 import torch
+from isaaclab_physx.physics import PhysxCfg
 
 from pxr import Sdf, UsdShade
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import AssetBaseCfg, VisualMaterial, VisualMaterialCfg
-from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
+from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim import build_simulation_context
 from isaaclab.utils.configclass import configclass
 
@@ -62,9 +63,7 @@ class _VisualMaterialSceneCfg(InteractiveSceneCfg):
                     visual_material_bindings={"body": "/World/shared"},
                 ),
             ],
-            random_choice=False,
         ),
-        cloning_contexts=("isaaclab.cloner:UsdReplicateContext",),
     )
 
 
@@ -89,27 +88,39 @@ def Xform "Robot"
     )
 
     with build_simulation_context(
-        device="cuda:0", gravity_enabled=False, add_ground_plane=False, auto_add_lighting=False
+        sim_cfg=sim_utils.SimulationCfg(physics=PhysxCfg(), gravity=(0.0, 0.0, 0.0)), device="cuda:0"
     ) as sim:
         cfg = _VisualMaterialSceneCfg(num_envs=12, env_spacing=1.0, replicate_physics=False, filter_collisions=False)
         for variant in cfg.robot.spawn.assets_cfg:
             variant.usd_path = str(asset_path)
 
-        scene = InteractiveScene(cfg)
+        scene = cfg.class_type(cfg)
         sim.reset()
 
         assert scene.num_envs == 12
-        assert len(scene.clone_plan.sources) == 3
-        assert scene.clone_plan.destinations == ("/World/envs/env_{}/Robot",) * 3
-        assert scene.clone_plan.cfg_rows[id(cfg.robot)] == (0, 1, 2)
-        assert id(cfg.warm) not in scene.clone_plan.cfg_rows
-        assert id(cfg.cool) not in scene.clone_plan.cfg_rows
+        assert scene.clone_plan.destinations == (
+            "/World/envs/env_{}/Robot/warm",
+            "/World/envs/env_{}/Robot/cool",
+            *("/World/envs/env_{}/Robot",) * 3,
+            "/World/shared",
+        )
+        assert tuple(scene.clone_plan.cfg_rows[id(item)] for item in (cfg.warm, cfg.cool, cfg.robot, cfg.shared)) == (
+            (0,),
+            (1,),
+            (2, 3, 4),
+            (5,),
+        )
         assert scene["warm"].num_instances == scene["cool"].num_instances == 12
         assert scene["shared"].num_instances == 1
+        robot_rows = scene.clone_plan.cfg_rows[id(cfg.robot)]
+        robot_materials = dict(zip(robot_rows, ("warm", "cool", None)))
+        env_columns = {int(env_id): column for column, env_id in enumerate(scene.clone_plan.env_ids.tolist())}
         for env_id in range(scene.num_envs):
             for cloned_material in ("warm", "cool"):
                 assert scene.stage.GetPrimAtPath(f"/World/envs/env_{env_id}/Robot/{cloned_material}").IsValid()
-            material_name = ("warm", "cool", None)[env_id % 3]
+            material_name = robot_materials[
+                next(row for row in robot_rows if scene.clone_plan.clone_mask[row, env_columns[env_id]])
+            ]
             material_path = (
                 "/World/shared" if material_name is None else f"/World/envs/env_{env_id}/Robot/{material_name}"
             )

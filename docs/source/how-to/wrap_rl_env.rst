@@ -42,82 +42,32 @@ For example, here is how you would wrap an environment to enforce that reset is 
     env = gym.wrappers.OrderEnforcing(env)
 
 
-Wrapper for recording videos
-----------------------------
+Recording videos
+----------------
 
-The :class:`gymnasium.wrappers.RecordVideo` wrapper can be used to record videos of the environment.
-The wrapper takes a ``video_dir`` argument, which specifies where to save the videos. The videos are saved in
-`mp4 <https://en.wikipedia.org/wiki/MP4_file_format>`__ format at specified intervals for specified
-number of environment steps or episodes.
+Configure video capture on the environment before constructing it. The visualizer owns the
+viewpoint, and the recorder selects that visualizer as its source:
 
-To use the wrapper, you need to first install ``ffmpeg``. On Ubuntu, you can install it by running:
+.. code-block:: python
 
-.. code-block:: bash
+    from isaaclab.envs.utils.video_recorder_cfg import VideoRecorderCfg
+    from isaaclab_visualizers.kit import KitVisualizerCfg
 
-    sudo apt-get install ffmpeg
+    env_cfg.sim.visualizer_cfgs = [
+        KitVisualizerCfg(eye=(1.0, 1.0, 1.0), lookat=(0.0, 0.0, 0.0))
+    ]
+    env_cfg.video_recorders = [
+        VideoRecorderCfg(
+            source="visualizer:kit",
+            output_dir="videos/train",
+            video_interval=1500,
+            video_length=200,
+        )
+    ]
 
-.. attention::
-
-  By default, when running an environment in headless mode, the Omniverse viewport is disabled. This is done to
-  improve performance by avoiding unnecessary rendering.
-
-  We notice the following performance in different rendering modes with the  ``Isaac-Reach-Franka`` environment
-  using an RTX 3090 GPU:
-
-  * No GUI execution without off-screen rendering enabled: ~65,000 FPS
-  * No GUI execution with off-screen enabled: ~57,000 FPS
-  * GUI execution with full rendering: ~13,000 FPS
-
-
-The viewport camera used for rendering is the default camera in the scene called ``"/OmniverseKit_Persp"``.
-The camera's pose and image resolution can be configured through the
-:class:`~envs.ViewerCfg` class.
-
-
-.. dropdown:: Default parameters of the ViewerCfg class:
-    :icon: code
-
-    .. literalinclude:: ../../../source/isaaclab/isaaclab/envs/common.py
-        :language: python
-        :pyobject: ViewerCfg
-
-
-After adjusting the parameters, you can record videos by wrapping the environment with the
-:class:`gymnasium.wrappers.RecordVideo` wrapper and enabling the off-screen rendering
-flag. Additionally, you need to specify the render mode of the environment as ``"rgb_array"``.
-
-As an example, the following code records a video of the ``Isaac-Reach-Franka`` environment
-for 200 steps, and saves it in the ``videos`` folder at a step interval of 1500 steps.
-
-.. code:: python
-
-    """Launch Isaac Sim Simulator first."""
-
-
-    from isaaclab.app import AppLauncher
-
-    # launch omniverse app in headless mode with off-screen rendering
-    app_launcher = AppLauncher(headless=True, enable_cameras=True)
-    simulation_app = app_launcher.app
-
-    """Rest everything follows."""
-
-    import gymnasium as gym
-
-    # adjust camera resolution and pose
-    env_cfg.viewer.resolution = (640, 480)
-    env_cfg.viewer.eye = (1.0, 1.0, 1.0)
-    env_cfg.viewer.lookat = (0.0, 0.0, 0.0)
-    # create isaac-env instance
-    # set render mode to rgb_array to obtain images on render calls
-    env = gym.make(task_name, cfg=env_cfg, render_mode="rgb_array")
-    # wrap for video recording
-    video_kwargs = {
-        "video_folder": "videos/train",
-        "step_trigger": lambda step: step % 1500 == 0,
-        "video_length": 200,
-    }
-    env = gym.wrappers.RecordVideo(env, **video_kwargs)
+The environment advances each recorder from ``env.step()``; no Gym wrapper or
+``render_mode="rgb_array"`` is required. See :doc:`/source/how-to/record_video` for source
+selection, headless requirements, and camera-sensor recording.
 
 
 Wrapper for learning frameworks

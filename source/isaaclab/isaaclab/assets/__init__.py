@@ -3,23 +3,17 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Sub-package for different assets, such as rigid objects and articulations.
+"""Sub-package for scene assets, such as lights, rigid objects, and articulations.
 
-An asset is a physical object that can be spawned in the simulation. The class handles both
-the spawning of the asset into the USD stage as well as initialization of necessary physics
-handles to interact with the asset.
+An :class:`Asset` authors one plan-owned scene asset. :class:`AssetBase` extends it with the
+physics handles and data buffers needed to interact with runtime simulation state.
 
-Upon construction of the asset instance, the prim corresponding to the asset is spawned into the
-USD stage if the spawn configuration is not None. The spawn configuration is defined in the
-:attr:`AssetBaseCfg.spawn` attribute. In case the configured :attr:`AssetBaseCfg.prim_path` is
-an expression, then the prim is spawned at all the matching paths. Otherwise, a single prim is
-spawned at the configured path. For more information on the spawn configuration, see the
-:mod:`isaaclab.sim.spawners` module.
+Construction uses the active clone plan to author the prototype paths assigned to the asset. The
+clone lifecycle then populates their declared destinations. See :attr:`AssetBaseCfg.spawn` and
+:mod:`isaaclab.sim.spawners` for authoring configuration.
 
-The asset class also registers callbacks for the stage play/stop events. These are used to
-construct the physics handles for the asset as the physics engine is only available when the
-stage is playing. Additionally, the class registers a callback for debug visualization of the
-asset. This can be enabled by setting the :attr:`AssetBaseCfg.debug_vis` attribute to True.
+Runtime asset classes register callbacks that construct physics handles when simulation starts and
+provide optional debug visualization through :attr:`AssetBaseCfg.debug_vis`.
 
 The asset class follows the following naming convention for its methods:
 

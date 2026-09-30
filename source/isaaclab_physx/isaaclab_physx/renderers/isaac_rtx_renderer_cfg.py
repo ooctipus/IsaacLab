@@ -7,12 +7,10 @@
 
 from __future__ import annotations
 
-from dataclasses import field
 from typing import TYPE_CHECKING, Any, Literal
 
 from isaaclab.renderers.renderer_cfg import RendererCfg
 from isaaclab.utils.configclass import configclass
-from isaaclab.utils.renderers import isaac_rtx_per_env_scene_partition_enabled
 
 if TYPE_CHECKING:
     from .isaac_rtx_renderer import IsaacRtxRenderer
@@ -123,14 +121,6 @@ class IsaacRtxRendererCfg(RendererCfg):
 
     global_settings: IsaacRtxRendererGlobalSettingsCfg = IsaacRtxRendererGlobalSettingsCfg()
     """Global Kit/RTX quality settings applied before RTX Hydra attach."""
-
-    enable_scene_partitioning: bool = field(default_factory=isaac_rtx_per_env_scene_partition_enabled)
-    """Enable per-environment scene-partition authoring.
-
-    Enabled by default. Assigning this field explicitly overrides the construction
-    default. The legacy ``ISAAC_LAB_ENABLE_ISAAC_RTX_PER_ENV_SCENE_PARTITION``
-    environment variable still supplies that default when set.
-    """
 
     semantic_filter: str | list[str] = "*:*"
     """A string or a list specifying a semantic filter predicate. Defaults to ``"*:*"``.

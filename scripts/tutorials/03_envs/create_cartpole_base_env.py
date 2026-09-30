@@ -18,22 +18,18 @@ scene, action, observation and event managers to create an environment.
 
 import argparse
 
-from isaaclab.app import AppLauncher
+from isaaclab.app import add_launcher_args, launch_simulation
+
+from isaaclab_tasks.utils import preset, resolve_config, setup_preset_cli
+from isaaclab_tasks.utils.presets import MultiBackendSimulationCfg
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Tutorial on creating a cartpole base environment.")
 parser.add_argument("--num_envs", type=int, default=16, help="Number of environments to spawn.")
 
-# append AppLauncher cli args
-AppLauncher.add_app_launcher_args(parser)
-# parse the arguments
-args_cli = parser.parse_args()
-
-# launch omniverse app
-app_launcher = AppLauncher(args_cli)
-simulation_app = app_launcher.app
-
-"""Rest everything follows."""
+# append launcher arguments and parse Hydra-style preset overrides
+add_launcher_args(parser)
+args_cli, config_overrides = setup_preset_cli(parser)
 
 import math
 
@@ -46,9 +42,12 @@ from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils.configclass import configclass
-from isaaclab.visualizers import VisualizerCfg
 
 from isaaclab_tasks.core.cartpole.cartpole_manager_env_cfg import CartpoleSceneCfg
+
+from isaaclab_newton.physics import MJWarpSolverCfg  # isort:skip
+from isaaclab_ov.physics import OvPhysxCfg  # isort:skip
+from isaaclab_physx.physics import PhysxCfg  # isort:skip
 
 
 @configclass
@@ -125,51 +124,42 @@ class CartpoleEnvCfg(ManagerBasedEnvCfg):
     observations = ObservationsCfg()
     actions = ActionsCfg()
     events = EventCfg()
-
-    def __post_init__(self):
-        """Post initialization."""
-        # viewer settings
-        self.sim.default_visualizer_cfg = VisualizerCfg(eye=(4.5, 0.0, 6.0), lookat=(0.0, 0.0, 2.0))
-        # step settings
-        self.decimation = 4  # env step every 4 sim steps: 200Hz / 4 = 50Hz
-        # simulation settings
-        self.sim.dt = 0.005  # sim step every 5ms: 200Hz
+    decimation = 4  # env step every 4 sim steps: 200Hz / 4 = 50Hz
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(
+        dt=0.005,
+        render_interval=decimation,
+        device=args_cli.device,
+        physics=preset(
+            default=PhysxCfg(),
+            isaacsim_physx=PhysxCfg(),
+            ovphysx=OvPhysxCfg(),
+            newton_mjwarp=MJWarpSolverCfg(),
+        ),
+    )
 
 
 def main():
     """Main function."""
-    # parse the arguments
-    env_cfg = CartpoleEnvCfg()
+    env_cfg = resolve_config(CartpoleEnvCfg(), config_overrides)
     env_cfg.scene.num_envs = args_cli.num_envs
-    env_cfg.sim.device = args_cli.device
-    # setup base environment
-    env = ManagerBasedEnv(cfg=env_cfg)
+    with launch_simulation(env_cfg, args_cli):
+        env = ManagerBasedEnv(cfg=env_cfg)
 
-    # simulate physics
-    count = 0
-    while simulation_app.is_running():
-        with torch.inference_mode():
-            # reset
-            if count % 300 == 0:
-                count = 0
-                env.reset()
-                print("-" * 80)
-                print("[INFO]: Resetting environment...")
-            # sample random actions
-            joint_efforts = torch.randn_like(env.action_manager.action)
-            # step the environment
-            obs, _ = env.step(joint_efforts)
-            # print current orientation of pole
-            print("[Env 0]: Pole joint: ", obs["policy"][0][1].item())
-            # update counter
-            count += 1
+        count = 0
+        while env.sim.is_headless_or_exist_active_visualizer():
+            with torch.inference_mode():
+                if count % 300 == 0:
+                    count = 0
+                    env.reset()
+                    print("-" * 80)
+                    print("[INFO]: Resetting environment...")
+                joint_efforts = torch.randn_like(env.action_manager.action)
+                obs, _ = env.step(joint_efforts)
+                print("[Env 0]: Pole joint: ", obs["policy"][0][1].item())
+                count += 1
 
-    # close the environment
-    env.close()
+        env.close()
 
 
 if __name__ == "__main__":
-    # run the main function
     main()
-    # close sim app
-    simulation_app.close()

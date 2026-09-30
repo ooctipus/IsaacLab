@@ -735,7 +735,7 @@ def test_attachment_validity(setup_sim):
     sim, scene = setup_sim
     pva_world_cfg = PvaCfg(prim_path="/World/envs/env_0")
     with pytest.raises(RuntimeError) as exc_info:
-        pva_world = Pva(pva_world_cfg)
+        pva_world = pva_world_cfg.class_type(pva_world_cfg)
         pva_world._initialize_impl()
     assert exc_info.type is RuntimeError and "find a rigid body ancestor prim" in str(exc_info.value)
 

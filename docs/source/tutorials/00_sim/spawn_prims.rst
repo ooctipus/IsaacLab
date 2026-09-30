@@ -64,27 +64,16 @@ While working with direct USD APIs provides a lot of flexibility, it can be cumb
 easier to design scenes, Isaac Lab builds on top of the USD APIs to provide a configuration-driven interface to spawn prims
 into a scene. These are included in the :mod:`sim.spawners` module.
 
-When spawning prims into the scene, each prim requires a configuration class instance that defines the prim's attributes
-and relationships (through material and shading information). The configuration class is then passed to its respective
-function where the prim name and transformation are specified. The function then spawns the prim into the scene.
+Each prim is represented by an :class:`assets.AssetBaseCfg` that declares its path, spawn configuration, and initial
+transform. :class:`TutorialCfg` owns all of these asset configurations alongside the simulation configuration. The
+script gives that complete declarative input to a :class:`cloner.ReplicateSession`; the resulting clone plan supplies
+the source paths used to spawn every asset.
 
-At a high-level, this is how it works:
+.. literalinclude:: ../../../../scripts/tutorials/00_sim/spawn_prims.py
+   :language: python
+   :pyobject: TutorialCfg
 
-.. code-block:: python
-
-   # Create a configuration class instance
-   cfg = MyPrimCfg()
-   prim_path = "/path/to/prim"
-
-   # Spawn the prim into the scene using the corresponding spawner function
-   spawn_my_prim(prim_path, cfg, translation=[0, 0, 0], orientation=[1, 0, 0, 0], scale=[1, 1, 1])
-   # OR
-   # Use the spawner function directly from the configuration class
-   cfg.func(prim_path, cfg, translation=[0, 0, 0], orientation=[1, 0, 0, 0], scale=[1, 1, 1])
-
-
-In this tutorial, we demonstrate the spawning of various different prims into the scene. For more
-information on the available spawners, please refer to the :mod:`sim.spawners` module in Isaac Lab.
+For more information on the available spawn configurations, refer to the :mod:`sim.spawners` module.
 
 .. attention::
 
@@ -98,12 +87,7 @@ Spawning a ground plane
 -----------------------
 
 The :class:`~sim.spawners.from_files.GroundPlaneCfg` configures a grid-like ground plane with
-modifiable properties such as its appearance and size.
-
-.. literalinclude:: ../../../../scripts/tutorials/00_sim/spawn_prims.py
-   :language: python
-   :start-at: # Ground-plane
-   :end-at: cfg_ground.func("/World/defaultGroundPlane", cfg_ground)
+modifiable properties such as its appearance and size. The tutorial assigns it to the ``ground`` asset configuration.
 
 
 Spawning lights
@@ -111,45 +95,23 @@ Spawning lights
 
 It is possible to spawn `different light prims`_ into the stage. These include distant lights, sphere lights, disk
 lights, and cylinder lights. In this tutorial, we spawn a distant light which is a light that is infinitely far away
-from the scene and shines in a single direction.
-
-.. literalinclude:: ../../../../scripts/tutorials/00_sim/spawn_prims.py
-   :language: python
-   :start-at: # spawn distant light
-   :end-at: cfg_light_distant.func("/World/lightDistant", cfg_light_distant, translation=(1, 0, 10))
+from the scene and shines in a single direction. Its position is part of the ``light`` asset's initial-state
+configuration.
 
 
 Spawning primitive shapes
 -------------------------
 
-Before spawning primitive shapes, we introduce the concept of a transform prim or Xform. A transform prim is a prim that
-contains only transformation properties. It is used to group other prims under it and to transform them as a group.
-Here we make an Xform prim to group all the primitive shapes under it.
-
-.. literalinclude:: ../../../../scripts/tutorials/00_sim/spawn_prims.py
-   :language: python
-   :start-at: # create a new xform prim for all objects to be spawned under
-   :end-at: sim_utils.create_prim("/World/Objects", "Xform")
-
-Next, we spawn a cone using the :class:`~sim.spawners.shapes.ConeCfg` class. It is possible to specify
+We configure cones using the :class:`~sim.spawners.shapes.ConeCfg` class. It is possible to specify
 the radius, height, physics properties, and material properties of the cone. By default, the physics and material
-properties are disabled.
+properties are disabled. Their declared paths place them below ``/World/Objects``; the clone lifecycle creates the
+required hierarchy.
 
 The first two cones we spawn ``Cone1`` and ``Cone2`` are visual elements and do not have physics enabled.
-
-.. literalinclude:: ../../../../scripts/tutorials/00_sim/spawn_prims.py
-   :language: python
-   :start-at: # spawn a red cone
-   :end-at: cfg_cone.func("/World/Objects/Cone2", cfg_cone, translation=(-1.0, -1.0, 1.0))
 
 For the third cone ``ConeRigid``, we add rigid body physics to it by setting the attributes for that in the configuration
 class. Through these attributes, we can specify the mass, friction, and restitution of the cone. If unspecified, they
 default to the default values set by USD Physics.
-
-.. literalinclude:: ../../../../scripts/tutorials/00_sim/spawn_prims.py
-   :language: python
-   :start-at: # spawn a green cone with colliders and rigid body
-   :end-before: # spawn a blue cuboid with deformable body
 
 Lastly, we spawn a cuboid ``CuboidDeformable`` which contains deformable body physics properties. Unlike the
 rigid body simulation, a deformable body can have relative motion between its vertices. This is useful for simulating
@@ -157,22 +119,12 @@ soft bodies like cloth, rubber, or jello. It is important to note that deformabl
 GPU simulation and require a mesh object to be spawned with deformable body physics properties and a deformable
 physics material. This example uses the PhysX-specific deformable property and material cfgs.
 
-.. literalinclude:: ../../../../scripts/tutorials/00_sim/spawn_prims.py
-   :language: python
-   :start-at: # spawn a blue cuboid with deformable body
-   :end-before: # spawn a usd file of a table into the scene
-
 Spawning from another file
 --------------------------
 
 Lastly, it is possible to spawn prims from other file formats such as other USD, URDF, or OBJ files. In this tutorial,
 we spawn a USD file of a table into the scene. The table is a mesh prim and has a material prim associated with it.
 All of this information is stored in its USD file.
-
-.. literalinclude:: ../../../../scripts/tutorials/00_sim/spawn_prims.py
-   :language: python
-   :start-at: # spawn a usd file of a table into the scene
-   :end-at: cfg.func("/World/Objects/Table", cfg, translation=(0.0, 0.0, 1.05))
 
 The table above is added as a reference to the scene. In layman terms, this means that the table is not actually added
 to the scene, but a ``pointer`` to the table asset is added. This allows us to modify the table asset and have the changes

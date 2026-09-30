@@ -9,9 +9,9 @@ from __future__ import annotations
 
 from isaaclab_newton.physics import (
     MJWarpSolverCfg,
-    NewtonCfg,
     NewtonCollisionPipelineCfg,
     NewtonSoftContactCfg,
+    NewtonSolverCfg,
     VBDSolverCfg,
 )
 from isaaclab_newton.sim.schemas import NewtonDeformableBodyPropertiesCfg
@@ -55,42 +55,40 @@ from .franka_soft_env_cfg import (
 
 @configclass
 class PhysicsCfg(PresetCfg):
-    newton_mjwarp_vbd_proxy: NewtonCfg = NewtonCfg(
-        solver_cfg=CouplerProxyCfg(
-            entries=[
-                CouplerEntryCfg(
-                    name="rigid",
-                    solver_cfg=MJWarpSolverCfg(
-                        cone="elliptic",
-                        ls_iterations=20,
-                        integrator="implicitfast",
-                    ),
-                    bodies=[r"/World/envs/env_[^/]+/Robot", r"/World/envs/env_[^/]+/Support(Neg|Pos)Y"],
+    newton_mjwarp_vbd_proxy: NewtonSolverCfg = CouplerProxyCfg(
+        entries=[
+            CouplerEntryCfg(
+                name="rigid",
+                solver_cfg=MJWarpSolverCfg(
+                    cone="elliptic",
+                    ls_iterations=20,
+                    integrator="implicitfast",
                 ),
-                CouplerEntryCfg(
-                    name="soft",
-                    solver_cfg=VBDSolverCfg(iterations=10, rigid_body_particle_contact_buffer_size=1024),
-                    all_particles=True,
-                    include_static_shapes=True,
+                bodies=[r"/World/envs/env_[^/]+/Robot", r"/World/envs/env_[^/]+/Support(Neg|Pos)Y"],
+            ),
+            CouplerEntryCfg(
+                name="soft",
+                solver_cfg=VBDSolverCfg(iterations=10, rigid_body_particle_contact_buffer_size=1024),
+                all_particles=True,
+                include_static_shapes=True,
+            ),
+        ],
+        proxies=[
+            CouplerProxyMappingCfg(
+                source="rigid",
+                destination="soft",
+                bodies=[
+                    r"/World/envs/env_[^/]+/Robot/Geometry/.*panda_hand",
+                    r"/World/envs/env_[^/]+/Robot/Geometry/.*panda_(left|right)finger",
+                    r"/World/envs/env_[^/]+/Support(Neg|Pos)Y",
+                ],
+                collide_interval=1,
+                collision_pipeline=NewtonCollisionPipelineCfg(
+                    enable_rigid_soft_full_surface_contact=True,
                 ),
-            ],
-            proxies=[
-                CouplerProxyMappingCfg(
-                    source="rigid",
-                    destination="soft",
-                    bodies=[
-                        r"/World/envs/env_[^/]+/Robot/Geometry/.*panda_hand",
-                        r"/World/envs/env_[^/]+/Robot/Geometry/.*panda_(left|right)finger",
-                        r"/World/envs/env_[^/]+/Support(Neg|Pos)Y",
-                    ],
-                    collide_interval=1,
-                    collision_pipeline=NewtonCollisionPipelineCfg(
-                        enable_rigid_soft_full_surface_contact=True,
-                    ),
-                )
-            ],
-            iterations=1,
-        ),
+            )
+        ],
+        iterations=1,
         soft_contact_cfg=NewtonSoftContactCfg(
             soft_contact_ke=8.0e3,
             soft_contact_kd=1.0e-2,
@@ -212,7 +210,7 @@ class FrankaClothScenePresetCfg(PresetCfg):
 class FrankaClothCameraSceneCfg(FrankaClothSceneCfg):
     """Franka cloth scene with a base camera."""
 
-    base_camera: CameraCfg = FRANKA_CAMERA_CFG
+    camera: CameraCfg = FRANKA_CAMERA_CFG
 
 
 @configclass
@@ -290,5 +288,5 @@ class FrankaClothCameraEnvCfg(FrankaClothEnvCfg):
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        # Warm up the RTX render product/annotator (Newton skips the PhysX assets_loading render loop).
+        # Warm up the RTX render product and annotator.
         self.num_rerenders_on_reset = 2

@@ -15,10 +15,10 @@ simulation_app = AppLauncher(headless=True, enable_cameras=True).app
 """Rest everything follows."""
 
 import pytest
-from isaaclab_newton.physics import NewtonManager
 from isaaclab_newton.renderers import NewtonWarpRendererCfg
+from isaaclab_physx.physics import PhysxCfg
 
-from isaaclab.sim import build_simulation_context
+from isaaclab.sim import SimulationCfg, build_simulation_context
 
 _CONTRACT_DIR = Path(__file__).resolve().parents[3] / "isaaclab" / "test" / "renderers"
 if str(_CONTRACT_DIR) not in sys.path:
@@ -34,11 +34,11 @@ pytestmark = [pytest.mark.integration, pytest.mark.rendering, pytest.mark.isaacs
 
 def test_kinematic_rigid_object_scale_and_pose_are_rendered() -> None:
     """Kinematic PhysX transforms and root scale must reach Newton Warp."""
+    sim_cfg = SimulationCfg(device="cuda:0", gravity=(0.0, 0.0, 0.0), physics=PhysxCfg())
     run_rigid_object_scale_and_pose_rendering_contract(
         RigidObjectRenderingBackend(
             name="newton_warp (PhysX)",
-            simulation_context_factory=lambda: build_simulation_context(device="cuda:0", gravity_enabled=False),
+            simulation_context_factory=lambda: build_simulation_context(sim_cfg),
             renderer_cfg=NewtonWarpRendererCfg(),
-            cleanup=NewtonManager.clear,
         )
     )

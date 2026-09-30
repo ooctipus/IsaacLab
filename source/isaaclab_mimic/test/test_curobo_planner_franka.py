@@ -22,21 +22,29 @@ import gymnasium as gym
 import torch
 import warp as wp
 
-import isaaclab.utils.assets as _al_assets
 import isaaclab.utils.math as math_utils
 from isaaclab.assets import Articulation, RigidObjectCfg
+from isaaclab.cloner import expand_env_regex_ns
 from isaaclab.envs.manager_based_env import ManagerBasedEnv
 from isaaclab.markers import FRAME_MARKER_CFG, VisualizationMarkers
 from isaaclab.sim.schemas.schemas_cfg import RigidBodyPropertiesCfg
 from isaaclab.sim.spawners.from_files.from_files_cfg import UsdFileCfg
-
-ISAAC_NUCLEUS_DIR: str = getattr(_al_assets, "ISAAC_NUCLEUS_DIR", "/Isaac")
+from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR
+from isaaclab.utils.configclass import configclass
 
 from isaaclab_mimic.motion_planners.curobo.curobo_planner import CuroboPlanner
-from isaaclab_mimic.motion_planners.curobo.curobo_planner_cfg import CuroboPlannerCfg
+from isaaclab_mimic.motion_planners.curobo.curobo_planner_cfg import CuroboCollisionCfg, CuroboPlannerCfg
 
-import isaaclab_tasks  # noqa: F401
-from isaaclab_tasks.utils import parse_env_cfg
+from isaaclab_tasks.contrib.stack.config.franka.stack_joint_pos_env_cfg import FrankaCubeStackEnvCfg
+from isaaclab_tasks.utils import resolve_config
+
+
+@configclass
+class CuroboFrankaTestEnvCfg(FrankaCubeStackEnvCfg):
+    """Franka stack scene with its CuRobo clone-plan requirements."""
+
+    motion_planner: CuroboPlannerCfg = CuroboPlannerCfg()
+
 
 # Predefined EE goals for the test
 # Each entry is a tuple of: (goal specification, goal ID)
@@ -55,32 +63,50 @@ def curobo_test_env() -> Generator[dict[str, Any], None, None]:
     random.seed(SEED)
     torch.manual_seed(SEED)
 
-    env_cfg = parse_env_cfg("IsaacContrib-Stack-Cube-Franka", num_envs=1)
+    env_cfg = resolve_config(CuroboFrankaTestEnvCfg(), ())
+    env_cfg.scene.num_envs = 1
 
     # Add a static wall for the robot to avoid
     wall_props = RigidBodyPropertiesCfg(kinematic_enabled=True, disable_gravity=True)
     wall_cfg = RigidObjectCfg(
-        prim_path="/World/envs/env_0/moving_wall",
+        prim_path="{ENV_REGEX_NS}/moving_wall",
         spawn=UsdFileCfg(
-            usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/red_block.usd",
+            usd_path=f"{ISAACLAB_NUCLEUS_DIR}/Props/Blocks/red_block.usd",
             scale=(0.5, 4.5, 7.0),
             rigid_props=wall_props,
         ),
         init_state=RigidObjectCfg.InitialStateCfg(pos=(0.55, 0.0, 0.80)),
     )
     setattr(env_cfg.scene, "moving_wall", wall_cfg)
+    env_cfg.motion_planner.mesh_prim_paths.append(
+        CuroboCollisionCfg(name="moving_wall", prim_expr="{ENV_REGEX_NS}/moving_wall", scene_entity="moving_wall")
+    )
 
     env: ManagerBasedEnv = gym.make("IsaacContrib-Stack-Cube-Franka", cfg=env_cfg, headless=headless).unwrapped
     env.reset()
 
     robot = env.scene["robot"]
-    planner = CuroboPlanner(env=env, robot=robot, config=CuroboPlannerCfg.franka_config())
+    planner_cfg = env.cfg.motion_planner
+    planner = planner_cfg.class_type(planner_cfg, env, 0)
+    assert planner._object_obstacles == {
+        target.scene_entity: target.name for target in planner_cfg.mesh_prim_paths if target.scene_entity is not None
+    }
+    layout = env.sim.get_clone_plan()
+    assert layout is not None
+    env_template = env.scene.cfg.clone_cfg.clone_template
+    for target in planner_cfg.mesh_prim_paths:
+        matches = tuple(
+            match
+            for match in layout.match_geometry_targets(expand_env_regex_ns(target.prim_expr, env_template))
+            if match[0].env_id == planner.env_id
+        )
+        assert len(matches) == 1 and any(geometry.collision for geometry in matches[0][1])
 
     goal_pose_visualizer = None
     if not headless:
         goal_marker_cfg = FRAME_MARKER_CFG.replace(prim_path="/World/Visuals/goal_poses")
         goal_marker_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
-        goal_pose_visualizer = VisualizationMarkers(goal_marker_cfg)
+        goal_pose_visualizer = goal_marker_cfg.class_type(goal_marker_cfg)
 
     # Allow the simulation to settle
     for _ in range(3):

@@ -131,7 +131,7 @@ def run(argv: list[str]) -> BenchmarkResult:
     args_cli, remaining_args = _parse_args(argv)
 
     env_cfg, agent_cfg = resolve_task_config(args_cli.task, args_cli.agent)
-    _common.pre_launch_video_config(env_cfg, args_cli=args_cli)
+    _common.validate_video_config(env_cfg, args_cli)
 
     start_utc = capture.now_utc_iso()
     app_t0 = time.perf_counter_ns()

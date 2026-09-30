@@ -25,26 +25,84 @@ Pure-Python unit tests; no app launch. Covers:
 from __future__ import annotations
 
 import contextlib
+import sys
 import types
 from typing import Any
 from unittest.mock import patch
 
 import gymnasium as gym
+import isaaclab_experimental.envs.direct_rl_env_warp as direct_warp_module
 import isaaclab_experimental.envs.frontend as fe
+import isaaclab_experimental.envs.manager_based_env_warp as manager_warp_module
 import pytest
+from isaaclab_experimental.envs import DirectRLEnvWarp, ManagerBasedEnvWarp
 from isaaclab_experimental.envs.frontend import (
     FrontendIncompatibleError,
     WarpFrontend,
     Workflow,
 )
 from isaaclab_experimental.managers.scene_entity_cfg import SceneEntityCfg as WarpSceneEntityCfg
-from isaaclab_newton.physics import NewtonCfg
+from isaaclab_newton.physics import MJWarpSolverCfg
 from isaaclab_physx.physics import PhysxCfg
 
 from isaaclab.envs import ManagerBasedRLEnvCfg
 from isaaclab.managers.manager_term_cfg import EventTermCfg, ObservationTermCfg, RewardTermCfg
 from isaaclab.managers.scene_entity_cfg import SceneEntityCfg as StableSceneEntityCfg
 from isaaclab.utils.configclass import configclass
+
+_WARP_ENV_MODULES = [(DirectRLEnvWarp, direct_warp_module), (ManagerBasedEnvWarp, manager_warp_module)]
+
+
+@pytest.mark.parametrize(("env_type", "module"), _WARP_ENV_MODULES)
+def test_warp_random_seed_is_resolved_before_replicator(env_type, module, monkeypatch: pytest.MonkeyPatch):
+    """Warp frontends give Replicator the concrete seed shared by the other generators."""
+    events = []
+    core = types.ModuleType("omni.replicator.core")
+    core.set_global_seed = lambda seed: events.append(("replicator", seed))
+    replicator = types.ModuleType("omni.replicator")
+    replicator.core = core
+    monkeypatch.setitem(sys.modules, "omni.replicator", replicator)
+    monkeypatch.setitem(sys.modules, "omni.replicator.core", core)
+    monkeypatch.setattr(module, "configure_seed", lambda seed: events.append(("core", seed)) or 2718)
+
+    assert env_type.seed(-1) == 2718
+    assert events == [("core", -1), ("replicator", 2718)]
+
+
+@pytest.mark.parametrize(("env_type", "module"), _WARP_ENV_MODULES)
+def test_warp_seed_failure_releases_owned_simulation_context(env_type, module, monkeypatch: pytest.MonkeyPatch):
+    """A post-stage seed failure must not leak the SimulationContext singleton."""
+
+    class _SimulationContext:
+        _instance = None
+
+        def __init__(self, _cfg):
+            self.stage = object()
+            type(self)._instance = self
+
+        @classmethod
+        def instance(cls):
+            return cls._instance
+
+        def clear_instance(self):
+            type(self)._instance = None
+
+    class _Env(env_type):
+        @staticmethod
+        def seed(_seed):
+            raise RuntimeError("seed failed")
+
+        def _apply_manager_term_cfg_profile(self):
+            pass
+
+    monkeypatch.setattr(module, "SimulationContext", _SimulationContext)
+    cfg = types.SimpleNamespace(validate=lambda: None, seed=42, sim=object())
+
+    with pytest.raises(RuntimeError, match="seed failed"):
+        _Env(cfg)
+
+    assert _SimulationContext.instance() is None
+
 
 # ======================================================================
 # Fixtures: fake stable/warp symbols and configclass trees.
@@ -222,7 +280,7 @@ def _cfg_with_physics(physics: Any) -> Any:
 
 
 def test_require_newton_passes_for_newton():
-    fe.WarpFrontend._require_newton_physics(_cfg_with_physics(NewtonCfg()), "Isaac-Test-v0")  # no raise
+    fe.WarpFrontend._require_newton_physics(_cfg_with_physics(MJWarpSolverCfg()), "Isaac-Test-v0")  # no raise
 
 
 def test_require_newton_rejects_physx():

@@ -17,9 +17,10 @@ import pytest
 import torch
 import warp as wp
 
-from isaaclab.assets.visual_material.visual_material import VisualMaterial, _channel_specs
+from isaaclab.assets.visual_material import VisualMaterial
+from isaaclab.assets.visual_material.visual_material import _channel_specs, _VisualMaterialRegistry
 from isaaclab.cloner import ClonePlan
-from isaaclab.renderers.render_context import RenderContext
+from isaaclab.physics import PhysicsEvent
 
 _SOURCE_ROOT = Path(__file__).resolve().parents[3]
 _PACKAGE_ROOT = _SOURCE_ROOT / "isaaclab" / "isaaclab"
@@ -43,6 +44,15 @@ class _Material:
         return self._values[self._channel]
 
 
+def _registry(*, renderers=(), visualizers=()) -> _VisualMaterialRegistry:
+    simulation = SimpleNamespace(
+        _renderer_entries=list(renderers),
+        visualizers=list(visualizers),
+        _register_physics_callback=lambda *_args, **_kwargs: None,
+    )
+    return _VisualMaterialRegistry(simulation)
+
+
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required to exercise the GPU scatter path.")
 @pytest.mark.parametrize(
     ("channel", "trailing_shape"),
@@ -58,13 +68,13 @@ def test_partial_gpu_write_updates_flat_material_rows(channel: str, trailing_sha
         shape = (4, *trailing_shape)
         return torch.arange(count, dtype=torch.float32, device="cuda:0").reshape(shape) + offset
 
-    context = RenderContext()
     first = _Material("first", channel, initial_values(0.0))
     second = _Material("second", channel, initial_values(20.0))
-    context.register_visual_material(first)
-    context.register_visual_material(second)
     factory = _WriterFactory()
-    context.finalize_consumers([SimpleNamespace(visual_material_writer=factory)])
+    registry = _registry(renderers=[SimpleNamespace(visual_material_writer=factory)])
+    registry.register(first)
+    registry.register(second)
+    registry._initialize()  # noqa: SLF001 - exercise the lifecycle boundary directly
 
     assert first.values.untyped_storage().data_ptr() == second.values.untyped_storage().data_ptr()
     first_before = first.values.clone()
@@ -74,7 +84,7 @@ def test_partial_gpu_write_updates_flat_material_rows(channel: str, trailing_sha
     updates = torch.arange(math.prod(update_shape), dtype=torch.float32, device="cuda:0").reshape(update_shape) + 100
     expected_second[env_ids] = updates[0]
 
-    context.write_visual_materials([second], {channel: updates}, env_ids)
+    registry.write([second], {channel: updates}, env_ids)
     torch.cuda.synchronize()
 
     torch.testing.assert_close(first.values, first_before)
@@ -93,10 +103,10 @@ def test_write_runs_core_and_backend_on_the_calling_torch_stream() -> None:
             streams.append(wp.get_stream("cuda:0").cuda_stream)
             super().__call__(material_offsets, env_ids)
 
-    context = RenderContext()
     material = _Material("material", "roughness", torch.zeros(2, device="cuda:0"))
-    context.register_visual_material(material)
-    context.finalize_consumers([SimpleNamespace(visual_material_writer=lambda _batches: Writer())])
+    registry = _registry(renderers=[SimpleNamespace(visual_material_writer=lambda _batches: Writer())])
+    registry.register(material)
+    registry._initialize()  # noqa: SLF001 - exercise the lifecycle boundary directly
     streams.clear()
 
     stream = torch.cuda.Stream()
@@ -104,7 +114,7 @@ def test_write_runs_core_and_backend_on_the_calling_torch_stream() -> None:
     with torch.cuda.stream(stream):
         torch.cuda._sleep(20_000_000)
         updates.fill_(0.75)
-        context.write_visual_materials([material], {"roughness": updates})
+        registry.write([material], {"roughness": updates})
     torch.cuda.current_stream().wait_stream(stream)
 
     torch.testing.assert_close(material.values, torch.full((2,), 0.75, device="cuda:0"))
@@ -138,13 +148,13 @@ class _WriterFactory:
 
 
 def test_global_material_write_uses_its_single_flat_row() -> None:
-    context = RenderContext()
     material = _Material("global", "roughness", torch.zeros(1), is_per_env=False)
-    context.register_visual_material(material)
     factory = _WriterFactory()
-    context.finalize_consumers([SimpleNamespace(visual_material_writer=factory)])
+    registry = _registry(renderers=[SimpleNamespace(visual_material_writer=factory)])
+    registry.register(material)
+    registry._initialize()  # noqa: SLF001 - exercise the lifecycle boundary directly
 
-    context.write_visual_materials([material], {"roughness": torch.tensor([0.75])})
+    registry.write([material], {"roughness": torch.tensor([0.75])})
 
     torch.testing.assert_close(material.values, torch.tensor([0.75]))
     offsets, env_ids = factory.writers[0].writes[-1]
@@ -152,23 +162,20 @@ def test_global_material_write_uses_its_single_flat_row() -> None:
     torch.testing.assert_close(wp.to_torch(env_ids), torch.zeros(1, dtype=torch.int32))
 
 
-def test_finalize_deduplicates_and_rebuilds_shared_writer() -> None:
-    context = RenderContext()
+def test_lifecycle_rebuild_deduplicates_shared_writer_factories() -> None:
     material = _Material("material", "roughness", torch.zeros(2))
-    context.register_visual_material(material)
     factory = _WriterFactory()
     consumer = SimpleNamespace(visual_material_writer=factory)
-    context._renderer_entries = [(object(), consumer)]  # type: ignore[assignment]  # noqa: SLF001
-    visualizers = [consumer, SimpleNamespace(visual_material_writer=factory)]
+    registry = _registry(renderers=[consumer], visualizers=[consumer, SimpleNamespace(visual_material_writer=factory)])
+    registry.register(material)
 
-    context.finalize_consumers(visualizers)
-    context.finalize_consumers(visualizers)
+    registry._initialize()  # noqa: SLF001 - exercise the lifecycle boundary directly
     assert len(factory.writers) == 1
     assert not factory.writers[0].closed
     assert factory.writers[0].calls == 1
 
     material._values["roughness"] = torch.ones(2)  # noqa: SLF001 - model an asset lifecycle reinitialization
-    context.finalize_consumers(visualizers, rebuild=True)
+    registry._initialize()  # noqa: SLF001 - model a hard PHYSICS_READY lifecycle
     assert len(factory.writers) == 2
     assert factory.writers[0].closed
     assert not factory.writers[1].closed
@@ -179,17 +186,33 @@ def test_finalize_deduplicates_and_rebuilds_shared_writer() -> None:
 
 
 def test_material_registration_is_idempotent_after_lifecycle_stop() -> None:
-    context = RenderContext()
     material = _Material("material", "roughness", torch.zeros(2))
-    context.register_visual_material(material)
-    context.finalize_consumers([])
+    registry = _registry()
+    registry.register(material)
+    registry._initialize()  # noqa: SLF001 - exercise the lifecycle boundary directly
 
-    context.register_visual_material(material)
+    registry.register(material)
 
-    assert context._visual_materials == [material]  # noqa: SLF001
+    assert registry._materials == [material]  # noqa: SLF001
 
     with pytest.raises(RuntimeError, match="before rendering consumers"):
-        context.register_visual_material(_Material("late", "roughness", torch.zeros(2)))
+        registry.register(_Material("late", "roughness", torch.zeros(2)))
+
+
+def test_material_registry_initializes_after_assets_and_visualizers() -> None:
+    callbacks = []
+    simulation = SimpleNamespace(
+        _renderer_entries=[],
+        visualizers=[],
+        _register_physics_callback=lambda callback, event, **kwargs: callbacks.append((callback, event, kwargs)),
+    )
+
+    _VisualMaterialRegistry(simulation)
+
+    assert [(event, kwargs["order"]) for _callback, event, kwargs in callbacks] == [
+        (PhysicsEvent.PHYSICS_READY, 40),
+        (PhysicsEvent.STOP, 0),
+    ]
 
 
 def _class_method(path: Path, class_name: str, method_name: str) -> ast.FunctionDef:
@@ -219,7 +242,9 @@ def _runtime_tokens(method: ast.FunctionDef) -> set[str]:
 
 def test_runtime_material_writes_have_no_host_or_usd_path() -> None:
     methods = (
-        _class_method(_PACKAGE_ROOT / "renderers" / "render_context.py", "RenderContext", "write_visual_materials"),
+        _class_method(
+            _PACKAGE_ROOT / "assets" / "visual_material" / "visual_material.py", "_VisualMaterialRegistry", "write"
+        ),
         _class_method(
             _PACKAGE_ROOT / "assets" / "visual_material" / "visual_material.py", "VisualMaterial", "write_channels"
         ),
@@ -316,8 +341,19 @@ def test_rejected_visual_material_ownership_does_not_return() -> None:
     material_class = next(
         node for node in material_tree.body if isinstance(node, ast.ClassDef) and node.name == "VisualMaterial"
     )
-    assert "FactoryBase" not in {ast.unparse(base) for base in material_class.bases}
+    assert not material_class.bases
+    assert "get_or_create_backend" in _identifiers(material_tree)
+    assert not {"AssetBase", "GetPrimAtPath", "find_matching_prim_paths"} & _identifiers(material_tree)
+    assert not {
+        "_initialize_impl",
+        "reset",
+        "update",
+        "write_data_to_sim",
+    } & {node.name for node in material_class.body if isinstance(node, ast.FunctionDef)}
+    assert "render_context" not in _identifiers(material_tree)
+    assert "AssetBaseCfg" not in _identifiers(ast.parse(cfg_path.read_text()))
     assert not material_path.with_name("base_visual_material.py").exists()
+    assert not (_PACKAGE_ROOT / "renderers" / "render_context.py").exists()
     for package in ("isaaclab_newton", "isaaclab_physx", "isaaclab_ov"):
         backend_assets = _SOURCE_ROOT / package / package / "assets" / "visual_material"
         assert not tuple(backend_assets.glob("*.py"))

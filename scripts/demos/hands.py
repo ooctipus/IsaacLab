@@ -7,49 +7,49 @@
 
 .. code-block:: bash
 
-    # Usage with default PhysX physics and default kit visualizer.
+    # Usage with default PhysX physics and no visualizer.
     uv run python scripts/demos/hands.py
 
     # Usage with Newton visualizer and default PhysX physics.
-    uv run python scripts/demos/hands.py --visualizer newton
+    uv run python scripts/demos/hands.py visualizer=newton_gl
 
-    # Usage with Newton (MJWarp) physics and default kit visualizer.
-    uv run python scripts/demos/hands.py --physics newton_mjwarp
+    # Usage with Newton (MJWarp) physics and no visualizer.
+    uv run python scripts/demos/hands.py physics=newton_mjwarp
 
     # Usage with Newton visualizer and Newton (MJWarp) physics.
-    uv run python scripts/demos/hands.py --visualizer newton --physics newton_mjwarp
+    uv run python scripts/demos/hands.py visualizer=newton_gl physics=newton_mjwarp
 
 """
-
-"""Parse CLI first so we can decide whether to launch Isaac Sim Kit."""
 
 import argparse
 from typing import TYPE_CHECKING
 
+import torch
+
 from isaaclab.app import add_launcher_args, launch_simulation
+
+from isaaclab_tasks.utils import preset, resolve_config, setup_preset_cli
+from isaaclab_tasks.utils.presets import MultiBackendCameraCfg, MultiBackendSimulationCfg
 
 parser = argparse.ArgumentParser(
     description="This script demonstrates different dexterous hands.",
     conflict_handler="resolve",
 )
-parser.add_argument(
-    "--physics", default="isaacsim_physx", choices=["isaacsim_physx", "newton_mjwarp"], help="Physics backend."
-)
 add_launcher_args(parser)
-parser.set_defaults(visualizer=["kit"])
-args_cli = parser.parse_args()
+args_cli, config_overrides = setup_preset_cli(parser)
 
-import numpy as np
-import torch
 
 import isaaclab.sim as sim_utils
+from isaaclab.assets import ArticulationCfg, AssetBaseCfg
+from isaaclab.cloner import ReplicateSession
 
 ##
 # Pre-defined configs
 ##
-from isaaclab.physics import PhysicsCfg
+from isaaclab.utils.configclass import configclass
 
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg  # isort:skip
+from isaaclab_newton.physics import MJWarpSolverCfg  # isort:skip
+from isaaclab_physx.physics import PhysxCfg  # isort:skip
 from isaaclab_assets.robots.allegro import ALLEGRO_HAND_CFG  # isort:skip
 from isaaclab_assets.robots.shadow_hand import (
     SHADOW_HAND_NEWTON_CFG,
@@ -61,67 +61,48 @@ if TYPE_CHECKING:
     from isaaclab.assets import Articulation
 
 
-def define_origins(num_origins: int, spacing: float) -> list[list[float]]:
-    """Defines the origins of the scene."""
-    # create tensor based on number of environments
-    env_origins = torch.zeros(num_origins, 3)
-    # create a grid of origins
-    num_cols = np.floor(np.sqrt(num_origins))
-    num_rows = np.ceil(num_origins / num_cols)
-    xx, yy = torch.meshgrid(torch.arange(num_rows), torch.arange(num_cols), indexing="xy")
-    env_origins[:, 0] = spacing * xx.flatten()[:num_origins] - spacing * (num_rows - 1) / 2
-    env_origins[:, 1] = spacing * yy.flatten()[:num_origins] - spacing * (num_cols - 1) / 2
-    env_origins[:, 2] = 0.0
-    # return the origins
-    return env_origins.tolist()
+@configclass
+class DemoCfg:
+    """Dexterous-hand demo configuration."""
 
-
-def design_scene() -> tuple[dict, list[list[float]]]:
-    """Designs the scene."""
-    # Ground-plane
-    cfg = sim_utils.GroundPlaneCfg()
-    cfg.func("/World/defaultGroundPlane", cfg)
-    # Lights
-    cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
-    cfg.func("/World/Light", cfg)
-
-    # Create separate groups called "Origin1", "Origin2", "Origin3"
-    # Each group will have a mount and a robot on top of it
-    origins = define_origins(num_origins=2, spacing=0.5)
-
-    # Origin 1 with Allegro Hand
-    sim_utils.create_prim("/World/Origin1", "Xform", translation=origins[0])
-    # -- Robot
-    allegro_cfg = ALLEGRO_HAND_CFG.replace(prim_path="/World/Origin1/Robot")
-    allegro = allegro_cfg.class_type(allegro_cfg)
-
-    # Origin 2 with Shadow Hand
-    sim_utils.create_prim("/World/Origin2", "Xform", translation=origins[1])
-    # -- Robot
-    shadow_hand_cfg = SHADOW_HAND_NEWTON_CFG if args_cli.physics == "newton_mjwarp" else SHADOW_HAND_PHYSX_CFG
-    # Pose for this side-by-side scene; the asset's own pose is the reorientation task's.
-    shadow_hand_cfg = shadow_hand_cfg.replace(
-        prim_path="/World/Origin2/Robot",
-        init_state=shadow_hand_cfg.init_state.replace(
-            pos=(0.0, 0.2, 0.5),
-            rot=(0.52296271, -0.47593067, 0.47593067, 0.52296271),
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(
+        dt=0.01,
+        device=args_cli.device,
+        physics=preset(
+            default=PhysxCfg(),
+            isaacsim_physx=PhysxCfg(),
+            newton_mjwarp=MJWarpSolverCfg(
+                njmax=200,
+                nconmax=70,
+                impratio=10.0,
+                cone="elliptic",
+                integrator="implicitfast",
+                update_data_interval=2,
+                ccd_iterations=50,
+                num_substeps=2,
+                debug_mode=False,
+            ),
         ),
     )
-    shadow_hand = shadow_hand_cfg.class_type(shadow_hand_cfg)
+    camera: MultiBackendCameraCfg = MultiBackendCameraCfg()
+    ground: AssetBaseCfg = AssetBaseCfg(prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg())
+    light: AssetBaseCfg = AssetBaseCfg(
+        prim_path="/World/Light",
+        spawn=sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75)),
+    )
+    allegro: ArticulationCfg = ALLEGRO_HAND_CFG.replace(prim_path="/World/Origin1/Robot")
+    allegro.init_state.pos = (-0.25, 0.0, allegro.init_state.pos[2])
+    shadow_hand: ArticulationCfg = preset(
+        default=SHADOW_HAND_PHYSX_CFG.replace(prim_path="/World/Origin2/Robot"),
+        isaacsim_physx=SHADOW_HAND_PHYSX_CFG.replace(prim_path="/World/Origin2/Robot"),
+        newton_mjwarp=SHADOW_HAND_NEWTON_CFG.replace(prim_path="/World/Origin2/Robot"),
+    )
 
-    # return the scene information
-    scene_entities = {
-        "allegro": allegro,
-        "shadow_hand": shadow_hand,
-    }
-    return scene_entities, origins
 
-
-def run_simulator(sim: "sim_utils.SimulationContext", entities: dict[str, "Articulation"], origins: torch.Tensor):
+def run_simulator(sim: "sim_utils.SimulationContext", entities: dict[str, "Articulation"]):
     """Runs the simulation loop."""
     # Define simulation stepping
     sim_dt = sim.get_physics_dt()
-    sim_time = 0.0
     count = 0
     # Start with hand open
     grasp_mode = 0
@@ -130,13 +111,11 @@ def run_simulator(sim: "sim_utils.SimulationContext", entities: dict[str, "Artic
         # reset
         if count % 1000 == 0:
             # reset counters
-            sim_time = 0.0
             count = 0
             # reset robots
-            for index, robot in enumerate(entities.values()):
+            for robot in entities.values():
                 # root state
                 root_pose = robot.data.default_root_pose.torch.clone()
-                root_pose[:, :3] += origins[index]
                 robot.write_root_pose_to_sim_index(root_pose=root_pose)
                 root_vel = robot.data.default_root_vel.torch.clone()
                 robot.write_root_velocity_to_sim_index(root_velocity=root_vel)
@@ -173,7 +152,6 @@ def run_simulator(sim: "sim_utils.SimulationContext", entities: dict[str, "Artic
         # perform step
         sim.step()
         # update sim-time
-        sim_time += sim_dt
         count += 1
         # update buffers
         for robot in entities.values():
@@ -182,35 +160,35 @@ def run_simulator(sim: "sim_utils.SimulationContext", entities: dict[str, "Artic
 
 def main():
     """Main function."""
-    with launch_simulation(cfg=PhysicsCfg(), launcher_args=args_cli) as physics_cfg:
-        # The default newton mjwarp solver configuration needs to be tuned for these hands.
-        if isinstance(physics_cfg, NewtonCfg) and isinstance(physics_cfg.solver_cfg, MJWarpSolverCfg):
-            # The tendon-coupled fingers diverge past their limits under the default explicit
-            # integrator; the reorientation task's preset uses this one for the same reason.
-            physics_cfg.solver_cfg.integrator = "implicitfast"
-            physics_cfg.solver_cfg.njmax = 200
-            physics_cfg.solver_cfg.nconmax = 70
-            physics_cfg.solver_cfg.impratio = 10.0
-            physics_cfg.solver_cfg.cone = "elliptic"
-            physics_cfg.solver_cfg.update_data_interval = 2
-            physics_cfg.solver_cfg.ccd_iterations = 50
-            physics_cfg.num_substeps = 2
-            physics_cfg.debug_mode = False
-
+    cfg = resolve_config(DemoCfg(), config_overrides)
+    cfg.shadow_hand.init_state = cfg.shadow_hand.init_state.replace(
+        pos=(0.25, 0.0, 0.5),
+        rot=(0.52296271, -0.47593067, 0.47593067, 0.52296271),
+    )
+    with launch_simulation(cfg, args_cli):
         # Initialize the simulation context
-        sim_cfg = sim_utils.SimulationCfg(dt=0.01, device=args_cli.device, physics=physics_cfg)
-        sim = sim_utils.SimulationContext(sim_cfg)
+        sim = sim_utils.SimulationContext(cfg.sim)
         # Set main camera
         sim.set_camera_view(eye=[0.0, -0.5, 1.5], target=[0.0, -0.05, 0.45])
-        # design scene
-        scene_entities, scene_origins = design_scene()
-        scene_origins = torch.tensor(scene_origins, device=sim.device)
+        asset_cfgs = tuple(
+            asset_cfg
+            for asset_cfg in (cfg.ground, cfg.light, cfg.allegro, cfg.shadow_hand, cfg.camera)
+            if asset_cfg is not None
+        )
+        with ReplicateSession(asset_cfgs, 1, 0.0):
+            _camera = cfg.camera.class_type(cfg.camera) if cfg.camera is not None else None
+            cfg.ground.class_type(cfg.ground)
+            cfg.light.class_type(cfg.light)
+            scene_entities = {
+                "allegro": cfg.allegro.class_type(cfg.allegro),
+                "shadow_hand": cfg.shadow_hand.class_type(cfg.shadow_hand),
+            }
         # Play the simulator
         sim.reset()
         # Now we are ready!
         print("[INFO]: Setup complete...")
         # Run the simulator
-        run_simulator(sim, scene_entities, scene_origins)
+        run_simulator(sim, scene_entities)
 
 
 if __name__ == "__main__":

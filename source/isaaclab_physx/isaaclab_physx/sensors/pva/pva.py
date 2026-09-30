@@ -13,14 +13,8 @@ from typing import TYPE_CHECKING
 import torch
 import warp as wp
 
-from pxr import UsdGeom
-
 import isaaclab.utils.math as math_utils
-from isaaclab.markers import VisualizationMarkers
 from isaaclab.sensors.pva import BasePva
-from isaaclab.sim.utils.queries import path_expr_to_glob
-
-from isaaclab_physx.physics import PhysxManager as SimulationManager
 
 from .kernels import pva_reset_kernel, pva_update_kernel
 from .pva_data import PvaData
@@ -153,11 +147,11 @@ class Pva(BasePva):
         # Initialize parent class
         super()._initialize_impl()
         # obtain global simulation view
-        self._physics_sim_view = SimulationManager.get_physics_sim_view()
+        self._physics_sim_view = self._physics_manager.get_physics_sim_view()
 
         self._rigid_parent_expr, fixed_pos_b, fixed_quat_b = self._resolve_rigid_body_ancestor_expr()
         # Create the rigid body view on the ancestor
-        self._view = self._physics_sim_view.create_rigid_body_view(path_expr_to_glob(self._rigid_parent_expr))
+        self._view = self._physics_sim_view.create_rigid_body_view(self._rigid_parent_expr)
 
         # Unit world-gravity direction. The scene value can change at runtime, so it is
         # refreshed on every update instead of snapshotted here.
@@ -321,7 +315,7 @@ class Pva(BasePva):
         if debug_vis:
             # create markers if necessary for the first time
             if not hasattr(self, "acceleration_visualizer"):
-                self.acceleration_visualizer = VisualizationMarkers(self.cfg.visualizer_cfg)
+                self.acceleration_visualizer = self.cfg.visualizer_cfg.class_type(self.cfg.visualizer_cfg)
             # set their visibility to true
             self.acceleration_visualizer.set_visibility(True)
         else:
@@ -340,8 +334,6 @@ class Pva(BasePva):
         # -- resolve the scales
         default_scale = self.acceleration_visualizer.cfg.markers["arrow"].scale
         arrow_scale = torch.tensor(default_scale, device=self.device).repeat(self._data.lin_acc_b.torch.shape[0], 1)
-        # get up axis of current stage
-        up_axis = UsdGeom.GetStageUpAxis(self.stage)
         # arrow-direction; filter out bodies with effectively zero accel (no defined direction)
         pos_w_torch = self._data.pos_w.torch
         accel_w = math_utils.quat_apply(self._data.quat_w.torch, self._data.lin_acc_b.torch)
@@ -353,7 +345,7 @@ class Pva(BasePva):
         rotation_matrix = math_utils.create_rotation_matrix_from_view(
             pos_filtered,
             pos_filtered + accel_filtered,
-            up_axis=up_axis,
+            up_axis="Z",
             device=self._device,
         )
         quat_opengl = math_utils.quat_from_matrix(rotation_matrix)

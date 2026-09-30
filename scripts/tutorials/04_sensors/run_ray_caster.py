@@ -8,71 +8,49 @@ This script demonstrates how to use the ray-caster sensor.
 
 .. code-block:: bash
 
-    # Usage
-    uv run python scripts/tutorials/04_sensors/run_ray_caster.py --viz kit
+    uv run python scripts/tutorials/04_sensors/run_ray_caster.py visualizer=kit
 
 """
 
-"""Launch Isaac Sim Simulator first."""
-
 import argparse
 
-from isaaclab.app import AppLauncher
+from isaaclab_physx.physics import PhysxCfg
+
+import isaaclab.sim as sim_utils
+from isaaclab.app import add_launcher_args, launch_simulation
+
+from isaaclab_tasks.utils import resolve_config, setup_preset_cli
+from isaaclab_tasks.utils.presets import MultiBackendSimulationCfg
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Ray Caster Test Script")
-# append AppLauncher cli args
-AppLauncher.add_app_launcher_args(parser)
-# parse the arguments
-args_cli = parser.parse_args()
-# launch omniverse app
-app_launcher = AppLauncher(args_cli)
-simulation_app = app_launcher.app
-
-"""Rest everything follows."""
+add_launcher_args(parser)
+args_cli, config_overrides = setup_preset_cli(parser)
 
 import torch
 
-import isaaclab.sim as sim_utils
-from isaaclab.assets import RigidObject, RigidObjectCfg
+from isaaclab.assets import AssetBaseCfg, RigidObject, RigidObjectCfg
+from isaaclab.cloner import ReplicateSession
 from isaaclab.sensors.ray_caster import RayCaster, RayCasterCfg, patterns
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
+from isaaclab.utils.configclass import configclass
 from isaaclab.utils.timer import Timer
 
 
-def define_sensor() -> RayCaster:
-    """Defines the ray-caster sensor to add to the scene."""
-    # Create a ray-caster sensor
-    ray_caster_cfg = RayCasterCfg(
-        prim_path="/World/Origin.*/ball",
-        mesh_prim_paths=["/World/ground"],
-        pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=(2.0, 2.0)),
-        ray_alignment="yaw",
-        debug_vis=not args_cli.headless,
+@configclass
+class TutorialCfg:
+    """Ray-caster tutorial configuration."""
+
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(device=args_cli.device, physics=PhysxCfg())
+    num_envs: int = 4
+    env_spacing: float = 0.5
+    ground: AssetBaseCfg = AssetBaseCfg(
+        prim_path="/World/ground",
+        spawn=sim_utils.UsdFileCfg(usd_path=f"{ISAAC_NUCLEUS_DIR}/Environments/Terrains/rough_plane.usd"),
     )
-    ray_caster = RayCaster(cfg=ray_caster_cfg)
-
-    return ray_caster
-
-
-def design_scene() -> dict:
-    """Design the scene."""
-    # Populate scene
-    # -- Rough terrain
-    cfg = sim_utils.UsdFileCfg(usd_path=f"{ISAAC_NUCLEUS_DIR}/Environments/Terrains/rough_plane.usd")
-    cfg.func("/World/ground", cfg)
-    # -- Light
-    cfg = sim_utils.DistantLightCfg(intensity=2000)
-    cfg.func("/World/light", cfg)
-
-    # Create separate groups called "Origin1", "Origin2", "Origin3"
-    # Each group will have a robot in it
-    origins = [[0.25, 0.25, 0.0], [-0.25, 0.25, 0.0], [0.25, -0.25, 0.0], [-0.25, -0.25, 0.0]]
-    for i, origin in enumerate(origins):
-        sim_utils.create_prim(f"/World/Origin{i}", "Xform", translation=origin)
-    # -- Balls
-    cfg = RigidObjectCfg(
-        prim_path="/World/Origin.*/ball",
+    light: AssetBaseCfg = AssetBaseCfg(prim_path="/World/light", spawn=sim_utils.DistantLightCfg(intensity=2000))
+    balls: RigidObjectCfg = RigidObjectCfg(
+        prim_path="{ENV_REGEX_NS}/ball",
         spawn=sim_utils.SphereCfg(
             radius=0.25,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(),
@@ -81,13 +59,13 @@ def design_scene() -> dict:
             visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.0, 1.0)),
         ),
     )
-    balls = RigidObject(cfg)
-    # -- Sensors
-    ray_caster = define_sensor()
-
-    # return the scene information
-    scene_entities = {"balls": balls, "ray_caster": ray_caster}
-    return scene_entities
+    ray_caster: RayCasterCfg = RayCasterCfg(
+        prim_path="{ENV_REGEX_NS}/ball",
+        mesh_prim_paths=["/World/ground"],
+        pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=(2.0, 2.0)),
+        ray_alignment="yaw",
+        debug_vis=True,
+    )
 
 
 def run_simulator(sim: sim_utils.SimulationContext, scene_entities: dict):
@@ -104,7 +82,7 @@ def run_simulator(sim: sim_utils.SimulationContext, scene_entities: dict):
     # Create a counter for resetting the scene
     step_count = 0
     # Simulate physics
-    while simulation_app.is_running():
+    while sim.is_headless_or_exist_active_visualizer():
         # Reset the scene
         if step_count % 250 == 0:
             # reset the balls
@@ -118,7 +96,7 @@ def run_simulator(sim: sim_utils.SimulationContext, scene_entities: dict):
         sim.step()
         # Update the ray-caster
         with Timer(
-            f"Ray-caster update with {4} x {ray_caster.num_rays} rays with max height of"
+            f"Ray-caster update with {ray_caster.num_instances} x {ray_caster.num_rays} rays with max height of"
             f" {torch.max(ray_caster.data.pos_w.torch).item():.2f}"
         ):
             ray_caster.update(dt=sim.get_physics_dt(), force_recompute=True)
@@ -128,23 +106,25 @@ def run_simulator(sim: sim_utils.SimulationContext, scene_entities: dict):
 
 def main():
     """Main function."""
-    # Load simulation context
-    sim_cfg = sim_utils.SimulationCfg(device=args_cli.device)
-    sim = sim_utils.SimulationContext(sim_cfg)
-    # Set main camera
-    sim.set_camera_view([0.0, 15.0, 15.0], [0.0, 0.0, -2.5])
-    # Design scene
-    scene_entities = design_scene()
-    # Play simulator
-    sim.reset()
-    # Now we are ready!
-    print("[INFO]: Setup complete...")
-    # Run simulator
-    run_simulator(sim=sim, scene_entities=scene_entities)
+    cfg = resolve_config(TutorialCfg(), config_overrides)
+    with launch_simulation(cfg, args_cli):
+        sim = sim_utils.SimulationContext(cfg.sim)
+        sim.set_camera_view([0.0, 15.0, 15.0], [0.0, 0.0, -2.5])
+        with ReplicateSession(
+            (cfg.ground, cfg.light, cfg.balls, cfg.ray_caster, cfg.ray_caster.visualizer_cfg),
+            cfg.num_envs,
+            cfg.env_spacing,
+        ):
+            cfg.ground.class_type(cfg.ground)
+            cfg.light.class_type(cfg.light)
+            scene_entities = {
+                "balls": cfg.balls.class_type(cfg.balls),
+                "ray_caster": cfg.ray_caster.class_type(cfg.ray_caster),
+            }
+        sim.reset()
+        print("[INFO]: Setup complete...")
+        run_simulator(sim=sim, scene_entities=scene_entities)
 
 
 if __name__ == "__main__":
-    # run the main function
     main()
-    # close sim app
-    simulation_app.close()

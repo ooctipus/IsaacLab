@@ -7,28 +7,30 @@
 
 .. code-block:: bash
 
-    # Usage with default PhysX physics and default kit visualizer.
-    uv run --extra isaacsim python scripts/demos/multi_asset.py --num_envs 1024
+    # Usage with default PhysX physics and no visualizer.
+    uv run python scripts/demos/multi_asset.py --num_envs 1024
 
-    # Usage with Newton GL visualizer and default PhysX physics.
-    uv run --extra isaacsim python scripts/demos/multi_asset.py --visualizer newton_gl --num_envs 1024
+    # Usage with Newton visualizer and default PhysX physics.
+    uv run python scripts/demos/multi_asset.py visualizer=newton_gl --num_envs 1024
 
-    # Usage with Newton (MJWarp) physics and default kit visualizer.
-    uv run --extra isaacsim python scripts/demos/multi_asset.py --physics newton_mjwarp --num_envs 1024
+    # Usage with Newton (MJWarp) physics and no visualizer.
+    uv run python scripts/demos/multi_asset.py physics=newton_mjwarp --num_envs 1024
 
-    # Usage with Newton GL visualizer and Newton (MJWarp) physics.
-    uv run python scripts/demos/multi_asset.py --visualizer newton_gl --physics newton_mjwarp --num_envs 1024
+    # Usage with Newton visualizer and Newton (MJWarp) physics.
+    uv run python scripts/demos/multi_asset.py visualizer=newton_gl physics=newton_mjwarp --num_envs 1024
 
 """
 
 from __future__ import annotations
 
-"""Parse CLI first so we can decide whether to launch Isaac Sim Kit."""
-
 import argparse
+from dataclasses import MISSING
 from typing import TYPE_CHECKING
 
 from isaaclab.app import add_launcher_args, launch_simulation
+
+from isaaclab_tasks.utils import preset, resolve_config, setup_preset_cli
+from isaaclab_tasks.utils.presets import MultiBackendSceneCfg, MultiBackendSimulationCfg
 
 # add argparse arguments
 parser = argparse.ArgumentParser(
@@ -36,14 +38,8 @@ parser = argparse.ArgumentParser(
     conflict_handler="resolve",
 )
 parser.add_argument("--num_envs", type=int, default=512, help="Number of environments to spawn.")
-parser.add_argument(
-    "--physics", default="isaacsim_physx", choices=["isaacsim_physx", "newton_mjwarp"], help="Physics backend."
-)
 add_launcher_args(parser)
-# demos should open Kit visualizer by default
-parser.set_defaults(visualizer=["kit"])
-# parse the arguments
-args_cli = parser.parse_args()
+args_cli, config_overrides = setup_preset_cli(parser)
 
 import isaaclab.sim as sim_utils
 
@@ -51,9 +47,9 @@ import isaaclab.sim as sim_utils
 # Pre-defined configs
 ##
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg, RigidObjectCollectionCfg
-from isaaclab.physics import PhysicsCfg
-from isaaclab.scene import InteractiveSceneCfg
 
+from isaaclab_newton.physics import MJWarpSolverCfg, NewtonSolverCfg  # isort: skip
+from isaaclab_physx.physics import PhysxCfg  # isort: skip
 from isaaclab_assets.robots.anymal import ANYDRIVE_3_LSTM_ACTUATOR_CFG  # isort: skip
 
 from isaaclab.utils import Timer
@@ -63,6 +59,18 @@ from isaaclab.utils.configclass import configclass
 if TYPE_CHECKING:
     from isaaclab.assets import Articulation, RigidObject, RigidObjectCollection
     from isaaclab.scene import InteractiveScene
+
+
+@configclass
+class DemoCfg:
+    """Multi-asset demo configuration."""
+
+    sim: MultiBackendSimulationCfg = MultiBackendSimulationCfg(
+        dt=0.005,
+        device=args_cli.device,
+        physics=preset(default=PhysxCfg(), isaacsim_physx=PhysxCfg(), newton_mjwarp=MJWarpSolverCfg()),
+    )
+    scene: MultiObjectSceneCfg = MISSING
 
 
 # Visual material presets for the multi-asset variants.
@@ -85,7 +93,7 @@ OBJECT_PHYSICS = {
 
 
 @configclass
-class MultiObjectSceneCfg(InteractiveSceneCfg):
+class MultiObjectSceneCfg(MultiBackendSceneCfg):
     """Configuration for a multi-object scene."""
 
     # ground plane
@@ -111,7 +119,6 @@ class MultiObjectSceneCfg(InteractiveSceneCfg):
                 sim_utils.CuboidCfg(size=(0.3, 0.3, 0.3), **PURPLE_MATERIAL),
                 sim_utils.SphereCfg(radius=0.3, **PURPLE_MATERIAL),
             ],
-            random_choice=False,
             **OBJECT_PHYSICS,
         ),
         init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 2.0)),
@@ -146,7 +153,6 @@ class MultiObjectSceneCfg(InteractiveSceneCfg):
                 f"{ISAACLAB_NUCLEUS_DIR}/Robots/ANYbotics/ANYmal-C/anymal_c.usd",
                 f"{ISAACLAB_NUCLEUS_DIR}/Robots/ANYbotics/ANYmal-D/anymal_d.usd",
             ],
-            random_choice=False,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 disable_gravity=False,
                 retain_accelerations=False,
@@ -239,20 +245,22 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
 
 def main():
     """Main function."""
-    with launch_simulation(cfg=PhysicsCfg(), launcher_args=args_cli) as physics_cfg:
-        sim_cfg = sim_utils.SimulationCfg(dt=0.005, device=args_cli.device, physics=physics_cfg)
-        sim = sim_utils.SimulationContext(sim_cfg)
+    cfg = resolve_config(
+        DemoCfg(scene=MultiObjectSceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0, replicate_physics=True)),
+        config_overrides,
+    )
+    with launch_simulation(cfg, args_cli):
+        sim = sim_utils.SimulationContext(cfg.sim)
         # Set main camera
         sim.set_camera_view([2.5, 0.0, 4.0], [0.0, 0.0, 2.0])
 
         # Design scene
-        scene_cfg = MultiObjectSceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0, replicate_physics=True)
-        if args_cli.physics == "newton_mjwarp":
+        if isinstance(cfg.sim.physics, NewtonSolverCfg):
             # Newton views currently require a uniform body layout across worlds.
-            scene_cfg.object.spawn.assets_cfg = scene_cfg.object.spawn.assets_cfg[1:2]
-            scene_cfg.robot.spawn.usd_path = scene_cfg.robot.spawn.usd_path[0]
+            cfg.scene.object.spawn.assets_cfg = cfg.scene.object.spawn.assets_cfg[1:2]
+            cfg.scene.robot.spawn.usd_path = cfg.scene.robot.spawn.usd_path[0]
         with Timer("[INFO] Time to create scene: "):
-            scene = scene_cfg.class_type(scene_cfg)
+            scene = cfg.scene.class_type(cfg.scene)
 
         # Play the simulator
         sim.reset()

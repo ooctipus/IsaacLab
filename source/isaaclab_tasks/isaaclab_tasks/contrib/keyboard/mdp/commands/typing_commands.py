@@ -845,9 +845,8 @@ class LetterTypingCommand(CommandTerm):
         moving-jaw tip. Position is the primary task (always driven to zero); the ``~40%`` of iterations
         after the base pan settles also drive the approach orientation from ``reset.ik_rpy_deg`` (see
         :meth:`_approach_target_quat`), but only within the null space of position so the tip never leaves
-        the key. Each iteration writes the joints and calls ``sim.forward()``; the lazy data layer
-        recomputes the tip pose and Jacobian from the written joints, so the loop converges with no
-        physics (dynamics) step. The solve runs over
+        the key. Each iteration writes the joints and calls ``sim.forward()`` to recompute the tip pose
+        and Jacobian from the written joints, so the loop converges with no physics (dynamics) step. The solve runs over
         all envs (the controller is sized to ``num_envs``) but only ``env_ids`` are written, leaving
         mid-episode envs untouched.
         """
@@ -1011,16 +1010,7 @@ class LetterTypingCommand(CommandTerm):
     def _set_debug_vis_impl(self, debug_vis: bool):
         if debug_vis:
             if not hasattr(self, "_typing_visualizer"):
-                from isaaclab.markers import VisualizationMarkers
-
-                self._typing_visualizer = VisualizationMarkers(
-                    typing_vis.make_typing_visualizer_cfg(
-                        self.cfg.visualizer_prim_path,
-                        self.cfg.viz_pixel_size,
-                        self.cfg.viz_key_marker_radius,
-                        self.cfg.viz_key_marker_height,
-                    )
-                )
+                self._typing_visualizer = self.cfg.visualizer_cfg.class_type(self.cfg.visualizer_cfg)
                 # keyboard-dependent buffers are built lazily on the first callback (the keyboard is
                 # not yet assigned while the base class enables debug vis during ``__init__``).
                 self._viz_ready = False
