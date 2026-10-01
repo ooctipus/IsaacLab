@@ -17,18 +17,16 @@ import mujoco_warp as mjw
 import numpy as np
 import torch
 import warp as wp
+from gpu_components import directory as instance_directory
+from gpu_components.directory_data import (
+    InstanceCommands,
+    InstanceDirectoryData,
+    InstanceOperation,
+    InstanceResults,
+    InstanceStatus,
+)
 from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
 from isaaclab_newton.physics.worlds import NewtonWorldsBackendCfg
-from newton.worlds import (
-    WorldCommands,
-    WorldDirectoryData,
-    WorldOperation,
-    WorldResults,
-    WorldStatus,
-    create_world_commands,
-    create_world_results,
-    world_location,
-)
 
 from .keyboard_populations import prepare_keyboard_prototype
 from .keyboards.keyboard_geometry import generate_keyboard
@@ -38,14 +36,14 @@ from .selection_paths import bind_selectors, query_selection_indices, resolve_se
 
 
 @wp.kernel
-def _begin_batch(commands: WorldCommands, count: int):
+def _begin_batch(commands: InstanceCommands, count: int):
     commands.sequence[0] += wp.uint64(1)
     commands.count[0] = count
 
 
 @wp.kernel
 def _reset_commands(
-    commands: WorldCommands,
+    commands: InstanceCommands,
     env_indices: wp.array[int],
     variants: wp.array[wp.int64],
     handles: wp.array[int],
@@ -54,17 +52,17 @@ def _reset_commands(
 ):
     request = wp.tid()
     env_index = env_indices[request]
-    commands.operation[request] = int(WorldOperation.RESET)
-    commands.world_id[request] = handles[env_index]
+    commands.operation[request] = int(InstanceOperation.REPLACE)
+    commands.instance_id[request] = handles[env_index]
     commands.generation[request] = generations[env_index]
     commands.prototype[request] = int(variants[request])
     if create != 0:
-        commands.operation[request] = int(WorldOperation.CREATE)
+        commands.operation[request] = int(InstanceOperation.CREATE)
 
 
 @wp.kernel
 def _validate_snapshot(
-    commands: WorldCommands,
+    commands: InstanceCommands,
     request_status: wp.array[int],
     consumed: wp.array[int],
     enabled: wp.array[int],
@@ -72,8 +70,8 @@ def _validate_snapshot(
 ):
     request, column = wp.tid()
     if consumed[0] != 0 and enabled[0] != 0 and request < commands.count[0]:
-        if request_status[request] == int(WorldStatus.OK) and not wp.isfinite(payload[request, column]):
-            wp.atomic_max(request_status, request, int(WorldStatus.INVALID))
+        if request_status[request] == int(InstanceStatus.OK) and not wp.isfinite(payload[request, column]):
+            wp.atomic_max(request_status, request, int(InstanceStatus.INVALID))
 
 
 @wp.kernel
@@ -124,7 +122,7 @@ def _initialize_snapshot(
 
 @wp.kernel
 def _publish_handles(
-    results: WorldResults,
+    results: InstanceResults,
     batch_status: wp.array[int],
     env_indices: wp.array[int],
     requested: wp.array[wp.int64],
@@ -135,10 +133,10 @@ def _publish_handles(
     failed: wp.array[int],
 ):
     request = wp.tid()
-    if batch_status[0] != 0 or results.status[request] != int(WorldStatus.OK):
+    if batch_status[0] != 0 or results.status[request] != int(InstanceStatus.OK):
         wp.atomic_max(failed, 0, 1)
         return
-    env_index, identity = env_indices[request], results.world_id[request]
+    env_index, identity = env_indices[request], results.instance_id[request]
     handles[env_index] = identity
     generations[env_index] = results.generation[request]
     inverse[identity] = env_index
@@ -146,7 +144,7 @@ def _publish_handles(
 
 
 @wp.kernel
-def _backing_demand(commands: WorldCommands, directory: WorldDirectoryData, demand: wp.array2d[int]):
+def _backing_demand(commands: InstanceCommands, directory: InstanceDirectoryData, demand: wp.array2d[int]):
     prototype = wp.tid()
     before = directory.live_count[prototype]
     after = before
@@ -154,8 +152,10 @@ def _backing_demand(commands: WorldCommands, directory: WorldDirectoryData, dema
         if commands.prototype[request] == prototype:
             before += 1
             after += 1
-        if commands.operation[request] == int(WorldOperation.RESET):
-            source, row, valid = world_location(directory, commands.world_id[request], commands.generation[request])
+        if commands.operation[request] == int(InstanceOperation.REPLACE):
+            source, row, valid = instance_directory.location(
+                directory, commands.instance_id[request], commands.generation[request]
+            )
             if valid and source == prototype:
                 after -= 1
     demand[prototype, 0] = before
@@ -250,8 +250,8 @@ class KeyboardWorlds:
             self.world_id_by_env = wp.full(env.num_envs, -1, dtype=wp.int32, device=env.device)
             self.world_generation_by_env = wp.zeros(env.num_envs, dtype=wp.uint64, device=env.device)
             self.env_index_by_world_id = wp.full(env.num_envs, -1, dtype=wp.int32, device=env.device)
-            self.commands = create_world_commands(env.num_envs, device=env.device)
-            self.results = create_world_results(env.num_envs, device=env.device)
+            self.commands = instance_directory.allocate_commands(env.num_envs, device=env.device)
+            self.results = instance_directory.allocate_results(env.num_envs, device=env.device)
             self._request_env_indices = wp.empty(env.num_envs, dtype=wp.int32, device=env.device)
             self._request_variants = torch.empty(env.num_envs, dtype=torch.long, device=env.device)
             self._payload_enabled = wp.zeros(1, dtype=wp.int32, device=env.device)

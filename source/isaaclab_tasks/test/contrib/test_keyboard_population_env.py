@@ -87,11 +87,26 @@ def test_population_task_ownership_boundaries():
     for filename in ("keyboard_worlds.py", "mujoco_selection.py"):
         source = (directory / filename).read_text()
         assert "newton_worlds_lab" not in source
+        assert "newton.worlds" not in source
         tree = ast.parse(source)
         for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module == "gpu_components":
+                assert {alias.name for alias in node.names} <= {"directory"}
             if isinstance(node, ast.Call):
                 name = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
-                assert name not in {"MuJoCoWorlds", "WorldDirectory", "FieldStorage", "DeviceGraph", "state", "control"}
+                assert name not in {
+                    "MuJoCoWorlds",
+                    "WorldDirectory",
+                    "InstanceDirectory",
+                    "FieldStorage",
+                    "GraphUpdateTable",
+                    "DeviceGraph",
+                    "state",
+                    "control",
+                }
+                if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
+                    if node.func.value.id == "instance_directory":
+                        assert name in {"allocate_commands", "allocate_results", "location", "handle_at"}
 
 
 @pytest.mark.parametrize("fail_stop,fail_clear", [(False, False), (True, False), (False, True), (True, True)])
@@ -374,13 +389,13 @@ def test_deferred_root_reset_preserves_sampling_without_redundant_physical_write
 
 @pytest.mark.parametrize("batch_error", [0, 12])
 def test_native_batch_failure_prevents_task_handle_publication(batch_error):
-    from newton.worlds import WorldDirectory, create_world_results
+    from gpu_components import directory as instance_directory
 
     from isaaclab_tasks.contrib.keyboard.keyboard_worlds import _publish_handles
 
-    directory = WorldDirectory((2,), id_capacity=1, command_capacity=1, device="cpu")
-    results = create_world_results(1, device="cpu")
-    results.world_id.fill_(0)
+    directory = instance_directory.allocate((2,), id_capacity=1, command_capacity=1, device="cpu")
+    results = instance_directory.allocate_results(1, device="cpu")
+    results.instance_id.fill_(0)
     results.generation.fill_(2)
     directory.batch_result.status.fill_(batch_error)
     actors = wp.zeros(1, dtype=int, device="cpu")
@@ -402,23 +417,27 @@ def test_native_batch_failure_prevents_task_handle_publication(batch_error):
 
 
 def test_partial_native_publication_keeps_actual_successes_and_stops_task():
-    from newton.worlds import WorldDirectory, WorldOperation, create_world_commands, create_world_results
+    from gpu_components import directory as instance_directory
+    from gpu_components.directory_data import InstanceOperation
 
     from isaaclab_tasks.contrib.keyboard.keyboard_worlds import KeyboardWorlds
     from isaaclab_tasks.contrib.keyboard.so101_population_env import SO101KeyboardPopulationEnv
 
-    directory = WorldDirectory((4, 4), id_capacity=2, command_capacity=2, device="cpu")
-    directory.publish_ready_slots((4, 4))
+    directory = instance_directory.allocate((4, 4), id_capacity=2, command_capacity=2, device="cpu")
+    instance_directory.publish_admissible_slots(directory, (4, 4))
     bank = object.__new__(KeyboardWorlds)
-    bank.commands, bank.results = create_world_commands(2, device="cpu"), create_world_results(2, device="cpu")
-    bank.commands.operation.fill_(int(WorldOperation.CREATE))
+    bank.commands, bank.results = (
+        instance_directory.allocate_commands(2, device="cpu"),
+        instance_directory.allocate_results(2, device="cpu"),
+    )
+    bank.commands.operation.fill_(int(InstanceOperation.CREATE))
     bank.commands.count.fill_(2)
     bank.commands.sequence.fill_(1)
-    directory.begin(bank.commands)
-    directory.admit(bank.commands)
+    instance_directory.begin(directory, bank.commands)
+    instance_directory.admit(directory, bank.commands)
     directory.transaction.initialized_sequence.fill_(1)
-    directory.publish(bank.commands, bank.results)
-    handles = bank.results.world_id.numpy().copy()
+    instance_directory.publish(directory, bank.commands, bank.results)
+    handles = bank.results.instance_id.numpy().copy()
     bank.world_id_by_env = wp.array(handles, dtype=int, device="cpu")
     bank.world_generation_by_env = wp.ones(2, dtype=wp.uint64, device="cpu")
     bank.env_index_by_world_id = wp.array(np.argsort(handles), dtype=int, device="cpu")
@@ -433,11 +452,11 @@ def test_partial_native_publication_keeps_actual_successes_and_stops_task():
     bank.env._is_closed, bank.env._population_bindings_valid = False, True
 
     def publish_partial():
-        directory.begin(bank.commands)
-        directory.admit(bank.commands)
+        instance_directory.begin(directory, bank.commands)
+        instance_directory.admit(directory, bank.commands)
         # First request deliberately lacks initialization; the second succeeds.
         directory.transaction.initialized_sequence.assign(np.array([0, 2], dtype=np.uint64))
-        directory.publish(bank.commands, bank.results)
+        instance_directory.publish(directory, bank.commands, bank.results)
 
     runtime = SimpleNamespace(
         directory=directory.data,
@@ -465,33 +484,37 @@ def test_partial_native_publication_keeps_actual_successes_and_stops_task():
             with pytest.raises(RuntimeError, match="close this environment"):
                 operation()
     finally:
-        directory.close(streams=())
+        instance_directory.close(directory, streams=())
 
 
 @pytest.mark.parametrize("invalid", [float("nan"), float("inf"), -float("inf")])
 def test_nonfinite_native_reset_payload_preserves_old_lifetime(invalid):
-    from newton.worlds import WorldDirectory, WorldOperation, WorldStatus, create_world_commands, create_world_results
+    from gpu_components import directory as instance_directory
+    from gpu_components.directory_data import InstanceOperation, InstanceStatus
 
     from isaaclab_tasks.contrib.keyboard.keyboard_worlds import _validate_snapshot
 
-    directory = WorldDirectory((4,), id_capacity=2, command_capacity=2, device="cpu")
-    directory.publish_ready_slots((4,))
-    commands, results = create_world_commands(2, device="cpu"), create_world_results(2, device="cpu")
-    commands.operation.fill_(int(WorldOperation.CREATE))
+    directory = instance_directory.allocate((4,), id_capacity=2, command_capacity=2, device="cpu")
+    instance_directory.publish_admissible_slots(directory, (4,))
+    commands, results = (
+        instance_directory.allocate_commands(2, device="cpu"),
+        instance_directory.allocate_results(2, device="cpu"),
+    )
+    commands.operation.fill_(int(InstanceOperation.CREATE))
     commands.count.fill_(2)
     commands.sequence.fill_(1)
-    directory.begin(commands)
-    directory.admit(commands)
+    instance_directory.begin(directory, commands)
+    instance_directory.admit(directory, commands)
     directory.transaction.initialized_sequence.fill_(1)
-    directory.publish(commands, results)
-    original_ids = results.world_id.numpy().copy()
+    instance_directory.publish(directory, commands, results)
+    original_ids = results.instance_id.numpy().copy()
     original_generations = results.generation.numpy().copy()
     original_slots = directory.data.slot.numpy().copy()
-    commands.world_id.assign(original_ids)
+    commands.instance_id.assign(original_ids)
     commands.generation.assign(original_generations)
-    commands.operation.fill_(int(WorldOperation.RESET))
+    commands.operation.fill_(int(InstanceOperation.REPLACE))
     commands.sequence.fill_(2)
-    directory.begin(commands)
+    instance_directory.begin(directory, commands)
     payload = wp.array(np.array([[0, invalid, 1], [0, 0, 1]], dtype=np.float32), device="cpu")
     enabled = wp.ones(1, dtype=int, device="cpu")
     wp.launch(
@@ -500,10 +523,10 @@ def test_nonfinite_native_reset_payload_preserves_old_lifetime(invalid):
         [commands, directory.transaction.status, directory.batch_result.consumed, enabled, payload],
         device="cpu",
     )
-    directory.admit(commands)
+    instance_directory.admit(directory, commands)
     directory.transaction.initialized_sequence.fill_(2)
-    directory.publish(commands, results)
-    assert results.status.numpy().tolist() == [int(WorldStatus.INVALID), int(WorldStatus.OK)]
+    instance_directory.publish(directory, commands, results)
+    assert results.status.numpy().tolist() == [int(InstanceStatus.INVALID), int(InstanceStatus.OK)]
     first = int(original_ids[0])
     assert directory.data.slot.numpy()[first] == original_slots[first]
     assert directory.data.generation.numpy()[first] == original_generations[0]

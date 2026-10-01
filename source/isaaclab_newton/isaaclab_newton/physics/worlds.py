@@ -15,8 +15,8 @@ from typing import TYPE_CHECKING
 import newton
 import numpy as np
 import warp as wp
+from gpu_components.directory_data import InstanceCommands, InstanceResults
 from newton.solvers import MuJoCoWorlds, SolverMuJoCo
-from newton.worlds import WorldCommands, WorldResults
 
 from isaaclab.physics import PhysicsCfg, PhysicsEvent, PhysicsManager
 from isaaclab.scene_data import SceneDataBackend
@@ -108,8 +108,8 @@ class NewtonWorldsBackend:
 
     def prepare(
         self,
-        commands: WorldCommands,
-        results: WorldResults,
+        commands: InstanceCommands,
+        results: InstanceResults,
         *,
         validate=None,
         initialize=None,

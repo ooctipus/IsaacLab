@@ -20,12 +20,13 @@ from typing import Literal
 import numpy as np
 import torch
 import warp as wp
+from gpu_components import directory as instance_directory
+from gpu_components.directory_data import InstanceDirectoryData
 from mujoco_warp import Model as MuJoCoModel
 from mujoco_warp._src.support import contact_force_fn
 from mujoco_warp._src.types import vec5
 from newton import Model
 from newton.solvers import SolverMuJoCo
-from newton.worlds import WorldDirectoryData, world_handle_at, world_location
 
 from .newton_selection import (
     BODY,
@@ -54,7 +55,7 @@ class EnvWorldBindings:
     world_id_by_env: wp.array[int]
     world_generation_by_env: wp.array[wp.uint64]
     env_participating: wp.array[bool]
-    directory: WorldDirectoryData
+    directory: InstanceDirectoryData
     world_readiness_by_prototype: wp.array[_WorldReadiness]
 
 
@@ -66,7 +67,7 @@ def _env_world_location(placement: EnvWorldBindings, env_index: int):
     if env_index < 0 or env_index >= placement.world_id_by_env.shape[0]:
         return prototype, row
     if placement.env_participating[env_index]:
-        candidate, local_row, valid = world_location(
+        candidate, local_row, valid = instance_directory.location(
             placement.directory, placement.world_id_by_env[env_index], placement.world_generation_by_env[env_index]
         )
         if valid:
@@ -779,7 +780,7 @@ class MuJoCoSelections:
 
 @wp.func
 def _env_at_row(placement: EnvWorldBindings, prototype: int, row: int, env_index_by_world_id: wp.array[int]) -> int:
-    identity, generation, valid = world_handle_at(placement.directory, prototype, row)
+    identity, generation, valid = instance_directory.handle_at(placement.directory, prototype, row)
     if not valid or identity >= env_index_by_world_id.shape[0]:
         return -1
     env_index = env_index_by_world_id[identity]

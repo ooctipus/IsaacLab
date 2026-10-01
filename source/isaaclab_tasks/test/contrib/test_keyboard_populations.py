@@ -601,11 +601,12 @@ def test_native_spare_budget_rejects_invalid_values_before_prototype_allocation(
 
 def test_backing_demand_only_releases_valid_source_lifetimes():
     import warp as wp
-    from newton.worlds import WorldDirectoryData, WorldOperation, create_world_commands
+    from gpu_components import directory as instance_directory
+    from gpu_components.directory_data import InstanceDirectoryData, InstanceOperation
 
     from isaaclab_tasks.contrib.keyboard.keyboard_worlds import _backing_demand
 
-    data = WorldDirectoryData()
+    data = InstanceDirectoryData()
     for name, values in {
         "prototype": [0],
         "slot": [0],
@@ -615,11 +616,11 @@ def test_backing_demand_only_releases_valid_source_lifetimes():
     }.items():
         setattr(data, name, wp.array(values, dtype=int, device="cpu"))
     data.generation = wp.array([3], dtype=wp.uint64, device="cpu")
-    commands = create_world_commands(4, device="cpu")
+    commands = instance_directory.allocate_commands(4, device="cpu")
     commands.count.fill_(4)
-    commands.operation.fill_(int(WorldOperation.RESET))
+    commands.operation.fill_(int(InstanceOperation.REPLACE))
     commands.prototype.fill_(1)
-    commands.world_id.assign(np.array([0, 0, -1, 4], dtype=np.int32))
+    commands.instance_id.assign(np.array([0, 0, -1, 4], dtype=np.int32))
     commands.generation.assign(np.array([3, 2, 3, 3], dtype=np.uint64))
     demand = wp.zeros((2, 2), dtype=int, device="cpu")
     wp.launch(_backing_demand, 2, [commands, data, demand], device="cpu")

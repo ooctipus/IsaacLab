@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 import torch
 import warp as wp
-from newton.worlds import WorldDirectoryData
+from gpu_components.directory_data import InstanceDirectoryData
 
 from isaaclab_tasks.contrib.keyboard.mujoco_selection import (
     EnvWorldBindings,
@@ -992,7 +992,7 @@ def test_native_fields_follow_handles_strides_generations_and_reference_coordina
                 world_storage_ready_count=wp.array([2], dtype=int, device="cpu"),
             )
         )
-    directory = WorldDirectoryData()
+    directory = InstanceDirectoryData()
     for name, array in dict(
         prototype=wp.array([1, -1, 0], dtype=int, device="cpu"),
         slot=wp.array([1, -1, 0], dtype=int, device="cpu"),
@@ -1186,7 +1186,8 @@ def test_native_fields_follow_handles_strides_generations_and_reference_coordina
 
 
 def test_native_field_consumes_real_directory_local_slots_after_reset_and_compaction():
-    from newton.worlds import WorldDirectory, WorldOperation, create_world_commands, create_world_results
+    from gpu_components import directory as instance_directory
+    from gpu_components.directory_data import InstanceOperation
 
     from isaaclab_tasks.contrib.keyboard.mujoco_selection import (
         EnvWorldBindings,
@@ -1196,19 +1197,22 @@ def test_native_field_consumes_real_directory_local_slots_after_reset_and_compac
         _WorldReadiness,
     )
 
-    directory = WorldDirectory((2, 3), id_capacity=2, command_capacity=2, device="cpu")
-    directory.publish_ready_slots((2, 3))
-    commands, results = create_world_commands(2, device="cpu"), create_world_results(2, device="cpu")
-    commands.operation.fill_(int(WorldOperation.CREATE))
+    directory = instance_directory.allocate((2, 3), id_capacity=2, command_capacity=2, device="cpu")
+    instance_directory.publish_admissible_slots(directory, (2, 3))
+    commands, results = (
+        instance_directory.allocate_commands(2, device="cpu"),
+        instance_directory.allocate_results(2, device="cpu"),
+    )
+    commands.operation.fill_(int(InstanceOperation.CREATE))
     commands.prototype.assign(np.array([0, 1], np.int32))
     commands.count.fill_(2)
     commands.sequence.fill_(1)
-    directory.begin(commands)
-    directory.admit(commands)
+    instance_directory.begin(directory, commands)
+    instance_directory.admit(directory, commands)
     directory.transaction.initialized_sequence.fill_(1)  # This scalar test domain has preinitialized every row below.
-    directory.publish(commands, results)
+    instance_directory.publish(directory, commands, results)
     np.testing.assert_array_equal(results.status.numpy(), 0)
-    world_id_by_env = results.world_id.numpy()[::-1].copy()
+    world_id_by_env = results.instance_id.numpy()[::-1].copy()
     generations = results.generation.numpy()[::-1].copy()
     d = directory.data
     placement = EnvWorldBindings()
@@ -1245,21 +1249,21 @@ def test_native_field_consumes_real_directory_local_slots_after_reset_and_compac
     np.testing.assert_array_equal(output.numpy(), expected)
     assert d.slot_starts.numpy()[1] == 2 and 0 <= d.slot.numpy()[world_id_by_env[0]] < 3
     commands.count.fill_(1)
-    commands.operation.assign(np.array([int(WorldOperation.RESET), 0], np.int32))
-    commands.world_id.assign(np.array([world_id_by_env[1], -1], np.int32))
+    commands.operation.assign(np.array([int(InstanceOperation.REPLACE), 0], np.int32))
+    commands.instance_id.assign(np.array([world_id_by_env[1], -1], np.int32))
     commands.generation.assign(np.array([generations[1], 0], np.uint64))
     commands.prototype.fill_(1)
     commands.sequence.fill_(2)
-    directory.begin(commands)
-    directory.admit(commands)
+    instance_directory.begin(directory, commands)
+    instance_directory.admit(directory, commands)
     reset_value = arrays[1].numpy()[int(directory.transaction.destination_slot.numpy()[0])].copy()
     directory.transaction.initialized_sequence.fill_(2)
-    directory.publish(commands, results)
+    instance_directory.publish(directory, commands, results)
     wp.launch(_gather_scalars, (2, 1), [field, -1.0], [output], device="cpu")
     np.testing.assert_array_equal(output.numpy(), [expected[0], [-1]])
     generations[1] = results.generation.numpy()[0]
     placement.world_generation_by_env.assign(generations)
-    directory.plan_compaction()
+    instance_directory.plan_compaction(directory)
     # Explicit test-domain relocation, with the directory's actual local source/destination rows.
     starts = d.slot_starts.numpy()
     for prototype, count in enumerate(directory.compaction.count.numpy()):
@@ -1270,10 +1274,10 @@ def test_native_field_consumes_real_directory_local_slots_after_reset_and_compac
             values[dst] = values[src]
             arrays[prototype].assign(values)
     directory.compaction.copied_count.assign(directory.compaction.count.numpy())
-    directory.publish_compaction()
+    instance_directory.publish_compaction(directory)
     wp.launch(_gather_scalars, (2, 1), [field, -1.0], [output], device="cpu")
     np.testing.assert_array_equal(output.numpy(), [expected[0], reset_value])
-    directory.close(streams=())
+    instance_directory.close(directory, streams=())
 
 
 @pytest.mark.parametrize("device", ["cpu", "cuda:0"])
@@ -1400,7 +1404,7 @@ def _native_scalar_selection(device="cpu"):
     placement.world_id_by_env = wp.array([0, 1], dtype=int, device=device)
     placement.world_generation_by_env = wp.ones(2, dtype=wp.uint64, device=device)
     placement.env_participating = wp.ones(2, dtype=bool, device=device)
-    placement.directory = WorldDirectoryData()
+    placement.directory = InstanceDirectoryData()
     placement.directory.prototype = wp.zeros(2, dtype=int, device=device)
     placement.directory.slot = wp.array([0, 1], dtype=int, device=device)
     placement.directory.generation = wp.ones(2, dtype=wp.uint64, device=device)
