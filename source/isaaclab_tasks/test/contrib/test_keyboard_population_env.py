@@ -19,6 +19,8 @@ import pytest
 import torch
 import warp as wp
 
+from isaaclab_tasks.contrib.keyboard.selection_paths import NewtonSelectorCfg, resolve_selection
+
 
 def test_population_task_ownership_boundaries():
     import isaaclab_tasks.contrib.keyboard as keyboard
@@ -41,7 +43,7 @@ def test_population_task_ownership_boundaries():
         "keyboard_populations.py",
         "keyboard_worlds.py",
         "newton_selection.py",
-        "native_selection.py",
+        "mujoco_selection.py",
     ):
         tree = ast.parse((directory / filename).read_text())
         for node in ast.walk(tree):
@@ -71,15 +73,25 @@ def test_population_task_ownership_boundaries():
         "native_reset_adapter.py",
     ):
         assert not (directory / forbidden).exists()
+    import isaaclab_newton.physics.worlds as worlds_backend
+
+    for path in (*directory.rglob("*.py"), Path(worlds_backend.__file__)):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if not isinstance(node, ast.Attribute) or not isinstance(node.value, ast.Attribute):
+                continue
+            if node.value.attr == "directory":
+                assert node.attr not in {"data", "batch", "transaction", "compaction"}
+            if node.value.attr == "runtime":
+                assert node.attr != "backing"
     # Prepared native physics has one owner; task modules borrow it through the backend.
-    for filename in ("keyboard_worlds.py", "native_selection.py"):
+    for filename in ("keyboard_worlds.py", "mujoco_selection.py"):
         source = (directory / filename).read_text()
         assert "newton_worlds_lab" not in source
         tree = ast.parse(source)
         for node in ast.walk(tree):
             if isinstance(node, ast.Call):
                 name = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
-                assert name not in {"MuJoCoWorlds", "WorldDirectory", "RowStorage", "DeviceGraph", "state", "control"}
+                assert name not in {"MuJoCoWorlds", "WorldDirectory", "FieldStorage", "DeviceGraph", "state", "control"}
 
 
 @pytest.mark.parametrize("fail_stop,fail_clear", [(False, False), (True, False), (False, True), (True, True)])
@@ -89,7 +101,6 @@ def test_close_releases_native_bindings_held_by_runtime_configuration(fail_stop,
         BODY,
         NewtonSelectionGroup,
         NewtonSelections,
-        NewtonSelectorCfg,
     )
     from isaaclab_tasks.contrib.keyboard.so101_population_env import SO101KeyboardPopulationEnv
 
@@ -99,13 +110,13 @@ def test_close_releases_native_bindings_held_by_runtime_configuration(fail_stop,
     builder.end_world()
     source = NewtonSelections(builder.finalize("cpu"))
     selector = NewtonSelectorCfg(BODY, path=".*", count_per_world=1)
-    source.resolve(selector)
+    resolve_selection(source, selector)
     source_ref, source_model_ref = weakref.ref(source), weakref.ref(source.model)
     model = source.model.replicate(1)
     state = model.state()
     model_ref, state_ref = weakref.ref(model), weakref.ref(state)
     owner = NewtonSelections(model, state=state, source=source)
-    binding = NewtonSelectionGroup(selector, ((owner.resolve(selector), torch.tensor([0])),), 1)
+    binding = NewtonSelectionGroup(selector.index_domain, ((resolve_selection(owner, selector), torch.tensor([0])),), 1)
     env = SO101KeyboardPopulationEnv.__new__(SO101KeyboardPopulationEnv)
     env._is_closed = False
     calls = []
@@ -156,11 +167,12 @@ def test_close_releases_native_bindings_held_by_runtime_configuration(fail_stop,
 def test_failed_root_construction_uses_close_and_preserves_startup_error(cleanup_fails):
     from isaaclab_tasks.contrib.keyboard import so101_population_env as module
     from isaaclab_tasks.contrib.keyboard.keyboard_populations import KeyboardPopulations
-    from isaaclab_tasks.contrib.keyboard.newton_selection import BODY, NewtonSelections, NewtonSelectorCfg
+    from isaaclab_tasks.contrib.keyboard.newton_selection import BODY, NewtonSelections
     from isaaclab_tasks.utils import resolve_task_config
 
     cfg, _ = resolve_task_config("IsaacContrib-Keyboard-SO101-Populations", "", overrides=["physics=newton_mjwarp"])
     cfg.scene.num_envs = 1
+    cfg.events = {}  # EventManager construction is the failure boundary, before real selector binding.
     cfg.sim.device = "cuda:0"  # Only the constructor's hardware boundary is replaced; native resources below are CPU.
     startup_error, cleanup_error = MemoryError("manager construction"), RuntimeError("simulation cleanup")
     references, calls = [], []
@@ -172,7 +184,7 @@ def test_failed_root_construction_uses_close_and_preserves_startup_error(cleanup
         builder.add_shape_box(body, hx=0.03, hy=0.03, hz=0.03)
         builder.end_world()
         owner = NewtonSelections(builder.finalize("cpu"))
-        binding = owner.resolve(NewtonSelectorCfg(BODY, ".*", count_per_world=1))
+        binding = resolve_selection(owner, NewtonSelectorCfg(BODY, ".*", count_per_world=1))
         references.extend((weakref.ref(owner), weakref.ref(owner.model)))
         bank = KeyboardPopulations.__new__(KeyboardPopulations)
         bank._owners, bank._sources, bank._bindings = [owner], [], {"body": binding}
@@ -310,13 +322,14 @@ def test_native_reset_preserves_event_rng_without_editing_the_ending_world():
         ),
     )
     task.keyboard_variants = SimpleNamespace(
-        reset_defaults=defaults, reset_variants=lambda selected: torch.zeros_like(selected)
+        reset_defaults=defaults, staged_variant_ids=lambda selected: torch.zeros_like(selected)
     )
     task.episode_length_buf = torch.ones(4, dtype=torch.long)
     task.extras = {}
     calls = []
     for name in ("observation", "action", "reward", "curriculum", "command", "event", "termination"):
         setattr(task, name + "_manager", SimpleNamespace(reset=lambda selected, name=name: calls.append(name) or {}))
+    task.command_manager.get_term = lambda name: SimpleNamespace(cfg=task.cfg.commands.typing)
     task.curriculum_manager.compute = lambda **kwargs: None
     task.event_manager.available_modes = ("reset",)
     task.event_manager.apply = lambda **kwargs: pytest.fail(
@@ -367,9 +380,9 @@ def test_native_batch_failure_prevents_task_handle_publication(batch_error):
 
     directory = WorldDirectory((2,), id_capacity=1, command_capacity=1, device="cpu")
     results = create_world_results(1, device="cpu")
-    results.id.fill_(0)
+    results.world_id.fill_(0)
     results.generation.fill_(2)
-    directory.d.flags.assign(np.array([1, 0, batch_error], dtype=np.int32))
+    directory.batch_result.status.fill_(batch_error)
     actors = wp.zeros(1, dtype=int, device="cpu")
     requested = wp.zeros(1, dtype=wp.int64, device="cpu")
     handles = wp.full(1, -1, dtype=int, device="cpu")
@@ -380,12 +393,79 @@ def test_native_batch_failure_prevents_task_handle_publication(batch_error):
     wp.launch(
         _publish_handles,
         1,
-        [results, directory.d, actors, requested, handles, generations, inverse, variants, failed],
+        [results, directory.batch_result.status, actors, requested, handles, generations, inverse, variants, failed],
         device="cpu",
     )
     assert handles.numpy().tolist() == ([-1] if batch_error else [0])
     assert generations.numpy().tolist() == ([0] if batch_error else [2])
     assert failed.numpy().tolist() == ([1] if batch_error else [0])
+
+
+def test_partial_native_publication_keeps_actual_successes_and_stops_task():
+    from newton.worlds import WorldDirectory, WorldOperation, create_world_commands, create_world_results
+
+    from isaaclab_tasks.contrib.keyboard.keyboard_worlds import KeyboardWorlds
+    from isaaclab_tasks.contrib.keyboard.so101_population_env import SO101KeyboardPopulationEnv
+
+    directory = WorldDirectory((4, 4), id_capacity=2, command_capacity=2, device="cpu")
+    directory.publish_ready_slots((4, 4))
+    bank = object.__new__(KeyboardWorlds)
+    bank.commands, bank.results = create_world_commands(2, device="cpu"), create_world_results(2, device="cpu")
+    bank.commands.operation.fill_(int(WorldOperation.CREATE))
+    bank.commands.count.fill_(2)
+    bank.commands.sequence.fill_(1)
+    directory.begin(bank.commands)
+    directory.admit(bank.commands)
+    directory.transaction.initialized_sequence.fill_(1)
+    directory.publish(bank.commands, bank.results)
+    handles = bank.results.world_id.numpy().copy()
+    bank.world_id_by_env = wp.array(handles, dtype=int, device="cpu")
+    bank.world_generation_by_env = wp.ones(2, dtype=wp.uint64, device="cpu")
+    bank.env_index_by_world_id = wp.array(np.argsort(handles), dtype=int, device="cpu")
+    bank.variant_ids, bank._staged_variant_ids = torch.zeros(2, dtype=torch.long), torch.zeros(2, dtype=torch.long)
+    bank.desired_variant_ids = torch.ones(2, dtype=torch.long)
+    bank._payload, bank._payload_enabled = torch.empty((2, 3)), wp.ones(1, dtype=int, device="cpu")
+    bank._request_env_indices, bank._failed = wp.empty(2, dtype=int, device="cpu"), wp.zeros(1, dtype=int, device="cpu")
+    bank._request_variants, bank._demand = torch.empty(2, dtype=torch.long), wp.empty((2, 2), dtype=int, device="cpu")
+    bank.layouts, bank.reset_publication_count = (None, None), 0
+    bank.env = object.__new__(SO101KeyboardPopulationEnv)
+    bank.env.device, bank.env.num_envs = "cpu", 2
+    bank.env._is_closed, bank.env._population_bindings_valid = False, True
+
+    def publish_partial():
+        directory.begin(bank.commands)
+        directory.admit(bank.commands)
+        # First request deliberately lacks initialization; the second succeeds.
+        directory.transaction.initialized_sequence.assign(np.array([0, 2], dtype=np.uint64))
+        directory.publish(bank.commands, bank.results)
+
+    runtime = SimpleNamespace(
+        directory=directory.data,
+        batch_result=directory.batch_result,
+        populations=tuple(SimpleNamespace(world_ready_capacity=4, world_capacity=4) for _ in range(2)),
+    )
+    bank.backend = SimpleNamespace(runtime=runtime, forward=publish_partial)
+    ids, variants, snapshot = torch.arange(2), torch.ones(2, dtype=torch.long), torch.ones((2, 3))
+    try:
+        # CPU directory/payload exercise; no backing service or CUDA stream operation is needed.
+        with patch.object(wp, "get_stream", return_value=None), pytest.raises(RuntimeError, match="publication failed"):
+            bank.reset_from_snapshot(ids, variants, snapshot)
+        assert bank.variant_ids.tolist() == [0, 1]
+        assert bank.world_generation_by_env.numpy().tolist() == [1, 2]
+        assert directory.data.prototype.numpy()[handles].tolist() == [0, 1]
+        assert bank._staged_variant_ids.tolist() == [0, 0]
+        assert bank.desired_variant_ids.tolist() == [1, 1]
+        assert bank.reset_publication_count == 0
+        assert not bank.env._population_bindings_valid
+        for operation in (
+            lambda: bank.request_variants(ids, variants),
+            lambda: bank.stage_variant_changes(ids),
+            lambda: bank.reset_from_snapshot(ids, variants, snapshot),
+        ):
+            with pytest.raises(RuntimeError, match="close this environment"):
+                operation()
+    finally:
+        directory.close(streams=())
 
 
 @pytest.mark.parametrize("invalid", [float("nan"), float("inf"), -float("inf")])
@@ -395,35 +475,42 @@ def test_nonfinite_native_reset_payload_preserves_old_lifetime(invalid):
     from isaaclab_tasks.contrib.keyboard.keyboard_worlds import _validate_snapshot
 
     directory = WorldDirectory((4,), id_capacity=2, command_capacity=2, device="cpu")
-    directory.publish_ready((4,))
+    directory.publish_ready_slots((4,))
     commands, results = create_world_commands(2, device="cpu"), create_world_results(2, device="cpu")
-    commands.op.fill_(int(WorldOperation.CREATE))
+    commands.operation.fill_(int(WorldOperation.CREATE))
     commands.count.fill_(2)
     commands.sequence.fill_(1)
     directory.begin(commands)
     directory.admit(commands)
-    directory.t.initialized.fill_(1)
+    directory.transaction.initialized_sequence.fill_(1)
     directory.publish(commands, results)
-    original_ids = results.id.numpy().copy()
+    original_ids = results.world_id.numpy().copy()
     original_generations = results.generation.numpy().copy()
-    original_slots = directory.d.slot.numpy().copy()
-    commands.id.assign(original_ids)
+    original_slots = directory.data.slot.numpy().copy()
+    commands.world_id.assign(original_ids)
     commands.generation.assign(original_generations)
-    commands.op.fill_(int(WorldOperation.RESET))
+    commands.operation.fill_(int(WorldOperation.RESET))
     commands.sequence.fill_(2)
     directory.begin(commands)
     payload = wp.array(np.array([[0, invalid, 1], [0, 0, 1]], dtype=np.float32), device="cpu")
     enabled = wp.ones(1, dtype=int, device="cpu")
-    wp.launch(_validate_snapshot, payload.shape, [commands, directory.t, enabled, payload], device="cpu")
+    wp.launch(
+        _validate_snapshot,
+        payload.shape,
+        [commands, directory.transaction.status, directory.batch_result.consumed, enabled, payload],
+        device="cpu",
+    )
     directory.admit(commands)
-    directory.t.initialized.fill_(2)
+    directory.transaction.initialized_sequence.fill_(2)
     directory.publish(commands, results)
     assert results.status.numpy().tolist() == [int(WorldStatus.INVALID), int(WorldStatus.OK)]
     first = int(original_ids[0])
-    assert directory.d.slot.numpy()[first] == original_slots[first]
-    assert directory.d.generation.numpy()[first] == original_generations[0]
-    assert directory.d.generation.numpy()[int(original_ids[1])] == original_generations[1] + 1
-    assert directory.d.flags.numpy()[1] == 0  # No physical advancement after a mandatory failed reset.
+    assert directory.data.slot.numpy()[first] == original_slots[first]
+    assert directory.data.generation.numpy()[first] == original_generations[0]
+    assert directory.data.generation.numpy()[int(original_ids[1])] == original_generations[1] + 1
+    assert (
+        directory.batch_result.advance_allowed.numpy()[0] == 0
+    )  # No physical advancement after a mandatory failed reset.
 
 
 def test_native_overflow_keeps_capacity_failures_distinct_from_iteration_limits():
@@ -502,7 +589,7 @@ def test_redistribution_cadence_preserves_explicit_episode_boundaries(mode):
             env.reset()
             bank = task.keyboard_variants
             original = bank.variant_ids.clone()
-            bank.request(torch.tensor([2], device=task.device), torch.tensor([1], device=task.device))
+            bank.request_variants(torch.tensor([2], device=task.device), torch.tensor([1], device=task.device))
             actions = torch.zeros((4, 6), device=task.device)
             for index in range(3):
                 _, _, terminated, truncated, _ = env.step(actions)
@@ -602,11 +689,11 @@ def test_exact_population_reset_resize_and_survivor_continuation(use_graph):
             pending_before = bank.variant_ids.clone()
             identities = tuple(bank.backend.populations)
             with wp.ScopedStream(wp.stream_from_torch(torch.cuda.current_stream())):
-                bank.request(ids, torch.ones_like(ids))
+                bank.request_variants(ids, torch.ones_like(ids))
                 assert bank.backend.populations == identities
                 torch.testing.assert_close(bank.variant_ids, pending_before)
                 with patch.object(newton.ModelBuilder, "finalize", side_effect=AssertionError("rebuild from builder")):
-                    bank.redistribute(ids)
+                    bank.apply_pending_variants(ids)
                 assert bank.backend.counts == (1, 3)
                 torch.testing.assert_close(
                     command.cfg.reset_coords.read_state("joint_q")[keep], q_before, rtol=0, atol=0

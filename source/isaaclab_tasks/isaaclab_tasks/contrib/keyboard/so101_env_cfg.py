@@ -363,7 +363,7 @@ class SO101KeyboardPopulationEnvCfg(SO101KeyboardEnvCfg):
         def policy_slots(cfg):
             paths = (cfg.path,) if isinstance(cfg.path, str) else cfg.path
             if any("/Keyboard/" in path for path in paths) and cfg.count_per_world is not None:
-                return cfg.replace(count_per_world=None, dense_width=cfg.count_per_world)
+                return cfg.replace(count_per_world=None, policy_width=cfg.count_per_world)
             return cfg
 
         # Native key/root counts vary. Keep the reference policy and reset-snapshot

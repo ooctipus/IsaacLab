@@ -89,8 +89,8 @@ dependencies = [
     # ----- newton (default physics engine) -----
     # Pin the reviewed growable-memory engines across workspace and wheel installs.
     # Keep uv.lock and the wheel override files aligned when advancing these commits.
-    "newton[sim] @ git+https://github.com/ooctipus/newton.git@b0179ee8ad3be07b0c4819e5d00015ded8994edc",
-    "mujoco-warp @ git+https://github.com/ooctipus/mujoco_warp.git@c41949b190e2a7fd6385d7aa160e456e5ec37a31",
+    "newton[sim] @ git+https://github.com/ooctipus/newton.git@08e01eec56b715f49c7661b996df24ccc24d7a6d",
+    "mujoco-warp @ git+https://github.com/ooctipus/mujoco_warp.git@e67ac18ebb2ceb528e70f17fa0e00344ace0026f",
     # Import and mesh-processing packages used by Newton, including the ones that honoring
     # USD-authored ``physics:approximation`` requires. Keep these explicit instead of selecting
     # newton[importers], whose standalone USD dependency would overlap with usd-exchange.
@@ -412,8 +412,8 @@ environments = [
 override-dependencies = [
     "numpy>=2",
     "mujoco~=3.12.0",
-    "mujoco-warp @ git+https://github.com/ooctipus/mujoco_warp.git@c41949b190e2a7fd6385d7aa160e456e5ec37a31",
-    "newton[sim] @ git+https://github.com/ooctipus/newton.git@b0179ee8ad3be07b0c4819e5d00015ded8994edc",
+    "mujoco-warp @ git+https://github.com/ooctipus/mujoco_warp.git@e67ac18ebb2ceb528e70f17fa0e00344ace0026f",
+    "newton[sim] @ git+https://github.com/ooctipus/newton.git@08e01eec56b715f49c7661b996df24ccc24d7a6d",
     # Force the Newton-matched schemas over isaacsim's ==0.2.0 pin.
     "newton-usd-schemas>=0.5.0",
     "torch==2.12.0",

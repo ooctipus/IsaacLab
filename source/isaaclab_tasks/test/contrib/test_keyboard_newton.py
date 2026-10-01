@@ -20,20 +20,21 @@ import torch
 import warp as wp
 from newton.worlds import WorldDirectoryData
 
-from isaaclab_tasks.contrib.keyboard.native_selection import (
-    NativePlacement,
-    NativeScalarField,
-    NativeSelection,
-    _NativeCapacity,
-    _NativeScalarSource,
+from isaaclab_tasks.contrib.keyboard.mujoco_selection import (
+    EnvWorldBindings,
+    MuJoCoScalarField,
+    MuJoCoSelection,
+    MuJoCoSelections,
+    _ScalarSource,
+    _WorldReadiness,
 )
-from isaaclab_tasks.contrib.keyboard.native_selection import (
+from isaaclab_tasks.contrib.keyboard.mujoco_selection import (
     scalar_field_active as native_field_active,
 )
-from isaaclab_tasks.contrib.keyboard.native_selection import (
+from isaaclab_tasks.contrib.keyboard.mujoco_selection import (
     scalar_field_read as native_field_read,
 )
-from isaaclab_tasks.contrib.keyboard.native_selection import (
+from isaaclab_tasks.contrib.keyboard.mujoco_selection import (
     scalar_field_write as native_field_write,
 )
 from isaaclab_tasks.contrib.keyboard.newton_selection import (
@@ -66,32 +67,32 @@ def selections(request):
 def test_frequency_expansion_and_validation(selections):
     q = resolve_selection(selections, NewtonSelectorCfg(JOINT_COORD, ".*/free", count_per_world=7))
     qd = resolve_selection(selections, NewtonSelectorCfg(JOINT_DOF, ".*/free", count_per_world=6))
-    assert q.static_counts == (7, 7) and qd.static_counts == (6, 6)
+    assert q.world_selection_counts == (7, 7) and qd.world_selection_counts == (6, 6)
     assert copy.deepcopy(q) is q
     with pytest.raises(ValueError, match="matched no"):
         resolve_selection(selections, NewtonSelectorCfg(BODY, ".*/missing"))
     with pytest.raises(ValueError, match="Expected 1"):
         resolve_selection(selections, NewtonSelectorCfg(BODY, ".*", count_per_world=1))
-    with pytest.raises(ValueError, match="Unknown Newton frequency"):
+    with pytest.raises(ValueError, match="Unknown Newton index domain"):
         resolve_selection(selections, NewtonSelectorCfg("joint", ".*"))
 
 
 def test_numeric_binding_composes_path_ids_without_retaining_names(selections):
     """Keep name resolution outside integer relations, including the empty selection."""
-    from isaaclab_tasks.contrib.keyboard.selection_paths import query_selection_ids
+    from isaaclab_tasks.contrib.keyboard.selection_paths import query_selection_indices
 
     cfg = NewtonSelectorCfg(BODY, (".*/tip.*", ".*"))
-    ids = query_selection_ids(selections.model, cfg)
+    ids = query_selection_indices(selections.model, cfg)
     selected = selections.bind(BODY, ids)
     assert selected is resolve_selection(selections, cfg)
     assert selected.ids.numpy().tolist() == [1, 0, 3, 4, 2]
     assert not hasattr(selected, "path") and not hasattr(selected, "count_per_world")
     empty = selections.bind(BODY, [])
-    assert empty.static_counts == (0, 0) and empty.width == 0
+    assert empty.world_selection_counts == (0, 0) and empty.width == 0
     assert empty.dense_active().shape == (2, 0)
     np.testing.assert_array_equal(empty.world_start.numpy(), [0, 0, 0])
-    for frequency in (JOINT_COORD, JOINT_DOF):
-        assert selections.bind(frequency, []).joint_types().shape == (2, 0)
+    for index_domain in (JOINT_COORD, JOINT_DOF):
+        assert selections.bind(index_domain, []).joint_types().shape == (2, 0)
     for invalid in ([True], [0, True], [0.5], ["0"], [0, 0], [-1], [selections.model.body_count]):
         with pytest.raises(ValueError):
             selections.bind(BODY, invalid)
@@ -102,21 +103,38 @@ def test_numeric_selection_owners_have_no_symbolic_resolution_or_private_runtime
     import isaaclab_tasks.contrib.keyboard as keyboard
 
     directory = Path(keyboard.__file__).parent
-    for name in ("newton_selection.py", "native_selection.py"):
+    assert not (directory / "native_selection.py").exists()
+    assert set(EnvWorldBindings.vars) == {
+        "world_id_by_env",
+        "world_generation_by_env",
+        "env_participating",
+        "directory",
+        "world_readiness_by_prototype",
+    }
+    assert "env_world_bindings" in MuJoCoScalarField.vars and "placement" not in MuJoCoScalarField.vars
+    forbidden = {"NativePlacement", "NativeSelection", "NativeSelections", "NativePrototypeMapping", "static_counts"}
+    for path in directory.rglob("*.py"):
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.Name)):
+                assert getattr(node, "name", getattr(node, "id", "")) not in forbidden
+            if isinstance(node, ast.Attribute):
+                assert node.attr not in forbidden
+    for name in ("newton_selection.py", "mujoco_selection.py"):
         tree = ast.parse((directory / name).read_text())
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 assert all(alias.name != "re" for alias in node.names)
             if isinstance(node, ast.ImportFrom):
                 assert all(
-                    alias.name not in {"NewtonSelectorCfg", "query_selection_ids", "resolve_selection"}
+                    alias.name not in {"NewtonSelectorCfg", "query_selection_indices", "resolve_selection"}
                     for alias in node.names
                 )
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 assert node.name != "resolve"
             if isinstance(node, ast.Attribute):
-                assert node.attr not in {"path", "count_per_world", "dense_width"}
-    for name in ("native_selection.py", "keyboard_worlds.py"):
+                assert node.attr not in {"path", "count_per_world", "policy_width"}
+    for name in ("mujoco_selection.py", "keyboard_worlds.py"):
         tree = ast.parse((directory / name).read_text())
         for node in ast.walk(tree):
             if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "group":
@@ -155,7 +173,7 @@ def test_retired_selection_owner_preserves_existing_bindings_without_a_cache_cyc
 
 def test_ragged_membership_empty_world_and_reactivation(selections):
     bodies = resolve_selection(selections, NewtonSelectorCfg(BODY, (".*/tip.*", ".*")))
-    assert bodies.static_counts == (2, 3)  # overlap was deduplicated
+    assert bodies.world_selection_counts == (2, 3)  # overlap was deduplicated
     assert bodies.ids.numpy().tolist() == [1, 0, 3, 4, 2]  # pattern order, then model order
     with pytest.raises(ValueError, match="equal static counts"):
         bodies.dense_ids()
@@ -235,6 +253,21 @@ def test_task_architecture_has_no_articulation_views():
         if isinstance(node, ast.Call):
             name = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
             assert name not in {"finalize", "add_usd", "ModelBuilder", "generate_keyboard", "spawn_keyboard"}
+
+
+def test_task_graph_explicitly_retains_contact_borrowers_without_task_root():
+    import isaaclab_tasks.contrib.keyboard.keyboard_worlds as module
+
+    tree = ast.parse(Path(module.__file__).read_text())
+    prepare = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "prepare"
+    )
+    retain = next(keyword.value for keyword in prepare.keywords if keyword.arg == "retain")
+    attributes = {node.attr for node in ast.walk(retain) if isinstance(node, ast.Attribute)}
+    assert {"_contact_selection", "env_index_by_world_id"} <= attributes
+    assert not any(isinstance(value, ast.Name) and value.id == "self" for value in retain.elts)
 
 
 @pytest.mark.parametrize("use_graph", [False, True])
@@ -473,7 +506,9 @@ def test_reset_kinematics_updates_only_requested_logical_worlds(device, grouped)
             wp.to_torch(state.body_qd).fill_(7)
             owner = NewtonSelections(model, state=state)
             parts.append((resolve_selection(owner, cfg), torch.tensor(logical_worlds, device=device)))
-        roots = NewtonSelectionGroup(cfg.frequency, parts, 5, policy_width=cfg.dense_width) if grouped else parts[0][0]
+        roots = (
+            NewtonSelectionGroup(cfg.index_domain, parts, 5, policy_width=cfg.policy_width) if grouped else parts[0][0]
+        )
         ids = torch.tensor([0, 3] if grouped else [1], device=device)
         kinematics = prepare_reset_kinematics(roots, ids)
         for angle in (0.25, 0.75):
@@ -494,7 +529,8 @@ def test_reset_kinematics_updates_only_requested_logical_worlds(device, grouped)
 
 
 @pytest.mark.parametrize("device", ["cpu", "cuda:0"])
-def test_reset_ik_uses_current_bindings_without_retaining_a_graph(device):
+@pytest.mark.parametrize("reverse_body_groups", [False, True])
+def test_reset_ik_uses_current_bindings_without_retaining_a_graph(device, reverse_body_groups):
     from types import SimpleNamespace
 
     from isaaclab_tasks.contrib.keyboard.mdp.commands.typing_commands import LetterTypingCommand
@@ -534,13 +570,15 @@ def test_reset_ik_uses_current_bindings_without_retaining_a_graph(device):
         )
         groups = [
             NewtonSelectionGroup(
-                cfg.frequency,
+                cfg.index_domain,
                 [(resolve_selection(part, cfg), torch.tensor(ids, device=device)) for part, ids in zip(owners, actors)],
                 3,
-                policy_width=cfg.dense_width,
+                policy_width=cfg.policy_width,
             )
             for cfg in configs
         ]
+        if reverse_body_groups:
+            groups[1].rebind(tuple(reversed(groups[1].native_bindings)))
         roots, bodies, coords, dofs = groups
         ik = KeyboardResetIKCfg(joints=coords, dofs=dofs, body=bodies)
         command = object.__new__(LetterTypingCommand)
@@ -661,9 +699,12 @@ def test_grouped_selection_routes_exact_native_populations(device):
             owner = NewtonSelections(model, state=state, control=control, source=source)
         bindings.append(owner)
         states.append(state)
-    cfg = NewtonSelectorCfg(JOINT_COORD, "/Robot/hinge.*", dense_width=2)
-    parts = [(resolve_selection(owner, cfg), actor_ids) for owner, actor_ids in zip(bindings, actors, strict=True)]
-    selected = NewtonSelectionGroup(cfg.frequency, parts, 5, policy_width=cfg.dense_width)
+    cfg = NewtonSelectorCfg(JOINT_COORD, "/Robot/hinge.*", policy_width=2)
+    parts = [
+        (resolve_selection(owner, cfg), world_id_by_env)
+        for owner, world_id_by_env in zip(bindings, actors, strict=True)
+    ]
+    selected = NewtonSelectionGroup(cfg.index_domain, parts, 5, policy_width=cfg.policy_width)
     selected.write_state(
         "joint_q", torch.tensor([[1.0, 9.0], [2.0, 12.0], [3.0, 9.0], [4.0, 14.0], [5.0, 9.0]], device=device)
     )
@@ -677,16 +718,16 @@ def test_grouped_selection_routes_exact_native_populations(device):
     expected[0, 0] = 11.0
     torch.testing.assert_close(selected.read_state("joint_q"), expected)
     selected.write_control("joint_target_q", expected)
-    for part, actor_ids in parts:
+    for part, world_id_by_env in parts:
         torch.testing.assert_close(
-            wp.to_torch(part.owner.control.joint_target_q), expected[actor_ids, : part.width].flatten()
+            wp.to_torch(part.owner.control.joint_target_q), expected[world_id_by_env, : part.width].flatten()
         )
-    bodies_cfg = NewtonSelectorCfg(BODY, "/Robot/.*", dense_width=3)
+    bodies_cfg = NewtonSelectorCfg(BODY, "/Robot/.*", policy_width=3)
     bodies = NewtonSelectionGroup(
-        bodies_cfg.frequency,
+        bodies_cfg.index_domain,
         [(resolve_selection(owner, bodies_cfg), rows) for owner, rows in zip(bindings, actors, strict=True)],
         5,
-        policy_width=bodies_cfg.dense_width,
+        policy_width=bodies_cfg.policy_width,
     )
     poses = bodies.read_state("body_q")
     assert poses.shape == (5, 3, 7)
@@ -872,10 +913,11 @@ def test_keyboard_variant_reset_restores_geometry_inertia_and_sleep(use_graph):
             env.close()
 
 
-def test_native_fields_follow_handles_strides_generations_and_reference_coordinates():
+@pytest.mark.parametrize("retirement", ["selection", "runtime"])
+def test_native_fields_follow_handles_strides_generations_and_reference_coordinates(retirement):
     from types import SimpleNamespace
 
-    from isaaclab_tasks.contrib.keyboard.native_selection import NativePrototypeMapping, NativeSelections
+    from isaaclab_tasks.contrib.keyboard.mujoco_selection import MuJoCoSelections, NewtonMuJoCoMapping
 
     metadata, solvers, groups, buffers = [], [], [], []
     for prototype, count in enumerate((1, 2)):
@@ -894,6 +936,7 @@ def test_native_fields_follow_handles_strides_generations_and_reference_coordina
         reverse = list(reversed(range(count)))
         solver = SimpleNamespace(
             model=model,
+            mjw_model=SimpleNamespace(nbody=count + 1),
             mj_model=SimpleNamespace(nq=count, nv=count, jnt_qposadr=np.arange(count)),
             mjc_mocap_to_newton_jnt=wp.zeros((1, 0), dtype=int, device="cpu"),
             mjc_jnt_to_newton_jnt=wp.array([reverse], dtype=int, device="cpu"),
@@ -917,14 +960,18 @@ def test_native_fields_follow_handles_strides_generations_and_reference_coordina
             "mjc_mocap_to_newton_jnt",
         ):
             setattr(no_actuators, name, None)
-        mapping = NativePrototypeMapping(owner, no_actuators)
-        assert not mapping.position and not mapping.velocity and mapping.root_body_ids.shape == (0,)
-        assert not mapping.coordinate_ids.flags.writeable
+        mapping = NewtonMuJoCoMapping(owner, no_actuators)
+        assert (
+            not mapping.position_actuator_index_by_newton_target
+            and not mapping.velocity_actuator_index_by_newton_dof
+            and mapping.newton_body_by_mocap.shape == (0,)
+        )
+        assert not mapping.newton_coord_by_mujoco_qpos.flags.writeable
         with pytest.raises(TypeError):
-            mapping.coord[0] = 99
+            mapping.mujoco_qpos_index_by_newton_coord[0] = 99
         no_actuators.mjc_mocap_to_newton_jnt = wp.array([[-1]], dtype=int, device="cpu")
         with pytest.raises(ValueError, match="valid authored joints"):
-            NativePrototypeMapping(owner, no_actuators)
+            NewtonMuJoCoMapping(owner, no_actuators)
         physical = wp.array(np.full((2, 8), -999, np.float32), device="cpu")
         values = wp.array(ptr=physical.ptr, shape=(2, count), strides=physical.strides, dtype=float, device="cpu")
         values.assign(np.arange(2 * count, dtype=np.float32).reshape(2, count) + 10 * (prototype + 1) + 0.25)
@@ -938,37 +985,71 @@ def test_native_fields_follow_handles_strides_generations_and_reference_coordina
             xquat=wp.full((2, count + 1), wp.quat(1, 0, 0, 0), dtype=wp.quat, device="cpu"),
         )
         groups.append(
-            SimpleNamespace(index=prototype, data=data, world_ready_count=wp.array([2], dtype=int, device="cpu"))
+            SimpleNamespace(
+                prototype_index=prototype,
+                model=solver.mjw_model,
+                data=data,
+                world_storage_ready_count=wp.array([2], dtype=int, device="cpu"),
+            )
         )
     directory = WorldDirectoryData()
     for name, array in dict(
         prototype=wp.array([1, -1, 0], dtype=int, device="cpu"),
         slot=wp.array([1, -1, 0], dtype=int, device="cpu"),
         generation=wp.array([7, 0, 5], dtype=wp.uint64, device="cpu"),
-        starts=wp.array([0, 4, 8], dtype=int, device="cpu"),
+        slot_starts=wp.array([0, 4, 8], dtype=int, device="cpu"),
         slot_id=wp.array([2, -1, -1, -1, -1, 0, -1, -1], dtype=int, device="cpu"),
-        free_count=wp.zeros(2, dtype=int, device="cpu"),  # No free slots is not an unreadable population.
+        free_slot_count=wp.zeros(2, dtype=int, device="cpu"),  # No free slots is not an unreadable population.
     ).items():
         setattr(directory, name, array)
     actors = wp.array([2, 0, 1], dtype=int, device="cpu")
     generations = wp.array([5, 7, 0], dtype=wp.uint64, device="cpu")
-    runtime = SimpleNamespace(prototypes=tuple(groups), directory=SimpleNamespace(data=directory))
-    selections = NativeSelections(
+    from newton.solvers import MuJoCoWorlds
+
+    # Use the production public lifetime guard without allocating a GPU physics population.
+    runtime = object.__new__(MuJoCoWorlds)
+    runtime._closed = runtime._service_failed = False
+    runtime.device = wp.get_device("cpu")
+    runtime._views, runtime._directory = tuple(groups), SimpleNamespace(data=directory)
+    selections = MuJoCoSelections(
         tuple(metadata),
-        tuple(NativePrototypeMapping(owner, solver) for owner, solver in zip(metadata, solvers, strict=True)),
+        tuple(NewtonMuJoCoMapping(owner, solver) for owner, solver in zip(metadata, solvers, strict=True)),
         runtime,
         actors,
         generations,
         num_envs=3,
         device="cpu",
     )
+    # Nested device descriptors cannot safely embed pointers from another device.
+    for owner in (runtime, *(item.model for item in metadata)):
+        with (
+            patch.object(owner, "device", object()),
+            patch.object(wp, "ones", side_effect=AssertionError("Foreign owner reached device allocation")),
+            patch.object(wp, "array", side_effect=AssertionError("Foreign owner reached device allocation")),
+            pytest.raises(ValueError, match="same device"),
+        ):
+            MuJoCoSelections(
+                tuple(metadata), selections.mappings, runtime, actors, generations, num_envs=3, device="cpu"
+            )
+    swapped = copy.copy(groups[0])
+    swapped.model = copy.copy(groups[0].model)  # Same shape/topology metadata, different prepared owner.
+    with pytest.raises(ValueError, match="exact runtime population model"):
+        MuJoCoSelections(
+            tuple(metadata),
+            selections.mappings,
+            SimpleNamespace(populations=(swapped, groups[1]), device=wp.get_device("cpu")),
+            actors,
+            generations,
+            num_envs=3,
+            device="cpu",
+        )
     selected = selections.bind(JOINT_COORD, ((0,), (0, 1)), policy_width=2)
     assert copy.deepcopy(selected) is selected
     from isaaclab.utils import class_to_dict
 
     assert class_to_dict(selected) == {}
-    assert selected.static_counts == (1, 2) and selected.width == 2
-    assert not hasattr(selected, "path")
+    assert selected.prototype_selection_counts == (1, 2) and selected.width == 2
+    assert not hasattr(selected, "path") and not hasattr(selected, "joint_ids")
     np.testing.assert_array_equal(selected.active_counts().numpy(), [1, 2, 0])
     np.testing.assert_allclose(selected.read_state("joint_q").numpy(), [[10, 0], [23, 22], [0, 0]])
     np.testing.assert_array_equal(selected.dense_active().numpy(), [[True, False], [True, True], [False, False]])
@@ -977,6 +1058,16 @@ def test_native_fields_follow_handles_strides_generations_and_reference_coordina
     selected.write_control("joint_target_q", torch.tensor([[5.0, 6.0]]), torch.tensor([1]))
     np.testing.assert_allclose(groups[1].data.ctrl.numpy()[1], [6.25, 5.25, -7, -7])
     dofs = selections.bind(JOINT_DOF, ((0,), (0, 1)), policy_width=2)
+    for invalid in (
+        lambda: dofs.read_model("body_mass"),
+        lambda: selected.read_model("joint_target_ke"),
+        lambda: selected.read_state("joint_qd"),
+        lambda: dofs.write_control("joint_target_q", torch.zeros((3, 2))),
+        lambda: selected.write_control("joint_f", torch.zeros((3, 2))),
+    ):
+        with patch.object(wp, "launch", side_effect=AssertionError("Mismatched field was launched")):
+            with pytest.raises(ValueError, match="index domain"):
+                invalid()
     dofs.write_control("joint_target_qd", torch.tensor([[7.0, 8.0]]), torch.tensor([1]))
     dofs.write_control("joint_f", torch.tensor([[9.0, 10.0]]), torch.tensor([1]))
     np.testing.assert_allclose(groups[1].data.ctrl.numpy()[1], [6.25, 5.25, 8, 7])
@@ -1014,13 +1105,10 @@ def test_native_fields_follow_handles_strides_generations_and_reference_coordina
     from mujoco_warp._src.types import ConeType, vec5
 
     for group, count in zip(groups, (1, 2)):
-        group.model = SimpleNamespace(
-            nbody=count + 1,
-            opt=SimpleNamespace(cone=ConeType.PYRAMIDAL),
-            geom_bodyid=wp.array([1, count], dtype=int, device="cpu"),
-        )
-        group.world_capacity, group.world_count = 2, wp.array([2], dtype=int, device="cpu")
-        group.contact_capacity, group.contact_ready_count = 4, wp.array([3], dtype=int, device="cpu")
+        group.model.opt = SimpleNamespace(cone=ConeType.PYRAMIDAL)
+        group.model.geom_bodyid = wp.array([1, count], dtype=int, device="cpu")
+        group.world_capacity, group.world_live_count = 2, wp.array([2], dtype=int, device="cpu")
+        group.contact_capacity, group.contact_storage_ready_count = 4, wp.array([3], dtype=int, device="cpu")
         group.record_launch = lambda kernel, dim, inputs, **kwargs: wp.launch(kernel, dim, inputs, device="cpu")
     contact = SimpleNamespace(
         worldid=wp.array([1, 1, 1, -1], dtype=int, device="cpu"),
@@ -1038,6 +1126,8 @@ def test_native_fields_follow_handles_strides_generations_and_reference_coordina
     )
     bodies.prepare_contact_forces()
     inverse = wp.array([1, -1, 0], dtype=int, device="cpu")
+    with pytest.raises(ValueError, match="exact runtime"):
+        bodies.record_contact_forces(copy.copy(groups[1]), inverse)
     bodies.record_contact_forces(groups[1], inverse)
     # Source-body0 is nativebody2: normal vectors sum before the norm; friction is excluded.
     np.testing.assert_allclose(bodies.selected_net_normal_forces().numpy()[1], [[-2, 0, 2], [2, 0, -2]])
@@ -1048,99 +1138,139 @@ def test_native_fields_follow_handles_strides_generations_and_reference_coordina
     generations.assign(np.array([5, 6, 0], np.uint64))
     np.testing.assert_array_equal(selected.read_state("joint_q", fill=-1).numpy(), [[10, -1], [-1, -1], [-1, -1]])
     generations.assign(np.array([5, 7, 0], np.uint64))
-    groups[1].world_ready_count.fill_(1)
+    groups[1].world_storage_ready_count.fill_(1)
     assert not selected.dense_active()[1].any()
     for physical, count in zip(buffers, (1, 2)):
         np.testing.assert_array_equal(physical.numpy()[:, count:], -999)
-    selections.retire()
-    with pytest.raises(RuntimeError, match="retired"):
-        selections.bind(JOINT_COORD, ((0,), (0, 1)), policy_width=2)
-    np.testing.assert_array_equal(selected.read_state("joint_q").numpy()[0], [10, 0])
+    # A reset-only publication switches env0 and compacts env1 to another row.
+    # Raw old contacts still mention row1, now env0; selected forces must not consume them again.
+    directory.prototype.assign(np.array([1, -1, 1], dtype=np.int32))
+    directory.slot.assign(np.array([0, -1, 1], dtype=np.int32))
+    directory.slot_id.assign(np.array([-1, -1, -1, -1, 0, 2, -1, -1], dtype=np.int32))
+    directory.generation.assign(np.array([7, 0, 6], dtype=np.uint64))
+    generations.assign(np.array([6, 7, 0], dtype=np.uint64))
+    groups[1].world_storage_ready_count.fill_(2)
+    visible = bodies.selected_net_normal_forces().numpy()
+    np.testing.assert_array_equal(visible[0], 0)
+    np.testing.assert_allclose(visible[1], [[-2, 0, 2], [2, 0, -2]])
+    values, env_ids = torch.zeros((1, 2)), torch.tensor([0])
+    if retirement == "selection":
+        selections.retire()
+        selections.retire()
+    else:
+        runtime._closed = True
+    operations = (
+        lambda: selections.bind(JOINT_COORD, ((0,), (0, 1)), policy_width=2),
+        selected.dense_active,
+        selected.active_counts,
+        selected.joint_types,
+        lambda: selected.scalar_field("state", "joint_q"),
+        lambda: selected.read_state("joint_q"),
+        lambda: dofs.read_model("joint_target_ke"),
+        lambda: bodies.read_state("body_q"),
+        lambda: bodies.read_model("body_q"),
+        lambda: selected.write_state("joint_q", values, env_ids),
+        lambda: dofs.write_control("joint_f", values, env_ids),
+        bodies.prepare_contact_forces,
+        lambda: bodies.record_contact_forces(groups[1], inverse),
+        bodies.selected_net_normal_forces,
+    )
+    with (
+        patch.object(wp, "launch", side_effect=AssertionError("retired selection launched work")),
+        patch.object(wp, "empty", side_effect=AssertionError("retired selection allocated work")),
+        patch.object(torch, "_assert_async", side_effect=AssertionError("retired selection enqueued validation")),
+    ):
+        for operation in operations:
+            with pytest.raises(RuntimeError, match="retired|closed"):
+                operation()
 
 
 def test_native_field_consumes_real_directory_local_slots_after_reset_and_compaction():
     from newton.worlds import WorldDirectory, WorldOperation, create_world_commands, create_world_results
 
-    from isaaclab_tasks.contrib.keyboard.native_selection import (
-        NativePlacement,
-        NativeScalarField,
+    from isaaclab_tasks.contrib.keyboard.mujoco_selection import (
+        EnvWorldBindings,
+        MuJoCoScalarField,
         _gather_scalars,
-        _NativeCapacity,
-        _NativeScalarSource,
+        _ScalarSource,
+        _WorldReadiness,
     )
 
     directory = WorldDirectory((2, 3), id_capacity=2, command_capacity=2, device="cpu")
-    directory.publish_ready((2, 3))
+    directory.publish_ready_slots((2, 3))
     commands, results = create_world_commands(2, device="cpu"), create_world_results(2, device="cpu")
-    commands.op.fill_(int(WorldOperation.CREATE))
+    commands.operation.fill_(int(WorldOperation.CREATE))
     commands.prototype.assign(np.array([0, 1], np.int32))
     commands.count.fill_(2)
     commands.sequence.fill_(1)
     directory.begin(commands)
     directory.admit(commands)
-    directory.transaction.initialized.fill_(1)  # This scalar test domain has preinitialized every row below.
+    directory.transaction.initialized_sequence.fill_(1)  # This scalar test domain has preinitialized every row below.
     directory.publish(commands, results)
     np.testing.assert_array_equal(results.status.numpy(), 0)
-    actor_ids = results.id.numpy()[::-1].copy()
+    world_id_by_env = results.world_id.numpy()[::-1].copy()
     generations = results.generation.numpy()[::-1].copy()
     d = directory.data
-    placement = NativePlacement()
-    placement.actor_ids = wp.array(actor_ids, dtype=int, device="cpu")
-    placement.actor_generations = wp.array(generations, dtype=wp.uint64, device="cpu")
-    placement.actor_active = wp.ones(2, dtype=bool, device="cpu")
+    placement = EnvWorldBindings()
+    placement.world_id_by_env = wp.array(world_id_by_env, dtype=int, device="cpu")
+    placement.world_generation_by_env = wp.array(generations, dtype=wp.uint64, device="cpu")
+    placement.env_participating = wp.ones(2, dtype=bool, device="cpu")
     placement.directory = d
     descriptors, capacities, arrays = [], [], []
     for prototype, rows in enumerate((2, 3)):
-        source = _NativeScalarSource()
+        source = _ScalarSource()
         source.values = wp.array((10 * (prototype + 1) + np.arange(rows, dtype=np.float32))[:, None], device="cpu")
         arrays.append(source.values)
         descriptors.append(source)
-        capacity = _NativeCapacity()
-        capacity.ready_rows = wp.array([rows], dtype=int, device="cpu")
+        capacity = _WorldReadiness()
+        capacity.ready_world_count = wp.array([rows], dtype=int, device="cpu")
         capacities.append(capacity)
-    placement.capacities = wp.array(capacities, dtype=_NativeCapacity, device="cpu")
-    field = NativeScalarField()
-    field.placement = placement
-    field.sources = wp.array(descriptors, dtype=_NativeScalarSource, device="cpu")
+    placement.world_readiness_by_prototype = wp.array(capacities, dtype=_WorldReadiness, device="cpu")
+    field = MuJoCoScalarField()
+    field.env_world_bindings = placement
+    field.sources = wp.array(descriptors, dtype=_ScalarSource, device="cpu")
     field.columns, field.offsets = (
         wp.zeros((2, 1), dtype=int, device="cpu"),
         wp.zeros((2, 1), dtype=float, device="cpu"),
     )
-    field.task_active = wp.ones((2, 1), dtype=bool, device="cpu")
+    field.element_participating = wp.ones((2, 1), dtype=bool, device="cpu")
     output = wp.empty((2, 1), dtype=float, device="cpu")
     wp.launch(_gather_scalars, (2, 1), [field, -1.0], [output], device="cpu")
     expected = np.array(
-        [arrays[int(d.prototype.numpy()[identity])].numpy()[int(d.slot.numpy()[identity])] for identity in actor_ids]
+        [
+            arrays[int(d.prototype.numpy()[identity])].numpy()[int(d.slot.numpy()[identity])]
+            for identity in world_id_by_env
+        ]
     )
     np.testing.assert_array_equal(output.numpy(), expected)
-    assert d.starts.numpy()[1] == 2 and 0 <= d.slot.numpy()[actor_ids[0]] < 3
+    assert d.slot_starts.numpy()[1] == 2 and 0 <= d.slot.numpy()[world_id_by_env[0]] < 3
     commands.count.fill_(1)
-    commands.op.assign(np.array([int(WorldOperation.RESET), 0], np.int32))
-    commands.id.assign(np.array([actor_ids[1], -1], np.int32))
+    commands.operation.assign(np.array([int(WorldOperation.RESET), 0], np.int32))
+    commands.world_id.assign(np.array([world_id_by_env[1], -1], np.int32))
     commands.generation.assign(np.array([generations[1], 0], np.uint64))
     commands.prototype.fill_(1)
     commands.sequence.fill_(2)
     directory.begin(commands)
     directory.admit(commands)
     reset_value = arrays[1].numpy()[int(directory.transaction.destination_slot.numpy()[0])].copy()
-    directory.transaction.initialized.fill_(2)
+    directory.transaction.initialized_sequence.fill_(2)
     directory.publish(commands, results)
     wp.launch(_gather_scalars, (2, 1), [field, -1.0], [output], device="cpu")
     np.testing.assert_array_equal(output.numpy(), [expected[0], [-1]])
     generations[1] = results.generation.numpy()[0]
-    placement.actor_generations.assign(generations)
-    directory.plan_moves()
+    placement.world_generation_by_env.assign(generations)
+    directory.plan_compaction()
     # Explicit test-domain relocation, with the directory's actual local source/destination rows.
-    starts = d.starts.numpy()
+    starts = d.slot_starts.numpy()
     for prototype, count in enumerate(directory.compaction.count.numpy()):
-        src = directory.compaction.source.numpy()[starts[prototype] : starts[prototype] + count]
-        dst = directory.compaction.destination.numpy()[starts[prototype] : starts[prototype] + count]
+        src = directory.compaction.source_slots.numpy()[starts[prototype] : starts[prototype] + count]
+        dst = directory.compaction.destination_slots.numpy()[starts[prototype] : starts[prototype] + count]
         if count:
             values = arrays[prototype].numpy()
             values[dst] = values[src]
             arrays[prototype].assign(values)
-    directory.compaction.copied.assign(directory.compaction.count.numpy())
-    directory.publish_moves()
+    directory.compaction.copied_count.assign(directory.compaction.count.numpy())
+    directory.publish_compaction()
     wp.launch(_gather_scalars, (2, 1), [field, -1.0], [output], device="cpu")
     np.testing.assert_array_equal(output.numpy(), [expected[0], reset_value])
     directory.close(streams=())
@@ -1250,7 +1380,7 @@ def test_root_pose_sampling_preserves_original_draws_and_inputs():
 
 @wp.kernel
 def _native_bounds_probe(
-    field: NativeScalarField,
+    field: MuJoCoScalarField,
     worlds: wp.array[int],
     slots: wp.array[int],
     active: wp.array[bool],
@@ -1266,37 +1396,41 @@ def _native_scalar_selection(device="cpu"):
     """A real two-actor descriptor, without a physics engine or retained dense mirror."""
     from types import SimpleNamespace
 
-    placement = NativePlacement()
-    placement.actor_ids = wp.array([0, 1], dtype=int, device=device)
-    placement.actor_generations = wp.ones(2, dtype=wp.uint64, device=device)
-    placement.actor_active = wp.ones(2, dtype=bool, device=device)
+    placement = EnvWorldBindings()
+    placement.world_id_by_env = wp.array([0, 1], dtype=int, device=device)
+    placement.world_generation_by_env = wp.ones(2, dtype=wp.uint64, device=device)
+    placement.env_participating = wp.ones(2, dtype=bool, device=device)
     placement.directory = WorldDirectoryData()
     placement.directory.prototype = wp.zeros(2, dtype=int, device=device)
     placement.directory.slot = wp.array([0, 1], dtype=int, device=device)
     placement.directory.generation = wp.ones(2, dtype=wp.uint64, device=device)
-    placement.directory.starts = wp.array([0, 2], dtype=int, device=device)
+    placement.directory.slot_starts = wp.array([0, 2], dtype=int, device=device)
     placement.directory.slot_id = wp.array([0, 1], dtype=int, device=device)
-    capacity = _NativeCapacity()
-    capacity.ready_rows = wp.array([2], dtype=int, device=device)
-    placement.capacities = wp.array([capacity], dtype=_NativeCapacity, device=device)
-    source = _NativeScalarSource()
+    capacity = _WorldReadiness()
+    capacity.ready_world_count = wp.array([2], dtype=int, device=device)
+    placement.world_readiness_by_prototype = wp.array([capacity], dtype=_WorldReadiness, device=device)
+    source = _ScalarSource()
     source.values = wp.array([[3.0], [4.0]], dtype=float, device=device)
     source.broadcast_rows = 0
-    field = NativeScalarField()
-    field.placement = placement
-    field.sources = wp.array([source], dtype=_NativeScalarSource, device=device)
+    field = MuJoCoScalarField()
+    field.env_world_bindings = placement
+    field.sources = wp.array([source], dtype=_ScalarSource, device=device)
     field.columns = wp.zeros((1, 1), dtype=int, device=device)
     field.offsets = wp.zeros((1, 1), dtype=float, device=device)
-    field.task_active = wp.ones((2, 1), dtype=bool, device=device)
-    selected = NativeSelection.__new__(NativeSelection)
-    selected.owner = SimpleNamespace(device=wp.get_device(device), num_envs=2, _actors=placement.actor_ids)
+    field.element_participating = wp.ones((2, 1), dtype=bool, device=device)
+    selected = MuJoCoSelection.__new__(MuJoCoSelection)
+    selected.owner = object.__new__(MuJoCoSelections)
+    selected.owner.device, selected.owner.num_envs = wp.get_device(device), 2
+    selected.owner._env_indices = placement.world_id_by_env
+    selected.owner._retired = False
+    selected.owner.runtime = SimpleNamespace(populations=())
     selected.width = 1
     selected._fields = {("state", "joint_q"): field, ("control", "joint_f"): field}
     return selected, field, source, capacity
 
 
 @pytest.mark.parametrize("device", ["cpu", "cuda:0"])
-def test_native_scalar_bad_actor_and_slot_are_inert(device):
+def test_native_scalar_bad_env_index_and_slot_are_inert(device):
     if device.startswith("cuda") and not wp.is_cuda_available():
         pytest.skip("CUDA is unavailable")
     selected, field, source, capacity = _native_scalar_selection(device)
@@ -1308,13 +1442,38 @@ def test_native_scalar_bad_actor_and_slot_are_inert(device):
     np.testing.assert_array_equal(active.numpy(), [False, False, False, False, False, True])
     np.testing.assert_array_equal(values.numpy(), [0, 0, 0, 0, 0, 4])
     np.testing.assert_array_equal(source.values.numpy(), [[3], [99]])
-    field.task_active = wp.ones((2, 0), dtype=bool, device=device)
+    field.element_participating = wp.ones((2, 0), dtype=bool, device=device)
     field.columns = wp.zeros((1, 0), dtype=int, device=device)
     field.offsets = wp.zeros((1, 0), dtype=float, device=device)
     wp.launch(_native_bounds_probe, 6, [field, worlds, slots], [active, values], device=device)
     assert not active.numpy().any()
     np.testing.assert_array_equal(values.numpy(), 0)
     np.testing.assert_array_equal(source.values.numpy(), [[3], [99]])
+
+
+@pytest.fixture(params=["mujoco", "newton", "newton_group"])
+def writable_selection(request):
+    """The same indexed-write contract holds at all three task selection boundaries."""
+    if request.param == "mujoco":
+        selected, field, source, capacity = _native_scalar_selection()
+        yield selected, selected, source.values, source.values
+        return
+    builder = newton.ModelBuilder()
+    for _ in range(2):
+        builder.begin_world()
+        body = builder.add_link(mass=1.0, inertia=wp.mat33(0.1))
+        joint = builder.add_joint_prismatic(parent=-1, child=body)
+        builder.add_articulation([joint])
+        builder.end_world()
+    model = builder.finalize("cpu")
+    owner = NewtonSelections(model, state=model.state(), control=model.control())
+    owner.state.joint_q.assign(np.array([3, 4], dtype=np.float32))
+    owner.control.joint_f.assign(np.array([3, 4], dtype=np.float32))
+    coords, dofs = owner.bind(JOINT_COORD, [0, 1]), owner.bind(JOINT_DOF, [0, 1])
+    if request.param == "newton_group":
+        coords = NewtonSelectionGroup(JOINT_COORD, ((coords, torch.arange(2)),), 2)
+        dofs = NewtonSelectionGroup(JOINT_DOF, ((dofs, torch.arange(2)),), 2)
+    yield coords, dofs, owner.state.joint_q, owner.control.joint_f
 
 
 @pytest.mark.parametrize("method,attribute", [("write_state", "joint_q"), ("write_control", "joint_f")])
@@ -1333,13 +1492,15 @@ def test_native_scalar_bad_actor_and_slot_are_inert(device):
         [0],
     ],
 )
-def test_native_write_rejects_malformed_actors_before_launch(method, attribute, ids):
-    selected, field, source, capacity = _native_scalar_selection()
+def test_write_rejects_malformed_env_indices_before_mutation(writable_selection, method, attribute, ids):
+    coords, dofs, state, control = writable_selection
+    selected = coords if method == "write_state" else dofs
     count = len(ids) if isinstance(ids, torch.Tensor) and ids.ndim == 1 else 1
     with patch.object(wp, "launch", side_effect=AssertionError("Unsafe write was launched")):
         with pytest.raises((ValueError, RuntimeError)):
             getattr(selected, method)(attribute, torch.zeros((count, 1)), ids)
-    np.testing.assert_array_equal(source.values.numpy(), [[3], [4]])
+    np.testing.assert_array_equal(state.numpy().reshape(-1), [3, 4])
+    np.testing.assert_array_equal(control.numpy().reshape(-1), [3, 4])
 
 
 @pytest.mark.parametrize(
@@ -1355,17 +1516,202 @@ def test_native_write_rejects_malformed_actors_before_launch(method, attribute, 
         [[0.0]],
     ],
 )
-def test_native_write_rejects_malformed_values_before_launch(values):
-    selected, field, source, capacity = _native_scalar_selection()
+def test_write_rejects_malformed_values_before_mutation(writable_selection, values):
+    selected, _, state, control = writable_selection
     with patch.object(wp, "launch", side_effect=AssertionError("Unsafe write was launched")):
         with pytest.raises(ValueError):
             selected.write_state("joint_q", values, torch.tensor([0]))
-    np.testing.assert_array_equal(source.values.numpy(), [[3], [4]])
+    np.testing.assert_array_equal(state.numpy().reshape(-1), [3, 4])
+    np.testing.assert_array_equal(control.numpy().reshape(-1), [3, 4])
 
 
-def test_native_write_empty_and_valid_subset_leave_other_actors_unchanged():
-    selected, field, source, capacity = _native_scalar_selection()
+def test_write_empty_and_valid_subset_leave_other_envs_unchanged(writable_selection):
+    selected, dofs, state, control = writable_selection
     with patch.object(wp, "launch", side_effect=AssertionError("Empty write was launched")):
         selected.write_state("joint_q", torch.empty((0, 1)), torch.empty(0, dtype=torch.long))
     selected.write_state("joint_q", torch.tensor([[7.0]]), torch.tensor([1]))
-    np.testing.assert_array_equal(source.values.numpy(), [[3], [7]])
+    np.testing.assert_array_equal(state.numpy().reshape(-1), [3, 7])
+    values = torch.tensor([[8.0], [9.0]])
+    with (
+        patch.object(torch, "_assert_async", side_effect=AssertionError("Full-domain writes need no index scan")),
+        patch.object(torch, "zeros", side_effect=AssertionError("Full-domain writes need no index scratch")),
+    ):
+        dofs.write_control("joint_f", values)
+    np.testing.assert_array_equal(control.numpy().reshape(-1), [8, 9])
+
+
+@pytest.mark.parametrize("joint_kind", ["free", "ball"])
+@pytest.mark.parametrize("coord_targets", [False, True])
+@pytest.mark.parametrize("grouped", [False, True])
+def test_field_schema_keeps_coordinate_dof_and_body_domains_distinct(monkeypatch, joint_kind, coord_targets, grouped):
+    """Equal integer indices never make different entity domains interchangeable."""
+    monkeypatch.setattr(newton, "use_coord_layout_targets", coord_targets)
+    builder = newton.ModelBuilder()
+    builder.begin_world()
+    root = builder.add_link(mass=3.0, inertia=wp.mat33(0.1))
+    child = builder.add_link(mass=5.0, inertia=wp.mat33(0.1))
+    root_joint = (
+        builder.add_joint_free(child=root) if joint_kind == "free" else builder.add_joint_ball(parent=-1, child=root)
+    )
+    hinge = builder.add_joint_revolute(parent=root, child=child)
+    builder.add_articulation([root_joint, hinge])
+    builder.end_world()
+    model = builder.finalize("cpu")
+    owner = NewtonSelections(model, state=model.state(), control=model.control())
+    # The model snapshots this schema choice; a later process default is irrelevant.
+    monkeypatch.setattr(newton, "use_coord_layout_targets", not coord_targets)
+    index = 6 if joint_kind == "free" else 3  # Root quaternion scalar coordinate / hinge DOF.
+    coords, dofs, first_dof = (
+        owner.bind(JOINT_COORD, [index]),
+        owner.bind(JOINT_DOF, [index]),
+        owner.bind(JOINT_DOF, [0]),
+    )
+    if grouped:
+        coords, dofs, first_dof = (
+            NewtonSelectionGroup(part.index_domain, ((part, torch.tensor([0])),), 1)
+            for part in (coords, dofs, first_dof)
+        )
+    value = torch.tensor([[0.375]])
+    old_q, old_qd, old_f = (
+        owner.state.joint_q.numpy().copy(),
+        owner.state.joint_qd.numpy().copy(),
+        owner.control.joint_f.numpy().copy(),
+    )
+    for invalid in (
+        lambda: first_dof.read_model("body_mass"),
+        lambda: first_dof.scalar_field("model", "body_mass"),
+        lambda: coords.read_state("joint_qd"),
+        lambda: dofs.read_state("joint_q"),
+        lambda: coords.scalar_field("state", "joint_qd"),
+        lambda: dofs.scalar_field("state", "joint_q"),
+        lambda: coords.write_state("joint_qd", value),
+        lambda: coords.write_state("joint_qd", torch.empty((0, 1)), torch.empty(0, dtype=torch.long)),
+        lambda: dofs.write_state("joint_q", value),
+        lambda: coords.write_control("joint_f", value),
+    ):
+        with pytest.raises(ValueError, match="index domain"):
+            invalid()
+    np.testing.assert_array_equal(owner.state.joint_q.numpy(), old_q)
+    np.testing.assert_array_equal(owner.state.joint_qd.numpy(), old_qd)
+    np.testing.assert_array_equal(owner.control.joint_f.numpy(), old_f)
+    coords.write_state("joint_q", value)
+    dofs.write_state("joint_qd", value * 2)
+    dofs.write_control("joint_f", value * 3)
+    torch.testing.assert_close(coords.read_state("joint_q"), value)
+    torch.testing.assert_close(dofs.read_state("joint_qd"), value * 2)
+    assert owner.control.joint_f.numpy()[index] == value.item() * 3
+    targets, wrong_targets = (coords, dofs) if coord_targets else (dofs, coords)
+    old_targets = owner.control.joint_target_q.numpy().copy()
+    for invalid in (
+        lambda: wrong_targets.scalar_field("control", "joint_target_q"),
+        lambda: wrong_targets.write_control("joint_target_q", value),
+    ):
+        with pytest.raises(ValueError, match="index domain"):
+            invalid()
+    np.testing.assert_array_equal(owner.control.joint_target_q.numpy(), old_targets)
+    targets.scalar_field("control", "joint_target_q")
+    targets.write_control("joint_target_q", value)
+    assert owner.control.joint_target_q.numpy()[index] == value.item()
+    dofs.scalar_field("control", "joint_target_qd")
+    dofs.write_control("joint_target_qd", value * 4)
+    assert owner.control.joint_target_qd.numpy()[index] == value.item() * 4
+
+
+def test_selection_contracts_check_joint_identity_world_domain_and_scalar_topology():
+    """Equal lengths never establish ordered joint correspondence or shared ownership."""
+    from isaaclab_tasks.contrib.keyboard.selection_contracts import require_scalar_joint_pair
+
+    builder = newton.ModelBuilder()
+    builder.begin_world()
+    joints = []
+    for index in range(2):
+        body = builder.add_link(mass=1.0)
+        joints.append(builder.add_joint_prismatic(parent=-1, child=body))
+    builder.add_articulation(joints)
+    builder.end_world()
+    owner = NewtonSelections(builder.finalize("cpu"))
+    coords, dofs = owner.bind(JOINT_COORD, [0, 1]), owner.bind(JOINT_DOF, [0, 1])
+    require_scalar_joint_pair(coords, dofs)
+    with pytest.raises(ValueError, match="same ordered scalar joints"):
+        require_scalar_joint_pair(coords, owner.bind(JOINT_DOF, [1, 0]))
+    other = NewtonSelections(builder.finalize("cpu"))
+    with pytest.raises(ValueError, match="same world domain"):
+        require_scalar_joint_pair(coords, other.bind(JOINT_DOF, [0, 1]))
+    grouped_coords = NewtonSelectionGroup(JOINT_COORD, ((coords, torch.tensor([0])),), 1)
+    grouped_dofs = NewtonSelectionGroup(JOINT_DOF, ((dofs, torch.tensor([0])),), 1)
+    require_scalar_joint_pair(grouped_coords, grouped_dofs)
+    assert not hasattr(grouped_coords, "joint_ids")
+    with pytest.raises(ValueError, match="same world domain"):
+        require_scalar_joint_pair(coords, grouped_dofs)
+    with pytest.raises(ValueError, match="same world domain"):
+        require_scalar_joint_pair(
+            grouped_coords,
+            NewtonSelectionGroup(JOINT_DOF, ((other.bind(JOINT_DOF, [0, 1]), torch.tensor([0])),), 1),
+        )
+
+
+def test_prototype_cardinality_is_not_the_live_environment_axis():
+    """An empty invalid prototype must fail even when every live world looks valid."""
+    from types import SimpleNamespace
+
+    from isaaclab_tasks.contrib.keyboard.selection_contracts import require_count_per_world
+
+    parts = []
+    for count in (1, 2):
+        builder = newton.ModelBuilder()
+        builder.begin_world()
+        for _ in range(count):
+            builder.add_body(mass=1.0)
+        builder.end_world()
+        owner = NewtonSelections(builder.finalize("cpu"))
+        parts.append(owner.bind(BODY, list(range(count))))
+    selection = MuJoCoSelection(SimpleNamespace(device=wp.get_device("cpu"), num_envs=3), BODY, parts)
+    assert selection.prototype_selection_counts == (1, 2)
+    assert selection.element_participating.shape == (3, 2)
+    assert not hasattr(selection, "world_selection_counts")
+    assert not hasattr(parts[0], "prototype_selection_counts")
+    with pytest.raises(ValueError, match="exactly 1"):
+        require_count_per_world(selection, 1)
+    require_count_per_world(parts[0], 1)
+    with pytest.raises(ValueError, match="exactly 1"):
+        require_count_per_world(parts[1], 1)
+
+
+def test_partial_free_joint_is_not_a_scalar_pair(selections):
+    from isaaclab_tasks.contrib.keyboard.selection_contracts import require_scalar_joint_pair
+
+    coords = selections.bind(JOINT_COORD, [0, 8])
+    dofs = selections.bind(JOINT_DOF, [0, 7])
+    assert coords.world_selection_counts == dofs.world_selection_counts == (1, 1)
+    np.testing.assert_array_equal(coords.joint_ids.numpy(), dofs.joint_ids.numpy())
+    with pytest.raises(ValueError, match="components of multi-coordinate"):
+        require_scalar_joint_pair(coords, dofs)
+
+
+def test_group_world_domain_validates_before_rebind_and_ignores_group_enumeration_order():
+    from isaaclab_tasks.contrib.keyboard.selection_contracts import require_same_world_domain
+
+    parts = []
+    for _ in range(2):
+        builder = newton.ModelBuilder()
+        builder.begin_world()
+        builder.add_body(mass=1.0)
+        builder.end_world()
+        parts.append(NewtonSelections(builder.finalize("cpu")).bind(BODY, [0]))
+    first = ((parts[0], torch.tensor([1])), (parts[1], torch.tensor([0])))
+    group = NewtonSelectionGroup(BODY, first, 2)
+    reverse = NewtonSelectionGroup(BODY, tuple(reversed(first)), 2)
+    require_same_world_domain(group, reverse)
+    for invalid in (
+        ((parts[0], torch.tensor([0])), (parts[1], torch.tensor([0]))),
+        ((parts[0], torch.tensor([0])), (parts[1], torch.tensor([2]))),
+    ):
+        with pytest.raises(ValueError, match="disjoint, complete"):
+            group.rebind(invalid)
+        require_same_world_domain(group, reverse)
+    with pytest.raises(ValueError, match="alias one physical model world"):
+        group.rebind(((parts[0], torch.tensor([0])), (parts[0], torch.tensor([1]))))
+    require_same_world_domain(group, reverse)
+    swapped = NewtonSelectionGroup(BODY, ((parts[0], torch.tensor([0])), (parts[1], torch.tensor([1]))), 2)
+    with pytest.raises(ValueError, match="same world domain"):
+        require_same_world_domain(group, swapped)

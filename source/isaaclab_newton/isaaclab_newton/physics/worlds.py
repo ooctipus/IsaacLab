@@ -40,9 +40,9 @@ class NewtonWorldsBackendCfg(BackendCfg):
     class_type: type = "{DIR}.worlds:NewtonWorldsBackend"
     prototypes: tuple[tuple[Model, Data], ...] = field(kw_only=True, metadata={"copy": False})
     """Prepared immutable native models and one-world defaults, borrowed without copying."""
-    capacities: tuple[int, ...] = MISSING
+    world_capacities: tuple[int, ...] = MISSING
     """Virtual world row limits, independently of physical readiness and live counts."""
-    id_capacity: int = MISSING
+    world_id_capacity: int = MISSING
     """Maximum simultaneous logical world identities."""
     command_capacity: int = MISSING
     """Maximum GPU lifecycle requests in one batch."""
@@ -50,7 +50,7 @@ class NewtonWorldsBackendCfg(BackendCfg):
     """Native timestep [s], matching every prepared prototype's immutable timestep."""
     substeps: int = 2
     """Native substeps per physics frame; ``dt * substeps`` equals SimulationCfg.dt."""
-    initial_rows: tuple[int, ...] | None = None
+    initial_world_ready_capacities: tuple[int, ...] | None = None
     """Initial physical world readiness; lifetime creation belongs to task commands."""
     contact_capacities: tuple[int, ...] | None = None
     """Optional virtual candidate/contact limits per prototype."""
@@ -82,13 +82,13 @@ class NewtonWorldsBackend:
         self.dt, self.substeps = cfg.dt, operator.index(cfg.substeps)
         self.runtime = MuJoCoWorlds(
             prepared,
-            capacities=cfg.capacities,
-            id_capacity=cfg.id_capacity,
+            world_capacities=cfg.world_capacities,
+            id_capacity=cfg.world_id_capacity,
             command_capacity=cfg.command_capacity,
             contact_capacities=cfg.contact_capacities,
             ccd_capacities=cfg.ccd_capacities,
             memory_budget_bytes=cfg.memory_budget_bytes,
-            initial_rows=cfg.initial_rows,
+            initial_world_ready_capacities=cfg.initial_world_ready_capacities,
         )
         self.graph: wp.Graph | None = None
         self._closed = False

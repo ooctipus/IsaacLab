@@ -250,7 +250,9 @@ def _tip_jacobian(
 
 def tip_jacobian(ik: KeyboardResetIKCfg, out: wp.array) -> torch.Tensor:
     """Compute only the selected fingertip Jacobian [m/rad, rad/rad] without a padded articulation view."""
-    for (dofs, worlds), (body, _) in zip(ik.dofs.native_bindings, ik.body.native_bindings, strict=True):
+    bodies_by_owner = {body.owner: body for body, _ in ik.body.native_bindings}
+    for dofs, worlds in ik.dofs.native_bindings:
+        body = bodies_by_owner[dofs.owner]
         model, state = dofs.owner.model, dofs.owner.state
         shape = dofs.dense_ids().shape
         wp.launch(

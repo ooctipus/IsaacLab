@@ -63,13 +63,13 @@ def prepare_keyboard_prototype(env, keyboard_cfg, physics, selector_cfgs, *, con
     source = NewtonSelections(model)
     try:
         for cfg in selector_cfgs:
-            resolve_selection(source, cfg.replace(dense_width=None))
-        robot_q = resolve_selection(source, env.cfg.actions.action.joints.replace(dense_width=None))
-        robot_qd = resolve_selection(source, env.cfg.actions.action.dofs.replace(dense_width=None))
+            resolve_selection(source, cfg.replace(policy_width=None))
+        robot_q = resolve_selection(source, env.cfg.actions.action.joints.replace(policy_width=None))
+        robot_qd = resolve_selection(source, env.cfg.actions.action.dofs.replace(policy_width=None))
         wp.to_torch(model.joint_q)[robot_q.dense_ids()] = 0.0
         wp.to_torch(model.joint_qd).zero_()
         wp.to_torch(model.joint_target_mode)[robot_qd.dense_ids()] = int(newton.JointTargetMode.POSITION_VELOCITY)
-        roots = resolve_selection(source, env.cfg.commands.typing.reset_roots.replace(dense_width=None))
+        roots = resolve_selection(source, env.cfg.commands.typing.reset_roots.replace(policy_width=None))
         root_joints = source.root_joint_ids[roots.dense_ids()]
         if torch.any(root_joints < 0) or torch.any(
             wp.to_torch(model.joint_type)[root_joints] != int(newton.JointType.FIXED)
@@ -114,8 +114,8 @@ class KeyboardPopulations:
         self.layouts = tuple(generate_keyboard(cfg) for cfg in configs)
         if any(layout.active_key_count % 6 or layout.active_key_count > 108 for layout in self.layouts):
             raise ValueError("Keyboard populations require 6..108 keys in multiples of six.")
-        self.counts = torch.tensor([layout.active_key_count for layout in self.layouts], device=env.device)
-        self.backspaces = torch.tensor(
+        self.key_counts = torch.tensor([layout.active_key_count for layout in self.layouts], device=env.device)
+        self.backspace_slots = torch.tensor(
             [
                 next(key.slot for key in layout.active_keys if key.label.lower() in ("backspace", "bksp"))
                 for layout in self.layouts
@@ -153,7 +153,7 @@ class KeyboardPopulations:
                 contact_term = env.cfg.terminations.excessive_contact
                 sensor = None
                 if contact_term is not None:
-                    bodies = resolve_selection(selections, contact_term.params["bodies"].replace(dense_width=None))
+                    bodies = resolve_selection(selections, contact_term.params["bodies"].replace(policy_width=None))
                     sensor = SensorContact(
                         solver.model, sensing_bodies=bodies.ids.numpy().tolist(), request_contact_attributes=False
                     )
@@ -187,11 +187,11 @@ class KeyboardPopulations:
         cfg = self.env.cfg
         return cfg.commands, cfg.actions, cfg.observations, cfg.rewards, cfg.terminations, cfg.events
 
-    def reset_variants(self, env_ids):
+    def committed_variant_ids(self, env_ids):
         """Return the committed prototypes used by an upcoming snapshot reset."""
         return self.variant_ids[env_ids]
 
-    def reset_snapshot(self, env_ids, variant_ids, snapshot):
+    def reset_from_snapshot(self, env_ids, variant_ids, snapshot):
         """Restore a complete task snapshot into the already assigned exact populations."""
         from .mdp.reset import restore_reset_state
 
@@ -200,11 +200,11 @@ class KeyboardPopulations:
         restore_reset_state(self.env, snapshot, env_ids, command.reset_roots, command.reset_coords, command.reset_dofs)
 
     @property
-    def active_prototypes(self):
+    def populated_prototype_count(self):
         return sum(count > 0 for count in self.backend.counts)
 
     @property
-    def native_dofs(self):
+    def live_dof_count(self):
         return sum(p.model.joint_dof_count for p in self.backend.populations if p is not None)
 
     def _bind_native(self):
@@ -251,7 +251,7 @@ class KeyboardPopulations:
         self._sources.clear()
 
     def _parts(self, cfg):
-        native_cfg = cfg.replace(dense_width=None)
+        native_cfg = cfg.replace(policy_width=None)
         return tuple(
             (resolve_selection(owner, native_cfg), worlds)
             for owner, worlds in zip(self._owners, self.worlds)
@@ -262,7 +262,7 @@ class KeyboardPopulations:
         key = selector_key(cfg)
         if key not in self._bindings:
             self._bindings[key] = NewtonSelectionGroup(
-                cfg.frequency, self._parts(cfg), self.env.num_envs, policy_width=cfg.dense_width
+                cfg.index_domain, self._parts(cfg), self.env.num_envs, policy_width=cfg.policy_width
             )
         return self._bindings[key]
 
@@ -291,7 +291,7 @@ class KeyboardPopulations:
                 "Variant IDs are outside the registered keyboard range.",
             )
 
-    def request(self, env_ids, variant_ids=None):
+    def request_variants(self, env_ids, variant_ids=None):
         """Queue reset requests on the GPU without resizing native models."""
         self._validate_actor_request(env_ids, variant_ids)
         if variant_ids is None:
@@ -299,7 +299,7 @@ class KeyboardPopulations:
             variant_ids = (self.variant_ids[env_ids] + offsets) % len(self.layouts)
         self.desired_variant_ids[env_ids] = variant_ids
 
-    def redistribute(self, eligible_ids):
+    def apply_pending_variants(self, eligible_ids):
         """Apply pending requests for explicitly eligible episode boundaries."""
         self._validate_actor_request(eligible_ids)
         assignments = self.variant_ids.clone()

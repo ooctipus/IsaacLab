@@ -28,7 +28,15 @@
   "submission" API or compatibility alias for the unreleased `resolve_submission` method.
 - Use concrete types for public interfaces where practical.
 - For task-local Newton selection, resolve names in the path utility before numeric binding. Bound selections must not retain path expressions or accept `int | str` identities. Preserve ordered occurrence relations, including repeated asset instances.
-- Compose the public Newton handle/placement relations with task-owned actor participation. Do not reimplement lifetime validation, inspect private prototype storage, or infer the same native coordinate conversion in separate consumers.
+- Compose the public Newton handle/placement relations with task-owned environment participation. Do not reimplement lifetime validation, inspect private population storage, or infer the same MuJoCo coordinate conversion in separate consumers.
+- State every selection count's axis explicitly: world counts and prototype counts are different relations. Validate joint correspondence using owner, domain and ordered joint identity, not equal counts alone.
+- Validate selected fields against the prepared model's authoritative attribute frequency. Matching integer indices or scalar shapes do not make coordinate, DOF and body fields interchangeable; do not duplicate the model's schema in a task registry.
+- Validate explicit indexed writes before changing state: environment indices must be unique, in range and on the owner device, and values must match the declared shape and dtype. Keep the full-population path free of index scans.
+- Keep environment position, world ID plus generation, prototype index and storage slot distinct. Name conversion maps by destination and source index domains.
+- Name reset operations by their effect: requesting, staging and publishing are distinct. Do not give a staging-only operation and an immediate population rebuild the same contract.
+- A retained Python owner does not make explicitly retired native storage usable. Reject selection access after owner retirement or runtime closure before allocating or launching work; raw borrowed descriptors remain scoped to that lifetime.
+- Admit selection metadata, runtime storage and world handles only on one device before allocating descriptor tables. A nested pointer descriptor does not establish cross-device accessibility.
+- Retain the exact buffers consumed by captured task kernels. Do not retain preparation callbacks or the whole task root as a substitute for explicit resource ownership.
 - Use Google-style docstrings for public APIs.
 - Document SI units for public physical quantities in docstrings using inline `[unit]` notation (e.g. `Particle positions [m], shape [N, 3]`); use `[m or rad, depending on joint type]` where applicable, and skip non-physical fields (indices, counts, flags).
 - Keep comments brief and explain intent, constraints, or edge cases rather than restating code.

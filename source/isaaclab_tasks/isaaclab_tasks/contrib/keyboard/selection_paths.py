@@ -28,10 +28,10 @@ class NewtonSelectorCfg:
     Joint patterns expand into all coordinates or DOFs of each matched joint.
     """
 
-    frequency: Literal["body", "joint_coord", "joint_dof"] = MISSING
+    index_domain: Literal["body", "joint_coord", "joint_dof"] = MISSING
     path: str | tuple[str, ...] | list[str] = MISSING
     count_per_world: int | None = None
-    dense_width: int | None = None
+    policy_width: int | None = None
     """Explicit policy width for a group of differently sized native selections."""
 
 
@@ -53,23 +53,23 @@ def bind_selectors(value, resolve):
 def selector_key(cfg: NewtonSelectorCfg) -> tuple:
     """Return the immutable preparation cache key for a symbolic query."""
     patterns = (cfg.path,) if isinstance(cfg.path, str) else tuple(cfg.path)
-    return cfg.frequency, patterns, cfg.count_per_world, cfg.dense_width
+    return cfg.index_domain, patterns, cfg.count_per_world, cfg.policy_width
 
 
-def query_selection_ids(model: Model, cfg: NewtonSelectorCfg) -> np.ndarray:
-    """Resolve ordered patterns to unique frequency IDs, excluding global entities.
+def query_selection_indices(model: Model, cfg: NewtonSelectorCfg) -> np.ndarray:
+    """Resolve ordered patterns to unique model indices, excluding global entities.
 
     Occurrences in different bodies or joints remain distinct even when labels
     match. Repeated pattern matches of the same entity are selected once.
     """
-    if cfg.frequency not in (BODY, JOINT_COORD, JOINT_DOF):
-        raise ValueError(f"Unknown Newton frequency: {cfg.frequency!r}")
-    labels = model.body_label if cfg.frequency == BODY else model.joint_label
-    worlds = (model.body_world if cfg.frequency == BODY else model.joint_world).numpy()
+    if cfg.index_domain not in (BODY, JOINT_COORD, JOINT_DOF):
+        raise ValueError(f"Unknown Newton index domain: {cfg.index_domain!r}")
+    labels = model.body_label if cfg.index_domain == BODY else model.joint_label
+    worlds = (model.body_world if cfg.index_domain == BODY else model.joint_world).numpy()
     starts = (
         None
-        if cfg.frequency == BODY
-        else (model.joint_q_start if cfg.frequency == JOINT_COORD else model.joint_qd_start).numpy()
+        if cfg.index_domain == BODY
+        else (model.joint_q_start if cfg.index_domain == JOINT_COORD else model.joint_qd_start).numpy()
     )
     rows = [[] for _ in range(model.world_count)]
     seen = set()
@@ -84,10 +84,10 @@ def query_selection_ids(model: Model, cfg: NewtonSelectorCfg) -> np.ndarray:
                 seen.add(entity)
                 rows[world].extend([entity] if starts is None else range(int(starts[entity]), int(starts[entity + 1])))
         if not matched:
-            raise ValueError(f"Selector {pattern!r} matched no {cfg.frequency} entities.")
+            raise ValueError(f"Selector {pattern!r} matched no {cfg.index_domain} entities.")
     if cfg.count_per_world is not None and any(len(row) != cfg.count_per_world for row in rows):
         raise ValueError(
-            f"Expected {cfg.count_per_world} {cfg.frequency} entries per world; got {list(map(len, rows))}."
+            f"Expected {cfg.count_per_world} {cfg.index_domain} entries per world; got {list(map(len, rows))}."
         )
     return np.asarray([index for row in rows for index in row], dtype=np.int32)
 
@@ -95,10 +95,10 @@ def query_selection_ids(model: Model, cfg: NewtonSelectorCfg) -> np.ndarray:
 def resolve_selection(owner: NewtonSelections, cfg: NewtonSelectorCfg) -> NewtonSelection:
     """Bind a symbolic query through the numeric Newton selection API."""
     model = owner.model if owner.source is None else owner.source.model
-    ids = query_selection_ids(model, cfg)
+    ids = query_selection_indices(model, cfg)
     if owner.source is not None:
         stride = {BODY: model.body_count, JOINT_COORD: model.joint_coord_count, JOINT_DOF: model.joint_dof_count}[
-            cfg.frequency
+            cfg.index_domain
         ]
         ids = (ids[None, :] + np.arange(owner.model.world_count, dtype=np.int32)[:, None] * stride).reshape(-1)
-    return owner.bind(cfg.frequency, ids)
+    return owner.bind(cfg.index_domain, ids)

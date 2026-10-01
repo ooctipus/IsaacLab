@@ -43,12 +43,12 @@ def native_backend(monkeypatch):
     model = SimpleNamespace(opt=SimpleNamespace(timestep=SimpleNamespace(numpy=lambda: np.array([0.005]))))
     cfg = NewtonWorldsBackendCfg(
         prototypes=((model, object()),),
-        capacities=(8,),
-        id_capacity=4,
+        world_capacities=(8,),
+        world_id_capacity=4,
         command_capacity=4,
         dt=0.005,
         substeps=2,
-        initial_rows=(0,),
+        initial_world_ready_capacities=(0,),
         memory_budget_bytes=2**24,
     )
     backend = NewtonWorldsBackend(cfg)
@@ -60,7 +60,7 @@ def test_backend_owns_one_native_runtime_and_graph(native_backend, monkeypatch):
     """Verify coherent reset-only/step replay changes only the native physics permit."""
     backend, runtime, constructor, cfg, order = native_backend
     assert constructor.call_args.args == (cfg.prototypes,)
-    assert constructor.call_args.kwargs["initial_rows"] == (0,)
+    assert constructor.call_args.kwargs["initial_world_ready_capacities"] == (0,)
     commands, results, payload = object(), object(), object()
     callbacks = dict(validate=Mock(), initialize=Mock(), before_step=Mock(), after_substep=Mock())
     backend.prepare(commands, results, retain=(payload,), **callbacks)

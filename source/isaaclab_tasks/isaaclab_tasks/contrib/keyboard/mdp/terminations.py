@@ -14,7 +14,7 @@ import warp as wp
 
 from isaaclab.managers import ManagerTermBase
 
-from ..native_selection import NativeSelection
+from ..mujoco_selection import MuJoCoSelection
 from ..newton_selection import JOINT_DOF, NewtonSelection, scalar_field_active, scalar_field_read
 
 if TYPE_CHECKING:
@@ -87,13 +87,13 @@ class joint_vel_out_of_limit(ManagerTermBase):
 
     def __init__(self, cfg, env):
         super().__init__(cfg, env)
-        if cfg.params["joints"].frequency != JOINT_DOF:
+        if cfg.params["joints"].index_domain != JOINT_DOF:
             raise ValueError("Velocity limits require a JOINT_DOF selector.")
         self._out = wp.zeros(env.num_envs, dtype=wp.int32, device=env.device)
 
     def __call__(self, env, joints: NewtonSelection) -> torch.Tensor:
         self._out.zero_()
-        if isinstance(joints, NativeSelection):
+        if isinstance(joints, MuJoCoSelection):
             wp.launch(
                 _selected_velocity_limit_violation,
                 dim=(env.num_envs, joints.width),
@@ -135,7 +135,7 @@ class illegal_contact(ManagerTermBase):
         sensor_name = cfg.params["sensor_name"]
         self._sensor = env.scene.sensors[sensor_name] if sensor_name is not None else None
         if self._sensor is None:
-            if bodies.frequency != "body":
+            if bodies.index_domain != "body":
                 raise ValueError("Keyboard contact termination requires selected bodies.")
             return
         native = self._sensor.contact_view
@@ -147,7 +147,7 @@ class illegal_contact(ManagerTermBase):
         )
 
     def __call__(self, env, bodies, sensor_name: str | None, threshold: float):
-        if isinstance(bodies, NativeSelection):
+        if isinstance(bodies, MuJoCoSelection):
             return (bodies.selected_net_normal_forces().norm(dim=-1) > threshold).any(dim=1)
         if self._sensor is not None:
             forces = self._sensor.data.net_normal_forces_w_history.torch

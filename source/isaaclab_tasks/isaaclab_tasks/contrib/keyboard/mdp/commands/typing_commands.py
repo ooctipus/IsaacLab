@@ -28,6 +28,7 @@ from isaaclab.utils.math import (
 
 from isaaclab_tasks.utils.success_monitor import SuccessMonitor, SuccessMonitorCfg
 
+from ...selection_contracts import require_count_per_world, require_same_world_domain, require_scalar_joint_pair
 from ..reset import capture_reset_state, prepare_reset_kinematics, sample_root_poses, tip_jacobian
 from . import typing_vis
 
@@ -229,10 +230,9 @@ class LetterTypingCommand(CommandTerm):
         self._reset_ik = cfg.reset.ik
         if cfg.reset.ik is not None:
             ik_cfg = cfg.reset.ik
-            if ik_cfg.joints.static_counts != ik_cfg.dofs.static_counts or any(
-                n != 1 for n in ik_cfg.body.static_counts
-            ):
-                raise ValueError("Reset IK requires scalar joints and one end-effector body per world.")
+            require_scalar_joint_pair(ik_cfg.joints, ik_cfg.dofs)
+            require_same_world_domain(ik_cfg.joints, ik_cfg.body)
+            require_count_per_world(ik_cfg.body, 1)
             types = ik_cfg.dofs.joint_types()
             if torch.any((types != newton.JointType.REVOLUTE) & (types != newton.JointType.PRISMATIC)):
                 raise ValueError("Reset IK supports scalar revolute and prismatic joints.")
@@ -326,7 +326,7 @@ class LetterTypingCommand(CommandTerm):
     @property
     def _backspace(self):
         bank = self._env.keyboard_variants
-        return self._default_backspace if bank is None else bank.backspaces[bank.variant_ids]
+        return self._default_backspace if bank is None else bank.backspace_slots[bank.variant_ids]
 
     @property
     def command(self) -> torch.Tensor:
@@ -473,7 +473,7 @@ class LetterTypingCommand(CommandTerm):
         needs_bs = typed_len > prefix
         backspace = self._backspace if world_ids is None else self._backspace[world_ids]
         if variant_ids is not None:
-            backspace = self._env.keyboard_variants.backspaces[variant_ids]
+            backspace = self._env.keyboard_variants.backspace_slots[variant_ids]
         next_key = torch.where(needs_bs, backspace[rows % len(backspace)], target[rows, nxt]).clamp(min=0)
         # Backspace depth as a FRACTION of the word length, so "fully wrong" costs the same regardless of length
         # (len-1 unmatched=1 and len-3 unmatched=3 both map to 1.0). This removes the only structural length
@@ -796,7 +796,7 @@ class LetterTypingCommand(CommandTerm):
                 (self._buf_variant[snap] == variants).all(), "Replay snapshot must match requested prototype."
             )
             membership = self._prototype_membership[variants]
-            backspace = self._env.keyboard_variants.backspaces[variants]
+            backspace = self._env.keyboard_variants.backspace_slots[variants]
         active = membership.gather(1, tokens.clamp(min=0))
         needs_backspace = self.typed_len[env_ids] > prefix
         backspace_active = membership.gather(1, backspace[:, None]).squeeze(1)
@@ -817,7 +817,7 @@ class LetterTypingCommand(CommandTerm):
             if world_ids is not None and len(world_ids) != len(variant_ids):
                 raise ValueError("Prospective prototypes must match the requested cohort.")
             membership = self._prototype_membership[variant_ids]
-            backspace_slots = self._env.keyboard_variants.backspaces[variant_ids]
+            backspace_slots = self._env.keyboard_variants.backspace_slots[variant_ids]
         if len(membership) == 0:
             raise ValueError("Sampling requires a nonempty logical-world cohort.")
         active = membership[:, self._typeable] & (self._typeable[None, :] != backspace_slots[:, None])
@@ -1142,7 +1142,9 @@ class LetterTypingCommand(CommandTerm):
             rows = torch.arange(len(env_ids), device=self.device)
             nxt = torch.minimum(self.prefix_len[env_ids], (self.target_len[env_ids] - 1).clamp(min=0))
             slots = torch.where(
-                self.typed_len[env_ids] > self.prefix_len[env_ids], bank.backspaces[variants], self.target[env_ids, nxt]
+                self.typed_len[env_ids] > self.prefix_len[env_ids],
+                bank.backspace_slots[variants],
+                self.target[env_ids, nxt],
             ).clamp(min=0)
             key_roots = roots[rows, bank.reset_key_root[variants, slots]]
             target_w = (

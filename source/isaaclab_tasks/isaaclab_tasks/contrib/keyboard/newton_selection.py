@@ -27,6 +27,34 @@ JOINT_COORD = "joint_coord"
 JOINT_DOF = "joint_dof"
 
 
+def _validate_field_domain(model: Model, index_domain: str, attribute: str) -> None:
+    """Match a schema field to its index domain before borrowing its values."""
+    expected = Model.AttributeFrequency[index_domain.upper()]
+    actual = model.get_attribute_frequency(attribute)
+    if actual != expected:
+        raise ValueError(
+            f"Field {attribute!r} has index domain {getattr(actual, 'name', actual)}; selection uses {expected.name}."
+        )
+
+
+def _validate_write_env_indices(env_ids: torch.Tensor | None, num_envs: int, device: torch.device) -> int:
+    """Validate an injective environment subset; the complete domain needs no scan."""
+    if env_ids is None:
+        return num_envs
+    if (
+        not isinstance(env_ids, torch.Tensor)
+        or env_ids.ndim != 1
+        or env_ids.dtype != torch.long
+        or env_ids.device != device
+    ):
+        raise ValueError("Environment indices must be a one-dimensional int64 tensor on the selection device.")
+    torch._assert_async(((env_ids >= 0) & (env_ids < num_envs)).all(), "Environment indices are outside the task.")
+    seen = torch.zeros(num_envs, dtype=torch.int32, device=device)
+    seen.scatter_add_(0, env_ids, torch.ones_like(env_ids, dtype=torch.int32))
+    torch._assert_async((seen <= 1).all(), "Environment indices must be unique.")
+    return len(env_ids)
+
+
 @wp.struct
 class _ScalarSource:
     values: wp.array[float]
@@ -186,8 +214,8 @@ class NewtonSelection:
     __slots__ = (
         "__dict__",
         "owner",
-        "frequency",
-        "static_counts",
+        "index_domain",
+        "world_selection_counts",
         "capacity",
         "ids",
         "body_ids",
@@ -206,14 +234,14 @@ class NewtonSelection:
         "_scalar_source_ids",
     )
 
-    def __init__(self, owner, frequency: str, rows, bodies):
-        self.frequency = frequency
+    def __init__(self, owner, index_domain: str, rows, bodies):
+        self.index_domain = index_domain
         self.owner = owner
-        self.static_counts = tuple(map(len, rows))
+        self.world_selection_counts = tuple(map(len, rows))
         self.ids = wp.array([i for row in rows for i in row], dtype=wp.int32, device=owner.model.device)
         self.body_ids = wp.array(bodies, dtype=wp.int32, device=owner.model.device)
-        self.starts = wp.array(np.cumsum([0, *self.static_counts]), dtype=wp.int32, device=owner.model.device)
-        self.capacity = sum(self.static_counts)
+        self.starts = wp.array(np.cumsum([0, *self.world_selection_counts]), dtype=wp.int32, device=owner.model.device)
+        self.capacity = sum(self.world_selection_counts)
         self.freq_ids = wp.empty_like(self.ids)
         self.env_ids = wp.empty_like(self.ids)
         self.slot_ids = wp.empty_like(self.ids)
@@ -221,14 +249,18 @@ class NewtonSelection:
         self._counts = wp.zeros_like(self.world_start)
         self.active = wp.zeros(self.capacity, dtype=wp.bool, device=owner.model.device)
         self.joint_ids: wp.array | None = None
-        self._dense_width = self.static_counts[0] if self.static_counts and len(set(self.static_counts)) == 1 else None
+        self._dense_width = (
+            self.world_selection_counts[0]
+            if self.world_selection_counts and len(set(self.world_selection_counts)) == 1
+            else None
+        )
         self._dense_ids = None
         self._dense_active = None
         self._scalar_views = {}
         self._scalar_source_ids = None
         if self._dense_width is not None:
-            self._dense_ids = wp.to_torch(self.ids).reshape(len(self.static_counts), self._dense_width)
-            self._dense_active = wp.to_torch(self.active).reshape(len(self.static_counts), self._dense_width)
+            self._dense_ids = wp.to_torch(self.ids).reshape(len(self.world_selection_counts), self._dense_width)
+            self._dense_active = wp.to_torch(self.active).reshape(len(self.world_selection_counts), self._dense_width)
         self.refresh()
 
     def refresh(self) -> None:
@@ -236,7 +268,7 @@ class NewtonSelection:
         owner = self.owner
         wp.launch(
             _count_active,
-            dim=len(self.static_counts),
+            dim=len(self.world_selection_counts),
             inputs=[self.starts, self.body_ids, owner.body_active, owner.world_active],
             outputs=[self._counts],
             device=owner.model.device,
@@ -244,7 +276,7 @@ class NewtonSelection:
         wp.utils.array_scan(self._counts, self.world_start, inclusive=False)
         wp.launch(
             _compact_active,
-            dim=len(self.static_counts),
+            dim=len(self.world_selection_counts),
             inputs=[self.starts, self.ids, self.body_ids, owner.body_active, owner.world_active, self.world_start],
             outputs=[self.freq_ids, self.env_ids, self.slot_ids, self.active],
             device=owner.model.device,
@@ -279,7 +311,7 @@ class NewtonSelection:
         if self.joint_ids is None:
             raise ValueError("Joint types require a coordinate or DOF selection.")
         return wp.to_torch(self.owner.model.joint_type)[wp.to_torch(self.joint_ids)].reshape(
-            len(self.static_counts), self.width
+            len(self.world_selection_counts), self.width
         )
 
     @property
@@ -299,7 +331,7 @@ class NewtonSelection:
         return self._dense_active
 
     def dense(self, values: wp.array, fill: float = 0.0) -> torch.Tensor:
-        """Gather an array in this frequency and pad excluded slots with ``fill``."""
+        """Gather an array in this index domain and pad excluded slots with ``fill``."""
         selected = wp.to_torch(values)[self.dense_ids()]
         active = self.dense_active()
         while active.ndim < selected.ndim:
@@ -310,6 +342,7 @@ class NewtonSelection:
         """Gather a native state attribute through this explicit model binding."""
         if self.owner.state is None:
             raise RuntimeError("This selection has no bound Newton state.")
+        _validate_field_domain(self.owner.model, self.index_domain, attribute)
         return self.dense(getattr(self.owner.state, attribute), fill)
 
     def scalar_field(self, source: Literal["state", "model", "control"], attribute: str) -> NewtonScalarField:
@@ -322,12 +355,15 @@ class NewtonSelection:
         if key not in self._scalar_views:
             if source not in ("state", "model", "control"):
                 raise ValueError(f"Unknown native field source: {source!r}.")
+            _validate_field_domain(self.owner.model, self.index_domain, attribute)
             values = getattr(getattr(self.owner, source), attribute)
             if values.dtype != wp.float32 or values.ndim != 1:
                 raise TypeError("Scalar fields require a one-dimensional float32 native array.")
-            shape = (len(self.static_counts), self.width)
+            shape = (len(self.world_selection_counts), self.width)
             if self._scalar_source_ids is None:
-                self._scalar_source_ids = wp.zeros(len(self.static_counts), dtype=wp.int32, device=values.device)
+                self._scalar_source_ids = wp.zeros(
+                    len(self.world_selection_counts), dtype=wp.int32, device=values.device
+                )
             descriptor = _ScalarSource()
             descriptor.values = values
             view = NewtonScalarField()
@@ -338,28 +374,40 @@ class NewtonSelection:
         return self._scalar_views[key]
 
     def read_model(self, attribute: str, fill: float = 0.0) -> torch.Tensor:
-        """Gather a native model attribute in this selection's frequency."""
+        """Gather a native model attribute in this selection's index domain."""
+        _validate_field_domain(self.owner.model, self.index_domain, attribute)
         return self.dense(getattr(self.owner.model, attribute), fill)
 
-    def write_state(self, attribute: str, values: torch.Tensor, env_ids=None) -> None:
-        """Write participating selected state entries; values use the selected world order."""
-        if self.owner.state is None:
-            raise RuntimeError("This selection has no bound Newton state.")
+    def _write(self, source: str, attribute: str, values: torch.Tensor, env_ids) -> None:
+        native = getattr(self.owner, source)
+        if native is None:
+            raise RuntimeError(f"This selection has no bound Newton {source}.")
+        _validate_field_domain(self.owner.model, self.index_domain, attribute)
+        target = wp.to_torch(getattr(native, attribute))
+        count = _validate_write_env_indices(env_ids, len(self.world_selection_counts), target.device)
+        expected = (count, self.width, *target.shape[1:])
+        if (
+            not isinstance(values, torch.Tensor)
+            or values.shape != expected
+            or values.dtype != target.dtype
+            or values.device != target.device
+        ):
+            raise ValueError("Writes require matching native dtype, device and policy-width value rows.")
+        if count == 0:
+            return
         rows = slice(None) if env_ids is None else env_ids
-        target = wp.to_torch(getattr(self.owner.state, attribute))
         ids, active = self.dense_ids()[rows], self.dense_active()[rows]
         while active.ndim < values.ndim:
             active = active.unsqueeze(-1)
         target[ids] = torch.where(active, values, target[ids])
 
+    def write_state(self, attribute: str, values: torch.Tensor, env_ids=None) -> None:
+        """Write participating state entries for a unique, in-range environment subset."""
+        self._write("state", attribute, values, env_ids)
+
     def write_control(self, attribute: str, values: torch.Tensor, env_ids=None) -> None:
-        """Write participating selected control entries in stable world/slot order."""
-        if self.owner.control is None:
-            raise RuntimeError("This selection has no bound Newton control.")
-        target = wp.to_torch(getattr(self.owner.control, attribute))
-        worlds = slice(None) if env_ids is None else env_ids
-        ids = self.dense_ids()[worlds]
-        target[ids] = torch.where(self.dense_active()[worlds], values, target[ids])
+        """Write participating controls for a unique, in-range environment subset."""
+        self._write("control", attribute, values, env_ids)
 
 
 class NewtonSelections:
@@ -402,16 +450,16 @@ class NewtonSelections:
             roots, device=str(model.device)
         )
 
-    def bind(self, frequency: str, ids: Sequence[int] | np.ndarray) -> NewtonSelection:
-        """Bind ordered integer frequency IDs in this model, grouped by world.
+    def bind(self, index_domain: str, ids: Sequence[int] | np.ndarray) -> NewtonSelection:
+        """Bind ordered integer indices in this model, grouped by world.
 
         IDs are global model indices, including for replicated models. Duplicate,
         out-of-range and global-world IDs are rejected; empty bindings are valid.
         """
         if self._retired:
             raise RuntimeError("Cannot bind selections from a retired owner.")
-        if frequency not in (BODY, JOINT_COORD, JOINT_DOF):
-            raise ValueError(f"Unknown Newton frequency: {frequency!r}")
+        if index_domain not in (BODY, JOINT_COORD, JOINT_DOF):
+            raise ValueError(f"Unknown Newton index domain: {index_domain!r}")
         values = np.asarray(ids)
         if values.ndim != 1 or ((values.size or isinstance(ids, np.ndarray)) and values.dtype.kind not in "iu"):
             raise ValueError("Selection IDs must be a one-dimensional integer sequence.")
@@ -421,11 +469,11 @@ class NewtonSelections:
             BODY: self.model.body_count,
             JOINT_COORD: self.model.joint_coord_count,
             JOINT_DOF: self.model.joint_dof_count,
-        }[frequency]
+        }[index_domain]
         if np.any(values < 0) or np.any(values >= count) or len(np.unique(values)) != len(values):
-            raise ValueError("Selection IDs must be unique valid model frequency indices.")
+            raise ValueError("Selection IDs must be unique valid model indices.")
         values = values.astype(np.int32)
-        key = (frequency, tuple(map(int, values)))
+        key = (index_domain, tuple(map(int, values)))
         if key in self._bindings:
             return self._bindings[key]
         topology = self if self.source is None else self.source
@@ -433,14 +481,14 @@ class NewtonSelections:
             BODY: topology.model.body_count,
             JOINT_COORD: topology.model.joint_coord_count,
             JOINT_DOF: topology.model.joint_dof_count,
-        }[frequency]
+        }[index_domain]
         local = values if self.source is None else values % stride
-        if frequency == BODY:
+        if index_domain == BODY:
             bodies = local
             joints = None
             worlds = topology._body_world[local]
         else:
-            starts = topology._q_start if frequency == JOINT_COORD else topology._qd_start
+            starts = topology._q_start if index_domain == JOINT_COORD else topology._qd_start
             joints = np.searchsorted(starts[1:], local, side="right").astype(np.int32)
             bodies = topology._joint_child[joints]
             worlds = topology._joint_world[joints]
@@ -453,7 +501,7 @@ class NewtonSelections:
                 joints = joints + worlds * topology.model.joint_count
         rows = [values[worlds == world].tolist() for world in range(self.model.world_count)]
         body_rows = [bodies[worlds == world].tolist() for world in range(self.model.world_count)]
-        selection = NewtonSelection(self, frequency, rows, [body for row in body_rows for body in row])
+        selection = NewtonSelection(self, index_domain, rows, [body for row in body_rows for body in row])
         if joints is not None:
             joint_rows = [joints[worlds == world] for world in range(self.model.world_count)]
             selection.joint_ids = wp.array(np.concatenate(joint_rows), dtype=wp.int32, device=self.model.device)
@@ -486,7 +534,7 @@ class NewtonSelectionGroup:
 
     __slots__ = (
         "__dict__",
-        "frequency",
+        "index_domain",
         "_parts",
         "_num_envs",
         "_width",
@@ -496,13 +544,13 @@ class NewtonSelectionGroup:
         "_source_ids",
         "_tables",
         "_scalar_views",
-        "static_counts",
-        "joint_ids",
+        "world_selection_counts",
+        "world_bindings",
         "_device",
     )
 
-    def __init__(self, frequency: str, parts, num_envs: int, *, policy_width: int | None = None):
-        self.frequency = frequency
+    def __init__(self, index_domain: str, parts, num_envs: int, *, policy_width: int | None = None):
+        self.index_domain = index_domain
         self._num_envs = num_envs
         if not parts:
             raise ValueError("Grouped selections require at least one numeric native binding.")
@@ -540,17 +588,38 @@ class NewtonSelectionGroup:
         return modes.pop()
 
     def rebind(self, parts) -> None:
-        """Publish replacement native bindings after their old GPU consumers finish."""
+        """Publish a bijective world placement after old GPU consumers finish.
+
+        Borrowed world-index tensors must remain unchanged until the next rebind.
+        Distinct logical environments cannot alias one physical model world.
+        """
+        parts = tuple(parts)
         if sum(len(worlds) for _, worlds in parts) != self._num_envs:
             raise ValueError("Grouped selections must cover every logical world exactly once.")
         if any(part.width > self._width for part, _ in parts):
             raise ValueError("A native selection exceeds the configured dense policy width.")
-        self._parts = tuple(parts)
-        counts = [0] * self._num_envs
+        counts, world_bindings = [0] * self._num_envs, [None] * self._num_envs
         for part, worlds in parts:
-            for world, count in zip(worlds.tolist(), part.static_counts, strict=True):
+            if (
+                part.index_domain != self.index_domain
+                or part.owner.model.device != self._device
+                or worlds.ndim != 1
+                or worlds.dtype != torch.long
+                or worlds.device != torch.device(str(self._device))
+                or len(worlds) != len(part.world_selection_counts)
+            ):
+                raise ValueError("Selection index domain/world placement does not match its logical binding.")
+            for row, (world, count) in enumerate(zip(worlds.tolist(), part.world_selection_counts, strict=True)):
+                if not 0 <= world < self._num_envs or world_bindings[world] is not None:
+                    raise ValueError("Grouped selections require disjoint, complete logical world IDs.")
+                world_bindings[world] = (part.owner, row)
                 counts[world] = count
-        self.static_counts = tuple(counts)
+        if len(set(world_bindings)) != self._num_envs:
+            raise ValueError("Grouped selections cannot alias one physical model world across environments.")
+        self._parts = parts
+        self.world_selection_counts = tuple(counts)
+        # Immutable host relation for preparation checks; never read GPU placement in an MDP term.
+        self.world_bindings = tuple(world_bindings)
         # Logical rows can move while the borrowed native arrays stay unchanged.
         self._tables = {
             key: entry
@@ -565,22 +634,10 @@ class NewtonSelectionGroup:
         self._ids.fill_(-1)
         self._active.zero_()
         ids, active, source_ids = map(wp.to_torch, (self._ids, self._active, self._source_ids))
-        coverage = torch.zeros(self._num_envs, dtype=torch.int32, device=str(self._device))
         for source, (part, worlds) in enumerate(parts):
-            if part.frequency != self.frequency or len(worlds) != len(part.static_counts):
-                raise ValueError("Native selection frequency/world count does not match its logical binding.")
             ids[worlds, : part.width] = part.dense_ids()
             active[worlds, : part.width] = part.dense_active()
             source_ids[worlds] = source
-            coverage.index_add_(0, worlds, torch.ones_like(worlds, dtype=torch.int32))
-        torch._assert_async(
-            torch.all(coverage == 1), "Grouped selections require disjoint, complete logical world IDs."
-        )
-        self.joint_ids = (
-            None
-            if self.frequency == BODY
-            else wp.from_torch(torch.cat([wp.to_torch(part.joint_ids) for part, _ in parts]))
-        )
 
     def dense_active(self) -> torch.Tensor:
         """Return participation in stable logical-world/policy-slot order."""
@@ -606,6 +663,8 @@ class NewtonSelectionGroup:
     def _table(self, source: str, attribute: str):
         key = (source, attribute)
         if key not in self._tables:
+            for part, _ in self._parts:
+                _validate_field_domain(part.owner.model, self.index_domain, attribute)
             arrays = [getattr(getattr(part.owner, source), attribute) for part, _ in self._parts]
             dtype = arrays[0].dtype
             if any(array.dtype != dtype for array in arrays):
@@ -661,10 +720,20 @@ class NewtonSelectionGroup:
         return self._read("model", attribute, fill)
 
     def _write(self, source: str, attribute: str, values: torch.Tensor, env_ids=None) -> None:
+        target = wp.to_torch(getattr(getattr(self._parts[0][0].owner, source), attribute))
+        count = _validate_write_env_indices(env_ids, self._num_envs, target.device)
+        expected = (count, self.width, *target.shape[1:])
+        if (
+            not isinstance(values, torch.Tensor)
+            or values.shape != expected
+            or values.dtype != target.dtype
+            or values.device != target.device
+        ):
+            raise ValueError("Writes require matching native dtype, device and policy-width value rows.")
         table, dtype = self._table(source, attribute)
-        worlds = self._worlds if env_ids is None else wp.from_torch(env_ids.to(torch.int32))
-        if values.shape[:2] != (len(worlds), self.width):
-            raise ValueError("Grouped writes require one policy-width row per selected logical world.")
+        if count == 0:
+            return
+        worlds = self._worlds if env_ids is None else wp.from_torch(env_ids.to(torch.int32).contiguous())
         wp.launch(
             _scatter_values,
             dim=(len(worlds), self.width),

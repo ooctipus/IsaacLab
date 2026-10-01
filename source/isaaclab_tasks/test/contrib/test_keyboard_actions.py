@@ -24,8 +24,8 @@ from isaaclab_tasks.contrib.keyboard.newton_selection import (
     JOINT_DOF,
     NewtonSelectionGroup,
     NewtonSelections,
-    NewtonSelectorCfg,
 )
+from isaaclab_tasks.contrib.keyboard.selection_paths import NewtonSelectorCfg, resolve_selection
 
 
 @pytest.fixture(params=["cpu", "cuda:0"])
@@ -84,10 +84,12 @@ def test_native_relative_pd_preserves_rounding_masks_and_target_layout(device, m
     owners = [_owner(device, 2, 3), _owner(device, 1, 2)] if grouped else [_owner(device, 3, 3)]
     actors = [torch.tensor([2, 0], device=device), torch.tensor([1], device=device)]
     selected = []
-    for frequency in (JOINT_COORD, JOINT_DOF):
-        cfg = NewtonSelectorCfg(frequency, ".*/hinge.*", dense_width=3)
-        parts = [owner.resolve(cfg) for owner in owners]
-        selected.append(NewtonSelectionGroup(cfg, list(zip(parts, actors, strict=True)), 3) if grouped else parts[0])
+    for index_domain in (JOINT_COORD, JOINT_DOF):
+        cfg = NewtonSelectorCfg(index_domain, ".*/hinge.*", policy_width=3)
+        parts = [resolve_selection(owner, cfg) for owner in owners]
+        selected.append(
+            NewtonSelectionGroup(cfg.index_domain, list(zip(parts, actors, strict=True)), 3) if grouped else parts[0]
+        )
     joints, dofs = selected
     action = NewtonRelativeJointPositionAction(
         NewtonRelativeJointPositionActionCfg(asset_name=None, joints=joints, dofs=dofs, scale=0.02),
@@ -145,16 +147,20 @@ def test_native_relative_pd_preserves_rounding_masks_and_target_layout(device, m
     action.reset(torch.tensor([0], device=device))
     assert not action.raw_actions[0].any() and not action.processed_actions[0].any()
     assert not action.applied_effort[0].any()
-    assert class_to_dict(joints) == class_to_dict(NewtonSelectorCfg(JOINT_COORD, ".*/hinge.*", dense_width=3))
+    assert class_to_dict(joints) == {}
 
 
 def test_borrowed_fields_follow_group_rebinding_and_mask_refresh(device):
     owners = [_owner(device), _owner(device)]
     actors = [torch.tensor([1], device=device), torch.tensor([0], device=device)]
     groups = []
-    for frequency in (JOINT_COORD, JOINT_DOF):
-        cfg = NewtonSelectorCfg(frequency, ".*/hinge.*", count_per_world=3)
-        groups.append(NewtonSelectionGroup(cfg, [(o.resolve(cfg), ids) for o, ids in zip(owners, actors)], 2))
+    for index_domain in (JOINT_COORD, JOINT_DOF):
+        cfg = NewtonSelectorCfg(index_domain, ".*/hinge.*", count_per_world=3)
+        groups.append(
+            NewtonSelectionGroup(
+                cfg.index_domain, [(resolve_selection(o, cfg), ids) for o, ids in zip(owners, actors)], 2
+            )
+        )
     joints, dofs = groups
     action = NewtonRelativeJointPositionAction(
         NewtonRelativeJointPositionActionCfg(asset_name=None, joints=joints, dofs=dofs),
@@ -192,8 +198,8 @@ def test_borrowed_fields_follow_group_rebinding_and_mask_refresh(device):
     retired_control = owners[0].control.joint_target_q.numpy().copy()
     replacement = _owner(device, 2)
     for group in groups:
-        cfg = NewtonSelectorCfg(group.frequency, ".*/hinge.*", count_per_world=3)
-        group.rebind([(replacement.resolve(cfg), torch.tensor([0, 1], device=device))])
+        cfg = NewtonSelectorCfg(group.index_domain, ".*/hinge.*", count_per_world=3)
+        group.rebind([(resolve_selection(replacement, cfg), torch.tensor([0, 1], device=device))])
     assert joints.scalar_field("state", "joint_q") is not borrowed
     joints.write_state("joint_q", torch.full((2, 3), 0.3, device=device))
     replacement.world_active.fill_(False)
@@ -207,9 +213,12 @@ def test_borrowed_fields_follow_group_rebinding_and_mask_refresh(device):
         group.refresh()
     _check_action(action)
     assert (owners[0].control.joint_target_q.numpy() == retired_control).all()
-    for selection in (replacement.resolve(NewtonSelectorCfg(BODY, ".*/root")), joints):
-        with pytest.raises(TypeError, match="float32"):
-            selection.scalar_field("state", "body_q")
+    bodies = resolve_selection(replacement, NewtonSelectorCfg(BODY, ".*/root"))
+    with pytest.raises(TypeError, match="float32"):
+        bodies.scalar_field("state", "body_q")
+    with pytest.raises(ValueError, match="index domain"):
+        joints.scalar_field("state", "body_q")
+    for selection in (bodies, joints):
         with pytest.raises(ValueError, match="field source"):
             selection.scalar_field("other", "joint_q")
 
@@ -218,8 +227,8 @@ def test_captured_action_reads_updated_native_state_and_episode_masks(device):
     if device == "cpu":
         pytest.skip("CUDA graph test")
     owner = _owner(device, 2)
-    joints = owner.resolve(NewtonSelectorCfg(JOINT_COORD, ".*/hinge.*"))
-    dofs = owner.resolve(NewtonSelectorCfg(JOINT_DOF, ".*/hinge.*"))
+    joints = resolve_selection(owner, NewtonSelectorCfg(JOINT_COORD, ".*/hinge.*"))
+    dofs = resolve_selection(owner, NewtonSelectorCfg(JOINT_DOF, ".*/hinge.*"))
     action = NewtonRelativeJointPositionAction(
         NewtonRelativeJointPositionActionCfg(asset_name=None, joints=joints, dofs=dofs),
         SimpleNamespace(num_envs=2, device=device),

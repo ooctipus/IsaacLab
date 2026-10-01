@@ -14,6 +14,7 @@ import torch
 from isaaclab.utils.math import subtract_frame_transforms
 
 from ..newton_selection import NewtonSelection
+from ..selection_contracts import require_count_per_world, require_same_world_domain
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
@@ -67,8 +68,8 @@ def joint_vel(env: ManagerBasedRLEnv, joints: NewtonSelection) -> torch.Tensor:
 
 def key_positions_b(env: ManagerBasedRLEnv, keys: NewtonSelection, root: NewtonSelection) -> torch.Tensor:
     """Key positions [m] relative to exactly one robot root per world, in stable slot order."""
-    if any(count != 1 for count in root.static_counts):
-        raise ValueError("Relative key positions require exactly one root per world.")
+    require_same_world_domain(keys, root)
+    require_count_per_world(root, 1)
     root_pose = root.read_state("body_q")
     key_pose = keys.read_state("body_q")
     pos, _ = subtract_frame_transforms(root_pose[..., :3], root_pose[..., 3:], key_pose[..., :3])

@@ -31,6 +31,7 @@ from isaaclab.sim import SimulationContext
 from isaaclab.utils.seed import configure_seed
 
 from .keyboard_populations import KeyboardPopulations
+from .keyboard_worlds import KeyboardWorlds
 from .selection_paths import bind_selectors
 
 
@@ -95,8 +96,6 @@ class SO101KeyboardPopulationEnv(gym.Env):
         try:
             with self._stream_scope():
                 if isinstance(self.cfg.sim.physics, NewtonWorldsCfg):
-                    from .keyboard_worlds import KeyboardWorlds
-
                     self.keyboard_variants = KeyboardWorlds(self)
                 else:
                     self.keyboard_variants = KeyboardPopulations(self)
@@ -187,12 +186,12 @@ class SO101KeyboardPopulationEnv(gym.Env):
         if self._has_reset:
             raise RuntimeError("Curriculum snapshots must be prepared before episodes start.")
         if isinstance(self.cfg.sim.physics, NewtonWorldsCfg):
-            self.keyboard_variants.request(self.all_env_ids, torch.full_like(self.all_env_ids, variant))
-            self.keyboard_variants.redistribute(self.all_env_ids)
+            self.keyboard_variants.request_variants(self.all_env_ids, torch.full_like(self.all_env_ids, variant))
+            self._apply_variant_requests(self.all_env_ids)
             return self.all_env_ids
         worlds = self.keyboard_variants.worlds[variant]
         if not len(worlds):
-            # Tiny test/play batches can have fewer actors than prototypes. This
+            # Tiny test/play batches can have fewer environments than prototypes. This
             # one-time scratch assignment is restored before any rollout starts.
             self.keyboard_variants.apply(self.all_env_ids, torch.full_like(self.all_env_ids, variant))
             worlds = self.keyboard_variants.worlds[variant]
@@ -201,8 +200,8 @@ class SO101KeyboardPopulationEnv(gym.Env):
     def finish_curriculum(self, original_variants):
         """Restore initial assignments after temporary scratch cohorts, if any."""
         if isinstance(self.cfg.sim.physics, NewtonWorldsCfg):
-            self.keyboard_variants.request(self.all_env_ids, original_variants)
-            self.keyboard_variants.redistribute(self.all_env_ids)
+            self.keyboard_variants.request_variants(self.all_env_ids, original_variants)
+            self._apply_variant_requests(self.all_env_ids)
         else:
             self.keyboard_variants.apply(self.all_env_ids, original_variants)
 
@@ -229,7 +228,7 @@ class SO101KeyboardPopulationEnv(gym.Env):
                     # Preserve its random draws without mutating the ending lifetime.
                     bank = self.keyboard_variants
                     roots = self.command_manager.get_term("typing").cfg.reset_roots.width
-                    defaults = bank.reset_defaults[bank.reset_variants(env_ids), : roots * 7]
+                    defaults = bank.reset_defaults[bank.staged_variant_ids(env_ids), : roots * 7]
                     for event in vars(self.cfg.events).values():
                         if getattr(event, "mode", None) == "reset":
                             sample_root_poses(
@@ -258,22 +257,33 @@ class SO101KeyboardPopulationEnv(gym.Env):
             self._population_bindings_valid = False
             raise
 
+    def _apply_variant_requests(self, env_ids):
+        bank = self.keyboard_variants
+        if isinstance(bank, KeyboardWorlds):
+            return bank.stage_variant_changes(env_ids)
+        return bank.apply_pending_variants(env_ids)
+
     def reset_variant_ids(self, env_ids):
         """Query committed or staged prototypes for the current reset transaction."""
-        return self.keyboard_variants.reset_variants(env_ids)
+        bank = self.keyboard_variants
+        return (
+            bank.staged_variant_ids(env_ids)
+            if isinstance(bank, KeyboardWorlds)
+            else bank.committed_variant_ids(env_ids)
+        )
 
     def reset_keyboard(self, env_ids, variant_ids):
         """Reset selected episodes immediately to explicitly requested keyboard prototypes."""
         self._check_active()
         with self._stream_scope():
-            self.keyboard_variants.request(env_ids, variant_ids)
-            self.keyboard_variants.redistribute(env_ids)
+            self.keyboard_variants.request_variants(env_ids, variant_ids)
+            self._apply_variant_requests(env_ids)
             self.episode_interrupted[env_ids] = False
             self._reset_idx(env_ids)
 
     def restore_reset_snapshot(self, env_ids, variant_ids, snapshot):
         """Publish complete physical reset state before the command's typing state."""
-        self.keyboard_variants.reset_snapshot(env_ids, variant_ids, snapshot)
+        self.keyboard_variants.reset_from_snapshot(env_ids, variant_ids, snapshot)
 
     def reset(self, env_ids=slice(None), seed=None, options=None):
         """Reset requested logical episodes; the first reset builds the shared curriculum."""
@@ -284,8 +294,8 @@ class SO101KeyboardPopulationEnv(gym.Env):
         with self._stream_scope():
             self.episode_interrupted[ids] = False
             if self._has_reset:
-                self.keyboard_variants.request(ids)
-                self.keyboard_variants.redistribute(ids)
+                self.keyboard_variants.request_variants(ids)
+                self._apply_variant_requests(ids)
             self._reset_idx(ids)
             self.obs_buf = self.observation_manager.compute(update_history=True)
             self._has_reset = True
@@ -309,7 +319,7 @@ class SO101KeyboardPopulationEnv(gym.Env):
                     "Native keyboard contact workspace overflow.",
                 )
                 torch._assert_async(
-                    wp.to_torch(bank.backend.runtime.directory.batch.status)[0] == 0,
+                    wp.to_torch(bank.backend.runtime.batch_result.status)[0] == 0,
                     "Native keyboard directory transaction failed.",
                 )
             self.episode_length_buf += 1
@@ -324,7 +334,7 @@ class SO101KeyboardPopulationEnv(gym.Env):
             if self.cfg.compute_final_obs and (
                 len(reset_ids) or (redistribute and self.cfg.redistribution_mode == "truncate_pending")
             ):
-                # A continuing actor would update typing and record this sample before observing it.
+                # A continuing environment would update typing and record this sample before observing it.
                 # Preview that successor before replacing its model, without advancing live MDP state or RNG.
                 with (
                     torch.random.fork_rng(devices=[torch.device(self.device)]),
@@ -332,11 +342,11 @@ class SO101KeyboardPopulationEnv(gym.Env):
                 ):
                     self.extras["final_obs"] = self.observation_manager.preview()
             if len(reset_ids):
-                self.keyboard_variants.request(reset_ids)
+                self.keyboard_variants.request_variants(reset_ids)
             if redistribute:
                 eligible = reset_ids if self.cfg.redistribution_mode == "episode_boundary" else self.all_env_ids
                 if len(eligible):
-                    changed = self.keyboard_variants.redistribute(eligible)
+                    changed = self._apply_variant_requests(eligible)
                     if self.cfg.redistribution_mode == "truncate_pending" and len(changed):
                         self.episode_interrupted[changed] = ~self.reset_buf[changed]
                         truncated[changed] = ~terminated[changed]
@@ -355,11 +365,17 @@ class SO101KeyboardPopulationEnv(gym.Env):
                     "Populations/pending_fraction": (bank.desired_variant_ids != bank.variant_ids).float().mean(),
                     "Populations/natural_resets": natural_resets,
                     "Populations/interrupted_worlds": self.episode_interrupted.sum(),
-                    "Populations/redistributions": bank.redistribution_count,
+                    "Populations/publications": (
+                        bank.reset_publication_count if isinstance(bank, KeyboardWorlds) else bank.redistribution_count
+                    ),
                     "Populations/last_changed_worlds": bank.last_changed_worlds,
-                    "Populations/last_redistribution_host_ms": bank.last_redistribution_ms,
-                    "Populations/active_prototypes": bank.active_prototypes,
-                    "Populations/native_dofs": bank.native_dofs,
+                    "Populations/last_publication_host_ms": (
+                        bank.last_reset_publication_ms
+                        if isinstance(bank, KeyboardWorlds)
+                        else bank.last_redistribution_ms
+                    ),
+                    "Populations/populated_prototype_count": bank.populated_prototype_count,
+                    "Populations/live_dof_count": bank.live_dof_count,
                 }
             )
             if isinstance(self.cfg.sim.physics, NewtonWorldsCfg):

@@ -236,7 +236,7 @@ def _populations():
     return populations
 
 
-@pytest.mark.parametrize("operation", ["request", "apply", "redistribute"])
+@pytest.mark.parametrize("operation", ["request_variants", "apply", "apply_pending_variants"])
 @pytest.mark.parametrize(
     "ids",
     [
@@ -252,8 +252,8 @@ def test_invalid_actor_requests_fail_before_mutation(operation, ids):
     populations = _populations()
     original = populations.variant_ids.clone()
     with pytest.raises((ValueError, RuntimeError, TypeError, IndexError)):
-        if operation == "redistribute":
-            populations.redistribute(ids)
+        if operation == "apply_pending_variants":
+            populations.apply_pending_variants(ids)
         else:
             getattr(populations, operation)(ids, torch.zeros_like(ids, dtype=torch.long))
     torch.testing.assert_close(populations.variant_ids, original)
@@ -261,7 +261,7 @@ def test_invalid_actor_requests_fail_before_mutation(operation, ids):
     assert not populations.backend.calls
 
 
-@pytest.mark.parametrize("operation", ["request", "apply"])
+@pytest.mark.parametrize("operation", ["request_variants", "apply"])
 @pytest.mark.parametrize(
     "variants",
     [
@@ -290,7 +290,7 @@ def test_request_stays_on_the_tensor_device_without_publishing_a_model():
         patch.object(torch.Tensor, "numpy", side_effect=AssertionError("request readback")),
         patch.object(torch.Tensor, "item", side_effect=AssertionError("request scalar readback")),
     ):
-        populations.request(torch.tensor([1, 4]), torch.tensor([2, 0]))
+        populations.request_variants(torch.tensor([1, 4]), torch.tensor([2, 0]))
     assert populations.desired_variant_ids.tolist() == [0, 2, 1, 1, 0, 2]
     assert populations.variant_ids.tolist() == [0, 0, 1, 1, 2, 2]
     assert not populations.backend.calls
@@ -319,7 +319,7 @@ def test_simultaneous_same_count_swaps_keep_survivor_rows_and_runtime_identity()
     assert populations.backend.calls == [((2, 2, 2), (([1], [1]), ([1], [1]), ([0, 1], [0, 1])))]
     assert populations.variant_ids.tolist() == [1, 0, 0, 1, 2, 2]
     assert populations.desired_variant_ids.tolist() == [1, 0, 0, 1, 2, 2]
-    assert populations.redistribute(torch.arange(6)).numel() == 0
+    assert populations.apply_pending_variants(torch.arange(6)).numel() == 0
     assert len(populations.backend.calls) == 1
 
 
@@ -358,10 +358,10 @@ def test_native_rebinding_retires_replaced_owners_without_cyclic_gc(replacement)
     survivor_model = source.model.replicate(2)
     survivor = NewtonSelections(survivor_model, state=survivor_model.state(), source=source)
     binding = NewtonSelectionGroup(
-        selector.frequency,
+        selector.index_domain,
         ((resolve_selection(owner, selector), torch.tensor([0, 1])),),
         2,
-        policy_width=selector.dense_width,
+        policy_width=selector.policy_width,
     )
     survivor_binding = resolve_selection(survivor, selector)
     references = [weakref.ref(value) for value in (owner, model, owner.state, owner.control)]
@@ -459,9 +459,9 @@ def test_post_publication_failure_rejects_continuation_and_allows_explicit_close
         (env.step, (torch.zeros(6, 1),)),
         (env.reset, ()),
         (env.forward, ()),
-        (populations.request, (torch.tensor([1]), torch.tensor([2]))),
+        (populations.request_variants, (torch.tensor([1]), torch.tensor([2]))),
         (populations.apply, (torch.tensor([1]), torch.tensor([2]))),
-        (populations.redistribute, (torch.arange(6),)),
+        (populations.apply_pending_variants, (torch.arange(6),)),
         (populations.reconcile_state, (torch.ones(6, dtype=torch.bool), 0)),
     ):
         with pytest.raises(RuntimeError, match="bindings.*failed"):
@@ -527,7 +527,7 @@ def test_failed_native_world_construction_retires_sources_without_gc(phase, clea
         native_model = SimpleNamespace(opt=SimpleNamespace(timestep=wp.zeros(1, dtype=float, device="cpu")))
         return SimpleNamespace(model=source.model, mjw_model=native_model, mjw_data=object()), source
 
-    backend_owner = SimpleNamespace(runtime=SimpleNamespace(prototypes=()), close=Mock())
+    backend_owner = SimpleNamespace(runtime=SimpleNamespace(populations=()), close=Mock())
 
     def backend(_):
         if phase == "backend":
@@ -568,8 +568,8 @@ def test_failed_native_world_construction_retires_sources_without_gc(phase, clea
             patch.object(keyboard_worlds.mjw, "forward"),
             patch.object(keyboard_worlds.mjw, "make_step_workspace"),
             patch.object(keyboard_worlds.mjw, "step"),
-            patch.object(keyboard_worlds, "NativePrototypeMapping", new=lambda *_: object()),
-            patch.object(keyboard_worlds, "NativeSelections", new=bind),
+            patch.object(keyboard_worlds, "NewtonMuJoCoMapping", new=lambda *_: object()),
+            patch.object(keyboard_worlds, "MuJoCoSelections", new=bind),
             pytest.raises(MemoryError) as error,
         ):
             keyboard_worlds.KeyboardWorlds(env)
@@ -609,19 +609,59 @@ def test_backing_demand_only_releases_valid_source_lifetimes():
     for name, values in {
         "prototype": [0],
         "slot": [0],
-        "starts": [0, 1, 2],
+        "slot_starts": [0, 1, 2],
         "slot_id": [0, -1],
-        "active_count": [1, 0],
+        "live_count": [1, 0],
     }.items():
         setattr(data, name, wp.array(values, dtype=int, device="cpu"))
     data.generation = wp.array([3], dtype=wp.uint64, device="cpu")
     commands = create_world_commands(4, device="cpu")
     commands.count.fill_(4)
-    commands.op.fill_(int(WorldOperation.RESET))
+    commands.operation.fill_(int(WorldOperation.RESET))
     commands.prototype.fill_(1)
-    commands.id.assign(np.array([0, 0, -1, 4], dtype=np.int32))
+    commands.world_id.assign(np.array([0, 0, -1, 4], dtype=np.int32))
     commands.generation.assign(np.array([3, 2, 3, 3], dtype=np.uint64))
     demand = wp.zeros((2, 2), dtype=int, device="cpu")
     wp.launch(_backing_demand, 2, [commands, data, demand], device="cpu")
     # Destination reservation may be conservative; only the one valid source is released.
     np.testing.assert_array_equal(demand.numpy(), [[1, 0], [4, 4]])
+
+
+@pytest.mark.parametrize("fail_publication", [False, True])
+def test_snapshot_publication_updates_staged_variants_only_after_success(fail_publication):
+    import warp as wp
+
+    from isaaclab_tasks.contrib.keyboard.keyboard_worlds import KeyboardWorlds
+
+    bank = KeyboardWorlds.__new__(KeyboardWorlds)
+    bank.env = SimpleNamespace(num_envs=2, _check_active=lambda: None)
+    bank.layouts = (object(), object())
+    bank.variant_ids = torch.tensor([0, 0])
+    bank.desired_variant_ids = torch.tensor([0, 1])
+    bank._staged_variant_ids = torch.tensor([0, 0])
+    bank._payload = torch.zeros((2, 3))
+    bank._payload_enabled = wp.zeros(1, dtype=int, device="cpu")
+    bank.reset_publication_count = 0
+    bank.last_changed_worlds = bank.last_reset_publication_ms = 0
+
+    def publish(env_ids, variants):
+        assert bank.staged_variant_ids(env_ids).tolist() == [0]
+        if fail_publication:
+            raise RuntimeError("publication failed")
+        bank.variant_ids[env_ids] = variants
+
+    bank._submit = publish
+    ids, variants = torch.tensor([0]), torch.tensor([1])
+    if fail_publication:
+        with pytest.raises(RuntimeError, match="publication failed"):
+            bank.reset_from_snapshot(ids, variants, torch.ones((1, 3)))
+        assert bank.staged_variant_ids(ids).tolist() == [0]
+        assert bank.variant_ids.tolist() == [0, 0]
+        assert bank.reset_publication_count == 0
+    else:
+        bank.reset_from_snapshot(ids, variants, torch.ones((1, 3)))
+        assert bank.staged_variant_ids(ids).tolist() == [1]
+        assert bank.variant_ids.tolist() == [1, 0]
+        assert bank.reset_publication_count == 1
+    # A future requested distribution remains independent of this snapshot restore.
+    assert bank.desired_variant_ids.tolist() == [0, 1]

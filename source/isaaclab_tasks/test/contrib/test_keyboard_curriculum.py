@@ -27,7 +27,7 @@ def _command(heterogeneous=True):
             active[torch.tensor(ids)[:, None], slots] = True
     else:
         active[:, :4] = True
-    bank = SimpleNamespace(variant_ids=variants, layouts=(0, 1, 2), backspaces=torch.tensor([3, 6, 11]))
+    bank = SimpleNamespace(variant_ids=variants, layouts=(0, 1, 2), backspace_slots=torch.tensor([3, 6, 11]))
     command._env = SimpleNamespace(
         num_envs=5, device="cpu", all_env_ids=torch.arange(5), keyboard_variants=bank if heterogeneous else None
     )
@@ -203,7 +203,7 @@ def test_native_normal_ik_completes_prospective_payload_before_publication_and_p
     model = builder.finalize("cpu")
     bank = object.__new__(KeyboardWorlds)
     bank.variant_ids = torch.zeros(3, dtype=torch.long)
-    bank.backspaces = torch.tensor([1, 1])
+    bank.backspace_slots = torch.tensor([1, 1])
     bank.reset_defaults = torch.zeros((2, 16))
     bank.reset_defaults[:, 6] = bank.reset_defaults[:, 13] = 1
     bank.reset_defaults[0, 7], bank.reset_defaults[1, 7] = 0.05, 0.3

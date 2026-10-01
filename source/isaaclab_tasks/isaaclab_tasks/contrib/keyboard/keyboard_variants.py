@@ -59,8 +59,8 @@ class KeyboardVariants:
             ):
                 raise ValueError("Keyboard variants require 18 six-DOF slots and active counts divisible by six.")
         self.variant_ids = torch.zeros(env.num_envs, dtype=torch.long, device=env.device)
-        self.counts = torch.tensor([k.active_key_count for k in self.layouts], device=env.device)
-        self.backspaces = torch.tensor(
+        self.key_counts = torch.tensor([k.active_key_count for k in self.layouts], device=env.device)
+        self.backspace_slots = torch.tensor(
             [
                 next(k.slot for k in layout.active_keys if k.label.lower() in ("backspace", "bksp"))
                 for layout in self.layouts
@@ -237,7 +237,7 @@ class KeyboardVariants:
             for shape, source in zip(self.shape_ids[world], self._sources[variant]):
                 model.shape_source[shape] = source
         self.variant_ids[env_ids] = variant_ids
-        active = self._body_partition[None, :] < (self.counts[variant_ids, None] // 6)
+        active = self._body_partition[None, :] < (self.key_counts[variant_ids, None] // 6)
         wp.to_torch(self.env.selections.body_active)[self.body_ids[env_ids]] = active
         participating = active & wp.to_torch(self.env.selections.world_active)[env_ids, None]
         shape_ids = self._shape_ids_t[env_ids]

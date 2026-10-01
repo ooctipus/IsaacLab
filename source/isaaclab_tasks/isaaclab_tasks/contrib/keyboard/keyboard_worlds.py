@@ -23,10 +23,8 @@ from newton.worlds import (
     WorldCommands,
     WorldDirectoryData,
     WorldOperation,
-    WorldPhase,
     WorldResults,
     WorldStatus,
-    WorldTransaction,
     create_world_commands,
     create_world_results,
     world_location,
@@ -35,8 +33,8 @@ from newton.worlds import (
 from .keyboard_populations import prepare_keyboard_prototype
 from .keyboards.keyboard_geometry import generate_keyboard
 from .mdp.reset import ResetKinematics, reset_root_state_uniform
-from .native_selection import NativePrototypeMapping, NativeSelections
-from .selection_paths import bind_selectors, query_selection_ids, resolve_selection, selector_key
+from .mujoco_selection import MuJoCoSelections, NewtonMuJoCoMapping
+from .selection_paths import bind_selectors, query_selection_indices, resolve_selection, selector_key
 
 
 @wp.kernel
@@ -48,33 +46,34 @@ def _begin_batch(commands: WorldCommands, count: int):
 @wp.kernel
 def _reset_commands(
     commands: WorldCommands,
-    actors: wp.array[int],
+    env_indices: wp.array[int],
     variants: wp.array[wp.int64],
     handles: wp.array[int],
     generations: wp.array[wp.uint64],
     create: int,
 ):
     request = wp.tid()
-    actor = actors[request]
-    commands.op[request] = int(WorldOperation.RESET)
-    commands.id[request] = handles[actor]
-    commands.generation[request] = generations[actor]
+    env_index = env_indices[request]
+    commands.operation[request] = int(WorldOperation.RESET)
+    commands.world_id[request] = handles[env_index]
+    commands.generation[request] = generations[env_index]
     commands.prototype[request] = int(variants[request])
     if create != 0:
-        commands.op[request] = int(WorldOperation.CREATE)
+        commands.operation[request] = int(WorldOperation.CREATE)
 
 
 @wp.kernel
 def _validate_snapshot(
     commands: WorldCommands,
-    transaction: WorldTransaction,
+    request_status: wp.array[int],
+    consumed: wp.array[int],
     enabled: wp.array[int],
     payload: wp.array2d[float],
 ):
     request, column = wp.tid()
-    if enabled[0] != 0 and transaction.phase[0] == int(WorldPhase.VALIDATED) and request < commands.count[0]:
-        if not wp.isfinite(payload[request, column]):
-            wp.atomic_max(transaction.status, request, int(WorldStatus.INVALID))
+    if consumed[0] != 0 and enabled[0] != 0 and request < commands.count[0]:
+        if request_status[request] == int(WorldStatus.OK) and not wp.isfinite(payload[request, column]):
+            wp.atomic_max(request_status, request, int(WorldStatus.INVALID))
 
 
 @wp.kernel
@@ -83,7 +82,7 @@ def _initialize_snapshot(
     destinations: wp.array[int],
     count: wp.array[int],
     status: wp.array[int],
-    transaction: WorldTransaction,
+    initialized_sequence: wp.array[wp.uint64],
     sequence: wp.array[wp.uint64],
     payload_enabled: wp.array[int],
     payload: wp.array2d[float],
@@ -99,11 +98,9 @@ def _initialize_snapshot(
     mocap_quat: wp.array2d[wp.quat],
 ):
     ordinal = wp.tid()
-    if ordinal >= count[0] or status[0] != 0 or transaction.phase[0] != int(WorldPhase.ADMITTED):
+    if ordinal >= count[0] or status[0] != 0:
         return
     request = requests[ordinal]
-    if transaction.status[request] != int(WorldStatus.OK):
-        return
     destination = destinations[ordinal]
     if payload_enabled[0] != 0:
         for joint in range(q_columns.shape[0]):
@@ -122,14 +119,14 @@ def _initialize_snapshot(
                 payload[request, begin + 5],
             )
     # Defaults copied the entire native row first, including solver history and controls.
-    transaction.initialized[request] = sequence[0]
+    initialized_sequence[request] = sequence[0]
 
 
 @wp.kernel
 def _publish_handles(
     results: WorldResults,
     batch_status: wp.array[int],
-    actors: wp.array[int],
+    env_indices: wp.array[int],
     requested: wp.array[wp.int64],
     handles: wp.array[int],
     generations: wp.array[wp.uint64],
@@ -141,24 +138,24 @@ def _publish_handles(
     if batch_status[0] != 0 or results.status[request] != int(WorldStatus.OK):
         wp.atomic_max(failed, 0, 1)
         return
-    actor, identity = actors[request], results.id[request]
-    handles[actor] = identity
-    generations[actor] = results.generation[request]
-    inverse[identity] = actor
-    variants[actor] = requested[request]
+    env_index, identity = env_indices[request], results.world_id[request]
+    handles[env_index] = identity
+    generations[env_index] = results.generation[request]
+    inverse[identity] = env_index
+    variants[env_index] = requested[request]
 
 
 @wp.kernel
 def _backing_demand(commands: WorldCommands, directory: WorldDirectoryData, demand: wp.array2d[int]):
     prototype = wp.tid()
-    before = directory.active_count[prototype]
+    before = directory.live_count[prototype]
     after = before
     for request in range(commands.count[0]):
         if commands.prototype[request] == prototype:
             before += 1
             after += 1
-        if commands.op[request] == int(WorldOperation.RESET):
-            source, row, valid = world_location(directory, commands.id[request], commands.generation[request])
+        if commands.operation[request] == int(WorldOperation.RESET):
+            source, row, valid = world_location(directory, commands.world_id[request], commands.generation[request])
             if valid and source == prototype:
                 after -= 1
     demand[prototype, 0] = before
@@ -176,6 +173,10 @@ class KeyboardWorlds:
 
     Replay and normal reset payloads are completed before native publication.
     Unchanged worlds retain their native state, controls and solver history.
+    ``variant_ids`` records each successful publication; desired IDs are future
+    requests and staged IDs are the next reset plan. A partially rejected batch
+    retains its actual successes, invalidates the task, and requires closing it.
+    Task/MDP state is not rolled back across already published physics lifetimes.
     """
 
     capacity_overflow_mask = ~int(mjw.OverflowType.ITERATIONS | mjw.OverflowType.LS_ITERATIONS)
@@ -231,8 +232,8 @@ class KeyboardWorlds:
             self.layouts = tuple(generate_keyboard(cfg) for cfg in configs)
             if any(layout.active_key_count % 6 or not 6 <= layout.active_key_count <= 108 for layout in self.layouts):
                 raise ValueError("Keyboard prototypes require 6..108 keys in multiples of six.")
-            self.counts = torch.tensor([layout.active_key_count for layout in self.layouts], device=env.device)
-            self.backspaces = torch.tensor(
+            self.key_counts = torch.tensor([layout.active_key_count for layout in self.layouts], device=env.device)
+            self.backspace_slots = torch.tensor(
                 [
                     next(key.slot for key in layout.active_keys if key.label.lower() in ("backspace", "bksp"))
                     for layout in self.layouts
@@ -245,13 +246,13 @@ class KeyboardWorlds:
             # Last successful task publication; the directory owns lifetime and placement.
             self.variant_ids = torch.full((env.num_envs,), -1, dtype=torch.long, device=env.device)
             self.desired_variant_ids = env.all_env_ids.remainder(len(configs)).long()
-            self._reset_variants = self.desired_variant_ids.clone()
-            self.actor_ids = wp.full(env.num_envs, -1, dtype=wp.int32, device=env.device)
-            self.actor_generations = wp.zeros(env.num_envs, dtype=wp.uint64, device=env.device)
-            self.actor_for_id = wp.full(env.num_envs, -1, dtype=wp.int32, device=env.device)
+            self._staged_variant_ids = self.desired_variant_ids.clone()
+            self.world_id_by_env = wp.full(env.num_envs, -1, dtype=wp.int32, device=env.device)
+            self.world_generation_by_env = wp.zeros(env.num_envs, dtype=wp.uint64, device=env.device)
+            self.env_index_by_world_id = wp.full(env.num_envs, -1, dtype=wp.int32, device=env.device)
             self.commands = create_world_commands(env.num_envs, device=env.device)
             self.results = create_world_results(env.num_envs, device=env.device)
-            self._request_actors = wp.empty(env.num_envs, dtype=wp.int32, device=env.device)
+            self._request_env_indices = wp.empty(env.num_envs, dtype=wp.int32, device=env.device)
             self._request_variants = torch.empty(env.num_envs, dtype=torch.long, device=env.device)
             self._payload_enabled = wp.zeros(1, dtype=wp.int32, device=env.device)
             self._failed = wp.zeros(1, dtype=wp.int32, device=env.device)
@@ -266,9 +267,9 @@ class KeyboardWorlds:
             for cfg in self._manager_configs():
                 bind_selectors(cfg, remember)
             command = env.cfg.commands.typing
-            root_width = command.reset_roots.dense_width or command.reset_roots.count_per_world
-            coord_width = command.reset_coords.dense_width or command.reset_coords.count_per_world
-            dof_width = command.reset_dofs.dense_width or command.reset_dofs.count_per_world
+            root_width = command.reset_roots.policy_width or command.reset_roots.count_per_world
+            coord_width = command.reset_coords.policy_width or command.reset_coords.count_per_world
+            dof_width = command.reset_dofs.policy_width or command.reset_dofs.count_per_world
             self._q_offset, self._qd_offset = 7 * root_width, 7 * root_width + coord_width
             self._payload = torch.empty((env.num_envs, self._qd_offset + dof_width), device=env.device)
             self._payload_wp = wp.from_torch(self._payload)
@@ -286,7 +287,7 @@ class KeyboardWorlds:
                 workspace = mjw.make_step_workspace(solver.mjw_model, warm)
                 mjw.step(solver.mjw_model, warm, workspace=workspace)
                 prepared.append((solver.mjw_model, defaults))
-                mapping = NativePrototypeMapping(source, solver)
+                mapping = NewtonMuJoCoMapping(source, solver)
                 self._prototype_maps.append(mapping)
                 self._snapshot_maps.append(self._snapshot_columns(mapping, source, command))
             self.reset_kinematics = None
@@ -302,22 +303,22 @@ class KeyboardWorlds:
             self.backend = env.sim.get_or_create_backend(
                 NewtonWorldsBackendCfg(
                     prototypes=tuple(prepared),
-                    capacities=capacities,
-                    id_capacity=env.num_envs,
+                    world_capacities=capacities,
+                    world_id_capacity=env.num_envs,
                     command_capacity=env.num_envs,
-                    initial_rows=ready,
+                    initial_world_ready_capacities=ready,
                     dt=env.physics_dt / physics.num_substeps,
                     substeps=physics.num_substeps,
                     memory_budget_bytes=env.cfg.worlds_memory_budget_bytes,
                 )
             )
             runtime = self.backend.runtime
-            self._selection_owner = NativeSelections(
+            self._selection_owner = MuJoCoSelections(
                 tuple(self._sources),
                 tuple(self._prototype_maps),
                 runtime,
-                self.actor_ids,
-                self.actor_generations,
+                self.world_id_by_env,
+                self.world_generation_by_env,
                 num_envs=env.num_envs,
                 device=env.device,
             )
@@ -327,8 +328,8 @@ class KeyboardWorlds:
                 self._contact_selection = self.resolve(contact_cfg.params["bodies"])
                 self._contact_selection.prepare_contact_forces()
 
-            def initialize(group, requests, destinations, count, status, transaction, sequence):
-                qmap, qdmap, roots, refs = self._snapshot_maps[group.index]
+            def initialize(group, requests, destinations, count, status, initialized_sequence, sequence):
+                qmap, qdmap, roots, refs = self._snapshot_maps[group.prototype_index]
                 wp.launch(
                     _initialize_snapshot,
                     env.num_envs,
@@ -337,7 +338,7 @@ class KeyboardWorlds:
                         destinations,
                         count,
                         status,
-                        transaction,
+                        initialized_sequence,
                         sequence,
                         self._payload_enabled,
                         self._payload_wp,
@@ -355,13 +356,13 @@ class KeyboardWorlds:
                     device=env.device,
                 )
 
-            def validate(commands, transaction):
+            def validate(commands, request_status, consumed):
                 wp.capture_if(
-                    transaction.phase,
+                    consumed,
                     on_true=lambda: wp.launch(
                         _validate_snapshot,
                         self._payload.shape,
-                        [commands, transaction, self._payload_enabled, self._payload_wp],
+                        [commands, request_status, consumed, self._payload_enabled, self._payload_wp],
                         device=env.device,
                     ),
                 )
@@ -370,27 +371,36 @@ class KeyboardWorlds:
                 group.record_launch(
                     _record_overflow,
                     group.world_capacity,
-                    inputs=[group.data.overflow, group.index, self.overflow],
+                    inputs=[group.data.overflow, group.prototype_index, self.overflow],
                     domain="world",
                 )
                 if self._contact_selection is not None:
-                    self._contact_selection.record_contact_forces(group, self.actor_for_id)
+                    self._contact_selection.record_contact_forces(group, self.env_index_by_world_id)
 
             wp.load_module(module=__name__, device=env.device)
-            wp.load_module(module="isaaclab_tasks.contrib.keyboard.native_selection", device=env.device)
+            wp.load_module(module="isaaclab_tasks.contrib.keyboard.mujoco_selection", device=env.device)
             self.backend.prepare(
                 self.commands,
                 self.results,
                 validate=validate,
                 initialize=initialize,
                 after_substep=after_substep,
-                retain=(self._payload_wp, self._payload_enabled, self._snapshot_maps, self.overflow),
+                # Selection owns all contact descriptors and environment handles;
+                # retain it directly rather than the task/backend/graph root.
+                retain=(
+                    self._payload_wp,
+                    self._payload_enabled,
+                    self._snapshot_maps,
+                    self.overflow,
+                    self._contact_selection,
+                    self.env_index_by_world_id,
+                ),
             )
             env.sim.physics_manager.install(self.backend)
             self._submit(env.all_env_ids, self.desired_variant_ids, create=True)
-            self.redistribution_count = 0
+            self.reset_publication_count = 0
             self.last_changed_worlds = 0
-            self.last_redistribution_ms = 0.0
+            self.last_reset_publication_ms = 0.0
         except BaseException as error:
             try:
                 try:
@@ -407,23 +417,25 @@ class KeyboardWorlds:
         return cfg.commands, cfg.actions, cfg.observations, cfg.rewards, cfg.terminations, cfg.events
 
     def _snapshot_columns(self, mapping, source, command):
-        qids = query_selection_ids(source.model, command.reset_coords)
-        qdids = query_selection_ids(source.model, command.reset_dofs)
-        roots = query_selection_ids(source.model, command.reset_roots)
+        qids = query_selection_indices(source.model, command.reset_coords)
+        qdids = query_selection_indices(source.model, command.reset_dofs)
+        roots = query_selection_indices(source.model, command.reset_roots)
         qcolumns, qdcolumns = {int(v): i for i, v in enumerate(qids)}, {int(v): i for i, v in enumerate(qdids)}
-        if set(mapping.coordinate_ids.tolist()) != set(qcolumns) or set(mapping.dof_ids.tolist()) != set(qdcolumns):
+        if set(mapping.newton_coord_by_mujoco_qpos.tolist()) != set(qcolumns) or set(
+            mapping.newton_dof_by_mujoco_dof.tolist()
+        ) != set(qdcolumns):
             raise ValueError("Reset snapshots must cover every native scalar coordinate and velocity.")
         root_columns = {int(v): i for i, v in enumerate(roots)}
-        qmap = np.array([qcolumns[int(v)] for v in mapping.coordinate_ids], dtype=np.int32)
-        qdmap = np.array([qdcolumns[int(v)] for v in mapping.dof_ids], dtype=np.int32)
-        rootmap = np.array([root_columns[int(v)] for v in mapping.root_body_ids], dtype=np.int32)
+        qmap = np.array([qcolumns[int(v)] for v in mapping.newton_coord_by_mujoco_qpos], dtype=np.int32)
+        qdmap = np.array([qdcolumns[int(v)] for v in mapping.newton_dof_by_mujoco_dof], dtype=np.int32)
+        rootmap = np.array([root_columns[int(v)] for v in mapping.newton_body_by_mocap], dtype=np.int32)
         return tuple(
             wp.array(values, dtype=dtype, device=self.env.device)
             for values, dtype in (
                 (qmap, wp.int32),
                 (qdmap, wp.int32),
                 (rootmap, wp.int32),
-                (mapping.coordinate_refs, wp.float32),
+                (mapping.qpos_references, wp.float32),
             )
         )
 
@@ -440,7 +452,7 @@ class KeyboardWorlds:
             )
             poses = roots.read_model("body_q")[0]
             q, qd = coords.read_model("joint_q")[0], dofs.read_model("joint_qd")[0]
-            snapshot_width = self._qd_offset + (command.reset_dofs.dense_width or command.reset_dofs.count_per_world)
+            snapshot_width = self._qd_offset + (command.reset_dofs.policy_width or command.reset_dofs.count_per_world)
             snapshot = torch.zeros(snapshot_width, device=self.env.device)
             snapshot[: poses.numel()] = poses.flatten()
             snapshot[self._q_offset : self._q_offset + len(q)] = q
@@ -449,13 +461,13 @@ class KeyboardWorlds:
             active = torch.zeros(root_width, dtype=torch.bool, device=self.env.device)
             active[: len(poses)] = roots.dense_active()[0]
             root_active.append(active)
-            root_ids = resolve_selection(source, command.reset_roots.replace(dense_width=None)).ids.numpy()
+            root_ids = resolve_selection(source, command.reset_roots.replace(policy_width=None)).ids.numpy()
             root_index = {int(body): column for column, body in enumerate(root_ids)}
             parent, child = model.joint_parent.numpy(), model.joint_child.numpy()
             body_parent = {int(body): int(parent[joint]) for joint, body in enumerate(child)}
-            key_ids = resolve_selection(source, command.key_bodies.replace(dense_width=None)).ids.numpy()
+            key_ids = resolve_selection(source, command.key_bodies.replace(policy_width=None)).ids.numpy()
             local = np.zeros(
-                (command.key_bodies.dense_width or command.key_bodies.count_per_world, 3), dtype=np.float32
+                (command.key_bodies.policy_width or command.key_bodies.count_per_world, 3), dtype=np.float32
             )
             columns = np.full(len(local), -1, dtype=np.int64)
             body_poses = model.body_q.numpy()
@@ -474,7 +486,7 @@ class KeyboardWorlds:
             key_roots.append(columns)
             key_local.append(local)
             selected_roots = resolve_selection(
-                source, command.reset.pre_solve_reset.params["roots"].replace(dense_width=None)
+                source, command.reset.pre_solve_reset.params["roots"].replace(policy_width=None)
             ).ids.numpy()
             root_mask = torch.zeros(root_width, dtype=torch.bool, device=self.env.device)
             root_mask[[root_index[int(body)] for body in selected_roots]] = True
@@ -486,7 +498,7 @@ class KeyboardWorlds:
             root = tip
             while root not in root_index:
                 root = body_parent[root]
-            qids = resolve_selection(source, command.reset_coords.replace(dense_width=None)).ids.numpy()
+            qids = resolve_selection(source, command.reset_coords.replace(policy_width=None)).ids.numpy()
             qcolumn = {int(coord): column for column, coord in enumerate(qids)}
             robot_columns = np.array([qcolumn[int(coord)] for coord in robot], dtype=np.int64)
             robot_column = {int(coord): column for column, coord in enumerate(robot)}
@@ -514,14 +526,14 @@ class KeyboardWorlds:
 
     def resolve(self, cfg):
         """Compile task paths once before returning a numeric runtime binding."""
-        ids = tuple(query_selection_ids(source.model, cfg) for source in self._sources)
-        return self._selection_owner.bind(cfg.frequency, ids, policy_width=cfg.dense_width)
+        ids = tuple(query_selection_indices(source.model, cfg) for source in self._sources)
+        return self._selection_owner.bind(cfg.index_domain, ids, policy_width=cfg.policy_width)
 
-    def reset_variants(self, env_ids):
+    def staged_variant_ids(self, env_ids):
         """Return requested prototypes staged for this episode boundary."""
-        return self._reset_variants[env_ids]
+        return self._staged_variant_ids[env_ids]
 
-    def request(self, env_ids, variant_ids=None):
+    def request_variants(self, env_ids, variant_ids=None):
         """Update desired keyboard assignments without changing a live episode."""
         self._validate_request(env_ids, variant_ids)
         if variant_ids is None:
@@ -529,14 +541,14 @@ class KeyboardWorlds:
             variant_ids = (self.variant_ids[env_ids] + offsets) % len(self.layouts)
         self.desired_variant_ids[env_ids] = variant_ids
 
-    def redistribute(self, eligible_ids):
+    def stage_variant_changes(self, eligible_ids):
         """Stage eligible switches; publication waits for the complete snapshot."""
         self._validate_request(eligible_ids)
         changed = eligible_ids[self.desired_variant_ids[eligible_ids] != self.variant_ids[eligible_ids]]
-        self._reset_variants[eligible_ids] = self.desired_variant_ids[eligible_ids]
+        self._staged_variant_ids[eligible_ids] = self.desired_variant_ids[eligible_ids]
         return changed
 
-    def reset_snapshot(self, env_ids, variant_ids, snapshot):
+    def reset_from_snapshot(self, env_ids, variant_ids, snapshot):
         """Initialize and publish full native lifetimes from completed task snapshots."""
         self._validate_request(env_ids, variant_ids)
         if (
@@ -550,9 +562,10 @@ class KeyboardWorlds:
         self._payload_enabled.fill_(1)
         changed = (self.variant_ids[env_ids] != variant_ids).sum()
         self._submit(env_ids, variant_ids)
+        self._staged_variant_ids[env_ids] = variant_ids
         self.last_changed_worlds = changed
-        self.redistribution_count += 1
-        self.last_redistribution_ms = (time.perf_counter() - started) * 1000.0
+        self.reset_publication_count += 1
+        self.last_reset_publication_ms = (time.perf_counter() - started) * 1000.0
 
     def _validate_request(self, env_ids, variant_ids=None):
         self.env._check_active()
@@ -562,11 +575,13 @@ class KeyboardWorlds:
             or env_ids.dtype != torch.long
             or env_ids.device != self.variant_ids.device
         ):
-            raise ValueError("Actor IDs must be a one-dimensional int64 tensor on the task device.")
-        torch._assert_async(((env_ids >= 0) & (env_ids < self.env.num_envs)).all(), "Actor IDs are outside the task.")
+            raise ValueError("Environment indices must be a one-dimensional int64 tensor on the task device.")
+        torch._assert_async(
+            ((env_ids >= 0) & (env_ids < self.env.num_envs)).all(), "Environment indices are outside the task."
+        )
         seen = torch.zeros_like(self.variant_ids, dtype=torch.int32)
         seen.scatter_add_(0, env_ids, torch.ones_like(env_ids, dtype=torch.int32))
-        torch._assert_async((seen <= 1).all(), "Actor IDs must be unique.")
+        torch._assert_async((seen <= 1).all(), "Environment indices must be unique.")
         if variant_ids is not None:
             if (
                 not isinstance(variant_ids, torch.Tensor)
@@ -584,7 +599,7 @@ class KeyboardWorlds:
         count = len(env_ids)
         if not count:
             return
-        wp.to_torch(self._request_actors)[:count].copy_(env_ids)
+        wp.to_torch(self._request_env_indices)[:count].copy_(env_ids)
         self._request_variants[:count].copy_(variant_ids)
         try:
             wp.launch(_begin_batch, 1, [self.commands, count], device=self.env.device)
@@ -593,10 +608,10 @@ class KeyboardWorlds:
                 count,
                 [
                     self.commands,
-                    self._request_actors,
+                    self._request_env_indices,
                     wp.from_torch(self._request_variants),
-                    self.actor_ids,
-                    self.actor_generations,
+                    self.world_id_by_env,
+                    self.world_generation_by_env,
                     int(create),
                 ],
                 device=self.env.device,
@@ -605,19 +620,19 @@ class KeyboardWorlds:
             wp.launch(
                 _backing_demand,
                 len(self.layouts),
-                [self.commands, runtime.directory.data, self._demand],
+                [self.commands, runtime.directory, self._demand],
                 device=self.env.device,
             )
             demand = self._demand.numpy()
             streams = (wp.get_stream(self.env.device),)
             targets = []
-            for group, (required, _) in zip(runtime.prototypes, demand, strict=True):
+            for group, (required, _) in zip(runtime.populations, demand, strict=True):
                 required = int(required)
-                ready = group.ready_worlds
+                ready = group.world_ready_capacity
                 if required > ready or ready > 2 * required + 16 or required == 0:
                     ready = min(group.world_capacity, required + max(8, required // 2)) if required else 0
                 targets.append(ready)
-            if any(n != group.ready_worlds for group, n in zip(runtime.prototypes, targets, strict=True)):
+            if any(n != group.world_ready_capacity for group, n in zip(runtime.populations, targets, strict=True)):
                 runtime.resize_backing(
                     tuple(targets), streams=streams, spare_bytes=self.env.cfg.worlds_spare_memory_budget_bytes
                 )
@@ -628,12 +643,12 @@ class KeyboardWorlds:
                 count,
                 [
                     self.results,
-                    runtime.directory.batch.status,
-                    self._request_actors,
+                    runtime.batch_result.status,
+                    self._request_env_indices,
                     wp.from_torch(self._request_variants),
-                    self.actor_ids,
-                    self.actor_generations,
-                    self.actor_for_id,
+                    self.world_id_by_env,
+                    self.world_generation_by_env,
+                    self.env_index_by_world_id,
                     wp.from_torch(self.variant_ids),
                     self._failed,
                 ],
@@ -646,13 +661,13 @@ class KeyboardWorlds:
             # Compaction made every live population a prefix. Return empty groups
             # immediately and bound past peaks, while retaining headroom for small resets.
             targets = []
-            for group, (_, live) in zip(runtime.prototypes, demand, strict=True):
+            for group, (_, live) in zip(runtime.populations, demand, strict=True):
                 live = int(live)
-                ready = group.ready_worlds
+                ready = group.world_ready_capacity
                 if not live or ready > 2 * live + 16:
                     ready = min(group.world_capacity, live + max(8, live // 2)) if live else 0
                 targets.append(ready)
-            if any(n != group.ready_worlds for group, n in zip(runtime.prototypes, targets, strict=True)):
+            if any(n != group.world_ready_capacity for group, n in zip(runtime.populations, targets, strict=True)):
                 runtime.resize_backing(
                     tuple(targets), streams=streams, spare_bytes=self.env.cfg.worlds_spare_memory_budget_bytes
                 )
@@ -661,13 +676,13 @@ class KeyboardWorlds:
             raise
 
     @property
-    def active_prototypes(self):
-        return (wp.to_torch(self.backend.runtime.directory.data.active_count) > 0).sum()
+    def populated_prototype_count(self):
+        return (wp.to_torch(self.backend.runtime.directory.live_count) > 0).sum()
 
     @property
-    def native_dofs(self):
-        counts = wp.to_torch(self.backend.runtime.directory.data.active_count)
-        return (counts * (self.counts + 6)).sum()
+    def live_dof_count(self):
+        counts = wp.to_torch(self.backend.runtime.directory.live_count)
+        return (counts * (self.key_counts + 6)).sum()
 
     def reconcile_state(self, dirty_worlds, flags):
         if flags:
