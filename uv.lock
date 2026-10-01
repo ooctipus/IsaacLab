@@ -18,8 +18,8 @@ prerelease-mode = "allow"
 [manifest]
 overrides = [
     { name = "mujoco", specifier = "~=3.12.0" },
-    { name = "mujoco-warp", git = "https://github.com/ooctipus/mujoco_warp.git?rev=0f464884361bde0d39ff1591b7f74cda9ea8f4cc" },
-    { name = "newton", extras = ["sim"], git = "https://github.com/ooctipus/newton.git?rev=0a4e125dfc81d8d26839d13636b9c483a105852a" },
+    { name = "mujoco-warp", git = "https://github.com/ooctipus/mujoco_warp.git?rev=c41949b190e2a7fd6385d7aa160e456e5ec37a31" },
+    { name = "newton", extras = ["sim"], git = "https://github.com/ooctipus/newton.git?rev=b0179ee8ad3be07b0c4819e5d00015ded8994edc" },
     { name = "newton-usd-schemas", specifier = ">=0.5.0" },
     { name = "numpy", specifier = ">=2" },
     { name = "packaging", specifier = ">=20,<27" },
@@ -1988,9 +1988,9 @@ requires-dist = [
     { name = "matplotlib", specifier = ">=3.10.3" },
     { name = "meshio", specifier = ">=5.3.5" },
     { name = "moviepy", marker = "extra == 'video'", specifier = ">=1.0.3,<2.0.0.dev0" },
-    { name = "mujoco-warp", git = "https://github.com/ooctipus/mujoco_warp.git?rev=0f464884361bde0d39ff1591b7f74cda9ea8f4cc" },
+    { name = "mujoco-warp", git = "https://github.com/ooctipus/mujoco_warp.git?rev=c41949b190e2a7fd6385d7aa160e456e5ec37a31" },
     { name = "myst-parser", marker = "extra == 'dev'" },
-    { name = "newton", extras = ["sim"], git = "https://github.com/ooctipus/newton.git?rev=0a4e125dfc81d8d26839d13636b9c483a105852a" },
+    { name = "newton", extras = ["sim"], git = "https://github.com/ooctipus/newton.git?rev=b0179ee8ad3be07b0c4819e5d00015ded8994edc" },
     { name = "newton-usd-schemas", specifier = ">=0.5.0" },
     { name = "numba", specifier = ">=0.63.1" },
     { name = "numpy", specifier = ">=2" },
@@ -3204,7 +3204,7 @@ wheels = [
 [[package]]
 name = "mujoco-warp"
 version = "3.14.0"
-source = { git = "https://github.com/ooctipus/mujoco_warp.git?rev=0f464884361bde0d39ff1591b7f74cda9ea8f4cc#0f464884361bde0d39ff1591b7f74cda9ea8f4cc" }
+source = { git = "https://github.com/ooctipus/mujoco_warp.git?rev=c41949b190e2a7fd6385d7aa160e456e5ec37a31#c41949b190e2a7fd6385d7aa160e456e5ec37a31" }
 dependencies = [
     { name = "absl-py" },
     { name = "etils", extra = ["epath"] },
@@ -3289,7 +3289,7 @@ wheels = [
 [[package]]
 name = "newton"
 version = "1.7.0.dev0"
-source = { git = "https://github.com/ooctipus/newton.git?rev=0a4e125dfc81d8d26839d13636b9c483a105852a#0a4e125dfc81d8d26839d13636b9c483a105852a" }
+source = { git = "https://github.com/ooctipus/newton.git?rev=b0179ee8ad3be07b0c4819e5d00015ded8994edc#b0179ee8ad3be07b0c4819e5d00015ded8994edc" }
 dependencies = [
     { name = "warp-lang" },
 ]

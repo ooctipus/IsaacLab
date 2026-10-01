@@ -29,13 +29,14 @@ from newton.worlds import (
     WorldTransaction,
     create_world_commands,
     create_world_results,
+    world_location,
 )
 
 from .keyboard_populations import prepare_keyboard_prototype
 from .keyboards.keyboard_geometry import generate_keyboard
 from .mdp.reset import ResetKinematics, reset_root_state_uniform
-from .native_selection import NativeSelections
-from .newton_selection import bind_selectors
+from .native_selection import NativePrototypeMapping, NativeSelections
+from .selection_paths import bind_selectors, query_selection_ids, resolve_selection, selector_key
 
 
 @wp.kernel
@@ -127,7 +128,7 @@ def _initialize_snapshot(
 @wp.kernel
 def _publish_handles(
     results: WorldResults,
-    directory: WorldDirectoryData,
+    batch_status: wp.array[int],
     actors: wp.array[int],
     requested: wp.array[wp.int64],
     handles: wp.array[int],
@@ -137,7 +138,7 @@ def _publish_handles(
     failed: wp.array[int],
 ):
     request = wp.tid()
-    if directory.flags[2] != 0 or results.status[request] != int(WorldStatus.OK):
+    if batch_status[0] != 0 or results.status[request] != int(WorldStatus.OK):
         wp.atomic_max(failed, 0, 1)
         return
     actor, identity = actors[request], results.id[request]
@@ -157,7 +158,8 @@ def _backing_demand(commands: WorldCommands, directory: WorldDirectoryData, dema
             before += 1
             after += 1
         if commands.op[request] == int(WorldOperation.RESET):
-            if directory.prototype[commands.id[request]] == prototype:
+            source, row, valid = world_location(directory, commands.id[request], commands.generation[request])
+            if valid and source == prototype:
                 after -= 1
     demand[prototype, 0] = before
     demand[prototype, 1] = after
@@ -209,7 +211,7 @@ class KeyboardWorlds:
                         raise ValueError("Native normal resets require unconditional reset events.")
                     if getattr(event, "mode", None) == "reset" and event.func is not reset_root_state_uniform:
                         raise ValueError("Native normal resets admit only fixed keyboard root reset events.")
-                    if getattr(event, "mode", None) == "reset" and self._key(event.params["roots"]) != self._key(
+                    if getattr(event, "mode", None) == "reset" and selector_key(event.params["roots"]) != selector_key(
                         reset.pre_solve_reset.params["roots"]
                     ):
                         raise ValueError("Native reset events must select the same keyboard roots as pre-solve.")
@@ -240,6 +242,7 @@ class KeyboardWorlds:
             self.labels = tuple(
                 tuple(key.label for key in layout.keys) + ("",) * (108 - layout.slot_count) for layout in self.layouts
             )
+            # Last successful task publication; the directory owns lifetime and placement.
             self.variant_ids = torch.full((env.num_envs,), -1, dtype=torch.long, device=env.device)
             self.desired_variant_ids = env.all_env_ids.remainder(len(configs)).long()
             self._reset_variants = self.desired_variant_ids.clone()
@@ -257,7 +260,7 @@ class KeyboardWorlds:
             self._selector_cfgs = {}
 
             def remember(cfg):
-                self._selector_cfgs[self._key(cfg)] = cfg
+                self._selector_cfgs[selector_key(cfg)] = cfg
                 return cfg
 
             for cfg in self._manager_configs():
@@ -269,7 +272,7 @@ class KeyboardWorlds:
             self._q_offset, self._qd_offset = 7 * root_width, 7 * root_width + coord_width
             self._payload = torch.empty((env.num_envs, self._qd_offset + dof_width), device=env.device)
             self._payload_wp = wp.from_torch(self._payload)
-            self._maps, prepared = [], []
+            self._snapshot_maps, self._prototype_maps, prepared = [], [], []
             for cfg, layout in zip(configs, self.layouts, strict=True):
                 solver, source = prepare_keyboard_prototype(
                     env, cfg, physics, self._selector_cfgs.values(), contact_capacity=96 + 8 * layout.active_key_count
@@ -283,7 +286,9 @@ class KeyboardWorlds:
                 workspace = mjw.make_step_workspace(solver.mjw_model, warm)
                 mjw.step(solver.mjw_model, warm, workspace=workspace)
                 prepared.append((solver.mjw_model, defaults))
-                self._maps.append(self._snapshot_columns(solver, source, command))
+                mapping = NativePrototypeMapping(source, solver)
+                self._prototype_maps.append(mapping)
+                self._snapshot_maps.append(self._snapshot_columns(mapping, source, command))
             self.reset_kinematics = None
             if not reset.replay_only or reset.bank_path is None:
                 self._prepare_reset_staging(command)
@@ -307,10 +312,9 @@ class KeyboardWorlds:
                 )
             )
             runtime = self.backend.runtime
-            group_indices = {id(group): i for i, group in enumerate(runtime.prototypes)}
             self._selection_owner = NativeSelections(
                 tuple(self._sources),
-                tuple(self._solvers),
+                tuple(self._prototype_maps),
                 runtime,
                 self.actor_ids,
                 self.actor_generations,
@@ -324,7 +328,7 @@ class KeyboardWorlds:
                 self._contact_selection.prepare_contact_forces()
 
             def initialize(group, requests, destinations, count, status, transaction, sequence):
-                qmap, qdmap, roots, refs = self._maps[group_indices[id(group)]]
+                qmap, qdmap, roots, refs = self._snapshot_maps[group.index]
                 wp.launch(
                     _initialize_snapshot,
                     env.num_envs,
@@ -363,13 +367,12 @@ class KeyboardWorlds:
                 )
 
             def after_substep(group):
-                wp.launch(
+                group.record_launch(
                     _record_overflow,
-                    group.rows.capacity,
-                    [group.data.overflow, group_indices[id(group)], self.overflow],
-                    device=env.device,
+                    group.world_capacity,
+                    inputs=[group.data.overflow, group.index, self.overflow],
+                    domain="world",
                 )
-                group.observe_launch(_record_overflow, group.rows.capacity, "world")
                 if self._contact_selection is not None:
                     self._contact_selection.record_contact_forces(group, self.actor_for_id)
 
@@ -381,12 +384,10 @@ class KeyboardWorlds:
                 validate=validate,
                 initialize=initialize,
                 after_substep=after_substep,
-                retain=(self._payload_wp, self._payload_enabled, self._maps, self.overflow),
+                retain=(self._payload_wp, self._payload_enabled, self._snapshot_maps, self.overflow),
             )
             env.sim.physics_manager.install(self.backend)
             self._submit(env.all_env_ids, self.desired_variant_ids, create=True)
-            for cfg in self._manager_configs():
-                bind_selectors(cfg, self.resolve)
             self.redistribution_count = 0
             self.last_changed_worlds = 0
             self.last_redistribution_ms = 0.0
@@ -401,43 +402,29 @@ class KeyboardWorlds:
                 raise error from cleanup_error
             raise
 
-    @staticmethod
-    def _key(cfg):
-        paths = (cfg.path,) if isinstance(cfg.path, str) else tuple(cfg.path)
-        return cfg.frequency, paths, cfg.count_per_world, cfg.dense_width
-
     def _manager_configs(self):
         cfg = self.env.cfg
         return cfg.commands, cfg.actions, cfg.observations, cfg.rewards, cfg.terminations, cfg.events
 
-    def _snapshot_columns(self, solver, source, command):
-        model, native = solver.model, solver.mj_model
-        if native.nq != native.nv or not np.array_equal(native.jnt_qposadr, native.jnt_dofadr):
-            raise ValueError("Keyboard snapshots currently admit only scalar joint coordinates.")
-        inverse = solver.mjc_dof_to_newton_dof.numpy()[0]
-        qids = source.resolve(command.reset_coords.replace(dense_width=None)).ids.numpy()
-        qdids = source.resolve(command.reset_dofs.replace(dense_width=None)).ids.numpy()
-        if not np.array_equal(model.joint_q_start.numpy(), model.joint_qd_start.numpy()):
-            raise ValueError("Keyboard snapshots require matching scalar coordinate and DOF layouts.")
+    def _snapshot_columns(self, mapping, source, command):
+        qids = query_selection_ids(source.model, command.reset_coords)
+        qdids = query_selection_ids(source.model, command.reset_dofs)
+        roots = query_selection_ids(source.model, command.reset_roots)
         qcolumns, qdcolumns = {int(v): i for i, v in enumerate(qids)}, {int(v): i for i, v in enumerate(qdids)}
-        if set(inverse.tolist()) != set(qcolumns) or set(inverse.tolist()) != set(qdcolumns):
+        if set(mapping.coordinate_ids.tolist()) != set(qcolumns) or set(mapping.dof_ids.tolist()) != set(qdcolumns):
             raise ValueError("Reset snapshots must cover every native scalar coordinate and velocity.")
-        qmap = np.array([qcolumns[int(v)] for v in inverse], dtype=np.int32)
-        qdmap = np.array([qdcolumns[int(v)] for v in inverse], dtype=np.int32)
-        roots = source.resolve(command.reset_roots.replace(dense_width=None)).ids.numpy()
         root_columns = {int(v): i for i, v in enumerate(roots)}
-        joints = solver.mjc_mocap_to_newton_jnt.numpy()[0]
-        children = model.joint_child.numpy()[joints]
-        transforms = model.joint_X_c.numpy()[joints]
-        if not np.allclose(transforms, np.array([0, 0, 0, 0, 0, 0, 1]), atol=1e-7, rtol=0):
-            raise ValueError("Prepared fixed-root snapshot frames must match their child body frames.")
-        rootmap = np.array([root_columns[int(v)] for v in children], dtype=np.int32)
-        attrs = getattr(model, "mujoco", None)
-        reference = getattr(attrs, "dof_ref", None)
-        refs = np.zeros(native.nq, dtype=np.float32) if reference is None else reference.numpy()[inverse]
+        qmap = np.array([qcolumns[int(v)] for v in mapping.coordinate_ids], dtype=np.int32)
+        qdmap = np.array([qdcolumns[int(v)] for v in mapping.dof_ids], dtype=np.int32)
+        rootmap = np.array([root_columns[int(v)] for v in mapping.root_body_ids], dtype=np.int32)
         return tuple(
             wp.array(values, dtype=dtype, device=self.env.device)
-            for values, dtype in ((qmap, wp.int32), (qdmap, wp.int32), (rootmap, wp.int32), (refs, wp.float32))
+            for values, dtype in (
+                (qmap, wp.int32),
+                (qdmap, wp.int32),
+                (rootmap, wp.int32),
+                (mapping.coordinate_refs, wp.float32),
+            )
         )
 
     def _prepare_reset_staging(self, command):
@@ -448,7 +435,8 @@ class KeyboardWorlds:
         for prototype, (solver, source) in enumerate(zip(self._solvers, self._sources, strict=True)):
             model = solver.model
             roots, coords, dofs = (
-                source.resolve(cfg) for cfg in (command.reset_roots, command.reset_coords, command.reset_dofs)
+                resolve_selection(source, cfg)
+                for cfg in (command.reset_roots, command.reset_coords, command.reset_dofs)
             )
             poses = roots.read_model("body_q")[0]
             q, qd = coords.read_model("joint_q")[0], dofs.read_model("joint_qd")[0]
@@ -461,11 +449,11 @@ class KeyboardWorlds:
             active = torch.zeros(root_width, dtype=torch.bool, device=self.env.device)
             active[: len(poses)] = roots.dense_active()[0]
             root_active.append(active)
-            root_ids = source.resolve(command.reset_roots.replace(dense_width=None)).ids.numpy()
+            root_ids = resolve_selection(source, command.reset_roots.replace(dense_width=None)).ids.numpy()
             root_index = {int(body): column for column, body in enumerate(root_ids)}
             parent, child = model.joint_parent.numpy(), model.joint_child.numpy()
             body_parent = {int(body): int(parent[joint]) for joint, body in enumerate(child)}
-            key_ids = source.resolve(command.key_bodies.replace(dense_width=None)).ids.numpy()
+            key_ids = resolve_selection(source, command.key_bodies.replace(dense_width=None)).ids.numpy()
             local = np.zeros(
                 (command.key_bodies.dense_width or command.key_bodies.count_per_world, 3), dtype=np.float32
             )
@@ -485,20 +473,20 @@ class KeyboardWorlds:
                 )
             key_roots.append(columns)
             key_local.append(local)
-            selected_roots = source.resolve(
-                command.reset.pre_solve_reset.params["roots"].replace(dense_width=None)
+            selected_roots = resolve_selection(
+                source, command.reset.pre_solve_reset.params["roots"].replace(dense_width=None)
             ).ids.numpy()
             root_mask = torch.zeros(root_width, dtype=torch.bool, device=self.env.device)
             root_mask[[root_index[int(body)] for body in selected_roots]] = True
             keyboard_columns.append(root_mask)
-            robot = source.resolve(command.robot_joints).ids.numpy()
-            ik_dofs = source.resolve(command.reset.ik.dofs).ids.numpy()
-            ik_coords = source.resolve(command.reset.ik.joints).ids.numpy()
-            tip = int(source.resolve(command.reset.ik.body).ids.numpy()[0])
+            robot = resolve_selection(source, command.robot_joints).ids.numpy()
+            ik_dofs = resolve_selection(source, command.reset.ik.dofs).ids.numpy()
+            ik_coords = resolve_selection(source, command.reset.ik.joints).ids.numpy()
+            tip = int(resolve_selection(source, command.reset.ik.body).ids.numpy()[0])
             root = tip
             while root not in root_index:
                 root = body_parent[root]
-            qids = source.resolve(command.reset_coords.replace(dense_width=None)).ids.numpy()
+            qids = resolve_selection(source, command.reset_coords.replace(dense_width=None)).ids.numpy()
             qcolumn = {int(coord): column for column, coord in enumerate(qids)}
             robot_columns = np.array([qcolumn[int(coord)] for coord in robot], dtype=np.int64)
             robot_column = {int(coord): column for column, coord in enumerate(robot)}
@@ -525,7 +513,9 @@ class KeyboardWorlds:
         self.reset_key_local = torch.tensor(np.stack(key_local), device=self.env.device)
 
     def resolve(self, cfg):
-        return self._selection_owner.resolve(cfg)
+        """Compile task paths once before returning a numeric runtime binding."""
+        ids = tuple(query_selection_ids(source.model, cfg) for source in self._sources)
+        return self._selection_owner.bind(cfg.frequency, ids, policy_width=cfg.dense_width)
 
     def reset_variants(self, env_ids):
         """Return requested prototypes staged for this episode boundary."""
@@ -615,17 +605,17 @@ class KeyboardWorlds:
             wp.launch(
                 _backing_demand,
                 len(self.layouts),
-                [self.commands, runtime.directory.d, self._demand],
+                [self.commands, runtime.directory.data, self._demand],
                 device=self.env.device,
             )
             demand = self._demand.numpy()
-            streams = (wp.get_stream(self.env.device).cuda_stream,)
+            streams = (wp.get_stream(self.env.device),)
             targets = []
             for group, (required, _) in zip(runtime.prototypes, demand, strict=True):
                 required = int(required)
                 ready = group.ready_worlds
                 if required > ready or ready > 2 * required + 16 or required == 0:
-                    ready = min(group.rows.capacity, required + max(8, required // 2)) if required else 0
+                    ready = min(group.world_capacity, required + max(8, required // 2)) if required else 0
                 targets.append(ready)
             if any(n != group.ready_worlds for group, n in zip(runtime.prototypes, targets, strict=True)):
                 runtime.resize_backing(
@@ -638,7 +628,7 @@ class KeyboardWorlds:
                 count,
                 [
                     self.results,
-                    runtime.directory.d,
+                    runtime.directory.batch.status,
                     self._request_actors,
                     wp.from_torch(self._request_variants),
                     self.actor_ids,
@@ -660,7 +650,7 @@ class KeyboardWorlds:
                 live = int(live)
                 ready = group.ready_worlds
                 if not live or ready > 2 * live + 16:
-                    ready = min(group.rows.capacity, live + max(8, live // 2)) if live else 0
+                    ready = min(group.world_capacity, live + max(8, live // 2)) if live else 0
                 targets.append(ready)
             if any(n != group.ready_worlds for group, n in zip(runtime.prototypes, targets, strict=True)):
                 runtime.resize_backing(
@@ -672,11 +662,11 @@ class KeyboardWorlds:
 
     @property
     def active_prototypes(self):
-        return (wp.to_torch(self.backend.runtime.directory.d.active_count) > 0).sum()
+        return (wp.to_torch(self.backend.runtime.directory.data.active_count) > 0).sum()
 
     @property
     def native_dofs(self):
-        counts = wp.to_torch(self.backend.runtime.directory.d.active_count)
+        counts = wp.to_torch(self.backend.runtime.directory.data.active_count)
         return (counts * (self.counts + 6)).sum()
 
     def reconcile_state(self, dirty_worlds, flags):

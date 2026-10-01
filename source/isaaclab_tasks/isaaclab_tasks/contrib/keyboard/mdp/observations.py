@@ -67,7 +67,7 @@ def joint_vel(env: ManagerBasedRLEnv, joints: NewtonSelection) -> torch.Tensor:
 
 def key_positions_b(env: ManagerBasedRLEnv, keys: NewtonSelection, root: NewtonSelection) -> torch.Tensor:
     """Key positions [m] relative to exactly one robot root per world, in stable slot order."""
-    if any(count != 1 for count in root.counts):
+    if any(count != 1 for count in root.static_counts):
         raise ValueError("Relative key positions require exactly one root per world.")
     root_pose = root.read_state("body_q")
     key_pose = keys.read_state("body_q")

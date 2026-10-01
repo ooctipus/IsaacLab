@@ -13,7 +13,7 @@ from isaaclab.managers import CommandTermCfg, EventTermCfg
 from isaaclab.utils import configclass
 
 from ...keyboards.keyboard_schema import KEY_ACTUATION_FRACTION
-from ...newton_selection import NewtonSelectorCfg
+from ...selection_paths import NewtonSelectorCfg
 from ..reset import KeyboardResetIKCfg
 from .typing_commands import LetterTypingCommand
 

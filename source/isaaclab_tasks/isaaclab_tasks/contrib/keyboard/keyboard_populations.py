@@ -25,7 +25,8 @@ from pxr import Usd, UsdGeom
 from isaaclab.sim import use_stage
 
 from .keyboards.keyboard_geometry import generate_keyboard
-from .newton_selection import NewtonSelectionGroup, NewtonSelections, bind_selectors
+from .newton_selection import NewtonSelectionGroup, NewtonSelections
+from .selection_paths import bind_selectors, resolve_selection, selector_key
 
 
 def prepare_keyboard_prototype(env, keyboard_cfg, physics, selector_cfgs, *, contact_capacity=None):
@@ -62,13 +63,13 @@ def prepare_keyboard_prototype(env, keyboard_cfg, physics, selector_cfgs, *, con
     source = NewtonSelections(model)
     try:
         for cfg in selector_cfgs:
-            source.resolve(cfg.replace(dense_width=None))
-        robot_q = source.resolve(env.cfg.actions.action.joints.replace(dense_width=None))
-        robot_qd = source.resolve(env.cfg.actions.action.dofs.replace(dense_width=None))
+            resolve_selection(source, cfg.replace(dense_width=None))
+        robot_q = resolve_selection(source, env.cfg.actions.action.joints.replace(dense_width=None))
+        robot_qd = resolve_selection(source, env.cfg.actions.action.dofs.replace(dense_width=None))
         wp.to_torch(model.joint_q)[robot_q.dense_ids()] = 0.0
         wp.to_torch(model.joint_qd).zero_()
         wp.to_torch(model.joint_target_mode)[robot_qd.dense_ids()] = int(newton.JointTargetMode.POSITION_VELOCITY)
-        roots = source.resolve(env.cfg.commands.typing.reset_roots.replace(dense_width=None))
+        roots = resolve_selection(source, env.cfg.commands.typing.reset_roots.replace(dense_width=None))
         root_joints = source.root_joint_ids[roots.dense_ids()]
         if torch.any(root_joints < 0) or torch.any(
             wp.to_torch(model.joint_type)[root_joints] != int(newton.JointType.FIXED)
@@ -134,7 +135,7 @@ class KeyboardPopulations:
         self._bindings = {}
 
         def prepare(cfg):
-            self._selector_cfgs[self._key(cfg)] = cfg
+            self._selector_cfgs[selector_key(cfg)] = cfg
             return cfg
 
         for cfg in self._manager_configs():
@@ -152,7 +153,7 @@ class KeyboardPopulations:
                 contact_term = env.cfg.terminations.excessive_contact
                 sensor = None
                 if contact_term is not None:
-                    bodies = selections.resolve(contact_term.params["bodies"].replace(dense_width=None))
+                    bodies = resolve_selection(selections, contact_term.params["bodies"].replace(dense_width=None))
                     sensor = SensorContact(
                         solver.model, sensing_bodies=bodies.ids.numpy().tolist(), request_contact_attributes=False
                     )
@@ -169,8 +170,6 @@ class KeyboardPopulations:
             )
             env.sim.physics_manager.install(self.backend)
             self._bind_native()
-            for cfg in self._manager_configs():
-                bind_selectors(cfg, self.resolve)
             self.redistribution_count = 0
             self.last_changed_worlds = 0
             self.last_redistribution_ms = 0.0
@@ -197,7 +196,7 @@ class KeyboardPopulations:
         from .mdp.reset import restore_reset_state
 
         torch._assert_async((variant_ids == self.variant_ids[env_ids]).all(), "Snapshot prototype is not committed.")
-        command = self.env.cfg.commands.typing
+        command = self.env.command_manager.get_term("typing").cfg
         restore_reset_state(self.env, snapshot, env_ids, command.reset_roots, command.reset_coords, command.reset_dofs)
 
     @property
@@ -207,11 +206,6 @@ class KeyboardPopulations:
     @property
     def native_dofs(self):
         return sum(p.model.joint_dof_count for p in self.backend.populations if p is not None)
-
-    @staticmethod
-    def _key(cfg):
-        paths = (cfg.path,) if isinstance(cfg.path, str) else tuple(cfg.path)
-        return cfg.frequency, paths, cfg.count_per_world, cfg.dense_width
 
     def _bind_native(self):
         models = {population.model for population in self.backend.populations if population is not None}
@@ -259,13 +253,17 @@ class KeyboardPopulations:
     def _parts(self, cfg):
         native_cfg = cfg.replace(dense_width=None)
         return tuple(
-            (owner.resolve(native_cfg), worlds) for owner, worlds in zip(self._owners, self.worlds) if owner is not None
+            (resolve_selection(owner, native_cfg), worlds)
+            for owner, worlds in zip(self._owners, self.worlds)
+            if owner is not None
         )
 
     def resolve(self, cfg):
-        key = self._key(cfg)
+        key = selector_key(cfg)
         if key not in self._bindings:
-            self._bindings[key] = NewtonSelectionGroup(cfg, self._parts(cfg), self.env.num_envs)
+            self._bindings[key] = NewtonSelectionGroup(
+                cfg.frequency, self._parts(cfg), self.env.num_envs, policy_width=cfg.dense_width
+            )
         return self._bindings[key]
 
     def _validate_actor_request(self, env_ids, variant_ids=None):

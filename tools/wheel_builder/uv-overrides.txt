@@ -1,7 +1,7 @@
 numpy>=2
 mujoco~=3.12.0
-mujoco-warp @ git+https://github.com/ooctipus/mujoco_warp.git@ooctipus/heterogeneous-envs
-newton[sim] @ git+https://github.com/ooctipus/newton.git@ooctipus/heterogeneous-envs
+mujoco-warp @ git+https://github.com/ooctipus/mujoco_warp.git@c41949b190e2a7fd6385d7aa160e456e5ec37a31
+newton[sim] @ git+https://github.com/ooctipus/newton.git@b0179ee8ad3be07b0c4819e5d00015ded8994edc
 newton-usd-schemas>=0.5.0
 torch==2.12.0
 torchvision==0.27.0

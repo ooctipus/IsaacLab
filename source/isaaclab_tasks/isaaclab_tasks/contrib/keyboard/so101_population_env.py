@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import copy
 import math
 import operator
 
@@ -30,6 +31,7 @@ from isaaclab.sim import SimulationContext
 from isaaclab.utils.seed import configure_seed
 
 from .keyboard_populations import KeyboardPopulations
+from .selection_paths import bind_selectors
 
 
 class SO101KeyboardPopulationEnv(gym.Env):
@@ -99,13 +101,27 @@ class SO101KeyboardPopulationEnv(gym.Env):
                 else:
                     self.keyboard_variants = KeyboardPopulations(self)
                 self.sim.reset()
-                self.event_manager = EventManager(self.cfg.events, self)
-                self.command_manager = CommandManager(self.cfg.commands, self)
-                self.action_manager = ActionManager(self.cfg.actions, self)
-                self.observation_manager = ObservationManager(self.cfg.observations, self)
-                self.termination_manager = TerminationManager(self.cfg.terminations, self)
-                self.reward_manager = RewardManager(self.cfg.rewards, self)
-                self.curriculum_manager = CurriculumManager(self.cfg.curriculum, self)
+                self.event_manager = EventManager(
+                    bind_selectors(copy.deepcopy(self.cfg.events), self.keyboard_variants.resolve), self
+                )
+                self.command_manager = CommandManager(
+                    bind_selectors(copy.deepcopy(self.cfg.commands), self.keyboard_variants.resolve), self
+                )
+                self.action_manager = ActionManager(
+                    bind_selectors(copy.deepcopy(self.cfg.actions), self.keyboard_variants.resolve), self
+                )
+                self.observation_manager = ObservationManager(
+                    bind_selectors(copy.deepcopy(self.cfg.observations), self.keyboard_variants.resolve), self
+                )
+                self.termination_manager = TerminationManager(
+                    bind_selectors(copy.deepcopy(self.cfg.terminations), self.keyboard_variants.resolve), self
+                )
+                self.reward_manager = RewardManager(
+                    bind_selectors(copy.deepcopy(self.cfg.rewards), self.keyboard_variants.resolve), self
+                )
+                self.curriculum_manager = CurriculumManager(
+                    bind_selectors(copy.deepcopy(self.cfg.curriculum), self.keyboard_variants.resolve), self
+                )
                 if "startup" in self.event_manager.available_modes:
                     self.event_manager.apply(mode="startup")
                 self.single_observation_space = gym.spaces.Dict(
@@ -196,7 +212,7 @@ class SO101KeyboardPopulationEnv(gym.Env):
             replay_only = self.cfg.commands.typing.reset.replay_only
             native_worlds = isinstance(self.cfg.sim.physics, NewtonWorldsCfg)
             if self.cfg.keyboard_variants and not replay_only and not native_worlds:
-                command = self.cfg.commands.typing
+                command = self.command_manager.get_term("typing").cfg
                 zeros = torch.zeros((len(env_ids), command.keys.width), device=self.device)
                 command.keys.write_state("joint_q", zeros, env_ids)
                 command.key_dofs.write_state("joint_qd", zeros, env_ids)
@@ -212,7 +228,7 @@ class SO101KeyboardPopulationEnv(gym.Env):
                     # The admitted keyboard event is overwritten by snapshot/IK reset.
                     # Preserve its random draws without mutating the ending lifetime.
                     bank = self.keyboard_variants
-                    roots = self.cfg.commands.typing.reset_roots.width
+                    roots = self.command_manager.get_term("typing").cfg.reset_roots.width
                     defaults = bank.reset_defaults[bank.reset_variants(env_ids), : roots * 7]
                     for event in vars(self.cfg.events).values():
                         if getattr(event, "mode", None) == "reset":
@@ -293,7 +309,7 @@ class SO101KeyboardPopulationEnv(gym.Env):
                     "Native keyboard contact workspace overflow.",
                 )
                 torch._assert_async(
-                    wp.to_torch(bank.backend.runtime.directory.d.flags)[2] == 0,
+                    wp.to_torch(bank.backend.runtime.directory.batch.status)[0] == 0,
                     "Native keyboard directory transaction failed.",
                 )
             self.episode_length_buf += 1

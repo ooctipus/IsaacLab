@@ -16,6 +16,7 @@ import pytest
 import torch
 
 from isaaclab_tasks.contrib.keyboard.keyboard_populations import KeyboardPopulations, prepare_keyboard_prototype
+from isaaclab_tasks.contrib.keyboard.selection_paths import NewtonSelectorCfg, resolve_selection
 from isaaclab_tasks.contrib.keyboard.so101_population_env import SO101KeyboardPopulationEnv
 
 
@@ -84,7 +85,7 @@ def test_native_buffer_coverage_preserves_admitted_reset_modes(prototype_count, 
 @pytest.mark.parametrize("phase", ["second_prototype", "backend", "native_binding"])
 @pytest.mark.parametrize("cleanup_fails", [False, True])
 def test_failed_bank_construction_retires_acquired_bindings_without_gc(phase, cleanup_fails):
-    from isaaclab_tasks.contrib.keyboard.newton_selection import BODY, NewtonSelections, NewtonSelectorCfg
+    from isaaclab_tasks.contrib.keyboard.newton_selection import BODY, NewtonSelections
     from isaaclab_tasks.utils import resolve_task_config
 
     cfg, _ = resolve_task_config("IsaacContrib-Keyboard-SO101-Populations", "", overrides=["physics=newton_mjwarp"])
@@ -103,7 +104,7 @@ def test_failed_bank_construction_retires_acquired_bindings_without_gc(phase, cl
         builder.add_shape_box(body, hx=0.03, hy=0.03, hz=0.03)
         builder.end_world()
         source = NewtonSelections(builder.finalize("cpu"))
-        source.resolve(selector)
+        resolve_selection(source, selector)
         references.extend((weakref.ref(source), weakref.ref(source.model)))
         return SimpleNamespace(model=source.model), source
 
@@ -116,7 +117,7 @@ def test_failed_bank_construction_retires_acquired_bindings_without_gc(phase, cl
         model = bank._sources[0].model.replicate(1)
         owner = NewtonSelections(model, state=model.state(), source=bank._sources[0])
         bank._owners[0] = owner
-        bank._bindings["body"] = owner.resolve(selector)
+        bank._bindings["body"] = resolve_selection(owner, selector)
         references.extend((weakref.ref(owner), weakref.ref(model), weakref.ref(owner.state)))
         raise startup_error
 
@@ -163,7 +164,7 @@ def test_failed_bank_construction_retires_acquired_bindings_without_gc(phase, cl
 
 
 def test_failed_local_prototype_preparation_retires_unreturned_source_without_gc():
-    from isaaclab_tasks.contrib.keyboard.newton_selection import BODY, NewtonSelections, NewtonSelectorCfg
+    from isaaclab_tasks.contrib.keyboard.newton_selection import BODY, NewtonSelections
     from isaaclab_tasks.utils import resolve_task_config
 
     cfg, _ = resolve_task_config("IsaacContrib-Keyboard-SO101-Populations", "", overrides=["physics=newton_mjwarp"])
@@ -343,12 +344,7 @@ def test_backend_failure_leaves_published_actor_maps_unchanged():
 
 @pytest.mark.parametrize("replacement", ["replaced", "removed", "allocation_failure"])
 def test_native_rebinding_retires_replaced_owners_without_cyclic_gc(replacement):
-    from isaaclab_tasks.contrib.keyboard.newton_selection import (
-        BODY,
-        NewtonSelectionGroup,
-        NewtonSelections,
-        NewtonSelectorCfg,
-    )
+    from isaaclab_tasks.contrib.keyboard.newton_selection import BODY, NewtonSelectionGroup, NewtonSelections
 
     builder = newton.ModelBuilder()
     builder.begin_world()
@@ -356,13 +352,18 @@ def test_native_rebinding_retires_replaced_owners_without_cyclic_gc(replacement)
     builder.end_world()
     source = NewtonSelections(builder.finalize("cpu"))
     selector = NewtonSelectorCfg(BODY, ".*", count_per_world=1)
-    source.resolve(selector)
+    resolve_selection(source, selector)
     model = source.model.replicate(2)
     owner = NewtonSelections(model, state=model.state(), control=model.control(), source=source)
     survivor_model = source.model.replicate(2)
     survivor = NewtonSelections(survivor_model, state=survivor_model.state(), source=source)
-    binding = NewtonSelectionGroup(selector, ((owner.resolve(selector), torch.tensor([0, 1])),), 2)
-    survivor_binding = survivor.resolve(selector)
+    binding = NewtonSelectionGroup(
+        selector.frequency,
+        ((resolve_selection(owner, selector), torch.tensor([0, 1])),),
+        2,
+        policy_width=selector.dense_width,
+    )
+    survivor_binding = resolve_selection(survivor, selector)
     references = [weakref.ref(value) for value in (owner, model, owner.state, owner.control)]
     bank = KeyboardPopulations.__new__(KeyboardPopulations)
     bank.env = SimpleNamespace(native_contacts={})
@@ -393,22 +394,22 @@ def test_native_rebinding_retires_replaced_owners_without_cyclic_gc(replacement)
                 bank._bind_native()
             # The old owner remains reachable for close, but cannot repopulate its cache.
             with pytest.raises(RuntimeError, match="retired"):
-                bank._owners[0].resolve(selector)
+                resolve_selection(bank._owners[0], selector)
             # A retained test exception intentionally holds its failing frame;
             # release that external reference before checking owner lifetime.
             allocation_error.__traceback__ = None
         else:
             bank._bind_native()
             assert bank._owners[1] is survivor
-            assert survivor.resolve(selector) is survivor_binding
+            assert resolve_selection(survivor, selector) is survivor_binding
             active_owner = bank._owners[0] if replacement == "replaced" else survivor
-            binding.rebind(((active_owner.resolve(selector), torch.tensor([0, 1])),))
+            binding.rebind(((resolve_selection(active_owner, selector), torch.tensor([0, 1])),))
             assert all(reference() is None for reference in references)
         bank.close()
         del binding
         assert all(reference() is None for reference in references)
         with pytest.raises(RuntimeError, match="retired"):
-            source.resolve(selector)
+            resolve_selection(source, selector)
     finally:
         if enabled:
             gc.enable()
@@ -416,7 +417,7 @@ def test_native_rebinding_retires_replaced_owners_without_cyclic_gc(replacement)
 
 @pytest.mark.parametrize("failure_phase", ["native_bind", "selection_rebind"])
 def test_post_publication_failure_rejects_continuation_and_allows_explicit_close(failure_phase):
-    from isaaclab_tasks.contrib.keyboard.newton_selection import BODY, NewtonSelections, NewtonSelectorCfg
+    from isaaclab_tasks.contrib.keyboard.newton_selection import BODY, NewtonSelections
 
     populations = _populations()
     env = populations.env
@@ -428,7 +429,7 @@ def test_post_publication_failure_rejects_continuation_and_allows_explicit_close
     model = builder.finalize("cpu")
     state = model.state()
     model_ref, state_ref = weakref.ref(model), weakref.ref(state)
-    binding = NewtonSelections(model, state=state).resolve(NewtonSelectorCfg(BODY, path=".*"))
+    binding = resolve_selection(NewtonSelections(model, state=state), NewtonSelectorCfg(BODY, path=".*"))
     env.cfg = SimpleNamespace(body=binding)
     env.keyboard_variants = populations
     env.obs_buf, env.native_contacts = {}, {}
@@ -501,7 +502,7 @@ def test_failed_native_world_construction_retires_sources_without_gc(phase, clea
     import warp as wp
 
     from isaaclab_tasks.contrib.keyboard import keyboard_worlds
-    from isaaclab_tasks.contrib.keyboard.newton_selection import BODY, NewtonSelections, NewtonSelectorCfg
+    from isaaclab_tasks.contrib.keyboard.newton_selection import BODY, NewtonSelections
     from isaaclab_tasks.utils import resolve_task_config
 
     cfg, _ = resolve_task_config("IsaacContrib-Keyboard-SO101-Worlds", "", overrides=["physics=newton_mjwarp"])
@@ -521,7 +522,7 @@ def test_failed_native_world_construction_retires_sources_without_gc(phase, clea
         builder.add_shape_box(body, hx=0.03, hy=0.03, hz=0.03)
         builder.end_world()
         source = NewtonSelections(builder.finalize("cpu"))
-        source.resolve(NewtonSelectorCfg(BODY, ".*", count_per_world=1))
+        resolve_selection(source, NewtonSelectorCfg(BODY, ".*", count_per_world=1))
         references.extend((weakref.ref(source), weakref.ref(source.model)))
         native_model = SimpleNamespace(opt=SimpleNamespace(timestep=wp.zeros(1, dtype=float, device="cpu")))
         return SimpleNamespace(model=source.model, mjw_model=native_model, mjw_data=object()), source
@@ -567,6 +568,7 @@ def test_failed_native_world_construction_retires_sources_without_gc(phase, clea
             patch.object(keyboard_worlds.mjw, "forward"),
             patch.object(keyboard_worlds.mjw, "make_step_workspace"),
             patch.object(keyboard_worlds.mjw, "step"),
+            patch.object(keyboard_worlds, "NativePrototypeMapping", new=lambda *_: object()),
             patch.object(keyboard_worlds, "NativeSelections", new=bind),
             pytest.raises(MemoryError) as error,
         ):
@@ -595,3 +597,31 @@ def test_native_spare_budget_rejects_invalid_values_before_prototype_allocation(
         pytest.raises(ValueError, match="spare backing budget"),
     ):
         keyboard_worlds.KeyboardWorlds(SimpleNamespace(cfg=cfg))
+
+
+def test_backing_demand_only_releases_valid_source_lifetimes():
+    import warp as wp
+    from newton.worlds import WorldDirectoryData, WorldOperation, create_world_commands
+
+    from isaaclab_tasks.contrib.keyboard.keyboard_worlds import _backing_demand
+
+    data = WorldDirectoryData()
+    for name, values in {
+        "prototype": [0],
+        "slot": [0],
+        "starts": [0, 1, 2],
+        "slot_id": [0, -1],
+        "active_count": [1, 0],
+    }.items():
+        setattr(data, name, wp.array(values, dtype=int, device="cpu"))
+    data.generation = wp.array([3], dtype=wp.uint64, device="cpu")
+    commands = create_world_commands(4, device="cpu")
+    commands.count.fill_(4)
+    commands.op.fill_(int(WorldOperation.RESET))
+    commands.prototype.fill_(1)
+    commands.id.assign(np.array([0, 0, -1, 4], dtype=np.int32))
+    commands.generation.assign(np.array([3, 2, 3, 3], dtype=np.uint64))
+    demand = wp.zeros((2, 2), dtype=int, device="cpu")
+    wp.launch(_backing_demand, 2, [commands, data, demand], device="cpu")
+    # Destination reservation may be conservative; only the one valid source is released.
+    np.testing.assert_array_equal(demand.numpy(), [[1, 0], [4, 4]])

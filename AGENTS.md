@@ -27,6 +27,8 @@
 - Name wrench reads `get_forces_and_torques`, matching the existing add/set methods; avoid a separate
   "submission" API or compatibility alias for the unreleased `resolve_submission` method.
 - Use concrete types for public interfaces where practical.
+- For task-local Newton selection, resolve names in the path utility before numeric binding. Bound selections must not retain path expressions or accept `int | str` identities. Preserve ordered occurrence relations, including repeated asset instances.
+- Compose the public Newton handle/placement relations with task-owned actor participation. Do not reimplement lifetime validation, inspect private prototype storage, or infer the same native coordinate conversion in separate consumers.
 - Use Google-style docstrings for public APIs.
 - Document SI units for public physical quantities in docstrings using inline `[unit]` notation (e.g. `Particle positions [m], shape [N, 3]`); use `[m or rad, depending on joint type]` where applicable, and skip non-physical fields (indices, counts, flags).
 - Keep comments brief and explain intent, constraints, or edge cases rather than restating code.

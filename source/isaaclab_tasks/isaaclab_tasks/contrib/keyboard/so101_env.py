@@ -13,7 +13,8 @@ from newton import JointTargetMode, JointType, ModelFlags
 from isaaclab.envs import ManagerBasedRLEnv
 
 from .keyboard_variants import KeyboardVariants
-from .newton_selection import NewtonSelections, bind_selectors
+from .newton_selection import NewtonSelections
+from .selection_paths import bind_selectors, resolve_selection
 
 
 class SO101KeyboardEnv(ManagerBasedRLEnv):
@@ -28,35 +29,41 @@ class SO101KeyboardEnv(ManagerBasedRLEnv):
             NewtonManager.get_model(), state=NewtonManager.get_state(), control=NewtonManager.get_control()
         )
 
-        for cfg in (
-            self.cfg.commands,
-            self.cfg.actions,
-            self.cfg.observations,
-            self.cfg.rewards,
-            self.cfg.terminations,
-            self.event_manager.cfg,
-        ):
-            bind_selectors(cfg, self.selections.resolve)
-        # Authored robot USD can carry a calibrated pose. The task's reset seed is zero.
-        state = NewtonManager.get_state()
-        robot = self.cfg.actions.action.joints
-        wp.to_torch(state.joint_q)[robot.dense_ids()] = 0.0
-        wp.to_torch(state.joint_qd).zero_()
-        model = NewtonManager.get_model()
-        root_ids = self.selections.root_joint_ids[self.cfg.commands.typing.reset_roots.dense_ids()]
-        if torch.any(root_ids < 0) or torch.any(wp.to_torch(model.joint_type)[root_ids] != int(JointType.FIXED)):
-            raise ValueError("Keyboard reset snapshots require fixed articulation roots.")
-        wp.to_torch(model.joint_target_mode)[self.cfg.actions.action.dofs.dense_ids()] = int(
-            JointTargetMode.POSITION_VELOCITY
-        )
-        NewtonManager.notify_model_changed(ModelFlags.JOINT_DOF_PROPERTIES)
-        NewtonManager.invalidate_fk()
-        self.sim.forward()
-        self._property_world_mask = wp.zeros(self.num_envs + 1, dtype=wp.bool, device=self.device)
-        self.keyboard_variants = (
-            KeyboardVariants(self, self.cfg.keyboard_variants) if self.cfg.keyboard_variants else None
-        )
-        super().load_managers()
+        authored_cfg = self.cfg
+        self.cfg = authored_cfg.copy()
+        try:
+            for cfg in (
+                self.cfg.commands,
+                self.cfg.actions,
+                self.cfg.observations,
+                self.cfg.rewards,
+                self.cfg.terminations,
+                self.event_manager.cfg,
+            ):
+                bind_selectors(cfg, lambda query: resolve_selection(self.selections, query))
+            # Authored robot USD can carry a calibrated pose. The task's reset seed is zero.
+            state = NewtonManager.get_state()
+            robot = self.cfg.actions.action.joints
+            wp.to_torch(state.joint_q)[robot.dense_ids()] = 0.0
+            wp.to_torch(state.joint_qd).zero_()
+            model = NewtonManager.get_model()
+            root_ids = self.selections.root_joint_ids[self.cfg.commands.typing.reset_roots.dense_ids()]
+            if torch.any(root_ids < 0) or torch.any(wp.to_torch(model.joint_type)[root_ids] != int(JointType.FIXED)):
+                raise ValueError("Keyboard reset snapshots require fixed articulation roots.")
+            wp.to_torch(model.joint_target_mode)[self.cfg.actions.action.dofs.dense_ids()] = int(
+                JointTargetMode.POSITION_VELOCITY
+            )
+            NewtonManager.notify_model_changed(ModelFlags.JOINT_DOF_PROPERTIES)
+            NewtonManager.invalidate_fk()
+            self.sim.forward()
+            self._property_world_mask = wp.zeros(self.num_envs + 1, dtype=wp.bool, device=self.device)
+            self.keyboard_variants = (
+                KeyboardVariants(self, self.cfg.keyboard_variants) if self.cfg.keyboard_variants else None
+            )
+            super().load_managers()
+        finally:
+            # Managers retain their bound copies; reproducibility uses authored selectors.
+            self.cfg = authored_cfg
 
     @property
     def all_env_ids(self):
@@ -85,7 +92,7 @@ class SO101KeyboardEnv(ManagerBasedRLEnv):
                 (variant_ids == self.keyboard_variants.variant_ids[env_ids]).all(),
                 "Snapshot keyboard differs from the committed variant.",
             )
-        command = self.cfg.commands.typing
+        command = self.command_manager.get_term("typing").cfg
         restore_reset_state(self, snapshot, env_ids, command.reset_roots, command.reset_coords, command.reset_dofs)
 
     def curriculum_worlds(self, variant):

@@ -83,7 +83,7 @@ def test_backend_owns_one_native_runtime_and_graph(native_backend, monkeypatch):
     backend.close()
     assert backend.graph is None and runtime.capture.return_value is graph
     assert order[-2:] == ["join", "close"]
-    runtime.close.assert_called_once_with(streams=(0,))
+    runtime.close.assert_called_once_with(streams=(wp.get_stream(backend.device),))
     with pytest.raises(RuntimeError, match="open"):
         backend.step()
 

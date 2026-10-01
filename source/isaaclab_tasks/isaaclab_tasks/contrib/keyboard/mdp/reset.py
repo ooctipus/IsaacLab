@@ -17,7 +17,8 @@ from newton import JointType, Model, ModelFlags, State
 from isaaclab.utils import configclass
 from isaaclab.utils.math import quat_from_euler_xyz, quat_mul, sample_uniform
 
-from ..newton_selection import NewtonSelection, NewtonSelectorCfg
+from ..newton_selection import NewtonSelection
+from ..selection_paths import NewtonSelectorCfg
 
 
 @configclass

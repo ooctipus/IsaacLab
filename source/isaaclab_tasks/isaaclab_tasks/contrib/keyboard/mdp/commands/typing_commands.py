@@ -229,7 +229,9 @@ class LetterTypingCommand(CommandTerm):
         self._reset_ik = cfg.reset.ik
         if cfg.reset.ik is not None:
             ik_cfg = cfg.reset.ik
-            if ik_cfg.joints.counts != ik_cfg.dofs.counts or any(n != 1 for n in ik_cfg.body.counts):
+            if ik_cfg.joints.static_counts != ik_cfg.dofs.static_counts or any(
+                n != 1 for n in ik_cfg.body.static_counts
+            ):
                 raise ValueError("Reset IK requires scalar joints and one end-effector body per world.")
             types = ik_cfg.dofs.joint_types()
             if torch.any((types != newton.JointType.REVOLUTE) & (types != newton.JointType.PRISMATIC)):

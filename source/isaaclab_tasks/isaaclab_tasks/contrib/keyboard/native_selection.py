@@ -12,6 +12,9 @@ Native fields are borrowed strided views; gathers never become physics storage.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Literal
 
 import numpy as np
@@ -19,13 +22,15 @@ import torch
 import warp as wp
 from mujoco_warp._src.support import contact_force_fn
 from mujoco_warp._src.types import vec5
+from newton import Model
+from newton.solvers import SolverMuJoCo
+from newton.worlds import WorldDirectoryData, world_handle_at, world_location
 
 from .newton_selection import (
     BODY,
     JOINT_COORD,
     JOINT_DOF,
     NewtonSelections,
-    NewtonSelectorCfg,
     scalar_field_active,
     scalar_field_read,
     scalar_field_write,
@@ -42,11 +47,7 @@ class NativePlacement:
     actor_ids: wp.array[int]
     actor_generations: wp.array[wp.uint64]
     actor_active: wp.array[bool]
-    prototype: wp.array[int]
-    slot: wp.array[int]
-    generation: wp.array[wp.uint64]
-    starts: wp.array[int]
-    slot_ids: wp.array[int]
+    directory: WorldDirectoryData
     capacities: wp.array[_NativeCapacity]
 
 
@@ -57,17 +58,14 @@ def _native_location(placement: NativePlacement, actor: int):
     # of the checked Python write API. Reject it before any descriptor access.
     if actor < 0 or actor >= placement.actor_ids.shape[0]:
         return prototype, row
-    identity = placement.actor_ids[actor]
-    if placement.actor_active[actor] and identity >= 0 and identity < placement.prototype.shape[0]:
-        if placement.generation[identity] == placement.actor_generations[actor]:
-            candidate = placement.prototype[identity]
-            if candidate >= 0 and candidate < placement.capacities.shape[0]:
-                local_row = placement.slot[identity]
-                slot = placement.starts[candidate] + local_row
-                capacity = placement.capacities[candidate]
-                if local_row >= 0 and local_row < capacity.ready_rows[0]:
-                    if slot < placement.starts[candidate + 1] and placement.slot_ids[slot] == identity:
-                        prototype, row = candidate, local_row
+    if placement.actor_active[actor]:
+        candidate, local_row, valid = world_location(
+            placement.directory, placement.actor_ids[actor], placement.actor_generations[actor]
+        )
+        if valid:
+            capacity = placement.capacities[candidate]
+            if local_row < capacity.ready_rows[0]:
+                prototype, row = candidate, local_row
     return prototype, row
 
 
@@ -209,15 +207,16 @@ def _scatter(field: NativeScalarField, actors: wp.array[int], values: wp.array2d
 
 
 class NativeSelection:
-    """One declarative selection with stable handles and prototype-local columns."""
+    """Numeric prototype-local columns placed through stable world handles."""
 
-    # Manager config serialization sees only the declarative selector fields.
+    # Manager config serialization excludes runtime storage and retains no query.
     __slots__ = (
         "__dict__",
         "owner",
         "parts",
         "width",
-        "counts",
+        "static_counts",
+        "frequency",
         "_indices",
         "_columns",
         "_ids",
@@ -233,14 +232,16 @@ class NativeSelection:
         "_contact_maps",
     )
 
-    def __init__(self, owner, cfg, parts):
+    def __init__(self, owner, frequency: str, parts, *, policy_width: int | None = None):
         self.owner, self.parts = owner, tuple(parts)
-        self.frequency, self.path = cfg.frequency, cfg.path
-        self.count_per_world, self.dense_width = cfg.count_per_world, cfg.dense_width
-        self.width = cfg.dense_width or cfg.count_per_world or max(part.width for part in parts)
+        self.frequency = frequency
+        self.width = max(part.width for part in parts) if policy_width is None else policy_width
+        if isinstance(self.width, bool) or not isinstance(self.width, int) or self.width < 0:
+            raise ValueError("Policy width must be a nonnegative integer.")
         if any(part.width > self.width for part in parts):
             raise ValueError("Native selection exceeds the configured policy width.")
-        self.counts = (self.width,) * owner.num_envs
+        # Static topology counts are per prototype; width is the padded policy extent.
+        self.static_counts = tuple(part.width for part in parts)
         self._indices = [part.ids.numpy() for part in parts]
         self._columns = np.full((len(parts), self.width), -1, np.int32)
         for prototype, ids in enumerate(self._indices):
@@ -282,6 +283,10 @@ class NativeSelection:
         )
         return wp.to_torch(self._active)
 
+    def active_counts(self) -> torch.Tensor:
+        """Current participating scalar/body count per policy actor (GPU int64)."""
+        return self.dense_active().sum(dim=1)
+
     def joint_types(self) -> torch.Tensor:
         if self.joint_ids is None:
             raise ValueError("Joint types require a coordinate or DOF selection.")
@@ -299,7 +304,7 @@ class NativeSelection:
         columns, offsets = self._columns.copy(), np.zeros(self._columns.shape, np.float32)
         descriptors = []
         for prototype, (part, ids, group, mapping) in enumerate(
-            zip(self.parts, self._indices, self.owner.runtime.prototypes, self.owner._maps, strict=True)
+            zip(self.parts, self._indices, self.owner.runtime.prototypes, self.owner.mappings, strict=True)
         ):
             descriptor = _NativeScalarSource()
             if source == "model":
@@ -313,21 +318,21 @@ class NativeSelection:
                 if source == "state" and attribute == "joint_q":
                     if self.frequency != JOINT_COORD:
                         raise ValueError("joint_q requires a coordinate selection.")
-                    values, lookup = group.data.qpos, mapping["coord"]
-                    offsets[prototype, : len(ids)] = [mapping["qref"][int(index)] for index in ids]
+                    values, lookup = group.data.qpos, mapping.coord
+                    offsets[prototype, : len(ids)] = [mapping.qref[int(index)] for index in ids]
                 elif source == "state" and attribute == "joint_qd":
                     if self.frequency != JOINT_DOF:
                         raise ValueError("joint_qd requires a DOF selection.")
-                    values, lookup = group.data.qvel, mapping["dof"]
+                    values, lookup = group.data.qvel, mapping.dof
                 elif source == "control" and attribute in ("joint_target_q", "joint_target_qd"):
                     target = "position" if attribute == "joint_target_q" else "velocity"
-                    values, lookup = group.data.ctrl, mapping[target]
+                    values, lookup = group.data.ctrl, getattr(mapping, target)
                     if target == "position":
-                        offsets[prototype, : len(ids)] = [mapping["target_ref"][int(index)] for index in ids]
+                        offsets[prototype, : len(ids)] = [mapping.target_ref[int(index)] for index in ids]
                 elif source == "control" and attribute == "joint_f":
                     if self.frequency != JOINT_DOF:
                         raise ValueError("joint_f requires a DOF selection.")
-                    values, lookup = group.data.qfrc_applied, mapping["dof"]
+                    values, lookup = group.data.qfrc_applied, mapping.dof
                 else:
                     raise ValueError(f"Unsupported native scalar field {source}.{attribute}.")
                 try:
@@ -364,13 +369,13 @@ class NativeSelection:
         if source not in self._poses:
             descriptors, columns = [], self._columns.copy()
             for prototype, (part, ids, group, mapping) in enumerate(
-                zip(self.parts, self._indices, self.owner.runtime.prototypes, self.owner._maps, strict=True)
+                zip(self.parts, self._indices, self.owner.runtime.prototypes, self.owner.mappings, strict=True)
             ):
                 descriptor = _NativePoseSource()
                 if source == "state":
                     descriptor.position, descriptor.quaternion = group.data.xpos, group.data.xquat
                     descriptor.broadcast_rows, descriptor.wxyz = 0, 1
-                    columns[prototype, : len(ids)] = [mapping["body"][int(index)] for index in ids]
+                    columns[prototype, : len(ids)] = [mapping.body[int(index)] for index in ids]
                 else:
                     values = part.owner.model.body_q
                     shape, strides = (1, values.shape[0]), (values.capacity, values.strides[0])
@@ -457,35 +462,34 @@ class NativeSelection:
         self._contact_visible = wp.empty_like(self._contact_forces)
         self._contact_generations = wp.zeros(self.owner.num_envs, dtype=wp.uint64, device=self.owner.device)
         self._contact_maps = []
-        for ids, group, mapping in zip(self._indices, self.owner.runtime.prototypes, self.owner._maps, strict=True):
+        for ids, group, mapping in zip(self._indices, self.owner.runtime.prototypes, self.owner.mappings, strict=True):
             slots = np.full(group.model.nbody, -1, np.int32)
             for selected, body in enumerate(ids):
-                slots[mapping["body"][int(body)]] = selected
+                slots[mapping.body[int(body)]] = selected
             self._contact_maps.append(wp.array(slots, dtype=int, device=self.owner.device))
 
     def record_contact_forces(self, group, actor_for_id) -> None:
         """Record final-substep net normal forces [N], before the prototype leaves its branch."""
         if self._contact_forces is None:
             raise RuntimeError("Prepare contact reductions before graph capture.")
-        prototype = next(i for i, candidate in enumerate(self.owner.runtime.prototypes) if candidate is group)
-        dimensions = group.rows.capacity, self.width
-        wp.launch(
+        prototype = group.index
+        dimensions = group.world_capacity, self.width
+        group.record_launch(
             _clear_contact_forces,
             dimensions,
-            [self.owner.placement, prototype, actor_for_id, self._contact_forces, self._contact_generations],
-            device=self.owner.device,
+            inputs=[self.owner.placement, prototype, actor_for_id, self._contact_forces, self._contact_generations],
+            domain="world",
         )
-        group.observe_launch(_clear_contact_forces, dimensions, "world")
         data, model, contact = group.data, group.model, group.data.contact
-        wp.launch(
+        group.record_launch(
             _accumulate_contact_forces,
-            group.contacts.capacity,
-            [
+            group.contact_capacity,
+            inputs=[
                 self.owner.placement,
                 prototype,
                 actor_for_id,
-                group.rows.count,
-                group.contacts.ready_count,
+                group.world_count,
+                group.contact_ready_count,
                 data.nacon,
                 model.geom_bodyid,
                 self._contact_maps[prototype],
@@ -501,9 +505,8 @@ class NativeSelection:
                 int(model.opt.cone),
                 self._contact_forces,
             ],
-            device=self.owner.device,
+            domain="candidate",
         )
-        group.observe_launch(_accumulate_contact_forces, group.contacts.capacity, "candidate")
 
     def selected_net_normal_forces(self) -> torch.Tensor:
         """Read the last native step's net normal force [N]; reset lifetimes return zero."""
@@ -519,13 +522,104 @@ class NativeSelection:
         return wp.to_torch(self._contact_visible)
 
 
+@dataclass(frozen=True)
+class NativePrototypeMapping:
+    """One immutable authored-Newton to native-MuJoCo topology conversion.
+
+    Selections and reset payload compilation borrow these exact maps. No live
+    state, actor placement or query expressions belong to this prepared object.
+    """
+
+    model: Model
+    coord: MappingProxyType
+    dof: MappingProxyType
+    body: MappingProxyType
+    qref: MappingProxyType
+    position: MappingProxyType
+    velocity: MappingProxyType
+    target_ref: MappingProxyType
+    coordinate_ids: np.ndarray
+    dof_ids: np.ndarray
+    coordinate_refs: np.ndarray
+    root_body_ids: np.ndarray
+
+    def __init__(self, owner: NewtonSelections, solver: SolverMuJoCo):
+        if owner.model.world_count != 1 or solver.model is not owner.model:
+            raise ValueError("Native mapping requires its exact authored one-world Newton model and solver.")
+        cpu = solver.mj_model
+        joints = solver.mjc_jnt_to_newton_jnt.numpy()[0]
+        dofs = solver.mjc_dof_to_newton_dof.numpy()[0]
+        model = owner.model
+        qstarts, dstarts = model.joint_q_start.numpy(), model.joint_qd_start.numpy()
+        refs = getattr(getattr(model, "mujoco", None), "dof_ref", None)
+        refs = np.zeros(model.joint_dof_count, np.float32) if refs is None else refs.numpy()
+        mapping = {name: {} for name in ("coord", "dof", "body", "qref", "position", "velocity", "target_ref")}
+        for native, joint in enumerate(joints):
+            joint = int(joint)
+            if joint < 0 or qstarts[joint + 1] - qstarts[joint] != 1 or dstarts[joint + 1] - dstarts[joint] != 1:
+                raise ValueError("Native keyboard selections admit scalar joints only.")
+            mapping["coord"][int(qstarts[joint])] = int(cpu.jnt_qposadr[native])
+            mapping["qref"][int(qstarts[joint])] = float(refs[dstarts[joint]])
+        for native, dof in enumerate(dofs):
+            if dof < 0 or int(dof) in mapping["dof"]:
+                raise ValueError("Native DOF mappings must be unique and complete.")
+            mapping["dof"][int(dof)] = native
+        for native, body in enumerate(solver.mjc_body_to_newton.numpy()[0]):
+            if body >= 0:
+                if int(body) in mapping["body"]:
+                    raise ValueError("Native body mappings must be unique.")
+                mapping["body"][int(body)] = native
+        actuator_arrays = (
+            solver.mjc_actuator_ctrl_source,
+            solver.mjc_actuator_to_newton_idx,
+            solver.mjc_actuator_to_newton_target_q_idx,
+            solver.mjc_actuator_to_target_q_axis_idx,
+            solver.mjc_actuator_to_newton_ball_jnt,
+        )
+        modes, encoded, targets, axes, balls = (
+            np.empty(0, dtype=np.int32) if values is None else values.numpy() for values in actuator_arrays
+        )
+        for actuator, (mode, index, target, axis, ball) in enumerate(
+            zip(modes, encoded, targets, axes, balls, strict=True)
+        ):
+            if mode != 0 or axis >= 0 or ball >= 0 or index == -1:
+                raise ValueError("Native keyboard controls require mapped scalar joint-target actuators.")
+            kind, key = ("position", int(target)) if index >= 0 else ("velocity", -int(index) - 2)
+            if key < 0 or key in mapping[kind]:
+                raise ValueError("Native controls require a unique actuator for each selected target.")
+            mapping[kind][key] = actuator
+            if index >= 0:
+                mapping["target_ref"][key] = float(refs[index])
+        if len(mapping["coord"]) != cpu.nq or len(mapping["dof"]) != cpu.nv:
+            raise ValueError("Native scalar maps must cover every coordinate and DOF.")
+        object.__setattr__(self, "model", model)
+        for name, values in mapping.items():
+            object.__setattr__(self, name, MappingProxyType(values))
+        object.__setattr__(
+            self, "coordinate_ids", np.array(sorted(mapping["coord"], key=mapping["coord"].get), dtype=np.int32)
+        )
+        object.__setattr__(self, "dof_ids", np.array(sorted(mapping["dof"], key=mapping["dof"].get), dtype=np.int32))
+        object.__setattr__(
+            self, "coordinate_refs", np.array([mapping["qref"][int(q)] for q in self.coordinate_ids], dtype=np.float32)
+        )
+        root_mapping = solver.mjc_mocap_to_newton_jnt
+        root_joints = np.empty(0, dtype=np.int32) if root_mapping is None else root_mapping.numpy()[0]
+        if np.any(root_joints < 0) or np.any(root_joints >= model.joint_count):
+            raise ValueError("Native mocap roots must map to valid authored joints.")
+        object.__setattr__(self, "root_body_ids", model.joint_child.numpy()[root_joints].copy())
+        if not np.allclose(model.joint_X_c.numpy()[root_joints], [0, 0, 0, 0, 0, 0, 1], atol=1e-7, rtol=0):
+            raise ValueError("Prepared fixed-root snapshot frames must match their child body frames.")
+        for values in (self.coordinate_ids, self.dof_ids, self.coordinate_refs, self.root_body_ids):
+            values.flags.writeable = False
+
+
 class NativeSelections:
     """Bind authored selection metadata to native runtime storage and task handles."""
 
     def __init__(
         self,
         metadata: tuple[NewtonSelections, ...],
-        solvers,
+        mappings: tuple[NativePrototypeMapping, ...],
         runtime,
         actor_ids,
         actor_generations,
@@ -534,10 +628,12 @@ class NativeSelections:
         device,
         actor_active=None,
     ):
-        self.metadata, self.solvers, self.runtime = tuple(metadata), tuple(solvers), runtime
+        self.metadata, self.mappings, self.runtime = tuple(metadata), tuple(mappings), runtime
         self.num_envs, self.device = num_envs, wp.get_device(device)
-        if not metadata or len(metadata) != len(solvers) or len(metadata) != len(runtime.prototypes):
-            raise ValueError("Native selections require one metadata/solver source per prepared prototype.")
+        if not metadata or len(metadata) != len(mappings) or len(metadata) != len(runtime.prototypes):
+            raise ValueError("Native selections require one metadata/mapping source per prepared prototype.")
+        if any(mapping.model is not owner.model for owner, mapping in zip(metadata, mappings, strict=True)):
+            raise ValueError("Native mappings must belong to the exact prepared metadata model.")
         for array, dtype in ((actor_ids, wp.int32), (actor_generations, wp.uint64)):
             if array.shape != (num_envs,) or array.dtype != dtype or array.device != self.device:
                 raise ValueError("Actor handles must have matching extent, dtype and native device.")
@@ -549,76 +645,36 @@ class NativeSelections:
         ):
             raise ValueError("Actor participation must be a matching boolean device array.")
         self._actors = wp.array(np.arange(num_envs), dtype=int, device=self.device)
-        self._maps, self._bindings = [], {}
+        self._bindings = {}
         self._retired = False
         capacities = []
-        for owner, solver, group in zip(metadata, solvers, runtime.prototypes, strict=True):
-            if owner.model.world_count != 1 or solver.model is not owner.model:
-                raise ValueError("Native mapping requires its exact authored one-world Newton model and solver.")
-            cpu = solver.mj_model
-            joints = solver.mjc_jnt_to_newton_jnt.numpy()[0]
-            dofs = solver.mjc_dof_to_newton_dof.numpy()[0]
-            model = owner.model
-            qstarts, dstarts = model.joint_q_start.numpy(), model.joint_qd_start.numpy()
-            refs = getattr(getattr(model, "mujoco", None), "dof_ref", None)
-            refs = np.zeros(model.joint_dof_count, np.float32) if refs is None else refs.numpy()
-            mapping = {name: {} for name in ("coord", "dof", "body", "qref", "position", "velocity", "target_ref")}
-            for native, joint in enumerate(joints):
-                joint = int(joint)
-                if joint < 0 or qstarts[joint + 1] - qstarts[joint] != 1 or dstarts[joint + 1] - dstarts[joint] != 1:
-                    raise ValueError("Native keyboard selections admit scalar joints only.")
-                mapping["coord"][int(qstarts[joint])] = int(cpu.jnt_qposadr[native])
-                mapping["qref"][int(qstarts[joint])] = float(refs[dstarts[joint]])
-            for native, dof in enumerate(dofs):
-                if dof < 0 or int(dof) in mapping["dof"]:
-                    raise ValueError("Native DOF mappings must be unique and complete.")
-                mapping["dof"][int(dof)] = native
-            for native, body in enumerate(solver.mjc_body_to_newton.numpy()[0]):
-                if body >= 0:
-                    if int(body) in mapping["body"]:
-                        raise ValueError("Native body mappings must be unique.")
-                    mapping["body"][int(body)] = native
-            modes = solver.mjc_actuator_ctrl_source.numpy()
-            encoded = solver.mjc_actuator_to_newton_idx.numpy()
-            targets = solver.mjc_actuator_to_newton_target_q_idx.numpy()
-            axes = solver.mjc_actuator_to_target_q_axis_idx.numpy()
-            balls = solver.mjc_actuator_to_newton_ball_jnt.numpy()
-            for actuator, (mode, index, target, axis, ball) in enumerate(
-                zip(modes, encoded, targets, axes, balls, strict=True)
-            ):
-                if mode != 0 or axis >= 0 or ball >= 0 or index == -1:
-                    raise ValueError("Native keyboard controls require mapped scalar joint-target actuators.")
-                kind, key = ("position", int(target)) if index >= 0 else ("velocity", -int(index) - 2)
-                if key < 0 or key in mapping[kind]:
-                    raise ValueError("Native controls require a unique actuator for each selected target.")
-                mapping[kind][key] = actuator
-                if index >= 0:
-                    mapping["target_ref"][key] = float(refs[index])
-            self._maps.append(mapping)
+        for group in runtime.prototypes:
             capacity = _NativeCapacity()
-            capacity.ready_rows = group.rows.ready_count
+            capacity.ready_rows = group.world_ready_count
             capacities.append(capacity)
-        directory = runtime.directory.d
         placement = NativePlacement()
         placement.actor_ids, placement.actor_generations = actor_ids, actor_generations
         placement.actor_active = self.actor_active
-        placement.prototype, placement.slot, placement.generation = (
-            directory.prototype,
-            directory.slot,
-            directory.generation,
-        )
-        placement.starts, placement.slot_ids = directory.starts, directory.slot_id
+        placement.directory = runtime.directory.data
         placement.capacities = wp.array(capacities, dtype=_NativeCapacity, device=self.device)
         self.placement = placement
 
-    def resolve(self, cfg: NewtonSelectorCfg) -> NativeSelection:
-        """Resolve labels once; reset and relocation only update borrowed handles."""
+    def bind(
+        self, frequency: str, ids_by_prototype: Sequence[Sequence[int] | np.ndarray], *, policy_width: int | None = None
+    ) -> NativeSelection:
+        """Bind integer frequency IDs for every authored prototype, without paths."""
         if self._retired:
-            raise RuntimeError("Cannot resolve selections from a retired owner.")
-        patterns = (cfg.path,) if isinstance(cfg.path, str) else tuple(cfg.path)
-        key = cfg.frequency, patterns, cfg.count_per_world, cfg.dense_width
+            raise RuntimeError("Cannot bind selections from a retired owner.")
+        if policy_width is not None and (
+            isinstance(policy_width, bool) or not isinstance(policy_width, int) or policy_width < 0
+        ):
+            raise ValueError("Policy width must be a nonnegative integer.")
+        if len(ids_by_prototype) != len(self.metadata):
+            raise ValueError("Provide one ordered numeric ID sequence per prototype.")
+        parts = tuple(owner.bind(frequency, ids) for owner, ids in zip(self.metadata, ids_by_prototype, strict=True))
+        key = (frequency, tuple(tuple(map(int, ids)) for ids in ids_by_prototype), policy_width)
         if key not in self._bindings:
-            self._bindings[key] = NativeSelection(self, cfg, [owner.resolve(cfg) for owner in self.metadata])
+            self._bindings[key] = NativeSelection(self, frequency, parts, policy_width=policy_width)
         return self._bindings[key]
 
     def retire(self) -> None:
@@ -629,11 +685,8 @@ class NativeSelections:
 
 @wp.func
 def _actor_at_row(placement: NativePlacement, prototype: int, row: int, actor_for_id: wp.array[int]) -> int:
-    capacity = placement.capacities[prototype]
-    if row < 0 or row >= capacity.ready_rows[0]:
-        return -1
-    identity = placement.slot_ids[placement.starts[prototype] + row]
-    if identity < 0 or identity >= actor_for_id.shape[0]:
+    identity, generation, valid = world_handle_at(placement.directory, prototype, row)
+    if not valid or identity >= actor_for_id.shape[0]:
         return -1
     actor = actor_for_id[identity]
     if actor < 0 or actor >= placement.actor_ids.shape[0] or placement.actor_ids[actor] != identity:

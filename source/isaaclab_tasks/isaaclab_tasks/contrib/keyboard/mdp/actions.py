@@ -19,11 +19,11 @@ from isaaclab.utils import configclass
 from ..newton_selection import (
     JOINT_COORD,
     JOINT_DOF,
-    NewtonSelectorCfg,
     scalar_field_active,
     scalar_field_read,
     scalar_field_write,
 )
+from ..selection_paths import NewtonSelectorCfg
 
 
 @wp.kernel(enable_backward=False, module="unique", module_options={"fuse_fp": False})
@@ -79,7 +79,7 @@ class NewtonRelativeJointPositionAction(ActionTerm):
         if cfg.joints.frequency != JOINT_COORD or cfg.dofs.frequency != JOINT_DOF:
             raise ValueError("Relative joint targets require coordinate and DOF selectors.")
         self.joints, self.dofs = cfg.joints, cfg.dofs
-        if self.joints.counts != self.dofs.counts:
+        if self.joints.static_counts != self.dofs.static_counts:
             raise ValueError("Relative joint targets require scalar joints (one coordinate per DOF).")
         if not torch.equal(wp.to_torch(self.joints.joint_ids), wp.to_torch(self.dofs.joint_ids)):
             raise ValueError("Coordinate and DOF selectors must refer to the same scalar joints in the same order.")

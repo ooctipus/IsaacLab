@@ -98,7 +98,7 @@ class NewtonWorldsBackend:
                 self._last_work = wp.Event(self.device)
                 wp.get_stream(self.device).record_event(self._last_work)
         except BaseException:
-            self.runtime.close(streams=(wp.get_stream(self.device).cuda_stream,))
+            self.runtime.close(streams=(wp.get_stream(self.device),))
             raise
 
     @property
@@ -169,7 +169,7 @@ class NewtonWorldsBackend:
             with wp.ScopedDevice(self.device):
                 wp.synchronize_device(self.device)
                 self.graph = None
-                self.runtime.close(streams=(wp.get_stream(self.device).cuda_stream,))
+                self.runtime.close(streams=(wp.get_stream(self.device),))
                 self._permit = self._last_work = None
                 self._closed = True
 

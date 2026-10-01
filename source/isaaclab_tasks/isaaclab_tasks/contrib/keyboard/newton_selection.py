@@ -13,8 +13,7 @@ terms without a host synchronization.
 
 from __future__ import annotations
 
-import re
-from dataclasses import MISSING, fields, is_dataclass
+from collections.abc import Sequence
 from typing import Any, Literal
 
 import numpy as np
@@ -23,26 +22,9 @@ import warp as wp
 from newton import Control, Model, State
 from newton.solvers import SolverMuJoCo
 
-from isaaclab.utils import configclass
-
 BODY = "body"
 JOINT_COORD = "joint_coord"
 JOINT_DOF = "joint_dof"
-
-
-def bind_selectors(value, resolve):
-    """Resolve declarative task selections recursively before constructing manager terms."""
-    if isinstance(value, NewtonSelectorCfg):
-        return resolve(value)
-    if isinstance(value, dict):
-        for key, item in value.items():
-            value[key] = bind_selectors(item, resolve)
-    elif isinstance(value, (tuple, list)):
-        return type(value)(bind_selectors(item, resolve) for item in value)
-    elif is_dataclass(value):
-        for field in fields(value):
-            setattr(value, field.name, bind_selectors(getattr(value, field.name), resolve))
-    return value
 
 
 @wp.struct
@@ -149,22 +131,6 @@ def _scatter_values(
         source.values[index] = values[row, slot]
 
 
-@configclass
-class NewtonSelectorCfg:
-    """Match full model labels, preserving pattern order and model order within each world.
-
-    Overlapping patterns select an entity only once. Global entities (world -1)
-    are excluded. ``count_per_world`` validates static topology, before masking.
-    Joint patterns expand into all coordinates or DOFs of each matched joint.
-    """
-
-    frequency: Literal["body", "joint_coord", "joint_dof"] = MISSING
-    path: str | tuple[str, ...] | list[str] = MISSING
-    count_per_world: int | None = None
-    dense_width: int | None = None
-    """Explicit policy width for a group of differently sized native selections."""
-
-
 @wp.kernel
 def _count_active(
     starts: wp.array[int],
@@ -216,11 +182,12 @@ class NewtonSelection:
     """
 
     # Runtime binding storage stays out of the manager's configuration serializer.
-    # The instance dictionary contains only the original declarative selector.
+    # The empty instance dictionary deliberately carries no config provenance.
     __slots__ = (
         "__dict__",
         "owner",
-        "counts",
+        "frequency",
+        "static_counts",
         "capacity",
         "ids",
         "body_ids",
@@ -239,33 +206,14 @@ class NewtonSelection:
         "_scalar_source_ids",
     )
 
-    def __init__(self, owner, cfg, rows=None, bodies=None, *, source: NewtonSelection | None = None):
-        self.frequency = cfg.frequency
-        self.path = cfg.path
-        self.count_per_world = cfg.count_per_world
-        self.dense_width = cfg.dense_width
+    def __init__(self, owner, frequency: str, rows, bodies):
+        self.frequency = frequency
         self.owner = owner
-        if source is None:
-            self.counts = tuple(map(len, rows))
-            self.ids = wp.array([i for row in rows for i in row], dtype=wp.int32, device=owner.model.device)
-            self.body_ids = wp.array(bodies, dtype=wp.int32, device=owner.model.device)
-            self.starts = wp.array(np.cumsum([0, *self.counts]), dtype=wp.int32, device=owner.model.device)
-        else:
-            self.counts = (source.width,) * owner.model.world_count
-            worlds = owner.world_ids.to(torch.int32)[:, None]
-            stride = {
-                BODY: source.owner.model.body_count,
-                JOINT_COORD: source.owner.model.joint_coord_count,
-                JOINT_DOF: source.owner.model.joint_dof_count,
-            }[cfg.frequency]
-            self.ids = wp.from_torch((wp.to_torch(source.ids)[None] + worlds * stride).flatten())
-            self.body_ids = wp.from_torch(
-                (wp.to_torch(source.body_ids)[None] + worlds * source.owner.model.body_count).flatten()
-            )
-            self.starts = wp.from_torch(
-                torch.arange(owner.model.world_count + 1, dtype=torch.int32, device=worlds.device) * source.width
-            )
-        self.capacity = sum(self.counts)
+        self.static_counts = tuple(map(len, rows))
+        self.ids = wp.array([i for row in rows for i in row], dtype=wp.int32, device=owner.model.device)
+        self.body_ids = wp.array(bodies, dtype=wp.int32, device=owner.model.device)
+        self.starts = wp.array(np.cumsum([0, *self.static_counts]), dtype=wp.int32, device=owner.model.device)
+        self.capacity = sum(self.static_counts)
         self.freq_ids = wp.empty_like(self.ids)
         self.env_ids = wp.empty_like(self.ids)
         self.slot_ids = wp.empty_like(self.ids)
@@ -273,18 +221,14 @@ class NewtonSelection:
         self._counts = wp.zeros_like(self.world_start)
         self.active = wp.zeros(self.capacity, dtype=wp.bool, device=owner.model.device)
         self.joint_ids: wp.array | None = None
-        if source is not None and source.joint_ids is not None:
-            self.joint_ids = wp.from_torch(
-                (wp.to_torch(source.joint_ids)[None] + worlds * source.owner.model.joint_count).flatten()
-            )
-        self._dense_width = self.counts[0] if self.counts and len(set(self.counts)) == 1 else None
+        self._dense_width = self.static_counts[0] if self.static_counts and len(set(self.static_counts)) == 1 else None
         self._dense_ids = None
         self._dense_active = None
         self._scalar_views = {}
         self._scalar_source_ids = None
         if self._dense_width is not None:
-            self._dense_ids = wp.to_torch(self.ids).reshape(len(self.counts), self._dense_width)
-            self._dense_active = wp.to_torch(self.active).reshape(len(self.counts), self._dense_width)
+            self._dense_ids = wp.to_torch(self.ids).reshape(len(self.static_counts), self._dense_width)
+            self._dense_active = wp.to_torch(self.active).reshape(len(self.static_counts), self._dense_width)
         self.refresh()
 
     def refresh(self) -> None:
@@ -292,7 +236,7 @@ class NewtonSelection:
         owner = self.owner
         wp.launch(
             _count_active,
-            dim=len(self.counts),
+            dim=len(self.static_counts),
             inputs=[self.starts, self.body_ids, owner.body_active, owner.world_active],
             outputs=[self._counts],
             device=owner.model.device,
@@ -300,7 +244,7 @@ class NewtonSelection:
         wp.utils.array_scan(self._counts, self.world_start, inclusive=False)
         wp.launch(
             _compact_active,
-            dim=len(self.counts),
+            dim=len(self.static_counts),
             inputs=[self.starts, self.ids, self.body_ids, owner.body_active, owner.world_active, self.world_start],
             outputs=[self.freq_ids, self.env_ids, self.slot_ids, self.active],
             device=owner.model.device,
@@ -326,11 +270,17 @@ class NewtonSelection:
             raise ValueError("Dense selection requires equal static counts per world.")
         return self._dense_width
 
+    def active_counts(self) -> torch.Tensor:
+        """Current episode-participating count per model world (GPU int32)."""
+        return wp.to_torch(self._counts)[:-1]
+
     def joint_types(self) -> torch.Tensor:
         """Return the native joint types underlying selected coordinates or DOFs."""
         if self.joint_ids is None:
             raise ValueError("Joint types require a coordinate or DOF selection.")
-        return wp.to_torch(self.owner.model.joint_type)[wp.to_torch(self.joint_ids)].reshape(-1, self.width)
+        return wp.to_torch(self.owner.model.joint_type)[wp.to_torch(self.joint_ids)].reshape(
+            len(self.static_counts), self.width
+        )
 
     @property
     def use_coord_layout_targets(self) -> bool:
@@ -375,9 +325,9 @@ class NewtonSelection:
             values = getattr(getattr(self.owner, source), attribute)
             if values.dtype != wp.float32 or values.ndim != 1:
                 raise TypeError("Scalar fields require a one-dimensional float32 native array.")
-            shape = (len(self.counts), self.width)
+            shape = (len(self.static_counts), self.width)
             if self._scalar_source_ids is None:
-                self._scalar_source_ids = wp.zeros(len(self.counts), dtype=wp.int32, device=values.device)
+                self._scalar_source_ids = wp.zeros(len(self.static_counts), dtype=wp.int32, device=values.device)
             descriptor = _ScalarSource()
             descriptor.values = values
             view = NewtonScalarField()
@@ -429,7 +379,7 @@ class NewtonSelections:
         self.control = control
         self.solver = solver
         self.world_ids = torch.arange(model.world_count, dtype=torch.long, device=str(model.device))
-        self._source = source
+        self.source = source
         self.body_active = wp.ones(model.body_count, dtype=wp.bool, device=model.device)
         self.world_active = wp.ones(model.world_count, dtype=wp.bool, device=model.device)
         self._bindings: dict[tuple, NewtonSelection] = {}
@@ -452,56 +402,61 @@ class NewtonSelections:
             roots, device=str(model.device)
         )
 
-    def resolve(self, cfg: NewtonSelectorCfg) -> NewtonSelection:
-        """Resolve a declarative selector once against this finalized model."""
+    def bind(self, frequency: str, ids: Sequence[int] | np.ndarray) -> NewtonSelection:
+        """Bind ordered integer frequency IDs in this model, grouped by world.
+
+        IDs are global model indices, including for replicated models. Duplicate,
+        out-of-range and global-world IDs are rejected; empty bindings are valid.
+        """
         if self._retired:
-            raise RuntimeError("Cannot resolve selections from a retired owner.")
-        patterns = (cfg.path,) if isinstance(cfg.path, str) else tuple(cfg.path)
-        key = (cfg.frequency, patterns, cfg.count_per_world, cfg.dense_width)
+            raise RuntimeError("Cannot bind selections from a retired owner.")
+        if frequency not in (BODY, JOINT_COORD, JOINT_DOF):
+            raise ValueError(f"Unknown Newton frequency: {frequency!r}")
+        values = np.asarray(ids)
+        if values.ndim != 1 or ((values.size or isinstance(ids, np.ndarray)) and values.dtype.kind not in "iu"):
+            raise ValueError("Selection IDs must be a one-dimensional integer sequence.")
+        if not isinstance(ids, np.ndarray) and any(isinstance(value, (bool, np.bool_)) for value in ids):
+            raise ValueError("Selection IDs must be integers, not booleans.")
+        count = {
+            BODY: self.model.body_count,
+            JOINT_COORD: self.model.joint_coord_count,
+            JOINT_DOF: self.model.joint_dof_count,
+        }[frequency]
+        if np.any(values < 0) or np.any(values >= count) or len(np.unique(values)) != len(values):
+            raise ValueError("Selection IDs must be unique valid model frequency indices.")
+        values = values.astype(np.int32)
+        key = (frequency, tuple(map(int, values)))
         if key in self._bindings:
             return self._bindings[key]
-        if self._source is not None:
-            selection = NewtonSelection(self, cfg, source=self._source.resolve(cfg))
-            self._bindings[key] = selection
-            return selection
-        if cfg.frequency not in (BODY, JOINT_COORD, JOINT_DOF):
-            raise ValueError(f"Unknown Newton frequency: {cfg.frequency!r}")
-        labels = self.model.body_label if cfg.frequency == BODY else self.model.joint_label
-        worlds = self._body_world if cfg.frequency == BODY else self._joint_world
-        rows = [[] for _ in range(self.model.world_count)]
-        owners = [[] for _ in rows]
-        seen = set()
-        for pattern in patterns:
-            regex = re.compile(pattern)
-            matched = False
-            for entity, (label, world) in enumerate(zip(labels, worlds, strict=True)):
-                if world < 0 or not regex.fullmatch(label):
-                    continue
-                matched = True
-                if entity in seen:
-                    continue
-                seen.add(entity)
-                if cfg.frequency == BODY:
-                    indices = [entity]
-                    body = entity
-                else:
-                    starts = self._q_start if cfg.frequency == JOINT_COORD else self._qd_start
-                    indices = range(int(starts[entity]), int(starts[entity + 1]))
-                    body = int(self._joint_child[entity])
-                rows[world].extend(indices)
-                owners[world].extend([body] * len(indices))
-            if not matched:
-                raise ValueError(f"Selector {pattern!r} matched no {cfg.frequency} entities.")
-        if cfg.count_per_world is not None and any(len(row) != cfg.count_per_world for row in rows):
-            raise ValueError(
-                f"Expected {cfg.count_per_world} {cfg.frequency} entries per world; got {list(map(len, rows))}."
-            )
-        selection = NewtonSelection(self, cfg, rows, [b for row in owners for b in row])
-        if cfg.frequency != BODY:
-            starts = self._q_start if cfg.frequency == JOINT_COORD else self._qd_start
-            inverse = np.repeat(np.arange(self.model.joint_count), np.diff(starts))
-            flat_ids = np.array([i for row in rows for i in row], dtype=np.int32)
-            selection.joint_ids = wp.array(inverse[flat_ids], dtype=wp.int32, device=self.model.device)
+        topology = self if self.source is None else self.source
+        stride = {
+            BODY: topology.model.body_count,
+            JOINT_COORD: topology.model.joint_coord_count,
+            JOINT_DOF: topology.model.joint_dof_count,
+        }[frequency]
+        local = values if self.source is None else values % stride
+        if frequency == BODY:
+            bodies = local
+            joints = None
+            worlds = topology._body_world[local]
+        else:
+            starts = topology._q_start if frequency == JOINT_COORD else topology._qd_start
+            joints = np.searchsorted(starts[1:], local, side="right").astype(np.int32)
+            bodies = topology._joint_child[joints]
+            worlds = topology._joint_world[joints]
+        if np.any(worlds < 0):
+            raise ValueError("Selections exclude global-world entities.")
+        if self.source is not None:
+            worlds = values // stride
+            bodies = bodies + worlds * topology.model.body_count
+            if joints is not None:
+                joints = joints + worlds * topology.model.joint_count
+        rows = [values[worlds == world].tolist() for world in range(self.model.world_count)]
+        body_rows = [bodies[worlds == world].tolist() for world in range(self.model.world_count)]
+        selection = NewtonSelection(self, frequency, rows, [body for row in body_rows for body in row])
+        if joints is not None:
+            joint_rows = [joints[worlds == world] for world in range(self.model.world_count)]
+            selection.joint_ids = wp.array(np.concatenate(joint_rows), dtype=wp.int32, device=self.model.device)
         self._bindings[key] = selection
         return selection
 
@@ -531,6 +486,7 @@ class NewtonSelectionGroup:
 
     __slots__ = (
         "__dict__",
+        "frequency",
         "_parts",
         "_num_envs",
         "_width",
@@ -540,24 +496,25 @@ class NewtonSelectionGroup:
         "_source_ids",
         "_tables",
         "_scalar_views",
-        "counts",
+        "static_counts",
         "joint_ids",
         "_device",
     )
 
-    def __init__(self, cfg: NewtonSelectorCfg, parts, num_envs: int):
-        self.frequency, self.path = cfg.frequency, cfg.path
-        self.count_per_world, self.dense_width = cfg.count_per_world, cfg.dense_width
+    def __init__(self, frequency: str, parts, num_envs: int, *, policy_width: int | None = None):
+        self.frequency = frequency
         self._num_envs = num_envs
-        self._width = cfg.dense_width or cfg.count_per_world or max(part.width for part, _ in parts)
+        if not parts:
+            raise ValueError("Grouped selections require at least one numeric native binding.")
+        self._width = max(part.width for part, _ in parts) if policy_width is None else policy_width
+        if isinstance(self._width, bool) or not isinstance(self._width, int) or self._width < 0:
+            raise ValueError("Policy width must be a nonnegative integer.")
         self._device = parts[0][0].owner.model.device
         self._worlds = wp.from_torch(torch.arange(num_envs, dtype=torch.int32, device=str(self._device)))
         self._ids = wp.empty((num_envs, self._width), dtype=wp.int32, device=self._device)
         self._active = wp.empty((num_envs, self._width), dtype=wp.bool, device=self._device)
         self._source_ids = wp.empty(num_envs, dtype=wp.int32, device=self._device)
         self._tables = {}
-        # Counts here describe policy slots. Native counts remain on each binding.
-        self.counts = (self._width,) * num_envs
         self.rebind(parts)
 
     def __deepcopy__(self, memo):
@@ -589,6 +546,11 @@ class NewtonSelectionGroup:
         if any(part.width > self._width for part, _ in parts):
             raise ValueError("A native selection exceeds the configured dense policy width.")
         self._parts = tuple(parts)
+        counts = [0] * self._num_envs
+        for part, worlds in parts:
+            for world, count in zip(worlds.tolist(), part.static_counts, strict=True):
+                counts[world] = count
+        self.static_counts = tuple(counts)
         # Logical rows can move while the borrowed native arrays stay unchanged.
         self._tables = {
             key: entry
@@ -605,7 +567,7 @@ class NewtonSelectionGroup:
         ids, active, source_ids = map(wp.to_torch, (self._ids, self._active, self._source_ids))
         coverage = torch.zeros(self._num_envs, dtype=torch.int32, device=str(self._device))
         for source, (part, worlds) in enumerate(parts):
-            if part.frequency != self.frequency or len(worlds) != len(part.counts):
+            if part.frequency != self.frequency or len(worlds) != len(part.static_counts):
                 raise ValueError("Native selection frequency/world count does not match its logical binding.")
             ids[worlds, : part.width] = part.dense_ids()
             active[worlds, : part.width] = part.dense_active()
@@ -629,6 +591,10 @@ class NewtonSelectionGroup:
         active = wp.to_torch(self._active)
         for part, worlds in self._parts:
             active[worlds, : part.width] = part.dense_active()
+
+    def active_counts(self) -> torch.Tensor:
+        """Current participating count per logical policy actor (GPU int64)."""
+        return self.dense_active().sum(dim=1)
 
     def joint_types(self) -> torch.Tensor:
         """Read joint types once in logical-world order for scalar-joint validation."""

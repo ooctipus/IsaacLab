@@ -31,7 +31,8 @@ from .keyboards.keyboard_geometry import generate_keyboard
 from .keyboards.keyboard_pool import TYPING_KEYBOARD_VARIANTS
 from .mdp.actions import NewtonRelativeJointPositionActionCfg
 from .mdp.reset import KeyboardResetIKCfg
-from .newton_selection import BODY, JOINT_COORD, JOINT_DOF, NewtonSelectorCfg, bind_selectors
+from .newton_selection import BODY, JOINT_COORD, JOINT_DOF
+from .selection_paths import NewtonSelectorCfg, bind_selectors
 
 _REFERENCE_KEYBOARD = generate_keyboard(TYPING_KEYBOARD_VARIANTS[0])
 _BACKSPACE_SLOT = next(key.slot for key in _REFERENCE_KEYBOARD.active_keys if key.label.lower() == "backspace")
