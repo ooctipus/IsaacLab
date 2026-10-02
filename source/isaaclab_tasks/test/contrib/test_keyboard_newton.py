@@ -1109,7 +1109,6 @@ def test_native_fields_follow_handles_strides_generations_and_reference_coordina
         group.model.geom_bodyid = wp.array([1, count], dtype=int, device="cpu")
         group.world_capacity, group.world_live_count = 2, wp.array([2], dtype=int, device="cpu")
         group.contact_capacity, group.contact_storage_ready_count = 4, wp.array([3], dtype=int, device="cpu")
-        group.record_launch = lambda kernel, dim, inputs, **kwargs: wp.launch(kernel, dim, inputs, device="cpu")
     contact = SimpleNamespace(
         worldid=wp.array([1, 1, 1, -1], dtype=int, device="cpu"),
         geom=wp.array([[0, 1]] * 4, dtype=wp.vec2i, device="cpu"),

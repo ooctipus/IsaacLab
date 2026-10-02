@@ -490,7 +490,7 @@ class MuJoCoSelection:
             raise RuntimeError("Prepare contact reductions before graph capture.")
         prototype = group.prototype_index
         dimensions = group.world_capacity, self.width
-        group.record_launch(
+        wp.launch(
             _clear_contact_forces,
             dimensions,
             inputs=[
@@ -500,10 +500,10 @@ class MuJoCoSelection:
                 self._contact_forces,
                 self._contact_generations,
             ],
-            domain="world",
+            device=self.owner.device,
         )
         data, model, contact = group.data, group.model, group.data.contact
-        group.record_launch(
+        wp.launch(
             _accumulate_contact_forces,
             group.contact_capacity,
             inputs=[
@@ -527,7 +527,7 @@ class MuJoCoSelection:
                 int(model.opt.cone),
                 self._contact_forces,
             ],
-            domain="candidate",
+            device=self.owner.device,
         )
 
     def selected_net_normal_forces(self) -> torch.Tensor:

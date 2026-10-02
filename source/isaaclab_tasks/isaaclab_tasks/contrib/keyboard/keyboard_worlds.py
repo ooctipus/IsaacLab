@@ -31,7 +31,7 @@ from isaaclab_newton.physics.worlds import NewtonWorldsBackendCfg
 from .keyboard_populations import prepare_keyboard_prototype
 from .keyboards.keyboard_geometry import generate_keyboard
 from .mdp.reset import ResetKinematics, reset_root_state_uniform
-from .mujoco_selection import MuJoCoSelections, NewtonMuJoCoMapping
+from .mujoco_selection import MuJoCoSelections, NewtonMuJoCoMapping, _accumulate_contact_forces, _clear_contact_forces
 from .selection_paths import bind_selectors, query_selection_indices, resolve_selection, selector_key
 
 
@@ -285,7 +285,7 @@ class KeyboardWorlds:
                 mjw.forward(solver.mjw_model, defaults)
                 warm = mjw.replicate_data(defaults, 1)
                 workspace = mjw.make_step_workspace(solver.mjw_model, warm)
-                mjw.step(solver.mjw_model, warm, workspace=workspace)
+                mjw.step(solver.mjw_model, warm, scratch=workspace.scratch)
                 prepared.append((solver.mjw_model, defaults))
                 mapping = NewtonMuJoCoMapping(source, solver)
                 self._prototype_maps.append(mapping)
@@ -368,14 +368,22 @@ class KeyboardWorlds:
                 )
 
             def after_substep(group):
-                group.record_launch(
+                wp.launch(
                     _record_overflow,
                     group.world_capacity,
                     inputs=[group.data.overflow, group.prototype_index, self.overflow],
-                    domain="world",
+                    device=env.device,
                 )
                 if self._contact_selection is not None:
                     self._contact_selection.record_contact_forces(group, self.env_index_by_world_id)
+
+            def application_bindings(group, launches):
+                counts = {
+                    _record_overflow: group.world_live_count,
+                    _clear_contact_forces: group.world_live_count,
+                    _accumulate_contact_forces: group.contact_storage_ready_count,
+                }
+                return tuple((index, 0, counts[record.kernel]) for index, record in enumerate(launches)), (), ()
 
             wp.load_module(module=__name__, device=env.device)
             wp.load_module(module="isaaclab_tasks.contrib.keyboard.mujoco_selection", device=env.device)
@@ -385,6 +393,7 @@ class KeyboardWorlds:
                 validate=validate,
                 initialize=initialize,
                 after_substep=after_substep,
+                application_bindings=application_bindings,
                 # Selection owns all contact descriptors and environment handles;
                 # retain it directly rather than the task/backend/graph root.
                 retain=(

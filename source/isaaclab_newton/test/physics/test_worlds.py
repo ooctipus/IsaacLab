@@ -62,7 +62,9 @@ def test_backend_owns_one_native_runtime_and_graph(native_backend, monkeypatch):
     assert constructor.call_args.args == (cfg.prototypes,)
     assert constructor.call_args.kwargs["initial_world_ready_capacities"] == (0,)
     commands, results, payload = object(), object(), object()
-    callbacks = dict(validate=Mock(), initialize=Mock(), before_step=Mock(), after_substep=Mock())
+    callbacks = dict(
+        validate=Mock(), initialize=Mock(), before_step=Mock(), after_substep=Mock(), application_bindings=Mock()
+    )
     backend.prepare(commands, results, retain=(payload,), **callbacks)
     assert runtime.capture.call_args.args == (commands, results)
     assert runtime.capture.call_args.kwargs["retain"] == (payload,)

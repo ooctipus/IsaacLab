@@ -115,12 +115,14 @@ class NewtonWorldsBackend:
         initialize=None,
         before_step=None,
         after_substep=None,
+        application_bindings=None,
         retain=(),
     ) -> None:
         """Record task callbacks and one graph before the first simulation reset.
 
         Callbacks run only during preparation; their recorded kernels consume
-        explicitly retained buffers. The task initializes each request's payload
+        explicitly retained buffers. ``application_bindings`` separately declares
+        numeric count relations for their exact captured records. The task initializes each request's payload
         before publishing its new command sequence. Poses refresh on every valid
         replay, including reset-only replay with no native advancement.
         """
@@ -137,6 +139,7 @@ class NewtonWorldsBackend:
                 initialize=initialize,
                 before_step=before_step,
                 after_substep=after_substep,
+                application_bindings=application_bindings,
                 retain=retain,
                 substeps=self.substeps,
                 refresh_kinematics=True,

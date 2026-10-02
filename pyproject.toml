@@ -427,10 +427,11 @@ python-preference = "only-managed"
 package = false
 
 [tool.uv.sources]
+warp-lang = { path = "../../warp.wt/capture-launches", editable = true }
 # Matching development checkouts; replace with immutable published sources before distribution.
-gpu-components = { path = "../../gpu-components", editable = true }
-newton = { path = "../../newton.wt/dynamic-worlds-runtime", editable = true }
-mujoco-warp = { path = "../../mujoco_warp.wt/dynamic-worlds-workspace", editable = true }
+gpu-components = { path = "../../gpu-components.wt/warp-capture", editable = true }
+newton = { path = "../../newton.wt/capture-launches", editable = true }
+mujoco-warp = { path = "../../mujoco_warp.wt/capture-launches", editable = true }
 omniverseclient = { index = "pypi-public" }
 ovphysx = { index = "pypi-public" }
 ovrtx = { index = "pypi-public" }
