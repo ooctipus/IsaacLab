@@ -4,27 +4,27 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-# Optional finalization of an image whose installed Newton provides this bridge.
+# Optional finalization of an image whose installed GPU Components provides this bridge.
 ARG INPUT_IMAGE=isaac-lab-base
 FROM ${INPUT_IMAGE} AS source
 
 FROM nvidia/cuda:12.9.1-devel-ubuntu24.04@sha256:020bc241a628776338f4d4053fed4c38f6f7f3d7eb5919fecb8de313bb8ba47c AS compiler
-ARG NEWTON_CUDA_SOURCE
-ARG NEWTON_SOURCE_SHA256
-COPY --from=source ${NEWTON_CUDA_SOURCE} /tmp/cuda_graph.cu
+ARG GPU_COMPONENTS_CUDA_SOURCE
+ARG GPU_COMPONENTS_SOURCE_SHA256
+COPY --from=source ${GPU_COMPONENTS_CUDA_SOURCE} /tmp/graph.cu
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-RUN printf '%s  /tmp/cuda_graph.cu\n' "${NEWTON_SOURCE_SHA256}" | sha256sum --check \
+RUN printf '%s  /tmp/graph.cu\n' "${GPU_COMPONENTS_SOURCE_SHA256}" | sha256sum --check \
  && mkdir /out \
  && nvcc -std=c++17 -shared -Xcompiler -fPIC -rdc=true --cudart=static --cudadevrt=static \
       -gencode=arch=compute_89,code=sm_89 -gencode=arch=compute_120,code=sm_120 \
-      /tmp/cuda_graph.cu -o /out/cuda_graph.so -L/usr/local/cuda/lib64/stubs -lcuda \
+      /tmp/graph.cu -o /out/cuda_graph.so -L/usr/local/cuda/lib64/stubs -lcuda \
  && cuobjdump --list-elf /out/cuda_graph.so > /out/cubins.txt \
  && grep -q sm_89 /out/cubins.txt && grep -q sm_120 /out/cubins.txt \
  && nvcc --version > /out/compiler.txt \
  && printf '{"source_sha256":"%s","library_sha256":"%s","architectures":[89,120],"cuda_toolkit":"12.9.1"}\n' \
-      "${NEWTON_SOURCE_SHA256}" "$(sha256sum /out/cuda_graph.so | cut -d ' ' -f 1)" > /out/cuda_graph.json
+      "${GPU_COMPONENTS_SOURCE_SHA256}" "$(sha256sum /out/cuda_graph.so | cut -d ' ' -f 1)" > /out/cuda_graph.json
 
 FROM source AS runtime
-COPY --from=compiler /out/ /opt/newton-cuda-graph/
-ENV NEWTON_CUDA_GRAPH_LIBRARY=/opt/newton-cuda-graph/cuda_graph.so
+COPY --from=compiler /out/ /opt/gpu-components-cuda-graph/
+ENV GPU_COMPONENTS_CUDA_GRAPH_LIBRARY=/opt/gpu-components-cuda-graph/cuda_graph.so
 USER isaaclab

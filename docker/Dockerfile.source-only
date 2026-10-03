@@ -30,14 +30,19 @@ RUN --mount=type=bind,source=source,target=/tmp/isaaclab_overlay/source,readonly
     --mount=type=bind,source=tools,target=/tmp/isaaclab_overlay/tools,readonly \
     --mount=type=bind,source=pyproject.toml,target=/tmp/isaaclab_overlay/pyproject.toml,readonly \
     --mount=type=bind,source=uv.lock,target=/tmp/isaaclab_overlay/uv.lock,readonly \
+    --mount=type=bind,source=docker/wheels,target=/tmp/isaaclab_overlay/wheels,readonly \
     --mount=type=bind,source=isaaclab.sh,target=/tmp/isaaclab_overlay/isaaclab.sh,readonly \
     --mount=type=cache,target=/root/.cache/uv,sharing=locked \
+    --mount=type=secret,id=git_netrc,target=${HOME}/.netrc \
     rm -rf "${ISAACLAB_PATH:?}/source" "${ISAACLAB_PATH:?}/scripts" "${ISAACLAB_PATH:?}/tools" && \
     cp -a /tmp/isaaclab_overlay/source "${ISAACLAB_PATH}/source" && \
     cp -a /tmp/isaaclab_overlay/scripts "${ISAACLAB_PATH}/scripts" && \
     cp -a /tmp/isaaclab_overlay/tools "${ISAACLAB_PATH}/tools" && \
     cp -a /tmp/isaaclab_overlay/pyproject.toml "${ISAACLAB_PATH}/pyproject.toml" && \
     cp -a /tmp/isaaclab_overlay/uv.lock "${ISAACLAB_PATH}/uv.lock" && \
+    mkdir -p "${ISAACLAB_PATH}/docker" && \
+    rm -rf "${ISAACLAB_PATH}/docker/wheels" && \
+    cp -a /tmp/isaaclab_overlay/wheels "${ISAACLAB_PATH}/docker/wheels" && \
     cp -a /tmp/isaaclab_overlay/isaaclab.sh "${ISAACLAB_PATH}/isaaclab.sh" && \
     chown -R isaaclab:isaaclab \
       "${ISAACLAB_PATH}/source" \

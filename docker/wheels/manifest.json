@@ -1,0 +1,9 @@
+{
+  "warp_lang-1.17.0-py3-none-manylinux_2_38_x86_64.whl": {
+    "url": "https://api.github.com/repos/ooctipus/warp/releases/assets/608023399",
+    "sha256": "caabdb76aa70bb097f3e7c62c90ce5546d36b85ddcf4f2532e4f13b3e7e66ba5",
+    "source_commit": "c48d4e3bd0dc7e1efd5284cd36c558dc95436fda",
+    "warp_sha256": "9b593c146109a8586c1bc6212474cb73b858986980d9b9316adf53f308cf8d78",
+    "warp_clang_sha256": "5679ca7557cc0d1bdf730b343a98e97c51a15f24350a9c7735dc4158fd56114a"
+  }
+}

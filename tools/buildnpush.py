@@ -25,6 +25,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from collections.abc import Iterable
 from contextlib import contextmanager
@@ -74,6 +75,7 @@ class BuildArgs:
     skip_push: bool = False
     kitless: bool = False
     kitless_base_image: str = DEFAULT_KITLESS_BASE_IMAGE
+    git_netrc: str | None = None
 
 
 @dataclass
@@ -443,7 +445,7 @@ def build_full_deps(ctx: BuildContext, plan: BuildPlan, docker_env: dict[str, st
     """Build the full dependency image."""
 
     print("Building full image with dependencies...")
-    env = {"SKIP_PIP_INSTALL": "0"}
+    env = {"SKIP_PIP_INSTALL": "0", "ISAACLAB_GIT_NETRC": ctx.args.git_netrc or "/dev/null"}
     unset_env: list[str] = []
     if not plan.use_cache:
         env["ISAACLAB_NOCACHE"] = "1"
@@ -464,6 +466,7 @@ def build_full_deps(ctx: BuildContext, plan: BuildPlan, docker_env: dict[str, st
         docker(
             "build",
             *cache_flag,
+            *(["--secret", f"id=git_netrc,src={ctx.args.git_netrc}"] if ctx.args.git_netrc else []),
             "-f",
             "docker/Dockerfile.kitless",
             "--build-arg",
@@ -506,6 +509,7 @@ def build_overlay(ctx: BuildContext, plan: BuildPlan, docker_env: dict[str, str]
     docker(
         "build",
         "--no-cache",
+        *(["--secret", f"id=git_netrc,src={ctx.args.git_netrc}"] if ctx.args.git_netrc else []),
         "-f",
         "docker/Dockerfile.source-only",
         "--build-arg",
@@ -542,9 +546,8 @@ def out_of_sync_packages(check_output: str) -> list[str]:
 
     ``uv`` reports every editable workspace member as needing a reinstall on each check: their
     recorded metadata never matches what a fresh sync would produce, so all of ``source/`` shows
-    up even when the environment is exactly right. Those entries always resolve to a local
-    ``file://`` path, whereas a genuinely drifted dependency resolves to a registry or git URL
-    (Newton, for instance, is pinned to a git revision). Keep only the latter.
+    up even when the environment is exactly right. Exclude only those source workspace paths;
+    local wheel artifacts are installed dependencies and must still match the lock.
 
     Args:
         check_output: Combined stdout/stderr of ``uv sync --check``.
@@ -555,10 +558,46 @@ def out_of_sync_packages(check_output: str) -> list[str]:
     offenders = []
     for line in check_output.splitlines():
         stripped = line.strip()
-        if not re.match(r"^[-+] [A-Za-z0-9._-]+", stripped) or "file://" in stripped:
+        workspace = re.search(r"file://[^\s)]*/source/isaaclab(?:_\w+)?(?:[\s)]|$)", stripped)
+        if not re.match(r"^[-+] [A-Za-z0-9._-]+", stripped) or workspace:
             continue
         offenders.append(stripped)
     return offenders
+
+
+def prepare_dependency_wheels(git_netrc: str | None) -> None:
+    """Fetch pinned private build artifacts without persisting their credentials."""
+    directory = REPO_ROOT / "docker/wheels"
+    manifest = directory / "manifest.json"
+    if not manifest.is_file():
+        return
+    for name, artifact in json.loads(manifest.read_text()).items():
+        if Path(name).name != name or not name.endswith(".whl"):
+            raise BuildError(f"Invalid wheel artifact name: {name}")
+        destination = directory / name
+        if not destination.is_file():
+            with tempfile.TemporaryDirectory(dir=directory) as temporary:
+                downloaded = Path(temporary) / name
+                run(
+                    [
+                        "curl",
+                        "--fail",
+                        "--silent",
+                        "--show-error",
+                        "--location",
+                        *(["--netrc-file", git_netrc] if git_netrc else []),
+                        "--header",
+                        "Accept: application/octet-stream",
+                        "--output",
+                        str(downloaded),
+                        artifact["url"],
+                    ]
+                )
+                if hashlib.sha256(downloaded.read_bytes()).hexdigest() != artifact["sha256"]:
+                    raise BuildError(f"Downloaded wheel does not match its pinned hash: {name}")
+                downloaded.replace(destination)
+        if hashlib.sha256(destination.read_bytes()).hexdigest() != artifact["sha256"]:
+            raise BuildError(f"Wheel artifact does not match its pinned hash: {name}")
 
 
 def verify_lockfile() -> None:
@@ -620,20 +659,20 @@ def verify_synced_deps(ctx: BuildContext, docker_env: dict[str, str]) -> None:
     print("Verified image environment matches the repository's uv.lock (workspace members aside).")
 
 
-def build_newton_bridge() -> None:
-    """Compile the optional installed Newton bridge without adding a runtime toolchain.
+def build_gpu_components_bridge() -> None:
+    """Compile the optional installed GPU Components bridge without a runtime toolchain.
 
     Source-only updates may defer unrelated dependencies, but an existing native
-    bridge cannot be built against a Newton revision that cluster startup replaces.
+    bridge cannot be built against a GPU Components revision that startup replaces.
     """
     probe = """import hashlib, importlib.metadata as metadata, json
 from pathlib import Path
 try:
-    package = metadata.distribution("newton")
+    package = metadata.distribution("gpu-components")
 except metadata.PackageNotFoundError:
     print("{}")
     raise SystemExit(0)
-source = Path(package.locate_file("newton/_src/utils/cuda_graph.cu"))
+source = Path(package.locate_file("gpu_components/graph.cu"))
 direct = json.loads(package.read_text("direct_url.json") or "{}")
 print(json.dumps({"source": str(source) if source.is_file() else None,
                   "sha256": hashlib.sha256(source.read_bytes()).hexdigest() if source.is_file() else None,
@@ -643,35 +682,38 @@ print(json.dumps({"source": str(source) if source.is_file() else None,
     probe_args += ["-c", 'exec "${VIRTUAL_ENV}/bin/python" -c "$1"', "bridge-inspection", probe]
     installed = json.loads(docker(*probe_args, capture=True))
     with (REPO_ROOT / "uv.lock").open("rb") as file:
-        locked = next((p for p in tomllib.load(file)["package"] if p["name"] == "newton"), None)
+        locked = next((p for p in tomllib.load(file)["package"] if p["name"] == "gpu-components"), None)
     expected = locked["source"].get("git", "").partition("#")[2] if locked else ""
     if not locked:
-        print("Newton is not selected by uv.lock; skipping native image finalization.")
+        print("GPU Components is not selected by uv.lock; skipping native image finalization.")
         return
     if not installed:
         # Both supported image families sync root dependencies at startup. A stale
-        # source-only base must not defer its first Newton install past compilation.
+        # source-only base must not defer its first bridge install past compilation.
         with (REPO_ROOT / "pyproject.toml").open("rb") as file:
             dependencies = tomllib.load(file)["project"].get("dependencies", [])
-        if any(re.match(r"newton(?:\[|[\s<>=!~;@]|$)", requirement, re.IGNORECASE) for requirement in dependencies):
+        if any(
+            re.match(r"gpu[-_.]components(?:\[|[\s<>=!~;@]|$)", requirement, re.IGNORECASE)
+            for requirement in dependencies
+        ):
             raise BuildError(
-                "Newton is required by this checkout but missing from the image. "
+                "GPU Components is required by this checkout but missing from the image. "
                 "Use -p/--pip or -d/--deps before publishing this image."
             )
-        print("Newton is not installed or required by the root project; skipping native image finalization.")
+        print("GPU Components is not installed or required by the root project; skipping native image finalization.")
         return
     matches = installed["commit"] == expected if expected else installed["version"] == locked["version"]
     if not matches:
         raise BuildError(
-            "Cannot prepare the CUDA graph bridge from a Newton revision that differs from uv.lock. "
+            "Cannot prepare the CUDA graph bridge from a GPU Components revision that differs from uv.lock. "
             "Use -p/--pip or -d/--deps before publishing this image."
         )
     if installed["source"] is None:
-        print("Pinned Newton has no CUDA graph bridge; skipping native image finalization.")
+        print("Pinned GPU Components has no CUDA graph bridge; skipping native image finalization.")
         return
     build_args = ["build", "-f", "docker/Dockerfile.cuda-graph", "--build-arg", f"INPUT_IMAGE={BASE_IMAGE}"]
-    build_args += ["--build-arg", f"NEWTON_CUDA_SOURCE={installed['source']}"]
-    build_args += ["--build-arg", f"NEWTON_SOURCE_SHA256={installed['sha256']}"]
+    build_args += ["--build-arg", f"GPU_COMPONENTS_CUDA_SOURCE={installed['source']}"]
+    build_args += ["--build-arg", f"GPU_COMPONENTS_SOURCE_SHA256={installed['sha256']}"]
     docker(*build_args, "-t", BASE_IMAGE, ".", env={"DOCKER_BUILDKIT": "1"})
 
 
@@ -777,6 +819,13 @@ def clean_stale_egg_info() -> None:
 def build_image(args: BuildArgs) -> None:
     """Run the requested build."""
 
+    if args.git_netrc and not Path(args.git_netrc).is_file():
+        raise BuildError("--git-netrc must name an existing credential file")
+    if args.git_netrc and Path(args.git_netrc).resolve().is_relative_to(REPO_ROOT.resolve()):
+        raise BuildError(
+            "--git-netrc must be outside the Docker build context so credentials cannot enter image layers"
+        )
+    prepare_dependency_wheels(args.git_netrc)
     clean_stale_egg_info()
     verify_lockfile()
     ctx = make_context(args)
@@ -796,7 +845,7 @@ def build_image(args: BuildArgs) -> None:
         dependencies_synced = plan.run_pip_install or not plan.skip_deps
         if dependencies_synced:
             verify_synced_deps(ctx, docker_env)
-        build_newton_bridge()
+        build_gpu_components_bridge()
         tag_and_push(ctx, plan)
     if ctx.deps_hash:
         update_state_and_cleanup(ctx)
@@ -1035,6 +1084,7 @@ Build Options:
   -d, --deps        Rebuild dependency/base image, then copy source
   -a, --all         Full no-cache dependency/base rebuild, then copy source
       --kitless     Build the Newton-only image from docker/Dockerfile.kitless
+      --git-netrc PATH  Mount Git HTTPS credentials as a build-only secret
       --skip-push   Build/tag only, do not push to NGC
   -h, --help        Show this help
 
@@ -1057,6 +1107,7 @@ def parse_build_args(argv: list[str]) -> BuildArgs:
     parser.add_argument("-a", "--all", action="store_true")
     parser.add_argument("--skip-push", action="store_true")
     parser.add_argument("--kitless", action="store_true")
+    parser.add_argument("--git-netrc", type=lambda value: str(Path(value).expanduser().resolve()))
     parser.add_argument("-h", "--help", action="store_true")
     ns = parser.parse_args(argv)
     if ns.help:
@@ -1074,6 +1125,7 @@ def parse_build_args(argv: list[str]) -> BuildArgs:
         skip_push=ns.skip_push,
         kitless=ns.kitless,
         kitless_base_image=os.environ.get("KITLESS_BASE_IMAGE", DEFAULT_KITLESS_BASE_IMAGE),
+        git_netrc=ns.git_netrc,
     )
 
 

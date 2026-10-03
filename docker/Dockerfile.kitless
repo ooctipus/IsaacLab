@@ -56,6 +56,7 @@ WORKDIR ${ISAACLAB_PATH}
 COPY pyproject.toml uv.lock VERSION LICENSE LICENSE-mimic README.md ./
 COPY source/ source/
 COPY isaaclab.sh ./
+COPY docker/wheels/ docker/wheels/
 
 # Installed from uv.lock rather than via ``isaaclab.sh --install``: only the lock applies
 # ``[tool.uv] override-dependencies``, which pins ``packaging>=20,<27`` against ovphysx's
@@ -73,7 +74,8 @@ COPY isaaclab.sh ./
 # is not a lock entry. ``uv sync`` reuses the venv only because UV_PYTHON pins the same interpreter
 # it was created with; otherwise it deletes and rebuilds it.
 ARG DEPS_CACHE_BUST=0
-RUN uv venv --seed "${VIRTUAL_ENV}" \
+RUN --mount=type=secret,id=git_netrc,target=/root/.netrc \
+    uv venv --seed "${VIRTUAL_ENV}" \
  && uv sync --frozen --inexact --extra all --extra importers --extra test --extra wandb \
  && chmod +x "${ISAACLAB_PATH}/isaaclab.sh" \
  && chmod -R a+rwX "${VIRTUAL_ENV}"/lib/python3.*/site-packages/ovrtx \

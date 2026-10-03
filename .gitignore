@@ -45,6 +45,7 @@ docker/.isaac-lab-host-cache.yaml
 **/wandb/*
 **/.neptune/*
 docker/artifacts/
+docker/wheels/*.whl
 *.tmp
 **/__tracked_surface.stl
 

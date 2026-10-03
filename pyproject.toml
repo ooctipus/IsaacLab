@@ -88,8 +88,7 @@ dependencies = [
     "gitpython>=3.1.59",  # used by RL training and experiment logging
     "gpu-components==0.1.0",  # standalone numeric relations and GPU storage
     # ----- newton (default physics engine) -----
-    # Matching extraction checkouts are selected below in tool.uv.sources.
-    # Keep uv.lock and wheel overrides aligned; these are development sources.
+    # Immutable integration sources are selected below in tool.uv.sources.
     "newton[sim]==1.7.0.dev0",
     "mujoco-warp==3.14.0",
     # Import and mesh-processing packages used by Newton, including the ones that honoring
@@ -427,11 +426,12 @@ python-preference = "only-managed"
 package = false
 
 [tool.uv.sources]
-warp-lang = { path = "../../warp.wt/capture-launches", editable = true }
+# buildnpush retrieves and verifies this private release artifact before syncing.
+warp-lang = { path = "docker/wheels/warp_lang-1.17.0-py3-none-manylinux_2_38_x86_64.whl", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" }
 # Matching development checkouts; replace with immutable published sources before distribution.
-gpu-components = { path = "../../gpu-components.wt/warp-capture", editable = true }
-newton = { path = "../../newton.wt/capture-launches", editable = true }
-mujoco-warp = { path = "../../mujoco_warp.wt/capture-launches", editable = true }
+gpu-components = { git = "https://github.com/ooctipus/gpu-components.git", rev = "846288b15c32f4b45271597b169d4c241b0681c8" }
+newton = { git = "https://github.com/ooctipus/newton.git", rev = "353cc600a4c7469f1dc66503ba42cc4510b00e99" }
+mujoco-warp = { git = "https://github.com/ooctipus/mujoco_warp.git", rev = "822fc39c5424eb17e9b1eccf6eb7d3279f6353b1" }
 omniverseclient = { index = "pypi-public" }
 ovphysx = { index = "pypi-public" }
 ovrtx = { index = "pypi-public" }

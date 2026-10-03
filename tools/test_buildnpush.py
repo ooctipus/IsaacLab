@@ -55,6 +55,91 @@ def _ctx(args: bp.BuildArgs) -> bp.BuildContext:
 class BuildnpushTest(unittest.TestCase):
     """Tests for build image role and strategy decisions."""
 
+    def test_wheel_bootstrap_checks_existing_and_downloaded_bytes(self) -> None:
+        payload = b"qualified wheel"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            directory = root / "docker/wheels"
+            directory.mkdir(parents=True)
+            name = "example-1.0-py3-none-any.whl"
+            (directory / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        name: {
+                            "url": "https://api.github.com/repos/example/releases/assets/1",
+                            "sha256": hashlib.sha256(payload).hexdigest(),
+                        }
+                    }
+                )
+            )
+
+            def download(command):
+                self.assertIn("--netrc-file", command)
+                self.assertIn("Accept: application/octet-stream", command)
+                Path(command[command.index("--output") + 1]).write_bytes(payload)
+
+            with mock.patch.object(bp, "REPO_ROOT", root), mock.patch.object(bp, "run", side_effect=download) as run:
+                bp.prepare_dependency_wheels("/private/netrc")
+                bp.prepare_dependency_wheels("/private/netrc")
+                self.assertEqual(run.call_count, 1)
+                self.assertEqual((directory / name).read_bytes(), payload)
+                (directory / name).write_bytes(b"wrong artifact")
+                with self.assertRaisesRegex(bp.BuildError, "pinned hash"):
+                    bp.prepare_dependency_wheels("/private/netrc")
+
+    def test_wheel_bootstrap_never_publishes_a_corrupt_download(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            directory = root / "docker/wheels"
+            directory.mkdir(parents=True)
+            name = "example-1.0-py3-none-any.whl"
+            (directory / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        name: {
+                            "url": "https://example.invalid/artifact",
+                            "sha256": "0" * 64,
+                        }
+                    }
+                )
+            )
+            with (
+                mock.patch.object(bp, "REPO_ROOT", root),
+                mock.patch.object(
+                    bp,
+                    "run",
+                    side_effect=lambda command: Path(command[command.index("--output") + 1]).write_bytes(b"bad"),
+                ),
+            ):
+                with self.assertRaisesRegex(bp.BuildError, "pinned hash"):
+                    bp.prepare_dependency_wheels(None)
+            self.assertEqual([path.name for path in directory.iterdir()], ["manifest.json"])
+
+    def test_overlay_passes_git_credentials_only_as_a_build_secret(self) -> None:
+        args = bp.parse_build_args(["lab", "--pip", "--git-netrc", "/private/netrc"])
+        ctx = _ctx(args)
+        plan = bp.BuildPlan(True, True, False, "cached", ctx.deps_image)
+        with mock.patch.object(bp, "docker", return_value="") as docker:
+            bp.build_overlay(
+                ctx, plan, {"DOCKER_ISAACLAB_PATH": "/workspace/isaaclab", "DOCKER_ISAACSIM_ROOT_PATH": ""}
+            )
+        command = docker.call_args.args
+        self.assertEqual(command[command.index("--secret") + 1], "id=git_netrc,src=/private/netrc")
+        self.assertNotIn("/private/netrc", docker.call_args.kwargs.get("env", {}).values())
+
+    def test_build_rejects_credentials_inside_its_context(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            credentials = root / "credentials"
+            credentials.write_text("secret")
+            with mock.patch.object(bp, "REPO_ROOT", root):
+                with self.assertRaisesRegex(bp.BuildError, "outside the Docker build context"):
+                    bp.build_image(bp.BuildArgs(tag="lab", git_netrc=str(credentials)))
+
+    def test_local_wheel_drift_is_not_an_editable_workspace_exception(self) -> None:
+        wheel = "+ warp-lang @ file:///workspace/isaaclab/docker/wheels/warp_lang-1.17.0-py3-none-any.whl"
+        self.assertEqual(bp.out_of_sync_packages(_UV_CHECK_WORKSPACE_ONLY + wheel), [wheel])
+
     def _mock_images(self, created: dict[str, str]):
         return mock.patch.multiple(
             bp,
@@ -117,6 +202,7 @@ class BuildnpushTest(unittest.TestCase):
         with mock.patch.multiple(
             bp,
             clean_stale_egg_info=lambda: None,
+            prepare_dependency_wheels=lambda netrc: None,
             verify_lockfile=verify_lockfile,
             determine_plan=lambda ctx: bp.BuildPlan(
                 skip_deps=True,
@@ -131,7 +217,7 @@ class BuildnpushTest(unittest.TestCase):
             build_overlay=lambda ctx, plan, docker_env: steps.append("overlay"),
             build_full_deps=reject_deps_build,
             verify_synced_deps=verify_synced_deps,
-            build_newton_bridge=lambda: steps.append("bridge"),
+            build_gpu_components_bridge=lambda: steps.append("bridge"),
             tag_and_push=lambda ctx, plan: steps.append("tag"),
         ):
             bp.build_image(bp.BuildArgs(tag="factory", source=True, skip_push=True))
@@ -400,7 +486,7 @@ class BuildnpushTest(unittest.TestCase):
 
     def test_bridge_finalization_uses_locked_installed_source_without_runtime_compiler(self) -> None:
         source = {
-            "source": "/opt/venv/newton/_src/utils/cuda_graph.cu",
+            "source": "/opt/venv/gpu_components/graph.cu",
             "sha256": "a" * 64,
             "commit": "b" * 40,
             "version": "1.7.0",
@@ -408,67 +494,84 @@ class BuildnpushTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             (root / "uv.lock").write_text(
-                '[[package]]\nname="newton"\nversion="1.7.0"\nsource={git="https://example/newton#' + "b" * 40 + '"}\n'
+                '[[package]]\nname="gpu-components"\nversion="1.7.0"\nsource={git="https://example/gpu-components#'
+                + "b" * 40
+                + '"}\n'
             )
             with (
                 mock.patch.object(bp, "REPO_ROOT", root),
                 mock.patch.object(bp, "docker", return_value=json.dumps(source)) as docker,
             ):
-                bp.build_newton_bridge()
+                bp.build_gpu_components_bridge()
         probe, build = docker.call_args_list
         self.assertIn("runc", probe.args)
         self.assertIn("none", probe.args)
         self.assertIn("docker/Dockerfile.cuda-graph", build.args)
-        self.assertIn(f"NEWTON_CUDA_SOURCE={source['source']}", build.args)
-        self.assertIn(f"NEWTON_SOURCE_SHA256={source['sha256']}", build.args)
+        self.assertIn(f"GPU_COMPONENTS_CUDA_SOURCE={source['source']}", build.args)
+        self.assertIn(f"GPU_COMPONENTS_SOURCE_SHA256={source['sha256']}", build.args)
+        self.assertIn('metadata.distribution("gpu-components")', probe.args[-1])
+        self.assertIn('locate_file("gpu_components/graph.cu")', probe.args[-1])
+        recipe = (bp.REPO_ROOT / "docker/Dockerfile.cuda-graph").read_text()
+        self.assertIn("GPU_COMPONENTS_CUDA_GRAPH_LIBRARY=/opt/gpu-components-cuda-graph/cuda_graph.so", recipe)
+        self.assertIn("sha256sum --check", recipe)
+        self.assertIn('"library_sha256"', recipe)
+        for architecture in (89, 120):
+            self.assertIn(f"-gencode=arch=compute_{architecture},code=sm_{architecture}", recipe)
+            self.assertIn(f"grep -q sm_{architecture}", recipe)
 
-    def test_bridge_finalization_rejects_newton_drift_even_before_first_native_upgrade(self) -> None:
+    def test_bridge_finalization_rejects_components_drift_even_before_first_native_upgrade(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            (root / "uv.lock").write_text('[[package]]\nname="newton"\nversion="1.7.0"\nsource={git="repo#new"}\n')
-            for source_path in (None, "/opt/newton/cuda_graph.cu"):
+            (root / "uv.lock").write_text(
+                '[[package]]\nname="gpu-components"\nversion="1.7.0"\nsource={git="repo#new"}\n'
+            )
+            for source_path in (None, "/opt/gpu_components/graph.cu"):
                 with self.subTest(source_path=source_path), mock.patch.object(bp, "REPO_ROOT", root):
                     installed = {"source": source_path, "sha256": "a" * 64, "commit": "old", "version": "1.7.0"}
                     with mock.patch.object(bp, "docker", return_value=json.dumps(installed)) as docker:
                         with self.assertRaisesRegex(bp.BuildError, "-p/--pip"):
-                            bp.build_newton_bridge()
+                            bp.build_gpu_components_bridge()
                     self.assertEqual(docker.call_count, 1)
 
-    def test_bridge_finalization_skips_pinned_newton_without_native_source(self) -> None:
+    def test_bridge_finalization_skips_pinned_components_without_native_source(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            (root / "uv.lock").write_text('[[package]]\nname="newton"\nversion="1.7.0"\nsource={git="repo#same"}\n')
+            (root / "uv.lock").write_text(
+                '[[package]]\nname="gpu-components"\nversion="1.7.0"\nsource={git="repo#same"}\n'
+            )
             (root / "pyproject.toml").write_text('[project]\nname="other-project"\ndependencies=[]\n')
             for installed in ({}, {"source": None, "commit": "same", "version": "1.7.0"}):
                 with self.subTest(installed=installed), mock.patch.object(bp, "REPO_ROOT", root):
                     with mock.patch.object(bp, "docker", return_value=json.dumps(installed)) as docker:
-                        bp.build_newton_bridge()
+                        bp.build_gpu_components_bridge()
                     self.assertEqual(docker.call_count, 1)
 
-    def test_bridge_finalization_rejects_missing_required_newton_before_startup_install(self) -> None:
+    def test_bridge_finalization_rejects_missing_required_components_before_startup_install(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            (root / "uv.lock").write_text('[[package]]\nname="newton"\nversion="1.7.0"\nsource={git="repo#new"}\n')
+            (root / "uv.lock").write_text(
+                '[[package]]\nname="gpu-components"\nversion="1.7.0"\nsource={git="repo#new"}\n'
+            )
             (root / "pyproject.toml").write_text(
-                '[project]\nname="isaaclab-dev"\ndependencies=["newton[sim] @ git+https://example/newton@new"]\n'
+                '[project]\nname="isaaclab-dev"\ndependencies=["gpu-components @ git+https://example/components@new"]\n'
             )
             with mock.patch.object(bp, "REPO_ROOT", root), mock.patch.object(bp, "docker", return_value="{}") as docker:
                 with self.assertRaisesRegex(bp.BuildError, "missing from the image.*-p/--pip"):
-                    bp.build_newton_bridge()
+                    bp.build_gpu_components_bridge()
             self.assertEqual(docker.call_count, 1)
 
-    def test_bridge_finalization_does_not_require_newton_when_checkout_omits_it(self) -> None:
+    def test_bridge_finalization_does_not_require_components_when_checkout_omits_it(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             (root / "uv.lock").write_text('[[package]]\nname="other-package"\nversion="1.0"\n')
             with mock.patch.object(bp, "REPO_ROOT", root), mock.patch.object(bp, "docker", return_value="{}") as docker:
-                bp.build_newton_bridge()
+                bp.build_gpu_components_bridge()
             self.assertEqual(docker.call_count, 1)
 
     def test_cluster_rejects_stale_or_corrupt_bridge_after_dependency_sync(self) -> None:
         workflow = (bp.REPO_ROOT / "docker/cluster/multi_node.yaml").read_text()
-        marker = "uv run --no-sync python - <<'PY_NEWTON_BRIDGE'"
-        source = textwrap.dedent(workflow.split(marker, 1)[1].split("PY_NEWTON_BRIDGE", 1)[0])
+        marker = "uv run --no-sync python - <<'PY_GPU_COMPONENTS_BRIDGE'"
+        source = textwrap.dedent(workflow.split(marker, 1)[1].split("PY_GPU_COMPONENTS_BRIDGE", 1)[0])
         self.assertLess(workflow.index("uv sync --locked"), workflow.index(marker))
         self.assertLess(workflow.index(marker), workflow.index("-m torch.distributed.run"))
         with tempfile.TemporaryDirectory() as temp:
@@ -480,10 +583,12 @@ class BuildnpushTest(unittest.TestCase):
                 "library_sha256": hashlib.sha256(library.read_bytes()).hexdigest(),
             }
             library.with_suffix(".json").write_text(json.dumps(manifest))
-            with mock.patch.dict(os.environ, {"NEWTON_CUDA_GRAPH_LIBRARY": str(library)}):
+            with mock.patch.dict(os.environ, {"GPU_COMPONENTS_CUDA_GRAPH_LIBRARY": str(library)}):
                 with mock.patch.object(importlib.metadata, "distribution") as distribution:
                     distribution.return_value.locate_file.return_value = cu
                     exec(compile(source, "<cluster-native-bridge-check>", "exec"), {})
+                    distribution.assert_called_with("gpu-components")
+                    distribution.return_value.locate_file.assert_called_with("gpu_components/graph.cu")
                     cu.write_bytes(b"new source")
                     with self.assertRaisesRegex(RuntimeError, "source changed"):
                         exec(compile(source, "<cluster-native-bridge-check>", "exec"), {})
