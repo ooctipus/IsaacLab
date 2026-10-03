@@ -54,8 +54,8 @@ class LetterTypingCommandCfg(CommandTermCfg):
         ``pitch`` tilts the finger axis below horizontal (``90`` points straight down, ``0`` is horizontal);
         ``yaw`` offsets the heading the arm settles into (``0`` keeps it); ``roll`` rotates the jaw about its
         approach (finger) axis. These describe the *desired* approach pose only: the 5-DoF arm solves
-        orientation in the null space of the key-position task, so roll/pitch/yaw are tracked best-effort and
-        never move the tip off the key."""
+        orientation with a damped projection that gives position approximate priority. Roll/pitch/yaw
+        are tracked best-effort, and the orientation correction can perturb tip position."""
 
         ik_hover_height: float = MISSING
         """Height [m] above the target key at which the jaw tip is placed on reset."""

@@ -1218,12 +1218,13 @@ class LetterTypingCommand(CommandTerm):
 
         Seeds the arm from its default pose (optionally jittered by ``reset.ik_seed_joint_noise``), then runs
         damped-least-squares differential IK on the
-        moving-jaw tip. Position is the primary task (always driven to zero); the ``~40%`` of iterations
+        moving-jaw tip. Position is the primary task; the ``~40%`` of iterations
         after the base pan settles also drive the approach orientation from ``reset.ik_rpy_deg`` (see
-        :meth:`_approach_target_quat`), but only within the null space of position so the tip never leaves
-        the key. Native worlds evaluate a compact prospective robot/root payload, then publish the
-        completed snapshot once; continuing episodes are never used as reset scratch. Other backends
-        evaluate selected live Newton FK/Jacobians and reconcile once with ``env.forward()``. Both paths
+        :meth:`_approach_target_quat`). Damping makes the position-priority projection approximate, so
+        orientation correction can perturb tip position. Native worlds evaluate a compact prospective
+        robot/root payload, then publish the completed snapshot once; continuing episodes are never
+        used as reset scratch. Other backends evaluate selected live Newton FK/Jacobians and reconcile
+        once with ``env.forward()``. Both paths
         preserve the full-environment iteration draw and use the same DLS equations and joint limits.
         With ``publish=False``, return eligible actor IDs and their complete native snapshots for the
         episode-reset owner to combine with replay rows; online bank construction publishes by default.
@@ -1337,8 +1338,8 @@ class LetterTypingCommand(CommandTerm):
 
             # Task-priority damped least squares. The 5-DoF arm cannot reach an arbitrary key position AND
             # a downward pitch, so full-pose DLS trades away position (measured ~6 cm off). Instead make
-            # POSITION the primary task (always driven to zero) and add the pitch as a SECONDARY task
-            # projected into the null space of position, so orientation can never move the tip off the key.
+            # position the primary task and project the secondary orientation correction through its
+            # damped complement. This approximates null-space projection; position is not invariant.
             j_pos = jac[:, 0:3, :]  # (N, 3, n_joints)
             e_pos = target_w - tip_pos_w  # (N, 3)
             jt_pos = j_pos.transpose(1, 2)
@@ -1348,8 +1349,8 @@ class LetterTypingCommand(CommandTerm):
             pos_pinv = jt_pos @ pos_inverse  # (N, n_joints, 3)
             dq = pos_pinv @ e_pos.unsqueeze(-1)  # (N, n_joints, 1)
 
-            # Phase 2 (once position has settled): pitch the finger down, but only within position's null
-            # space. quat_des is computed once from the heading the arm settled into during phase 1.
+            # Phase 2: add a position-priority pitch correction. quat_des is computed once from the
+            # heading reached during phase 1; damping prevents an exact null-space projection.
             if i >= n_position:
                 if quat_des is None:
                     quat_des = self._approach_target_quat(ee_quat_w)
@@ -1389,8 +1390,8 @@ class LetterTypingCommand(CommandTerm):
         Tilts the finger axis ``pitch`` below horizontal along the arm's settled heading (rotated by
         ``yaw`` about world ``+Z``), then rolls the jaw ``roll`` about that approach (finger) axis. The
         pitch is realized as the minimal rotation of ``ee_quat_w`` onto the desired finger axis. This is
-        the *desired* pose only: the null-space solve tracks it best-effort and never sacrifices the tip
-        position, so it need not be exactly reachable on the 5-DoF arm.
+        the *desired* pose only: the damped solve tracks it with approximate position priority, and it
+        need not be exactly reachable on the 5-DoF arm.
 
         Args:
             ee_quat_w: Current moving-jaw link orientation (x, y, z, w), shape ``(num_envs, 4)``.
