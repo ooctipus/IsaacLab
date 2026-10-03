@@ -7,15 +7,65 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
+from unittest.mock import Mock, call
 
 import gymnasium as gym
 import numpy as np
 import pytest
+import torch
 
 from isaaclab.envs import ManagerBasedRLEnv
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize("ending", [False, True])
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize("override", [False, True])
+def test_final_observation_hook_runs_only_for_enabled_automatic_resets(ending, enabled, override):
+    """Keep terminal observation timing with the environment and preview ownership with the task."""
+    done = torch.tensor([ending, False])
+    ordinary, successor = {"policy": torch.zeros(2, 1)}, {"policy": torch.ones(2, 1)}
+    env = SimpleNamespace(
+        cfg=SimpleNamespace(decimation=1, sim=SimpleNamespace(render_interval=1), compute_final_obs=enabled),
+        device="cpu",
+        num_envs=2,
+        physics_dt=0.01,
+        step_dt=0.01,
+        render_enabled=False,
+        video_recorders=[],
+        _physics_handles_decimation=True,
+        _sim_step_counter=0,
+        common_step_counter=0,
+        episode_length_buf=torch.zeros(2, dtype=torch.long),
+        extras={},
+        action_manager=Mock(),
+        scene=Mock(),
+        recorder_manager=Mock(active_terms=[]),
+        sim=Mock(is_rendering=False, consume_reset_request=Mock(return_value=False)),
+        termination_manager=Mock(compute=Mock(return_value=done), terminated=done, time_outs=torch.zeros_like(done)),
+        reward_manager=Mock(compute=Mock(return_value=torch.zeros(2))),
+        observation_manager=Mock(compute=Mock(return_value=ordinary), preview=Mock(return_value=successor)),
+        command_manager=Mock(),
+        event_manager=Mock(available_modes=[]),
+        _reset_idx=Mock(),
+    )
+    operation = (
+        env.observation_manager.preview if override else MethodType(ManagerBasedRLEnv._compute_final_observations, env)
+    )
+    env._compute_final_observations = Mock(side_effect=operation)
+    ManagerBasedRLEnv.step(env, torch.zeros(2, 1))
+    expected = int(ending and enabled)
+    assert env._compute_final_observations.call_count == expected
+    assert env.observation_manager.preview.call_count == expected * int(override)
+    assert env.observation_manager.compute.call_args_list == (
+        ([call()] if expected and not override else []) + [call(update_history=True)]
+    )
+    if expected:
+        assert env.extras["final_obs"] is (successor if override else ordinary)
+    else:
+        assert "final_obs" not in env.extras
 
 
 def _make_env_with_policy_obs_terms(

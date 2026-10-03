@@ -13,7 +13,7 @@ import numpy as np
 import torch
 
 from ..managers import CommandManager, CurriculumManager, RewardManager, TerminationManager
-from .common import VecEnvStepReturn
+from .common import VecEnvObs, VecEnvStepReturn
 from .manager_based_env import ManagerBasedEnv
 from .manager_based_rl_env_cfg import ManagerBasedRLEnvCfg
 
@@ -153,9 +153,11 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
         }
         scalars = {
             "episode": {
-                "mean_reward": lambda: float(getattr(self, "reward_buf", None).mean())
-                if getattr(self, "reward_buf", None) is not None
-                else 0.0,
+                "mean_reward": lambda: (
+                    float(getattr(self, "reward_buf", None).mean())
+                    if getattr(self, "reward_buf", None) is not None
+                    else 0.0
+                ),
                 "episode_length": lambda: float(self.episode_length_buf.float().mean()),
             }
         }
@@ -242,7 +244,7 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
         if len(reset_env_ids) > 0:
             # capture the terminal observation before reset and expose it for Same-Step autoreset.
             if self.cfg.compute_final_obs:
-                self.extras["final_obs"] = self.observation_manager.compute()
+                self.extras["final_obs"] = self._compute_final_observations()
             self.recorder_manager.record_pre_reset(reset_env_ids)
 
             self._reset_idx(reset_env_ids)
@@ -346,6 +348,14 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
     """
     Helper functions.
     """
+
+    def _compute_final_observations(self) -> VecEnvObs:
+        """Compute pre-reset observations, allowing task-owned successor-state previews.
+
+        Called only when automatic resets occur and ``compute_final_obs`` is enabled.
+        Overrides must preserve live task state and observation history.
+        """
+        return self.observation_manager.compute()
 
     def _configure_gym_env_spaces(self):
         """Configure the action and observation spaces for the Gym environment."""

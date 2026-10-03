@@ -29,8 +29,8 @@ class CommandTerm(ManagerTermBase):
     in the case of a goal-conditioned navigation task, the command term can be used to
     generate a target position for the robot to navigate to.
 
-    It implements a resampling mechanism that allows the command to be resampled at a fixed
-    frequency. The resampling frequency can be specified in the configuration object.
+    It resamples commands at intervals specified in the configuration object, or only on
+    explicit reset when :attr:`CommandTermCfg.resampling_time_range` is None.
     Additionally, it is possible to assign a visualization function to the command term
     that can be used to visualize the command in the simulator.
     """
@@ -48,7 +48,9 @@ class CommandTerm(ManagerTermBase):
         # -- metrics that can be used for logging
         self.metrics = {}
         # -- time left before resampling
-        self.time_left = torch.zeros(self.num_envs, device=self.device)
+        self.time_left = torch.full(
+            (self.num_envs,), float("inf") if cfg.resampling_time_range is None else 0.0, device=self.device
+        )
         # -- counter for the number of times the command has been resampled within the current episode
         self.command_counter = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
 
@@ -150,12 +152,13 @@ class CommandTerm(ManagerTermBase):
         """
         # update the metrics based on current state
         self._update_metrics()
-        # reduce the time left before resampling
-        self.time_left -= dt
-        # resample the command if necessary
-        resample_env_ids = (self.time_left <= 0.0).nonzero().flatten()
-        if len(resample_env_ids) > 0:
-            self._resample(resample_env_ids)
+        if self.cfg.resampling_time_range is not None:
+            # reduce the time left before resampling
+            self.time_left -= dt
+            # resample the command if necessary
+            resample_env_ids = (self.time_left <= 0.0).nonzero().flatten()
+            if len(resample_env_ids) > 0:
+                self._resample(resample_env_ids)
         # update the command
         self._update_command()
 
@@ -175,7 +178,10 @@ class CommandTerm(ManagerTermBase):
         num_envs = len(range(self.num_envs)[env_ids]) if isinstance(env_ids, slice) else len(env_ids)
         if num_envs != 0:
             # resample the time left before resampling
-            self.time_left[env_ids] = self.time_left[env_ids].uniform_(*self.cfg.resampling_time_range)
+            if self.cfg.resampling_time_range is None:
+                self.time_left[env_ids] = float("inf")
+            else:
+                self.time_left[env_ids] = self.time_left[env_ids].uniform_(*self.cfg.resampling_time_range)
             # resample the command
             self._resample_command(env_ids)
             # increment the command counter
