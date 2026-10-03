@@ -587,7 +587,6 @@ class LetterTypingCommand(CommandTerm):
             ],
             device=str(self.device),
         )
-        wp.synchronize()
         return target, typed, target_len, typed_len, prefix_len
 
     def _sample_diverse_states(self, cap: int, world_ids: torch.Tensor | None = None, variant_ids=None):
@@ -1237,12 +1236,7 @@ class LetterTypingCommand(CommandTerm):
         staged = isinstance(bank, KeyboardWorlds)
         if not staged and not publish:
             raise ValueError("Only native reset payloads can be prepared without publishing.")
-        # _resample_command filled typed/target and the derived typed_len/prefix_len via a Warp kernel
-        # launched moments earlier in super().reset(). target_key_pos_w() below reads those tensors back
-        # in torch within this same call (no env step in between), so synchronize Warp first: otherwise
-        # the read can race the kernel and see stale lengths, making needs_backspace False and snapping the
-        # arm to the next key instead of the backspace key for a pre-filled wrong buffer.
-        wp.synchronize()
+        # The task root orders Warp resampling and Torch IK on the caller's stream.
         eligible = self.target_len > 0
         if not staged:
             eligible = (

@@ -34,6 +34,7 @@
 - Validate explicit indexed writes before changing state: environment indices must be unique, in range and on the owner device, and values must match the declared shape and dtype. Keep the full-population path free of index scans.
 - Fused MDP kernels must preserve tensor shape and index-domain contracts before dereferencing native storage; broadcasting is not a pointer-bound guarantee.
 - Mixed Torch/Warp task roots own producer ordering across actions, physics, resets and observations. Use one shared stream-scope operation with dependencies on both entry and exit; do not rely on default-stream coincidence or scatter task synchronization into numerical kernels.
+- Private numerical MDP helpers preserve the task root's stream ordering; they must not impose whole-device synchronization.
 - The environment owns terminal-observation timing; task overrides own successor previews and must preserve live command state, RNG and observation history. Do not copy a parent step loop to customize terminal observations.
 - Keep the original integer width when comparing identities. Masked identities may be arbitrary; included out-of-range identities must be rejected without accessing the destination bank.
 - Borrow derived body poses through read-only field descriptors with the existing placement, readiness and episode masks. Do not cache gathered physics values or expose derived poses as independent writable coordinates.

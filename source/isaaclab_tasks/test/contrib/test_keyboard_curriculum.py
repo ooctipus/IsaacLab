@@ -149,8 +149,9 @@ def test_replay_only_samples_requested_prototypes_without_normal_weight_floor():
     assert not torch.equal(desired, command._env.keyboard_variants.variant_ids)
 
 
-def test_candidate_sampling_uses_only_the_requested_noncontiguous_cohort():
+def test_candidate_sampling_uses_only_the_requested_noncontiguous_cohort(monkeypatch):
     command = _command()
+    monkeypatch.setattr(wp, "synchronize", lambda: pytest.fail("Sampling must preserve the task's stream ordering"))
     worlds = torch.tensor([4, 1])
     keys, counts, backspace = command._sampling_keys(worlds)
     assert wp.to_torch(keys)[:, :2].tolist() == [[4, 5], [4, 5]]
@@ -327,6 +328,7 @@ def test_native_normal_ik_completes_prospective_payload_before_publication_and_p
     command.target = torch.zeros((3, 1), dtype=torch.long)
     command.target_len = torch.ones(3, dtype=torch.long)
     command.typed_len = command.prefix_len = torch.zeros(3, dtype=torch.long)
+    monkeypatch.setattr(wp, "synchronize", lambda: pytest.fail("Reset IK must preserve the task's stream ordering"))
     ids = torch.tensor([2, 0])
     before = bank.reset_defaults.clone()
     torch.manual_seed(721)
