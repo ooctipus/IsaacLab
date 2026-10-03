@@ -120,3 +120,21 @@ def test_time_out_vs_terminated_split(env):
     out = tm.compute()
     assert torch.all(out)
     assert torch.all(tm.terminated) and torch.all(tm.time_outs)
+
+
+def test_last_episode_causes_preserve_continuing_rows(env):
+    env.num_envs = 4
+    env.causes = torch.tensor([[True, False], [False, True], [True, True], [False, False]])
+    manager = TerminationManager(
+        {
+            "a": TerminationTermCfg(func=lambda env: env.causes[:, 0]),
+            "b": TerminationTermCfg(func=lambda env: env.causes[:, 1], time_out=True),
+        },
+        env,
+    )
+    manager.compute()
+    original = manager._last_episode_dones
+    env.causes = torch.tensor([[False, False], [True, False], [False, True], [False, False]])
+    assert manager.compute().tolist() == [False, True, True, False]
+    assert manager._last_episode_dones is original
+    assert original.tolist() == [[True, False], [True, False], [False, True], [False, False]]
