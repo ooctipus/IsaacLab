@@ -7,13 +7,12 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import torch
+import warp as wp
 
-from isaaclab.utils.math import subtract_frame_transforms
-
-from ..newton_selection import NewtonSelection
+from ..newton_selection import NewtonSelection, pose_field_active, pose_field_read
 from ..selection_contracts import require_count_per_world, require_same_world_domain
 
 if TYPE_CHECKING:
@@ -22,13 +21,44 @@ if TYPE_CHECKING:
     from .commands import LetterTypingCommand
 
 
-def _slots_onehot(slots: torch.Tensor, num_keys: int) -> torch.Tensor:
+@wp.kernel(enable_backward=False)
+def _encode_slots(slots: wp.array2d[wp.int64], active: wp.array2d[bool], out: wp.array3d[float]):
+    world, letter, key = wp.tid()
+    out[world, letter, key] = float(slots[world, letter] == wp.int64(key) and active[world, key])
+
+
+@wp.kernel(enable_backward=False, module="unique", module_options={"fuse_fp": False})
+def _relative_key_positions(
+    roots: Any,
+    keys: Any,
+    out: wp.array2d[wp.vec3],
+):
+    world, slot = wp.tid()
+    position = wp.vec3(0.0)
+    if pose_field_active(roots, world, 0) and pose_field_active(keys, world, slot):
+        root = pose_field_read(roots, world, 0)
+        q = wp.transform_get_rotation(root)
+        q = wp.quat(-q[0], -q[1], -q[2], q[3]) / wp.max(wp.dot(q, q), 1.0e-9)
+        relative = wp.transform_get_translation(pose_field_read(keys, world, slot)) - wp.transform_get_translation(root)
+        imaginary = wp.vec3(q[0], q[1], q[2])
+        cross = 2.0 * wp.cross(imaginary, relative)
+        position = relative + q[3] * cross + wp.cross(imaginary, cross)
+    out[world, slot] = position
+
+
+def _slots_onehot(slots: torch.Tensor, active: torch.Tensor) -> torch.Tensor:
     """One-hot a ``(num_envs, max_len)`` slot-id buffer (``-1`` marks empty) into ``(num_envs, max_len * num_keys)``.
 
     Empty/padding positions (slot ``-1``) become all-zero rows, so they contribute nothing.
     """
-    onehot = torch.zeros((*slots.shape, num_keys), dtype=torch.float, device=slots.device)
-    onehot.scatter_(-1, slots.clamp(min=0).unsqueeze(-1), (slots >= 0).unsqueeze(-1).to(torch.float))
+    onehot = torch.empty((*slots.shape, active.shape[1]), dtype=torch.float, device=slots.device)
+    wp.launch(
+        _encode_slots,
+        onehot.shape,
+        inputs=[wp.from_torch(slots), wp.from_torch(active)],
+        outputs=[wp.from_torch(onehot)],
+        device=str(slots.device),
+    )
     return onehot.reshape(slots.shape[0], -1)
 
 
@@ -40,8 +70,7 @@ def target_keys_onehot(env: ManagerBasedRLEnv, command_name: str) -> torch.Tenso
     each target key is.
     """
     command: LetterTypingCommand = env.command_manager.get_term(command_name)  # type: ignore
-    active = command.key_joints.dense_active().gather(1, command.target.clamp(min=0))
-    return _slots_onehot(torch.where(active, command.target, -1), command.num_keys)
+    return _slots_onehot(command.target, command.key_joints.dense_active())
 
 
 def typed_keys_onehot(env: ManagerBasedRLEnv, command_name: str) -> torch.Tensor:
@@ -52,8 +81,7 @@ def typed_keys_onehot(env: ManagerBasedRLEnv, command_name: str) -> torch.Tensor
     mistake the agent must backspace.
     """
     command: LetterTypingCommand = env.command_manager.get_term(command_name)  # type: ignore
-    active = command.key_joints.dense_active().gather(1, command.typed.clamp(min=0))
-    return _slots_onehot(torch.where(active, command.typed, -1), command.num_keys)
+    return _slots_onehot(command.typed, command.key_joints.dense_active())
 
 
 def joint_pos(env: ManagerBasedRLEnv, joints: NewtonSelection) -> torch.Tensor:
@@ -70,11 +98,17 @@ def key_positions_b(env: ManagerBasedRLEnv, keys: NewtonSelection, root: NewtonS
     """Key positions [m] relative to exactly one robot root per world, in stable slot order."""
     require_same_world_domain(keys, root)
     require_count_per_world(root, 1)
-    root_pose = root.read_state("body_q")
-    key_pose = keys.read_state("body_q")
-    pos, _ = subtract_frame_transforms(root_pose[..., :3], root_pose[..., 3:], key_pose[..., :3])
-    active = keys.dense_active() & root.dense_active()
-    return torch.where(active.unsqueeze(-1), pos, 0.0).flatten(1)
+    roots = root.pose_field("state", "body_q")
+    key_poses = keys.pose_field("state", "body_q")
+    positions = wp.empty(keys.dense_shape, dtype=wp.vec3, device=key_poses.sources.device)
+    wp.launch(
+        _relative_key_positions,
+        keys.dense_shape,
+        inputs=[roots, key_poses],
+        outputs=[positions],
+        device=positions.device,
+    )
+    return wp.to_torch(positions).flatten(1)
 
 
 def last_action(env: ManagerBasedRLEnv) -> torch.Tensor:

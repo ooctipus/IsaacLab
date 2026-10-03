@@ -11,6 +11,8 @@ import gc
 import weakref
 from contextlib import nullcontext
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 from unittest.mock import patch
 
 import newton
@@ -19,6 +21,8 @@ import pytest
 import torch
 import warp as wp
 from gpu_components.directory_data import InstanceDirectoryData
+
+from isaaclab.utils.warp.utils import warp_on_torch_stream
 
 from isaaclab_tasks.contrib.keyboard.mujoco_selection import (
     EnvWorldBindings,
@@ -43,8 +47,150 @@ from isaaclab_tasks.contrib.keyboard.newton_selection import (
     JOINT_DOF,
     NewtonSelectionGroup,
     NewtonSelections,
+    pose_field_active,
+    pose_field_read,
 )
 from isaaclab_tasks.contrib.keyboard.selection_paths import NewtonSelectorCfg, resolve_selection
+
+
+@wp.kernel
+def _probe_pose_field(
+    field: Any, worlds: wp.array[int], slots: wp.array[int], active: wp.array[bool], values: wp.array[wp.transform]
+):
+    i = wp.tid()
+    active[i] = pose_field_active(field, worlds[i], slots[i])
+    values[i] = pose_field_read(field, worlds[i], slots[i])
+
+
+@wp.kernel
+def _stream_increment(source: wp.array[float], destination: wp.array[float]):
+    destination[wp.tid()] = source[wp.tid()] + 1.0
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda:0"])
+@pytest.mark.parametrize("operation", ["reset", "reset_to", "step", "forward", "reset_keyboard"])
+def test_keyboard_root_orders_torch_and_warp_producers(device, operation):
+    from isaaclab.envs import ManagerBasedRLEnv
+
+    from isaaclab_tasks.contrib.keyboard.so101_env import SO101KeyboardEnv
+
+    if device.startswith("cuda") and not wp.is_cuda_available():
+        pytest.skip("CUDA is unavailable")
+    source, destination = (torch.zeros(4, device=device) for _ in range(2))
+    source_wp, destination_wp = wp.from_torch(source), wp.from_torch(destination)
+    observed = wp.empty_like(destination_wp)
+    result = []
+
+    def numerical_stage(*args, **kwargs):
+        wp.launch(_stream_increment, 4, inputs=[source_wp], outputs=[destination_wp], device=device)
+        result.append(destination * 2.0)
+
+    env = SO101KeyboardEnv.__new__(SO101KeyboardEnv)
+    env._is_closed = True
+    env.sim = SimpleNamespace(device=device, forward=numerical_stage if operation == "forward" else lambda: None)
+    env.keyboard_variants = object()
+    env._reset_idx = numerical_stage
+    wp.synchronize_device(device)
+    prior = wp.ScopedStream(wp.Stream(device), sync_exit=True) if device.startswith("cuda") else nullcontext()
+    producer = torch.cuda.stream(torch.cuda.Stream(device=device)) if device.startswith("cuda") else nullcontext()
+    parent_operation = operation if operation in {"reset", "reset_to", "step"} else "step"
+    with prior, producer, patch.object(ManagerBasedRLEnv, parent_operation, numerical_stage):
+        if device.startswith("cuda"):
+            torch.cuda._sleep(20_000_000)
+        source.fill_(41.0)
+        if operation == "reset":
+            env.reset()
+        elif operation == "reset_to":
+            env.reset_to({})
+        elif operation == "step":
+            env.step(None)
+        elif operation == "forward":
+            env.forward()
+        else:
+            env.reset_keyboard(torch.arange(4, device=device), torch.zeros(4, device=device, dtype=torch.long))
+        # This consumer uses the restored Warp stream, not the caller's Torch stream.
+        wp.copy(observed, destination_wp)
+    wp.synchronize_device(device)
+    torch.testing.assert_close(wp.to_torch(observed), torch.full_like(destination, 42.0))
+    assert len(result) == 1
+    torch.testing.assert_close(result[0], torch.full_like(destination, 84.0))
+
+
+def test_keyboard_observations_preserve_padding_participation_and_frame_math():
+    from isaaclab.utils.math import subtract_frame_transforms
+
+    from isaaclab_tasks.contrib.keyboard.mdp.observations import (
+        _relative_key_positions,
+        target_keys_onehot,
+        typed_keys_onehot,
+    )
+
+    wp.init()
+    generator = torch.Generator().manual_seed(351)
+    worlds, keys, width = 11, 18, 5
+    active = torch.rand(worlds, keys, generator=generator) > 0.3
+    active[0] = False
+    slots = torch.randint(-1, keys, (worlds, width), generator=generator)
+    command = SimpleNamespace(
+        target=slots, typed=slots.flip(1), key_joints=SimpleNamespace(dense_active=lambda: active)
+    )
+    env = SimpleNamespace(command_manager=SimpleNamespace(get_term=lambda name: command))
+    for operation, tokens in ((target_keys_onehot, command.target), (typed_keys_onehot, command.typed)):
+        expected = torch.zeros(worlds, width, keys)
+        for world in range(worlds):
+            for letter, key in enumerate(tokens[world].tolist()):
+                if key >= 0 and active[world, key]:
+                    expected[world, letter, key] = 1
+        torch.testing.assert_close(operation(env, "typing"), expected.flatten(1), rtol=0, atol=0)
+
+    roots = torch.randn(worlds, 1, 7, generator=generator)
+    roots[0, :, 3:] = 0
+    poses = torch.randn(worlds, keys, 7, generator=generator)
+    root_active = torch.rand(worlds, 1, generator=generator) > 0.2
+    expected, _ = subtract_frame_transforms(roots[..., :3], roots[..., 3:], poses[..., :3])
+    expected = torch.where((active & root_active)[..., None], expected, 0)
+    output = torch.full((worlds, keys, 3), float("nan"))
+
+    def pose_field(values, membership):
+        from isaaclab_tasks.contrib.keyboard.newton_selection import NewtonPoseField, _PoseSource
+
+        field, source = NewtonPoseField(), _PoseSource()
+        source.values = wp.from_torch(values.reshape(-1, 7), dtype=wp.transform)
+        field.sources = wp.array([source], dtype=_PoseSource, device="cpu")
+        field.sources._values = source.values
+        field.source_ids = wp.zeros(worlds, dtype=int, device="cpu")
+        field.ids = wp.from_torch(
+            torch.arange(values.shape[0] * values.shape[1], dtype=torch.int32).reshape(values.shape[:2])
+        )
+        field.active = wp.from_torch(membership)
+        return field
+
+    wp.launch(
+        _relative_key_positions,
+        (worlds, keys),
+        inputs=[
+            pose_field(roots, root_active),
+            pose_field(poses, active),
+        ],
+        outputs=[wp.from_torch(output, dtype=wp.vec3)],
+        device="cpu",
+    )
+    torch.testing.assert_close(output, expected, rtol=2e-6, atol=2e-6)
+    probe_active, probe_values = wp.empty(5, dtype=bool, device="cpu"), wp.empty(5, dtype=wp.transform, device="cpu")
+    wp.launch(
+        _probe_pose_field,
+        5,
+        [
+            pose_field(poses, active),
+            wp.array([-1, worlds, 1, 1, 1], dtype=int, device="cpu"),
+            wp.array([0, 0, -1, keys, 0], dtype=int, device="cpu"),
+        ],
+        [probe_active, probe_values],
+        device="cpu",
+    )
+    np.testing.assert_array_equal(probe_active.numpy(), [False, False, False, False, bool(active[1, 0])])
+    np.testing.assert_array_equal(probe_values.numpy()[:4], 0)
+    np.testing.assert_array_equal(probe_values.numpy()[4], poses[1, 0].numpy() if active[1, 0] else np.zeros(7))
 
 
 @pytest.fixture(params=["cpu", "cuda:0"])
@@ -389,7 +535,6 @@ def test_fixed_root_writer_masks_frames_and_stream_order(device, nested_task):
     from isaaclab.utils.math import combine_frame_transforms
 
     from isaaclab_tasks.contrib.keyboard.mdp.reset import write_fixed_root_poses
-    from isaaclab_tasks.contrib.keyboard.so101_population_env import SO101KeyboardPopulationEnv
 
     if device.startswith("cuda") and not wp.is_cuda_available():
         pytest.skip("CUDA is unavailable")
@@ -444,9 +589,7 @@ def test_fixed_root_writer_masks_frames_and_stream_order(device, nested_task):
             delayed = torch.empty_like(storage)[..., ::2]
             delayed.copy_(poses)
             if nested_task:
-                task = SO101KeyboardPopulationEnv.__new__(SO101KeyboardPopulationEnv)
-                task.device = device
-                with task._stream_scope():
+                with warp_on_torch_stream(device):
                     write_fixed_root_poses(env, roots, ids, delayed)
                 # Reproduce _demand/_failed readback after returning from a nested task scope.
                 torch.cuda._sleep(200_000_000)
@@ -732,6 +875,36 @@ def test_grouped_selection_routes_exact_native_populations(device):
     poses = bodies.read_state("body_q")
     assert poses.shape == (5, 3, 7)
     assert not poses[[0, 2, 4], 2].any()
+    from isaaclab_tasks.contrib.keyboard.mdp.observations import key_positions_b
+
+    root_cfg = NewtonSelectorCfg(BODY, "/Robot/root")
+    root_parts = [(resolve_selection(owner, root_cfg), rows) for owner, rows in zip(bindings, actors, strict=True)]
+    roots = NewtonSelectionGroup(BODY, root_parts, 5)
+    for state in states:
+        wp.to_torch(state.body_q)[:, 0] = torch.arange(len(state.body_q), device=device)
+    for selected_bodies, selected_roots in (
+        (bodies, roots),
+        *((part, root) for (part, _), (root, _) in zip(bodies.native_bindings, roots.native_bindings, strict=True)),
+    ):
+        expected_positions = (
+            selected_bodies.read_state("body_q")[..., :3] - selected_roots.read_state("body_q")[..., :3]
+        )
+        expected_positions = torch.where(selected_bodies.dense_active()[..., None], expected_positions, 0)
+        if selected_bodies is bodies:
+            group_positions = expected_positions.flatten(1)
+        torch.testing.assert_close(
+            key_positions_b(SimpleNamespace(device=device), selected_bodies, selected_roots),
+            expected_positions.flatten(1),
+        )
+        assert selected_bodies.dense_shape == expected_positions.shape[:2]
+        with pytest.raises(ValueError, match="body selection"):
+            selected.pose_field("state", "body_q")
+        with pytest.raises(TypeError, match="transform"):
+            selected_bodies.pose_field("model", "body_mass")
+    # Reacquisition observes a new logical placement; no dense pose is cached.
+    bodies.rebind(tuple(reversed(bodies.native_bindings)))
+    roots.rebind(tuple(reversed(roots.native_bindings)))
+    torch.testing.assert_close(key_positions_b(SimpleNamespace(device=device), bodies, roots), group_positions)
     from isaaclab.utils import class_to_dict
 
     assert class_to_dict(selected) == {}
@@ -788,6 +961,107 @@ def test_keyboard_has_no_internal_contacts(partition_mode):
     assert solver.mj_data.ncon > 0
     for contact in solver.mj_data.contact:
         assert any("probe_collision" in solver.mj_model.geom(int(geom)).name for geom in contact.geom)
+
+
+@pytest.mark.parametrize("source_case", ["none", "shared", "variant_change", "destination_change"])
+def test_keyboard_host_sources_skip_only_proven_identical_publication(monkeypatch, source_case):
+    import isaaclab_tasks.contrib.keyboard.keyboard_variants as module
+
+    class Resource:
+        def __eq__(self, other):
+            raise AssertionError("Resource equality cannot prove allocation identity")
+
+    reference = None if source_case == "none" else Resource()
+    other = Resource()
+    registered = [reference, other if source_case == "variant_change" else reference]
+    initial = [reference, other if source_case == "destination_change" else reference]
+    suffix = "parts/part_000/base_link"
+    shape_suffix, joint_suffix = suffix + "/shape", suffix + "/joint"
+
+    def array(values):
+        return wp.array(values, dtype=wp.int32, device="cpu")
+
+    model = newton.Model("cpu")
+    model.__dict__.update(
+        body_label=[f"/world{i}/Keyboard/{suffix}" for i in range(2)],
+        shape_label=[f"/world{i}/Keyboard/{shape_suffix}" for i in range(2)],
+        joint_label=[f"/world{i}/Keyboard/{joint_suffix}" for i in range(2)],
+        body_world=array([0, 1]),
+        shape_world=array([0, 1]),
+        shape_body=array([0, 1]),
+        shape_type=array([int(newton.GeoType.BOX)] * 2),
+        shape_flags=array([0, 0]),
+        shape_source=initial.copy(),
+        use_coord_layout_targets=True,
+    )
+    sources = [
+        SimpleNamespace(
+            body_label=[f"/Keyboard/{suffix}"],
+            shape_label=[f"/Keyboard/{shape_suffix}"],
+            joint_label=[f"/Keyboard/{joint_suffix}"],
+            shape_type=array([int(newton.GeoType.BOX)]),
+            shape_flags=array([0]),
+            shape_source=[resource],
+            joint_qd_start=array([0]),
+        )
+        for resource in registered
+    ]
+    remaining = iter(sources)
+    builder = SimpleNamespace(
+        begin_world=lambda: None,
+        end_world=lambda: None,
+        add_usd=lambda *a, **k: None,
+        finalize=lambda device: next(remaining),
+    )
+    selection = SimpleNamespace(dense_ids=lambda: torch.tensor([[0], [1]]), joint_ids=array([0, 1]))
+    layout = SimpleNamespace(
+        partition_mode="fixed_dof",
+        partition_dof=6,
+        partition_count=18,
+        active_key_count=6,
+        keys=[SimpleNamespace(label="backspace", slot=0)],
+    )
+    layout.active_keys = layout.keys
+    env = SimpleNamespace(
+        num_envs=2,
+        device="cpu",
+        selections=SimpleNamespace(
+            body_active=wp.ones(2, dtype=wp.bool, device="cpu"),
+            world_active=wp.ones(2, dtype=wp.bool, device="cpu"),
+            refresh=lambda: None,
+        ),
+        sim=SimpleNamespace(physics_manager=SimpleNamespace(create_builder=lambda **kwargs: builder)),
+        cfg=SimpleNamespace(
+            cache_keyboard_constants=False,
+            sim=SimpleNamespace(physics=SimpleNamespace(load_visual_shapes=True)),
+            commands=SimpleNamespace(typing=SimpleNamespace(keys=selection, key_dofs=selection)),
+        ),
+        _property_world_mask=wp.zeros(3, dtype=wp.bool, device="cpu"),
+    )
+    state = SimpleNamespace(joint_q=wp.zeros(2, device="cpu"), joint_qd=wp.zeros(2, device="cpu"))
+    control = SimpleNamespace(
+        **{name: wp.zeros(2, device="cpu") for name in ("joint_target_q", "joint_target_qd", "joint_f")}
+    )
+    monkeypatch.setattr(module, "generate_keyboard", lambda cfg: layout)
+    monkeypatch.setattr(module, "spawn_keyboard", lambda *args, **kwargs: None)
+    monkeypatch.setattr(module, "replace_newton_builder_shape_colors", lambda *args: None)
+    for name, value in (("get_model", model), ("get_state", state), ("get_control", control)):
+        monkeypatch.setattr(module.NewtonManager, name, lambda value=value: value)
+    for name in ("notify_model_changed", "set_body_sleep_policy", "invalidate_fk"):
+        monkeypatch.setattr(module.NewtonManager, name, lambda *args, **kwargs: None)
+    bank = module.KeyboardVariants(env, (SimpleNamespace(uniform_key_shapes=True),) * 2)
+    if source_case in ("none", "shared"):
+
+        def forbid_readback(self):
+            raise AssertionError("Unchanged host descriptors must not read back reset indices")
+
+        monkeypatch.setattr(torch.Tensor, "tolist", forbid_readback)
+    bank.apply(torch.tensor([1]), torch.tensor([1]))
+    assert model.shape_source[0] is initial[0]
+    assert model.shape_source[1] is registered[1]
+    bank.apply(torch.tensor([1]), torch.tensor([0]))
+    assert model.shape_source[0] is initial[0]
+    assert model.shape_source[1] is registered[0]
 
 
 @pytest.mark.parametrize("use_graph", [False, True])
@@ -1100,8 +1374,32 @@ def test_native_fields_follow_handles_strides_generations_and_reference_coordina
     np.testing.assert_array_equal(groups[1].data.ctrl.numpy()[1], [41.375, 40.375, 0, 0])
     np.testing.assert_array_equal(groups[1].data.qfrc_applied.numpy()[1], 0)
     bodies = selections.bind(BODY, ((0,), (0, 1)), policy_width=2)
+    assert bodies.dense_shape == (3, 2)
     np.testing.assert_allclose(bodies.read_state("body_q").numpy()[1], [[1, 2, 3, 0, 0, 0, 1]] * 2)
     np.testing.assert_allclose(bodies.read_model("body_q").numpy()[1], [[0, 0, 0, 0, 0, 0, 1]] * 2)
+    from isaaclab_tasks.contrib.keyboard.mdp.observations import key_positions_b
+
+    roots = selections.bind(BODY, ((0,), (0,)), policy_width=1)
+    wp.to_torch(groups[1].data.xpos)[1, 1, 0] = 1.25
+    relative = key_positions_b(SimpleNamespace(device="cpu"), bodies, roots)
+    expected_relative = torch.zeros(3, 6)
+    expected_relative[1, 3] = 0.25
+    torch.testing.assert_close(relative, expected_relative)
+    probe_active, probe_values = wp.empty(5, dtype=bool, device="cpu"), wp.empty(5, dtype=wp.transform, device="cpu")
+    wp.launch(
+        _probe_pose_field,
+        5,
+        [
+            bodies.pose_field("state", "body_q"),
+            wp.array([-1, 3, 1, 1, 1], dtype=int, device="cpu"),
+            wp.array([0, 0, -1, 2, 0], dtype=int, device="cpu"),
+        ],
+        [probe_active, probe_values],
+        device="cpu",
+    )
+    np.testing.assert_array_equal(probe_active.numpy(), [False, False, False, False, True])
+    np.testing.assert_array_equal(probe_values.numpy()[:4], 0)
+    np.testing.assert_array_equal(probe_values.numpy()[4], [1, 2, 3, 0, 0, 0, 1])
     from mujoco_warp._src.types import ConeType, vec5
 
     for group, count in zip(groups, (1, 2)):
@@ -1139,6 +1437,7 @@ def test_native_fields_follow_handles_strides_generations_and_reference_coordina
     generations.assign(np.array([5, 7, 0], np.uint64))
     groups[1].world_storage_ready_count.fill_(1)
     assert not selected.dense_active()[1].any()
+    torch.testing.assert_close(key_positions_b(SimpleNamespace(device="cpu"), bodies, roots), torch.zeros(3, 6))
     for physical, count in zip(buffers, (1, 2)):
         np.testing.assert_array_equal(physical.numpy()[:, count:], -999)
     # A reset-only publication switches env0 and compacts env1 to another row.
@@ -1168,6 +1467,8 @@ def test_native_fields_follow_handles_strides_generations_and_reference_coordina
         lambda: dofs.read_model("joint_target_ke"),
         lambda: bodies.read_state("body_q"),
         lambda: bodies.read_model("body_q"),
+        lambda: bodies.pose_field("state", "body_q"),
+        lambda: bodies.pose_field("model", "body_q"),
         lambda: selected.write_state("joint_q", values, env_ids),
         lambda: dofs.write_control("joint_f", values, env_ids),
         bodies.prepare_contact_forces,

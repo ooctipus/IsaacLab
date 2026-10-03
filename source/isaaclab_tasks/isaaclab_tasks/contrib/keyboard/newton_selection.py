@@ -103,6 +103,37 @@ class _PoseSource:
     values: wp.array[wp.transform]
 
 
+@wp.struct
+class NewtonPoseField:
+    """Borrow read-only body poses [m, xyzw] with the selection's episode mask.
+
+    This is a derived observation, not a generalized coordinate write interface.
+    Native storage must remain stable; reacquire after a group rebind.
+    """
+
+    sources: wp.array[_PoseSource]
+    source_ids: wp.array[int]
+    ids: wp.array2d[int]
+    active: wp.array2d[bool]
+
+
+@wp.func
+def pose_field_active(field: NewtonPoseField, world: int, slot: int) -> bool:
+    if world < 0 or world >= field.active.shape[0] or slot < 0 or slot >= field.active.shape[1]:
+        return False
+    return field.active[world, slot]
+
+
+@wp.func
+def pose_field_read(field: NewtonPoseField, world: int, slot: int) -> wp.transform:
+    """Read one pose; excluded slots have zero position and zero quaternion."""
+    value = wp.transform(wp.vec3(0.0), wp.quat(0.0, 0.0, 0.0, 0.0))
+    if pose_field_active(field, world, slot):
+        source = field.sources[field.source_ids[world]]
+        value = source.values[field.ids[world, slot]]
+    return value
+
+
 @wp.kernel
 def _gather_scalars(
     sources: wp.array[_ScalarSource],
@@ -231,7 +262,8 @@ class NewtonSelection:
         "_dense_ids",
         "_dense_active",
         "_scalar_views",
-        "_scalar_source_ids",
+        "_pose_views",
+        "_source_ids",
     )
 
     def __init__(self, owner, index_domain: str, rows, bodies):
@@ -257,7 +289,8 @@ class NewtonSelection:
         self._dense_ids = None
         self._dense_active = None
         self._scalar_views = {}
-        self._scalar_source_ids = None
+        self._pose_views = {}
+        self._source_ids = None
         if self._dense_width is not None:
             self._dense_ids = wp.to_torch(self.ids).reshape(len(self.world_selection_counts), self._dense_width)
             self._dense_active = wp.to_torch(self.active).reshape(len(self.world_selection_counts), self._dense_width)
@@ -305,6 +338,11 @@ class NewtonSelection:
     def active_counts(self) -> torch.Tensor:
         """Current episode-participating count per model world (GPU int32)."""
         return wp.to_torch(self._counts)[:-1]
+
+    @property
+    def dense_shape(self) -> tuple[int, int]:
+        """Environment and slot extents at the explicit dense policy boundary."""
+        return len(self.world_selection_counts), self.width
 
     def joint_types(self) -> torch.Tensor:
         """Return the native joint types underlying selected coordinates or DOFs."""
@@ -360,18 +398,37 @@ class NewtonSelection:
             if values.dtype != wp.float32 or values.ndim != 1:
                 raise TypeError("Scalar fields require a one-dimensional float32 native array.")
             shape = (len(self.world_selection_counts), self.width)
-            if self._scalar_source_ids is None:
-                self._scalar_source_ids = wp.zeros(
-                    len(self.world_selection_counts), dtype=wp.int32, device=values.device
-                )
+            if self._source_ids is None:
+                self._source_ids = wp.zeros(len(self.world_selection_counts), dtype=wp.int32, device=values.device)
             descriptor = _ScalarSource()
             descriptor.values = values
             view = NewtonScalarField()
             view.sources = wp.array([descriptor], dtype=_ScalarSource, device=values.device)
-            view.source_ids = self._scalar_source_ids
+            view.source_ids = self._source_ids
             view.ids, view.active = self.ids.reshape(shape), self.active.reshape(shape)
             self._scalar_views[key] = view
         return self._scalar_views[key]
+
+    def pose_field(self, source: Literal["state", "model"], attribute: str) -> NewtonPoseField:
+        """Borrow body transforms without materializing a dense pose tensor."""
+        key = source, attribute
+        if key not in self._pose_views:
+            if source not in ("state", "model") or self.index_domain != BODY:
+                raise ValueError("Pose fields require a body selection and state/model source.")
+            _validate_field_domain(self.owner.model, self.index_domain, attribute)
+            values = getattr(getattr(self.owner, source), attribute)
+            if values.dtype != wp.transform or values.ndim != 1:
+                raise TypeError("Pose fields require a one-dimensional transform array.")
+            if self._source_ids is None:
+                self._source_ids = wp.zeros(self.dense_shape[0], dtype=wp.int32, device=values.device)
+            descriptor = _PoseSource()
+            descriptor.values = values
+            field = NewtonPoseField()
+            field.sources = wp.array([descriptor], dtype=_PoseSource, device=values.device)
+            field.source_ids = self._source_ids
+            field.ids, field.active = self.ids.reshape(self.dense_shape), self.active.reshape(self.dense_shape)
+            self._pose_views[key] = field
+        return self._pose_views[key]
 
     def read_model(self, attribute: str, fill: float = 0.0) -> torch.Tensor:
         """Gather a native model attribute in this selection's index domain."""
@@ -544,6 +601,7 @@ class NewtonSelectionGroup:
         "_source_ids",
         "_tables",
         "_scalar_views",
+        "_pose_views",
         "world_selection_counts",
         "world_bindings",
         "_device",
@@ -578,6 +636,11 @@ class NewtonSelectionGroup:
     def native_bindings(self):
         """Model-scoped selections paired with stable logical world IDs."""
         return self._parts
+
+    @property
+    def dense_shape(self) -> tuple[int, int]:
+        """Logical environment and slot extents at the dense policy boundary."""
+        return self._num_envs, self.width
 
     @property
     def use_coord_layout_targets(self) -> bool:
@@ -631,6 +694,7 @@ class NewtonSelectionGroup:
             )
         }
         self._scalar_views = {}
+        self._pose_views = {}
         self._ids.fill_(-1)
         self._active.zero_()
         ids, active, source_ids = map(wp.to_torch, (self._ids, self._active, self._source_ids))
@@ -714,6 +778,21 @@ class NewtonSelectionGroup:
     def read_state(self, attribute: str, fill: float = 0.0) -> torch.Tensor:
         """Gather a state attribute across native populations in one GPU launch."""
         return self._read("state", attribute, fill)
+
+    def pose_field(self, source: Literal["state", "model"], attribute: str) -> NewtonPoseField:
+        """Borrow body transforms across populations; reacquire after ``rebind``."""
+        key = source, attribute
+        if key not in self._pose_views:
+            if source not in ("state", "model") or self.index_domain != BODY:
+                raise ValueError("Pose fields require a body selection and state/model source.")
+            table, dtype = self._table(source, attribute)
+            if dtype != wp.transform:
+                raise TypeError("Pose fields require native transform arrays.")
+            field = NewtonPoseField()
+            field.sources, field.source_ids = table, self._source_ids
+            field.ids, field.active = self._ids, self._active
+            self._pose_views[key] = field
+        return self._pose_views[key]
 
     def read_model(self, attribute: str, fill: float = 0.0) -> torch.Tensor:
         """Gather a model attribute across native populations in one GPU launch."""

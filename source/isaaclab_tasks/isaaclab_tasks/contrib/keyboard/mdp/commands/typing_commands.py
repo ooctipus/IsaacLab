@@ -11,7 +11,7 @@ import inspect
 import math
 from collections.abc import Sequence
 from contextlib import contextmanager
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import newton
 import torch
@@ -28,6 +28,7 @@ from isaaclab.utils.math import (
 
 from isaaclab_tasks.utils.success_monitor import SuccessMonitor, SuccessMonitorCfg
 
+from ...newton_selection import scalar_field_active, scalar_field_read
 from ...selection_contracts import require_count_per_world, require_same_world_domain, require_scalar_joint_pair
 from ..reset import capture_reset_state, prepare_reset_kinematics, sample_root_poses, tip_jacobian
 from . import typing_vis
@@ -137,6 +138,133 @@ def _resample_reset_kernel(
     min_prefix[e] = wp.int64(p)
 
 
+@wp.func
+def _key_pressed(q: Any, lower: Any, upper: Any, fraction: float, world: int, key: int) -> bool:
+    lo = scalar_field_read(lower, world, key)
+    hi = scalar_field_read(upper, world, key)
+    threshold = hi - fraction * (hi - lo)
+    return scalar_field_active(q, world, key) and scalar_field_read(q, world, key) < threshold
+
+
+@wp.kernel(enable_backward=False, module="unique", module_options={"fuse_fp": False})
+def _advance_typing(
+    q: Any,
+    lower: Any,
+    upper: Any,
+    fraction: float,
+    backspace: wp.array[wp.int64],
+    previous: wp.array2d[wp.bool],
+    just_reset: wp.array[wp.bool],
+    typed: wp.array2d[wp.int64],
+    typed_len: wp.array[wp.int64],
+):
+    world = wp.tid()
+    length = int(typed_len[world])
+    adopt = just_reset[world]
+    erase = int(backspace[world])
+    if not adopt and _key_pressed(q, lower, upper, fraction, world, erase) and not previous[world, erase]:
+        length = wp.max(0, length - 1)
+        typed[world, length] = wp.int64(-1)
+    for key in range(previous.shape[1]):
+        down = _key_pressed(q, lower, upper, fraction, world, key)
+        if not adopt and down and not previous[world, key] and key != erase and length < typed.shape[1]:
+            typed[world, length] = wp.int64(key)
+            length += 1
+        previous[world, key] = down
+    just_reset[world] = False
+    typed_len[world] = wp.int64(length)
+
+
+@wp.kernel(enable_backward=False)
+def _restore_typing(
+    env_ids: wp.array[wp.int64],
+    snapshots: wp.array[wp.int64],
+    bank_target: wp.array2d[wp.int64],
+    bank_typed: wp.array2d[wp.int64],
+    bank_target_len: wp.array[wp.int64],
+    bank_typed_len: wp.array[wp.int64],
+    membership: wp.array2d[bool],
+    membership_rows: wp.array[wp.int64],
+    backspace: wp.array[wp.int64],
+    target: wp.array2d[wp.int64],
+    typed: wp.array2d[wp.int64],
+    target_len: wp.array[wp.int64],
+    typed_len: wp.array[wp.int64],
+    previous: wp.array2d[bool],
+    just_reset: wp.array[bool],
+    prefix_len: wp.array[wp.int64],
+    distance: wp.array[float],
+    max_prefix: wp.array[wp.int64],
+    min_prefix: wp.array[wp.int64],
+    new_high: wp.array[bool],
+    new_low: wp.array[bool],
+    invalid: wp.array[bool],
+):
+    request = wp.tid()
+    world, snapshot = env_ids[request], snapshots[request]
+    row = membership_rows[request]
+    wanted, written = bank_target_len[snapshot], bank_typed_len[snapshot]
+    prefix = int(0)
+    while prefix < int(wp.min(wanted, written)):
+        if bank_target[snapshot, prefix] != bank_typed[snapshot, prefix]:
+            break
+        prefix += 1
+    valid = bool(True)
+    for column in range(target.shape[1]):
+        a, b = bank_target[snapshot, column], bank_typed[snapshot, column]
+        target[world, column] = a
+        typed[world, column] = b
+        if a >= 0:
+            if a >= wp.int64(membership.shape[1]) or not membership[row, a]:
+                valid = False
+        if b >= 0:
+            if b >= wp.int64(membership.shape[1]) or not membership[row, b]:
+                valid = False
+    if written > wp.int64(prefix) and not membership[row, backspace[request]]:
+        valid = False
+    for key in range(previous.shape[1]):
+        previous[world, key] = False
+    target_len[world] = wanted
+    typed_len[world] = written
+    just_reset[world] = True
+    prefix_len[world] = wp.int64(prefix)
+    distance[world] = float(wanted + written - wp.int64(2 * prefix))
+    max_prefix[world] = wp.int64(prefix)
+    min_prefix[world] = wp.int64(prefix)
+    new_high[world] = False
+    new_low[world] = False
+    invalid[request] = not valid
+
+
+@wp.kernel(enable_backward=False)
+def _typing_metrics(
+    target: wp.array2d[wp.int64],
+    typed: wp.array2d[wp.int64],
+    target_len: wp.array[wp.int64],
+    typed_len: wp.array[wp.int64],
+    prefix_len: wp.array[wp.int64],
+    distance: wp.array[float],
+    max_prefix: wp.array[wp.int64],
+    min_prefix: wp.array[wp.int64],
+    new_high: wp.array[wp.bool],
+    new_low: wp.array[wp.bool],
+):
+    world = wp.tid()
+    prefix = int(0)
+    limit = int(wp.min(target_len[world], typed_len[world]))
+    while prefix < limit:
+        if typed[world, prefix] != target[world, prefix]:
+            break
+        prefix += 1
+    value = wp.int64(prefix)
+    prefix_len[world] = value
+    distance[world] = float(target_len[world] + typed_len[world] - wp.int64(2) * value)
+    new_high[world] = value > max_prefix[world]
+    new_low[world] = value < min_prefix[world]
+    max_prefix[world] = wp.max(max_prefix[world], value)
+    min_prefix[world] = wp.min(min_prefix[world], value)
+
+
 class LetterTypingCommand(CommandTerm):
     """Letter-typing command for the procedural SO101 keyboard.
 
@@ -188,7 +316,6 @@ class LetterTypingCommand(CommandTerm):
             self._prototype_membership = membership.to(self.device)
 
         # per-key press threshold (filled lazily once joint limits are available)
-        self._press_level: torch.Tensor | None = None
 
         # buffers: -1 marks an empty / padding slot
         n, length = self.num_envs, self.max_len
@@ -361,6 +488,15 @@ class LetterTypingCommand(CommandTerm):
             return
         source = self._sample_sources(env_ids_t)  # -1 normal reset, else a compatible snapshot
         self._env_source[env_ids_t] = source
+        if self.cfg.reset.replay_only:
+            # Sampling guarantees a snapshot for every request. Snapshot validation
+            # still owns the fallback when a stored word is no longer compatible.
+            from ...keyboard_worlds import KeyboardWorlds
+
+            self._restore_snapshot(
+                env_ids_t, source, publish=not isinstance(self._env.keyboard_variants, KeyboardWorlds)
+            )
+            return
         normal_mask = source < 0
         normal_ids = env_ids_t[normal_mask]
         if normal_ids.numel() > 0:
@@ -773,34 +909,50 @@ class LetterTypingCommand(CommandTerm):
         assert self._buf_state is not None  # allocated in _build_buffer, which always runs first
         if publish:
             self._env.restore_reset_snapshot(env_ids, self._buf_variant[snap], self._buf_state[snap])
-        self.target[env_ids] = self._buf_target[snap]
-        self.typed[env_ids] = self._buf_typed[snap]
-        self.target_len[env_ids] = self._buf_target_len[snap]
-        self.typed_len[env_ids] = self._buf_typed_len[snap]
-        self._prev_pressed[env_ids] = False
-        self._just_reset[env_ids] = True
-        prefix = self._prefix_len()[env_ids]
-        self.prefix_len[env_ids] = prefix
-        self.distance[env_ids] = (self.target_len[env_ids] + self.typed_len[env_ids] - 2 * prefix).float()
-        self.max_prefix[env_ids] = prefix
-        self.min_prefix[env_ids] = prefix
-        self.new_high[env_ids] = False
-        self.new_low[env_ids] = False
-        tokens = torch.cat((self.target[env_ids], self.typed[env_ids]), dim=1)
         if publish:
-            membership = self.key_joints.dense_active()[env_ids]
+            membership, rows = self.key_joints.dense_active(), env_ids
             backspace = self._backspace[env_ids]
         else:
             variants = self._env.reset_variant_ids(env_ids)
             torch._assert_async(
                 (self._buf_variant[snap] == variants).all(), "Replay snapshot must match requested prototype."
             )
-            membership = self._prototype_membership[variants]
+            membership, rows = self._prototype_membership, variants
             backspace = self._env.keyboard_variants.backspace_slots[variants]
-        active = membership.gather(1, tokens.clamp(min=0))
-        needs_backspace = self.typed_len[env_ids] > prefix
-        backspace_active = membership.gather(1, backspace[:, None]).squeeze(1)
-        invalid = env_ids[((tokens >= 0) & ~active).any(dim=1) | (needs_backspace & ~backspace_active)]
+        invalid = torch.empty(len(env_ids), dtype=torch.bool, device=self.device)
+        wp.launch(
+            _restore_typing,
+            len(env_ids),
+            inputs=[
+                wp.from_torch(value)
+                for value in (
+                    env_ids,
+                    snap,
+                    self._buf_target,
+                    self._buf_typed,
+                    self._buf_target_len,
+                    self._buf_typed_len,
+                    membership,
+                    rows,
+                    backspace,
+                    self.target,
+                    self.typed,
+                    self.target_len,
+                    self.typed_len,
+                    self._prev_pressed,
+                    self._just_reset,
+                    self.prefix_len,
+                    self.distance,
+                    self.max_prefix,
+                    self.min_prefix,
+                    self.new_high,
+                    self.new_low,
+                    invalid,
+                )
+            ],
+            device=self.device,
+        )
+        invalid = env_ids[invalid]
         if invalid.numel():
             self._env_source[invalid] = -1
             self._resample_normal(invalid)
@@ -870,53 +1022,23 @@ class LetterTypingCommand(CommandTerm):
         self.new_low[env_ids_t] = False
 
     def _update_command(self):
-        if self._press_level is None or self._env.keyboard_variants is not None:
-            # Convention (keyboard_schema.KEY_ACTUATION_FRACTION): rest at upper_limit (~0), bottom at
-            # lower_limit (-travel); a key actuates once depressed past a fraction of its travel.
-            lower = self.cfg.key_dofs.read_model("joint_limit_lower")
-            upper = self.cfg.key_dofs.read_model("joint_limit_upper")
-            self._press_level = upper - self.cfg.actuation_fraction * (upper - lower)
-
-        pos = self.key_joints.read_state("joint_q")
-        pressed = (pos < self._press_level) & self.key_joints.dense_active()
-        # First control step after a reset: adopt the carried-over pressed keys as the baseline so a key
-        # already held at reset is not counted as a fresh keystroke. Applied unconditionally via a masked
-        # write, so there is no per-step ``.any()`` device->host sync.
-        self._prev_pressed = torch.where(self._just_reset[:, None], pressed, self._prev_pressed)
-        self._just_reset.zero_()
-        new_press = pressed & ~self._prev_pressed
-        self._prev_pressed = pressed
-
-        # Real-keyboard model: EVERY key newly pressed this step registers as its own keystroke (no single
-        # "winning" key), so mashing types them all - the extras land in the buffer as mistakes to backspace.
-        # The whole update is vectorized, static-shape and sync-free (no ``nonzero`` / boolean-index gather),
-        # so it stays cheap at large num_envs.
-        n = new_press.shape[0]
-        rows = torch.arange(n, device=self.device)
-        cols = torch.arange(self.num_keys, device=self.device)
-
-        # Backspace (edge-triggered): delete the last typed key for envs whose backspace key was newly
-        # pressed. Advanced-index write over every env - a no-op where backspace was not pressed.
-        bs_mask = new_press[rows, self._backspace]  # (N,)
-        del_len = (self.typed_len - 1).clamp(min=0)  # (N,)
-        at_del = self.typed[rows, del_len]  # (N,) current value at the delete position
-        self.typed[rows, del_len] = torch.where(bs_mask, torch.full_like(at_del, -1), at_del)
-        self.typed_len = torch.where(bs_mask, del_len, self.typed_len)
-
-        # Type: append every newly pressed non-backspace key, in slot (column) order, after the current
-        # buffer position and up to max_len. ``rank`` is each press's 0-indexed position among this env's
-        # presses, so its write column is ``typed_len + rank``. A spare "trash" column (index max_len)
-        # absorbs the non-press / overflow writes, so one masked ``scatter_`` places everything without any
-        # variable-length index gather; ``scatter_`` collisions only happen on the trash column (all -1).
-        type_press = new_press & (cols != self._backspace[:, None])  # (N, K)
-        rank = type_press.long().cumsum(dim=1) - 1  # (N, K)
-        dest = self.typed_len[:, None] + rank  # (N, K)
-        fits = type_press & (dest < self.max_len)  # (N, K)
-        buf = torch.full((n, self.max_len + 1), -1, dtype=self.typed.dtype, device=self.device)
-        buf[:, : self.max_len] = self.typed
-        buf.scatter_(1, torch.where(fits, dest, self.max_len), torch.where(fits, cols.expand(n, -1), -1))
-        self.typed.copy_(buf[:, : self.max_len])
-        self.typed_len = self.typed_len + fits.sum(dim=1)
+        # Adopt held keys after reset; otherwise apply backspace first, then all
+        # new presses in slot order. Read the selected native fields directly.
+        wp.launch(
+            _advance_typing,
+            len(self.typed),
+            inputs=[
+                self.key_joints.scalar_field("state", "joint_q"),
+                self.cfg.key_dofs.scalar_field("model", "joint_limit_lower"),
+                self.cfg.key_dofs.scalar_field("model", "joint_limit_upper"),
+                self.cfg.actuation_fraction,
+                *[
+                    wp.from_torch(value)
+                    for value in (self._backspace, self._prev_pressed, self._just_reset, self.typed, self.typed_len)
+                ],
+            ],
+            device=self.device,
+        )
 
     @contextmanager
     def preview_step(self, dt: float):
@@ -948,7 +1070,7 @@ class LetterTypingCommand(CommandTerm):
             "command_counter",
         )
         original = {name: getattr(self, name) for name in names}
-        metrics, press_level, seed = self.metrics, self._press_level, self._resample_seed
+        metrics, seed = self.metrics, self._resample_seed
         try:
             for name, value in original.items():
                 setattr(self, name, value.clone())
@@ -958,22 +1080,30 @@ class LetterTypingCommand(CommandTerm):
         finally:
             for name, value in original.items():
                 setattr(self, name, value)
-            self.metrics, self._press_level, self._resample_seed = metrics, press_level, seed
+            self.metrics, self._resample_seed = metrics, seed
 
     def _update_metrics(self):
-        # Sequential typing: only the contiguous correct prefix counts. Anything typed past the first
-        # mismatch is "non-prefix" and must be backspaced even if it coincidentally matches later.
-        prefix = self._prefix_len()
-        self.prefix_len = prefix  # exposed for the reward term
-        # distance = non_prefix (= typed_len - prefix) + missing (= target_len - prefix); 0 at success.
-        self.distance = (self.target_len + self.typed_len - 2 * prefix).float()
-        # High-water-mark progress signal for the ratchet reward: flag a new episode max / min prefix this
-        # step, then advance the marks. Because a re-reached length is neither a new max nor a new min, a
-        # keystroke can only ever be rewarded once, so backspace/retype loops cannot farm reward.
-        self.new_high = prefix > self.max_prefix
-        self.new_low = prefix < self.min_prefix
-        self.max_prefix = torch.maximum(self.max_prefix, prefix)
-        self.min_prefix = torch.minimum(self.min_prefix, prefix)
+        # Metrics intentionally precede press processing in CommandTerm.compute.
+        wp.launch(
+            _typing_metrics,
+            len(self.typed),
+            inputs=[
+                wp.from_torch(value)
+                for value in (
+                    self.target,
+                    self.typed,
+                    self.target_len,
+                    self.typed_len,
+                    self.prefix_len,
+                    self.distance,
+                    self.max_prefix,
+                    self.min_prefix,
+                    self.new_high,
+                    self.new_low,
+                )
+            ],
+            device=self.device,
+        )
         self.metrics["distance"] = self.distance
 
     def _prefix_len(self) -> torch.Tensor:
@@ -1007,14 +1137,20 @@ class LetterTypingCommand(CommandTerm):
         # off the episode's start, not its (fixed-length) word. Empty subsets carry the last value forward (0
         # before the first sample) so the curves have no NaN gaps. Without the curriculum every env is uniform.
         if self._cur_enabled and self._buffer_built:
-            from_buffer = self._env_source[ids] >= 0
+            src = self._env_source[ids]
+            from_buffer = src >= 0
         else:
             from_buffer = torch.zeros_like(succeeded, dtype=torch.bool)
         # Administrative cuts have no observed outcome. Keep reductions fixed-size and read all statistics once.
         splits = torch.stack((~from_buffer & completed, from_buffer & completed))
         bands = torch.stack((torch.ones_like(completed), *(start_d < thr for thr in self._distance_bands)))
         masks = (splits[:, None, :] & bands[None, :, :]).flatten(0, 1)
-        statistics = torch.stack(((masks & succeeded).sum(dim=1), masks.sum(dim=1)), dim=1).cpu().tolist()
+        statistics = torch.stack(((masks & succeeded).sum(dim=1), masks.sum(dim=1)), dim=1)
+        # Queue all independent reset accounting before the logging readback.
+        # Sources still refer to the snapshots that seeded the ending episodes.
+        if self._cur_enabled and self._buffer_built:
+            self.success_monitor.success_update(src, succeeded, valid=from_buffer & completed)
+        statistics = statistics.cpu().tolist()
         keys = [
             f"{tag}/{name}"
             for tag in ("uniform", "buffer")
@@ -1025,17 +1161,6 @@ class LetterTypingCommand(CommandTerm):
             if cnt > 0:
                 self._split_last[key] = succ / cnt
             split_metrics[key] = self._split_last.get(key, 0.0)
-
-        # Curriculum: attribute the ending episode's success to the snapshot that seeded each env. Uses the
-        # sources assigned at the PREVIOUS reset (still in _env_source) with the terminal distance read above,
-        # before super().reset() -> _resample_command overwrites both.
-        if self._cur_enabled and self._buffer_built:
-            src = self._env_source[ids]
-            valid = (src >= 0) & completed
-            if bool(valid.any()):
-                self.success_monitor.success_update(src[valid], succeeded[valid])
-                unmeasured = self.success_monitor.success_size == 0
-                self.success_monitor.success_rate[unmeasured] = self.success_monitor.cfg.target_success_rate
 
         # Mark the episode-reset window so _resample_command takes the curriculum path (snapshot restore)
         # here, while the mid-episode resampling timer stays on the normal random resample.

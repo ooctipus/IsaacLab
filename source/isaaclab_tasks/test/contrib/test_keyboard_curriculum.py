@@ -17,6 +17,82 @@ from isaaclab_tasks.contrib.keyboard.mdp.commands.typing_commands import LetterT
 from isaaclab_tasks.utils.success_monitor import SuccessMonitor, SuccessMonitorCfg
 
 
+def _dense_scalar_field(values, active=None):
+    from isaaclab_tasks.contrib.keyboard.newton_selection import NewtonScalarField, _ScalarSource
+
+    field = NewtonScalarField()
+    source = _ScalarSource()
+    source.values = wp.from_torch(values.flatten())
+    field.sources = wp.array([source], dtype=_ScalarSource, device=values.device.type)
+    field.sources._source_values = source.values
+    field.source_ids = wp.zeros(values.shape[0], dtype=wp.int32, device=values.device.type)
+    field.ids = wp.from_torch(torch.arange(values.numel(), dtype=torch.int32).reshape(values.shape))
+    field.active = wp.from_torch(torch.ones_like(values, dtype=torch.bool) if active is None else active)
+    return field
+
+
+@pytest.mark.parametrize("history", [1, 3, 10, 50])
+@pytest.mark.parametrize("masked", [False, True])
+def test_success_history_preserves_order_and_excludes_invalid_slots(history, masked):
+    monitor = SuccessMonitor(SuccessMonitorCfg(monitored_history_len=history), 1, 7, "cpu")
+    monitor.success_rate.fill_(0.5)
+    outcomes = [[0.0] * history for _ in range(7)]
+    pointers, sizes, rates = [0] * 7, [0] * 7, [0.5] * 7
+    generator = torch.Generator().manual_seed(123)
+    for count in (0, 1, 81, 13, 64, 200, 31):
+        slots = torch.randint(0, 6, (count,), generator=generator)
+        success = torch.rand(count, generator=generator) > 0.4
+        valid = torch.rand(count, generator=generator) > 0.3 if masked else torch.ones(count, dtype=torch.bool)
+        if masked:
+            slots[~valid] = -999
+        for slot in range(7):
+            updates = [float(success[i]) for i in range(count) if valid[i] and slots[i] == slot][-history:]
+            for result in updates:
+                outcomes[slot][pointers[slot]] = result
+                pointers[slot] = (pointers[slot] + 1) % history
+            if updates:
+                sizes[slot] = min(history, sizes[slot] + len(updates))
+                rates[slot] = sum(outcomes[slot]) / sizes[slot]
+        monitor.success_update(slots, success, valid=valid if masked else None)
+        torch.testing.assert_close(monitor.success_buf, torch.tensor(outcomes))
+        torch.testing.assert_close(monitor.success_pointer, torch.tensor(pointers))
+        torch.testing.assert_close(monitor.success_size, torch.tensor(sizes))
+        torch.testing.assert_close(monitor.success_rate, torch.tensor(rates))
+
+
+def test_success_history_keeps_masked_int64_identity_and_rejects_invalid_descriptors():
+    original_dtype = torch.get_default_dtype()
+    try:
+        torch.set_default_dtype(torch.float64)
+        monitor = SuccessMonitor(SuccessMonitorCfg(monitored_history_len=3), 1, 2, "cpu")
+    finally:
+        torch.set_default_dtype(original_dtype)
+    assert monitor.success_buf.dtype == monitor.success_rate.dtype == torch.float32
+    monitor.success_update(torch.tensor([0, 2**32]), torch.tensor([True, False]), valid=torch.tensor([True, False]))
+    assert monitor.success_size.tolist() == [1, 0]
+    assert monitor.success_pointer.tolist() == [1, 0]
+    assert monitor.success_buf.tolist() == [[1, 0, 0], [0, 0, 0]]
+    original = monitor.success_buf.clone()
+    for slots, outcomes, valid in (
+        (torch.tensor([0.5]), torch.tensor([True]), None),
+        (torch.tensor([[0]]), torch.tensor([[True]]), None),
+        (torch.tensor([0]), torch.tensor([True, False]), None),
+        (torch.tensor([0]), torch.tensor([True]), torch.tensor([1])),
+    ):
+        with pytest.raises(ValueError):
+            monitor.success_update(slots, outcomes, valid=valid)
+        torch.testing.assert_close(monitor.success_buf, original)
+    for invalid in (-1, 2, 2**32):
+        # The masked tail must not conceal an earlier invalid included identity.
+        with pytest.raises(RuntimeError, match="must index the monitor bank"):
+            monitor.success_update(
+                torch.tensor([invalid, invalid]), torch.tensor([True, False]), valid=torch.tensor([True, False])
+            )
+        torch.testing.assert_close(monitor.success_buf, original)
+    with pytest.raises(ValueError, match="at least one episode"):
+        SuccessMonitor(SuccessMonitorCfg(monitored_history_len=0), 1, 2, "cpu")
+
+
 def _command(heterogeneous=True):
     wp.init()
     command = object.__new__(LetterTypingCommand)
@@ -507,15 +583,99 @@ def test_reset_statistics_use_one_bulk_readback_and_preserve_censored_bands(monk
     assert readbacks == [(torch.Size((10, 2)), torch.int64)]
 
 
+@pytest.mark.parametrize("keys,width", [(6, 1), (108, 4)])
+def test_typing_kernels_preserve_edges_order_overflow_and_prefix_extremes(keys, width):
+    import numpy as np
+    import warp as wp
+
+    from isaaclab_tasks.contrib.keyboard.mdp.commands.typing_commands import _advance_typing, _typing_metrics
+
+    rng = np.random.default_rng(891)
+    worlds = 80
+    pressed = rng.random((worlds, keys)) < 0.4
+    previous = rng.random((worlds, keys)) < 0.4
+    just_reset = np.arange(worlds) % 4 == 0
+    backspace = rng.integers(0, keys, worlds, dtype=np.int64)
+    lengths = rng.integers(0, width + 1, worlds, dtype=np.int64)
+    typed = rng.integers(0, keys, (worlds, width), dtype=np.int64)
+    typed[np.arange(width) >= lengths[:, None]] = -1
+    expected = typed.copy()
+    expected_lengths = lengths.copy()
+    for world in range(worlds):
+        if just_reset[world]:
+            continue
+        edges = set(np.flatnonzero(pressed[world] & ~previous[world]).tolist())
+        letters = typed[world, : lengths[world]].tolist()
+        if int(backspace[world]) in edges:
+            letters = letters[:-1]
+        letters = (letters + sorted(edges - {int(backspace[world])}))[:width]
+        expected[world] = letters + [-1] * (width - len(letters))
+        expected_lengths[world] = len(letters)
+    inputs = [wp.array(value, device="cpu") for value in (backspace, previous, just_reset, typed, lengths)]
+    q = _dense_scalar_field(-torch.from_numpy(pressed).float())
+    lower = _dense_scalar_field(-torch.ones(worlds, keys))
+    upper = _dense_scalar_field(torch.zeros(worlds, keys))
+    wp.launch(_advance_typing, worlds, inputs=[q, lower, upper, 0.5, *inputs], device="cpu")
+    np.testing.assert_array_equal(inputs[1].numpy(), pressed)
+    assert not inputs[2].numpy().any()
+    np.testing.assert_array_equal(inputs[3].numpy(), expected)
+    np.testing.assert_array_equal(inputs[4].numpy(), expected_lengths)
+
+    target = rng.integers(0, keys, (worlds, width), dtype=np.int64)
+    target[::2] = expected[::2]
+    target_lengths = rng.integers(0, width + 1, worlds, dtype=np.int64)
+    old_max = rng.integers(0, width + 1, worlds, dtype=np.int64)
+    old_min = rng.integers(0, width + 1, worlds, dtype=np.int64)
+    expected_prefix = np.zeros(worlds, dtype=np.int64)
+    for world in range(worlds):
+        equal = (
+            target[world, : min(target_lengths[world], expected_lengths[world])]
+            == expected[world, : min(target_lengths[world], expected_lengths[world])]
+        )
+        expected_prefix[world] = np.argmin(equal) if not equal.all() else len(equal)
+    outputs = [wp.zeros(worlds, dtype=dtype, device="cpu") for dtype in (wp.int64, float)]
+    maxima, minima = wp.array(old_max, device="cpu"), wp.array(old_min, device="cpu")
+    high, low = wp.zeros(worlds, dtype=wp.bool, device="cpu"), wp.zeros(worlds, dtype=wp.bool, device="cpu")
+    wp.launch(
+        _typing_metrics,
+        worlds,
+        inputs=[
+            wp.array(target, device="cpu"),
+            inputs[3],
+            wp.array(target_lengths, device="cpu"),
+            inputs[4],
+            *outputs,
+            maxima,
+            minima,
+            high,
+            low,
+        ],
+        device="cpu",
+    )
+    for actual, wanted in (
+        (outputs[0], expected_prefix),
+        (outputs[1], target_lengths + expected_lengths - 2 * expected_prefix),
+        (maxima, np.maximum(old_max, expected_prefix)),
+        (minima, np.minimum(old_min, expected_prefix)),
+        (high, expected_prefix > old_max),
+        (low, expected_prefix < old_min),
+    ):
+        np.testing.assert_array_equal(actual.numpy(), wanted)
+
+
 def _preview_command():
     command = _command(False)
     command.cfg.resampling_time_range = (10.0, 10.0)
     command.cfg.actuation_fraction = 0.5
     command.cfg.key_dofs = SimpleNamespace(
-        read_model=lambda name: -torch.ones(5, 12) if name == "joint_limit_lower" else torch.zeros(5, 12)
+        scalar_field=lambda source, name: _dense_scalar_field(
+            -torch.ones(5, 12) if name == "joint_limit_lower" else torch.zeros(5, 12)
+        )
     )
     positions = torch.zeros(5, 12)
-    command.key_joints.read_state = lambda name: positions
+    command.key_joints.scalar_field = lambda source, name: _dense_scalar_field(
+        positions, command.key_joints.dense_active()
+    )
     command.target = torch.tensor([[0, 1, -1]]).expand(5, -1).clone()
     command.typed = torch.full((5, 3), -1, dtype=torch.long)
     command.target_len = torch.full((5,), 2, dtype=torch.long)
@@ -527,7 +687,6 @@ def _preview_command():
     command.time_left = torch.full((5,), 10.0)
     command.distance = torch.full((5,), 2.0)
     command.metrics = {"distance": command.distance}
-    command._press_level = None
     command._cur_enabled = command._episode_reset = False
     command._env.command_manager = SimpleNamespace(get_term=lambda name: command)
     return command, positions
@@ -554,14 +713,14 @@ def test_successor_preview_reuses_typing_update_preserving_live_state_and_rng(ca
         command.time_left[0] = 0.01
     references = {name: value for name, value in vars(command).items() if isinstance(value, torch.Tensor)}
     values = {name: value.clone() for name, value in references.items()}
-    metrics, seed, press = command.metrics, command._resample_seed, command._press_level
+    metrics, seed = command.metrics, command._resample_seed
     rng = torch.random.get_rng_state().clone()
     with torch.random.fork_rng(devices=[]), command.preview_step(0.04):
         preview = {name: getattr(command, name).clone() for name in values}
         observation = typed_keys_onehot(command._env, "typing")
         successor_seed = command._resample_seed
     assert torch.equal(torch.random.get_rng_state(), rng)
-    assert command.metrics is metrics and command._press_level is press and command._resample_seed == seed
+    assert command.metrics is metrics and command._resample_seed == seed
     for name, original in references.items():
         assert getattr(command, name) is original
         torch.testing.assert_close(original, values[name], rtol=0, atol=0)
@@ -589,20 +748,25 @@ def test_successor_preview_restores_original_state_on_failure(monkeypatch, insid
         monkeypatch.setattr(command, "_update_command", fail)
     with pytest.raises(RuntimeError, match="preview failed"), command.preview_step(0.04):
         raise RuntimeError("preview failed")
-    assert command.metrics is metrics and command._press_level is None
+    assert command.metrics is metrics
     for name, value in original.items():
         assert getattr(command, name) is value
         torch.testing.assert_close(value, values[name], rtol=0, atol=0)
 
 
-def test_final_observation_contains_current_press_and_successor_history_without_committing():
+@pytest.mark.parametrize("resample", [False, True, None])
+def test_final_observation_contains_current_press_and_successor_history_without_committing(resample):
     from isaaclab.managers import ObservationGroupCfg, ObservationManager, ObservationTermCfg
 
     from isaaclab_tasks.contrib.keyboard.mdp.observations import typed_keys_onehot
     from isaaclab_tasks.contrib.keyboard.mdp.rewards import letter_typing_progress, typing_success
     from isaaclab_tasks.contrib.keyboard.mdp.terminations import typing_complete
+    from isaaclab_tasks.contrib.keyboard.so101_env import SO101KeyboardEnv
 
     command, positions = _preview_command()
+    if resample is None:
+        command.cfg.resampling_time_range = None
+        command.time_left.fill_(float("inf"))
     env = command._env
     env.sim = SimpleNamespace(is_playing=lambda: True)
     plain = ObservationGroupCfg(concatenate_terms=True)
@@ -610,11 +774,17 @@ def test_final_observation_contains_current_press_and_successor_history_without_
     history = ObservationGroupCfg(concatenate_terms=True)
     history.typed = ObservationTermCfg(func=typed_keys_onehot, params={"command_name": "typing"}, history_length=2)
     manager = ObservationManager({"plain": plain, "history": history}, env)
+    env.observation_manager, env.step_dt = manager, 0.04
     manager.compute(update_history=True)
     before = (letter_typing_progress(env, "typing"), typing_success(env, "typing"), typing_complete(env, "typing"))
     positions[0, 0] = -0.75
-    with torch.random.fork_rng(devices=[]), command.preview_step(0.04):
-        successor = manager.preview()
+    if resample:
+        command.time_left[1] = 0.01
+    seed = command._resample_seed
+    rng = torch.random.get_rng_state().clone()
+    successor = SO101KeyboardEnv._compute_final_observations(env)
+    assert torch.equal(torch.random.get_rng_state(), rng)
+    assert command._resample_seed == seed
     assert command.typed[0, 0] == -1
     assert successor["plain"][0, 0] == 1
     assert successor["history"][0, 36] == 1
@@ -630,12 +800,16 @@ def test_final_observation_contains_current_press_and_successor_history_without_
 
 @pytest.mark.parametrize("source", [(2, -1, 1), (2, 0, 1), (-1, -1, -1)])
 @pytest.mark.parametrize("invalid_replay", [False, True])
-def test_native_reset_publishes_one_complete_mixed_payload(monkeypatch, source, invalid_replay):
+@pytest.mark.parametrize("replay_only", [False, True])
+def test_native_reset_publishes_one_complete_mixed_payload(monkeypatch, source, invalid_replay, replay_only):
     from isaaclab.managers import CommandTerm
 
     from isaaclab_tasks.contrib.keyboard.keyboard_worlds import KeyboardWorlds
 
     command = _command()
+    if replay_only and -1 in source:
+        pytest.skip("Replay-only sampling cannot return a normal-reset source.")
+    command.cfg.reset.replay_only = replay_only
     bank = object.__new__(KeyboardWorlds)
     bank.__dict__.update(vars(command._env.keyboard_variants))
     bank.reset_defaults = torch.zeros((3, 2))
@@ -648,6 +822,7 @@ def test_native_reset_publishes_one_complete_mixed_payload(monkeypatch, source, 
         del bank.reset_defaults  # A replay-only bank has no normal IK staging metadata.
     command._cur_enabled = command._buffer_built = True
     command._sample_sources = lambda ids: torch.tensor(source)
+    command.success_monitor = SuccessMonitor(SuccessMonitorCfg(), 1, 3, "cpu")
     command._buf_variant = torch.arange(3)
     command._buf_state = torch.tensor([[100.0, 200.0], [101.0, 201.0], [102.0, 202.0]])
     command._buf_target = torch.tensor([[0, -1, -1], [4, -1, -1], [7, -1, -1]])
@@ -731,3 +906,49 @@ def test_failed_command_reset_always_clears_episode_window(monkeypatch):
     with pytest.raises(RuntimeError, match="sample failed"):
         command.reset(torch.tensor([4, 1]))
     assert not command._episode_reset
+
+
+def test_snapshot_restore_updates_only_requested_typing_rows_and_resets_watermarks():
+    command = _command()
+    command._buf_state = torch.zeros((3, 2))
+    command._buf_variant = torch.tensor([2, 1, 1])
+    command._buf_target = torch.tensor([[7, 8, -1], [4, -1, -1], [5, 6, -1]])
+    command._buf_typed = torch.tensor([[7, 9, 8], [4, -1, -1], [-1, -1, -1]])
+    command._buf_target_len = torch.tensor([2, 1, 2])
+    command._buf_typed_len = torch.tensor([3, 1, 0])
+    command.target, command.typed = torch.full((5, 3), 123), torch.full((5, 3), 456)
+    for name in ("target_len", "typed_len", "prefix_len", "max_prefix", "min_prefix"):
+        setattr(command, name, torch.full((5,), 7, dtype=torch.long))
+    for name in ("new_high", "new_low", "_just_reset"):
+        setattr(command, name, torch.ones(5, dtype=torch.bool))
+    command._prev_pressed = torch.ones((5, 12), dtype=torch.bool)
+    command.distance = torch.full((5,), 77.0)
+    names = (
+        "target",
+        "typed",
+        "target_len",
+        "typed_len",
+        "prefix_len",
+        "max_prefix",
+        "min_prefix",
+        "new_high",
+        "new_low",
+        "_just_reset",
+        "_prev_pressed",
+        "distance",
+    )
+    before = {name: getattr(command, name).clone() for name in names}
+    ids = torch.tensor([3, 1, 4])
+    command._restore_snapshot(ids, torch.arange(3), publish=False)
+    torch.testing.assert_close(command.target[ids], command._buf_target)
+    torch.testing.assert_close(command.typed[ids], command._buf_typed)
+    torch.testing.assert_close(command.target_len[ids], command._buf_target_len)
+    torch.testing.assert_close(command.typed_len[ids], command._buf_typed_len)
+    for name in ("prefix_len", "min_prefix", "max_prefix"):
+        assert getattr(command, name)[ids].tolist() == [1, 1, 0]
+    assert command.distance[ids].tolist() == [3, 0, 2]
+    assert command._just_reset[ids].all()
+    assert not command._prev_pressed[ids].any()
+    assert not command.new_high[ids].any() and not command.new_low[ids].any()
+    for name in names:
+        torch.testing.assert_close(getattr(command, name)[[0, 2]], before[name][[0, 2]], rtol=0, atol=0)

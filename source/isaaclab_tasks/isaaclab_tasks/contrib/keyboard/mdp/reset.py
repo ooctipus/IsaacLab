@@ -16,6 +16,7 @@ from newton import JointType, Model, ModelFlags, State
 
 from isaaclab.utils import configclass
 from isaaclab.utils.math import quat_from_euler_xyz, quat_mul, sample_uniform
+from isaaclab.utils.warp.utils import warp_on_torch_stream
 
 from ..newton_selection import NewtonSelection
 from ..selection_paths import NewtonSelectorCfg
@@ -326,13 +327,7 @@ def write_fixed_root_poses(env, roots: NewtonSelection, env_ids: torch.Tensor, p
     requested = torch.full((env.num_envs,), -1, dtype=torch.long, device=env.device)
     requested[env_ids] = torch.arange(len(env_ids), device=env.device)
     requested_wp, poses_wp = wp.from_torch(requested), wp.from_torch(poses)
-    stream = None
-    if poses.is_cuda:
-        stream = wp.get_stream(env.device)
-        producer = torch.cuda.current_stream(env.device)
-        if (stream.cuda_stream or 0) != producer.cuda_stream:
-            stream = wp.stream_from_torch(producer)
-    with wp.ScopedStream(stream, sync_exit=True):
+    with warp_on_torch_stream(env.device):
         for part, worlds in roots.native_bindings:
             model = part.owner.model
             shape = part.dense_ids().shape

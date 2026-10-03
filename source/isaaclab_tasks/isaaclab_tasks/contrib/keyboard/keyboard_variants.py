@@ -42,6 +42,8 @@ class KeyboardVariants:
     Variants have 18 fixed-root partitions of six scalar sliders. Collision shapes
     are boxes; cap and label meshes are pre-registered visual resources. The solver's
     existing property notification synchronizes joint, shape, and inertial changes.
+    The bank is the sole writer of its bound host shape-source descriptors; physics
+    properties remain reset values and are restored on every application.
     """
 
     def __init__(self, env, configs: tuple[KeyboardSpawnerCfg, ...]):
@@ -117,6 +119,15 @@ class KeyboardVariants:
                 raise ValueError("Keyboard variants must preserve each registered shape's geometry type.")
             if any(flags[i] & int(ShapeFlags.COLLIDE_SHAPES) and types[i] != GeoType.BOX for i in source_shapes[-1]):
                 raise ValueError("Registered keyboards currently require box collision geometry.")
+
+        # Identical host resources need no reset publication or device-to-host IDs.
+        # Object identity matters: equal mesh contents do not imply the same owner.
+        if all(
+            all(variant[column] is reference for variant in self._sources)
+            and all(model.shape_source[shape] is reference for shape in shape_ids[:, column])
+            for column, reference in enumerate(self._sources[0])
+        ):
+            self._sources = []
 
         def register(names, destination, indices):
             ids = wp.array(destination, dtype=wp.int32, device=model.device)
@@ -233,9 +244,10 @@ class KeyboardVariants:
                 device=model.device,
             )
         # Host mesh descriptors are rendering resources; physics uses the matching device pointers above.
-        for world, variant in zip(env_ids.tolist(), variant_ids.tolist()):
-            for shape, source in zip(self.shape_ids[world], self._sources[variant]):
-                model.shape_source[shape] = source
+        if self._sources:
+            for world, variant in zip(env_ids.tolist(), variant_ids.tolist()):
+                for shape, source in zip(self.shape_ids[world], self._sources[variant]):
+                    model.shape_source[shape] = source
         self.variant_ids[env_ids] = variant_ids
         active = self._body_partition[None, :] < (self.key_counts[variant_ids, None] // 6)
         wp.to_torch(self.env.selections.body_active)[self.body_ids[env_ids]] = active

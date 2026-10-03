@@ -33,6 +33,8 @@ from .newton_selection import (
     NewtonSelections,
     _validate_field_domain,
     _validate_write_env_indices,
+    pose_field_active,
+    pose_field_read,
     scalar_field_active,
     scalar_field_read,
     scalar_field_write,
@@ -154,6 +156,48 @@ class _PoseSource:
     wxyz: int
 
 
+@wp.struct
+class MuJoCoPoseField:
+    """Borrow read-only body poses [m, xyzw] through generation-checked placement.
+
+    This derived observation shares the scalar field's owner and retirement law.
+    The runtime owns all pose storage; this descriptor owns only index relations.
+    """
+
+    env_world_bindings: EnvWorldBindings
+    sources: wp.array[_PoseSource]
+    columns: wp.array2d[int]
+    element_participating: wp.array2d[bool]
+
+
+@wp.func(module=pose_field_active.module, name=pose_field_active.key)
+def pose_field_active(field: MuJoCoPoseField, world: int, slot: int) -> bool:
+    prototype, row = _env_world_location(field.env_world_bindings, world)
+    if prototype < 0 or slot < 0 or slot >= field.element_participating.shape[1]:
+        return False
+    return field.element_participating[world, slot] and field.columns[prototype, slot] >= 0
+
+
+@wp.func(module=pose_field_read.module, name=pose_field_read.key)
+def pose_field_read(field: MuJoCoPoseField, world: int, slot: int) -> wp.transform:
+    """Read one pose; excluded slots have zero position and zero quaternion."""
+    value = wp.transform(wp.vec3(0.0), wp.quat(0.0, 0.0, 0.0, 0.0))
+    prototype, row = _env_world_location(field.env_world_bindings, world)
+    if prototype < 0 or slot < 0 or slot >= field.element_participating.shape[1]:
+        return value
+    if field.element_participating[world, slot]:
+        column = field.columns[prototype, slot]
+        if column >= 0:
+            source = field.sources[prototype]
+            if source.broadcast_rows != 0:
+                row = 0
+            rotation = source.quaternion[row, column]
+            if source.wxyz != 0:
+                rotation = wp.quat(rotation[1], rotation[2], rotation[3], rotation[0])
+            value = wp.transform(source.position[row, column], rotation)
+    return value
+
+
 @wp.kernel
 def _gather_scalars(field: MuJoCoScalarField, fill: float, out: wp.array2d[float]):
     env_index, selected = wp.tid()
@@ -165,26 +209,14 @@ def _gather_scalars(field: MuJoCoScalarField, fill: float, out: wp.array2d[float
 
 @wp.kernel
 def _gather_poses(
-    placement: EnvWorldBindings,
-    sources: wp.array[_PoseSource],
-    columns: wp.array2d[int],
-    element_participating: wp.array2d[bool],
+    field: MuJoCoPoseField,
     fill: float,
     out: wp.array2d[wp.transform],
 ):
     env_index, selected = wp.tid()
     value = wp.transform(wp.vec3(fill), wp.quat(fill, fill, fill, fill))
-    prototype, row = _env_world_location(placement, env_index)
-    if prototype >= 0 and element_participating[env_index, selected]:
-        column = columns[prototype, selected]
-        if column >= 0:
-            source = sources[prototype]
-            if source.broadcast_rows != 0:
-                row = 0
-            rotation = source.quaternion[row, column]
-            if source.wxyz != 0:
-                rotation = wp.quat(rotation[1], rotation[2], rotation[3], rotation[0])
-            value = wp.transform(source.position[row, column], rotation)
+    if pose_field_active(field, env_index, selected):
+        value = pose_field_read(field, env_index, selected)
     out[env_index, selected] = value
 
 
@@ -292,6 +324,11 @@ class MuJoCoSelection:
         )
         return wp.to_torch(self._active)
 
+    @property
+    def dense_shape(self) -> tuple[int, int]:
+        """Logical environment and slot extents at the dense policy boundary."""
+        return self.owner.num_envs, self.width
+
     def active_counts(self) -> torch.Tensor:
         """Current participating scalar/body count per policy environment (GPU int64)."""
         return self.dense_active().sum(dim=1)
@@ -384,9 +421,16 @@ class MuJoCoSelection:
                 device=self.owner.device,
             )
             return wp.to_torch(out)
+        field = self.pose_field(source, attribute)
+        out = wp.empty(self.dense_shape, dtype=wp.transform, device=self.owner.device)
+        wp.launch(_gather_poses, out.shape, [field, fill], [out], device=self.owner.device)
+        return wp.to_torch(out)
+
+    def pose_field(self, source: Literal["state", "model"], attribute: str) -> MuJoCoPoseField:
+        """Borrow poses while the selection owner and runtime remain open."""
         populations = self.owner._borrow_populations()
-        if attribute != "body_q" or source not in ("state", "model"):
-            raise ValueError("Native body selections currently expose body_q only.")
+        if self.index_domain != BODY or attribute != "body_q" or source not in ("state", "model"):
+            raise ValueError("Native pose fields require a body selection and state/model body_q.")
         if source not in self._poses:
             descriptors, columns = [], self._columns.copy()
             for prototype, (part, ids, group, mapping) in enumerate(
@@ -410,20 +454,13 @@ class MuJoCoSelection:
                     )
                     descriptor.broadcast_rows, descriptor.wxyz = 1, 0
                 descriptors.append(descriptor)
-            self._poses[source] = (
-                wp.array(descriptors, dtype=_PoseSource, device=self.owner.device),
-                wp.array(columns, dtype=int, device=self.owner.device),
-            )
-        sources, columns = self._poses[source]
-        out = wp.empty(self.element_participating.shape, dtype=wp.transform, device=self.owner.device)
-        wp.launch(
-            _gather_poses,
-            out.shape,
-            [self.owner.env_world_bindings, sources, columns, self.element_participating, fill],
-            [out],
-            device=self.owner.device,
-        )
-        return wp.to_torch(out)
+            field = MuJoCoPoseField()
+            field.env_world_bindings = self.owner.env_world_bindings
+            field.sources = wp.array(descriptors, dtype=_PoseSource, device=self.owner.device)
+            field.columns = wp.array(columns, dtype=int, device=self.owner.device)
+            field.element_participating = self.element_participating
+            self._poses[source] = field
+        return self._poses[source]
 
     def read_state(self, attribute: str, fill: float = 0.0) -> torch.Tensor:
         """Gather native state into policy rows, using task coordinate conventions."""

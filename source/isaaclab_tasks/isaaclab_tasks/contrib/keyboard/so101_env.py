@@ -11,6 +11,7 @@ from isaaclab_newton.physics import NewtonManager
 from newton import JointTargetMode, JointType, ModelFlags
 
 from isaaclab.envs import ManagerBasedRLEnv
+from isaaclab.utils.warp.utils import warp_on_torch_stream
 
 from .keyboard_variants import KeyboardVariants
 from .newton_selection import NewtonSelections
@@ -21,7 +22,23 @@ class SO101KeyboardEnv(ManagerBasedRLEnv):
     """Bind task selectors after model finalization and before MDP construction."""
 
     def __init__(self, cfg, render_mode=None, **kwargs):
-        super().__init__(cfg.copy(), render_mode=render_mode, **kwargs)
+        with warp_on_torch_stream(cfg.sim.device):
+            super().__init__(cfg.copy(), render_mode=render_mode, **kwargs)
+
+    def reset(self, env_ids=slice(None), *, seed=None, options=None):
+        """Reset episodes with physics and task work ordered on the caller's stream."""
+        with warp_on_torch_stream(self.device):
+            return super().reset(env_ids, seed=seed, options=options)
+
+    def step(self, action):
+        """Advance actions, physics and the MDP in one ordered stream scope."""
+        with warp_on_torch_stream(self.device):
+            return super().step(action)
+
+    def reset_to(self, state, env_ids=slice(None), seed=None, is_relative=False):
+        """Restore an explicit scene state with the same ordering as ordinary resets."""
+        with warp_on_torch_stream(self.device):
+            return super().reset_to(state, env_ids, seed, is_relative)
 
     def load_managers(self):
         self.episode_interrupted = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
@@ -77,7 +94,17 @@ class SO101KeyboardEnv(ManagerBasedRLEnv):
 
     def forward(self):
         """Reconcile task-authored state and update native forward kinematics."""
-        self.sim.forward()
+        with warp_on_torch_stream(self.device):
+            self.sim.forward()
+
+    def _compute_final_observations(self):
+        """Observe the continuing typing transition without committing it before reset."""
+        device = torch.device(self.device)
+        with (
+            torch.random.fork_rng(devices=[device] if device.type == "cuda" else []),
+            self.command_manager.get_term("typing").preview_step(self.step_dt),
+        ):
+            return self.observation_manager.preview()
 
     def reset_variant_ids(self, env_ids):
         """Return the committed keyboard variants used by snapshot sampling."""
@@ -133,5 +160,6 @@ class SO101KeyboardEnv(ManagerBasedRLEnv):
         """Reset selected episodes to registered keyboard variants, then reconcile forward kinematics."""
         if self.keyboard_variants is None:
             raise RuntimeError("This configuration has no registered keyboard variants.")
-        self._reset_idx(env_ids, variant_ids=variant_ids)
-        self.sim.forward()
+        with warp_on_torch_stream(self.device):
+            self._reset_idx(env_ids, variant_ids=variant_ids)
+            self.sim.forward()

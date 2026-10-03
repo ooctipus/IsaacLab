@@ -107,7 +107,7 @@ class CommandsCfg:
         reset_roots=NewtonSelectorCfg(BODY, path=(".*/Robot/base", KEYBOARD_ROOT.path), count_per_world=19),
         reset_coords=NewtonSelectorCfg(JOINT_COORD, path=(ROBOT_Q.path, KEY_Q.path), count_per_world=114),
         reset_dofs=NewtonSelectorCfg(JOINT_DOF, path=(ROBOT_QD.path, KEY_QD.path), count_per_world=114),
-        resampling_time_range=(10.0, 10.0),
+        resampling_time_range=None,
         debug_vis=False,
         letter_length=(1, 5),
         max_len=5,

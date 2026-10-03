@@ -80,8 +80,7 @@ def _initialize_snapshot(
     destinations: wp.array[int],
     count: wp.array[int],
     status: wp.array[int],
-    initialized_sequence: wp.array[wp.uint64],
-    sequence: wp.array[wp.uint64],
+    request_stride: int,
     payload_enabled: wp.array[int],
     payload: wp.array2d[float],
     q_columns: wp.array[int],
@@ -95,29 +94,40 @@ def _initialize_snapshot(
     mocap_pos: wp.array2d[wp.vec3],
     mocap_quat: wp.array2d[wp.quat],
 ):
-    ordinal = wp.tid()
-    if ordinal >= count[0] or status[0] != 0:
+    ordinal, column = wp.tid()
+    if status[0] != 0 or payload_enabled[0] == 0:
         return
-    request = requests[ordinal]
-    destination = destinations[ordinal]
-    if payload_enabled[0] != 0:
-        for joint in range(q_columns.shape[0]):
-            q[destination, joint] = payload[request, q_offset + q_columns[joint]] + references[joint]
-        for dof in range(qd_columns.shape[0]):
-            qd[destination, dof] = payload[request, qd_offset + qd_columns[dof]]
-        for root in range(roots.shape[0]):
-            begin = 7 * roots[root]
-            mocap_pos[destination, root] = wp.vec3(
+    for row in range(ordinal, count[0], request_stride):
+        request, destination = requests[row], destinations[row]
+        if column < q_columns.shape[0]:
+            q[destination, column] = payload[request, q_offset + q_columns[column]] + references[column]
+        if column < qd_columns.shape[0]:
+            qd[destination, column] = payload[request, qd_offset + qd_columns[column]]
+        if column < roots.shape[0]:
+            begin = 7 * roots[column]
+            mocap_pos[destination, column] = wp.vec3(
                 payload[request, begin], payload[request, begin + 1], payload[request, begin + 2]
             )
-            mocap_quat[destination, root] = wp.quat(
+            mocap_quat[destination, column] = wp.quat(
                 payload[request, begin + 6],
                 payload[request, begin + 3],
                 payload[request, begin + 4],
                 payload[request, begin + 5],
             )
-    # Defaults copied the entire native row first, including solver history and controls.
-    initialized_sequence[request] = sequence[0]
+
+
+@wp.kernel
+def _acknowledge_snapshot(
+    requests: wp.array[int],
+    count: wp.array[int],
+    status: wp.array[int],
+    sequence: wp.array[wp.uint64],
+    initialized_sequence: wp.array[wp.uint64],
+):
+    ordinal = wp.tid()
+    # The preceding default copy and every snapshot column must finish first.
+    if ordinal < count[0] and status[0] == 0:
+        initialized_sequence[requests[ordinal]] = sequence[0]
 
 
 @wp.kernel
@@ -330,16 +340,16 @@ class KeyboardWorlds:
 
             def initialize(group, requests, destinations, count, status, initialized_sequence, sequence):
                 qmap, qdmap, roots, refs = self._snapshot_maps[group.prototype_index]
+                request_stride = min(env.num_envs, 32)
                 wp.launch(
                     _initialize_snapshot,
-                    env.num_envs,
+                    (request_stride, max(qmap.size, qdmap.size, roots.size)),
                     [
                         requests,
                         destinations,
                         count,
                         status,
-                        initialized_sequence,
-                        sequence,
+                        request_stride,
                         self._payload_enabled,
                         self._payload_wp,
                         qmap,
@@ -353,6 +363,12 @@ class KeyboardWorlds:
                         group.data.mocap_pos,
                         group.data.mocap_quat,
                     ],
+                    device=env.device,
+                )
+                wp.launch(
+                    _acknowledge_snapshot,
+                    env.num_envs,
+                    [requests, count, status, sequence, initialized_sequence],
                     device=env.device,
                 )
 
@@ -642,9 +658,23 @@ class KeyboardWorlds:
                     ready = min(group.world_capacity, required + max(8, required // 2)) if required else 0
                 targets.append(ready)
             if any(n != group.world_ready_capacity for group, n in zip(runtime.populations, targets, strict=True)):
-                runtime.resize_backing(
-                    tuple(targets), streams=streams, spare_bytes=self.env.cfg.worlds_spare_memory_budget_bytes
-                )
+                try:
+                    if all(
+                        n >= group.world_ready_capacity for group, n in zip(runtime.populations, targets, strict=True)
+                    ):
+                        runtime.grow_backing(tuple(targets), streams=streams)
+                    else:
+                        runtime.resize_backing(
+                            tuple(targets), streams=streams, spare_bytes=self.env.cfg.worlds_spare_memory_budget_bytes
+                        )
+                except MemoryError:
+                    # Headroom is optional; demand includes every live source and incoming lifetime.
+                    required_capacities = tuple(int(value) for value in demand[:, 0])
+                    if required_capacities == tuple(targets):
+                        raise
+                    runtime.resize_backing(
+                        required_capacities, streams=streams, spare_bytes=self.env.cfg.worlds_spare_memory_budget_bytes
+                    )
             self.backend.forward()
             self._failed.zero_()
             wp.launch(

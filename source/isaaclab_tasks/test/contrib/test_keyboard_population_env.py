@@ -224,7 +224,7 @@ def test_failed_root_construction_uses_close_and_preserves_startup_error(cleanup
             patch.object(module.SO101KeyboardPopulationEnv, "seed", return_value=42),
             patch.object(torch, "zeros", new=lambda *a, **kw: zeros(*a, **{**kw, "device": "cpu"})),
             patch.object(torch, "arange", new=lambda *a, **kw: arange(*a, **{**kw, "device": "cpu"})),
-            patch.object(module.SO101KeyboardPopulationEnv, "_stream_scope", new=lambda _: nullcontext()),
+            patch.object(module, "warp_on_torch_stream", new=lambda _: nullcontext()),
             pytest.raises(MemoryError) as error,
         ):
             module.SO101KeyboardPopulationEnv.__init__(env, cfg)
@@ -387,6 +387,74 @@ def test_deferred_root_reset_preserves_sampling_without_redundant_physical_write
             module.reset_root_state_uniform(task, selected, roots, **params, defer_to_typing=True)
 
 
+@pytest.mark.parametrize("count,enabled,status", [(0, 1, 0), (1, 1, 0), (37, 1, 0), (37, 0, 0), (37, 1, 1)])
+def test_snapshot_columns_complete_before_lifetime_acknowledgement(count, enabled, status):
+    from isaaclab_tasks.contrib.keyboard.keyboard_worlds import _acknowledge_snapshot, _initialize_snapshot
+
+    capacity, stride = 48, 32
+    requests = np.arange(capacity, dtype=np.int32)[::-1].copy()
+    destinations = np.roll(np.arange(capacity, dtype=np.int32), 7)
+    qcols, qdcols, roots = np.array([3, 0, 5], np.int32), np.array([4, 1], np.int32), np.array([1, 0], np.int32)
+    payload = np.arange(capacity * 32, dtype=np.float32).reshape(capacity, 32) / 16
+    references = np.array([0.25, -0.5, 0.75], np.float32)
+    q = wp.full((capacity, 3), -77.0, dtype=float, device="cpu")
+    qd = wp.full((capacity, 2), -77.0, dtype=float, device="cpu")
+    pos = wp.full((capacity, 2), wp.vec3(-77.0), device="cpu")
+    quat = wp.full((capacity, 2), wp.quat(-77.0, -77.0, -77.0, -77.0), device="cpu")
+    request_ids = wp.array(requests, device="cpu")
+    extent, outcome = wp.full(1, count, dtype=int, device="cpu"), wp.full(1, status, dtype=int, device="cpu")
+    ack = wp.zeros(capacity, dtype=wp.uint64, device="cpu")
+    wp.launch(
+        _initialize_snapshot,
+        (stride, 3),
+        inputs=[
+            request_ids,
+            wp.array(destinations, device="cpu"),
+            extent,
+            outcome,
+            stride,
+            wp.full(1, enabled, dtype=int, device="cpu"),
+            wp.array(payload, device="cpu"),
+            wp.array(qcols, device="cpu"),
+            wp.array(qdcols, device="cpu"),
+            wp.array(roots, device="cpu"),
+            wp.array(references, device="cpu"),
+            14,
+            20,
+            q,
+            qd,
+            pos,
+            quat,
+        ],
+        device="cpu",
+    )
+    assert not ack.numpy().any()
+    changed = destinations[:count] if enabled and status == 0 else np.empty(0, dtype=int)
+    source = requests[: len(changed)]
+    expected_q, expected_qd = np.full((capacity, 3), -77.0, np.float32), np.full((capacity, 2), -77.0, np.float32)
+    expected_pos, expected_quat = (
+        np.full((capacity, 2, 3), -77.0, np.float32),
+        np.full((capacity, 2, 4), -77.0, np.float32),
+    )
+    expected_q[changed] = payload[source[:, None], 14 + qcols] + references
+    expected_qd[changed] = payload[source[:, None], 20 + qdcols]
+    for root, source_root in enumerate(roots):
+        expected_pos[changed, root] = payload[source[:, None], 7 * source_root + np.arange(3)]
+        expected_quat[changed, root] = payload[source[:, None], 7 * source_root + np.array([6, 3, 4, 5])]
+    for actual, expected in ((q, expected_q), (qd, expected_qd), (pos, expected_pos), (quat, expected_quat)):
+        np.testing.assert_array_equal(actual.numpy(), expected)
+    wp.launch(
+        _acknowledge_snapshot,
+        capacity,
+        inputs=[request_ids, extent, outcome, wp.full(1, 9, dtype=wp.uint64, device="cpu"), ack],
+        device="cpu",
+    )
+    expected_ack = np.zeros(capacity, np.uint64)
+    if status == 0:
+        expected_ack[requests[:count]] = 9
+    np.testing.assert_array_equal(ack.numpy(), expected_ack)
+
+
 @pytest.mark.parametrize("batch_error", [0, 12])
 def test_native_batch_failure_prevents_task_handle_publication(batch_error):
     from gpu_components import directory as instance_directory
@@ -414,6 +482,91 @@ def test_native_batch_failure_prevents_task_handle_publication(batch_error):
     assert handles.numpy().tolist() == ([-1] if batch_error else [0])
     assert generations.numpy().tolist() == ([0] if batch_error else [2])
     assert failed.numpy().tolist() == ([1] if batch_error else [0])
+
+
+@pytest.mark.parametrize("failure", [None, MemoryError, RuntimeError])
+def test_native_reset_retries_optional_headroom_once_before_publication(failure):
+    from gpu_components import directory as instance_directory
+    from gpu_components.directory_data import InstanceOperation
+
+    from isaaclab_tasks.contrib.keyboard.keyboard_worlds import KeyboardWorlds
+
+    directory = instance_directory.allocate((4, 4), id_capacity=2, command_capacity=2, device="cpu")
+    instance_directory.publish_admissible_slots(directory, (4, 0))
+    bank = object.__new__(KeyboardWorlds)
+    bank.commands = instance_directory.allocate_commands(2, device="cpu")
+    bank.results = instance_directory.allocate_results(2, device="cpu")
+    bank.commands.operation.fill_(int(InstanceOperation.CREATE))
+    bank.commands.count.fill_(2)
+    bank.commands.sequence.fill_(1)
+    instance_directory.begin(directory, bank.commands)
+    instance_directory.admit(directory, bank.commands)
+    directory.transaction.initialized_sequence.fill_(1)
+    instance_directory.publish(directory, bank.commands, bank.results)
+    handles = bank.results.instance_id.numpy().copy()
+    bank.world_id_by_env = wp.array(handles, dtype=int, device="cpu")
+    bank.world_generation_by_env = wp.ones(2, dtype=wp.uint64, device="cpu")
+    bank.env_index_by_world_id = wp.array(np.argsort(handles), dtype=int, device="cpu")
+    bank.variant_ids = torch.zeros(2, dtype=torch.long)
+    bank._request_env_indices, bank._failed = wp.empty(2, dtype=int, device="cpu"), wp.zeros(1, dtype=int, device="cpu")
+    bank._request_variants, bank._demand = torch.empty(2, dtype=torch.long), wp.empty((2, 2), dtype=int, device="cpu")
+    bank.layouts = (None, None)
+    bank.env = SimpleNamespace(
+        device="cpu", cfg=SimpleNamespace(worlds_spare_memory_budget_bytes=0), _population_bindings_valid=True
+    )
+    groups = tuple(SimpleNamespace(world_ready_capacity=n, world_capacity=4) for n in (4, 0))
+    calls = []
+
+    def grow(counts, *, streams):
+        calls.append(("grow", counts))
+        raise MemoryError("optional headroom exhausted budget")
+
+    def resize(counts, *, streams, spare_bytes):
+        calls.append(("resize", counts))
+        assert spare_bytes == 0
+        if failure is not None:
+            raise failure("required backing unavailable or quarantined")
+        instance_directory.publish_admissible_slots(directory, counts)
+        for group, count in zip(groups, counts, strict=True):
+            group.world_ready_capacity = count
+
+    def publish():
+        calls.append(("publish",))
+        instance_directory.begin(directory, bank.commands)
+        instance_directory.admit(directory, bank.commands)
+        directory.transaction.initialized_sequence.fill_(2)
+        instance_directory.publish(directory, bank.commands, bank.results)
+
+    runtime = SimpleNamespace(
+        directory=directory.data,
+        batch_result=directory.batch_result,
+        populations=groups,
+        grow_backing=grow,
+        resize_backing=resize,
+    )
+    bank.backend = SimpleNamespace(runtime=runtime, forward=publish)
+    try:
+        with patch.object(wp, "get_stream", return_value=None):
+            if failure is None:
+                bank._submit(torch.arange(2), torch.ones(2, dtype=torch.long))
+            else:
+                with pytest.raises(failure, match="required backing unavailable"):
+                    bank._submit(torch.arange(2), torch.ones(2, dtype=torch.long))
+        assert calls[:2] == [("grow", (4, 4)), ("resize", (2, 2))]
+        if failure is None:
+            assert calls[2:] == [("publish",), ("resize", (0, 2))]
+            assert bank.variant_ids.tolist() == [1, 1]
+            assert bank.world_generation_by_env.numpy().tolist() == [2, 2]
+            assert bank.env._population_bindings_valid
+        else:
+            assert len(calls) == 2
+            assert bank.variant_ids.tolist() == [0, 0]
+            assert bank.world_id_by_env.numpy().tolist() == handles.tolist()
+            assert bank.world_generation_by_env.numpy().tolist() == [1, 1]
+            assert directory.data.prototype.numpy()[handles].tolist() == [0, 0]
+            assert not bank.env._population_bindings_valid
+    finally:
+        instance_directory.close(directory, streams=())
 
 
 def test_partial_native_publication_keeps_actual_successes_and_stops_task():

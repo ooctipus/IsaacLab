@@ -29,6 +29,7 @@ from isaaclab.managers import (
 )
 from isaaclab.sim import SimulationContext
 from isaaclab.utils.seed import configure_seed
+from isaaclab.utils.warp.utils import warp_on_torch_stream
 
 from .keyboard_populations import KeyboardPopulations
 from .keyboard_worlds import KeyboardWorlds
@@ -94,7 +95,7 @@ class SO101KeyboardPopulationEnv(gym.Env):
         self.native_contacts = {}
         self.sim = SimulationContext(self.cfg.sim)
         try:
-            with self._stream_scope():
+            with warp_on_torch_stream(self.device):
                 if isinstance(self.cfg.sim.physics, NewtonWorldsCfg):
                     self.keyboard_variants = KeyboardWorlds(self)
                 else:
@@ -152,15 +153,6 @@ class SO101KeyboardPopulationEnv(gym.Env):
         if not self._population_bindings_valid:
             raise RuntimeError("Population bindings publication failed; close this environment and create another.")
 
-    def _stream_scope(self):
-        """Borrow an existing wrapper; nested wrappers unregister the same CUDA handle in Warp 1.17."""
-        stream = wp.get_stream(self.device)
-        producer = torch.cuda.current_stream(self.device)
-        if (stream.cuda_stream or 0) != producer.cuda_stream:
-            stream = wp.stream_from_torch(producer)
-        # Restored Warp consumers must also wait when the caller changed streams.
-        return wp.ScopedStream(stream, sync_exit=True)
-
     def invalidate_fk(self, env_ids):
         """Record task-authored state edits for reconciliation before native reads."""
         self._dirty_worlds[env_ids] = True
@@ -174,7 +166,7 @@ class SO101KeyboardPopulationEnv(gym.Env):
     def forward(self):
         """Reconcile reset coordinates/properties and native solver state exactly once."""
         self._check_active()
-        with self._stream_scope():
+        with warp_on_torch_stream(self.device):
             if self._dirty:
                 self.keyboard_variants.reconcile_state(self._dirty_worlds, self._dirty_flags)
                 self._dirty_worlds.zero_()
@@ -275,7 +267,7 @@ class SO101KeyboardPopulationEnv(gym.Env):
     def reset_keyboard(self, env_ids, variant_ids):
         """Reset selected episodes immediately to explicitly requested keyboard prototypes."""
         self._check_active()
-        with self._stream_scope():
+        with warp_on_torch_stream(self.device):
             self.keyboard_variants.request_variants(env_ids, variant_ids)
             self._apply_variant_requests(env_ids)
             self.episode_interrupted[env_ids] = False
@@ -291,7 +283,7 @@ class SO101KeyboardPopulationEnv(gym.Env):
         if seed is not None:
             self.seed(seed)
         ids = self.all_env_ids[slice(None) if env_ids is None else env_ids]
-        with self._stream_scope():
+        with warp_on_torch_stream(self.device):
             self.episode_interrupted[ids] = False
             if self._has_reset:
                 self.keyboard_variants.request_variants(ids)
@@ -304,7 +296,7 @@ class SO101KeyboardPopulationEnv(gym.Env):
     def step(self, action):
         """Advance eight native substeps with relative PD refreshed every physics frame."""
         self._check_active()
-        with self._stream_scope():
+        with warp_on_torch_stream(self.device):
             self.episode_interrupted.zero_()
             self.extras.pop("final_obs", None)
             self.action_manager.process_action(action.to(self.device))
