@@ -50,6 +50,7 @@ RUN --mount=type=bind,source=source,target=/tmp/isaaclab_overlay/source,readonly
       "${ISAACLAB_PATH}/tools" \
       "${ISAACLAB_PATH}/pyproject.toml" \
       "${ISAACLAB_PATH}/uv.lock" \
+      "${ISAACLAB_PATH}/docker/wheels" \
       "${ISAACLAB_PATH}/isaaclab.sh" && \
     find "${ISAACLAB_PATH}/source" -type f -name "*.sh" -exec sed -i 's/\r$//' {} + && \
     if [ "${RUN_PIP_INSTALL}" = "1" ]; then \

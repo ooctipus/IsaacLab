@@ -130,7 +130,7 @@ RUN touch /bin/nvidia-smi && \
 # pyproject.toml to build an installation plan, but not their sources. Resolving the ~240
 # third-party packages here means a source edit re-runs only the workspace install below.
 COPY --parents ../source/*/pyproject.toml ${ISAACLAB_PATH}/
-COPY docker/wheels/ ${ISAACLAB_PATH}/docker/wheels/
+COPY --chown=isaaclab:isaaclab docker/wheels/ ${ISAACLAB_PATH}/docker/wheels/
 
 # The image's package set. Kit ships in the base image, so the teleop stack comes without the
 # ``isaacsim`` wheel; ``teleop`` itself is left exactly as tuned.
