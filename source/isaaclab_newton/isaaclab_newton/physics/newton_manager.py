@@ -739,7 +739,11 @@ class NewtonManager(PhysicsManager):
             if cls._usdrt_stage is None:
                 simulate = cls._simulate_full if cls._is_all_graphable() else cls._simulate_physics_only
                 with Timer(name="newton_cuda_graph", msg="CUDA graph took:"):
-                    with _paused_gc(), wp.ScopedCapture(device=device, force_module_load=False) as capture:
+                    with (
+                        _paused_gc(),
+                        wp.ScopedStream(wp.Stream(device), sync_exit=True),
+                        wp.ScopedCapture(device=device, force_module_load=False) as capture,
+                    ):
                         simulate()
                 NewtonManager._graph = capture.graph
                 logger.info("Newton CUDA graph captured (deferred standard mode)")
@@ -1998,6 +2002,9 @@ class NewtonManager(PhysicsManager):
         Called by :meth:`start_simulation` and :meth:`set_decimation`
         whenever the graph needs to be (re-)captured.
 
+        Graphable callbacks submit to the current Warp stream. Standard preparation
+        owns a private capture stream; replay remains on the caller stream.
+
         * **No USDRT / headless**: captures immediately via
           ``wp.ScopedCapture`` unless the solver requires reset-dependent setup.
         * **RTX active**: defers capture to the first :meth:`step` call
@@ -2024,7 +2031,11 @@ class NewtonManager(PhysicsManager):
             with Timer(name="newton_cuda_graph", msg="CUDA graph took:", activity="Capturing CUDA graph"):
                 if cls._usdrt_stage is None and not cls._requires_initial_reset_before_graph_capture():
                     simulate = cls._simulate_full if cls._is_all_graphable() else cls._simulate_physics_only
-                    with _paused_gc(), wp.ScopedCapture(device=device) as capture:
+                    with (
+                        _paused_gc(),
+                        wp.ScopedStream(wp.Stream(device), sync_exit=True),
+                        wp.ScopedCapture(device=device) as capture,
+                    ):
                         simulate()
                     NewtonManager._graph = capture.graph
                     logger.info("Newton CUDA graph captured (standard Warp mode)")
@@ -2484,7 +2495,7 @@ class NewtonManager(PhysicsManager):
             cls._sensor_graph = cls._capture_relaxed_graph(device, capture_target=pipeline)
         else:
             try:
-                with wp.ScopedCapture(device=device) as capture:
+                with wp.ScopedStream(wp.Stream(device), sync_exit=True), wp.ScopedCapture(device=device) as capture:
                     pipeline()
                 cls._sensor_graph = capture.graph
             except Exception:

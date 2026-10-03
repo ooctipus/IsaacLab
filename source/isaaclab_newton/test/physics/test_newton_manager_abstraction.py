@@ -1091,9 +1091,27 @@ def test_cuda_graph_capture_uses_simulation_device(monkeypatch):
 
     captured_devices = []
     captured_graph = object()
+    preparation_stream = object()
+    scope_active = []
+
+    def make_stream(device):
+        assert device == "cuda:1"
+        return preparation_stream
+
+    class FakeScopedStream:
+        def __init__(self, stream, *, sync_enter=True, sync_exit=False):
+            assert stream is preparation_stream
+            assert sync_enter and sync_exit
+
+        def __enter__(self):
+            scope_active.append(True)
+
+        def __exit__(self, *exc):
+            scope_active.pop()
 
     class FakeScopedCapture:
         def __init__(self, device=None):
+            assert scope_active
             captured_devices.append(device)
             self.graph = captured_graph
 
@@ -1110,11 +1128,79 @@ def test_cuda_graph_capture_uses_simulation_device(monkeypatch):
     monkeypatch.setattr(NewtonManager, "_is_all_graphable", classmethod(lambda cls: False))
     monkeypatch.setattr(NewtonManager, "_simulate_physics_only", classmethod(lambda cls: None))
     monkeypatch.setattr(wp, "ScopedCapture", FakeScopedCapture)
+    monkeypatch.setattr(wp, "Stream", make_stream)
+    monkeypatch.setattr(wp, "ScopedStream", FakeScopedStream)
 
     NewtonManager._capture_or_defer_graph()
 
     assert captured_devices == ["cuda:1"]
     assert NewtonManager._graph is captured_graph
+
+
+@wp.kernel
+def _capture_stream_increment(values: wp.array(dtype=int)):
+    values[0] += 1
+
+
+@pytest.mark.parametrize("capture_kind", ["initial", "deferred", "sensor"])
+def test_cuda_graph_preparation_from_default_stream(monkeypatch, capture_kind):
+    """All ordinary graph owners prepare privately and replay on the caller's default stream."""
+    if not wp.is_cuda_available():
+        pytest.skip("CUDA graph preparation requires CUDA")
+    device = "cuda:0"
+    values = wp.zeros(1, dtype=int, device=device)
+    wp.load_module(device=device)
+
+    def simulate():
+        wp.launch(_capture_stream_increment, dim=1, inputs=[values], device=device)
+
+    monkeypatch.setattr(PhysicsManager, "_cfg", SimpleNamespace(use_cuda_graph=True))
+    monkeypatch.setattr(PhysicsManager, "_device", device)
+    monkeypatch.setattr(PhysicsManager, "_sim", SimpleNamespace(is_playing=lambda: True))
+    monkeypatch.setattr(PhysicsManager, "_sim_time", 0.0)
+    for name, value in {
+        "_usdrt_stage": None,
+        "_solver": None,
+        "_model_changes": set(),
+        "_graph": None,
+        "_graph_capture_pending": capture_kind == "deferred",
+        "_solver_dt": 0.01,
+        "_num_substeps": 1,
+        "_adapter": None,
+        "_post_actuator_callbacks": [],
+        "_sensor_tasks": {"increment": simulate},
+        "_sensor_eager_tasks": set(),
+        "_sensor_graph": None,
+        "_sensor_flags": None,
+        "_sensor_flags_host": None,
+        "_sensor_graph_capture_failed": False,
+    }.items():
+        monkeypatch.setattr(NewtonManager, name, value)
+    monkeypatch.setattr(NewtonManager, "_is_all_graphable", classmethod(lambda cls: False))
+    monkeypatch.setattr(NewtonManager, "_simulate_physics_only", classmethod(lambda cls: simulate()))
+    for name in (
+        "forward",
+        "_refit_sensor_bvh",
+        "_mark_transforms_changed",
+        "_mark_sensor_state_dirty",
+        "_check_solver_status",
+        "_log_solver_debug",
+    ):
+        monkeypatch.setattr(NewtonManager, name, classmethod(lambda cls: None))
+    with wp.ScopedStream(wp.Stream(device, cuda_stream=0), sync_enter=True, sync_exit=True):
+        values.fill_(10)
+        if capture_kind == "initial":
+            NewtonManager._capture_or_defer_graph()
+            wp.capture_launch(NewtonManager._graph)
+        elif capture_kind == "deferred":
+            NewtonManager.step()
+        else:
+            NewtonManager._capture_sensor_graph()
+            assert NewtonManager._sensor_graph is not None
+            NewtonManager._sensor_flags.fill_(1)
+            wp.capture_launch(NewtonManager._sensor_graph)
+        assert wp.get_stream(device).cuda_stream == 0
+        np.testing.assert_array_equal(values.numpy(), [12 if capture_kind == "sensor" else 11])
 
 
 # ---------------------------------------------------------------------------
