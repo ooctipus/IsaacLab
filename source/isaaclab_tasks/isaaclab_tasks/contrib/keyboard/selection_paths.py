@@ -9,14 +9,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import MISSING, fields, is_dataclass
-from typing import Literal
 
 import numpy as np
 from newton import Model
 
 from isaaclab.utils import configclass
 
-from .newton_selection import BODY, JOINT_COORD, JOINT_DOF, NewtonSelection, NewtonSelections
+from .newton_selection import NewtonSelection, NewtonSelections
 
 
 @configclass
@@ -28,7 +27,7 @@ class NewtonSelectorCfg:
     Joint patterns expand into all coordinates or DOFs of each matched joint.
     """
 
-    index_domain: Literal["body", "joint_coord", "joint_dof"] = MISSING
+    index_domain: Model.AttributeFrequency = MISSING
     path: str | tuple[str, ...] | list[str] = MISSING
     count_per_world: int | None = None
     policy_width: int | None = None
@@ -62,14 +61,20 @@ def query_selection_indices(model: Model, cfg: NewtonSelectorCfg) -> np.ndarray:
     Occurrences in different bodies or joints remain distinct even when labels
     match. Repeated pattern matches of the same entity are selected once.
     """
-    if cfg.index_domain not in (BODY, JOINT_COORD, JOINT_DOF):
+    if not isinstance(cfg.index_domain, Model.AttributeFrequency) or cfg.index_domain not in (
+        Model.AttributeFrequency.BODY,
+        Model.AttributeFrequency.JOINT_COORD,
+        Model.AttributeFrequency.JOINT_DOF,
+    ):
         raise ValueError(f"Unknown Newton index domain: {cfg.index_domain!r}")
-    labels = model.body_label if cfg.index_domain == BODY else model.joint_label
-    worlds = (model.body_world if cfg.index_domain == BODY else model.joint_world).numpy()
+    labels = model.body_label if cfg.index_domain == Model.AttributeFrequency.BODY else model.joint_label
+    worlds = (model.body_world if cfg.index_domain == Model.AttributeFrequency.BODY else model.joint_world).numpy()
     starts = (
         None
-        if cfg.index_domain == BODY
-        else (model.joint_q_start if cfg.index_domain == JOINT_COORD else model.joint_qd_start).numpy()
+        if cfg.index_domain == Model.AttributeFrequency.BODY
+        else (
+            model.joint_q_start if cfg.index_domain == Model.AttributeFrequency.JOINT_COORD else model.joint_qd_start
+        ).numpy()
     )
     rows = [[] for _ in range(model.world_count)]
     seen = set()
@@ -97,8 +102,10 @@ def resolve_selection(owner: NewtonSelections, cfg: NewtonSelectorCfg) -> Newton
     model = owner.model if owner.source is None else owner.source.model
     ids = query_selection_indices(model, cfg)
     if owner.source is not None:
-        stride = {BODY: model.body_count, JOINT_COORD: model.joint_coord_count, JOINT_DOF: model.joint_dof_count}[
-            cfg.index_domain
-        ]
+        stride = {
+            Model.AttributeFrequency.BODY: model.body_count,
+            Model.AttributeFrequency.JOINT_COORD: model.joint_coord_count,
+            Model.AttributeFrequency.JOINT_DOF: model.joint_dof_count,
+        }[cfg.index_domain]
         ids = (ids[None, :] + np.arange(owner.model.world_count, dtype=np.int32)[:, None] * stride).reshape(-1)
     return owner.bind(cfg.index_domain, ids)

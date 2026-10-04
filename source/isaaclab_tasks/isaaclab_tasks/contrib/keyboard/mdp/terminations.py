@@ -11,11 +11,12 @@ from typing import TYPE_CHECKING, Any
 
 import torch
 import warp as wp
+from newton import Model
 
 from isaaclab.managers import ManagerTermBase
 
 from ..mujoco_selection import MuJoCoSelection
-from ..newton_selection import JOINT_DOF, NewtonSelection, scalar_field_active, scalar_field_read
+from ..newton_selection import NewtonSelection, scalar_field_active, scalar_field_read
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
@@ -87,7 +88,7 @@ class joint_vel_out_of_limit(ManagerTermBase):
 
     def __init__(self, cfg, env):
         super().__init__(cfg, env)
-        if cfg.params["joints"].index_domain != JOINT_DOF:
+        if cfg.params["joints"].index_domain != Model.AttributeFrequency.JOINT_DOF:
             raise ValueError("Velocity limits require a JOINT_DOF selector.")
         self._out = wp.zeros(env.num_envs, dtype=wp.int32, device=env.device)
 
@@ -135,7 +136,7 @@ class illegal_contact(ManagerTermBase):
         sensor_name = cfg.params["sensor_name"]
         self._sensor = env.scene.sensors[sensor_name] if sensor_name is not None else None
         if self._sensor is None:
-            if bodies.index_domain != "body":
+            if bodies.index_domain != Model.AttributeFrequency.BODY:
                 raise ValueError("Keyboard contact termination requires selected bodies.")
             return
         native = self._sensor.contact_view

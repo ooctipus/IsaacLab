@@ -42,9 +42,6 @@ from isaaclab_tasks.contrib.keyboard.mujoco_selection import (
     scalar_field_write as native_field_write,
 )
 from isaaclab_tasks.contrib.keyboard.newton_selection import (
-    BODY,
-    JOINT_COORD,
-    JOINT_DOF,
     NewtonSelectionGroup,
     NewtonSelections,
     pose_field_active,
@@ -211,14 +208,18 @@ def selections(request):
 
 
 def test_frequency_expansion_and_validation(selections):
-    q = resolve_selection(selections, NewtonSelectorCfg(JOINT_COORD, ".*/free", count_per_world=7))
-    qd = resolve_selection(selections, NewtonSelectorCfg(JOINT_DOF, ".*/free", count_per_world=6))
+    q = resolve_selection(
+        selections, NewtonSelectorCfg(newton.Model.AttributeFrequency.JOINT_COORD, ".*/free", count_per_world=7)
+    )
+    qd = resolve_selection(
+        selections, NewtonSelectorCfg(newton.Model.AttributeFrequency.JOINT_DOF, ".*/free", count_per_world=6)
+    )
     assert q.world_selection_counts == (7, 7) and qd.world_selection_counts == (6, 6)
     assert copy.deepcopy(q) is q
     with pytest.raises(ValueError, match="matched no"):
-        resolve_selection(selections, NewtonSelectorCfg(BODY, ".*/missing"))
+        resolve_selection(selections, NewtonSelectorCfg(newton.Model.AttributeFrequency.BODY, ".*/missing"))
     with pytest.raises(ValueError, match="Expected 1"):
-        resolve_selection(selections, NewtonSelectorCfg(BODY, ".*", count_per_world=1))
+        resolve_selection(selections, NewtonSelectorCfg(newton.Model.AttributeFrequency.BODY, ".*", count_per_world=1))
     with pytest.raises(ValueError, match="Unknown Newton index domain"):
         resolve_selection(selections, NewtonSelectorCfg("joint", ".*"))
 
@@ -227,21 +228,21 @@ def test_numeric_binding_composes_path_ids_without_retaining_names(selections):
     """Keep name resolution outside integer relations, including the empty selection."""
     from isaaclab_tasks.contrib.keyboard.selection_paths import query_selection_indices
 
-    cfg = NewtonSelectorCfg(BODY, (".*/tip.*", ".*"))
+    cfg = NewtonSelectorCfg(newton.Model.AttributeFrequency.BODY, (".*/tip.*", ".*"))
     ids = query_selection_indices(selections.model, cfg)
-    selected = selections.bind(BODY, ids)
+    selected = selections.bind(newton.Model.AttributeFrequency.BODY, ids)
     assert selected is resolve_selection(selections, cfg)
     assert selected.ids.numpy().tolist() == [1, 0, 3, 4, 2]
     assert not hasattr(selected, "path") and not hasattr(selected, "count_per_world")
-    empty = selections.bind(BODY, [])
+    empty = selections.bind(newton.Model.AttributeFrequency.BODY, [])
     assert empty.world_selection_counts == (0, 0) and empty.width == 0
     assert empty.dense_active().shape == (2, 0)
     np.testing.assert_array_equal(empty.world_start.numpy(), [0, 0, 0])
-    for index_domain in (JOINT_COORD, JOINT_DOF):
+    for index_domain in (newton.Model.AttributeFrequency.JOINT_COORD, newton.Model.AttributeFrequency.JOINT_DOF):
         assert selections.bind(index_domain, []).joint_types().shape == (2, 0)
     for invalid in ([True], [0, True], [0.5], ["0"], [0, 0], [-1], [selections.model.body_count]):
         with pytest.raises(ValueError):
-            selections.bind(BODY, invalid)
+            selections.bind(newton.Model.AttributeFrequency.BODY, invalid)
 
 
 def test_numeric_selection_owners_have_no_symbolic_resolution_or_private_runtime_access():
@@ -258,7 +259,14 @@ def test_numeric_selection_owners_have_no_symbolic_resolution_or_private_runtime
         "world_readiness_by_prototype",
     }
     assert "env_world_bindings" in MuJoCoScalarField.vars and "placement" not in MuJoCoScalarField.vars
-    forbidden = {"NativePlacement", "NativeSelection", "NativeSelections", "NativePrototypeMapping", "static_counts"}
+    forbidden = {
+        "NativePlacement",
+        "NativeSelection",
+        "NativeSelections",
+        "NativePrototypeMapping",
+        "NewtonMuJoCoMapping",
+        "static_counts",
+    }
     for path in directory.rglob("*.py"):
         tree = ast.parse(path.read_text())
         for node in ast.walk(tree):
@@ -269,6 +277,8 @@ def test_numeric_selection_owners_have_no_symbolic_resolution_or_private_runtime
     for name in ("newton_selection.py", "mujoco_selection.py"):
         tree = ast.parse((directory / name).read_text())
         for node in ast.walk(tree):
+            if isinstance(node, ast.Name):
+                assert node.id not in {"BODY", "JOINT_COORD", "JOINT_DOF"}
             if isinstance(node, ast.Import):
                 assert all(alias.name != "re" for alias in node.names)
             if isinstance(node, ast.ImportFrom):
@@ -283,8 +293,25 @@ def test_numeric_selection_owners_have_no_symbolic_resolution_or_private_runtime
     for name in ("mujoco_selection.py", "keyboard_worlds.py"):
         tree = ast.parse((directory / name).read_text())
         for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                assert not (node.module or "").startswith("mujoco_warp._src")
+            if isinstance(node, ast.Attribute):
+                assert not node.attr.startswith("mjc_")
             if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "group":
                 assert node.attr not in {"rows", "contacts", "ccd", "updates", "observe_launch", "_owner"}
+
+
+def test_numeric_selection_domains_use_the_model_frequency_identity():
+    builder = newton.ModelBuilder()
+    builder.begin_world()
+    builder.add_body(label="/body", mass=1.0)
+    builder.end_world()
+    owner = NewtonSelections(builder.finalize("cpu"))
+    selection = owner.bind(newton.Model.AttributeFrequency.BODY, [0])
+    assert selection.index_domain is newton.Model.AttributeFrequency.BODY
+    for domain in ("body", "BODY", int(newton.Model.AttributeFrequency.BODY), True):
+        with pytest.raises(ValueError, match="index domain"):
+            owner.bind(domain, [0])
 
 
 def test_retired_selection_owner_preserves_existing_bindings_without_a_cache_cycle():
@@ -294,7 +321,7 @@ def test_retired_selection_owner_preserves_existing_bindings_without_a_cache_cyc
     builder.end_world()
     model = builder.finalize("cpu")
     owner = NewtonSelections(model, state=model.state(), control=model.control())
-    cfg = NewtonSelectorCfg(BODY, ".*", count_per_world=1)
+    cfg = NewtonSelectorCfg(newton.Model.AttributeFrequency.BODY, ".*", count_per_world=1)
     selected = resolve_selection(owner, cfg)
     references = [weakref.ref(value) for value in (owner, model, owner.state, owner.control)]
     del model
@@ -318,7 +345,7 @@ def test_retired_selection_owner_preserves_existing_bindings_without_a_cache_cyc
 
 
 def test_ragged_membership_empty_world_and_reactivation(selections):
-    bodies = resolve_selection(selections, NewtonSelectorCfg(BODY, (".*/tip.*", ".*")))
+    bodies = resolve_selection(selections, NewtonSelectorCfg(newton.Model.AttributeFrequency.BODY, (".*/tip.*", ".*")))
     assert bodies.world_selection_counts == (2, 3)  # overlap was deduplicated
     assert bodies.ids.numpy().tolist() == [1, 0, 3, 4, 2]  # pattern order, then model order
     with pytest.raises(ValueError, match="equal static counts"):
@@ -339,7 +366,9 @@ def test_ragged_membership_empty_world_and_reactivation(selections):
 
 
 def test_dense_mask_clears_values_without_caching_state(selections):
-    bodies = resolve_selection(selections, NewtonSelectorCfg(BODY, ".*/base", count_per_world=1))
+    bodies = resolve_selection(
+        selections, NewtonSelectorCfg(newton.Model.AttributeFrequency.BODY, ".*/base", count_per_world=1)
+    )
     values = wp.ones(selections.model.body_count, dtype=wp.float32, device=selections.model.device)
     wp.to_torch(selections.body_active)[0] = False
     selections.refresh()
@@ -351,7 +380,7 @@ def test_dense_mask_clears_values_without_caching_state(selections):
 def test_membership_refresh_is_capture_safe(selections):
     if not selections.model.device.is_cuda:
         pytest.skip("CUDA graph test")
-    selected = resolve_selection(selections, NewtonSelectorCfg(BODY, ".*"))
+    selected = resolve_selection(selections, NewtonSelectorCfg(newton.Model.AttributeFrequency.BODY, ".*"))
     with wp.ScopedCapture(device=selections.model.device) as capture:
         selections.refresh()
     selections.world_active.fill_(False)
@@ -506,9 +535,15 @@ def test_selected_tip_jacobian_matches_finite_difference(selections):
     model = selections.model
     state = model.state()
     ik = KeyboardResetIKCfg(
-        joints=resolve_selection(selections, NewtonSelectorCfg(JOINT_COORD, ".*/hinge0", count_per_world=1)),
-        dofs=resolve_selection(selections, NewtonSelectorCfg(JOINT_DOF, ".*/hinge0", count_per_world=1)),
-        body=resolve_selection(selections, NewtonSelectorCfg(BODY, ".*/tip0", count_per_world=1)),
+        joints=resolve_selection(
+            selections, NewtonSelectorCfg(newton.Model.AttributeFrequency.JOINT_COORD, ".*/hinge0", count_per_world=1)
+        ),
+        dofs=resolve_selection(
+            selections, NewtonSelectorCfg(newton.Model.AttributeFrequency.JOINT_DOF, ".*/hinge0", count_per_world=1)
+        ),
+        body=resolve_selection(
+            selections, NewtonSelectorCfg(newton.Model.AttributeFrequency.BODY, ".*/tip0", count_per_world=1)
+        ),
         tip_offset=(0.3, 0.2, -0.1),
     )
     selections.state = state
@@ -549,7 +584,9 @@ def test_fixed_root_writer_masks_frames_and_stream_order(device, nested_task):
     model = builder.finalize(device)
     owner = NewtonSelections(model)
     owner.world_ids = torch.tensor([2, 0, 1], device=device)
-    roots = resolve_selection(owner, NewtonSelectorCfg(BODY, ".*/root.*", count_per_world=2))
+    roots = resolve_selection(
+        owner, NewtonSelectorCfg(newton.Model.AttributeFrequency.BODY, ".*/root.*", count_per_world=2)
+    )
     roots.dense_active()[2, 1] = False
     ids = torch.tensor([1, 2], device=device)
     storage = torch.zeros((2, 2, 14), device=device)
@@ -627,7 +664,7 @@ def test_reset_kinematics_updates_only_requested_logical_worlds(device, grouped)
     )
     with stream:
         actors = ([4, 0], [1, 3, 2]) if grouped else ([0, 1],)
-        cfg = NewtonSelectorCfg(BODY, ".*/root", count_per_world=2)
+        cfg = NewtonSelectorCfg(newton.Model.AttributeFrequency.BODY, ".*/root", count_per_world=2)
         parts = []
         for logical_worlds in actors:
             builder = newton.ModelBuilder()
@@ -706,10 +743,10 @@ def test_reset_ik_uses_current_bindings_without_retaining_a_graph(device, revers
     with stream:
         owners, actors = (owner(2), owner(1)), ([2, 0], [1])
         configs = (
-            NewtonSelectorCfg(BODY, ".*/root", count_per_world=1),
-            NewtonSelectorCfg(BODY, ".*/tip", count_per_world=1),
-            NewtonSelectorCfg(JOINT_COORD, ".*/slider", count_per_world=1),
-            NewtonSelectorCfg(JOINT_DOF, ".*/slider", count_per_world=1),
+            NewtonSelectorCfg(newton.Model.AttributeFrequency.BODY, ".*/root", count_per_world=1),
+            NewtonSelectorCfg(newton.Model.AttributeFrequency.BODY, ".*/tip", count_per_world=1),
+            NewtonSelectorCfg(newton.Model.AttributeFrequency.JOINT_COORD, ".*/slider", count_per_world=1),
+            NewtonSelectorCfg(newton.Model.AttributeFrequency.JOINT_DOF, ".*/slider", count_per_world=1),
         )
         groups = [
             NewtonSelectionGroup(
@@ -778,7 +815,7 @@ def test_velocity_reduction_uses_compact_ragged_dofs(selections):
 
     model = selections.model
     state = model.state()
-    joints = resolve_selection(selections, NewtonSelectorCfg(JOINT_DOF, ".*/hinge.*"))
+    joints = resolve_selection(selections, NewtonSelectorCfg(newton.Model.AttributeFrequency.JOINT_DOF, ".*/hinge.*"))
     model.joint_velocity_limit.fill_(2.0)
     wp.to_torch(state.joint_qd)[joints.ids.numpy()[-2:]] = -3.0
     selections.state = state
@@ -796,7 +833,7 @@ def test_bound_selection_does_not_serialize_symbolic_configuration(selections):
 
     from isaaclab_tasks.contrib.keyboard.mdp.observations import joint_pos
 
-    cfg = NewtonSelectorCfg(JOINT_COORD, ".*/free", count_per_world=7)
+    cfg = NewtonSelectorCfg(newton.Model.AttributeFrequency.JOINT_COORD, ".*/free", count_per_world=7)
     term = ObservationTermCfg(func=joint_pos, params={"joints": resolve_selection(selections, cfg)})
     assert class_to_dict(term)["params"]["joints"] == {}
     assert class_to_dict(cfg)["path"] == ".*/free"
@@ -842,7 +879,7 @@ def test_grouped_selection_routes_exact_native_populations(device):
             owner = NewtonSelections(model, state=state, control=control, source=source)
         bindings.append(owner)
         states.append(state)
-    cfg = NewtonSelectorCfg(JOINT_COORD, "/Robot/hinge.*", policy_width=2)
+    cfg = NewtonSelectorCfg(newton.Model.AttributeFrequency.JOINT_COORD, "/Robot/hinge.*", policy_width=2)
     parts = [
         (resolve_selection(owner, cfg), world_id_by_env)
         for owner, world_id_by_env in zip(bindings, actors, strict=True)
@@ -865,7 +902,7 @@ def test_grouped_selection_routes_exact_native_populations(device):
         torch.testing.assert_close(
             wp.to_torch(part.owner.control.joint_target_q), expected[world_id_by_env, : part.width].flatten()
         )
-    bodies_cfg = NewtonSelectorCfg(BODY, "/Robot/.*", policy_width=3)
+    bodies_cfg = NewtonSelectorCfg(newton.Model.AttributeFrequency.BODY, "/Robot/.*", policy_width=3)
     bodies = NewtonSelectionGroup(
         bodies_cfg.index_domain,
         [(resolve_selection(owner, bodies_cfg), rows) for owner, rows in zip(bindings, actors, strict=True)],
@@ -877,9 +914,9 @@ def test_grouped_selection_routes_exact_native_populations(device):
     assert not poses[[0, 2, 4], 2].any()
     from isaaclab_tasks.contrib.keyboard.mdp.observations import key_positions_b
 
-    root_cfg = NewtonSelectorCfg(BODY, "/Robot/root")
+    root_cfg = NewtonSelectorCfg(newton.Model.AttributeFrequency.BODY, "/Robot/root")
     root_parts = [(resolve_selection(owner, root_cfg), rows) for owner, rows in zip(bindings, actors, strict=True)]
-    roots = NewtonSelectionGroup(BODY, root_parts, 5)
+    roots = NewtonSelectionGroup(newton.Model.AttributeFrequency.BODY, root_parts, 5)
     for state in states:
         wp.to_torch(state.body_q)[:, 0] = torch.arange(len(state.body_q), device=device)
     for selected_bodies, selected_roots in (
@@ -1189,11 +1226,15 @@ def test_keyboard_variant_reset_restores_geometry_inertia_and_sleep(use_graph):
 
 @pytest.mark.parametrize("retirement", ["selection", "runtime"])
 def test_native_fields_follow_handles_strides_generations_and_reference_coordinates(retirement):
+    from dataclasses import replace
     from types import SimpleNamespace
 
-    from isaaclab_tasks.contrib.keyboard.mujoco_selection import MuJoCoSelections, NewtonMuJoCoMapping
+    from newton._src.solvers.mujoco.worlds import _MuJoCoWorldPopulation
+    from newton.solvers import MuJoCoModelMapping, MuJoCoWorldPopulation, MuJoCoWorlds
 
-    metadata, solvers, groups, buffers = [], [], [], []
+    from isaaclab_tasks.contrib.keyboard.mujoco_selection import MuJoCoSelections, validate_native_mapping
+
+    metadata, mappings, groups, buffers = [], [], [], []
     for prototype, count in enumerate((1, 2)):
         builder = newton.ModelBuilder()
         builder.begin_world()
@@ -1208,44 +1249,45 @@ def test_native_fields_follow_handles_strides_generations_and_reference_coordina
         owner = NewtonSelections(model)
         metadata.append(owner)
         reverse = list(reversed(range(count)))
-        solver = SimpleNamespace(
-            model=model,
-            mjw_model=SimpleNamespace(nbody=count + 1),
-            mj_model=SimpleNamespace(nq=count, nv=count, jnt_qposadr=np.arange(count)),
-            mjc_mocap_to_newton_jnt=wp.zeros((1, 0), dtype=int, device="cpu"),
-            mjc_jnt_to_newton_jnt=wp.array([reverse], dtype=int, device="cpu"),
-            mjc_dof_to_newton_dof=wp.array([reverse], dtype=int, device="cpu"),
-            mjc_body_to_newton=wp.array([[-1, *reverse]], dtype=int, device="cpu"),
-            mjc_actuator_ctrl_source=wp.zeros(count * 2, dtype=int, device="cpu"),
-            mjc_actuator_to_newton_idx=wp.array([*reverse, *[-i - 2 for i in reverse]], dtype=int, device="cpu"),
-            mjc_actuator_to_newton_target_q_idx=wp.array([*reverse, *[-1] * count], dtype=int, device="cpu"),
-            mjc_actuator_to_target_q_axis_idx=wp.full(count * 2, -1, dtype=int, device="cpu"),
-            mjc_actuator_to_newton_ball_jnt=wp.full(count * 2, -1, dtype=int, device="cpu"),
+        native_model = SimpleNamespace(nbody=count + 1, nq=count, nv=count)
+        mapping = MuJoCoModelMapping(
+            model,
+            native_model,
+            np.array([reverse], dtype=np.int32),
+            np.array([reverse], dtype=np.int32),
+            np.array([[-1, *reverse]], dtype=np.int32),
+            np.empty((1, 0), dtype=np.int32),
+            np.full((1, count), 0.25, dtype=np.float32),
+            np.array([*reverse, *[-1] * count], dtype=np.int32),
+            np.array([*[-1] * count, *reverse], dtype=np.int32),
+            np.full(count * 2, -1, dtype=np.int32),
+            np.full(count * 2, -1, dtype=np.int32),
+            np.full(count * 2, -1, dtype=np.int32),
+            np.array([[*[0.25] * count, *[0.0] * count]], dtype=np.float32),
         )
-        solvers.append(solver)
-        # Unactuated and non-mocap prototypes still have valid numeric relations.
-        no_actuators = copy.copy(solver)
-        for name in (
-            "mjc_actuator_ctrl_source",
-            "mjc_actuator_to_newton_idx",
-            "mjc_actuator_to_newton_target_q_idx",
-            "mjc_actuator_to_target_q_axis_idx",
-            "mjc_actuator_to_newton_ball_jnt",
-            "mjc_mocap_to_newton_jnt",
-        ):
-            setattr(no_actuators, name, None)
-        mapping = NewtonMuJoCoMapping(owner, no_actuators)
-        assert (
-            not mapping.position_actuator_index_by_newton_target
-            and not mapping.velocity_actuator_index_by_newton_dof
-            and mapping.newton_body_by_mocap.shape == (0,)
+        mappings.append(mapping)
+        empty = np.empty(0, dtype=np.int32)
+        no_actuators = replace(
+            mapping,
+            newton_target_by_position_actuator=empty,
+            newton_dof_by_velocity_actuator=empty,
+            newton_control_by_direct_actuator=empty,
+            newton_joint_by_ball_actuator=empty,
+            axis_by_actuator=empty,
+            position_references=np.empty((1, 0), dtype=np.float32),
         )
-        assert not mapping.newton_coord_by_mujoco_qpos.flags.writeable
-        with pytest.raises(TypeError):
-            mapping.mujoco_qpos_index_by_newton_coord[0] = 99
-        no_actuators.mjc_mocap_to_newton_jnt = wp.array([[-1]], dtype=int, device="cpu")
+        validate_native_mapping(owner, no_actuators)
         with pytest.raises(ValueError, match="valid authored joints"):
-            NewtonMuJoCoMapping(owner, no_actuators)
+            validate_native_mapping(owner, replace(no_actuators, newton_joint_by_mujoco_mocap=np.array([[-1]])))
+        with pytest.raises(ValueError, match="unique actuator"):
+            validate_native_mapping(
+                owner,
+                replace(
+                    mapping,
+                    newton_target_by_position_actuator=np.zeros(count * 2, dtype=np.int32),
+                    newton_dof_by_velocity_actuator=np.full(count * 2, -1, dtype=np.int32),
+                ),
+            )
         physical = wp.array(np.full((2, 8), -999, np.float32), device="cpu")
         values = wp.array(ptr=physical.ptr, shape=(2, count), strides=physical.strides, dtype=float, device="cpu")
         values.assign(np.arange(2 * count, dtype=np.float32).reshape(2, count) + 10 * (prototype + 1) + 0.25)
@@ -1258,14 +1300,20 @@ def test_native_fields_follow_handles_strides_generations_and_reference_coordina
             xpos=wp.full((2, count + 1), wp.vec3(1, 2, 3), dtype=wp.vec3, device="cpu"),
             xquat=wp.full((2, count + 1), wp.quat(1, 0, 0, 0), dtype=wp.quat, device="cpu"),
         )
-        groups.append(
-            SimpleNamespace(
-                prototype_index=prototype,
-                model=solver.mjw_model,
-                data=data,
-                world_storage_ready_count=wp.array([2], dtype=int, device="cpu"),
-            )
+        live, ready, contact_ready, ccd_ready = (wp.array([count], dtype=int, device="cpu") for count in (2, 2, 3, 1))
+        owner = _MuJoCoWorldPopulation(
+            native_model,
+            prototype_index=prototype,
+            data=data,
+            world_storage=SimpleNamespace(capacity=2, protected_count=live, ready_count=ready),
+            contact_storage=SimpleNamespace(capacity=4, ready_count=contact_ready),
+            ccd_storage=SimpleNamespace(capacity=1, ready_count=ccd_ready),
         )
+        owner.view = MuJoCoWorldPopulation(
+            prototype, native_model, data, 2, 4, 1, live, ready, contact_ready, ccd_ready, weakref.ref(owner)
+        )
+        groups.append(owner.view)
+        buffers.append(owner)
     directory = InstanceDirectoryData()
     for name, array in dict(
         prototype=wp.array([1, -1, 0], dtype=int, device="cpu"),
@@ -1278,16 +1326,17 @@ def test_native_fields_follow_handles_strides_generations_and_reference_coordina
         setattr(directory, name, array)
     actors = wp.array([2, 0, 1], dtype=int, device="cpu")
     generations = wp.array([5, 7, 0], dtype=wp.uint64, device="cpu")
-    from newton.solvers import MuJoCoWorlds
-
     # Use the production public lifetime guard without allocating a GPU physics population.
-    runtime = object.__new__(MuJoCoWorlds)
-    runtime._closed = runtime._service_failed = False
-    runtime.device = wp.get_device("cpu")
-    runtime._views, runtime._directory = tuple(groups), SimpleNamespace(data=directory)
+    runtime = MuJoCoWorlds(
+        device=wp.get_device("cpu"),
+        populations=tuple(groups),
+        directory=directory,
+        _directory=SimpleNamespace(data=directory),
+        _populations=buffers[1::2],
+    )
     selections = MuJoCoSelections(
         tuple(metadata),
-        tuple(NewtonMuJoCoMapping(owner, solver) for owner, solver in zip(metadata, solvers, strict=True)),
+        tuple(mappings),
         runtime,
         actors,
         generations,
@@ -1307,17 +1356,17 @@ def test_native_fields_follow_handles_strides_generations_and_reference_coordina
             )
     swapped = copy.copy(groups[0])
     swapped.model = copy.copy(groups[0].model)  # Same shape/topology metadata, different prepared owner.
-    with pytest.raises(ValueError, match="exact runtime population model"):
+    with pytest.raises(ValueError, match="changed|exact runtime population model"):
         MuJoCoSelections(
             tuple(metadata),
             selections.mappings,
-            SimpleNamespace(populations=(swapped, groups[1]), device=wp.get_device("cpu")),
+            replace(runtime, populations=(swapped, groups[1])),
             actors,
             generations,
             num_envs=3,
             device="cpu",
         )
-    selected = selections.bind(JOINT_COORD, ((0,), (0, 1)), policy_width=2)
+    selected = selections.bind(newton.Model.AttributeFrequency.JOINT_COORD, ((0,), (0, 1)), policy_width=2)
     assert copy.deepcopy(selected) is selected
     from isaaclab.utils import class_to_dict
 
@@ -1331,7 +1380,7 @@ def test_native_fields_follow_handles_strides_generations_and_reference_coordina
     np.testing.assert_allclose(groups[1].data.qpos.numpy()[1], [41.25, 40.25])
     selected.write_control("joint_target_q", torch.tensor([[5.0, 6.0]]), torch.tensor([1]))
     np.testing.assert_allclose(groups[1].data.ctrl.numpy()[1], [6.25, 5.25, -7, -7])
-    dofs = selections.bind(JOINT_DOF, ((0,), (0, 1)), policy_width=2)
+    dofs = selections.bind(newton.Model.AttributeFrequency.JOINT_DOF, ((0,), (0, 1)), policy_width=2)
     for invalid in (
         lambda: dofs.read_model("body_mass"),
         lambda: selected.read_model("joint_target_ke"),
@@ -1373,13 +1422,13 @@ def test_native_fields_follow_handles_strides_generations_and_reference_coordina
     np.testing.assert_array_equal(effort.numpy(), [[-3.5, 0], [-3.5, -3.5], [0, 0]])
     np.testing.assert_array_equal(groups[1].data.ctrl.numpy()[1], [41.375, 40.375, 0, 0])
     np.testing.assert_array_equal(groups[1].data.qfrc_applied.numpy()[1], 0)
-    bodies = selections.bind(BODY, ((0,), (0, 1)), policy_width=2)
+    bodies = selections.bind(newton.Model.AttributeFrequency.BODY, ((0,), (0, 1)), policy_width=2)
     assert bodies.dense_shape == (3, 2)
     np.testing.assert_allclose(bodies.read_state("body_q").numpy()[1], [[1, 2, 3, 0, 0, 0, 1]] * 2)
     np.testing.assert_allclose(bodies.read_model("body_q").numpy()[1], [[0, 0, 0, 0, 0, 0, 1]] * 2)
     from isaaclab_tasks.contrib.keyboard.mdp.observations import key_positions_b
 
-    roots = selections.bind(BODY, ((0,), (0,)), policy_width=1)
+    roots = selections.bind(newton.Model.AttributeFrequency.BODY, ((0,), (0,)), policy_width=1)
     wp.to_torch(groups[1].data.xpos)[1, 1, 0] = 1.25
     relative = key_positions_b(SimpleNamespace(device="cpu"), bodies, roots)
     expected_relative = torch.zeros(3, 6)
@@ -1400,13 +1449,11 @@ def test_native_fields_follow_handles_strides_generations_and_reference_coordina
     np.testing.assert_array_equal(probe_active.numpy(), [False, False, False, False, True])
     np.testing.assert_array_equal(probe_values.numpy()[:4], 0)
     np.testing.assert_array_equal(probe_values.numpy()[4], [1, 2, 3, 0, 0, 0, 1])
-    from mujoco_warp._src.types import ConeType, vec5
+    from mujoco_warp import ConeType, vec5
 
     for group, count in zip(groups, (1, 2)):
         group.model.opt = SimpleNamespace(cone=ConeType.PYRAMIDAL)
         group.model.geom_bodyid = wp.array([1, count], dtype=int, device="cpu")
-        group.world_capacity, group.world_live_count = 2, wp.array([2], dtype=int, device="cpu")
-        group.contact_capacity, group.contact_storage_ready_count = 4, wp.array([3], dtype=int, device="cpu")
     contact = SimpleNamespace(
         worldid=wp.array([1, 1, 1, -1], dtype=int, device="cpu"),
         geom=wp.array([[0, 1]] * 4, dtype=wp.vec2i, device="cpu"),
@@ -1438,7 +1485,7 @@ def test_native_fields_follow_handles_strides_generations_and_reference_coordina
     groups[1].world_storage_ready_count.fill_(1)
     assert not selected.dense_active()[1].any()
     torch.testing.assert_close(key_positions_b(SimpleNamespace(device="cpu"), bodies, roots), torch.zeros(3, 6))
-    for physical, count in zip(buffers, (1, 2)):
+    for physical, count in zip(buffers[::2], (1, 2)):
         np.testing.assert_array_equal(physical.numpy()[:, count:], -999)
     # A reset-only publication switches env0 and compacts env1 to another row.
     # Raw old contacts still mention row1, now env0; selected forces must not consume them again.
@@ -1458,7 +1505,7 @@ def test_native_fields_follow_handles_strides_generations_and_reference_coordina
     else:
         runtime._closed = True
     operations = (
-        lambda: selections.bind(JOINT_COORD, ((0,), (0, 1)), policy_width=2),
+        lambda: selections.bind(newton.Model.AttributeFrequency.JOINT_COORD, ((0,), (0, 1)), policy_width=2),
         selected.dense_active,
         selected.active_counts,
         selected.joint_types,
@@ -1698,7 +1745,7 @@ def _native_bounds_probe(
 
 def _native_scalar_selection(device="cpu"):
     """A real two-actor descriptor, without a physics engine or retained dense mirror."""
-    from types import SimpleNamespace
+    from newton.solvers import MuJoCoWorlds
 
     placement = EnvWorldBindings()
     placement.world_id_by_env = wp.array([0, 1], dtype=int, device=device)
@@ -1727,7 +1774,11 @@ def _native_scalar_selection(device="cpu"):
     selected.owner.device, selected.owner.num_envs = wp.get_device(device), 2
     selected.owner._env_indices = placement.world_id_by_env
     selected.owner._retired = False
-    selected.owner.runtime = SimpleNamespace(populations=())
+    selected.owner.runtime = MuJoCoWorlds(
+        device=wp.get_device(device),
+        directory=placement.directory,
+        _directory=SimpleNamespace(data=placement.directory),
+    )
     selected.width = 1
     selected._fields = {("state", "joint_q"): field, ("control", "joint_f"): field}
     return selected, field, source, capacity
@@ -1773,10 +1824,13 @@ def writable_selection(request):
     owner = NewtonSelections(model, state=model.state(), control=model.control())
     owner.state.joint_q.assign(np.array([3, 4], dtype=np.float32))
     owner.control.joint_f.assign(np.array([3, 4], dtype=np.float32))
-    coords, dofs = owner.bind(JOINT_COORD, [0, 1]), owner.bind(JOINT_DOF, [0, 1])
+    coords, dofs = (
+        owner.bind(newton.Model.AttributeFrequency.JOINT_COORD, [0, 1]),
+        owner.bind(newton.Model.AttributeFrequency.JOINT_DOF, [0, 1]),
+    )
     if request.param == "newton_group":
-        coords = NewtonSelectionGroup(JOINT_COORD, ((coords, torch.arange(2)),), 2)
-        dofs = NewtonSelectionGroup(JOINT_DOF, ((dofs, torch.arange(2)),), 2)
+        coords = NewtonSelectionGroup(newton.Model.AttributeFrequency.JOINT_COORD, ((coords, torch.arange(2)),), 2)
+        dofs = NewtonSelectionGroup(newton.Model.AttributeFrequency.JOINT_DOF, ((dofs, torch.arange(2)),), 2)
     yield coords, dofs, owner.state.joint_q, owner.control.joint_f
 
 
@@ -1866,9 +1920,9 @@ def test_field_schema_keeps_coordinate_dof_and_body_domains_distinct(monkeypatch
     monkeypatch.setattr(newton, "use_coord_layout_targets", not coord_targets)
     index = 6 if joint_kind == "free" else 3  # Root quaternion scalar coordinate / hinge DOF.
     coords, dofs, first_dof = (
-        owner.bind(JOINT_COORD, [index]),
-        owner.bind(JOINT_DOF, [index]),
-        owner.bind(JOINT_DOF, [0]),
+        owner.bind(newton.Model.AttributeFrequency.JOINT_COORD, [index]),
+        owner.bind(newton.Model.AttributeFrequency.JOINT_DOF, [index]),
+        owner.bind(newton.Model.AttributeFrequency.JOINT_DOF, [0]),
     )
     if grouped:
         coords, dofs, first_dof = (
@@ -1934,15 +1988,20 @@ def test_selection_contracts_check_joint_identity_world_domain_and_scalar_topolo
     builder.add_articulation(joints)
     builder.end_world()
     owner = NewtonSelections(builder.finalize("cpu"))
-    coords, dofs = owner.bind(JOINT_COORD, [0, 1]), owner.bind(JOINT_DOF, [0, 1])
+    coords, dofs = (
+        owner.bind(newton.Model.AttributeFrequency.JOINT_COORD, [0, 1]),
+        owner.bind(newton.Model.AttributeFrequency.JOINT_DOF, [0, 1]),
+    )
     require_scalar_joint_pair(coords, dofs)
     with pytest.raises(ValueError, match="same ordered scalar joints"):
-        require_scalar_joint_pair(coords, owner.bind(JOINT_DOF, [1, 0]))
+        require_scalar_joint_pair(coords, owner.bind(newton.Model.AttributeFrequency.JOINT_DOF, [1, 0]))
     other = NewtonSelections(builder.finalize("cpu"))
     with pytest.raises(ValueError, match="same world domain"):
-        require_scalar_joint_pair(coords, other.bind(JOINT_DOF, [0, 1]))
-    grouped_coords = NewtonSelectionGroup(JOINT_COORD, ((coords, torch.tensor([0])),), 1)
-    grouped_dofs = NewtonSelectionGroup(JOINT_DOF, ((dofs, torch.tensor([0])),), 1)
+        require_scalar_joint_pair(coords, other.bind(newton.Model.AttributeFrequency.JOINT_DOF, [0, 1]))
+    grouped_coords = NewtonSelectionGroup(
+        newton.Model.AttributeFrequency.JOINT_COORD, ((coords, torch.tensor([0])),), 1
+    )
+    grouped_dofs = NewtonSelectionGroup(newton.Model.AttributeFrequency.JOINT_DOF, ((dofs, torch.tensor([0])),), 1)
     require_scalar_joint_pair(grouped_coords, grouped_dofs)
     assert not hasattr(grouped_coords, "joint_ids")
     with pytest.raises(ValueError, match="same world domain"):
@@ -1950,7 +2009,11 @@ def test_selection_contracts_check_joint_identity_world_domain_and_scalar_topolo
     with pytest.raises(ValueError, match="same world domain"):
         require_scalar_joint_pair(
             grouped_coords,
-            NewtonSelectionGroup(JOINT_DOF, ((other.bind(JOINT_DOF, [0, 1]), torch.tensor([0])),), 1),
+            NewtonSelectionGroup(
+                newton.Model.AttributeFrequency.JOINT_DOF,
+                ((other.bind(newton.Model.AttributeFrequency.JOINT_DOF, [0, 1]), torch.tensor([0])),),
+                1,
+            ),
         )
 
 
@@ -1968,8 +2031,10 @@ def test_prototype_cardinality_is_not_the_live_environment_axis():
             builder.add_body(mass=1.0)
         builder.end_world()
         owner = NewtonSelections(builder.finalize("cpu"))
-        parts.append(owner.bind(BODY, list(range(count))))
-    selection = MuJoCoSelection(SimpleNamespace(device=wp.get_device("cpu"), num_envs=3), BODY, parts)
+        parts.append(owner.bind(newton.Model.AttributeFrequency.BODY, list(range(count))))
+    selection = MuJoCoSelection(
+        SimpleNamespace(device=wp.get_device("cpu"), num_envs=3), newton.Model.AttributeFrequency.BODY, parts
+    )
     assert selection.prototype_selection_counts == (1, 2)
     assert selection.element_participating.shape == (3, 2)
     assert not hasattr(selection, "world_selection_counts")
@@ -1984,8 +2049,8 @@ def test_prototype_cardinality_is_not_the_live_environment_axis():
 def test_partial_free_joint_is_not_a_scalar_pair(selections):
     from isaaclab_tasks.contrib.keyboard.selection_contracts import require_scalar_joint_pair
 
-    coords = selections.bind(JOINT_COORD, [0, 8])
-    dofs = selections.bind(JOINT_DOF, [0, 7])
+    coords = selections.bind(newton.Model.AttributeFrequency.JOINT_COORD, [0, 8])
+    dofs = selections.bind(newton.Model.AttributeFrequency.JOINT_DOF, [0, 7])
     assert coords.world_selection_counts == dofs.world_selection_counts == (1, 1)
     np.testing.assert_array_equal(coords.joint_ids.numpy(), dofs.joint_ids.numpy())
     with pytest.raises(ValueError, match="components of multi-coordinate"):
@@ -2001,10 +2066,10 @@ def test_group_world_domain_validates_before_rebind_and_ignores_group_enumeratio
         builder.begin_world()
         builder.add_body(mass=1.0)
         builder.end_world()
-        parts.append(NewtonSelections(builder.finalize("cpu")).bind(BODY, [0]))
+        parts.append(NewtonSelections(builder.finalize("cpu")).bind(newton.Model.AttributeFrequency.BODY, [0]))
     first = ((parts[0], torch.tensor([1])), (parts[1], torch.tensor([0])))
-    group = NewtonSelectionGroup(BODY, first, 2)
-    reverse = NewtonSelectionGroup(BODY, tuple(reversed(first)), 2)
+    group = NewtonSelectionGroup(newton.Model.AttributeFrequency.BODY, first, 2)
+    reverse = NewtonSelectionGroup(newton.Model.AttributeFrequency.BODY, tuple(reversed(first)), 2)
     require_same_world_domain(group, reverse)
     for invalid in (
         ((parts[0], torch.tensor([0])), (parts[1], torch.tensor([0]))),
@@ -2016,6 +2081,8 @@ def test_group_world_domain_validates_before_rebind_and_ignores_group_enumeratio
     with pytest.raises(ValueError, match="alias one physical model world"):
         group.rebind(((parts[0], torch.tensor([0])), (parts[0], torch.tensor([1]))))
     require_same_world_domain(group, reverse)
-    swapped = NewtonSelectionGroup(BODY, ((parts[0], torch.tensor([0])), (parts[1], torch.tensor([1]))), 2)
+    swapped = NewtonSelectionGroup(
+        newton.Model.AttributeFrequency.BODY, ((parts[0], torch.tensor([0])), (parts[1], torch.tensor([1]))), 2
+    )
     with pytest.raises(ValueError, match="same world domain"):
         require_same_world_domain(group, swapped)

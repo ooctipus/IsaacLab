@@ -16,7 +16,7 @@ import newton
 import numpy as np
 import warp as wp
 from gpu_components.directory_data import InstanceCommands, InstanceResults
-from newton.solvers import MuJoCoWorlds, SolverMuJoCo
+from newton.solvers import SolverMuJoCo, mujoco_worlds_capture, mujoco_worlds_close, mujoco_worlds_prepare
 
 from isaaclab.physics import PhysicsCfg, PhysicsEvent, PhysicsManager
 from isaaclab.scene_data import SceneDataBackend
@@ -80,7 +80,7 @@ class NewtonWorldsBackend:
             if not np.allclose(model.opt.timestep.numpy(), cfg.dt, rtol=1e-7, atol=0):
                 raise ValueError("Every prepared native timestep must equal the backend dt.")
         self.dt, self.substeps = cfg.dt, operator.index(cfg.substeps)
-        self.runtime = MuJoCoWorlds(
+        self.runtime = mujoco_worlds_prepare(
             prepared,
             world_capacities=cfg.world_capacities,
             id_capacity=cfg.world_id_capacity,
@@ -98,7 +98,7 @@ class NewtonWorldsBackend:
                 self._last_work = wp.Event(self.device)
                 wp.get_stream(self.device).record_event(self._last_work)
         except BaseException:
-            self.runtime.close(streams=(wp.get_stream(self.device),))
+            mujoco_worlds_close(self.runtime, streams=(wp.get_stream(self.device),))
             raise
 
     @property
@@ -131,7 +131,8 @@ class NewtonWorldsBackend:
         if self.graph is not None:
             raise RuntimeError("The native worlds backend already has its prepared graph.")
         with wp.ScopedDevice(self.device), wp.ScopedStream(wp.Stream(self.device), sync_exit=True):
-            self.graph = self.runtime.capture(
+            self.graph = mujoco_worlds_capture(
+                self.runtime,
                 commands,
                 results,
                 permit=self._permit,
@@ -172,7 +173,7 @@ class NewtonWorldsBackend:
             with wp.ScopedDevice(self.device):
                 wp.synchronize_device(self.device)
                 self.graph = None
-                self.runtime.close(streams=(wp.get_stream(self.device),))
+                mujoco_worlds_close(self.runtime, streams=(wp.get_stream(self.device),))
                 self._permit = self._last_work = None
                 self._closed = True
 

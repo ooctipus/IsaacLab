@@ -112,11 +112,7 @@ def test_population_task_ownership_boundaries():
 @pytest.mark.parametrize("fail_stop,fail_clear", [(False, False), (True, False), (False, True), (True, True)])
 def test_close_releases_native_bindings_held_by_runtime_configuration(fail_stop, fail_clear):
     from isaaclab_tasks.contrib.keyboard.keyboard_populations import KeyboardPopulations
-    from isaaclab_tasks.contrib.keyboard.newton_selection import (
-        BODY,
-        NewtonSelectionGroup,
-        NewtonSelections,
-    )
+    from isaaclab_tasks.contrib.keyboard.newton_selection import NewtonSelectionGroup, NewtonSelections
     from isaaclab_tasks.contrib.keyboard.so101_population_env import SO101KeyboardPopulationEnv
 
     builder = newton.ModelBuilder()
@@ -124,7 +120,7 @@ def test_close_releases_native_bindings_held_by_runtime_configuration(fail_stop,
     builder.add_body(label="/body", mass=1.0)
     builder.end_world()
     source = NewtonSelections(builder.finalize("cpu"))
-    selector = NewtonSelectorCfg(BODY, path=".*", count_per_world=1)
+    selector = NewtonSelectorCfg(newton.Model.AttributeFrequency.BODY, path=".*", count_per_world=1)
     resolve_selection(source, selector)
     source_ref, source_model_ref = weakref.ref(source), weakref.ref(source.model)
     model = source.model.replicate(1)
@@ -182,7 +178,7 @@ def test_close_releases_native_bindings_held_by_runtime_configuration(fail_stop,
 def test_failed_root_construction_uses_close_and_preserves_startup_error(cleanup_fails):
     from isaaclab_tasks.contrib.keyboard import so101_population_env as module
     from isaaclab_tasks.contrib.keyboard.keyboard_populations import KeyboardPopulations
-    from isaaclab_tasks.contrib.keyboard.newton_selection import BODY, NewtonSelections
+    from isaaclab_tasks.contrib.keyboard.newton_selection import NewtonSelections
     from isaaclab_tasks.utils import resolve_task_config
 
     cfg, _ = resolve_task_config("IsaacContrib-Keyboard-SO101-Populations", "", overrides=["physics=newton_mjwarp"])
@@ -199,7 +195,9 @@ def test_failed_root_construction_uses_close_and_preserves_startup_error(cleanup
         builder.add_shape_box(body, hx=0.03, hy=0.03, hz=0.03)
         builder.end_world()
         owner = NewtonSelections(builder.finalize("cpu"))
-        binding = resolve_selection(owner, NewtonSelectorCfg(BODY, ".*", count_per_world=1))
+        binding = resolve_selection(
+            owner, NewtonSelectorCfg(newton.Model.AttributeFrequency.BODY, ".*", count_per_world=1)
+        )
         references.extend((weakref.ref(owner), weakref.ref(owner.model)))
         bank = KeyboardPopulations.__new__(KeyboardPopulations)
         bank._owners, bank._sources, bank._bindings = [owner], [], {"body": binding}
@@ -489,6 +487,7 @@ def test_native_reset_retries_optional_headroom_once_before_publication(failure)
     from gpu_components import directory as instance_directory
     from gpu_components.directory_data import InstanceOperation
 
+    from isaaclab_tasks.contrib.keyboard import keyboard_worlds
     from isaaclab_tasks.contrib.keyboard.keyboard_worlds import KeyboardWorlds
 
     directory = instance_directory.allocate((4, 4), id_capacity=2, command_capacity=2, device="cpu")
@@ -514,21 +513,21 @@ def test_native_reset_retries_optional_headroom_once_before_publication(failure)
     bank.env = SimpleNamespace(
         device="cpu", cfg=SimpleNamespace(worlds_spare_memory_budget_bytes=0), _population_bindings_valid=True
     )
-    groups = tuple(SimpleNamespace(world_ready_capacity=n, world_capacity=4) for n in (4, 0))
+    groups = tuple(SimpleNamespace(ready=n, world_capacity=4) for n in (4, 0))
     calls = []
 
-    def grow(counts, *, streams):
+    def grow(runtime, counts, *, streams):
         calls.append(("grow", counts))
         raise MemoryError("optional headroom exhausted budget")
 
-    def resize(counts, *, streams, spare_bytes):
+    def resize(runtime, counts, *, streams, spare_bytes):
         calls.append(("resize", counts))
         assert spare_bytes == 0
         if failure is not None:
             raise failure("required backing unavailable or quarantined")
         instance_directory.publish_admissible_slots(directory, counts)
         for group, count in zip(groups, counts, strict=True):
-            group.world_ready_capacity = count
+            group.ready = count
 
     def publish():
         calls.append(("publish",))
@@ -541,12 +540,15 @@ def test_native_reset_retries_optional_headroom_once_before_publication(failure)
         directory=directory.data,
         batch_result=directory.batch_result,
         populations=groups,
-        grow_backing=grow,
-        resize_backing=resize,
     )
     bank.backend = SimpleNamespace(runtime=runtime, forward=publish)
     try:
-        with patch.object(wp, "get_stream", return_value=None):
+        with (
+            patch.object(wp, "get_stream", return_value=None),
+            patch.object(keyboard_worlds, "mujoco_world_population_ready_capacity", new=lambda group: group.ready),
+            patch.object(keyboard_worlds, "mujoco_worlds_grow_backing", new=grow),
+            patch.object(keyboard_worlds, "mujoco_worlds_resize_backing", new=resize),
+        ):
             if failure is None:
                 bank._submit(torch.arange(2), torch.ones(2, dtype=torch.long))
             else:
@@ -573,6 +575,7 @@ def test_partial_native_publication_keeps_actual_successes_and_stops_task():
     from gpu_components import directory as instance_directory
     from gpu_components.directory_data import InstanceOperation
 
+    from isaaclab_tasks.contrib.keyboard import keyboard_worlds
     from isaaclab_tasks.contrib.keyboard.keyboard_worlds import KeyboardWorlds
     from isaaclab_tasks.contrib.keyboard.so101_population_env import SO101KeyboardPopulationEnv
 
@@ -614,13 +617,17 @@ def test_partial_native_publication_keeps_actual_successes_and_stops_task():
     runtime = SimpleNamespace(
         directory=directory.data,
         batch_result=directory.batch_result,
-        populations=tuple(SimpleNamespace(world_ready_capacity=4, world_capacity=4) for _ in range(2)),
+        populations=tuple(SimpleNamespace(ready=4, world_capacity=4) for _ in range(2)),
     )
     bank.backend = SimpleNamespace(runtime=runtime, forward=publish_partial)
     ids, variants, snapshot = torch.arange(2), torch.ones(2, dtype=torch.long), torch.ones((2, 3))
     try:
         # CPU directory/payload exercise; no backing service or CUDA stream operation is needed.
-        with patch.object(wp, "get_stream", return_value=None), pytest.raises(RuntimeError, match="publication failed"):
+        with (
+            patch.object(wp, "get_stream", return_value=None),
+            patch.object(keyboard_worlds, "mujoco_world_population_ready_capacity", new=lambda group: group.ready),
+            pytest.raises(RuntimeError, match="publication failed"),
+        ):
             bank.reset_from_snapshot(ids, variants, snapshot)
         assert bank.variant_ids.tolist() == [0, 1]
         assert bank.world_generation_by_env.numpy().tolist() == [1, 2]

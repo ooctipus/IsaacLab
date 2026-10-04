@@ -13,8 +13,6 @@ Native fields are borrowed strided views; gathers never become physics storage.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
-from types import MappingProxyType
 from typing import Literal
 
 import numpy as np
@@ -22,14 +20,11 @@ import torch
 import warp as wp
 from gpu_components import directory as instance_directory
 from gpu_components.directory_data import InstanceDirectoryData
-from mujoco_warp import Model as MuJoCoModel
-from mujoco_warp._src.support import contact_force_fn
-from mujoco_warp._src.types import vec5
+from mujoco_warp import contact_force_fn, vec5
 from newton import Model
-from newton.solvers import SolverMuJoCo
+from newton.solvers import MuJoCoModelMapping, mujoco_world_population_validate, mujoco_worlds_validate
 
 from .newton_selection import (
-    BODY,
     NewtonSelections,
     _validate_field_domain,
     _validate_write_env_indices,
@@ -276,7 +271,7 @@ class MuJoCoSelection:
         "_contact_maps",
     )
 
-    def __init__(self, owner, index_domain: str, parts, *, policy_width: int | None = None):
+    def __init__(self, owner, index_domain: Model.AttributeFrequency, parts, *, policy_width: int | None = None):
         self.owner, self.parts = owner, tuple(parts)
         self.index_domain = index_domain
         self.width = max(part.width for part in parts) if policy_width is None else policy_width
@@ -295,7 +290,7 @@ class MuJoCoSelection:
         self._active = wp.empty_like(self.element_participating)
         self._fields, self._poses = {}, {}
         self._contact_forces = None
-        if self.index_domain != BODY:
+        if self.index_domain != Model.AttributeFrequency.BODY:
             values = np.zeros_like(self._columns)
             for prototype, part in enumerate(parts):
                 values[prototype, : part.width] = part.owner.model.joint_type.numpy()[part.joint_ids.numpy()]
@@ -335,7 +330,7 @@ class MuJoCoSelection:
 
     def joint_types(self) -> torch.Tensor:
         self.owner._borrow_populations()
-        if self.index_domain == BODY:
+        if self.index_domain == Model.AttributeFrequency.BODY:
             raise ValueError("Joint types require a coordinate or DOF selection.")
         out = wp.empty(self.element_participating.shape, dtype=int, device=self.owner.device)
         wp.launch(
@@ -349,7 +344,7 @@ class MuJoCoSelection:
         key = source, attribute
         if key in self._fields:
             return self._fields[key]
-        if source not in ("state", "model", "control") or self.index_domain == BODY:
+        if source not in ("state", "model", "control") or self.index_domain == Model.AttributeFrequency.BODY:
             raise ValueError("Scalar fields require a joint selection and state/model/control source.")
         columns, offsets = self._columns.copy(), np.zeros(self._columns.shape, np.float32)
         descriptors = []
@@ -367,31 +362,26 @@ class MuJoCoSelection:
             else:
                 descriptor.broadcast_rows = 0
                 if source == "state" and attribute == "joint_q":
-                    values, lookup = group.data.qpos, mapping.mujoco_qpos_index_by_newton_coord
-                    offsets[prototype, : len(ids)] = [
-                        mapping.qpos_reference_by_newton_coord[int(index)] for index in ids
-                    ]
+                    values, native_ids = group.data.qpos, mapping.newton_coord_by_mujoco_qpos[0]
                 elif source == "state" and attribute == "joint_qd":
-                    values, lookup = group.data.qvel, mapping.mujoco_dof_index_by_newton_dof
+                    values, native_ids = group.data.qvel, mapping.newton_dof_by_mujoco_dof[0]
                 elif source == "control" and attribute in ("joint_target_q", "joint_target_qd"):
-                    target = (
-                        "position_actuator_index_by_newton_target"
+                    native_ids = (
+                        mapping.newton_target_by_position_actuator
                         if attribute == "joint_target_q"
-                        else "velocity_actuator_index_by_newton_dof"
+                        else mapping.newton_dof_by_velocity_actuator
                     )
-                    values, lookup = group.data.ctrl, getattr(mapping, target)
-                    if attribute == "joint_target_q":
-                        offsets[prototype, : len(ids)] = [
-                            mapping.position_reference_by_newton_target[int(index)] for index in ids
-                        ]
+                    values = group.data.ctrl
                 elif source == "control" and attribute == "joint_f":
-                    values, lookup = group.data.qfrc_applied, mapping.mujoco_dof_index_by_newton_dof
+                    values, native_ids = group.data.qfrc_applied, mapping.newton_dof_by_mujoco_dof[0]
                 else:
                     raise ValueError(f"Unsupported native scalar field {source}.{attribute}.")
-                try:
-                    columns[prototype, : len(ids)] = [lookup[int(index)] for index in ids]
-                except KeyError as exc:
-                    raise ValueError(f"Selected native {source}.{attribute} has no unique mapped target.") from exc
+                selected_columns = _native_columns(native_ids, ids)
+                columns[prototype, : len(ids)] = selected_columns
+                if source == "state" and attribute == "joint_q":
+                    offsets[prototype, : len(ids)] = mapping.qpos_references[0, selected_columns]
+                elif source == "control" and attribute == "joint_target_q":
+                    offsets[prototype, : len(ids)] = mapping.position_references[0, selected_columns]
             if values.dtype != wp.float32 or values.ndim != 2:
                 raise TypeError("Native scalar sources require two-dimensional float32 arrays.")
             if np.any(columns[prototype, : len(ids)] >= values.shape[1]):
@@ -410,7 +400,7 @@ class MuJoCoSelection:
         return field
 
     def _read(self, source, attribute, fill):
-        if self.index_domain != BODY:
+        if self.index_domain != Model.AttributeFrequency.BODY:
             field = self.scalar_field(source, attribute)
             out = wp.empty(self.element_participating.shape, dtype=float, device=self.owner.device)
             wp.launch(
@@ -429,7 +419,11 @@ class MuJoCoSelection:
     def pose_field(self, source: Literal["state", "model"], attribute: str) -> MuJoCoPoseField:
         """Borrow poses while the selection owner and runtime remain open."""
         populations = self.owner._borrow_populations()
-        if self.index_domain != BODY or attribute != "body_q" or source not in ("state", "model"):
+        if (
+            self.index_domain != Model.AttributeFrequency.BODY
+            or attribute != "body_q"
+            or source not in ("state", "model")
+        ):
             raise ValueError("Native pose fields require a body selection and state/model body_q.")
         if source not in self._poses:
             descriptors, columns = [], self._columns.copy()
@@ -440,9 +434,7 @@ class MuJoCoSelection:
                 if source == "state":
                     descriptor.position, descriptor.quaternion = group.data.xpos, group.data.xquat
                     descriptor.broadcast_rows, descriptor.wxyz = 0, 1
-                    columns[prototype, : len(ids)] = [
-                        mapping.mujoco_body_index_by_newton_body[int(index)] for index in ids
-                    ]
+                    columns[prototype, : len(ids)] = _native_columns(mapping.newton_body_by_mujoco_body[0], ids)
                 else:
                     values = part.owner.model.body_q
                     shape, strides = (1, values.shape[0]), (values.capacity, values.strides[0])
@@ -504,7 +496,7 @@ class MuJoCoSelection:
     def prepare_contact_forces(self) -> None:
         """Prepare policy normal-force reductions before capturing native steps."""
         populations = self.owner._borrow_populations()
-        if self.index_domain != BODY:
+        if self.index_domain != Model.AttributeFrequency.BODY:
             raise ValueError("Contact force reductions require a body selection.")
         if self._contact_forces is not None:
             return
@@ -514,8 +506,7 @@ class MuJoCoSelection:
         self._contact_maps = []
         for ids, group, mapping in zip(self._indices, populations, self.owner.mappings, strict=True):
             slots = np.full(group.model.nbody, -1, np.int32)
-            for selected, body in enumerate(ids):
-                slots[mapping.mujoco_body_index_by_newton_body[int(body)]] = selected
+            slots[_native_columns(mapping.newton_body_by_mujoco_body[0], ids)] = np.arange(len(ids))
             self._contact_maps.append(wp.array(slots, dtype=int, device=self.owner.device))
 
     def record_contact_forces(self, group, env_index_by_world_id) -> None:
@@ -588,140 +579,57 @@ class MuJoCoSelection:
         return wp.to_torch(self._contact_visible)
 
 
-@dataclass(frozen=True)
-class NewtonMuJoCoMapping:
-    """One immutable authored-Newton to native-MuJoCo topology conversion.
+def validate_native_mapping(owner: NewtonSelections, mapping: MuJoCoModelMapping) -> None:
+    """Admit the task's scalar controls and fixed-root snapshots against producer metadata."""
+    model = owner.model
+    if model.world_count != 1 or mapping.newton_model is not model:
+        raise ValueError("Native mapping requires its exact authored one-world Newton model.")
+    coordinates, dofs = mapping.newton_coord_by_mujoco_qpos[0], mapping.newton_dof_by_mujoco_dof[0]
+    if (
+        len(coordinates) != mapping.mujoco_model.nq
+        or len(dofs) != mapping.mujoco_model.nv
+        or np.any(coordinates < 0)
+        or np.any(coordinates >= model.joint_coord_count)
+        or len(np.unique(coordinates)) != len(coordinates)
+        or np.any(dofs < 0)
+        or np.any(dofs >= model.joint_dof_count)
+        or len(np.unique(dofs)) != len(dofs)
+    ):
+        raise ValueError("Native keyboard selections require complete unique scalar joint mappings.")
+    qstarts, dstarts = model.joint_q_start.numpy(), model.joint_qd_start.numpy()
+    joints = np.searchsorted(qstarts[1:], coordinates, side="right")
+    if np.any(np.diff(qstarts)[joints] != 1) or np.any(np.diff(dstarts)[joints] != 1):
+        raise ValueError("Native keyboard selections admit scalar joints only.")
+    bodies = mapping.newton_body_by_mujoco_body[0]
+    bodies = bodies[bodies >= 0]
+    if len(np.unique(bodies)) != len(bodies):
+        raise ValueError("MuJoCo body mappings must be unique.")
+    position, velocity = mapping.newton_target_by_position_actuator, mapping.newton_dof_by_velocity_actuator
+    if (
+        np.any(mapping.newton_control_by_direct_actuator >= 0)
+        or np.any(mapping.axis_by_actuator >= 0)
+        or np.any(mapping.newton_joint_by_ball_actuator >= 0)
+        or np.any((position >= 0) == (velocity >= 0))
+    ):
+        raise ValueError("Native keyboard controls require mapped scalar joint-target actuators.")
+    for indices in (position, velocity):
+        indices = indices[indices >= 0]
+        if len(np.unique(indices)) != len(indices):
+            raise ValueError("Native controls require a unique actuator for each selected target.")
+    roots = mapping.newton_joint_by_mujoco_mocap[0]
+    if np.any(roots < 0) or np.any(roots >= model.joint_count):
+        raise ValueError("Native mocap roots must map to valid authored joints.")
+    if not np.allclose(model.joint_X_c.numpy()[roots], [0, 0, 0, 0, 0, 0, 1], atol=1e-7, rtol=0):
+        raise ValueError("Prepared fixed-root snapshot frames must match their child body frames.")
 
-    Selections and reset payload compilation borrow these exact maps. No live
-    state, environment placement or query expressions belong to this prepared object.
-    Both model endpoints are retained: equal dimensions never establish identity.
-    """
 
-    newton_model: Model
-    mujoco_model: MuJoCoModel
-    mujoco_qpos_index_by_newton_coord: MappingProxyType
-    mujoco_dof_index_by_newton_dof: MappingProxyType
-    mujoco_body_index_by_newton_body: MappingProxyType
-    qpos_reference_by_newton_coord: MappingProxyType
-    position_actuator_index_by_newton_target: MappingProxyType
-    velocity_actuator_index_by_newton_dof: MappingProxyType
-    position_reference_by_newton_target: MappingProxyType
-    newton_coord_by_mujoco_qpos: np.ndarray
-    newton_dof_by_mujoco_dof: np.ndarray
-    qpos_references: np.ndarray
-    newton_body_by_mocap: np.ndarray
-
-    def __init__(self, owner: NewtonSelections, solver: SolverMuJoCo):
-        if owner.model.world_count != 1 or solver.model is not owner.model:
-            raise ValueError("Native mapping requires its exact authored one-world Newton model and solver.")
-        cpu = solver.mj_model
-        joints = solver.mjc_jnt_to_newton_jnt.numpy()[0]
-        dofs = solver.mjc_dof_to_newton_dof.numpy()[0]
-        model = owner.model
-        qstarts, dstarts = model.joint_q_start.numpy(), model.joint_qd_start.numpy()
-        refs = getattr(getattr(model, "mujoco", None), "dof_ref", None)
-        refs = np.zeros(model.joint_dof_count, np.float32) if refs is None else refs.numpy()
-        mapping = {
-            name: {}
-            for name in (
-                "mujoco_qpos_index_by_newton_coord",
-                "mujoco_dof_index_by_newton_dof",
-                "mujoco_body_index_by_newton_body",
-                "qpos_reference_by_newton_coord",
-                "position_actuator_index_by_newton_target",
-                "velocity_actuator_index_by_newton_dof",
-                "position_reference_by_newton_target",
-            )
-        }
-        for native, joint in enumerate(joints):
-            joint = int(joint)
-            if joint < 0 or qstarts[joint + 1] - qstarts[joint] != 1 or dstarts[joint + 1] - dstarts[joint] != 1:
-                raise ValueError("Native keyboard selections admit scalar joints only.")
-            mapping["mujoco_qpos_index_by_newton_coord"][int(qstarts[joint])] = int(cpu.jnt_qposadr[native])
-            mapping["qpos_reference_by_newton_coord"][int(qstarts[joint])] = float(refs[dstarts[joint]])
-        for native, dof in enumerate(dofs):
-            if dof < 0 or int(dof) in mapping["mujoco_dof_index_by_newton_dof"]:
-                raise ValueError("Native DOF mappings must be unique and complete.")
-            mapping["mujoco_dof_index_by_newton_dof"][int(dof)] = native
-        for native, body in enumerate(solver.mjc_body_to_newton.numpy()[0]):
-            if body >= 0:
-                if int(body) in mapping["mujoco_body_index_by_newton_body"]:
-                    raise ValueError("MuJoCo body mappings must be unique.")
-                mapping["mujoco_body_index_by_newton_body"][int(body)] = native
-        actuator_arrays = (
-            solver.mjc_actuator_ctrl_source,
-            solver.mjc_actuator_to_newton_idx,
-            solver.mjc_actuator_to_newton_target_q_idx,
-            solver.mjc_actuator_to_target_q_axis_idx,
-            solver.mjc_actuator_to_newton_ball_jnt,
-        )
-        modes, encoded, targets, axes, balls = (
-            np.empty(0, dtype=np.int32) if values is None else values.numpy() for values in actuator_arrays
-        )
-        for actuator, (mode, index, target, axis, ball) in enumerate(
-            zip(modes, encoded, targets, axes, balls, strict=True)
-        ):
-            if mode != 0 or axis >= 0 or ball >= 0 or index == -1:
-                raise ValueError("Native keyboard controls require mapped scalar joint-target actuators.")
-            kind, key = (
-                ("position_actuator_index_by_newton_target", int(target))
-                if index >= 0
-                else ("velocity_actuator_index_by_newton_dof", -int(index) - 2)
-            )
-            if key < 0 or key in mapping[kind]:
-                raise ValueError("Native controls require a unique actuator for each selected target.")
-            mapping[kind][key] = actuator
-            if index >= 0:
-                mapping["position_reference_by_newton_target"][key] = float(refs[index])
-        if (
-            len(mapping["mujoco_qpos_index_by_newton_coord"]) != cpu.nq
-            or len(mapping["mujoco_dof_index_by_newton_dof"]) != cpu.nv
-        ):
-            raise ValueError("Native scalar maps must cover every coordinate and DOF.")
-        object.__setattr__(self, "newton_model", model)
-        object.__setattr__(self, "mujoco_model", solver.mjw_model)
-        for name, values in mapping.items():
-            object.__setattr__(self, name, MappingProxyType(values))
-        object.__setattr__(
-            self,
-            "newton_coord_by_mujoco_qpos",
-            np.array(
-                sorted(
-                    mapping["mujoco_qpos_index_by_newton_coord"], key=mapping["mujoco_qpos_index_by_newton_coord"].get
-                ),
-                dtype=np.int32,
-            ),
-        )
-        object.__setattr__(
-            self,
-            "newton_dof_by_mujoco_dof",
-            np.array(
-                sorted(mapping["mujoco_dof_index_by_newton_dof"], key=mapping["mujoco_dof_index_by_newton_dof"].get),
-                dtype=np.int32,
-            ),
-        )
-        object.__setattr__(
-            self,
-            "qpos_references",
-            np.array(
-                [mapping["qpos_reference_by_newton_coord"][int(q)] for q in self.newton_coord_by_mujoco_qpos],
-                dtype=np.float32,
-            ),
-        )
-        root_mapping = solver.mjc_mocap_to_newton_jnt
-        root_joints = np.empty(0, dtype=np.int32) if root_mapping is None else root_mapping.numpy()[0]
-        if np.any(root_joints < 0) or np.any(root_joints >= model.joint_count):
-            raise ValueError("Native mocap roots must map to valid authored joints.")
-        object.__setattr__(self, "newton_body_by_mocap", model.joint_child.numpy()[root_joints].copy())
-        if not np.allclose(model.joint_X_c.numpy()[root_joints], [0, 0, 0, 0, 0, 0, 1], atol=1e-7, rtol=0):
-            raise ValueError("Prepared fixed-root snapshot frames must match their child body frames.")
-        for values in (
-            self.newton_coord_by_mujoco_qpos,
-            self.newton_dof_by_mujoco_dof,
-            self.qpos_references,
-            self.newton_body_by_mocap,
-        ):
-            values.flags.writeable = False
+def _native_columns(native_ids: np.ndarray, selected_ids: np.ndarray) -> np.ndarray:
+    """Project an admitted producer relation into the task's selected-column order."""
+    inverse = {int(index): column for column, index in enumerate(native_ids) if index >= 0}
+    try:
+        return np.asarray([inverse[int(index)] for index in selected_ids], dtype=np.int32)
+    except KeyError as error:
+        raise ValueError("Selected native field has no unique mapped target.") from error
 
 
 class MuJoCoSelections:
@@ -730,7 +638,7 @@ class MuJoCoSelections:
     def __init__(
         self,
         metadata: tuple[NewtonSelections, ...],
-        mappings: tuple[NewtonMuJoCoMapping, ...],
+        mappings: tuple[MuJoCoModelMapping, ...],
         runtime,
         world_id_by_env,
         world_generation_by_env,
@@ -741,12 +649,17 @@ class MuJoCoSelections:
     ):
         self.metadata, self.mappings, self.runtime = tuple(metadata), tuple(mappings), runtime
         self.num_envs, self.device = num_envs, wp.get_device(device)
+        mujoco_worlds_validate(runtime)
+        for population in runtime.populations:
+            mujoco_world_population_validate(population)
         if runtime.device != self.device or any(owner.model.device != self.device for owner in metadata):
             raise ValueError("Selection metadata, runtime storage and handles must use the same device.")
         if not metadata or len(metadata) != len(mappings) or len(metadata) != len(runtime.populations):
             raise ValueError("Native selections require one metadata/mapping source per prepared prototype.")
         if any(mapping.newton_model is not owner.model for owner, mapping in zip(metadata, mappings, strict=True)):
             raise ValueError("Native mappings must belong to the exact prepared metadata model.")
+        for owner, mapping in zip(metadata, mappings, strict=True):
+            validate_native_mapping(owner, mapping)
         if any(
             mapping.mujoco_model is not population.model
             for mapping, population in zip(mappings, runtime.populations, strict=True)
@@ -781,7 +694,7 @@ class MuJoCoSelections:
 
     def bind(
         self,
-        index_domain: str,
+        index_domain: Model.AttributeFrequency,
         indices_by_prototype: Sequence[Sequence[int] | np.ndarray],
         *,
         policy_width: int | None = None,
@@ -805,8 +718,9 @@ class MuJoCoSelections:
     def _borrow_populations(self):
         if self._retired:
             raise RuntimeError("Cannot access selections from a retired owner.")
-        # The public population property also rejects explicit runtime closure or
-        # quarantined backing. Retaining its Python owner does not keep it open.
+        mujoco_worlds_validate(self.runtime)
+        for population in self.runtime.populations:
+            mujoco_world_population_validate(population)
         return self.runtime.populations
 
     def retire(self) -> None:

@@ -22,14 +22,10 @@ import warp as wp
 from newton import Control, Model, State
 from newton.solvers import SolverMuJoCo
 
-BODY = "body"
-JOINT_COORD = "joint_coord"
-JOINT_DOF = "joint_dof"
 
-
-def _validate_field_domain(model: Model, index_domain: str, attribute: str) -> None:
+def _validate_field_domain(model: Model, index_domain: Model.AttributeFrequency, attribute: str) -> None:
     """Match a schema field to its index domain before borrowing its values."""
-    expected = Model.AttributeFrequency[index_domain.upper()]
+    expected = index_domain
     actual = model.get_attribute_frequency(attribute)
     if actual != expected:
         raise ValueError(
@@ -266,7 +262,7 @@ class NewtonSelection:
         "_source_ids",
     )
 
-    def __init__(self, owner, index_domain: str, rows, bodies):
+    def __init__(self, owner, index_domain: Model.AttributeFrequency, rows, bodies):
         self.index_domain = index_domain
         self.owner = owner
         self.world_selection_counts = tuple(map(len, rows))
@@ -413,7 +409,7 @@ class NewtonSelection:
         """Borrow body transforms without materializing a dense pose tensor."""
         key = source, attribute
         if key not in self._pose_views:
-            if source not in ("state", "model") or self.index_domain != BODY:
+            if source not in ("state", "model") or self.index_domain != Model.AttributeFrequency.BODY:
                 raise ValueError("Pose fields require a body selection and state/model source.")
             _validate_field_domain(self.owner.model, self.index_domain, attribute)
             values = getattr(getattr(self.owner, source), attribute)
@@ -507,7 +503,7 @@ class NewtonSelections:
             roots, device=str(model.device)
         )
 
-    def bind(self, index_domain: str, ids: Sequence[int] | np.ndarray) -> NewtonSelection:
+    def bind(self, index_domain: Model.AttributeFrequency, ids: Sequence[int] | np.ndarray) -> NewtonSelection:
         """Bind ordered integer indices in this model, grouped by world.
 
         IDs are global model indices, including for replicated models. Duplicate,
@@ -515,7 +511,11 @@ class NewtonSelections:
         """
         if self._retired:
             raise RuntimeError("Cannot bind selections from a retired owner.")
-        if index_domain not in (BODY, JOINT_COORD, JOINT_DOF):
+        if not isinstance(index_domain, Model.AttributeFrequency) or index_domain not in (
+            Model.AttributeFrequency.BODY,
+            Model.AttributeFrequency.JOINT_COORD,
+            Model.AttributeFrequency.JOINT_DOF,
+        ):
             raise ValueError(f"Unknown Newton index domain: {index_domain!r}")
         values = np.asarray(ids)
         if values.ndim != 1 or ((values.size or isinstance(ids, np.ndarray)) and values.dtype.kind not in "iu"):
@@ -523,9 +523,9 @@ class NewtonSelections:
         if not isinstance(ids, np.ndarray) and any(isinstance(value, (bool, np.bool_)) for value in ids):
             raise ValueError("Selection IDs must be integers, not booleans.")
         count = {
-            BODY: self.model.body_count,
-            JOINT_COORD: self.model.joint_coord_count,
-            JOINT_DOF: self.model.joint_dof_count,
+            Model.AttributeFrequency.BODY: self.model.body_count,
+            Model.AttributeFrequency.JOINT_COORD: self.model.joint_coord_count,
+            Model.AttributeFrequency.JOINT_DOF: self.model.joint_dof_count,
         }[index_domain]
         if np.any(values < 0) or np.any(values >= count) or len(np.unique(values)) != len(values):
             raise ValueError("Selection IDs must be unique valid model indices.")
@@ -535,17 +535,17 @@ class NewtonSelections:
             return self._bindings[key]
         topology = self if self.source is None else self.source
         stride = {
-            BODY: topology.model.body_count,
-            JOINT_COORD: topology.model.joint_coord_count,
-            JOINT_DOF: topology.model.joint_dof_count,
+            Model.AttributeFrequency.BODY: topology.model.body_count,
+            Model.AttributeFrequency.JOINT_COORD: topology.model.joint_coord_count,
+            Model.AttributeFrequency.JOINT_DOF: topology.model.joint_dof_count,
         }[index_domain]
         local = values if self.source is None else values % stride
-        if index_domain == BODY:
+        if index_domain == Model.AttributeFrequency.BODY:
             bodies = local
             joints = None
             worlds = topology._body_world[local]
         else:
-            starts = topology._q_start if index_domain == JOINT_COORD else topology._qd_start
+            starts = topology._q_start if index_domain == Model.AttributeFrequency.JOINT_COORD else topology._qd_start
             joints = np.searchsorted(starts[1:], local, side="right").astype(np.int32)
             bodies = topology._joint_child[joints]
             worlds = topology._joint_world[joints]
@@ -607,7 +607,9 @@ class NewtonSelectionGroup:
         "_device",
     )
 
-    def __init__(self, index_domain: str, parts, num_envs: int, *, policy_width: int | None = None):
+    def __init__(
+        self, index_domain: Model.AttributeFrequency, parts, num_envs: int, *, policy_width: int | None = None
+    ):
         self.index_domain = index_domain
         self._num_envs = num_envs
         if not parts:
@@ -783,7 +785,7 @@ class NewtonSelectionGroup:
         """Borrow body transforms across populations; reacquire after ``rebind``."""
         key = source, attribute
         if key not in self._pose_views:
-            if source not in ("state", "model") or self.index_domain != BODY:
+            if source not in ("state", "model") or self.index_domain != Model.AttributeFrequency.BODY:
                 raise ValueError("Pose fields require a body selection and state/model source.")
             table, dtype = self._table(source, attribute)
             if dtype != wp.transform:

@@ -27,11 +27,21 @@ from gpu_components.directory_data import (
 )
 from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
 from isaaclab_newton.physics.worlds import NewtonWorldsBackendCfg
+from newton.solvers import (
+    mujoco_world_population_ready_capacity,
+    mujoco_worlds_grow_backing,
+    mujoco_worlds_resize_backing,
+)
 
 from .keyboard_populations import prepare_keyboard_prototype
 from .keyboards.keyboard_geometry import generate_keyboard
 from .mdp.reset import ResetKinematics, reset_root_state_uniform
-from .mujoco_selection import MuJoCoSelections, NewtonMuJoCoMapping, _accumulate_contact_forces, _clear_contact_forces
+from .mujoco_selection import (
+    MuJoCoSelections,
+    _accumulate_contact_forces,
+    _clear_contact_forces,
+    validate_native_mapping,
+)
 from .selection_paths import bind_selectors, query_selection_indices, resolve_selection, selector_key
 
 
@@ -296,7 +306,8 @@ class KeyboardWorlds:
                 warm = mjw.replicate_data(defaults, 1)
                 mjw.step(solver.mjw_model, warm)
                 prepared.append((solver.mjw_model, defaults))
-                mapping = NewtonMuJoCoMapping(source, solver)
+                mapping = solver.model_mapping
+                validate_native_mapping(source, mapping)
                 self._prototype_maps.append(mapping)
                 self._snapshot_maps.append(self._snapshot_columns(mapping, source, command))
             self.reset_kinematics = None
@@ -445,21 +456,24 @@ class KeyboardWorlds:
         qdids = query_selection_indices(source.model, command.reset_dofs)
         roots = query_selection_indices(source.model, command.reset_roots)
         qcolumns, qdcolumns = {int(v): i for i, v in enumerate(qids)}, {int(v): i for i, v in enumerate(qdids)}
-        if set(mapping.newton_coord_by_mujoco_qpos.tolist()) != set(qcolumns) or set(
-            mapping.newton_dof_by_mujoco_dof.tolist()
+        if set(mapping.newton_coord_by_mujoco_qpos[0].tolist()) != set(qcolumns) or set(
+            mapping.newton_dof_by_mujoco_dof[0].tolist()
         ) != set(qdcolumns):
             raise ValueError("Reset snapshots must cover every native scalar coordinate and velocity.")
         root_columns = {int(v): i for i, v in enumerate(roots)}
-        qmap = np.array([qcolumns[int(v)] for v in mapping.newton_coord_by_mujoco_qpos], dtype=np.int32)
-        qdmap = np.array([qdcolumns[int(v)] for v in mapping.newton_dof_by_mujoco_dof], dtype=np.int32)
-        rootmap = np.array([root_columns[int(v)] for v in mapping.newton_body_by_mocap], dtype=np.int32)
+        qmap = np.array([qcolumns[int(v)] for v in mapping.newton_coord_by_mujoco_qpos[0]], dtype=np.int32)
+        qdmap = np.array([qdcolumns[int(v)] for v in mapping.newton_dof_by_mujoco_dof[0]], dtype=np.int32)
+        rootmap = np.array(
+            [root_columns[int(v)] for v in source.model.joint_child.numpy()[mapping.newton_joint_by_mujoco_mocap[0]]],
+            dtype=np.int32,
+        )
         return tuple(
             wp.array(values, dtype=dtype, device=self.env.device)
             for values, dtype in (
                 (qmap, wp.int32),
                 (qdmap, wp.int32),
                 (rootmap, wp.int32),
-                (mapping.qpos_references, wp.float32),
+                (mapping.qpos_references[0], wp.float32),
             )
         )
 
@@ -652,27 +666,37 @@ class KeyboardWorlds:
             targets = []
             for group, (required, _) in zip(runtime.populations, demand, strict=True):
                 required = int(required)
-                ready = group.world_ready_capacity
+                ready = mujoco_world_population_ready_capacity(group)
                 if required > ready or ready > 2 * required + 16 or required == 0:
                     ready = min(group.world_capacity, required + max(8, required // 2)) if required else 0
                 targets.append(ready)
-            if any(n != group.world_ready_capacity for group, n in zip(runtime.populations, targets, strict=True)):
+            if any(
+                n != mujoco_world_population_ready_capacity(group)
+                for group, n in zip(runtime.populations, targets, strict=True)
+            ):
                 try:
                     if all(
-                        n >= group.world_ready_capacity for group, n in zip(runtime.populations, targets, strict=True)
+                        n >= mujoco_world_population_ready_capacity(group)
+                        for group, n in zip(runtime.populations, targets, strict=True)
                     ):
-                        runtime.grow_backing(tuple(targets), streams=streams)
+                        mujoco_worlds_grow_backing(runtime, tuple(targets), streams=streams)
                     else:
-                        runtime.resize_backing(
-                            tuple(targets), streams=streams, spare_bytes=self.env.cfg.worlds_spare_memory_budget_bytes
+                        mujoco_worlds_resize_backing(
+                            runtime,
+                            tuple(targets),
+                            streams=streams,
+                            spare_bytes=self.env.cfg.worlds_spare_memory_budget_bytes,
                         )
                 except MemoryError:
                     # Headroom is optional; demand includes every live source and incoming lifetime.
                     required_capacities = tuple(int(value) for value in demand[:, 0])
                     if required_capacities == tuple(targets):
                         raise
-                    runtime.resize_backing(
-                        required_capacities, streams=streams, spare_bytes=self.env.cfg.worlds_spare_memory_budget_bytes
+                    mujoco_worlds_resize_backing(
+                        runtime,
+                        required_capacities,
+                        streams=streams,
+                        spare_bytes=self.env.cfg.worlds_spare_memory_budget_bytes,
                     )
             self.backend.forward()
             self._failed.zero_()
@@ -701,13 +725,16 @@ class KeyboardWorlds:
             targets = []
             for group, (_, live) in zip(runtime.populations, demand, strict=True):
                 live = int(live)
-                ready = group.world_ready_capacity
+                ready = mujoco_world_population_ready_capacity(group)
                 if not live or ready > 2 * live + 16:
                     ready = min(group.world_capacity, live + max(8, live // 2)) if live else 0
                 targets.append(ready)
-            if any(n != group.world_ready_capacity for group, n in zip(runtime.populations, targets, strict=True)):
-                runtime.resize_backing(
-                    tuple(targets), streams=streams, spare_bytes=self.env.cfg.worlds_spare_memory_budget_bytes
+            if any(
+                n != mujoco_world_population_ready_capacity(group)
+                for group, n in zip(runtime.populations, targets, strict=True)
+            ):
+                mujoco_worlds_resize_backing(
+                    runtime, tuple(targets), streams=streams, spare_bytes=self.env.cfg.worlds_spare_memory_budget_bytes
                 )
         except BaseException:
             self.env._population_bindings_valid = False

@@ -30,11 +30,11 @@ def native_backend(monkeypatch):
     stream = SimpleNamespace(
         cuda_stream=0, wait_event=lambda _: order.append("wait"), record_event=lambda _: order.append("record")
     )
-    runtime = SimpleNamespace(
-        device=device, capture=Mock(return_value=object()), close=Mock(side_effect=lambda **_: order.append("close"))
-    )
+    runtime = SimpleNamespace(device=device)
     constructor = Mock(return_value=runtime)
-    monkeypatch.setattr(module, "MuJoCoWorlds", constructor)
+    monkeypatch.setattr(module, "mujoco_worlds_prepare", constructor)
+    monkeypatch.setattr(module, "mujoco_worlds_capture", Mock(return_value=object()))
+    monkeypatch.setattr(module, "mujoco_worlds_close", Mock(side_effect=lambda *_, **__: order.append("close")))
     monkeypatch.setattr(wp, "Stream", lambda _: stream)
     monkeypatch.setattr(wp, "Event", lambda _: object())
     monkeypatch.setattr(wp, "get_stream", lambda *_: stream)
@@ -66,12 +66,12 @@ def test_backend_owns_one_native_runtime_and_graph(native_backend, monkeypatch):
         validate=Mock(), initialize=Mock(), before_step=Mock(), after_substep=Mock(), application_bindings=Mock()
     )
     backend.prepare(commands, results, retain=(payload,), **callbacks)
-    assert runtime.capture.call_args.args == (commands, results)
-    assert runtime.capture.call_args.kwargs["retain"] == (payload,)
-    assert runtime.capture.call_args.kwargs["refresh_kinematics"] is True
-    assert runtime.capture.call_args.kwargs["substeps"] == 2
+    assert module.mujoco_worlds_capture.call_args.args == (runtime, commands, results)
+    assert module.mujoco_worlds_capture.call_args.kwargs["retain"] == (payload,)
+    assert module.mujoco_worlds_capture.call_args.kwargs["refresh_kinematics"] is True
+    assert module.mujoco_worlds_capture.call_args.kwargs["substeps"] == 2
     for name, callback in callbacks.items():
-        assert runtime.capture.call_args.kwargs[name] is callback
+        assert module.mujoco_worlds_capture.call_args.kwargs[name] is callback
     permits = []
     monkeypatch.setattr(wp, "capture_launch", lambda _: permits.append(int(backend._permit.numpy()[0])))
     order.clear()
@@ -83,9 +83,9 @@ def test_backend_owns_one_native_runtime_and_graph(native_backend, monkeypatch):
         backend.prepare(commands, results)
     graph = backend.graph
     backend.close()
-    assert backend.graph is None and runtime.capture.return_value is graph
+    assert backend.graph is None and module.mujoco_worlds_capture.return_value is graph
     assert order[-2:] == ["join", "close"]
-    runtime.close.assert_called_once_with(streams=(wp.get_stream(backend.device),))
+    module.mujoco_worlds_close.assert_called_once_with(runtime, streams=(wp.get_stream(backend.device),))
     with pytest.raises(RuntimeError, match="open"):
         backend.step()
 
@@ -128,7 +128,7 @@ def test_manager_borrows_context_resource_and_orders_reset_only_lifecycle(native
         assert events == ["model", "ready", "ready"]
         assert manager.get_simulation_time() == pytest.approx(0.01)
         manager.close()
-        runtime.close.assert_not_called()
+        module.mujoco_worlds_close.assert_not_called()
         assert PhysicsManager._sim is None
     finally:
         manager.close()

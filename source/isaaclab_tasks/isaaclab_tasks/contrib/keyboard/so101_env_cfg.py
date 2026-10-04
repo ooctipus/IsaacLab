@@ -6,6 +6,7 @@
 from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg, NewtonShapeCfg
 from isaaclab_newton.physics.population import NewtonPopulationCfg
 from isaaclab_newton.physics.worlds import NewtonWorldsCfg
+from newton import Model
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import AssetBaseCfg
@@ -31,19 +32,26 @@ from .keyboards.keyboard_geometry import generate_keyboard
 from .keyboards.keyboard_pool import TYPING_KEYBOARD_VARIANTS
 from .mdp.actions import NewtonRelativeJointPositionActionCfg
 from .mdp.reset import KeyboardResetIKCfg
-from .newton_selection import BODY, JOINT_COORD, JOINT_DOF
 from .selection_paths import NewtonSelectorCfg, bind_selectors
 
 _REFERENCE_KEYBOARD = generate_keyboard(TYPING_KEYBOARD_VARIANTS[0])
 _BACKSPACE_SLOT = next(key.slot for key in _REFERENCE_KEYBOARD.active_keys if key.label.lower() == "backspace")
 
-ROBOT_Q = NewtonSelectorCfg(JOINT_COORD, path=".*/Robot/joints/.*", count_per_world=6)
-ROBOT_QD = NewtonSelectorCfg(JOINT_DOF, path=".*/Robot/joints/.*", count_per_world=6)
-KEY_Q = NewtonSelectorCfg(JOINT_COORD, path=".*/Keyboard/parts/part_.*/joints/key_.*_joint", count_per_world=108)
-KEY_QD = NewtonSelectorCfg(JOINT_DOF, path=".*/Keyboard/parts/part_.*/joints/key_.*_joint", count_per_world=108)
-KEY_BODIES = NewtonSelectorCfg(BODY, path=".*/Keyboard/parts/part_.*/keys/key_.*", count_per_world=108)
-ROBOT_ROOT = NewtonSelectorCfg(BODY, path=".*/Robot/base", count_per_world=1)
-KEYBOARD_ROOT = NewtonSelectorCfg(BODY, path=".*/Keyboard/parts/part_.*/base_link", count_per_world=18)
+ROBOT_Q = NewtonSelectorCfg(Model.AttributeFrequency.JOINT_COORD, path=".*/Robot/joints/.*", count_per_world=6)
+ROBOT_QD = NewtonSelectorCfg(Model.AttributeFrequency.JOINT_DOF, path=".*/Robot/joints/.*", count_per_world=6)
+KEY_Q = NewtonSelectorCfg(
+    Model.AttributeFrequency.JOINT_COORD, path=".*/Keyboard/parts/part_.*/joints/key_.*_joint", count_per_world=108
+)
+KEY_QD = NewtonSelectorCfg(
+    Model.AttributeFrequency.JOINT_DOF, path=".*/Keyboard/parts/part_.*/joints/key_.*_joint", count_per_world=108
+)
+KEY_BODIES = NewtonSelectorCfg(
+    Model.AttributeFrequency.BODY, path=".*/Keyboard/parts/part_.*/keys/key_.*", count_per_world=108
+)
+ROBOT_ROOT = NewtonSelectorCfg(Model.AttributeFrequency.BODY, path=".*/Robot/base", count_per_world=1)
+KEYBOARD_ROOT = NewtonSelectorCfg(
+    Model.AttributeFrequency.BODY, path=".*/Keyboard/parts/part_.*/base_link", count_per_world=18
+)
 ARM_PATH = ".*/Robot/joints/(shoulder_pan|shoulder_lift|elbow_flex|wrist_flex|wrist_roll)"
 
 
@@ -104,9 +112,15 @@ class CommandsCfg:
         key_bodies=KEY_BODIES,
         robot_joints=ROBOT_Q,
         robot_dofs=ROBOT_QD,
-        reset_roots=NewtonSelectorCfg(BODY, path=(".*/Robot/base", KEYBOARD_ROOT.path), count_per_world=19),
-        reset_coords=NewtonSelectorCfg(JOINT_COORD, path=(ROBOT_Q.path, KEY_Q.path), count_per_world=114),
-        reset_dofs=NewtonSelectorCfg(JOINT_DOF, path=(ROBOT_QD.path, KEY_QD.path), count_per_world=114),
+        reset_roots=NewtonSelectorCfg(
+            Model.AttributeFrequency.BODY, path=(".*/Robot/base", KEYBOARD_ROOT.path), count_per_world=19
+        ),
+        reset_coords=NewtonSelectorCfg(
+            Model.AttributeFrequency.JOINT_COORD, path=(ROBOT_Q.path, KEY_Q.path), count_per_world=114
+        ),
+        reset_dofs=NewtonSelectorCfg(
+            Model.AttributeFrequency.JOINT_DOF, path=(ROBOT_QD.path, KEY_QD.path), count_per_world=114
+        ),
         resampling_time_range=None,
         debug_vis=False,
         letter_length=(1, 5),
@@ -118,9 +132,9 @@ class CommandsCfg:
         reset=mdp.LetterTypingCommandCfg.ResetCfg(
             enabled=True,
             ik=KeyboardResetIKCfg(
-                joints=NewtonSelectorCfg(JOINT_COORD, path=ARM_PATH, count_per_world=5),
-                dofs=NewtonSelectorCfg(JOINT_DOF, path=ARM_PATH, count_per_world=5),
-                body=NewtonSelectorCfg(BODY, path=".*/Robot/gripper", count_per_world=1),
+                joints=NewtonSelectorCfg(Model.AttributeFrequency.JOINT_COORD, path=ARM_PATH, count_per_world=5),
+                dofs=NewtonSelectorCfg(Model.AttributeFrequency.JOINT_DOF, path=ARM_PATH, count_per_world=5),
+                body=NewtonSelectorCfg(Model.AttributeFrequency.BODY, path=".*/Robot/gripper", count_per_world=1),
                 tip_offset=(-0.0079, -0.000218121, -0.0981274),
             ),
             ik_rpy_deg=(0.0, 45.0, 0.0),  # (roll, pitch, yaw) [deg]
@@ -238,7 +252,7 @@ class TerminationsCfg:
     excessive_contact = DoneTerm(
         func=mdp.illegal_contact,
         params={
-            "bodies": NewtonSelectorCfg(BODY, path=".*/Robot/.*", count_per_world=7),
+            "bodies": NewtonSelectorCfg(Model.AttributeFrequency.BODY, path=".*/Robot/.*", count_per_world=7),
             "sensor_name": "robot_contact",
             "threshold": 20.0,
         },
@@ -321,13 +335,13 @@ class SO101KeyboardEnvPresets(PresetCfg):
     single_108.commands.typing.key_dofs = _key_qd
     single_108.commands.typing.key_bodies = _key_bodies
     single_108.commands.typing.reset_roots = NewtonSelectorCfg(
-        BODY, path=(ROBOT_ROOT.path, _root.path), count_per_world=2
+        Model.AttributeFrequency.BODY, path=(ROBOT_ROOT.path, _root.path), count_per_world=2
     )
     single_108.commands.typing.reset_coords = NewtonSelectorCfg(
-        JOINT_COORD, path=(ROBOT_Q.path, _key_q.path), count_per_world=114
+        Model.AttributeFrequency.JOINT_COORD, path=(ROBOT_Q.path, _key_q.path), count_per_world=114
     )
     single_108.commands.typing.reset_dofs = NewtonSelectorCfg(
-        JOINT_DOF, path=(ROBOT_QD.path, _key_qd.path), count_per_world=114
+        Model.AttributeFrequency.JOINT_DOF, path=(ROBOT_QD.path, _key_qd.path), count_per_world=114
     )
     single_108.commands.typing.reset.pre_solve_reset.params["roots"] = _root
     single_108.events.reset_keyboard.params["roots"] = _root

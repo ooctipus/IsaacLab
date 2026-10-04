@@ -85,13 +85,13 @@ def test_native_buffer_coverage_preserves_admitted_reset_modes(prototype_count, 
 @pytest.mark.parametrize("phase", ["second_prototype", "backend", "native_binding"])
 @pytest.mark.parametrize("cleanup_fails", [False, True])
 def test_failed_bank_construction_retires_acquired_bindings_without_gc(phase, cleanup_fails):
-    from isaaclab_tasks.contrib.keyboard.newton_selection import BODY, NewtonSelections
+    from isaaclab_tasks.contrib.keyboard.newton_selection import NewtonSelections
     from isaaclab_tasks.utils import resolve_task_config
 
     cfg, _ = resolve_task_config("IsaacContrib-Keyboard-SO101-Populations", "", overrides=["physics=newton_mjwarp"])
     cfg.keyboard_variants = (cfg.scene.keyboard.spawn,) * 2
     cfg.terminations.excessive_contact = None
-    selector = NewtonSelectorCfg(BODY, ".*", count_per_world=1)
+    selector = NewtonSelectorCfg(newton.Model.AttributeFrequency.BODY, ".*", count_per_world=1)
     startup_error, cleanup_error = MemoryError("startup allocation"), RuntimeError("cleanup failed")
     references, calls = [], []
 
@@ -164,11 +164,11 @@ def test_failed_bank_construction_retires_acquired_bindings_without_gc(phase, cl
 
 
 def test_failed_local_prototype_preparation_retires_unreturned_source_without_gc():
-    from isaaclab_tasks.contrib.keyboard.newton_selection import BODY, NewtonSelections
+    from isaaclab_tasks.contrib.keyboard.newton_selection import NewtonSelections
     from isaaclab_tasks.utils import resolve_task_config
 
     cfg, _ = resolve_task_config("IsaacContrib-Keyboard-SO101-Populations", "", overrides=["physics=newton_mjwarp"])
-    selectors = (NewtonSelectorCfg(BODY, ".*", count_per_world=1),)
+    selectors = (NewtonSelectorCfg(newton.Model.AttributeFrequency.BODY, ".*", count_per_world=1),)
     references = []
 
     def add_usd(builder, *args, **kwargs):
@@ -344,14 +344,14 @@ def test_backend_failure_leaves_published_actor_maps_unchanged():
 
 @pytest.mark.parametrize("replacement", ["replaced", "removed", "allocation_failure"])
 def test_native_rebinding_retires_replaced_owners_without_cyclic_gc(replacement):
-    from isaaclab_tasks.contrib.keyboard.newton_selection import BODY, NewtonSelectionGroup, NewtonSelections
+    from isaaclab_tasks.contrib.keyboard.newton_selection import NewtonSelectionGroup, NewtonSelections
 
     builder = newton.ModelBuilder()
     builder.begin_world()
     builder.add_body(label="/body", mass=1.0)
     builder.end_world()
     source = NewtonSelections(builder.finalize("cpu"))
-    selector = NewtonSelectorCfg(BODY, ".*", count_per_world=1)
+    selector = NewtonSelectorCfg(newton.Model.AttributeFrequency.BODY, ".*", count_per_world=1)
     resolve_selection(source, selector)
     model = source.model.replicate(2)
     owner = NewtonSelections(model, state=model.state(), control=model.control(), source=source)
@@ -417,7 +417,7 @@ def test_native_rebinding_retires_replaced_owners_without_cyclic_gc(replacement)
 
 @pytest.mark.parametrize("failure_phase", ["native_bind", "selection_rebind"])
 def test_post_publication_failure_rejects_continuation_and_allows_explicit_close(failure_phase):
-    from isaaclab_tasks.contrib.keyboard.newton_selection import BODY, NewtonSelections
+    from isaaclab_tasks.contrib.keyboard.newton_selection import NewtonSelections
 
     populations = _populations()
     env = populations.env
@@ -429,7 +429,9 @@ def test_post_publication_failure_rejects_continuation_and_allows_explicit_close
     model = builder.finalize("cpu")
     state = model.state()
     model_ref, state_ref = weakref.ref(model), weakref.ref(state)
-    binding = resolve_selection(NewtonSelections(model, state=state), NewtonSelectorCfg(BODY, path=".*"))
+    binding = resolve_selection(
+        NewtonSelections(model, state=state), NewtonSelectorCfg(newton.Model.AttributeFrequency.BODY, path=".*")
+    )
     env.cfg = SimpleNamespace(body=binding)
     env.keyboard_variants = populations
     env.obs_buf, env.native_contacts = {}, {}
@@ -502,7 +504,7 @@ def test_failed_native_world_construction_retires_sources_without_gc(phase, clea
     import warp as wp
 
     from isaaclab_tasks.contrib.keyboard import keyboard_worlds
-    from isaaclab_tasks.contrib.keyboard.newton_selection import BODY, NewtonSelections
+    from isaaclab_tasks.contrib.keyboard.newton_selection import NewtonSelections
     from isaaclab_tasks.utils import resolve_task_config
 
     cfg, _ = resolve_task_config("IsaacContrib-Keyboard-SO101-Worlds", "", overrides=["physics=newton_mjwarp"])
@@ -522,10 +524,12 @@ def test_failed_native_world_construction_retires_sources_without_gc(phase, clea
         builder.add_shape_box(body, hx=0.03, hy=0.03, hz=0.03)
         builder.end_world()
         source = NewtonSelections(builder.finalize("cpu"))
-        resolve_selection(source, NewtonSelectorCfg(BODY, ".*", count_per_world=1))
+        resolve_selection(source, NewtonSelectorCfg(newton.Model.AttributeFrequency.BODY, ".*", count_per_world=1))
         references.extend((weakref.ref(source), weakref.ref(source.model)))
         native_model = SimpleNamespace(opt=SimpleNamespace(timestep=wp.zeros(1, dtype=float, device="cpu")))
-        return SimpleNamespace(model=source.model, mjw_model=native_model, mjw_data=object()), source
+        return SimpleNamespace(
+            model=source.model, mjw_model=native_model, mjw_data=object(), model_mapping=object()
+        ), source
 
     backend_owner = SimpleNamespace(runtime=SimpleNamespace(populations=()), close=Mock())
 
@@ -567,7 +571,7 @@ def test_failed_native_world_construction_retires_sources_without_gc(phase, clea
             patch.object(keyboard_worlds.mjw, "replicate_data", return_value=object()),
             patch.object(keyboard_worlds.mjw, "forward"),
             patch.object(keyboard_worlds.mjw, "step", autospec=True),
-            patch.object(keyboard_worlds, "NewtonMuJoCoMapping", new=lambda *_: object()),
+            patch.object(keyboard_worlds, "validate_native_mapping", new=lambda *_: None),
             patch.object(keyboard_worlds, "MuJoCoSelections", new=bind),
             pytest.raises(MemoryError) as error,
         ):

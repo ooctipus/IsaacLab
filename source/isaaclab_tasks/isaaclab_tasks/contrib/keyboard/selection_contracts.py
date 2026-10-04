@@ -8,9 +8,10 @@
 from __future__ import annotations
 
 import numpy as np
+from newton import Model
 
 from .mujoco_selection import MuJoCoSelection
-from .newton_selection import JOINT_COORD, JOINT_DOF, NewtonSelection, NewtonSelectionGroup
+from .newton_selection import NewtonSelection, NewtonSelectionGroup
 
 
 def require_count_per_world(selection, count: int) -> None:
@@ -58,7 +59,10 @@ def require_scalar_joint_pair(coords, dofs) -> None:
     This is a preparation check. Model identity and placement must agree before
     comparing joint indices: equal integers from different models are unrelated.
     """
-    if coords.index_domain != JOINT_COORD or dofs.index_domain != JOINT_DOF:
+    if (
+        coords.index_domain != Model.AttributeFrequency.JOINT_COORD
+        or dofs.index_domain != Model.AttributeFrequency.JOINT_DOF
+    ):
         raise ValueError("Scalar joint pairs require coordinate and DOF selectors.")
     require_same_world_domain(coords, dofs)
     if coords.width != dofs.width:
