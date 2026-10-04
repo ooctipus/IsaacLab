@@ -27,11 +27,15 @@ UV_PIN = "ghcr.io/astral-sh/uv:0.12.9@sha256:8b940d3a9d65bed080436972241af2e21c8
 
 @pytest.mark.parametrize("dockerfile", DOCKERFILES, ids=lambda path: path.name)
 def test_dockerfile_creates_and_uses_non_root_user(dockerfile: Path):
-    """Every image creates uid/gid 1000 and finishes as the unprivileged user."""
+    """Every image creates or inherits uid/gid 1000 and finishes as the unprivileged user."""
     text = dockerfile.read_text(encoding="utf-8")
     users = re.findall(r"^\s*USER\s+(\S+)\s*$", text, re.MULTILINE)
 
     assert users and users[-1] == "isaaclab"
+    if dockerfile.name == "Dockerfile.source-only":
+        assert "FROM ${DEPS_BASE_IMAGE}" in text
+        assert "ARG DEPS_BASE_IMAGE=isaac-lab-deps:latest" in text
+        return
     assert re.search(r"\bgroupadd\b.*--gid\s+1000\b.*\bisaaclab\b", text, re.DOTALL)
     assert re.search(r"\buseradd\b.*--uid\s+1000\b.*--gid\s+1000\b.*\bisaaclab\b", text, re.DOTALL)
 

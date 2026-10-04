@@ -674,7 +674,8 @@ class TestWorkflowSpecArchitecture:
 
     def test_workflow_uses_the_managed_python_runtime(self):
         spec = self._spec()
-        assert spec.count("/workspace/isaaclab/isaaclab.sh -p") == 1
+        assert spec.count("uv run --no-sync isaaclab -p") == 1
+        assert "isaaclab.sh" not in spec
         assert spec.count('"${ISAACLAB_PYTHON[@]}"') == 3
         assert "/workspace/isaaclab/_isaac_sim/python.sh" not in spec
 

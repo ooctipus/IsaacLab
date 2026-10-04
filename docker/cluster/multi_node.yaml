@@ -133,7 +133,7 @@ workflow:
           {% if kitless == 1 %}
           ISAACLAB_PYTHON=(uv run --no-sync python)
           {% else %}
-          ISAACLAB_PYTHON=(/workspace/isaaclab/isaaclab.sh -p)
+          ISAACLAB_PYTHON=(uv run --no-sync isaaclab -p)
           {% endif %}
 
           {% if num_node > 1 %}
