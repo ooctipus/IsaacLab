@@ -428,10 +428,10 @@ package = false
 [tool.uv.sources]
 # buildnpush retrieves and verifies this private release artifact before syncing.
 warp-lang = { path = "docker/wheels/warp_lang-1.17.0-py3-none-manylinux_2_38_x86_64.whl", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" }
-# Matching development checkouts; replace with immutable published sources before distribution.
-gpu-components = { git = "https://github.com/ooctipus/gpu-components.git", rev = "846288b15c32f4b45271597b169d4c241b0681c8" }
-newton = { git = "https://github.com/ooctipus/newton.git", rev = "353cc600a4c7469f1dc66503ba42cc4510b00e99" }
-mujoco-warp = { git = "https://github.com/ooctipus/mujoco_warp.git", rev = "822fc39c5424eb17e9b1eccf6eb7d3279f6353b1" }
+# Matching published implementation commits for prepared dynamic-world execution.
+gpu-components = { git = "https://github.com/ooctipus/gpu-components.git", rev = "338fa9b34f25ca60bc4a3713d79b1115baf68372" }
+newton = { git = "https://github.com/ooctipus/newton.git", rev = "e66ed52db533b8a65635e4a61f79e4f8733d151f" }
+mujoco-warp = { git = "https://github.com/ooctipus/mujoco_warp.git", rev = "be0072dd0f0bf43e9459757a854aa5957de971d6" }
 omniverseclient = { index = "pypi-public" }
 ovphysx = { index = "pypi-public" }
 ovrtx = { index = "pypi-public" }
