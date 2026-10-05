@@ -516,7 +516,11 @@ def test_native_reset_retries_optional_headroom_once_before_publication(failure)
         device="cpu", cfg=SimpleNamespace(worlds_spare_memory_budget_bytes=0), _population_bindings_valid=True
     )
     groups = tuple(SimpleNamespace(ready=n, world_capacity=4) for n in (4, 0))
-    calls = []
+    calls, ready_queries = [], []
+
+    def ready_capacity(group):
+        ready_queries.append((len(calls), group.ready))
+        return group.ready
 
     def grow(runtime, counts, *, streams):
         calls.append(("grow", counts))
@@ -547,7 +551,7 @@ def test_native_reset_retries_optional_headroom_once_before_publication(failure)
     try:
         with (
             patch.object(wp, "get_stream", return_value=None),
-            patch.object(keyboard_worlds, "mujoco_world_population_ready_capacity", new=lambda group: group.ready),
+            patch.object(keyboard_worlds, "mujoco_world_population_ready_capacity", new=ready_capacity),
             patch.object(keyboard_worlds, "mujoco_worlds_grow_backing", new=grow),
             patch.object(keyboard_worlds, "mujoco_worlds_resize_backing", new=resize),
         ):
@@ -557,6 +561,7 @@ def test_native_reset_retries_optional_headroom_once_before_publication(failure)
                 with pytest.raises(failure, match="required backing unavailable"):
                     bank._submit(torch.arange(2), torch.ones(2, dtype=torch.long))
         assert calls[:2] == [("grow", (4, 4)), ("resize", (2, 2))]
+        assert ready_queries == [(0, 4), (0, 0)] + ([(3, 2), (3, 2)] if failure is None else [])
         if failure is None:
             assert calls[2:] == [("publish",), ("resize", (0, 2))]
             assert bank.variant_ids.tolist() == [1, 1]

@@ -25,6 +25,7 @@ The guide owns shared contribution rules. Update them there instead of copying t
 - Do not define Warp kernels in `python -c`; write a temporary Python file instead so Warp can inspect the source.
 - Do not add debug output to production Warp kernels. Use temporary standalone reproductions and remove debug output before committing.
 - Validate native descriptor relations when preparing selection consumers or recording new work. Prepared selection reuse checks owner lifetime and health; do not rescan every prototype or add mirrored validation metadata on that path.
+- Read public readiness once per serialized capacity decision; query it again after backing service or publication. Do not retain readiness snapshots across those phases.
 
 ## Commits and branches
 

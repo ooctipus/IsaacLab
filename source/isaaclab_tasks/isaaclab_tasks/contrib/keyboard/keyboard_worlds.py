@@ -665,22 +665,17 @@ class KeyboardWorlds:
             )
             demand = self._demand.numpy()
             streams = (wp.get_stream(self.env.device),)
-            targets = []
+            targets, ready_capacities = [], []
             for group, (required, _) in zip(runtime.populations, demand, strict=True):
                 required = int(required)
                 ready = mujoco_world_population_ready_capacity(group)
+                ready_capacities.append(ready)
                 if required > ready or ready > 2 * required + 16 or required == 0:
                     ready = min(group.world_capacity, required + max(8, required // 2)) if required else 0
                 targets.append(ready)
-            if any(
-                n != mujoco_world_population_ready_capacity(group)
-                for group, n in zip(runtime.populations, targets, strict=True)
-            ):
+            if targets != ready_capacities:
                 try:
-                    if all(
-                        n >= mujoco_world_population_ready_capacity(group)
-                        for group, n in zip(runtime.populations, targets, strict=True)
-                    ):
+                    if all(n >= ready for n, ready in zip(targets, ready_capacities, strict=True)):
                         mujoco_worlds_grow_backing(runtime, tuple(targets), streams=streams)
                     else:
                         mujoco_worlds_resize_backing(
@@ -724,17 +719,15 @@ class KeyboardWorlds:
                 )
             # Compaction made every live population a prefix. Return empty groups
             # immediately and bound past peaks, while retaining headroom for small resets.
-            targets = []
+            targets, ready_capacities = [], []
             for group, (_, live) in zip(runtime.populations, demand, strict=True):
                 live = int(live)
                 ready = mujoco_world_population_ready_capacity(group)
+                ready_capacities.append(ready)
                 if not live or ready > 2 * live + 16:
                     ready = min(group.world_capacity, live + max(8, live // 2)) if live else 0
                 targets.append(ready)
-            if any(
-                n != mujoco_world_population_ready_capacity(group)
-                for group, n in zip(runtime.populations, targets, strict=True)
-            ):
+            if targets != ready_capacities:
                 mujoco_worlds_resize_backing(
                     runtime, tuple(targets), streams=streams, spare_bytes=self.env.cfg.worlds_spare_memory_budget_bytes
                 )
