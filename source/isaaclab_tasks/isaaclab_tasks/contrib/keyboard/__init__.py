@@ -26,10 +26,30 @@ from . import agents
 
 gym.register(
     id="IsaacContrib-Keyboard-SO101",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    entry_point=f"{__name__}.so101_env:SO101KeyboardEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.so101_env_cfg:SO101KeyboardEnvCfg",
+        "env_cfg_entry_point": f"{__name__}.so101_env_cfg:SO101KeyboardEnvPresets",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:SO101PPORunnerCfg",
+    },
+)
+
+gym.register(
+    id="IsaacContrib-Keyboard-SO101-Populations",
+    entry_point=f"{__name__}.so101_population_env:SO101KeyboardPopulationEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.so101_env_cfg:SO101KeyboardPopulationEnvPresets",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:SO101PPORunnerCfg",
+    },
+)
+
+gym.register(
+    id="IsaacContrib-Keyboard-SO101-Worlds",
+    entry_point=f"{__name__}.so101_population_env:SO101KeyboardPopulationEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.so101_env_cfg:SO101KeyboardWorldsEnvPresets",
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:SO101PPORunnerCfg",
     },
 )

@@ -7,8 +7,10 @@
 
 from __future__ import annotations
 
+import copy
 import inspect
 from collections.abc import Sequence
+from types import BuiltinFunctionType, FunctionType
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -16,7 +18,7 @@ import torch
 from prettytable import PrettyTable
 
 from ..envs.utils.io_descriptors import _warn_io_descriptors_deprecated
-from ..utils import instantiate, modifiers, noise, to_dict
+from ..utils import instantiate, modifiers, noise, string_to_callable, to_dict
 from ..utils.buffers import CircularBuffer, DelayBuffer
 from .manager_base import ManagerBase, ManagerTermBase
 from .manager_term_cfg import ObservationGroupCfg, ObservationTermCfg
@@ -372,7 +374,42 @@ class ObservationManager(ManagerBase):
         self._obs_buffer = obs_buffer
         return obs_buffer
 
-    def compute_group(self, group_name: str, update_history: bool = False) -> torch.Tensor | dict[str, torch.Tensor]:
+    def preview(self) -> dict[str, torch.Tensor | dict[str, torch.Tensor]]:
+        """Compute one continuing sample without committing history, postprocessor state, or RNG.
+
+        Function callbacks must be pure reads of environment state. Class-based observation terms and
+        arbitrary callable objects are rejected before invoking callbacks: copying their environment
+        dependencies cannot establish an isolated preview. Built-in filters, integrators, and noise
+        models own their state and are evaluated on temporary copies. The observation cache is unchanged.
+
+        Returns:
+            One continuing observation per group, in the same layout as :meth:`compute`.
+        """
+        copies = {}
+        functions = (FunctionType, BuiltinFunctionType, torch.jit.ScriptFunction)
+        supported = (modifiers.DigitalFilter, modifiers.Integrator, noise.NoiseModel, noise.NoiseModelWithAdditiveBias)
+        # Validate every callback before evaluating any observation or consuming random numbers.
+        for configs in self._group_obs_term_cfgs.values():
+            for cfg in configs:
+                if not isinstance(cfg.func, functions):
+                    raise TypeError("Observation preview requires pure function observation terms.")
+                callbacks = [mod.func for mod in cfg.modifiers or ()]
+                if cfg.noise is not None and cfg.noise.func is not None:
+                    callbacks.append(cfg.noise.func)
+                for func in callbacks:
+                    func = string_to_callable(func) if isinstance(func, str) else func
+                    if type(func) in supported:
+                        if id(func) not in copies:
+                            copies[id(func)] = copy.deepcopy(func)
+                    elif not isinstance(func, functions):
+                        raise TypeError("Observation preview requires pure functions or built-in postprocessors.")
+        device = torch.device(self.device)
+        with torch.random.fork_rng(devices=[device] if device.type == "cuda" else []):
+            return {name: self.compute_group(name, _preview=copies) for name in self._group_obs_term_names}
+
+    def compute_group(
+        self, group_name: str, update_history: bool = False, *, _preview: dict | None = None
+    ) -> torch.Tensor | dict[str, torch.Tensor]:
         """Computes the observations for a given group.
 
         The observations for a given group are computed by calling the registered functions for each
@@ -439,7 +476,8 @@ class ObservationManager(ManagerBase):
                     # Custom callbacks may modify or retain their input.
                     obs = obs.clone()
                     if isinstance(modifier.func, modifiers.ModifierBase):
-                        obs = modifier.func(obs)
+                        func = modifier.func if _preview is None else _preview[id(modifier.func)]
+                        obs = func(obs)
                     else:
                         obs = modifier.func(obs, **modifier.params)
             # Noise callbacks must not modify their input, but may return borrowed storage.
@@ -447,7 +485,8 @@ class ObservationManager(ManagerBase):
                 obs = term_cfg.noise.func(obs, term_cfg.noise)
                 owned = False
             elif isinstance(term_cfg.noise, noise.NoiseModelCfg) and term_cfg.noise.func is not None:
-                obs = term_cfg.noise.func(obs)
+                func = term_cfg.noise.func if _preview is None else _preview[id(term_cfg.noise.func)]
+                obs = func(obs)
                 owned = False
             if term_cfg.clip:
                 obs = (
@@ -460,15 +499,20 @@ class ObservationManager(ManagerBase):
                 obs = obs.mul_(term_cfg.scale) if owned else obs * term_cfg.scale
                 owned = True
             if term_name in self._group_obs_term_delay_buffer[group_name]:
-                obs = self._group_obs_term_delay_buffer[group_name][term_name].compute(
-                    obs, update_history=update_history
+                delay_buffer = self._group_obs_term_delay_buffer[group_name][term_name]
+                obs = (
+                    delay_buffer.compute(obs, update_history=update_history)
+                    if _preview is None
+                    else delay_buffer.preview(obs)
                 )
                 # the delay buffer returns storage independent of its history
                 owned = True
             # Update the history buffer if observation term has history enabled
             if term_cfg.history_length > 0:
                 circular_buffer = self._group_obs_term_history_buffer[group_name][term_name]
-                if update_history:
+                if _preview is not None:
+                    history = circular_buffer.preview(obs)
+                elif update_history:
                     circular_buffer.append(obs)
                 elif circular_buffer._buffer is None:
                     # because circular buffer only exits after the simulation steps,
@@ -481,10 +525,12 @@ class ObservationManager(ManagerBase):
                     )
                     circular_buffer.append(obs)
 
+                if _preview is None:
+                    history = circular_buffer.buffer
                 if term_cfg.flatten_history_dim:
-                    obs = circular_buffer.buffer.reshape(self._env.num_envs, -1)
+                    obs = history.reshape(self._env.num_envs, -1)
                 else:
-                    obs = circular_buffer.buffer
+                    obs = history
                 owned = False
             # Secure borrowed storage before another term can overwrite it, including shared scratch buffers.
             group_obs[term_name] = obs if owned else obs.clone()

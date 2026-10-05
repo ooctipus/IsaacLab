@@ -40,6 +40,13 @@ class MJWarpSolverCfg(NewtonSolverCfg):
     nconmax: int | None = None
     """Number of contact points per environment (world)."""
 
+    nccdmax: int | None = None
+    """GJK/EPA collision workspace capacity per world; defaults to the contact capacity.
+
+    Must be between zero and the resolved :attr:`nconmax`. Reducing this saves temporary
+    GPU memory without reducing contact storage. Monitor MJWarp overflow for the workload.
+    """
+
     iterations: int = 100
     """Number of solver iterations."""
 
@@ -57,6 +64,9 @@ class MJWarpSolverCfg(NewtonSolverCfg):
 
     disable_contacts: bool = False
     """Whether to disable contact computation in MuJoCo."""
+
+    enable_sleeping: bool = False
+    """Enable tree sleeping, including explicitly disabled episode participants."""
 
     disable_sensors: bool = False
     """Whether to disable MuJoCo Warp's internal sensor computation.

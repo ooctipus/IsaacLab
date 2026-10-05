@@ -595,6 +595,7 @@ class _ContactSensor:
 class _SceneDataProvider:
     def __init__(self, contact_sensors=None):
         self._contact_sensors = contact_sensors or {}
+        self.backend = SimpleNamespace(rigid_geometry_version=0)
 
     def get_contact_sensors(self):
         return self._contact_sensors
@@ -828,6 +829,43 @@ def test_newton_visualizer_headless_renders_frame_on_demand(monkeypatch, cfg_typ
         visualizer.render_rgb_array()
     assert state.body_q is provider.poses
     assert viewer.events[-2:] == ["begin_frame", "end_frame"]
+
+
+@pytest.mark.parametrize("headless", [False, True])
+def test_newton_gl_refreshes_changed_geometry_before_rendering(monkeypatch, headless):
+    from isaaclab_newton.physics import NewtonManager
+
+    provider = _SceneDataProvider()
+    viewer = Mock()
+    viewer.is_paused.return_value = False
+    viewer._update_frequency = 1
+    visualizer = _make_newton_visualizer(viewer, provider)
+    visualizer._runtime_headless = headless
+    visualizer._model = object()
+    visualizer._resolved_visible_env_ids = [0]
+    picking = viewer.picking
+    viewer.show_collision = True
+    monkeypatch.setattr(NewtonManager, "get_contacts", lambda: None)
+
+    def render():
+        visualizer.step(0.04)
+        if headless:
+            visualizer.render_rgb_array()
+
+    render()
+    viewer.refresh_shapes.assert_not_called()
+    provider.backend.rigid_geometry_version += 1
+    viewer.reset_mock()
+    render()
+    viewer.refresh_shapes.assert_called_once_with()
+    calls = [call[0] for call in viewer.mock_calls]
+    assert calls.index("refresh_shapes") < calls.index("log_state")
+    viewer.set_model.assert_not_called()
+    assert viewer.picking is picking
+    assert viewer.show_collision is True
+    viewer.reset_mock()
+    render()
+    viewer.refresh_shapes.assert_not_called()
 
 
 def test_newton_visualizer_contact_sensor_fallback_obeys_show_contacts(monkeypatch):

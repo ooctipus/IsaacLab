@@ -151,6 +151,12 @@ second full-image copy for normalized uint8 images. Existing observation configu
 Action Manager
 --------------
 
+An action term normally resolves ``asset_name`` from the scene. Terms that bind
+their control targets directly may explicitly set :attr:`ActionTermCfg.asset_name`
+to ``None``; their ``self._asset`` remains ``None`` and the scene is not accessed.
+The process/apply lifecycle is unchanged, and omitting ``asset_name`` remains a
+configuration error.
+
 .. autoclass:: ActionManager
     :members:
     :inherited-members:

@@ -194,3 +194,62 @@ Solver Managers
   :members:
   :inherited-members:
   :show-inheritance:
+
+Experimental Homogeneous Populations
+-----------------------------------
+
+These explicitly composed resources support headless native-contact MuJoCo Warp
+populations. Their lifecycle belongs to ``SimulationContext``; task assignments
+and policy buffers belong to the calling environment.
+
+.. autoclass:: isaaclab_newton.physics.population.NewtonPopulationCfg
+  :members:
+  :show-inheritance:
+  :exclude-members: __init__
+
+.. autoclass:: isaaclab_newton.physics.population.NewtonPopulationManager
+  :members:
+  :show-inheritance:
+
+.. autoclass:: isaaclab_newton.physics.population.NewtonPopulationBackendCfg
+  :members:
+  :show-inheritance:
+  :exclude-members: __init__
+
+.. autoclass:: isaaclab_newton.physics.population.NewtonPopulationBackend
+  :members:
+
+.. autoclass:: isaaclab_newton.physics.population.NewtonPopulation
+  :members:
+
+Experimental Native Worlds
+--------------------------
+
+``NewtonWorldsBackend`` keeps native physics arrays and logical identities in one
+``newton.solvers.MuJoCoWorlds`` runtime. Prepare immutable native prototypes once,
+register the backend with ``SimulationContext``, record task callbacks, and install
+it before resetting the simulation. GPU commands create, retype or destroy worlds;
+``forward()`` applies coherent pending commands and refreshes current poses without
+advancing physics. ``step()`` uses the same executable with physics enabled.
+
+The caller owns complete reset payloads and publishes each new command sequence
+only when its payload is ready. World capacities reserve virtual rows; live counts
+and physical readiness remain separate. The initial backend is headless and exposes
+native arrays through ``backend.runtime``; it provides no replicated Newton state.
+
+.. autoclass:: NewtonWorldsCfg
+  :members:
+  :show-inheritance:
+  :exclude-members: __init__
+
+.. autoclass:: NewtonWorldsManager
+  :members:
+  :show-inheritance:
+
+.. autoclass:: NewtonWorldsBackendCfg
+  :members:
+  :show-inheritance:
+  :exclude-members: __init__
+
+.. autoclass:: NewtonWorldsBackend
+  :members:

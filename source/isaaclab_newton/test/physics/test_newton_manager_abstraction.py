@@ -21,7 +21,6 @@ Covers:
 
 from __future__ import annotations
 
-import contextlib
 import logging
 from types import SimpleNamespace
 
@@ -68,7 +67,7 @@ from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.physics import PhysicsEvent, PhysicsManager
 from isaaclab.scene_data import SceneDataFormat, SceneDataProvider
 from isaaclab.sim import SimulationCfg, SimulationContext, build_simulation_context
-from isaaclab.test.utils import test_devices
+from isaaclab.test.utils import DeviceScope, test_devices
 
 # ---------------------------------------------------------------------------
 # Lightweight (no sim) parametrisation
@@ -952,13 +951,31 @@ def test_mpm_unsupported_cuda_graph_capture_uses_eager_execution(monkeypatch):
 
 
 def test_cuda_graph_capture_uses_simulation_device(monkeypatch):
-    """CUDA graph capture should use the simulation device instead of Warp's default device."""
-
+    """Capture privately on the simulation device and join the caller on both boundaries."""
     captured_devices = []
     captured_graph = object()
+    preparation_stream = SimpleNamespace(device="cuda:1")
+    scope_active = []
+
+    def make_stream(device):
+        assert device == "cuda:1"
+        return preparation_stream
+
+    class FakeScopedStream:
+        def __init__(self, stream, *, sync_enter=True, sync_exit=False):
+            assert stream is preparation_stream
+            assert sync_enter and sync_exit
+
+        def __enter__(self):
+            scope_active.append(True)
+
+        def __exit__(self, *exc):
+            scope_active.pop()
 
     class FakeScopedCapture:
         def __init__(self, stream=None, capture_mode=None):
+            assert scope_active and stream is preparation_stream
+            assert capture_mode == wp.CaptureMode.THREAD_LOCAL
             captured_devices.append(stream.device)
             self.graph = captured_graph
 
@@ -970,15 +987,71 @@ def test_cuda_graph_capture_uses_simulation_device(monkeypatch):
 
     monkeypatch.setattr(PhysicsManager, "_device", "cuda:1", raising=False)
     monkeypatch.setattr(newton_manager_module, "has_kit", lambda: False)
-    stream = SimpleNamespace(device="cuda:1")
-    monkeypatch.setattr(wp, "get_stream", lambda device: stream if device == "cuda:1" else None)
-    monkeypatch.setattr(wp, "ScopedStream", lambda stream: contextlib.nullcontext())
     monkeypatch.setattr(wp, "ScopedCapture", FakeScopedCapture)
+    monkeypatch.setattr(wp, "Stream", make_stream)
+    monkeypatch.setattr(wp, "ScopedStream", FakeScopedStream)
 
     graph = NewtonManager._capture_graph(lambda: None)
 
     assert captured_devices == ["cuda:1"]
     assert graph is captured_graph
+
+
+@wp.kernel
+def _capture_stream_increment(values: wp.array[int]):
+    values[0] += 1
+
+
+@pytest.mark.parametrize("capture_kind", ["initial", "deferred", "query"])
+@pytest.mark.parametrize("device", test_devices(DeviceScope.CUDA))
+def test_cuda_graph_preparation_from_default_stream(monkeypatch, capture_kind, device):
+    """Physics and query owners capture privately without advancing work before replay."""
+    values = wp.zeros(1, dtype=int, device=device)
+    wp.load_module(device=device)
+
+    def simulate():
+        wp.launch(_capture_stream_increment, dim=1, inputs=[values], device=device)
+
+    monkeypatch.setattr(PhysicsManager, "_cfg", SimpleNamespace(use_cuda_graph=True))
+    monkeypatch.setattr(PhysicsManager, "_device", device)
+    monkeypatch.setattr(PhysicsManager, "_sim", SimpleNamespace(is_playing=lambda: True))
+    monkeypatch.setattr(PhysicsManager, "_sim_time", 0.0)
+    monkeypatch.setattr(newton_manager_module, "has_kit", lambda: False)
+    for name, value in {
+        "_solver": None,
+        "_model_changes": set(),
+        "_graph": None,
+        "_graph_capture_pending": capture_kind == "deferred",
+        "_solver_dt": 0.01,
+        "_num_substeps": 1,
+        "_adapter": None,
+        "_post_actuator_callbacks": [],
+    }.items():
+        monkeypatch.setattr(NewtonManager, name, value)
+    monkeypatch.setattr(NewtonManager, "_is_all_graphable", classmethod(lambda cls: False))
+    monkeypatch.setattr(NewtonManager, "_simulate_physics_only", classmethod(lambda cls: simulate()))
+    for name in ("forward", "_mark_transforms_changed", "_check_solver_status", "_log_solver_debug"):
+        monkeypatch.setattr(NewtonManager, name, classmethod(lambda cls: None))
+    with wp.ScopedStream(wp.Stream(device, cuda_stream=0), sync_enter=True, sync_exit=True):
+        values.fill_(10)
+        if capture_kind == "initial":
+            graph = NewtonManager._capture_graph(simulate)
+            np.testing.assert_array_equal(values.numpy(), [10])
+            wp.capture_launch(graph)
+        elif capture_kind == "deferred":
+            NewtonManager.step()
+            assert not NewtonManager._graph_capture_pending
+        else:
+            backend = SimpleNamespace(
+                model=SimpleNamespace(device=wp.get_device(device), shape_count=0, particle_count=0),
+                state_0=SimpleNamespace(body_q=values, particle_q=None),
+                bvh_refit=SimpleNamespace(timestamp=-1, data=None),
+            )
+            graph = NewtonQueries.run_query(backend, 0, simulate, None)
+            np.testing.assert_array_equal(values.numpy(), [11])
+            assert NewtonQueries.run_query(backend, 0, simulate, graph) is graph
+        assert wp.get_stream(device).cuda_stream == 0
+        np.testing.assert_array_equal(values.numpy(), [12 if capture_kind == "query" else 11])
 
 
 # ---------------------------------------------------------------------------
@@ -1035,7 +1108,8 @@ def test_fixed_root_pose_write_updates_solver(monkeypatch, asset_class, writer, 
     np.testing.assert_allclose(solver.mjw_data.mocap_pos.numpy()[0, 0], target.numpy()[0, :3])
 
 
-def test_forward_consumes_existing_reset_masks(monkeypatch):
+@pytest.mark.parametrize("advance", [False, True])
+def test_forward_consumes_existing_reset_masks(monkeypatch, advance):
     """Authored-state masks are consumed once, without rerunning clean FK or solver reset."""
     world_mask = wp.array([False, True], dtype=wp.bool, device="cpu")
     fk_mask = wp.array([True, False], dtype=wp.bool, device="cpu")
@@ -1060,8 +1134,31 @@ def test_forward_consumes_existing_reset_masks(monkeypatch):
         NewtonManager, "_reset_solver_internals_delegate", NewtonManager._reset_solver_internals, raising=False
     )
 
-    NewtonManager.forward()
-    NewtonManager.forward()
+    if advance:
+        monkeypatch.setattr(PhysicsManager, "_sim", SimpleNamespace(is_playing=lambda: True))
+        monkeypatch.setattr(PhysicsManager, "_cfg", SimpleNamespace(use_cuda_graph=False))
+        monkeypatch.setattr(PhysicsManager, "_device", "cpu")
+        monkeypatch.setattr(PhysicsManager, "_sim_time", 0.0)
+        for name, value in {
+            "_model_changes": set(),
+            "_graph_capture_pending": False,
+            "_solver_dt": 0.01,
+            "_num_substeps": 1,
+            "_adapter": None,
+            "_post_actuator_callbacks": [],
+        }.items():
+            monkeypatch.setattr(NewtonManager, name, value)
+        monkeypatch.setattr(NewtonManager, "_is_all_graphable", classmethod(lambda cls: False))
+        for name in (
+            "_simulate_physics_only",
+            "_mark_transforms_changed",
+            "_check_solver_status",
+            "_log_solver_debug",
+        ):
+            monkeypatch.setattr(NewtonManager, name, classmethod(lambda cls: None))
+    reconcile = NewtonManager.step if advance else NewtonManager.forward
+    reconcile()
+    reconcile()
 
     assert observed == [([False, True], [True, False])]
     assert solver_resets == [[False, True]]
@@ -1779,3 +1876,32 @@ def test_deterministic_mode_allows_those_sensors_without_a_guarantee(
     NewtonManager._validate_deterministic_solver_cfg(
         MJWarpSolverCfg(disable_sensors=True), wp.DeterministicMode.NOT_GUARANTEED
     )
+
+
+@pytest.mark.parametrize("selector", ["env_ids", "env_mask"])
+def test_invalidate_fk_selects_ragged_worlds_without_views(monkeypatch, selector):
+    """A raw-state write invalidates only the selected world's model articulations."""
+    from isaaclab.physics import PhysicsManager
+
+    model = SimpleNamespace(
+        world_count=2,
+        articulation_count=3,
+        articulation_world=wp.array([0, 1, 1], dtype=wp.int32, device="cpu"),
+    )
+    worlds = wp.zeros(3, dtype=wp.bool, device="cpu")
+    articulations = wp.zeros(3, dtype=wp.bool, device="cpu")
+    monkeypatch.setattr(NewtonManager, "backend", SimpleNamespace(model=model))
+    monkeypatch.setattr(NewtonManager, "_world_reset_mask", worlds)
+    monkeypatch.setattr(NewtonManager, "_fk_reset_mask", articulations)
+    monkeypatch.setattr(NewtonManager, "_reconciliation_pending", False)
+    monkeypatch.setattr(NewtonManager, "_mark_transforms_changed", classmethod(lambda cls: None))
+    monkeypatch.setattr(PhysicsManager, "_device", "cpu")
+    selection = (
+        wp.array([1], dtype=wp.int32, device="cpu")
+        if selector == "env_ids"
+        else wp.array([False, True], dtype=wp.bool, device="cpu")
+    )
+    NewtonManager.invalidate_fk(**{selector: selection})
+    np.testing.assert_array_equal(worlds.numpy(), [False, True, False])
+    np.testing.assert_array_equal(articulations.numpy(), [False, True, True])
+    assert NewtonManager._reconciliation_pending

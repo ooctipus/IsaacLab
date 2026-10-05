@@ -48,6 +48,19 @@ def test_default_stays_kitless_for_a_kitless_config(kit_branch_taken):
     assert kit_branch_taken == []
 
 
+def test_population_physics_is_kitless_without_prototype_config():
+    """Recognize the population owner directly rather than relying on nested Newton settings."""
+    from isaaclab_newton.physics.population import NewtonPopulationCfg
+
+    cfg = NewtonPopulationCfg()
+    assert cfg.prototype_physics is None
+    scanned = sim_launcher.scan(cfg)
+    assert scanned.resolved_physics_cfg is cfg
+    assert scanned.has_kitless_physics
+    assert not scanned.has_kit_physics
+    assert not scanned.needs_kit
+
+
 def test_kitless_launch_configures_storage_before_user_code(kit_branch_taken, monkeypatch: pytest.MonkeyPatch):
     """A direct OmniClient read inside a kitless runtime must see profile routing."""
     events = []

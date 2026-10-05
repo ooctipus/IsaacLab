@@ -3,32 +3,57 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg, NewtonCollisionPipelineCfg, NewtonShapeCfg
-from isaaclab_physx.physics import PhysxCfg
+from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg, NewtonShapeCfg
+from isaaclab_newton.physics.population import NewtonPopulationCfg
+from isaaclab_newton.physics.worlds import NewtonWorldsCfg
+from newton import Model
 
 import isaaclab.sim as sim_utils
-from isaaclab.assets import ArticulationCfg, AssetBaseCfg
-from isaaclab.controllers import DifferentialIKControllerCfg
+from isaaclab.assets import AssetBaseCfg
 from isaaclab.envs import ManagerBasedRLEnvCfg
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
-from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
-from isaaclab.physics import PhysxAutoCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import ContactSensorCfg
-from isaaclab.sim import MultiAssetSpawnerCfg, SimulationCfg
-from isaaclab.utils import configclass, replace
+from isaaclab.sim import SimulationCfg
+from isaaclab.utils import clone, configclass, replace
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.noise import UniformNoiseCfg as Unoise
 from isaaclab.visualizers import VisualizerCfg
 
-from isaaclab_tasks.utils import PresetCfg, preset
+from isaaclab_tasks.utils import PresetCfg
 
 from . import mdp
-from .keyboards import TYPING_KEYBOARD_POOL
+from .keyboards.keyboard_gen_cfg import KeyboardSpawnerCfg
+from .keyboards.keyboard_geometry import generate_keyboard
+from .keyboards.keyboard_pool import TYPING_KEYBOARD_VARIANTS
+from .mdp.actions import NewtonRelativeJointPositionActionCfg
+from .mdp.reset import KeyboardResetIKCfg
+from .selection_paths import NewtonSelectorCfg, bind_selectors
+
+_REFERENCE_KEYBOARD = generate_keyboard(TYPING_KEYBOARD_VARIANTS[0])
+_BACKSPACE_SLOT = next(key.slot for key in _REFERENCE_KEYBOARD.active_keys if key.label.lower() == "backspace")
+
+ROBOT_Q = NewtonSelectorCfg(Model.AttributeFrequency.JOINT_COORD, path=".*/Robot/joints/.*", count_per_world=6)
+ROBOT_QD = NewtonSelectorCfg(Model.AttributeFrequency.JOINT_DOF, path=".*/Robot/joints/.*", count_per_world=6)
+KEY_Q = NewtonSelectorCfg(
+    Model.AttributeFrequency.JOINT_COORD, path=".*/Keyboard/parts/part_.*/joints/key_.*_joint", count_per_world=108
+)
+KEY_QD = NewtonSelectorCfg(
+    Model.AttributeFrequency.JOINT_DOF, path=".*/Keyboard/parts/part_.*/joints/key_.*_joint", count_per_world=108
+)
+KEY_BODIES = NewtonSelectorCfg(
+    Model.AttributeFrequency.BODY, path=".*/Keyboard/parts/part_.*/keys/key_.*", count_per_world=108
+)
+ROBOT_ROOT = NewtonSelectorCfg(Model.AttributeFrequency.BODY, path=".*/Robot/base", count_per_world=1)
+KEYBOARD_ROOT = NewtonSelectorCfg(
+    Model.AttributeFrequency.BODY, path=".*/Keyboard/parts/part_.*/base_link", count_per_world=18
+)
+ARM_PATH = ".*/Robot/joints/(shoulder_pan|shoulder_lift|elbow_flex|wrist_flex|wrist_roll)"
+
 
 ##
 # Pre-defined configs
@@ -37,73 +62,19 @@ from isaaclab_assets.robots.so101 import SO101_CFG  # isort: skip
 
 
 @configclass
-class KeyboardAssetCfg(PresetCfg):
-    """Backend-dependent keyboard articulation, selected by the ``physics=`` preset.
-
-    PhysX flattens all per-env articulation instances onto one axis, so the ``fixed_dof`` partition
-    (18 roots/env) exposes every key. IsaacLab's Newton :class:`ArticulationData` reads only the first
-    articulation per env (``[:, 0]``), so Newton uses a single 108-DOF articulation instead.
-    """
-
-    # PhysX: 18 articulation roots/env under ``parts/part_*`` (its ArticulationView flattens them).
-    # (Octi) partitioned keyboard investigate if topologies can be harnessed to improve performance
-    default = ArticulationCfg(
-        prim_path="{ENV_REGEX_NS}/Keyboard",
-        articulation_root_prim_path="/parts/part_.*",
-        spawn=MultiAssetSpawnerCfg(assets_cfg=list(TYPING_KEYBOARD_POOL.spawners_partitioned), random_choice=False),
-        init_state=ArticulationCfg.InitialStateCfg(
-            # Pose used by the training checkpoint: centered in the SO-101 workspace and rotated -90 degrees.
-            pos=(0.285, 0.0, 0.01),
-            rot=(0.0, 0.0, -0.7071068, 0.7071068),  # -90 deg about Z (xyzw)
-            joint_pos={"key_.*_joint": 0.0},
-            joint_vel={"key_.*_joint": 0.0},
-        ),
-        actuators={},
-    )
-    # Newton: one 108-DOF articulation/env, root auto-resolved at ``prim_path`` (Newton's
-    # ArticulationData reads only the first articulation per env, so separate parts would be invisible).
-    newton_mjwarp = replace(
-        default,
-        articulation_root_prim_path=None,
-        spawn=MultiAssetSpawnerCfg(assets_cfg=list(TYPING_KEYBOARD_POOL.spawners_single), random_choice=False),
-    )
-    isaacsim_physx = default
-    physx = default
-    default = newton_mjwarp
-
-
-@configclass
 class SO101SceneCfg(InteractiveSceneCfg):
-    """SO-101 keyboard-typing scene."""
+    """Authored robot and 18 six-key partitions, without runtime asset views."""
 
-    robot: ArticulationCfg = replace(
-        SO101_CFG,
+    robot: AssetBaseCfg = AssetBaseCfg(
         prim_path="{ENV_REGEX_NS}/Robot",
-        # Face the keyboard at +X and retain the task's original reset-IK seed.
-        init_state=replace(
-            SO101_CFG.init_state,
-            rot=(0.0, 0.0, 2**-0.5, 2**-0.5),
-            joint_pos={
-                "shoulder_pan": 0.0,
-                "shoulder_lift": 0.0,
-                "elbow_flex": 0.0,
-                "wrist_flex": 0.0,
-                "wrist_roll": 0.0,
-                "gripper": 0.0,
-            },
-        ),
-        spawn=replace(
-            SO101_CFG.spawn,
-            variants={
-                "Robot": "robot",
-                "Sensor": "sensors",
-                "Physics": preset(default="physics", isaacsim_physx="physx", physx="physx", newton_mjwarp="physics"),
-            },
-        ),
+        spawn=clone(SO101_CFG.spawn),
+        init_state=AssetBaseCfg.InitialStateCfg(rot=(0.0, 0.0, 2**-0.5, 2**-0.5)),
     )
-
-    # keyboard
-    keyboard: ArticulationCfg = KeyboardAssetCfg()
+    keyboard: AssetBaseCfg = AssetBaseCfg(
+        prim_path="{ENV_REGEX_NS}/Keyboard",
+        spawn=clone(TYPING_KEYBOARD_VARIANTS[0]),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.285, 0.0, 0.01), rot=(0.0, 0.0, -0.7071068, 0.7071068)),
+    )
 
     # contact sensor
     robot_contact = ContactSensorCfg(
@@ -136,28 +107,35 @@ class CommandsCfg:
     """Command terms for the MDP."""
 
     typing = mdp.LetterTypingCommandCfg(
-        asset_name="robot",
-        object_name="keyboard",
-        resampling_time_range=(10.0, 10.0),
+        keys=KEY_Q,
+        key_dofs=KEY_QD,
+        key_bodies=KEY_BODIES,
+        robot_joints=ROBOT_Q,
+        robot_dofs=ROBOT_QD,
+        reset_roots=NewtonSelectorCfg(
+            Model.AttributeFrequency.BODY, path=(".*/Robot/base", KEYBOARD_ROOT.path), count_per_world=19
+        ),
+        reset_coords=NewtonSelectorCfg(
+            Model.AttributeFrequency.JOINT_COORD, path=(ROBOT_Q.path, KEY_Q.path), count_per_world=114
+        ),
+        reset_dofs=NewtonSelectorCfg(
+            Model.AttributeFrequency.JOINT_DOF, path=(ROBOT_QD.path, KEY_QD.path), count_per_world=114
+        ),
+        resampling_time_range=None,
         debug_vis=False,
         letter_length=(1, 5),
         max_len=5,
         command_mode="letter_full",
-        typeable_slots=tuple(
-            slot for slot in TYPING_KEYBOARD_POOL.active_slots if slot != TYPING_KEYBOARD_POOL.backspace_slot
-        ),
-        backspace_slot=TYPING_KEYBOARD_POOL.backspace_slot,
-        slot_labels=TYPING_KEYBOARD_POOL.slot_labels,
+        typeable_slots=tuple(key.slot for key in _REFERENCE_KEYBOARD.active_keys if key.slot != _BACKSPACE_SLOT),
+        backspace_slot=_BACKSPACE_SLOT,
+        slot_labels=tuple(key.label for key in _REFERENCE_KEYBOARD.keys),
         reset=mdp.LetterTypingCommandCfg.ResetCfg(
             enabled=True,
-            ik=mdp.DifferentialInverseKinematicsActionCfg(
-                asset_name="robot",
-                joint_names=["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll"],
-                body_name="gripper(_link)?",
-                controller=DifferentialIKControllerCfg(command_type="pose", use_relative_mode=False, ik_method="dls"),
-                body_offset=mdp.DifferentialInverseKinematicsActionCfg.OffsetCfg(
-                    pos=(-0.0079, -0.000218121, -0.0981274)
-                ),
+            ik=KeyboardResetIKCfg(
+                joints=NewtonSelectorCfg(Model.AttributeFrequency.JOINT_COORD, path=ARM_PATH, count_per_world=5),
+                dofs=NewtonSelectorCfg(Model.AttributeFrequency.JOINT_DOF, path=ARM_PATH, count_per_world=5),
+                body=NewtonSelectorCfg(Model.AttributeFrequency.BODY, path=".*/Robot/gripper", count_per_world=1),
+                tip_offset=(-0.0079, -0.000218121, -0.0981274),
             ),
             ik_rpy_deg=(0.0, 45.0, 0.0),  # (roll, pitch, yaw) [deg]
             ik_hover_height=0.02,
@@ -177,7 +155,7 @@ class CommandsCfg:
                         "roll": [0.0, 0.75],
                     },
                     "velocity_range": {"x": [-0.0, 0.0], "y": [-0.0, 0.0], "z": [-0.0, 0.0]},
-                    "asset_cfg": SceneEntityCfg("keyboard"),
+                    "roots": KEYBOARD_ROOT,
                 },
             ),
         ),
@@ -186,7 +164,7 @@ class CommandsCfg:
 
 @configclass
 class SO101RelJointPosActionCfg:
-    action = mdp.RelativeJointPositionActionCfg(asset_name="robot", joint_names=[".*"], scale=0.02)
+    action = NewtonRelativeJointPositionActionCfg(asset_name=None, joints=ROBOT_Q, dofs=ROBOT_QD, scale=0.02)
 
 
 @configclass
@@ -205,8 +183,8 @@ class SO101ObservationsCfg:
         """Observations for proprioception group."""
 
         actions = ObsTerm(func=mdp.last_action)
-        joint_pos = ObsTerm(func=mdp.joint_pos, noise=Unoise(n_min=-0.0, n_max=0.0))
-        joint_vel = ObsTerm(func=mdp.joint_vel, noise=Unoise(n_min=-0.0, n_max=0.0))
+        joint_pos = ObsTerm(func=mdp.joint_pos, params={"joints": ROBOT_Q}, noise=Unoise(n_min=-0.0, n_max=0.0))
+        joint_vel = ObsTerm(func=mdp.joint_vel, params={"joints": ROBOT_QD}, noise=Unoise(n_min=-0.0, n_max=0.0))
 
     @configclass
     class PerceptionObsCfg(ObsGroup):
@@ -216,9 +194,8 @@ class SO101ObservationsCfg:
             func=mdp.key_positions_b,
             clip=(-2.0, 2.0),
             params={
-                "command_name": "typing",
-                "base_asset_cfg": SceneEntityCfg("robot"),
-                "active_slots": TYPING_KEYBOARD_POOL.active_slots,
+                "keys": KEY_BODIES,
+                "root": ROBOT_ROOT,
             },
         )
 
@@ -248,7 +225,7 @@ class EventCfg:
                 "roll": [0.0, 0.75],
             },
             "velocity_range": {"x": [-0.0, 0.0], "y": [-0.0, 0.0], "z": [-0.0, 0.0]},
-            "asset_cfg": SceneEntityCfg("keyboard"),
+            "roots": KEYBOARD_ROOT,
         },
     )
 
@@ -259,7 +236,7 @@ class SO101ReorientRewardCfg:
 
     success = RewTerm(func=mdp.typing_success, weight=50.0, params={"command_name": "typing"})
 
-    mechanical_power = RewTerm(func=mdp.mechanical_power, weight=-0.0005)
+    mechanical_power = RewTerm(func=mdp.mechanical_power, weight=-0.0005, params={"joints": ROBOT_QD})
 
     early_termination = RewTerm(func=mdp.is_terminated_term, weight=-10, params={"term_keys": ["abnormal_robot"]})
 
@@ -270,11 +247,15 @@ class TerminationsCfg:
 
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
 
-    abnormal_robot = DoneTerm(func=mdp.joint_vel_out_of_limit)
+    abnormal_robot = DoneTerm(func=mdp.joint_vel_out_of_limit, params={"joints": ROBOT_QD})
 
     excessive_contact = DoneTerm(
         func=mdp.illegal_contact,
-        params={"sensor_cfg": SceneEntityCfg("robot_contact"), "threshold": 20.0},
+        params={
+            "bodies": NewtonSelectorCfg(Model.AttributeFrequency.BODY, path=".*/Robot/.*", count_per_world=7),
+            "sensor_name": "robot_contact",
+            "threshold": 20.0,
+        },
     )
 
     success = DoneTerm(func=mdp.typing_complete, params={"command_name": "typing"})
@@ -282,39 +263,36 @@ class TerminationsCfg:
 
 @configclass
 class PhysicsCfg(PresetCfg):
-    # Octi: note
-    # physx is usable but extremely slow for this task and is only for evaluation purposes
-    # for training please only use newton_mjwarp.
-    isaacsim_physx = PhysxCfg(
-        bounce_threshold_velocity=0.01,
-        gpu_max_rigid_patch_count=16 * 5 * 2**15,
-        gpu_found_lost_pairs_capacity=2**27,
-        gpu_total_aggregate_pairs_capacity=2**27,
-    )
     newton_mjwarp = NewtonCfg(
         solver_cfg=MJWarpSolverCfg(
             solver="newton",
             integrator="implicitfast",
             njmax=600,
             nconmax=600,
+            nccdmax=128,
             impratio=1.0,
             cone="pyramidal",
             update_data_interval=2,
             iterations=100,
             ls_iterations=15,
-            use_mujoco_contacts=False,
+            use_mujoco_contacts=True,
+            enable_sleeping=True,
         ),
-        collision_cfg=NewtonCollisionPipelineCfg(),
         default_shape_cfg=NewtonShapeCfg(),
         num_substeps=2,
         debug_mode=False,
     )
-    physx = PhysxAutoCfg(isaacsim_physx=isaacsim_physx)
     default = newton_mjwarp
 
 
 @configclass
 class SO101KeyboardEnvCfg(ManagerBasedRLEnvCfg):
+    keyboard_variants: tuple[KeyboardSpawnerCfg, ...] = TYPING_KEYBOARD_VARIANTS
+    """Registered reset variants; an empty tuple keeps the authored 108-key partitioned baseline."""
+
+    cache_keyboard_constants: bool = True
+    """Prepare immutable sleeping-variant solver constants once, before episode resets."""
+
     scene: SO101SceneCfg = SO101SceneCfg(num_envs=4096, env_spacing=1.0, replicate_physics=True)
     observations: SO101ObservationsCfg = SO101ObservationsCfg()
     actions: SO101RelJointPosActionCfg = SO101RelJointPosActionCfg()
@@ -337,3 +315,109 @@ class SO101KeyboardEnvCfg(ManagerBasedRLEnvCfg):
         super().play_mode()
         self.num_envs = 36
         self.commands.typing.debug_vis = True
+
+
+@configclass
+class SO101KeyboardEnvPresets(PresetCfg):
+    """Matched training comparisons selected with ``presets=<mode>``."""
+
+    heterogeneous = SO101KeyboardEnvCfg()
+    partitioned_108 = SO101KeyboardEnvCfg(keyboard_variants=())
+    single_108 = SO101KeyboardEnvCfg(keyboard_variants=())
+    single_108.scene.keyboard.spawn.partition_mode = "single"
+
+    # The single articulation has the same 108 key slots but one keyboard root.
+    _key_q = replace(KEY_Q, path=".*/Keyboard/joints/key_.*_joint")
+    _key_qd = replace(KEY_QD, path=".*/Keyboard/joints/key_.*_joint")
+    _key_bodies = replace(KEY_BODIES, path=".*/Keyboard/keys/key_.*")
+    _root = replace(KEYBOARD_ROOT, path=".*/Keyboard/base_link", count_per_world=1)
+    single_108.commands.typing.keys = _key_q
+    single_108.commands.typing.key_dofs = _key_qd
+    single_108.commands.typing.key_bodies = _key_bodies
+    single_108.commands.typing.reset_roots = NewtonSelectorCfg(
+        Model.AttributeFrequency.BODY, path=(ROBOT_ROOT.path, _root.path), count_per_world=2
+    )
+    single_108.commands.typing.reset_coords = NewtonSelectorCfg(
+        Model.AttributeFrequency.JOINT_COORD, path=(ROBOT_Q.path, _key_q.path), count_per_world=114
+    )
+    single_108.commands.typing.reset_dofs = NewtonSelectorCfg(
+        Model.AttributeFrequency.JOINT_DOF, path=(ROBOT_QD.path, _key_qd.path), count_per_world=114
+    )
+    single_108.commands.typing.reset.pre_solve_reset.params["roots"] = _root
+    single_108.events.reset_keyboard.params["roots"] = _root
+    single_108.observations.perception.key_positions.params["keys"] = _key_bodies
+    default = heterogeneous
+
+
+@configclass
+class PopulationPhysicsCfg(PresetCfg):
+    newton_mjwarp = NewtonPopulationCfg(prototype_physics=PhysicsCfg().newton_mjwarp)
+    default = newton_mjwarp
+
+
+@configclass
+class SO101KeyboardPopulationEnvCfg(SO101KeyboardEnvCfg):
+    """The same global typing MDP over exact, independently sized native populations."""
+
+    sim: SimulationCfg = SimulationCfg(physics=PopulationPhysicsCfg(), dt=0.01)
+    compute_final_obs: bool = True
+    """Preserve pre-reset successor observations for timeout value bootstrapping."""
+    redistribution_interval: int = 128
+    """Policy steps between desired-distribution reconciliation boundaries."""
+    redistribution_mode: str = "truncate_pending"
+    """End pending episodes at each boundary. Opt-in ``episode_boundary`` has no guaranteed turnover interval."""
+    population_stream_count: int = 8
+    """Maximum concurrently executing homogeneous population streams."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        if self.terminations.excessive_contact is not None:
+            self.terminations.excessive_contact.params["sensor_name"] = None
+
+        def policy_slots(cfg):
+            paths = (cfg.path,) if isinstance(cfg.path, str) else cfg.path
+            if any("/Keyboard/" in path for path in paths) and cfg.count_per_world is not None:
+                return replace(cfg, count_per_world=None, policy_width=cfg.count_per_world)
+            return cfg
+
+        # Native key/root counts vary. Keep the reference policy and reset-snapshot
+        # widths explicit in configuration, while native bindings stay compact.
+        for cfg in (self.commands, self.actions, self.observations, self.rewards, self.terminations, self.events):
+            bind_selectors(cfg, policy_slots)
+
+
+@configclass
+class SO101KeyboardPopulationEnvPresets(PresetCfg):
+    heterogeneous = SO101KeyboardPopulationEnvCfg()
+    partitioned_108 = SO101KeyboardPopulationEnvCfg(keyboard_variants=())
+    default = heterogeneous
+
+
+@configclass
+class WorldsPhysicsCfg(PresetCfg):
+    newton_mjwarp = NewtonWorldsCfg(prototype_physics=PhysicsCfg().newton_mjwarp)
+    default = newton_mjwarp
+
+
+@configclass
+class SO101KeyboardWorldsEnvCfg(SO101KeyboardPopulationEnvCfg):
+    """Immediate heterogeneous resets through one prepared native world graph.
+
+    Normal IK and replay resets stage complete snapshots before publication.
+    Supply ``commands.typing.reset.bank_path`` to reuse a prepared curriculum;
+    otherwise the task builds its curriculum from the same reset implementation.
+    """
+
+    sim: SimulationCfg = SimulationCfg(physics=WorldsPhysicsCfg(), dt=0.01)
+    redistribution_interval: int = 1
+    redistribution_mode: str = "episode_boundary"
+    worlds_memory_budget_bytes: int = 16 * 1024**3
+    # Retain available spare backing within the total budget, rounded to allocation granules; None keeps all.
+    worlds_spare_memory_budget_bytes: int | None = 1024**3
+
+
+@configclass
+class SO101KeyboardWorldsEnvPresets(PresetCfg):
+    heterogeneous = SO101KeyboardWorldsEnvCfg()
+    partitioned_108 = SO101KeyboardWorldsEnvCfg(keyboard_variants=())
+    default = heterogeneous

@@ -6,6 +6,7 @@
 __all__ = [
     "RslRlDistillationAlgorithmCfg",
     "RslRlDistillationRunnerCfg",
+    "RslRlEnv",
     "RslRlBaseRunnerCfg",
     "RslRlCNNModelCfg",
     "RslRlMLPModelCfg",
@@ -28,4 +29,4 @@ from .rl_cfg import (
 )
 from .rnd_cfg import RslRlRndCfg
 from .symmetry_cfg import RslRlSymmetryCfg
-from .vecenv_wrapper import RslRlVecEnvWrapper
+from .vecenv_wrapper import RslRlEnv, RslRlVecEnvWrapper

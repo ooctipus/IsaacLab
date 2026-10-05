@@ -88,11 +88,12 @@ class ActionTermCfg:
     The class should inherit from :class:`isaaclab.managers.action_manager.ActionTerm`.
     """
 
-    asset_name: str = MISSING
+    asset_name: str | None = MISSING
     """The name of the scene entity.
 
     This is the name defined in the scene configuration file. See the :class:`InteractiveSceneCfg`
-    class for more details.
+    class for more details. Set to ``None`` for a term that binds its control targets directly
+    without a scene asset. Such a term must not access ``self._asset``.
     """
 
     debug_vis: bool = False
@@ -117,8 +118,17 @@ class CommandTermCfg:
     The class should inherit from :class:`isaaclab.managers.command_manager.CommandTerm`.
     """
 
-    resampling_time_range: tuple[float, float] = MISSING
-    """Time before commands are changed [s]."""
+    resampling_time_range: tuple[float, float] | None = MISSING
+    """Uniform range of time before commands are resampled [s].
+
+    None disables timed resampling: explicit resets still resample commands, but compute
+    only updates metrics and the command. The timer is initialized and reset to infinity;
+    changing its value does not request resampling in this mode. Reset the affected
+    environments after changing scheduling modes.
+
+    Disabling the timer also removes its random draws, including those for equal finite
+    interval bounds, so opting in can change subsequent seeded random samples.
+    """
     debug_vis: bool = False
     """Whether to visualize debug information. Defaults to False."""
 

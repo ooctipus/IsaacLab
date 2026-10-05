@@ -164,6 +164,14 @@ def create_newton_builder(cfg: NewtonBuilderCfg) -> ModelBuilder:
     return ModelBuilder()
 
 
+@wp.kernel(enable_backward=False)
+def _mark_world_articulations(articulation_world: wp.array[int], world_mask: wp.array[bool], fk_mask: wp.array[bool]):
+    articulation = wp.tid()
+    world = articulation_world[articulation]
+    if world >= 0 and world_mask[world]:
+        fk_mask[articulation] = True
+
+
 class NewtonBackend:
     """Own one finalized Newton model and its native state and control buffers."""
 
@@ -171,15 +179,14 @@ class NewtonBackend:
         builder = SimulationContext.instance().get_or_create_backend(NewtonBuilderCfg(physics_cfg=cfg.physics_cfg))
         self.model = builder.finalize(device=cfg.device)
         self.particle_ranges: dict[str, tuple[int, int]] = {}
-        # Newton 1.6 preserves groups through builder replication but not finalization.
-        # Remove this snapshot when the pinned Newton includes newton-physics/newton#3326.
+        # Finalized Newton models do not retain the builder's deformable identities and ranges.
         self.deformable_ranges = {
             label: (start, end - start, kind)
-            for family, kind in (("cloth", "surface"), ("soft", "volume"))
+            for kind in ("surface", "volume")
             for label, start, end in zip(
-                getattr(builder, f"_{family}_label"),
-                getattr(builder, f"_{family}_particle_start"),
-                getattr(builder, f"_{family}_particle_end"),
+                getattr(builder, f"{kind}_label"),
+                getattr(builder, f"_{kind}_particle_start"),
+                getattr(builder, f"_{kind}_particle_end"),
                 strict=True,
             )
         }
@@ -258,13 +265,14 @@ class NewtonQueries:
     @staticmethod
     def capture_graph(device: str, capture_target: Callable[[], None], *, relaxed: bool = False) -> wp.Graph:
         """Record work without an eager warmup or graph replay, using Warp's public capture API."""
-        stream = wp.get_stream(device)
-        mode = wp.CaptureMode.THREAD_LOCAL
         if relaxed:
             # RTX uses the legacy CUDA stream. A nonblocking stream avoids implicit synchronization.
             stream = wp.stream_from_torch(torch.cuda.Stream(device=device))
             mode = wp.CaptureMode.RELAXED
-        with NewtonQueries._paused_gc(), wp.ScopedStream(stream):
+        else:
+            stream = wp.Stream(device)
+            mode = wp.CaptureMode.THREAD_LOCAL
+        with NewtonQueries._paused_gc(), wp.ScopedStream(stream, sync_enter=True, sync_exit=True):
             with wp.ScopedCapture(stream=stream, capture_mode=mode) as capture:
                 capture_target()
         return capture.graph
@@ -1050,6 +1058,57 @@ class NewtonManager(PhysicsManager):
         cls._model_changes.add(change)
 
     @classmethod
+    def get_solver(cls) -> SolverBase:
+        """Return the active solver for solver-specific preparation APIs."""
+        if cls._solver is None:
+            raise RuntimeError("The Newton solver has not been initialized.")
+        return cls._solver
+
+    @classmethod
+    def notify_model_changed(
+        cls,
+        change: ModelFlags,
+        *,
+        world_mask: wp.array | None = None,
+        constant_variant_ids: wp.array | None = None,
+        root_poses_only: bool = False,
+    ) -> None:
+        """Synchronize authored properties before a state read or reset.
+
+        Args:
+            change: Categories of model properties that were modified.
+            world_mask: Worlds to wake, including the trailing global-world entry.
+                Selective notification requires the MuJoCo solver. Property writes
+                themselves must already be restricted to the selected worlds.
+            constant_variant_ids: Prepared MuJoCo constant variant ID for each world.
+            root_poses_only: Only fixed world-root parent poses changed; preserves prepared constants.
+        """
+        if constant_variant_ids is not None or root_poses_only:
+            if not isinstance(cls._solver, SolverMuJoCo):
+                raise NotImplementedError("Prepared constants require SolverMuJoCo.")
+            cls._solver.notify_model_changed(
+                change,
+                world_mask=world_mask,
+                constant_variant_ids=constant_variant_ids,
+                root_poses_only=root_poses_only,
+            )
+        elif world_mask is None:
+            cls._solver.notify_model_changed(change)
+        elif isinstance(cls._solver, SolverMuJoCo):
+            cls._solver.notify_model_changed(change, world_mask=world_mask)
+        else:
+            raise NotImplementedError("Selective property notification requires SolverMuJoCo.")
+        if change & ModelFlags.SHAPE_PROPERTIES:
+            cls._scene_data_backend.rigid_geometry_version += 1
+
+    @classmethod
+    def set_body_sleep_policy(cls, body_ids: wp.array, policy: SolverMuJoCo.SleepPolicy) -> None:
+        """Set the MuJoCo runtime sleep policy for trees containing selected Newton bodies."""
+        if not isinstance(cls._solver, SolverMuJoCo):
+            raise NotImplementedError("Runtime sleep policies require SolverMuJoCo.")
+        cls._solver.set_body_sleep_policy(body_ids, policy)
+
+    @classmethod
     def invalidate_fk(
         cls, env_mask: wp.array | None = None, env_ids: wp.array | None = None, articulation_ids: wp.array | None = None
     ) -> None:
@@ -1066,7 +1125,9 @@ class NewtonManager(PhysicsManager):
                 Used by ``_index`` write methods.
             articulation_ids: Mapping from ``(world, arti)`` to model articulation
                 index. Shape ``(world_count, count_per_world)``. Obtained from
-                ``ArticulationView.articulation_ids``.
+                ``ArticulationView.articulation_ids``. If omitted, all model
+                articulations in the selected worlds are invalidated, including
+                worlds with different articulation counts.
         """
         cls._mark_transforms_changed()
 
@@ -1088,6 +1149,15 @@ class NewtonManager(PhysicsManager):
                 dim=(env_ids.shape[0], articulation_ids.shape[1]),
                 inputs=[env_ids, articulation_ids],
                 outputs=[NewtonManager._world_reset_mask, NewtonManager._fk_reset_mask],
+                device=PhysicsManager._device,
+            )
+        elif env_mask is not None or env_ids is not None:
+            cls.invalidate_body_state(env_ids=env_ids, env_mask=env_mask)
+            wp.launch(
+                _mark_world_articulations,
+                dim=cls.backend.model.articulation_count,
+                inputs=[cls.backend.model.articulation_world, cls._world_reset_mask],
+                outputs=[cls._fk_reset_mask],
                 device=PhysicsManager._device,
             )
         else:

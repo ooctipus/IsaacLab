@@ -46,6 +46,12 @@ class KeyboardSpawnerCfg(SpawnerCfg):
     seed: int = 0
     """Seed for deterministic generation."""
 
+    key_count: int | None = None
+    """Take this many keys from the layout, retaining a backspace key when available."""
+
+    uniform_key_shapes: bool = False
+    """Author visual, label, and collision slots even for padded keys, for registered variants."""
+
     topology_mode: TopologyMode = "exact"
     """Key-slot topology. Padded modes are intended for ablation benchmarks."""
 

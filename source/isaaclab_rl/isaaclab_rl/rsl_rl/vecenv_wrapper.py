@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import contextlib
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import gymnasium as gym
 import torch
@@ -27,6 +27,38 @@ if TYPE_CHECKING:
         from isaaclab_experimental.envs import DirectRLEnvWarp, ManagerBasedRLEnvWarp
 
 
+@runtime_checkable
+class RslRlEnv(Protocol):
+    """Vector Gym environment consumed by RSL-RL, independent of simulation composition.
+
+    ``step`` uses same-step autoreset and returns observation groups, rewards,
+    terminated, truncated and extras. ``obs_buf`` contains the latest groups.
+    Tensor batches have ``num_envs`` leading rows on ``device``. Configuration
+    must expose ``is_finite_horizon`` to select timeout bootstrapping. The base
+    environment must also inherit :class:`gymnasium.Env`; it need not own a scene
+    or inherit an Isaac Lab environment class.
+    """
+
+    num_envs: int
+    device: str
+    max_episode_length: int
+    episode_length_buf: torch.Tensor
+    obs_buf: dict[str, torch.Tensor]
+    cfg: Any
+    single_action_space: gym.Space
+    action_space: gym.Space
+    observation_space: gym.Space
+    render_mode: str | None
+
+    def reset(self, **kwargs) -> tuple[dict[str, torch.Tensor], dict]: ...
+
+    def step(self, actions: torch.Tensor) -> tuple[dict, torch.Tensor, torch.Tensor, torch.Tensor, dict]: ...
+
+    def seed(self, seed: int = -1) -> int: ...
+
+    def close(self) -> None: ...
+
+
 class RslRlVecEnvWrapper(VecEnv):
     """Wraps around Isaac Lab environment for the RSL-RL library
 
@@ -39,20 +71,23 @@ class RslRlVecEnvWrapper(VecEnv):
         https://github.com/leggedrobotics/rsl_rl/blob/master/rsl_rl/env/vec_env.py
     """
 
-    def __init__(self, env: ManagerBasedRLEnv | DirectRLEnv, clip_actions: float | None = None):
+    def __init__(self, env: gym.Env, clip_actions: float | None = None):
         """Initializes the wrapper.
 
         Note:
             The wrapper calls :meth:`reset` at the start since the RSL-RL runner does not call reset.
 
         Args:
-            env: The environment to wrap around.
+            env: A supported Isaac Lab environment or Gym environment implementing
+                :class:`RslRlEnv`. Gym wrappers around either are supported.
             clip_actions: The clipping value for actions. If ``None``, then no clipping is done.
 
         Raises:
-            ValueError: When the environment is not an instance of :class:`ManagerBasedRLEnv` or :class:`DirectRLEnv`.
+            ValueError: When the unwrapped environment implements neither the structural
+                :class:`RslRlEnv` contract nor a supported Isaac Lab environment type.
         """
-        check_env_type(env, allow_manager_based_env=True)
+        if not (isinstance(env.unwrapped, gym.Env) and isinstance(env.unwrapped, RslRlEnv)):
+            check_env_type(env, allow_manager_based_env=True)
         self.env = env
         self.clip_actions = clip_actions
 
@@ -111,7 +146,7 @@ class RslRlVecEnvWrapper(VecEnv):
         return cls.__name__
 
     @property
-    def unwrapped(self) -> ManagerBasedRLEnv | DirectRLEnv | DirectRLEnvWarp | ManagerBasedRLEnvWarp:
+    def unwrapped(self) -> RslRlEnv | ManagerBasedRLEnv | DirectRLEnv | DirectRLEnvWarp | ManagerBasedRLEnvWarp:
         """Returns the base environment of the wrapper.
 
         This will be the bare :class:`gymnasium.Env` environment, underneath all layers of wrappers.
