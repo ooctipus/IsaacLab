@@ -444,7 +444,7 @@ mujoco = { index = "mujoco-nightly" }
 warp-lang = { path = "_build/dependency-wheels/warp_lang-1.19.0.dev0-py3-none-manylinux_2_38_x86_64.whl", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" }
 # Matching published implementation commits for prepared dynamic-world execution.
 gpu-components = { git = "https://github.com/ooctipus/gpu-components.git", rev = "6cc307cd5066dbd434dc6e7fc1b21b6327e2100f" }
-newton = { git = "https://github.com/ooctipus/newton.git", rev = "ed0a89a1b3a998322d43a34fb016e3c4e7ae592d" }
+newton = { git = "https://github.com/ooctipus/newton.git", rev = "2fae4acdee25dbb254a8709d4a68f2fbeb948c31" }
 mujoco-warp = { git = "https://github.com/ooctipus/mujoco_warp.git", rev = "34e044b58f1292121e0a906a5e76d96993097341" }
 omniverseclient = { index = "pypi-public" }
 ovphysx = { index = "pypi-public" }
