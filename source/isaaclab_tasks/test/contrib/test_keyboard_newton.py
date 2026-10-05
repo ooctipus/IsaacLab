@@ -1225,7 +1225,7 @@ def test_keyboard_variant_reset_restores_geometry_inertia_and_sleep(use_graph):
             env.close()
 
 
-@pytest.mark.parametrize("retirement", ["selection", "runtime"])
+@pytest.mark.parametrize("retirement", ["selection", "runtime", "quarantine"])
 def test_native_fields_follow_handles_strides_generations_and_reference_coordinates(retirement):
     from dataclasses import replace
     from types import SimpleNamespace
@@ -1370,6 +1370,13 @@ def test_native_fields_follow_handles_strides_generations_and_reference_coordina
             device="cpu",
         )
     selected = selections.bind(newton.Model.AttributeFrequency.JOINT_COORD, ((0,), (0, 1)), policy_width=2)
+    # New consumers must reject replaced borrowed descriptors before allocating their field tables.
+    with (
+        patch.object(groups[0], "data", copy.copy(groups[0].data)),
+        patch.object(wp, "array", side_effect=AssertionError("Invalid descriptors reached field allocation")),
+        pytest.raises(ValueError, match="descriptors changed"),
+    ):
+        selected.scalar_field("state", "joint_q")
     assert copy.deepcopy(selected) is selected
     from isaaclab.utils import class_to_dict
 
@@ -1426,6 +1433,12 @@ def test_native_fields_follow_handles_strides_generations_and_reference_coordina
     np.testing.assert_array_equal(groups[1].data.ctrl.numpy()[1], [41.375, 40.375, 0, 0])
     np.testing.assert_array_equal(groups[1].data.qfrc_applied.numpy()[1], 0)
     bodies = selections.bind(newton.Model.AttributeFrequency.BODY, ((0,), (0, 1)), policy_width=2)
+    with (
+        patch.object(groups[0], "data", copy.copy(groups[0].data)),
+        patch.object(wp, "array", side_effect=AssertionError("Invalid descriptors reached pose allocation")),
+        pytest.raises(ValueError, match="descriptors changed"),
+    ):
+        bodies.pose_field("state", "body_q")
     assert bodies.dense_shape == (3, 2)
     np.testing.assert_allclose(bodies.read_state("body_q").numpy()[1], [[1, 2, 3, 0, 0, 0, 1]] * 2)
     np.testing.assert_allclose(bodies.read_model("body_q").numpy()[1], [[0, 0, 0, 0, 0, 0, 1]] * 2)
@@ -1471,6 +1484,12 @@ def test_native_fields_follow_handles_strides_generations_and_reference_coordina
     groups[1].data.efc = SimpleNamespace(
         force=wp.array([[0.0, 0.0, 0.0, 0.0], [3.0, 5.0, 2.0, 99.0]], dtype=float, device="cpu")
     )
+    with (
+        patch.object(groups[0], "data", copy.copy(groups[0].data)),
+        patch.object(wp, "zeros", side_effect=AssertionError("Invalid descriptors reached contact allocation")),
+        pytest.raises(ValueError, match="descriptors changed"),
+    ):
+        bodies.prepare_contact_forces()
     bodies.prepare_contact_forces()
     inverse = wp.array([1, -1, 0], dtype=int, device="cpu")
     with pytest.raises(ValueError, match="exact runtime"):
@@ -1478,6 +1497,19 @@ def test_native_fields_follow_handles_strides_generations_and_reference_coordina
     bodies.record_contact_forces(groups[1], inverse)
     # Source-body0 is nativebody2: normal vectors sum before the norm; friction is excluded.
     np.testing.assert_allclose(bodies.selected_net_normal_forces().numpy()[1], [[-2, 0, 2], [2, 0, -2]])
+    # Prepared fields retain their descriptors. Reuse checks lifetime without scanning every prototype again.
+    with patch(
+        "isaaclab_tasks.contrib.keyboard.mujoco_selection.mujoco_world_population_validate",
+        side_effect=AssertionError("Prepared selection repeated population preparation validation"),
+    ):
+        np.testing.assert_allclose(selected.read_state("joint_q").numpy(), [[10, 0], [40, 41], [0, 0]])
+        np.testing.assert_array_equal(selected.dense_active().numpy(), [[True, False], [True, True], [False, False]])
+        np.testing.assert_array_equal(
+            selected.joint_types().numpy(), [[newton.JointType.PRISMATIC, 0], [newton.JointType.PRISMATIC] * 2, [0, 0]]
+        )
+        torch.testing.assert_close(key_positions_b(SimpleNamespace(device="cpu"), bodies, roots), expected_relative)
+        bodies.prepare_contact_forces()
+        np.testing.assert_allclose(bodies.selected_net_normal_forces().numpy()[1], [[-2, 0, 2], [2, 0, -2]])
     generations.assign(np.array([5, 8, 0], np.uint64))
     directory.generation.assign(np.array([8, 0, 5], np.uint64))
     np.testing.assert_array_equal(bodies.selected_net_normal_forces().numpy(), 0)
@@ -1505,8 +1537,10 @@ def test_native_fields_follow_handles_strides_generations_and_reference_coordina
     if retirement == "selection":
         selections.retire()
         selections.retire()
-    else:
+    elif retirement == "runtime":
         runtime._closed = True
+    else:
+        runtime._service_failed = True
     operations = (
         lambda: selections.bind(newton.Model.AttributeFrequency.JOINT_COORD, ((0,), (0, 1)), policy_width=2),
         selected.dense_active,
@@ -1531,7 +1565,7 @@ def test_native_fields_follow_handles_strides_generations_and_reference_coordina
         patch.object(torch, "_assert_async", side_effect=AssertionError("retired selection enqueued validation")),
     ):
         for operation in operations:
-            with pytest.raises(RuntimeError, match="retired|closed"):
+            with pytest.raises(RuntimeError, match="retired|closed|backing service failed"):
                 operation()
 
 

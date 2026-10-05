@@ -309,7 +309,7 @@ class MuJoCoSelection:
 
     def dense_active(self) -> torch.Tensor:
         """Participation by policy environment and slot; ordinary solver sleep is unrelated."""
-        self.owner._borrow_populations()
+        self.owner._check_active()
         wp.launch(
             _selection_active,
             self.element_participating.shape,
@@ -329,7 +329,7 @@ class MuJoCoSelection:
         return self.dense_active().sum(dim=1)
 
     def joint_types(self) -> torch.Tensor:
-        self.owner._borrow_populations()
+        self.owner._check_active()
         if self.index_domain == Model.AttributeFrequency.BODY:
             raise ValueError("Joint types require a coordinate or DOF selection.")
         out = wp.empty(self.element_participating.shape, dtype=int, device=self.owner.device)
@@ -340,12 +340,13 @@ class MuJoCoSelection:
 
     def scalar_field(self, source: Literal["state", "model", "control"], attribute: str) -> MuJoCoScalarField:
         """Borrow selected native scalar storage while the owner and runtime remain open."""
-        populations = self.owner._borrow_populations()
+        self.owner._check_active()
         key = source, attribute
         if key in self._fields:
             return self._fields[key]
         if source not in ("state", "model", "control") or self.index_domain == Model.AttributeFrequency.BODY:
             raise ValueError("Scalar fields require a joint selection and state/model/control source.")
+        populations = self.owner._borrow_populations()
         columns, offsets = self._columns.copy(), np.zeros(self._columns.shape, np.float32)
         descriptors = []
         for prototype, (part, ids, group, mapping) in enumerate(
@@ -418,7 +419,7 @@ class MuJoCoSelection:
 
     def pose_field(self, source: Literal["state", "model"], attribute: str) -> MuJoCoPoseField:
         """Borrow poses while the selection owner and runtime remain open."""
-        populations = self.owner._borrow_populations()
+        self.owner._check_active()
         if (
             self.index_domain != Model.AttributeFrequency.BODY
             or attribute != "body_q"
@@ -426,6 +427,7 @@ class MuJoCoSelection:
         ):
             raise ValueError("Native pose fields require a body selection and state/model body_q.")
         if source not in self._poses:
+            populations = self.owner._borrow_populations()
             descriptors, columns = [], self._columns.copy()
             for prototype, (part, ids, group, mapping) in enumerate(
                 zip(self.parts, self._indices, populations, self.owner.mappings, strict=True)
@@ -495,11 +497,12 @@ class MuJoCoSelection:
 
     def prepare_contact_forces(self) -> None:
         """Prepare policy normal-force reductions before capturing native steps."""
-        populations = self.owner._borrow_populations()
+        self.owner._check_active()
         if self.index_domain != Model.AttributeFrequency.BODY:
             raise ValueError("Contact force reductions require a body selection.")
         if self._contact_forces is not None:
             return
+        populations = self.owner._borrow_populations()
         self._contact_forces = wp.zeros(self.element_participating.shape, dtype=wp.vec3, device=self.owner.device)
         self._contact_visible = wp.empty_like(self._contact_forces)
         self._contact_generations = wp.zeros(self.owner.num_envs, dtype=wp.uint64, device=self.owner.device)
@@ -560,7 +563,7 @@ class MuJoCoSelection:
 
     def selected_net_normal_forces(self) -> torch.Tensor:
         """Read the last native step's net normal force [N]; reset lifetimes return zero."""
-        self.owner._borrow_populations()
+        self.owner._check_active()
         if self._contact_forces is None:
             raise RuntimeError("Contact forces were not prepared in the native step program.")
         wp.launch(
@@ -715,10 +718,15 @@ class MuJoCoSelections:
             self._bindings[key] = MuJoCoSelection(self, index_domain, parts, policy_width=policy_width)
         return self._bindings[key]
 
-    def _borrow_populations(self):
+    def _check_active(self):
+        """Check prepared consumers' lifetime without revalidating fixed native descriptors."""
         if self._retired:
             raise RuntimeError("Cannot access selections from a retired owner.")
         mujoco_worlds_validate(self.runtime)
+
+    def _borrow_populations(self):
+        """Validate native descriptors before preparing a new consumer; reuse checks lifetime only."""
+        self._check_active()
         for population in self.runtime.populations:
             mujoco_world_population_validate(population)
         return self.runtime.populations
