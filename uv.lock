@@ -17,9 +17,9 @@ prerelease-mode = "allow"
 
 [manifest]
 overrides = [
-    { name = "mujoco", specifier = "~=3.12.0" },
-    { name = "mujoco-warp", specifier = "~=3.12.0" },
-    { name = "newton", extras = ["sim"], git = "https://github.com/newton-physics/newton.git?rev=release-1.6" },
+    { name = "mujoco", specifier = "==3.14.1.dev993205559", index = "https://py.mujoco.org/" },
+    { name = "mujoco-warp", git = "https://github.com/ooctipus/mujoco_warp.git?rev=34e044b58f1292121e0a906a5e76d96993097341" },
+    { name = "newton", extras = ["sim"], git = "https://github.com/ooctipus/newton.git?rev=69f47697e6810bfd74c28182443f3f8c1ca643b1" },
     { name = "newton-usd-schemas", specifier = ">=0.5.0" },
     { name = "numpy", specifier = ">=2" },
     { name = "packaging", specifier = ">=20,<27" },
@@ -27,6 +27,8 @@ overrides = [
     { name = "torchvision", specifier = "==0.27.0", index = "https://download.pytorch.org/whl/cu130" },
     { name = "usd-exchange", specifier = "==3.0.0" },
     { name = "usd-optimize", specifier = "~=1.3.0" },
+    { name = "warp-lang", marker = "platform_machine != 'x86_64' or sys_platform != 'linux'", specifier = "==1.17.0" },
+    { name = "warp-lang", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'", path = "docker/wheels/warp_lang-1.19.0.dev0-py3-none-manylinux_2_38_x86_64.whl" },
 ]
 
 [[package]]
@@ -1353,6 +1355,16 @@ wheels = [
 ]
 
 [[package]]
+name = "gpu-components"
+version = "0.1.0"
+source = { git = "https://github.com/ooctipus/gpu-components.git?rev=ec924032fafbe733931d14c2ddfc9f300049c574#ec924032fafbe733931d14c2ddfc9f300049c574" }
+dependencies = [
+    { name = "numpy" },
+    { name = "warp-lang", version = "1.17.0", source = { registry = "https://pypi.nvidia.com/" }, marker = "platform_machine != 'x86_64' or sys_platform == 'win32'" },
+    { name = "warp-lang", version = "1.19.0.dev0", source = { path = "docker/wheels/warp_lang-1.19.0.dev0-py3-none-manylinux_2_38_x86_64.whl" }, marker = "platform_machine == 'x86_64' and sys_platform != 'win32'" },
+]
+
+[[package]]
 name = "grpcio"
 version = "1.83.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1746,6 +1758,7 @@ dependencies = [
     { name = "fast-simplification" },
     { name = "filelock" },
     { name = "gitpython" },
+    { name = "gpu-components" },
     { name = "gymnasium" },
     { name = "h5py" },
     { name = "hf-xet" },
@@ -1768,6 +1781,7 @@ dependencies = [
     { name = "lazy-loader" },
     { name = "matplotlib" },
     { name = "meshio" },
+    { name = "mujoco-warp" },
     { name = "newton", extra = ["sim"] },
     { name = "newton-usd-schemas" },
     { name = "numba" },
@@ -1800,7 +1814,8 @@ dependencies = [
     { name = "trimesh" },
     { name = "typing-extensions" },
     { name = "usd-exchange" },
-    { name = "warp-lang" },
+    { name = "warp-lang", version = "1.17.0", source = { registry = "https://pypi.nvidia.com/" }, marker = "platform_machine != 'x86_64' or sys_platform == 'win32'" },
+    { name = "warp-lang", version = "1.19.0.dev0", source = { path = "docker/wheels/warp_lang-1.19.0.dev0-py3-none-manylinux_2_38_x86_64.whl" }, marker = "platform_machine == 'x86_64' and sys_platform != 'win32'" },
 ]
 
 [package.optional-dependencies]
@@ -1953,6 +1968,7 @@ requires-dist = [
     { name = "filelock" },
     { name = "flaky", marker = "extra == 'test'" },
     { name = "gitpython", specifier = ">=3.1.59" },
+    { name = "gpu-components", git = "https://github.com/ooctipus/gpu-components.git?rev=ec924032fafbe733931d14c2ddfc9f300049c574" },
     { name = "gym", marker = "extra == 'rl-games'" },
     { name = "gymnasium", specifier = ">=1.2.0" },
     { name = "h5py", specifier = ">=3.15.0" },
@@ -1989,8 +2005,9 @@ requires-dist = [
     { name = "matplotlib", specifier = ">=3.10.3" },
     { name = "meshio", specifier = ">=5.3.5" },
     { name = "moviepy", marker = "extra == 'video'", specifier = ">=1.0.3,<2.0.0.dev0" },
+    { name = "mujoco-warp", git = "https://github.com/ooctipus/mujoco_warp.git?rev=34e044b58f1292121e0a906a5e76d96993097341" },
     { name = "myst-parser", marker = "extra == 'dev'" },
-    { name = "newton", extras = ["sim"], specifier = ">=1.2.0" },
+    { name = "newton", extras = ["sim"], git = "https://github.com/ooctipus/newton.git?rev=69f47697e6810bfd74c28182443f3f8c1ca643b1" },
     { name = "newton-usd-schemas", specifier = ">=0.5.0" },
     { name = "numba", specifier = ">=0.63.1" },
     { name = "numpy", specifier = ">=2" },
@@ -2062,7 +2079,8 @@ requires-dist = [
     { name = "usd-exchange", specifier = "==3.0.0" },
     { name = "viser", marker = "extra == 'viser'", specifier = ">=1.0.16" },
     { name = "wandb", marker = "extra == 'wandb'", specifier = ">=0.13.11" },
-    { name = "warp-lang", specifier = "==1.17.0" },
+    { name = "warp-lang", marker = "platform_machine != 'x86_64' or sys_platform != 'linux'", specifier = "==1.17.0" },
+    { name = "warp-lang", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'", path = "docker/wheels/warp_lang-1.19.0.dev0-py3-none-manylinux_2_38_x86_64.whl" },
 ]
 provides-extras = ["tetrahedralization", "video", "importers", "test", "dev", "sb3", "skrl", "rl-games", "wandb", "rsl-rl", "torchrl", "viser", "rerun", "isaacsim", "ov", "ovphysx", "ovrtx", "mimic", "teleop", "rlinf", "leapp", "all"]
 
@@ -3170,20 +3188,20 @@ wheels = [
 
 [[package]]
 name = "mujoco"
-version = "3.12.0"
-source = { registry = "https://pypi.org/simple" }
+version = "3.14.1.dev993205559"
+source = { registry = "https://py.mujoco.org/" }
 dependencies = [
     { name = "absl-py" },
     { name = "etils", extra = ["epath"] },
     { name = "glfw" },
     { name = "numpy" },
     { name = "pyopengl" },
+    { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a6/cd/40c929fa073d6b25d44c9f32b3dbbfcb025053cba54f57f8d46d84cdc034/mujoco-3.12.0.tar.gz", hash = "sha256:38bb3eaf4251937a85d58b25f55b1679297155bc4f4e964490d1fd9f42f8bf93", size = 1209771, upload-time = "2026-08-20T11:01:09.106Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/51/d9/f3cb98d7e37439ffa912b8c63f63e065473523d958cc9eebf40bf8cf9c96/mujoco-3.12.0-cp312-cp312-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:b10fd3040f5c71504f25a560d8e2fea881f0dc27a9cfd22b4b0a79e65c942f20", size = 18506697, upload-time = "2026-08-20T11:47:55.661Z" },
-    { url = "https://files.pythonhosted.org/packages/b7/2e/389e8aaa3ce75e21f97ac9e7c48235b6b7acbfb1f370fd3ffb334f77b905/mujoco-3.12.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:7ec16ce408871a0a9157cc556958ab66cd34db9fc1dccd3ef07717170163a4e0", size = 19816226, upload-time = "2026-08-20T11:47:58.602Z" },
-    { url = "https://files.pythonhosted.org/packages/18/2e/7c42bb3c57b0ae6c37f55f47af94bcc7ea1fe9c39d76df99fb55c3d28591/mujoco-3.12.0-cp312-cp312-win_amd64.whl", hash = "sha256:d575c455829c8b8d2ffeff4eb3341115623f2e10a250271e73ad94219b707a35", size = 16733176, upload-time = "2026-08-20T11:48:01.552Z" },
+    { url = "https://py.mujoco.org/mujoco/mujoco-3.14.1.dev993205559-cp312-cp312-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:bd5e2ad5ada8722ec4f0351dd52d1042dfd9222c17ca7767eb183ee7c936d55d" },
+    { url = "https://py.mujoco.org/mujoco/mujoco-3.14.1.dev993205559-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:1bc42bf70d2618f1eb0dcc7fa672d28afc757efa007479618e5acb034ad012a7" },
+    { url = "https://py.mujoco.org/mujoco/mujoco-3.14.1.dev993205559-cp312-cp312-win_amd64.whl", hash = "sha256:bd37ccde1d110714ad087c42bda409807d34647acae20427842235fc1e746335" },
 ]
 
 [[package]]
@@ -3204,18 +3222,15 @@ wheels = [
 
 [[package]]
 name = "mujoco-warp"
-version = "3.12.0"
-source = { registry = "https://pypi.org/simple" }
+version = "3.14.0"
+source = { git = "https://github.com/ooctipus/mujoco_warp.git?rev=34e044b58f1292121e0a906a5e76d96993097341#34e044b58f1292121e0a906a5e76d96993097341" }
 dependencies = [
     { name = "absl-py" },
     { name = "etils", extra = ["epath"] },
     { name = "mujoco" },
     { name = "numpy" },
-    { name = "warp-lang" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/b2/4f/41acd8a084dc8f140594fcca74f2dda61f89705505df20885bd6e65c0146/mujoco_warp-3.12.0.tar.gz", hash = "sha256:6937b83e9eb1632446a70104867d2b0c0ff028613ebc377eee992d30640d6554", size = 2085022, upload-time = "2026-08-20T11:58:15.742Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/47/24/d60f407b469be023566c8e149eb1598ff7d8f9b16332cdadc4fa45ebee3a/mujoco_warp-3.12.0-py3-none-any.whl", hash = "sha256:a0d5d5df854dbf49727cbe2463f8b1c44117cc979cf17ae91d81f291ae0a3b62", size = 2164496, upload-time = "2026-08-20T11:58:13.887Z" },
+    { name = "warp-lang", version = "1.17.0", source = { registry = "https://pypi.nvidia.com/" }, marker = "platform_machine != 'x86_64' or sys_platform == 'win32'" },
+    { name = "warp-lang", version = "1.19.0.dev0", source = { path = "docker/wheels/warp_lang-1.19.0.dev0-py3-none-manylinux_2_38_x86_64.whl" }, marker = "platform_machine == 'x86_64' and sys_platform != 'win32'" },
 ]
 
 [[package]]
@@ -3293,14 +3308,16 @@ wheels = [
 
 [[package]]
 name = "newton"
-version = "1.6.1rc1"
-source = { git = "https://github.com/newton-physics/newton.git?rev=release-1.6#dff296359317779bd08e3ba4bc23bc5d4e20bbcd" }
+version = "1.7.0.dev0"
+source = { git = "https://github.com/ooctipus/newton.git?rev=69f47697e6810bfd74c28182443f3f8c1ca643b1#69f47697e6810bfd74c28182443f3f8c1ca643b1" }
 dependencies = [
-    { name = "warp-lang" },
+    { name = "warp-lang", version = "1.17.0", source = { registry = "https://pypi.nvidia.com/" }, marker = "platform_machine != 'x86_64' or sys_platform == 'win32'" },
+    { name = "warp-lang", version = "1.19.0.dev0", source = { path = "docker/wheels/warp_lang-1.19.0.dev0-py3-none-manylinux_2_38_x86_64.whl" }, marker = "platform_machine == 'x86_64' and sys_platform != 'win32'" },
 ]
 
 [package.optional-dependencies]
 sim = [
+    { name = "gpu-components" },
     { name = "mujoco" },
     { name = "mujoco-warp" },
 ]
@@ -3806,7 +3823,8 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "ovstage" },
     { name = "packaging" },
-    { name = "warp-lang" },
+    { name = "warp-lang", version = "1.17.0", source = { registry = "https://pypi.nvidia.com/" }, marker = "platform_machine != 'x86_64' or sys_platform == 'win32'" },
+    { name = "warp-lang", version = "1.19.0.dev0", source = { path = "docker/wheels/warp_lang-1.19.0.dev0-py3-none-manylinux_2_38_x86_64.whl" }, marker = "platform_machine == 'x86_64' and sys_platform != 'win32'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/92/d0/35570d204b623fc70db06cfec0ea6a1f4c2ec95473a153acbaabb1dfe47c/ovphysx-0.6.3-py3-none-manylinux_2_35_aarch64.whl", hash = "sha256:247a17a7d0966a8a4059a53cd4524d21ef877c6dfeac42d9bd499c2518b234db", size = 132197166, upload-time = "2026-09-16T18:06:40.483Z" },
@@ -5810,14 +5828,60 @@ wheels = [
 name = "warp-lang"
 version = "1.17.0"
 source = { registry = "https://pypi.nvidia.com/" }
+resolution-markers = [
+    "platform_machine == 'aarch64' and sys_platform == 'linux'",
+    "platform_machine == 'AMD64' and sys_platform == 'win32'",
+]
 dependencies = [
     { name = "numpy" },
 ]
 wheels = [
-    { url = "https://pypi.nvidia.com/warp-lang/warp_lang-1.17.0-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:47cd93636828dd16e55eeb4e77a0e3547b5fb0f383000a3d228629df68f28fd8" },
     { url = "https://pypi.nvidia.com/warp-lang/warp_lang-1.17.0-py3-none-manylinux_2_34_aarch64.whl", hash = "sha256:5051271048da956a8b94e2db9771ce60ce9591a3ac5bb49037f3d6812d1eea00" },
     { url = "https://pypi.nvidia.com/warp-lang/warp_lang-1.17.0-py3-none-win_amd64.whl", hash = "sha256:ca35c82242a7553046f09023bbe56750b5c3d9af72625bd1a905a56d3189771d" },
 ]
+
+[[package]]
+name = "warp-lang"
+version = "1.19.0.dev0"
+source = { path = "docker/wheels/warp_lang-1.19.0.dev0-py3-none-manylinux_2_38_x86_64.whl" }
+resolution-markers = [
+    "platform_machine == 'x86_64' and sys_platform == 'linux'",
+]
+dependencies = [
+    { name = "numpy" },
+]
+wheels = [
+    { filename = "warp_lang-1.19.0.dev0-py3-none-manylinux_2_38_x86_64.whl", hash = "sha256:2fc4c96c185913dc50f9760c3f7e846907251d6c7907e00ff156d1bec603c8d7" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "blosc", marker = "(platform_machine != 'ARM64' and platform_machine != 'aarch64' and platform_machine != 'arm64' and extra == 'examples') or (sys_platform != 'win32' and extra == 'examples')", specifier = ">=1.11.1" },
+    { name = "coverage", extras = ["toml"], marker = "extra == 'dev'" },
+    { name = "matplotlib", marker = "extra == 'examples'", specifier = ">=3.7.5" },
+    { name = "ml-dtypes", marker = "extra == 'dev'", specifier = ">=0.5.4" },
+    { name = "myst-parser", marker = "extra == 'docs'" },
+    { name = "nlopt", marker = "(python_full_version < '3.15' and platform_machine != 'ARM64' and platform_machine != 'aarch64' and platform_machine != 'arm64' and extra == 'examples') or (python_full_version < '3.15' and sys_platform != 'win32' and extra == 'examples')" },
+    { name = "numpy" },
+    { name = "nvidia-sphinx-theme", marker = "extra == 'docs'" },
+    { name = "nvtx", marker = "(platform_machine != 'ARM64' and platform_machine != 'aarch64' and platform_machine != 'arm64' and extra == 'dev') or (sys_platform != 'win32' and extra == 'dev')" },
+    { name = "pillow", marker = "extra == 'examples'", specifier = ">=10.4.0" },
+    { name = "pre-commit", marker = "extra == 'docs'" },
+    { name = "psutil", marker = "extra == 'examples'", specifier = ">=7.1.0" },
+    { name = "pyglet", marker = "extra == 'examples'", specifier = ">=2.1.9" },
+    { name = "sphinx-copybutton", marker = "extra == 'docs'" },
+    { name = "torch", marker = "extra == 'torch-cu12'", specifier = ">=2.7.0" },
+    { name = "torch", marker = "extra == 'torch-cu13'", specifier = ">=2.9.0" },
+    { name = "usd-core", marker = "(platform_machine != 'ARM64' and platform_machine != 'aarch64' and platform_machine != 'arm64' and sys_platform == 'win32' and extra == 'benchmark') or (platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'benchmark') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'benchmark')", specifier = ">=25.5" },
+    { name = "usd-core", marker = "(platform_machine != 'ARM64' and platform_machine != 'aarch64' and platform_machine != 'arm64' and sys_platform == 'win32' and extra == 'examples') or (platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'examples') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'examples')", specifier = ">=25.5" },
+    { name = "usd-exchange", marker = "python_full_version >= '3.10' and python_full_version < '3.13' and platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'benchmark'", specifier = ">=2.2" },
+    { name = "usd-exchange", marker = "python_full_version >= '3.10' and python_full_version < '3.13' and platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'examples'", specifier = ">=2.2" },
+    { name = "warp-lang", extras = ["docs"], marker = "extra == 'dev'" },
+    { name = "warp-lang", extras = ["examples"], marker = "extra == 'dev'" },
+    { name = "warp-lang", extras = ["examples"], marker = "extra == 'torch-cu12'" },
+    { name = "warp-lang", extras = ["examples"], marker = "extra == 'torch-cu13'" },
+]
+provides-extras = ["docs", "benchmark", "examples", "torch-cu12", "torch-cu13", "dev"]
 
 [[package]]
 name = "watchdog"

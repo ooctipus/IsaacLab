@@ -30,6 +30,12 @@ def test_rerun_visualizer_set_camera_view():
 
 def test_viser_visualizer_set_camera_view(monkeypatch):
     visualizer = ViserVisualizer(ViserVisualizerCfg())
+    initial = SimpleNamespace(position=None, look_at=None, fov=None)
+    visualizer._viewer = SimpleNamespace(_server=SimpleNamespace(initial_camera=initial, get_clients=lambda: {}))
+    visualizer.set_camera_view([1, 2, 3], [0, 0, 0])
+    assert initial.position == (1.0, 2.0, 3.0)
+    assert initial.look_at == (0.0, 0.0, 0.0)
+    assert initial.fov > 0
     visualizer._viewer = SimpleNamespace()
 
     # Client ready: pose applies immediately, nothing left pending.

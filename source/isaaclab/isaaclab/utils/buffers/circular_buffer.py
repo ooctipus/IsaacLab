@@ -3,6 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
+import copy
 from collections.abc import Sequence
 
 import torch
@@ -206,6 +207,21 @@ class CircularBuffer:
             self._need_reset = False
 
         self._num_pushes += 1
+
+    def preview(self, data: torch.Tensor) -> torch.Tensor:
+        """Return the history after appending ``data``, preserving the live storage and counters.
+
+        Args:
+            data: Next sample, with first dimension equal to the batch size.
+
+        Returns:
+            Independent history with the same layout as :attr:`buffer`.
+        """
+        temporary = copy.copy(self)
+        temporary._buffer = None if self._buffer is None else self._buffer.clone()
+        temporary._num_pushes = self._num_pushes.clone()
+        temporary.append(data)
+        return temporary.buffer
 
     def _allocate_buffer(self, data: torch.Tensor) -> None:
         """Allocate the internal buffer and finalize the storage layout on first append."""

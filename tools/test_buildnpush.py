@@ -1,0 +1,602 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+"""Unit tests for ``tools/buildnpush.py``."""
+
+from __future__ import annotations
+
+import contextlib
+import hashlib
+import importlib.metadata
+import json
+import os
+import re
+import subprocess
+import tempfile
+import textwrap
+import unittest
+from pathlib import Path
+from unittest import mock
+
+import buildnpush as bp
+
+# Real ``uv sync --check`` output shapes. Editable workspace members are reported on every check
+# even when the image is correct, so only the git/registry entries indicate an actually stale image.
+_UV_CHECK_WORKSPACE_ONLY = """Would download 14 packages
+Would uninstall 14 packages
+Would install 14 packages
+ - isaaclab==13.2.1 (from file:///workspace/isaaclab/source/isaaclab)
+ + isaaclab @ file:///workspace/isaaclab/source/isaaclab
+ - isaaclab-newton==2.2.0 (from file:///workspace/isaaclab/source/isaaclab_newton)
+ + isaaclab-newton @ file:///workspace/isaaclab/source/isaaclab_newton
+The environment is outdated; run `uv sync` to update the environment
+"""
+
+_UV_CHECK_DRIFTED_DEPENDENCY = """Would install 1 package
+ - isaaclab==13.2.1 (from file:///workspace/isaaclab/source/isaaclab)
+ + isaaclab @ file:///workspace/isaaclab/source/isaaclab
+ + newton @ git+https://github.com/newton-physics/newton.git@d7581b73
+The environment is outdated; run `uv sync` to update the environment
+"""
+
+
+def _ctx(args: bp.BuildArgs) -> bp.BuildContext:
+    return bp.BuildContext(
+        args=args,
+        deps_hash="abc123",
+        deps_image="isaac-lab-deps:abc123",
+        prepared_image=f"isaac-lab-prepared:{args.tag}",
+        final_image=f"nvcr.io/nvidian/octi-isaac-lab:{args.tag}",
+    )
+
+
+class BuildnpushTest(unittest.TestCase):
+    """Tests for build image role and strategy decisions."""
+
+    def test_wheel_bootstrap_checks_existing_and_downloaded_bytes(self) -> None:
+        payload = b"qualified wheel"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            directory = root / "docker/wheels"
+            directory.mkdir(parents=True)
+            name = "example-1.0-py3-none-any.whl"
+            (directory / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        name: {
+                            "url": "https://api.github.com/repos/example/releases/assets/1",
+                            "sha256": hashlib.sha256(payload).hexdigest(),
+                        }
+                    }
+                )
+            )
+
+            def download(command):
+                self.assertIn("--netrc-file", command)
+                self.assertIn("Accept: application/octet-stream", command)
+                Path(command[command.index("--output") + 1]).write_bytes(payload)
+
+            with mock.patch.object(bp, "REPO_ROOT", root), mock.patch.object(bp, "run", side_effect=download) as run:
+                bp.prepare_dependency_wheels("/private/netrc")
+                bp.prepare_dependency_wheels("/private/netrc")
+                self.assertEqual(run.call_count, 1)
+                self.assertEqual((directory / name).read_bytes(), payload)
+                (directory / name).write_bytes(b"wrong artifact")
+                with self.assertRaisesRegex(bp.BuildError, "pinned hash"):
+                    bp.prepare_dependency_wheels("/private/netrc")
+
+    def test_wheel_bootstrap_never_publishes_a_corrupt_download(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            directory = root / "docker/wheels"
+            directory.mkdir(parents=True)
+            name = "example-1.0-py3-none-any.whl"
+            (directory / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        name: {
+                            "url": "https://example.invalid/artifact",
+                            "sha256": "0" * 64,
+                        }
+                    }
+                )
+            )
+            with (
+                mock.patch.object(bp, "REPO_ROOT", root),
+                mock.patch.object(
+                    bp,
+                    "run",
+                    side_effect=lambda command: Path(command[command.index("--output") + 1]).write_bytes(b"bad"),
+                ),
+            ):
+                with self.assertRaisesRegex(bp.BuildError, "pinned hash"):
+                    bp.prepare_dependency_wheels(None)
+            self.assertEqual([path.name for path in directory.iterdir()], ["manifest.json"])
+
+    def test_overlay_passes_git_credentials_only_as_a_build_secret(self) -> None:
+        args = bp.parse_build_args(["lab", "--pip", "--git-netrc", "/private/netrc"])
+        ctx = _ctx(args)
+        plan = bp.BuildPlan(True, True, False, "cached", ctx.deps_image)
+        with mock.patch.object(bp, "docker", return_value="") as docker:
+            bp.build_overlay(
+                ctx, plan, {"DOCKER_ISAACLAB_PATH": "/workspace/isaaclab", "DOCKER_ISAACSIM_ROOT_PATH": ""}
+            )
+        command = docker.call_args.args
+        self.assertEqual(command[command.index("--secret") + 1], "id=git_netrc,src=/private/netrc")
+        self.assertNotIn("/private/netrc", docker.call_args.kwargs.get("env", {}).values())
+
+    def test_build_rejects_credentials_inside_its_context(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            credentials = root / "credentials"
+            credentials.write_text("secret")
+            with mock.patch.object(bp, "REPO_ROOT", root):
+                with self.assertRaisesRegex(bp.BuildError, "outside the Docker build context"):
+                    bp.build_image(bp.BuildArgs(tag="lab", git_netrc=str(credentials)))
+
+    def test_local_wheel_drift_is_not_an_editable_workspace_exception(self) -> None:
+        wheel = "+ warp-lang @ file:///workspace/isaaclab/docker/wheels/warp_lang-1.17.0-py3-none-any.whl"
+        self.assertEqual(bp.out_of_sync_packages(_UV_CHECK_WORKSPACE_ONLY + wheel), [wheel])
+
+    def _mock_images(self, created: dict[str, str]):
+        return mock.patch.multiple(
+            bp,
+            image_exists=lambda image: image in created,
+            image_created=lambda image: created.get(image, ""),
+            image_layer_count=lambda image: 80 if image in created else 0,
+        )
+
+    def test_source_overlay_uses_prepared_image_even_when_hash_deps_exist(self) -> None:
+        ctx = _ctx(bp.BuildArgs(tag="factory", source=True))
+        with self._mock_images(
+            {
+                ctx.prepared_image: "2026-06-16T20:00:00Z",
+                ctx.final_image: "2026-06-16T19:00:00Z",
+                ctx.deps_image: "2026-06-16T18:00:00Z",
+                bp.BASE_IMAGE: "2026-06-16T17:00:00Z",
+            }
+        ):
+            plan = bp.determine_plan(ctx)
+
+        self.assertTrue(plan.skip_deps)
+        self.assertFalse(plan.run_pip_install)
+        self.assertEqual(plan.build_base_image, ctx.prepared_image)
+
+    def test_source_overlay_prefers_checkpoint_over_newer_final_image(self) -> None:
+        ctx = _ctx(bp.BuildArgs(tag="factory", source=True))
+        with self._mock_images(
+            {
+                ctx.prepared_image: "2026-06-16T19:00:00Z",
+                ctx.final_image: "2026-06-16T20:00:00Z",
+                bp.BASE_IMAGE: "2026-06-16T18:00:00Z",
+            }
+        ):
+            plan = bp.determine_plan(ctx)
+
+        self.assertEqual(plan.build_base_image, ctx.prepared_image)
+
+    def test_source_build_does_not_compute_dependency_hash(self) -> None:
+        with mock.patch.object(bp, "compute_deps_hash", side_effect=AssertionError("hash called")):
+            ctx = bp.make_context(bp.BuildArgs(tag="factory", source=True))
+
+        self.assertEqual(ctx.deps_hash, "")
+        self.assertEqual(ctx.deps_image, "")
+
+    def test_source_overlay_requires_prepared_image(self) -> None:
+        ctx = _ctx(bp.BuildArgs(tag="factory", source=True))
+        with self._mock_images({}):
+            with self.assertRaisesRegex(bp.BuildError, "No prepared image"):
+                bp.determine_plan(ctx)
+
+    def test_source_only_build_defers_lock_reconciliation(self) -> None:
+        """A source-only build leaves lock reconciliation to the cluster launch script."""
+
+        def reject_deps_build(*args, **kwargs):
+            raise AssertionError("a source-only build must not rebuild dependencies")
+
+        verify_lockfile = mock.Mock()
+        verify_synced_deps = mock.Mock()
+        steps = []
+        with mock.patch.multiple(
+            bp,
+            clean_stale_egg_info=lambda: None,
+            prepare_dependency_wheels=lambda netrc: None,
+            verify_lockfile=verify_lockfile,
+            determine_plan=lambda ctx: bp.BuildPlan(
+                skip_deps=True,
+                use_cache=True,
+                run_pip_install=False,
+                reason="source",
+                build_base_image=ctx.prepared_image,
+            ),
+            print_build_config=lambda ctx, plan: None,
+            parse_env_file=lambda path: {"DOCKER_ISAACLAB_PATH": "/workspace/isaaclab"},
+            resolved_symlinks=contextlib.nullcontext,
+            build_overlay=lambda ctx, plan, docker_env: steps.append("overlay"),
+            build_full_deps=reject_deps_build,
+            verify_synced_deps=verify_synced_deps,
+            build_gpu_components_bridge=lambda: steps.append("bridge"),
+            tag_and_push=lambda ctx, plan: steps.append("tag"),
+        ):
+            bp.build_image(bp.BuildArgs(tag="factory", source=True, skip_push=True))
+
+        verify_lockfile.assert_called_once_with()
+        verify_synced_deps.assert_not_called()
+        self.assertEqual(steps, ["overlay", "bridge", "tag"])
+
+    def test_pip_overlay_uses_prepared_image_before_deps_cache(self) -> None:
+        ctx = _ctx(bp.BuildArgs(tag="factory", pip=True))
+        with self._mock_images(
+            {
+                ctx.prepared_image: "2026-06-16T20:00:00Z",
+                ctx.deps_image: "2026-06-16T19:00:00Z",
+            }
+        ):
+            plan = bp.determine_plan(ctx)
+
+        self.assertTrue(plan.skip_deps)
+        self.assertTrue(plan.run_pip_install)
+        self.assertEqual(plan.build_base_image, ctx.prepared_image)
+
+    def test_default_build_uses_matching_hash_deps_cache(self) -> None:
+        ctx = _ctx(bp.BuildArgs(tag="factory"))
+        with self._mock_images({ctx.deps_image: "2026-06-16T20:00:00Z"}):
+            plan = bp.determine_plan(ctx)
+
+        self.assertTrue(plan.skip_deps)
+        self.assertFalse(plan.run_pip_install)
+        self.assertEqual(plan.build_base_image, ctx.deps_image)
+
+    def test_source_tagging_preserves_prepared_checkpoint(self) -> None:
+        ctx = _ctx(bp.BuildArgs(tag="factory", source=True, skip_push=True))
+        plan = bp.BuildPlan(
+            skip_deps=True,
+            use_cache=True,
+            run_pip_install=False,
+            reason="source",
+            build_base_image=ctx.prepared_image,
+        )
+        calls: list[tuple[str, ...]] = []
+        with mock.patch.object(bp, "docker", lambda *args, **kwargs: calls.append(args) or ""):
+            bp.tag_and_push(ctx, plan)
+
+        self.assertEqual(calls, [("tag", bp.BASE_IMAGE, ctx.final_image)])
+
+    def test_pip_tagging_updates_prepared_checkpoint(self) -> None:
+        ctx = _ctx(bp.BuildArgs(tag="factory", pip=True, skip_push=True))
+        plan = bp.BuildPlan(
+            skip_deps=True,
+            use_cache=True,
+            run_pip_install=True,
+            reason="pip",
+            build_base_image=ctx.prepared_image,
+        )
+        calls: list[tuple[str, ...]] = []
+        with mock.patch.object(bp, "docker", lambda *args, **kwargs: calls.append(args) or ""):
+            bp.tag_and_push(ctx, plan)
+
+        self.assertEqual(
+            calls,
+            [
+                ("tag", bp.BASE_IMAGE, ctx.prepared_image),
+                ("tag", bp.BASE_IMAGE, ctx.final_image),
+            ],
+        )
+
+    def test_tag_image_records_prepared_and_final_tags(self) -> None:
+        calls: list[tuple[str, ...]] = []
+        with mock.patch.object(bp, "image_exists", lambda image: image == "isaac-lab-base"):
+            with mock.patch.object(bp, "docker", lambda *args, **kwargs: calls.append(args) or ""):
+                bp.tag_image("isaac-lab-base", "factory", skip_push=True)
+
+        self.assertEqual(
+            calls,
+            [
+                ("tag", "isaac-lab-base", "isaac-lab-prepared:factory"),
+                ("tag", "isaac-lab-base", "nvcr.io/nvidian/octi-isaac-lab:factory"),
+            ],
+        )
+
+    def test_parse_build_args_rejects_multiple_depth_flags(self) -> None:
+        with self.assertRaisesRegex(bp.BuildError, "choose only one"):
+            bp.parse_build_args(["factory", "-s", "-p"])
+
+    def test_deps_rebuild_forces_dependency_resync(self) -> None:
+        ctx = _ctx(bp.BuildArgs(tag="factory", deps=True))
+        with self._mock_images({ctx.deps_image: "2026-06-16T20:00:00Z"}):
+            plan = bp.determine_plan(ctx)
+
+        self.assertFalse(plan.skip_deps)
+        self.assertTrue(plan.run_pip_install)
+        self.assertTrue(plan.bust_deps_cache)
+
+    def test_cached_deps_build_does_not_force_dependency_resync(self) -> None:
+        ctx = _ctx(bp.BuildArgs(tag="factory"))
+        with self._mock_images({ctx.deps_image: "2026-06-16T20:00:00Z"}):
+            plan = bp.determine_plan(ctx)
+
+        self.assertFalse(plan.bust_deps_cache)
+
+    def test_deps_hash_ignores_lock_changes(self) -> None:
+        lock = bp.REPO_ROOT / "uv.lock"
+        if not lock.is_file():
+            self.skipTest("uv.lock is not present in this checkout")
+        original = lock.read_bytes()
+        before = bp.compute_deps_hash(False)
+        try:
+            lock.write_bytes(original + b"\n# deps-hash probe\n")
+            after = bp.compute_deps_hash(False)
+        finally:
+            lock.write_bytes(original)
+
+        self.assertEqual(before, after)
+
+    def test_deps_hash_ignores_python_project_changes(self) -> None:
+        for relative_path in ("pyproject.toml", "source/isaaclab_rl/pyproject.toml"):
+            with self.subTest(path=relative_path):
+                path = bp.REPO_ROOT / relative_path
+                original = path.read_bytes()
+                before = bp.compute_deps_hash(False)
+                try:
+                    path.write_bytes(original + b"\n# deps-hash probe\n")
+                    after = bp.compute_deps_hash(False)
+                finally:
+                    path.write_bytes(original)
+                self.assertEqual(before, after)
+
+    def test_deps_hash_changes_with_the_foundation_recipe(self) -> None:
+        recipe = bp.REPO_ROOT / "docker/Dockerfile.base"
+        original = recipe.read_bytes()
+        before = bp.compute_deps_hash(False)
+        try:
+            recipe.write_bytes(original + b"\n# foundation-hash probe\n")
+            after = bp.compute_deps_hash(False)
+        finally:
+            recipe.write_bytes(original)
+
+        self.assertNotEqual(before, after)
+
+    def test_deps_hash_changes_with_the_apt_installer(self) -> None:
+        installer = bp.REPO_ROOT / "tools/install_deps.py"
+        original = installer.read_bytes()
+        before = bp.compute_deps_hash(False)
+        try:
+            installer.write_bytes(original + b"\n# foundation-hash probe\n")
+            after = bp.compute_deps_hash(False)
+        finally:
+            installer.write_bytes(original)
+
+        self.assertNotEqual(before, after)
+
+    def test_deps_hash_changes_with_extension_system_dependencies(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            extension = root / "source/example/config/extension.toml"
+            extension.parent.mkdir(parents=True)
+            extension.write_text("[package]\n")
+            with mock.patch.object(bp, "REPO_ROOT", root):
+                before = bp.compute_deps_hash(False)
+                extension.write_text('[package]\n[isaac_lab_settings]\napt_deps = ["git"]\n')
+                after = bp.compute_deps_hash(False)
+
+        self.assertNotEqual(before, after)
+
+    def test_deps_hash_ignores_extension_metadata_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            extension = root / "source/example/config/extension.toml"
+            extension.parent.mkdir(parents=True)
+            extension.write_text('[package]\nversion = "1.0.0"\n')
+            with mock.patch.object(bp, "REPO_ROOT", root):
+                before = bp.compute_deps_hash(False)
+                extension.write_text('[package]\nversion = "1.0.1"\n')
+                after = bp.compute_deps_hash(False)
+
+        self.assertEqual(before, after)
+
+    def test_verify_lockfile_checks_without_installing(self) -> None:
+        with mock.patch.object(bp, "run") as run:
+            bp.verify_lockfile()
+
+        run.assert_called_once_with(["uv", "lock", "--check", "--offline"])
+
+    def _mock_uv_check(self, returncode: int, stderr: str = ""):
+        """Patch the ``docker run`` that executes ``uv sync --check`` inside the built image."""
+        captured: list[list[str]] = []
+
+        def fake_run(cmd, **kwargs):
+            captured.append(cmd)
+            return subprocess.CompletedProcess(cmd, returncode, stdout="", stderr=stderr)
+
+        return mock.patch.object(bp.subprocess, "run", fake_run), captured
+
+    def test_verify_synced_deps_rejects_an_environment_that_drifted_from_the_lock(self) -> None:
+        ctx = _ctx(bp.BuildArgs(tag="factory"))
+        docker_env = {"DOCKER_ISAACLAB_PATH": "/workspace/isaaclab"}
+        patcher, _ = self._mock_uv_check(1, stderr=_UV_CHECK_DRIFTED_DEPENDENCY)
+        with patcher:
+            with self.assertRaisesRegex(bp.BuildError, "out of sync with uv.lock"):
+                bp.verify_synced_deps(ctx, docker_env)
+
+    def test_verify_synced_deps_accepts_an_environment_whose_only_diff_is_workspace_members(self) -> None:
+        """uv always re-reports the editable ``source/`` packages, which must not fail the build."""
+        ctx = _ctx(bp.BuildArgs(tag="factory"))
+        docker_env = {"DOCKER_ISAACLAB_PATH": "/workspace/isaaclab"}
+        patcher, _ = self._mock_uv_check(1, stderr=_UV_CHECK_WORKSPACE_ONLY)
+        with patcher:
+            bp.verify_synced_deps(ctx, docker_env)
+
+    def test_verify_synced_deps_rejects_a_check_that_could_not_run(self) -> None:
+        ctx = _ctx(bp.BuildArgs(tag="factory"))
+        docker_env = {"DOCKER_ISAACLAB_PATH": "/workspace/isaaclab"}
+        patcher, _ = self._mock_uv_check(127, stderr="bash: uv: command not found")
+        with patcher:
+            with self.assertRaisesRegex(bp.BuildError, "could not verify"):
+                bp.verify_synced_deps(ctx, docker_env)
+
+    def test_out_of_sync_packages_keeps_only_non_workspace_entries(self) -> None:
+        self.assertEqual(bp.out_of_sync_packages(_UV_CHECK_WORKSPACE_ONLY), [])
+        self.assertEqual(
+            bp.out_of_sync_packages(_UV_CHECK_DRIFTED_DEPENDENCY),
+            ["+ newton @ git+https://github.com/newton-physics/newton.git@d7581b73"],
+        )
+
+    def test_verify_synced_deps_accepts_an_environment_that_matches_the_lock(self) -> None:
+        ctx = _ctx(bp.BuildArgs(tag="factory"))
+        docker_env = {"DOCKER_ISAACLAB_PATH": "/workspace/isaaclab"}
+        patcher, captured = self._mock_uv_check(0)
+        with patcher:
+            bp.verify_synced_deps(ctx, docker_env)
+
+        self.assertIn("uv sync --check --frozen --offline " + bp.BASE_UV_SYNC_EXTRAS, captured[0][-1])
+
+    def test_verify_synced_deps_checks_the_kitless_extras_for_a_kitless_build(self) -> None:
+        ctx = _ctx(bp.BuildArgs(tag="factory", kitless=True))
+        docker_env = {"DOCKER_ISAACLAB_PATH": "/workspace/isaaclab"}
+        patcher, captured = self._mock_uv_check(0)
+        with patcher:
+            bp.verify_synced_deps(ctx, docker_env)
+
+        self.assertIn("uv sync --check --frozen --offline " + bp.KITLESS_UV_SYNC_EXTRAS, captured[0][-1])
+
+    def test_base_uv_sync_extras_match_the_dockerfiles(self) -> None:
+        """Build, overlay, verification, and launch use the image's dependency selection."""
+        base = (bp.REPO_ROOT / "docker/Dockerfile.base").read_text()
+        extras = re.search(r'^ARG IMAGE_EXTRAS="([^"]*)"', base, re.MULTILINE).group(1)
+        self.assertEqual(extras + " --no-install-package imageio-ffmpeg", bp.BASE_UV_SYNC_EXTRAS)
+        self.assertIn('ENV ISAACLAB_UV_SYNC_ARGS="${IMAGE_EXTRAS} --no-install-package imageio-ffmpeg"', base)
+        overlay = (bp.REPO_ROOT / "docker/Dockerfile.source-only").read_text()
+        self.assertIn(f'ARG ISAACLAB_UV_SYNC_ARGS="{bp.BASE_UV_SYNC_EXTRAS}"', overlay)
+        self.assertNotIn("${ISAACLAB_PATH}/.venv", overlay)
+        kitless = (bp.REPO_ROOT / "docker/Dockerfile.kitless").read_text()
+        self.assertIn(f'ENV ISAACLAB_UV_SYNC_ARGS="{bp.KITLESS_UV_SYNC_EXTRAS}"', kitless)
+
+    def test_kitless_overlay_receives_kitless_sync_extras(self) -> None:
+        ctx = _ctx(bp.BuildArgs(tag="factory", kitless=True))
+        plan = bp.BuildPlan(True, True, False, "cached", ctx.deps_image)
+        calls: list[tuple[str, ...]] = []
+        with mock.patch.object(bp, "docker", lambda *args, **kwargs: calls.append(args) or ""):
+            bp.build_overlay(
+                ctx, plan, {"DOCKER_ISAACLAB_PATH": "/workspace/isaaclab", "DOCKER_ISAACSIM_ROOT_PATH": ""}
+            )
+
+        self.assertIn(f"ISAACLAB_UV_SYNC_ARGS={bp.KITLESS_UV_SYNC_EXTRAS}", calls[0])
+
+    def test_bridge_finalization_uses_locked_installed_source_without_runtime_compiler(self) -> None:
+        source = {
+            "source": "/opt/venv/gpu_components/graph.cu",
+            "sha256": "a" * 64,
+            "commit": "b" * 40,
+            "version": "1.7.0",
+        }
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "uv.lock").write_text(
+                '[[package]]\nname="gpu-components"\nversion="1.7.0"\nsource={git="https://example/gpu-components#'
+                + "b" * 40
+                + '"}\n'
+            )
+            with (
+                mock.patch.object(bp, "REPO_ROOT", root),
+                mock.patch.object(bp, "docker", return_value=json.dumps(source)) as docker,
+            ):
+                bp.build_gpu_components_bridge()
+        probe, build = docker.call_args_list
+        self.assertIn("runc", probe.args)
+        self.assertIn("none", probe.args)
+        self.assertIn("docker/Dockerfile.cuda-graph", build.args)
+        self.assertIn(f"GPU_COMPONENTS_CUDA_SOURCE={source['source']}", build.args)
+        self.assertIn(f"GPU_COMPONENTS_SOURCE_SHA256={source['sha256']}", build.args)
+        self.assertIn('metadata.distribution("gpu-components")', probe.args[-1])
+        self.assertIn('locate_file("gpu_components/graph.cu")', probe.args[-1])
+        recipe = (bp.REPO_ROOT / "docker/Dockerfile.cuda-graph").read_text()
+        self.assertIn("GPU_COMPONENTS_CUDA_GRAPH_LIBRARY=/opt/gpu-components-cuda-graph/cuda_graph.so", recipe)
+        self.assertIn("sha256sum --check", recipe)
+        self.assertIn('"library_sha256"', recipe)
+        for architecture in (89, 120):
+            self.assertIn(f"-gencode=arch=compute_{architecture},code=sm_{architecture}", recipe)
+            self.assertIn(f"grep -q sm_{architecture}", recipe)
+
+    def test_bridge_finalization_rejects_components_drift_even_before_first_native_upgrade(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "uv.lock").write_text(
+                '[[package]]\nname="gpu-components"\nversion="1.7.0"\nsource={git="repo#new"}\n'
+            )
+            for source_path in (None, "/opt/gpu_components/graph.cu"):
+                with self.subTest(source_path=source_path), mock.patch.object(bp, "REPO_ROOT", root):
+                    installed = {"source": source_path, "sha256": "a" * 64, "commit": "old", "version": "1.7.0"}
+                    with mock.patch.object(bp, "docker", return_value=json.dumps(installed)) as docker:
+                        with self.assertRaisesRegex(bp.BuildError, "-p/--pip"):
+                            bp.build_gpu_components_bridge()
+                    self.assertEqual(docker.call_count, 1)
+
+    def test_bridge_finalization_skips_pinned_components_without_native_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "uv.lock").write_text(
+                '[[package]]\nname="gpu-components"\nversion="1.7.0"\nsource={git="repo#same"}\n'
+            )
+            (root / "pyproject.toml").write_text('[project]\nname="other-project"\ndependencies=[]\n')
+            for installed in ({}, {"source": None, "commit": "same", "version": "1.7.0"}):
+                with self.subTest(installed=installed), mock.patch.object(bp, "REPO_ROOT", root):
+                    with mock.patch.object(bp, "docker", return_value=json.dumps(installed)) as docker:
+                        bp.build_gpu_components_bridge()
+                    self.assertEqual(docker.call_count, 1)
+
+    def test_bridge_finalization_rejects_missing_required_components_before_startup_install(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "uv.lock").write_text(
+                '[[package]]\nname="gpu-components"\nversion="1.7.0"\nsource={git="repo#new"}\n'
+            )
+            (root / "pyproject.toml").write_text(
+                '[project]\nname="isaaclab-dev"\ndependencies=["gpu-components @ git+https://example/components@new"]\n'
+            )
+            with mock.patch.object(bp, "REPO_ROOT", root), mock.patch.object(bp, "docker", return_value="{}") as docker:
+                with self.assertRaisesRegex(bp.BuildError, "missing from the image.*-p/--pip"):
+                    bp.build_gpu_components_bridge()
+            self.assertEqual(docker.call_count, 1)
+
+    def test_bridge_finalization_does_not_require_components_when_checkout_omits_it(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "uv.lock").write_text('[[package]]\nname="other-package"\nversion="1.0"\n')
+            with mock.patch.object(bp, "REPO_ROOT", root), mock.patch.object(bp, "docker", return_value="{}") as docker:
+                bp.build_gpu_components_bridge()
+            self.assertEqual(docker.call_count, 1)
+
+    def test_cluster_rejects_stale_or_corrupt_bridge_after_dependency_sync(self) -> None:
+        workflow = (bp.REPO_ROOT / "docker/cluster/multi_node.yaml").read_text()
+        marker = "uv run --no-sync python - <<'PY_GPU_COMPONENTS_BRIDGE'"
+        source = textwrap.dedent(workflow.split(marker, 1)[1].split("PY_GPU_COMPONENTS_BRIDGE", 1)[0])
+        self.assertLess(workflow.index("uv sync --locked"), workflow.index(marker))
+        self.assertLess(workflow.index(marker), workflow.index("-m torch.distributed.run"))
+        with tempfile.TemporaryDirectory() as temp:
+            library, cu = Path(temp) / "cuda_graph.so", Path(temp) / "cuda_graph.cu"
+            library.write_bytes(b"binary")
+            cu.write_bytes(b"source")
+            manifest = {
+                "source_sha256": hashlib.sha256(cu.read_bytes()).hexdigest(),
+                "library_sha256": hashlib.sha256(library.read_bytes()).hexdigest(),
+            }
+            library.with_suffix(".json").write_text(json.dumps(manifest))
+            with mock.patch.dict(os.environ, {"GPU_COMPONENTS_CUDA_GRAPH_LIBRARY": str(library)}):
+                with mock.patch.object(importlib.metadata, "distribution") as distribution:
+                    distribution.return_value.locate_file.return_value = cu
+                    exec(compile(source, "<cluster-native-bridge-check>", "exec"), {})
+                    distribution.assert_called_with("gpu-components")
+                    distribution.return_value.locate_file.assert_called_with("gpu_components/graph.cu")
+                    cu.write_bytes(b"new source")
+                    with self.assertRaisesRegex(RuntimeError, "source changed"):
+                        exec(compile(source, "<cluster-native-bridge-check>", "exec"), {})
+                    cu.write_bytes(b"source")
+                    library.write_bytes(b"corrupt")
+                    with self.assertRaisesRegex(RuntimeError, "library differs"):
+                        exec(compile(source, "<cluster-native-bridge-check>", "exec"), {})
+
+
+if __name__ == "__main__":
+    unittest.main()

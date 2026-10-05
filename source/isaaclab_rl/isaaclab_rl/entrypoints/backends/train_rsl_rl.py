@@ -136,6 +136,8 @@ def _run(args_cli: argparse.Namespace) -> None:
             logger.info(f"Exact experiment name requested from command line: {run_name}")
             if agent_cfg.run_name:
                 run_name += f"_{agent_cfg.run_name}"
+            if args_cli.workflow_id:
+                run_name += f"_{args_cli.workflow_id}"
             log_dir = os.path.join(log_root_path, run_name)
             # rank 0 writes its settings and videos where a single-GPU run does; other ranks use rank_<rank>/
             rank_dir = log_dir if rank in (None, 0) else os.path.join(log_dir, f"rank_{rank}")

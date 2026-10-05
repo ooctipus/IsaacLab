@@ -126,6 +126,9 @@ class SceneDataFormat:
 
 
 class SceneDataBackend:
+    rigid_geometry_version: int = 0
+    """Revision of rigid mesh resources, local shape transforms, sizes, and visibility."""
+
     geometry_timestamp: int = 0
     """Logical update timestamp, advanced after native writes or buffer swaps, including within one step.
 

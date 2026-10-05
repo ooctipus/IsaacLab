@@ -11,6 +11,31 @@ from collections.abc import Sequence
 import torch
 import warp as wp
 
+
+def warp_on_torch_stream(device: str | torch.device) -> wp.ScopedStream:
+    """Order mixed Warp/Torch work on the caller's current Torch stream.
+
+    Prior work on the current Warp stream precedes this scope; subsequent work on
+    the restored Warp stream follows it. These are device dependencies, not host
+    synchronization. Nested scopes reuse the current wrapper when already aligned.
+    CPU execution needs no stream. Callers still order independent external producers.
+
+    Args:
+        device: Device on which the mixed numerical operations execute.
+
+    Returns:
+        A scope that selects the Torch stream for Warp and restores the prior stream.
+    """
+    device = torch.device(device)
+    stream = None
+    if device.type == "cuda":
+        producer = torch.cuda.current_stream(device)
+        stream = wp.get_stream(str(producer.device))
+        if (stream.cuda_stream or 0) != producer.cuda_stream:
+            stream = wp.stream_from_torch(producer)
+    return wp.ScopedStream(stream, sync_exit=True)
+
+
 ##
 # Mask resolution - ids/mask to warp boolean mask.
 ##

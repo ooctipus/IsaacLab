@@ -30,13 +30,16 @@ class ActionTerm(ManagerTermBase):
     """Base class for action terms.
 
     The action term is responsible for processing the raw actions sent to the environment
-    and applying them to the asset managed by the term. The action term is comprised of two
+    and applying them to the simulation objects controlled by the term. The action term is comprised of two
     operations:
 
     * Processing of actions: This operation is performed once per **environment step** and
       is responsible for pre-processing the raw actions sent to the environment.
     * Applying actions: This operation is performed once per **simulation step** and is
-      responsible for applying the processed actions to the asset managed by the term.
+      responsible for applying the processed actions to the term's control targets.
+
+    Set :attr:`ActionTermCfg.asset_name` to ``None`` when the term binds its control
+    targets directly. Otherwise, ``self._asset`` is the named scene asset.
     """
 
     def __init__(self, cfg: ActionTermCfg, env: ManagerBasedEnv):
@@ -48,8 +51,8 @@ class ActionTerm(ManagerTermBase):
         """
         # call the base class constructor
         super().__init__(cfg, env)
-        # parse config to obtain asset to which the term is applied
-        self._asset: AssetBase = self._env.scene[self.cfg.asset_name]
+        # Explicit target bindings do not require a scene asset.
+        self._asset: AssetBase | None = None if self.cfg.asset_name is None else self._env.scene[self.cfg.asset_name]
         self._IO_descriptor = GenericActionIODescriptor()
         self._export_IO_descriptor = True
 

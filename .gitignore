@@ -29,6 +29,7 @@
 **/*.sif
 docker/cluster/exports/
 docker/.container.cfg
+docker/.isaac-lab-host-cache.yaml
 
 # IDE
 **/.idea/
@@ -44,6 +45,7 @@ docker/.container.cfg
 **/wandb/*
 **/.neptune/*
 docker/artifacts/
+docker/wheels/*.whl
 *.tmp
 **/__tracked_surface.stl
 

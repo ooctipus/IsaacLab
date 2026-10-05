@@ -90,3 +90,54 @@ def test_kit_prebundle_loads_the_environments_torch():
         "assert Path(torch.__file__).resolve().is_relative_to(Path(os.environ['VIRTUAL_ENV']))\n"
         "PY"
     )
+
+
+def test_wandb_logger_is_installed():
+    """Training images support the W&B logger selected by cluster submissions."""
+    assert _in_image(
+        'cd /workspace/isaaclab && uv run --no-sync python -c "import wandb; print(wandb.__version__)"'
+    ).strip()
+
+
+def test_native_integration_artifacts_match_their_manifests():
+    """Native images ship the qualified Warp binaries and matching L40/Blackwell bridge."""
+    _in_image("""
+"${VIRTUAL_ENV}/bin/python" - <<'PY'
+import hashlib
+import importlib.metadata
+import json
+import os
+from pathlib import Path
+package = importlib.metadata.distribution("gpu-components")
+source = Path(package.locate_file("gpu_components/graph.cu"))
+library = Path(os.environ["GPU_COMPONENTS_CUDA_GRAPH_LIBRARY"])
+manifest = json.loads(library.with_suffix(".json").read_text())
+assert manifest["architectures"] == [89, 120]
+assert manifest["cuda_toolkit"] == "12.9.1"
+assert manifest["source_sha256"] == hashlib.sha256(source.read_bytes()).hexdigest()
+assert manifest["library_sha256"] == hashlib.sha256(library.read_bytes()).hexdigest()
+assert library.is_relative_to("/opt/gpu-components-cuda-graph")
+wheel_directory = Path(os.environ["ISAACLAB_PATH"]) / "docker/wheels"
+artifacts = json.loads((wheel_directory / "manifest.json").read_text())
+warp = importlib.metadata.distribution("warp-lang")
+for filename, artifact in artifacts.items():
+    assert hashlib.sha256((wheel_directory / filename).read_bytes()).hexdigest() == artifact["sha256"]
+artifact = next(value for name, value in artifacts.items() if name.startswith("warp_lang-"))
+for field, binary in (("warp_sha256", "warp.so"), ("warp_clang_sha256", "warp-clang.so")):
+    installed = Path(warp.locate_file("warp/bin/" + binary))
+    assert hashlib.sha256(installed.read_bytes()).hexdigest() == artifact[field], binary
+PY""")
+
+
+def test_bundled_keyboard_assets_compose_without_remote_client():
+    """The runtime user can read the complete USD trees without contacting Omniverse."""
+    _in_image("""cd /workspace/isaaclab && uv run --no-sync python - <<'PY'
+from unittest.mock import patch
+from pxr import Usd
+from isaaclab.utils.assets import retrieve_file_path
+with patch("isaaclab.utils.assets._get_omni_client", side_effect=AssertionError("Unexpected asset client")):
+    for path in ("/opt/isaaclab-assets/ground/default_ground_plane.usda",
+                 "/opt/isaaclab-assets/so101/so101_new_calib.usda"):
+        stage = Usd.Stage.Open(retrieve_file_path(path))
+        assert stage and not stage.GetCompositionErrors(), path
+PY""")

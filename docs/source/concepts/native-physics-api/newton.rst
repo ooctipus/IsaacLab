@@ -126,3 +126,172 @@ Authoritative references
 * `Control reference <https://newton-physics.github.io/newton/stable/api/_generated/newton.Control.html>`_
 * `ArticulationView selection reference <https://newton-physics.github.io/newton/stable/api/_generated/newton.selection.ArticulationView.html>`_
 * `Newton articulation guide <https://newton-physics.github.io/newton/stable/concepts/articulations.html>`_
+
+Task-local selections: SO101 keyboard
+------------------------------------
+
+``IsaacContrib-Keyboard-SO101`` authors its robot and fixed-capacity keyboard with
+``AssetBaseCfg`` and binds its own selectors in ``SO101KeyboardEnv.load_managers``.
+The source configuration stays declarative; bindings belong to one finalized model.
+Actions, MDP terms, reset snapshots, and selected fingertip Jacobians read Newton arrays
+without creating an ``ArticulationView``. Each world has 18 six-DOF keyboard articulations
+plus the robot. Native MJWarp contacts and sleeping exclude unused partitions from dynamics.
+
+For example, the task composes a joint observation and relative key-position observation as follows:
+
+.. code-block:: python
+
+   from newton import Model
+
+   from isaaclab.managers import ObservationTermCfg
+   from isaaclab_tasks.contrib.keyboard import mdp
+   from isaaclab_tasks.contrib.keyboard.selection_paths import NewtonSelectorCfg
+
+   joint_positions = ObservationTermCfg(
+       func=mdp.joint_pos,
+       params={"joints": NewtonSelectorCfg(Model.AttributeFrequency.JOINT_COORD, path=".*/Robot/joints/.*", count_per_world=6)},
+   )
+   key_positions = ObservationTermCfg(
+       func=mdp.key_positions_b,
+       params={
+           "keys": NewtonSelectorCfg(
+               Model.AttributeFrequency.BODY, path=".*/Keyboard/parts/part_.*/keys/key_.*", count_per_world=108
+           ),
+           "root": NewtonSelectorCfg(Model.AttributeFrequency.BODY, path=".*/Robot/base", count_per_world=1),
+       },
+   )
+
+Patterns full-match Newton labels. Ordered pattern lists preserve pattern order and then model
+order within each world; overlapping matches are deduplicated. Coordinates and DOFs are separate
+frequencies: a free joint expands to seven coordinates but six DOFs. ``count_per_world`` validates
+static cardinality before episode filtering. Global entities (world -1) are excluded.
+
+A resolved selection exposes compact ``freq_ids``, ``env_ids``, ``slot_ids``, and ``world_start``
+Warp arrays. Only entries before ``world_start[-1]`` are valid. Empty worlds have equal adjacent
+offsets. Storage addresses remain stable during ``env.selections.refresh()``, which rebuilds the
+compact indices after changing the task's ``body_active`` or ``world_active`` masks. Dense gathers
+are an explicit, uniform policy boundary and zero excluded slots. The composition root binds
+``NewtonSelections(model, state=state, control=control, solver=solver)`` to the native resources.
+MDP terms use selection methods such as ``read_state("joint_q")``, ``read_model(...)``, and
+``write_control(...)`` rather than looking up a process-global Newton model. The root must update
+the bound state if its solver swaps current-state pointers between task boundaries.
+
+Episode participation is independent of automatic physics sleeping. Naturally sleeping active
+keys remain valid observations and targets. ``KeyboardVariants`` applies the same episode membership
+to selectors, shape visibility, and explicit ``ALWAYS`` sleep policies. Re-enabled partitions return
+to ``ALLOWED``. The SO101 task provides matched training configurations through
+``presets=heterogeneous`` (the default), ``presets=partitioned_108`` (18 six-key articulations),
+and ``presets=single_108`` (one 108-key articulation). Both baselines disable the variant bank
+and retain all 108 keys. The presets own the spawn topology and selector paths together; policy
+observations, robot actions, rewards, and physics settings are shared.
+
+After raw joint writes, call ``NewtonManager.invalidate_fk(env_ids=...)`` with int32 world IDs,
+or pass an ``env_mask``. No articulation view mapping is required. This marks all articulations
+in the selected worlds for the next forward/state/render boundary. For fixed-root pose changes,
+write the appropriate model joint frames and call ``NewtonManager.notify_model_changed`` with
+``ModelFlags.JOINT_PROPERTIES`` and a ``(world_count + 1,)`` world mask before invalidating FK.
+The final mask entry represents global entities and normally remains false for task resets.
+
+The action term preserves the original relative target and implicit-PD effort telemetry used by
+the power reward. The latter is an estimate, not the solver's ``mujoco:qfrc_actuator`` output.
+Its fused kernel uses ``selection.scalar_field("state", "joint_q")`` and analogous model/control
+fields. These borrowed scalar-field descriptors include participation and native indexing; they
+must be reacquired after a binding changes. The selection owns their cache, and action terms
+do not retain a second table of native pointers.
+Reset snapshots store root poses relative to world origins followed by selected coordinates and
+velocities; their layout is task-local and is not an external checkpoint format.
+
+Reset-time keyboard variants
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The default bank contains every multiple of six active keys from six to 108 and two different
+108-key styles. Variant 0 is the reference 108-key keyboard, variants 1 through 17 have 6 through
+102 keys, and variant 18 is another 108-key style. Observations retain their padded 108-slot layout.
+Every normal episode reset samples a different registered variant independently per world, excluding
+that world's previous variant when the bank has more than one entry. Explicit variant requests may
+reuse the current keyboard. For explicit review:
+
+.. code-block:: python
+
+   env.unwrapped.reset_keyboard([0, 1], [1, 6])  # six keys in world 0, 36 in world 1
+   env.unwrapped.reset_keyboard([0], [0])       # world 0 returns to the 108-key reference
+
+The bank compiles USD templates once during task initialization. At reset it installs pre-registered
+cap/label meshes, box collider dimensions and bounds, body mass, center of mass, inertia and inverse
+inertia, joint frames, drive properties and limits. It synchronizes the solver, clears key state and
+control, updates participation and sleep policies, then performs the task reset. Model array addresses
+remain stable for CUDA graph replay. Reset-time selection itself runs outside graph capture.
+
+Current registered variants require the same 18 six-slider topology and box collision shapes; this
+is not an arbitrary articulated mesh-collider replacement API. Visual meshes can change vertex counts.
+Viser consumes the scene-data rigid geometry revision and refreshes its model resources on the next
+render. The case belongs to the first fixed partition root so root randomization also moves its collider.
+
+Typing targets, backspace roles, glyph labels, and actuation thresholds follow each world's current
+variant. Curriculum snapshots are built per variant and sampled only for compatible worlds. Registration
+cost and Viser's geometry refresh occur outside physics stepping; benchmark reset-heavy training and
+rendering separately from steady-state solver throughput.
+
+Exact homogeneous populations
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``IsaacContrib-Keyboard-SO101-Populations`` is an experimental headless alternative using the
+same action, observation, reward, termination, typing-command, and curriculum implementations.
+One genuine Gym environment owns the logical policy rows and task managers. Its real
+``SimulationContext`` owns a ``NewtonPopulationBackend`` through ``NewtonPopulationCfg``.
+No scene or articulation view is created to stand in for these native resources.
+
+Each keyboard variant is authored and finalized once as a pristine one-world Newton/MJWarp
+prototype. The active physics manager registers solver schemas in its builder factory. Runtime
+populations replicate those prepared prototypes to their exact requested counts on the GPU;
+they do not rebuild collision exclusions, import USD, or repeat model conversion. Six-key
+keyboards have one six-DOF keyboard articulation, and 108-key keyboards have 18. A variant with
+zero assigned worlds has no runtime population. Policy observations and reset snapshots retain
+their shared padded layouts, while native physics contains only the actual keys.
+
+``NewtonSelectionGroup`` combines native selections with stable logical world IDs. Label
+resolution happens only on the prepared prototypes; runtime indices expand on the GPU.
+Gather/scatter operations preserve logical policy order across native population changes.
+The action kernel consumes the same scalar-field API for a single model or a group of models.
+Curriculum sampling still builds one global snapshot buffer across all variants, rather than
+one full buffer per population.
+
+At reset, the task queues a desired variant without changing model sizes. The
+``redistribution_interval`` setting determines how often pending requests are considered:
+
+* ``redistribution_mode="truncate_pending"`` (the default) applies all pending requests at the
+  boundary and explicitly truncates any affected unfinished episodes. This matches the requested
+  assignment immediately at the cost of additional episode boundaries. The task's
+  ``episode_interrupted`` mask excludes those administrative cuts from curriculum success/failure
+  attribution while preserving the ordinary command and physical reset. Pre-reset successor
+  observations are retained, and the task's shared-encoder PPO bootstraps timeouts from their
+  critic values instead of the already-reset observations or previous-step values. Genuine
+  terminations take precedence over coincident timeouts. This mode currently requires
+  ``compute_final_obs=True`` and ``is_finite_horizon=False``; unsupported combinations fail
+  before simulation construction.
+* ``redistribution_mode="episode_boundary"`` changes only worlds ending an episode on that
+  redistribution step. Other pending worlds continue on their current keyboard until a later
+  eligible boundary. There is no bounded-delay guarantee: a fixed episode horizon and cadence
+  can repeatedly miss each other, leaving some requests unapplied indefinitely.
+
+For example, the population task accepts ``physics=newton_mjwarp``,
+``presets=heterogeneous``, ``env.redistribution_interval=128`` (the default), and
+``env.redistribution_mode=truncate_pending``. Prototype solver options live under
+``env.sim.physics.prototype_physics``. The usual global ``--physics`` replacement would discard
+the population manager, so use the task's named physics preset.
+
+Unchanged counts retain their models, states, solvers, and graph executables. Changed counts
+allocate exact replacements and transfer surviving worlds' native model properties, state,
+control, solver history, and contacts before publication. Copying only joint positions and
+velocities would not preserve continuation. Physics payloads remain on the GPU; the current
+scheduler reads back the small logical assignment plan at redistribution and validates transfer
+status before publishing replacements. Resizing itself is not captured in a CUDA graph.
+At 4096 actors, this host assignment plan contains 4096 integer IDs; it is not limited to
+one count per prototype. Counts, allocation, graph recording and publication remain host-coordinated.
+
+The backend schedules independent populations over a configurable number of CUDA streams,
+with explicit dependencies on the caller's stream. A physics-frame graph contains two native
+substeps and returns to the same state-buffer pointers. Relative-PD targets are refreshed each
+physics frame, preserving the reference task's four frames per policy step. This implementation
+currently supports native-contact MJWarp, fixed-root keyboard prototypes, and headless training;
+it does not yet provide population rendering or other solver implementations.

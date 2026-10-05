@@ -158,15 +158,23 @@ def test_version_single_source_matches_literal_pins(source_checkout_root: Path):
     for package in ("torch", "torchvision", "torchaudio"):
         assert f"{package}=={versions[package]}" in dependencies
 
-    # The Newton uv override is its single pin and may select a release or Git revision.
+    # Package version and source revision are independent: the override mirrors
+    # the version table, while uv.sources selects the reviewed source commit.
     newton_spec = next(requirement for requirement in overrides if requirement.startswith("newton[sim]"))
-    assert newton_spec.endswith(f"newton.git@{versions['newton']}")
+    assert newton_spec == f"newton[sim]=={versions['newton']}"
+    assert newton_spec in dependencies
+    assert re.fullmatch(r"[0-9a-f]{40}", pyproject["tool"]["uv"]["sources"]["newton"]["rev"])
 
     # warp-lang is a core dependency whose table value may be an exact pin
     # ("1.2.3" -> ``==``) or a range (">=1.2.3" -> mirrored verbatim).
     warp_value = versions["warp"]
     warp_spec = f"warp-lang=={warp_value}" if warp_value[0].isdigit() else f"warp-lang{warp_value}"
     assert warp_spec in dependencies
+    assert (
+        f"warp-lang=={versions['warp_integration']}; sys_platform == 'linux' and platform_machine == 'x86_64'"
+        in overrides
+    )
+    assert f"{warp_spec}; sys_platform != 'linux' or platform_machine != 'x86_64'" in overrides
 
 
 def test_public_ov_packages_use_public_pypi_index(source_checkout_root: Path):

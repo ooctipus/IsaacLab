@@ -7,30 +7,58 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import torch
+import warp as wp
 
-from isaaclab.managers import ManagerTermBase, SceneEntityCfg
-from isaaclab.utils import index_fill_
-from isaaclab.utils.math import subtract_frame_transforms
+from ..newton_selection import NewtonSelection, pose_field_active, pose_field_read
+from ..selection_contracts import require_count_per_world, require_same_world_domain
 
 if TYPE_CHECKING:
-    from isaaclab.assets import Articulation
     from isaaclab.envs import ManagerBasedRLEnv
-    from isaaclab.managers import ObservationTermCfg
 
     from .commands import LetterTypingCommand
 
 
-def _slots_onehot(slots: torch.Tensor, num_keys: int) -> torch.Tensor:
+@wp.kernel(enable_backward=False)
+def _encode_slots(slots: wp.array2d[wp.int64], active: wp.array2d[bool], out: wp.array3d[float]):
+    world, letter, key = wp.tid()
+    out[world, letter, key] = float(slots[world, letter] == wp.int64(key) and active[world, key])
+
+
+@wp.kernel(enable_backward=False, module="unique", module_options={"fuse_fp": False})
+def _relative_key_positions(
+    roots: Any,
+    keys: Any,
+    out: wp.array2d[wp.vec3],
+):
+    world, slot = wp.tid()
+    position = wp.vec3(0.0)
+    if pose_field_active(roots, world, 0) and pose_field_active(keys, world, slot):
+        root = pose_field_read(roots, world, 0)
+        q = wp.transform_get_rotation(root)
+        q = wp.quat(-q[0], -q[1], -q[2], q[3]) / wp.max(wp.dot(q, q), 1.0e-9)
+        relative = wp.transform_get_translation(pose_field_read(keys, world, slot)) - wp.transform_get_translation(root)
+        imaginary = wp.vec3(q[0], q[1], q[2])
+        cross = 2.0 * wp.cross(imaginary, relative)
+        position = relative + q[3] * cross + wp.cross(imaginary, cross)
+    out[world, slot] = position
+
+
+def _slots_onehot(slots: torch.Tensor, active: torch.Tensor) -> torch.Tensor:
     """One-hot a ``(num_envs, max_len)`` slot-id buffer (``-1`` marks empty) into ``(num_envs, max_len * num_keys)``.
 
     Empty/padding positions (slot ``-1``) become all-zero rows, so they contribute nothing.
     """
-    valid = slots >= 0
-    onehot = torch.nn.functional.one_hot(slots.clamp(min=0), num_classes=num_keys).to(torch.float)
-    onehot = onehot * valid.unsqueeze(-1).to(onehot.dtype)
+    onehot = torch.empty((*slots.shape, active.shape[1]), dtype=torch.float, device=slots.device)
+    wp.launch(
+        _encode_slots,
+        onehot.shape,
+        inputs=[wp.from_torch(slots), wp.from_torch(active)],
+        outputs=[wp.from_torch(onehot)],
+        device=str(slots.device),
+    )
     return onehot.reshape(slots.shape[0], -1)
 
 
@@ -42,7 +70,7 @@ def target_keys_onehot(env: ManagerBasedRLEnv, command_name: str) -> torch.Tenso
     each target key is.
     """
     command: LetterTypingCommand = env.command_manager.get_term(command_name)  # type: ignore
-    return _slots_onehot(command.target, command.num_keys)
+    return _slots_onehot(command.target, command.key_joints.dense_active())
 
 
 def typed_keys_onehot(env: ManagerBasedRLEnv, command_name: str) -> torch.Tensor:
@@ -53,67 +81,37 @@ def typed_keys_onehot(env: ManagerBasedRLEnv, command_name: str) -> torch.Tensor
     mistake the agent must backspace.
     """
     command: LetterTypingCommand = env.command_manager.get_term(command_name)  # type: ignore
-    return _slots_onehot(command.typed, command.num_keys)
+    return _slots_onehot(command.typed, command.key_joints.dense_active())
 
 
-class key_positions_b(ManagerTermBase):
-    """Per-key keyboard positions ``(x, y, z)`` [m] in the base asset's root frame, in global slot order.
+def joint_pos(env: ManagerBasedRLEnv, joints: NewtonSelection) -> torch.Tensor:
+    """Selected joint coordinates [m or rad, depending on joint type]."""
+    return joints.read_state("joint_q")
 
-    A gather map is built once from the keyboard articulation's ``(instance, body)`` layout into the
-    canonical global key-slot order (``slot = part * dof + local``), mirroring the mapping in
-    :class:`~isaaclab_tasks.contrib.keyboard.mdp.commands.LetterTypingCommand`. This makes the
-    observation layout-stable: column ``s`` always refers to the same logical key slot regardless of how
-    the keyboard is partitioned into articulation instances. Inactive slots are zero-padded, so a
-    keyboard with fewer than :attr:`num_slots` real keys fills only its active subset of columns and the
-    remainder stays ``0``.
 
-    The map is agnostic to the partition mode:
+def joint_vel(env: ManagerBasedRLEnv, joints: NewtonSelection) -> torch.Tensor:
+    """Selected joint velocities [m/s or rad/s, depending on joint type]."""
+    return joints.read_state("joint_qd")
 
-    * ``single`` -> one instance per env; key body ``key_{slot:03d}``.
-    * ``fixed_dof`` -> ``parts/part_*`` instances per env; key body ``key_{local:03d}``.
 
-    Args (from ``cfg.params``):
-        command_name: Name of the typing command that owns the canonical key-slot map. Defaults to ``typing``.
-        base_asset_cfg: Scene entity providing the reference root frame. Defaults to ``SceneEntityCfg("robot")``.
-        active_slots: Global key-slot ids that hold a real key; all other slots are zero-padded. ``None``
-            keeps every slot that mapped to a key body.
+def key_positions_b(env: ManagerBasedRLEnv, keys: NewtonSelection, root: NewtonSelection) -> torch.Tensor:
+    """Key positions [m] relative to exactly one robot root per world, in stable slot order."""
+    require_same_world_domain(keys, root)
+    require_count_per_world(root, 1)
+    roots = root.pose_field("state", "body_q")
+    key_poses = keys.pose_field("state", "body_q")
+    positions = wp.empty(keys.dense_shape, dtype=wp.vec3, device=key_poses.sources.device)
+    wp.launch(
+        _relative_key_positions,
+        keys.dense_shape,
+        inputs=[roots, key_poses],
+        outputs=[positions],
+        device=positions.device,
+    )
+    return wp.to_torch(positions).flatten(1)
 
-    Returns (from :meth:`__call__`):
-        Tensor of shape ``(num_envs, num_slots * 3)`` with per-slot key positions [m] in the base frame,
-        flattened in global slot order and with inactive slots zeroed.
-    """
 
-    def __init__(self, cfg: ObservationTermCfg, env: ManagerBasedRLEnv):
-        super().__init__(cfg, env)
-        command: LetterTypingCommand = env.command_manager.get_term(cfg.params["command_name"])  # type: ignore
-        self.keyboard = command.keyboard
-        self.num_slots = command.num_keys
-        self._inst_idx = command._inst_idx
-        self._body_idx = command._body_col_idx
-
-        # Zero-padding mask: every gathered slot maps to a real key body, so keep them all unless
-        # active_slots restricts the observation to a subset of slots (the rest stay zeroed).
-        active_slots: tuple[int, ...] | None = cfg.params["active_slots"]  # type: ignore
-        if active_slots is None:
-            active = torch.ones(self.num_envs, self.num_slots, dtype=torch.bool, device=self.device)
-        else:
-            active = torch.zeros(self.num_envs, self.num_slots, dtype=torch.bool, device=self.device)
-            index_fill_(active, tuple(active_slots), True, dim=1)
-        self._active = active.unsqueeze(-1).float()  # (num_envs, num_slots, 1)
-
-    def __call__(
-        self,
-        env: ManagerBasedRLEnv,
-        command_name: str = "typing",
-        base_asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
-        active_slots: tuple[int, ...] | None = None,
-    ) -> torch.Tensor:
-        base: Articulation = env.scene[base_asset_cfg.name]
-        # (num_envs, num_slots, 3) key body world positions gathered into global slot order.
-        key_pos_w = self.keyboard.data.body_pos_w.torch[self._inst_idx, self._body_idx]
-        # broadcast the base root pose over slots and transform world -> base frame (position only).
-        root_pos_w = base.data.root_link_pos_w.torch.unsqueeze(1).expand(-1, self.num_slots, -1).reshape(-1, 3)
-        root_quat_w = base.data.root_link_quat_w.torch.unsqueeze(1).expand(-1, self.num_slots, -1).reshape(-1, 4)
-        key_pos_b, _ = subtract_frame_transforms(root_pos_w, root_quat_w, key_pos_w.reshape(-1, 3))
-        key_pos_b = key_pos_b.view(env.num_envs, self.num_slots, 3) * self._active
-        return key_pos_b.reshape(env.num_envs, -1)
+def last_action(env: ManagerBasedRLEnv) -> torch.Tensor:
+    """Previous policy actions with episode-excluded DOFs cleared."""
+    active = env.action_manager.get_term("action").dofs.dense_active()
+    return torch.where(active, env.action_manager.action, 0.0)

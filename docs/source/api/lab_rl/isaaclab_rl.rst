@@ -55,6 +55,14 @@ RL-Games Wrapper
 RSL-RL Wrapper
 --------------
 
+The wrapper also accepts a :class:`gymnasium.Env` implementing
+:class:`isaaclab_rl.rsl_rl.RslRlEnv`, including Gym wrappers around that environment.
+Observation groups and transitions are batched Torch tensors. The environment resets
+finished episodes within ``step`` and publishes the resulting groups in ``obs_buf``;
+``cfg.is_finite_horizon`` controls timeout bootstrapping. No scene or asset ownership
+is required by this boundary. The playback command additionally reads ``step_dt``
+in seconds to pace inference.
+
 .. automodule:: isaaclab_rl.rsl_rl
    :members:
    :imported-members:
