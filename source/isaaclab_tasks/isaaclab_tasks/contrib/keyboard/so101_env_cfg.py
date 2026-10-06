@@ -3,6 +3,8 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
+import math
+
 from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg, NewtonShapeCfg
 from isaaclab_newton.physics.population import NewtonPopulationCfg
 from isaaclab_newton.physics.worlds import NewtonWorldsCfg
@@ -134,8 +136,13 @@ class CommandsCfg:
             ik=KeyboardResetIKCfg(
                 joints=NewtonSelectorCfg(Model.AttributeFrequency.JOINT_COORD, path=ARM_PATH, count_per_world=5),
                 dofs=NewtonSelectorCfg(Model.AttributeFrequency.JOINT_DOF, path=ARM_PATH, count_per_world=5),
-                body=NewtonSelectorCfg(Model.AttributeFrequency.BODY, path=".*/Robot/gripper", count_per_world=1),
-                tip_offset=(-0.0079, -0.000218121, -0.0981274),
+                bodies=NewtonSelectorCfg(
+                    Model.AttributeFrequency.BODY,
+                    path=(".*/Robot/gripper", ".*/Robot/moving_jaw_so101_v1"),
+                    count_per_world=2,
+                ),
+                # Distal collision-pad face centers in the fixed and moving fingers' own frames.
+                tip_offsets=((-0.01109053, -0.0002182119, -0.1039430412), (-0.0090431124, -0.081606701, 0.0188999989)),
             ),
             ik_rpy_deg=(0.0, 45.0, 0.0),  # (roll, pitch, yaw) [deg]
             ik_hover_height=0.02,
@@ -287,6 +294,16 @@ class PhysicsCfg(PresetCfg):
 
 @configclass
 class SO101KeyboardEnvCfg(ManagerBasedRLEnvCfg):
+    robot_joint_positions: dict[str, float] = {
+        "shoulder_pan": 0.0,
+        "shoulder_lift": 0.0,
+        "elbow_flex": 0.0,
+        "wrist_flex": 0.0,
+        "wrist_roll": -math.pi / 2,
+        "gripper": 0.25,
+    }
+    """Neutral pose [rad] for each arm: camera mount up, jaws partly open."""
+
     keyboard_variants: tuple[KeyboardSpawnerCfg, ...] = TYPING_KEYBOARD_VARIANTS
     """Registered reset variants; an empty tuple keeps the authored 108-key partitioned baseline."""
 

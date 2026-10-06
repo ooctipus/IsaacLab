@@ -530,38 +530,67 @@ def test_108_key_task_without_views_and_partial_reset(use_graph, keyboard_mode, 
             env.close()
 
 
-def test_selected_tip_jacobian_matches_finite_difference(selections):
+def test_selected_tip_jacobian_matches_finite_difference():
     from isaaclab_tasks.contrib.keyboard.mdp.reset import KeyboardResetIKCfg, tip_jacobian
 
-    model = selections.model
+    builder = newton.ModelBuilder()
+    for world in range(2):
+        builder.begin_world()
+        root, fixed_tip, moving_tip = (
+            builder.add_link(label=f"/{world}/{name}", mass=1.0) for name in ("root", "fixed_tip", "moving_tip")
+        )
+        joints = [builder.add_joint_fixed(parent=-1, child=root)]
+        joints.append(builder.add_joint_revolute(parent=root, child=fixed_tip, axis=(0, 0, 1), label=f"/{world}/hinge"))
+        joints.append(
+            builder.add_joint_revolute(parent=fixed_tip, child=moving_tip, axis=(1, 0, 0), label=f"/{world}/jaw")
+        )
+        builder.joint_q[-1] = 0.7
+        builder.add_articulation(joints)
+        builder.end_world()
+    model = builder.finalize("cpu")
+    selections = NewtonSelections(model)
     state = model.state()
     ik = KeyboardResetIKCfg(
         joints=resolve_selection(
-            selections, NewtonSelectorCfg(newton.Model.AttributeFrequency.JOINT_COORD, ".*/hinge0", count_per_world=1)
+            selections, NewtonSelectorCfg(newton.Model.AttributeFrequency.JOINT_COORD, ".*/hinge", count_per_world=1)
         ),
         dofs=resolve_selection(
-            selections, NewtonSelectorCfg(newton.Model.AttributeFrequency.JOINT_DOF, ".*/hinge0", count_per_world=1)
+            selections, NewtonSelectorCfg(newton.Model.AttributeFrequency.JOINT_DOF, ".*/hinge", count_per_world=1)
         ),
-        body=resolve_selection(
-            selections, NewtonSelectorCfg(newton.Model.AttributeFrequency.BODY, ".*/tip0", count_per_world=1)
+        bodies=resolve_selection(
+            selections,
+            NewtonSelectorCfg(
+                newton.Model.AttributeFrequency.BODY, (".*/fixed_tip", ".*/moving_tip"), count_per_world=2
+            ),
         ),
-        tip_offset=(0.3, 0.2, -0.1),
+        tip_offsets=((0.3, 0.2, -0.1), (-0.1, 0.1, -0.2)),
     )
     selections.state = state
     ids = ik.joints.dense_ids()
     wp.to_torch(state.joint_q)[ids] = 0.4
     newton.eval_fk(model, state.joint_q, state.joint_qd, state)
     output = wp.zeros((2, 6, 1), dtype=wp.float32, device=model.device)
-    analytic = tip_jacobian(ik, output).cpu().numpy().copy()
+    tip_ids = torch.tensor([0, 1])
+    offsets = torch.tensor(ik.tip_offsets)
+    analytic = tip_jacobian(ik, tip_ids, offsets, output).cpu().numpy().copy()
     samples = []
     epsilon = 0.001
     for delta in (-epsilon, epsilon):
         wp.to_torch(state.joint_q)[ids] = 0.4 + delta
         newton.eval_fk(model, state.joint_q, state.joint_qd, state)
-        poses = ik.body.dense(state.body_q).cpu().numpy()[:, 0]
-        samples.append(np.array([wp.transform_point(wp.transform(*pose), wp.vec3(*ik.tip_offset)) for pose in poses]))
+        poses = ik.bodies.dense(state.body_q).numpy()[np.arange(2), tip_ids.numpy()]
+        samples.append(
+            np.array(
+                [
+                    wp.transform_point(wp.transform(*pose), wp.vec3(*offset))
+                    for pose, offset in zip(poses, ik.tip_offsets, strict=True)
+                ]
+            )
+        )
     derivative = (samples[1] - samples[0]) / (2 * epsilon)
     np.testing.assert_allclose(analytic[:, :3, 0], derivative, atol=3e-5)
+    with pytest.raises(RuntimeError, match="outside the layout"):
+        tip_jacobian(ik, torch.tensor([0, 2]), offsets, output)
 
 
 @pytest.mark.parametrize("device,nested_task", [("cpu", False), ("cuda:0", False), ("cuda:0", True)])
@@ -715,7 +744,7 @@ def test_reset_ik_uses_current_bindings_without_retaining_a_graph(device, revers
     from types import SimpleNamespace
 
     from isaaclab_tasks.contrib.keyboard.mdp.commands.typing_commands import LetterTypingCommand
-    from isaaclab_tasks.contrib.keyboard.mdp.reset import KeyboardResetIKCfg
+    from isaaclab_tasks.contrib.keyboard.mdp.reset import KeyboardResetIKCfg, write_fixed_root_poses
 
     if device.startswith("cuda") and not wp.is_cuda_available():
         pytest.skip("CUDA is unavailable")
@@ -725,10 +754,14 @@ def test_reset_ik_uses_current_bindings_without_retaining_a_graph(device, revers
         for world in range(count):
             builder.begin_world()
             root = builder.add_link(label=f"/{world}/root", mass=1.0)
-            tip = builder.add_link(label=f"/{world}/tip", mass=1.0)
+            tip = builder.add_link(label=f"/{world}/tip0", mass=1.0)
+            moving_tip = builder.add_link(label=f"/{world}/tip1", mass=1.0)
             fixed = builder.add_joint_fixed(parent=-1, child=root)
             slider = builder.add_joint_prismatic(parent=root, child=tip, axis=(1, 0, 0), label=f"/{world}/slider")
-            builder.add_articulation([fixed, slider])
+            jaw = builder.add_joint_fixed(parent=tip, child=moving_tip)
+            builder.add_articulation([fixed, slider, jaw])
+            key = builder.add_link(label=f"/{world}/key", mass=1.0)
+            builder.add_articulation([builder.add_joint_fixed(parent=-1, child=key)])
             builder.end_world()
         result = NewtonSelections(builder.finalize(device))
         result.state = result.model.state()
@@ -744,10 +777,11 @@ def test_reset_ik_uses_current_bindings_without_retaining_a_graph(device, revers
     with stream:
         owners, actors = (owner(2), owner(1)), ([2, 0], [1])
         configs = (
-            NewtonSelectorCfg(newton.Model.AttributeFrequency.BODY, ".*/root", count_per_world=1),
-            NewtonSelectorCfg(newton.Model.AttributeFrequency.BODY, ".*/tip", count_per_world=1),
+            NewtonSelectorCfg(newton.Model.AttributeFrequency.BODY, (".*/root", ".*/key"), count_per_world=2),
+            NewtonSelectorCfg(newton.Model.AttributeFrequency.BODY, ".*/tip[01]", count_per_world=2),
             NewtonSelectorCfg(newton.Model.AttributeFrequency.JOINT_COORD, ".*/slider", count_per_world=1),
             NewtonSelectorCfg(newton.Model.AttributeFrequency.JOINT_DOF, ".*/slider", count_per_world=1),
+            NewtonSelectorCfg(newton.Model.AttributeFrequency.BODY, ".*/key", count_per_world=1),
         )
         groups = [
             NewtonSelectionGroup(
@@ -760,30 +794,41 @@ def test_reset_ik_uses_current_bindings_without_retaining_a_graph(device, revers
         ]
         if reverse_body_groups:
             groups[1].rebind(tuple(reversed(groups[1].native_bindings)))
-        roots, bodies, coords, dofs = groups
-        ik = KeyboardResetIKCfg(joints=coords, dofs=dofs, body=bodies)
+        roots, bodies, coords, dofs, keys = groups
+        ik = KeyboardResetIKCfg(joints=coords, dofs=dofs, bodies=bodies, tip_offsets=((0, 0, 0), (0.03, 0, 0)))
+        root_poses = torch.zeros((3, 2, 7), device=device)
+        root_poses[..., 6] = 1
+        root_poses[:, 0, 0] = 0.2
+        root_poses[:, 1, 0] = torch.tensor([0.1, 0.15, 0.25], device=device)
         command = object.__new__(LetterTypingCommand)
         command._env = SimpleNamespace(
-            num_envs=3, device=device, keyboard_variants=None, invalidate_fk=lambda _: None, forward=lambda: None
+            num_envs=3,
+            device=device,
+            keyboard_variants=None,
+            invalidate_fk=lambda _: None,
+            notify_model_changed=lambda *args, **kwargs: None,
+            forward=lambda: None,
         )
+        pre = SimpleNamespace(func=lambda env, ids: write_fixed_root_poses(env, roots, ids, root_poses[ids]), params={})
         command.cfg = SimpleNamespace(
             robot_joints=coords,
             robot_dofs=dofs,
             reset_roots=roots,
-            reset=SimpleNamespace(ik=ik, pre_solve_reset=None, ik_seed_joint_noise=0.0),
+            reset=SimpleNamespace(ik=ik, pre_solve_reset=pre, ik_seed_joint_noise=0.0),
         )
         command._reset_ik, command._ik_iters = ik, (2, 2)
         command.target_len = torch.ones(3, dtype=torch.long, device=device)
         command._default_robot_q = torch.zeros((3, 1), device=device)
         command._ik_jacobian = wp.zeros((3, 6, 1), dtype=wp.float32, device=device)
         command._ik_limits = torch.tensor([-2.0, 2.0], device=device).expand(3, 1, 2)
-        command._ik_offset, command._ik_hover = torch.zeros((3, 3), device=device), torch.zeros(3, device=device)
-        target = torch.zeros((3, 3), device=device)
-        target[:, 0] = torch.tensor([0.1, 0.2, 0.3], device=device)
-        command.target_key_pos_w = lambda: target
+        command._ik_offsets = torch.tensor(ik.tip_offsets, dtype=torch.float32, device=device)
+        command._ik_hover = torch.zeros(3, device=device)
+        command.target_key_pos_w = lambda: keys.read_state("body_q")[:, 0, :3]
         command._approach_target_quat = lambda quat: quat
-        expected = torch.clamp(target[:, :1] / (1 + 0.05**2), -0.2, 0.2)
-        expected += torch.clamp((target[:, :1] - expected) / (1 + 0.05**2), -0.2, 0.2)
+        # Fresh roots put the first two keys left of their arms, selecting tip 1.
+        displacement = torch.tensor([[-0.13], [-0.08], [0.05]], device=device)
+        expected = displacement / (1 + 0.05**2)
+        expected += (displacement - expected) / (1 + 0.05**2)
         for selected in (torch.tensor([2], device=device), torch.arange(3, device=device)):
             old_q, old_bodies = coords.read_state("joint_q").clone(), bodies.read_state("body_q").clone()
             with patch.object(wp, "ScopedCapture", wraps=wp.ScopedCapture) as capture:
@@ -1665,14 +1710,14 @@ def test_native_field_consumes_real_directory_local_slots_after_reset_and_compac
 
 
 @pytest.mark.parametrize("device", ["cpu", "cuda:0"])
-def test_compact_reset_chain_matches_newton_and_preserves_live_state(device):
+def test_compact_reset_tips_match_newton_and_preserve_reference_frame_and_live_state(device):
     from isaaclab_tasks.contrib.keyboard.mdp.reset import ResetKinematics
 
     if device.startswith("cuda") and not wp.is_cuda_available():
         pytest.skip("CUDA is unavailable")
     builder = newton.ModelBuilder()
     builder.begin_world()
-    bodies = [builder.add_link(mass=1.0) for _ in range(5)]
+    bodies = [builder.add_link(mass=1.0) for _ in range(7)]
     joints = [builder.add_joint_fixed(parent=-1, child=bodies[0])]
     joints.append(
         builder.add_joint_revolute(
@@ -1697,20 +1742,38 @@ def test_compact_reset_chain_matches_newton_and_preserves_live_state(device):
         )
     )
     joints.append(builder.add_joint_revolute(parent=bodies[1], child=bodies[4], axis=(0, 1, 0)))
+    joints.append(
+        builder.add_joint_fixed(
+            parent=bodies[3], child=bodies[5], parent_xform=wp.transform((0.02, 0.03, 0), wp.quat_identity())
+        )
+    )
+    joints.append(
+        builder.add_joint_revolute(
+            parent=bodies[3],
+            child=bodies[6],
+            axis=(1, 0, 0),
+            parent_xform=wp.transform((-0.02, -0.03, 0), wp.quat_identity()),
+        )
+    )
     builder.add_articulation(joints)
     builder.end_world()
     model = builder.finalize(device)
     state = model.state()
     before_q, before_pose = state.joint_q.numpy().copy(), state.body_q.numpy().copy()
-    workspace = ResetKinematics(model, [0, 1, 2], [1, 0], bodies[3], 3, (0.03, -0.02, 0.04))
-    workspace.validate_model(model, [0, 1, 2], [1, 0], bodies[3])
+    tip_bodies = [bodies[5], bodies[6]]
+    offsets = ((0.03, -0.02, 0.04), (-0.02, 0.01, 0.05))
+    workspace = ResetKinematics(model, [0, 1, 2, 3], [1, 0], tip_bodies, 3, offsets)
+    workspace.validate_model(model, [0, 1, 2, 3], [1, 0], tip_bodies)
     assert not any(isinstance(value, (newton.Model, newton.State)) for value in vars(workspace).values())
-    q = torch.tensor([[0.4, 0.1, -0.3], [-0.5, 0.2, 0.9], [0.1, -0.2, 0.3]], device=device)
+    q = torch.tensor([[0.4, 0.1, -0.3, 0.2], [-0.5, 0.2, 0.9, 0.7], [0.1, -0.2, 0.3, -0.4]], device=device)
     root = torch.tensor([[0.4, -0.1, 0.2, 0, 0, 0, 1]] * 3, device=device)
+    tip_ids = torch.tensor([0, 1, 1], device=device)
     context = wp.ScopedStream(wp.stream_from_torch(torch.cuda.current_stream(device))) if q.is_cuda else nullcontext()
     with context:
-        pose, jacobian = workspace.evaluate(q, root)
-        actual_pose, actual_jacobian = pose.cpu().numpy().copy(), jacobian.cpu().numpy().copy()
+        pose, tip_positions, jacobian = workspace.evaluate(q, root, tip_ids)
+        actual_pose, actual_tips, actual_jacobian = (
+            value.cpu().numpy().copy() for value in (pose, tip_positions, jacobian)
+        )
         np.testing.assert_array_equal(state.joint_q.numpy(), before_q)
         np.testing.assert_array_equal(state.body_q.numpy(), before_pose)
         for row in range(3):
@@ -1719,7 +1782,11 @@ def test_compact_reset_chain_matches_newton_and_preserves_live_state(device):
             model.joint_X_p.assign(xp)
             state.joint_q.assign(q[row].cpu().numpy())
             newton.eval_fk(model, state.joint_q, state.joint_qd, state)
-            np.testing.assert_allclose(actual_pose[row], state.body_q.numpy()[bodies[3]], atol=1e-7, rtol=0)
+            np.testing.assert_allclose(actual_pose[row], state.body_q.numpy()[tip_bodies[0]], atol=1e-7, rtol=0)
+            tip_id = int(tip_ids[row])
+            tip_body = tip_bodies[tip_id]
+            expected_tip = wp.transform_point(wp.transform(*state.body_q.numpy()[tip_body]), wp.vec3(*offsets[tip_id]))
+            np.testing.assert_allclose(actual_tips[row], expected_tip, atol=1e-7, rtol=0)
             for column, coordinate in enumerate((1, 0)):
                 tips = []
                 for sign in (-1, 1):
@@ -1727,19 +1794,24 @@ def test_compact_reset_chain_matches_newton_and_preserves_live_state(device):
                     shifted[coordinate] += sign * 1e-2
                     state.joint_q.assign(shifted)
                     newton.eval_fk(model, state.joint_q, state.joint_qd, state)
-                    transform = wp.transform(*state.body_q.numpy()[bodies[3]])
-                    tips.append(np.array(wp.transform_point(transform, wp.vec3(0.03, -0.02, 0.04))))
+                    transform = wp.transform(*state.body_q.numpy()[tip_body])
+                    tips.append(np.array(wp.transform_point(transform, wp.vec3(*offsets[tip_id]))))
                 np.testing.assert_allclose(
                     actual_jacobian[row, :3, column], (tips[1] - tips[0]) / 0.02, atol=3e-5, rtol=0
                 )
-        empty_pose, empty_jac = workspace.evaluate(q[:0], root[:0])
-        assert empty_pose.shape == (0, 7) and empty_jac.shape == (0, 6, 2)
+        empty_pose, empty_tips, empty_jac = workspace.evaluate(q[:0], root[:0], tip_ids[:0])
+        assert empty_pose.shape == (0, 7) and empty_tips.shape == (0, 3) and empty_jac.shape == (0, 6, 2)
     with pytest.raises(ValueError, match="ancestors"):
-        ResetKinematics(model, [0, 1, 2], [2], bodies[3], 3, (0, 0, 0))
+        ResetKinematics(model, [0, 1, 2, 3], [3], tip_bodies, 3, offsets)
     with pytest.raises(ValueError, match="layout"):
-        workspace.evaluate(q.repeat(2, 1), root.repeat(2, 1))
+        workspace.evaluate(q.repeat(2, 1), root.repeat(2, 1), tip_ids.repeat(2))
     with pytest.raises(ValueError, match="identical"):
-        workspace.validate_model(model, [0, 1, 2], [0, 1], bodies[3])
+        workspace.validate_model(model, [0, 1, 2, 3], [0, 1], tip_bodies)
+    # CUDA asserts poison the context; exercise the same ID guard on the CPU row.
+    if device == "cpu":
+        for invalid in (-1, 2):
+            with pytest.raises(RuntimeError, match="outside the layout"):
+                workspace.evaluate(q, root, torch.full_like(tip_ids, invalid))
 
 
 def test_root_pose_sampling_preserves_original_draws_and_inputs():

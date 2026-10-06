@@ -960,7 +960,7 @@ def test_native_multi_arm_reset_changes_policy_batch_and_preserves_other_worlds(
             assert [source.model.joint_dof_count for source in bank._sources] == [114, 120, 12, 18]
             command = task.command_manager.get_term("typing")
             assert command.target.shape == command.typed.shape == (4, 5)
-            assert len(np.unique(command.cfg.reset.ik.body.parts[1].ids.numpy())) == 2
+            assert len(np.unique(command.cfg.reset.ik.bodies.parts[1].ids.numpy())) == 4
             observations = TensorDict(obs, batch_size=[4])
             actor = SharedArmMLPModel(
                 observations,

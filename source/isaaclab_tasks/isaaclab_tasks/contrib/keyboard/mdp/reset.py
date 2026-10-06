@@ -24,16 +24,17 @@ from ..selection_paths import NewtonSelectorCfg
 
 @configclass
 class KeyboardResetIKCfg:
-    """Selected scalar arm joints and the link-local fingertip offset [m].
+    """Selected scalar arm joints and ordered body-local fingertip offsets [m].
 
-    Native worlds select one tip per authored arm. Their chains share topology,
-    while each arm's root pose, coordinate columns, and limits belong to its prototype.
+    The first selected body per arm defines the approach orientation. Native arms
+    share topology; their root poses, coordinate columns, and limits belong to each prototype.
+    Two tips are ordered left/right; SO101 root-local +X is the left side.
     """
 
     joints: NewtonSelectorCfg = MISSING
     dofs: NewtonSelectorCfg = MISSING
-    body: NewtonSelectorCfg = MISSING
-    tip_offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    bodies: NewtonSelectorCfg = MISSING
+    tip_offsets: tuple[tuple[float, float, float], ...] = ((0.0, 0.0, 0.0),)
 
 
 @wp.kernel
@@ -47,11 +48,17 @@ def _reset_kinematics(
     joint_child: wp.array[wp.transform],
     axes: wp.array[wp.vec3],
     selected: wp.array[int],
-    offset: wp.vec3,
+    tip_joints: wp.array[int],
+    tip_ids: wp.array[wp.int64],
+    offsets: wp.array[wp.vec3],
     poses: wp.array2d[wp.transform],
+    tip_positions: wp.array[wp.vec3],
     jacobian: wp.array3d[float],
 ):
     row = wp.tid()
+    tip_id = tip_ids[row]
+    if tip_id < 0 or tip_id >= offsets.shape[0]:
+        return
     root_pose = wp.transform(
         wp.vec3(root[row, 0], root[row, 1], root[row, 2]),
         wp.quat(root[row, 3], root[row, 4], root[row, 5], root[row, 6]),
@@ -68,7 +75,8 @@ def _reset_kinematics(
         elif kinds[joint] == int(JointType.PRISMATIC):
             motion = wp.transform(axes[joint] * q[row, column], wp.quat_identity())
         poses[row, joint] = (anchor * motion) * wp.transform_inverse(joint_child[joint])
-    tip = wp.transform_point(poses[row, parents.shape[0] - 1], offset)
+    tip = wp.transform_point(poses[row, tip_joints[tip_id]], offsets[tip_id])
+    tip_positions[row] = tip
     for column in range(selected.shape[0]):
         joint = selected[column]
         anchor = poses[row, parents[joint]] * joint_parent[joint]
@@ -83,64 +91,81 @@ def _reset_kinematics(
 
 
 class ResetKinematics:
-    """Compact scalar-chain reset workspace, independent of live physics state.
+    """Compact scalar-tree reset workspace, independent of live physics state.
 
     Immutable topology is copied from one prepared world. Mutable storage contains
-    only ancestor poses [m, xyzw] and a fingertip Jacobian [m/rad, rad/rad] for a
-    reset batch. Joint coordinates and root poses belong to the caller's payload.
+    only ancestor poses [m, xyzw], selected fingertip positions [m], and their
+    Jacobians [m/rad, rad/rad]. Joint coordinates, root poses, and per-row fingertip
+    choices belong to the caller's payload. The first body defines approach orientation.
     The fixed root's child frame must be identity, matching keyboard snapshots.
     """
 
-    def __init__(self, model, robot_coord_ids, ik_dof_ids, tip_body_id, capacity, offset):
+    def __init__(self, model, robot_coord_ids, ik_dof_ids, tip_body_ids, capacity, offsets):
         if isinstance(capacity, bool) or not isinstance(capacity, int) or capacity < 1:
             raise ValueError("Reset kinematics requires positive batch capacity.")
-        arrays = self._compile(model, robot_coord_ids, ik_dof_ids, tip_body_id)
+        arrays = self._compile(model, robot_coord_ids, ik_dof_ids, tip_body_ids)
+        offsets = np.asarray(offsets, dtype=np.float32)
+        if offsets.shape != (len(tip_body_ids), 3) or not np.isfinite(offsets).all():
+            raise ValueError("Reset kinematics requires one finite local offset per fingertip body.")
         self._topology = arrays
         self.device, self.capacity = model.device, capacity
         self.width = len(robot_coord_ids)
-        self._offset = wp.vec3(*offset)
-        dtypes = (int, int, int, wp.transform, wp.transform, wp.vec3, int)
+        self._offsets = wp.array(offsets, dtype=wp.vec3, device=self.device)
+        dtypes = (int, int, int, wp.transform, wp.transform, wp.vec3, int, int)
         self._arrays = tuple(wp.array(value, dtype=dtype, device=self.device) for value, dtype in zip(arrays, dtypes))
         self._poses = wp.empty((capacity, len(arrays[0])), dtype=wp.transform, device=self.device)
+        self._tip_positions = wp.empty(capacity, dtype=wp.vec3, device=self.device)
         self._jacobian = wp.empty((capacity, 6, len(ik_dof_ids)), dtype=float, device=self.device)
 
     @staticmethod
-    def _compile(model, robot_coord_ids, ik_dof_ids, tip_body_id):
+    def _compile(model, robot_coord_ids, ik_dof_ids, tip_body_ids):
         if model.world_count != 1:
             raise ValueError("Reset kinematics topology must come from one prepared world.")
-        coords, dofs = np.asarray(robot_coord_ids), np.asarray(ik_dof_ids)
+        coords, dofs, tips = np.asarray(robot_coord_ids), np.asarray(ik_dof_ids), np.asarray(tip_body_ids)
         if (
             coords.ndim != 1
             or dofs.ndim != 1
+            or tips.ndim != 1
             or len(coords) == 0
             or len(dofs) == 0
+            or len(tips) == 0
             or len(set(coords.tolist())) != len(coords)
             or len(set(dofs.tolist())) != len(dofs)
+            or len(set(tips.tolist())) != len(tips)
         ):
-            raise ValueError("Reset kinematics requires unique coordinate and DOF selections.")
+            raise ValueError("Reset kinematics requires unique coordinate, DOF, and fingertip selections.")
         if (
             not np.issubdtype(coords.dtype, np.integer)
             or not np.issubdtype(dofs.dtype, np.integer)
+            or not np.issubdtype(tips.dtype, np.integer)
             or np.any(coords < 0)
             or np.any(coords >= model.joint_coord_count)
             or np.any(dofs < 0)
             or np.any(dofs >= model.joint_dof_count)
-            or not 0 <= tip_body_id < model.body_count
+            or np.any(tips < 0)
+            or np.any(tips >= model.body_count)
         ):
             raise ValueError("Reset kinematics selections are outside the prepared model.")
         child, parent = model.joint_child.numpy(), model.joint_parent.numpy()
         kinds, qs, ds = model.joint_type.numpy(), model.joint_q_start.numpy(), model.joint_qd_start.numpy()
         owner = {int(body): joint for joint, body in enumerate(child)}
-        chain, body = [], int(tip_body_id)
-        while body >= 0:
-            if body not in owner or len(chain) >= model.joint_count:
-                raise ValueError("Reset tip must have an acyclic articulated ancestor chain.")
-            joint = owner[body]
-            if kinds[joint] not in (JointType.FIXED, JointType.REVOLUTE, JointType.PRISMATIC):
-                raise ValueError("Reset kinematics supports only fixed and scalar ancestor joints.")
-            chain.append(joint)
-            body = int(parent[joint])
-        chain.reverse()
+        chains = []
+        for tip in tips:
+            chain, body = [], int(tip)
+            while body >= 0:
+                if body not in owner or len(chain) >= model.joint_count:
+                    raise ValueError("Reset tip must have an acyclic articulated ancestor chain.")
+                joint = owner[body]
+                if kinds[joint] not in (JointType.FIXED, JointType.REVOLUTE, JointType.PRISMATIC):
+                    raise ValueError("Reset kinematics supports only fixed and scalar ancestor joints.")
+                chain.append(joint)
+                body = int(parent[joint])
+            chains.append(chain[::-1])
+        if any(chain[0] != chains[0][0] for chain in chains):
+            raise ValueError("Reset fingertips must share one articulated root.")
+        if any(not set(dofs).issubset({int(ds[j]) for j in chain if kinds[j] != JointType.FIXED}) for chain in chains):
+            raise ValueError("IK DOFs must be scalar ancestors of every selected fingertip.")
+        chain = list(dict.fromkeys(joint for chain in chains for joint in chain))
         xc = model.joint_X_c.numpy()[chain]
         if kinds[chain[0]] != JointType.FIXED or not np.array_equal(xc[0], [0, 0, 0, 0, 0, 0, 1]):
             raise ValueError("Reset kinematics requires a fixed root with an identity child frame.")
@@ -149,8 +174,6 @@ class ResetKinematics:
         dof_joints = {int(ds[j]): i for i, j in enumerate(chain) if kinds[j] != JointType.FIXED}
         if any(int(qs[j]) not in coord_columns for j in chain if kinds[j] != JointType.FIXED):
             raise ValueError("Robot coordinates must include every scalar ancestor joint.")
-        if any(int(dof) not in dof_joints for dof in dofs):
-            raise ValueError("IK DOFs must be scalar ancestors of the selected tip.")
         axes = model.joint_axis.numpy()
         joint_parent = model.joint_X_p.numpy()[chain]
         # The caller owns the root pose. Its authored placement is not part of
@@ -164,21 +187,29 @@ class ResetKinematics:
             xc,
             np.array([axes[ds[j]] if kinds[j] != JointType.FIXED else [0, 0, 0] for j in chain], dtype=np.float32),
             np.array([dof_joints[int(dof)] for dof in dofs], dtype=np.int32),
+            np.array([local[int(tip)] for tip in tips], dtype=np.int32),
         )
 
-    def validate_model(self, model, robot_coord_ids, ik_dof_ids, tip_body_id):
+    def validate_model(self, model, robot_coord_ids, ik_dof_ids, tip_body_ids):
         """Reject a prototype whose compiled robot topology differs from this workspace."""
-        other = self._compile(model, robot_coord_ids, ik_dof_ids, tip_body_id)
+        other = self._compile(model, robot_coord_ids, ik_dof_ids, tip_body_ids)
         if any(not np.array_equal(a, b) for a, b in zip(self._topology, other, strict=True)):
             raise ValueError("Keyboard prototypes must share identical reset robot kinematics.")
 
-    def evaluate(self, q: torch.Tensor, root_pose: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """Evaluate compact coordinates [rad or m] and root poses [m, xyzw], without live writes."""
+    def evaluate(
+        self, q: torch.Tensor, root_pose: torch.Tensor, tip_ids: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Return reference poses [m, xyzw], selected tips [m], and point Jacobians without live writes."""
         count = len(q)
         if q.shape != (count, self.width) or root_pose.shape != (count, 7) or count > self.capacity:
             raise ValueError("Reset coordinate/root batch differs from the prepared layout.")
         if q.dtype != torch.float32 or root_pose.dtype != torch.float32 or q.device != root_pose.device:
             raise ValueError("Reset coordinates and root poses must be float32 on the same device.")
+        if tip_ids.shape != (count,) or tip_ids.dtype != torch.long or tip_ids.device != q.device:
+            raise ValueError("Reset fingertip IDs must be an int64 vector on the coordinate device.")
+        torch._assert_async(
+            ((tip_ids >= 0) & (tip_ids < self._offsets.shape[0])).all(), "Reset fingertip IDs are outside the layout."
+        )
         q_wp, root_wp = wp.from_torch(q), wp.from_torch(root_pose)
         if q_wp.device != self.device:
             raise ValueError("Reset payload device differs from the prepared workspace.")
@@ -186,10 +217,20 @@ class ResetKinematics:
             wp.launch(
                 _reset_kinematics,
                 count,
-                [q_wp, root_wp, *self._arrays, self._offset, self._poses, self._jacobian],
+                [
+                    q_wp,
+                    root_wp,
+                    *self._arrays,
+                    wp.from_torch(tip_ids),
+                    self._offsets,
+                    self._poses,
+                    self._tip_positions,
+                    self._jacobian,
+                ],
                 device=self.device,
             )
-        return wp.to_torch(self._poses)[:count, -1], wp.to_torch(self._jacobian)[:count]
+        reference = wp.to_torch(self._poses)[:count, self._topology[-1][0]]
+        return reference, wp.to_torch(self._tip_positions)[:count], wp.to_torch(self._jacobian)[:count]
 
 
 @wp.kernel
@@ -236,17 +277,21 @@ def _tip_jacobian(
     dofs: wp.array2d[int],
     bodies: wp.array2d[int],
     logical_worlds: wp.array[wp.int64],
-    offset: wp.vec3,
+    tip_ids: wp.array[wp.int64],
+    offsets: wp.array[wp.vec3],
     out: wp.array3d[float],
 ):
     world, column = wp.tid()
+    tip_id = tip_ids[logical_worlds[world]]
+    if tip_id < 0 or tip_id >= offsets.shape[0]:
+        return
     joint = joints[world, column]
     frame = joint_X_p[joint]
     parent = joint_parent[joint]
     if parent >= 0:
         frame = body_q[parent] * frame
     axis = wp.transform_vector(frame, joint_axis[dofs[world, column]])
-    tip = wp.transform_point(body_q[bodies[world, 0]], offset)
+    tip = wp.transform_point(body_q[bodies[world, tip_id]], offsets[tip_id])
     linear = axis
     angular = wp.vec3(0.0)
     if joint_type[joint] == int(JointType.REVOLUTE):
@@ -257,9 +302,16 @@ def _tip_jacobian(
         out[logical_worlds[world], row + 3, column] = angular[row]
 
 
-def tip_jacobian(ik: KeyboardResetIKCfg, out: wp.array) -> torch.Tensor:
+def tip_jacobian(ik: KeyboardResetIKCfg, tip_ids: torch.Tensor, offsets: torch.Tensor, out: wp.array) -> torch.Tensor:
     """Compute only the selected fingertip Jacobian [m/rad, rad/rad] without a padded articulation view."""
-    bodies_by_owner = {body.owner: body for body, _ in ik.body.native_bindings}
+    if tip_ids.shape != (out.shape[0],) or tip_ids.dtype != torch.long or tip_ids.device != offsets.device:
+        raise ValueError("Reset fingertip IDs must be an int64 vector on the offset device.")
+    if offsets.ndim != 2 or offsets.shape[1] != 3 or offsets.dtype != torch.float32:
+        raise ValueError("Reset fingertip offsets must be float32 body-local vectors.")
+    torch._assert_async(
+        ((tip_ids >= 0) & (tip_ids < len(offsets))).all(), "Reset fingertip IDs are outside the layout."
+    )
+    bodies_by_owner = {body.owner: body for body, _ in ik.bodies.native_bindings}
     for dofs, worlds in ik.dofs.native_bindings:
         body = bodies_by_owner[dofs.owner]
         model, state = dofs.owner.model, dofs.owner.state
@@ -275,9 +327,10 @@ def tip_jacobian(ik: KeyboardResetIKCfg, out: wp.array) -> torch.Tensor:
                 model.joint_axis,
                 dofs.joint_ids.reshape(shape),
                 dofs.ids.reshape(shape),
-                body.ids.reshape((shape[0], 1)),
+                body.ids.reshape((shape[0], len(offsets))),
                 wp.from_torch(worlds),
-                wp.vec3(*ik.tip_offset),
+                wp.from_torch(tip_ids),
+                wp.from_torch(offsets, dtype=wp.vec3),
             ],
             outputs=[out],
             device=model.device,

@@ -77,9 +77,20 @@ def prepare_keyboard_prototype(
             resolve_selection(source, replace(cfg, policy_width=None))
         robot_q = resolve_selection(source, replace(env.cfg.actions.action.joints, policy_width=None))
         robot_qd = resolve_selection(source, replace(env.cfg.actions.action.dofs, policy_width=None))
-        wp.to_torch(model.joint_q)[robot_q.dense_ids()] = 0.0
-        wp.to_torch(model.joint_qd).zero_()
-        wp.to_torch(model.joint_target_mode)[robot_qd.dense_ids()] = int(newton.JointTargetMode.POSITION_VELOCITY)
+        positions = wp.array(
+            [
+                env.cfg.robot_joint_positions[model.joint_label[joint].rsplit("/", 1)[-1]]
+                for joint in robot_q.joint_ids.numpy()
+            ],
+            dtype=wp.float32,
+            device=model.device,
+        )
+        wp.indexedarray(model.joint_q, robot_q.ids).assign(positions)
+        model.joint_qd.zero_()
+        targets = robot_q if model.use_coord_layout_targets else robot_qd
+        wp.indexedarray(model.joint_target_q, targets.ids).assign(positions)
+        model.joint_target_qd.zero_()
+        wp.indexedarray(model.joint_target_mode, robot_qd.ids).fill_(int(newton.JointTargetMode.POSITION_VELOCITY))
         roots = resolve_selection(source, replace(env.cfg.commands.typing.reset_roots, policy_width=None))
         root_joints = source.root_joint_ids[roots.dense_ids()]
         if torch.any(root_joints < 0) or torch.any(

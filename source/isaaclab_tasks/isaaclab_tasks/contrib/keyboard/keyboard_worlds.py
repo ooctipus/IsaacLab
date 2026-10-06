@@ -535,8 +535,9 @@ class KeyboardWorlds:
         """Compile prototype-specific snapshot tables and one workspace shared by all present arms."""
         root_width = self._q_offset // 7
         defaults, key_roots, key_local, root_active, keyboard_columns = [], [], [], [], []
-        robot_roots, robot_columns, robot_limits = [], [], []
+        robot_roots, robot_columns, robot_limits, finger_columns = [], [], [], []
         max_arms = max(self.robot_counts)
+        num_tips = len(command.reset.ik.tip_offsets)
         self.reset_kinematics = None
         for prototype, (solver, source) in enumerate(zip(self._solvers, self._sources, strict=True)):
             model = solver.model
@@ -589,9 +590,9 @@ class KeyboardWorlds:
             robot_dofs = resolve_selection(source, command.robot_dofs).ids.numpy()
             ik_dofs = resolve_selection(source, command.reset.ik.dofs).ids.numpy()
             ik_coords = resolve_selection(source, command.reset.ik.joints).ids.numpy()
-            tips = resolve_selection(source, command.reset.ik.body).ids.numpy()
-            if len(tips) != self.robot_counts[prototype]:
-                raise ValueError("Reset IK must select exactly one tip for every authored arm.")
+            tips = resolve_selection(source, command.reset.ik.bodies).ids.numpy()
+            if len(tips) != self.robot_counts[prototype] * num_tips:
+                raise ValueError("Reset IK must select every configured fingertip for each authored arm.")
             body_roots = np.empty(model.body_count, dtype=np.int64)
             for body in range(model.body_count):
                 root = body
@@ -608,10 +609,14 @@ class KeyboardWorlds:
             qids = resolve_selection(source, replace(command.reset_coords, policy_width=None)).ids.numpy()
             qcolumn = {int(coord): column for column, coord in enumerate(qids)}
             roots_for_arms = np.full(max_arms, -1, dtype=np.int64)
+            fingers_for_arms = np.full((max_arms, num_tips), -1, dtype=np.int64)
             columns_for_arms = limits_for_arms = None
             lower, upper = model.joint_limit_lower.numpy(), model.joint_limit_upper.numpy()
-            for arm, tip in enumerate(tips):
-                root = body_roots[tip]
+            for arm, root in enumerate(dict.fromkeys(body_roots[tips])):
+                finger_ids = np.flatnonzero(body_roots[tips] == root)
+                if len(finger_ids) != num_tips:
+                    raise ValueError("Every reset arm requires the same configured fingertip order.")
+                arm_tips = tips[finger_ids]
                 arm_coords, arm_dofs = robot[coord_roots == root], robot_dofs[dof_roots == root]
                 arm_ik_coords, arm_ik_dofs = ik_coords[ik_coord_roots == root], ik_dofs[ik_dof_roots == root]
                 if len(arm_coords) != len(arm_dofs):
@@ -621,16 +626,22 @@ class KeyboardWorlds:
                 if self.reset_kinematics is None:
                     self.reset_ik_columns = torch.tensor(ik_columns, device=self.env.device)
                     self.reset_kinematics = ResetKinematics(
-                        model, arm_coords, arm_ik_dofs, tip, self.env.num_envs * max_arms, command.reset.ik.tip_offset
+                        model,
+                        arm_coords,
+                        arm_ik_dofs,
+                        arm_tips,
+                        self.env.num_envs * max_arms,
+                        command.reset.ik.tip_offsets,
                     )
                 else:
                     if not np.array_equal(ik_columns, self.reset_ik_columns.cpu().numpy()):
                         raise ValueError("Keyboard arms must share local IK coordinate ordering.")
-                    self.reset_kinematics.validate_model(model, arm_coords, arm_ik_dofs, tip)
+                    self.reset_kinematics.validate_model(model, arm_coords, arm_ik_dofs, arm_tips)
                 if columns_for_arms is None:
                     columns_for_arms = np.full((max_arms, len(arm_coords)), -1, dtype=np.int64)
                     limits_for_arms = np.zeros((max_arms, len(arm_coords), 2), dtype=np.float32)
                 roots_for_arms[arm] = root_index[root]
+                fingers_for_arms[arm] = finger_ids
                 columns_for_arms[arm] = [qcolumn[int(coord)] for coord in arm_coords]
                 center = (lower[arm_dofs] + upper[arm_dofs]) * 0.5
                 half = (upper[arm_dofs] - lower[arm_dofs]) * (0.5 * command.soft_joint_pos_limit_factor)
@@ -638,6 +649,7 @@ class KeyboardWorlds:
             robot_roots.append(roots_for_arms)
             robot_columns.append(columns_for_arms)
             robot_limits.append(limits_for_arms)
+            finger_columns.append(fingers_for_arms)
         self.reset_defaults = torch.stack(defaults)
         self.reset_root_active = torch.stack(root_active)
         self.reset_keyboard_roots = torch.stack(keyboard_columns)
@@ -646,6 +658,7 @@ class KeyboardWorlds:
         self.reset_robot_roots = torch.tensor(np.stack(robot_roots), device=self.env.device)
         self.reset_robot_columns = torch.tensor(np.stack(robot_columns), device=self.env.device)
         self.reset_robot_limits = torch.tensor(np.stack(robot_limits), device=self.env.device)
+        self.reset_finger_columns = torch.tensor(np.stack(finger_columns), device=self.env.device)
 
     def resolve(self, cfg):
         """Compile task paths once before returning a numeric runtime binding."""

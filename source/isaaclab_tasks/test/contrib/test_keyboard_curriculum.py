@@ -311,7 +311,7 @@ def test_native_normal_ik_completes_prospective_payload_before_publication_and_p
     bank.reset_ik_columns = torch.tensor([0])
     bank.reset_robot_roots = torch.tensor([[0], [0]])
     bank.reset_robot_limits = torch.tensor([-1.0, 1.0]).expand(2, 1, 1, 2)
-    bank.reset_kinematics = ResetKinematics(model, [0], [0], tip, 3, (0, 0, 0))
+    bank.reset_kinematics = ResetKinematics(model, [0], [0], [tip], 3, ((0, 0, 0),))
     desired = torch.tensor([1, 0, 1])
     command = object.__new__(LetterTypingCommand)
     published = []
@@ -331,7 +331,7 @@ def test_native_normal_ik_completes_prospective_payload_before_publication_and_p
             (ids.clone(), variants.clone(), payload.clone())
         ),
     )
-    ik = SimpleNamespace(joints=selected, body=selected)
+    ik = SimpleNamespace(joints=selected, bodies=selected)
     command.cfg = SimpleNamespace(
         robot_joints=selected,
         robot_dofs=selected,
@@ -346,7 +346,7 @@ def test_native_normal_ik_completes_prospective_payload_before_publication_and_p
     command._reset_ik, command._ik_iters = ik, (1, 1)
     command._default_robot_q = torch.zeros((3, 1))
     command._robot_limits = command._ik_limits = torch.tensor([-1.0, 1.0]).expand(3, 1, 2)
-    command._ik_offset, command._ik_hover = torch.zeros((3, 3)), torch.zeros(3)
+    command._ik_offsets, command._ik_hover = torch.zeros((1, 3)), torch.zeros(3)
     command.target = torch.zeros((3, 1), dtype=torch.long)
     command.target_len = torch.ones(3, dtype=torch.long)
     command.typed_len = command.prefix_len = torch.zeros(3, dtype=torch.long)
@@ -388,7 +388,7 @@ def test_native_normal_ik_completes_prospective_payload_before_publication_and_p
     torch.testing.assert_close(payload[:, 14], expected, atol=1e-7, rtol=0)
 
 
-def test_native_reset_uses_each_present_arms_root_limits_and_keyboard_half_without_overwriting_keys():
+def test_native_reset_uses_each_arms_next_owned_key_root_and_limits_without_overwriting_keys():
     import newton
 
     from isaaclab_tasks.contrib.keyboard.keyboard_worlds import KeyboardWorlds
@@ -398,10 +398,10 @@ def test_native_reset_uses_each_present_arms_root_limits_and_keyboard_half_witho
     bank = object.__new__(KeyboardWorlds)
     bank.env = SimpleNamespace(device="cpu", num_envs=3)
     bank.robot_counts = (1, 2)
-    bank.key_arm_ids = torch.tensor([[0, 0], [0, 1]])
+    bank.key_arm_ids = torch.tensor([[0, 0, 0, 0, 0], [0, 0, 1, 1, 1]])
     bank.variant_ids = torch.zeros(3, dtype=torch.long)
-    bank.backspace_slots = torch.ones(2, dtype=torch.long)
-    bank._q_offset, bank._qd_offset = 21, 25
+    bank.backspace_slots = torch.full((2,), 4, dtype=torch.long)
+    bank._q_offset, bank._qd_offset = 21, 28
     bank._sources, bank._solvers = [], []
     for count in bank.robot_counts:
         builder = newton.ModelBuilder()
@@ -421,12 +421,16 @@ def test_native_reset_uses_each_present_arms_root_limits_and_keyboard_half_witho
                 limit_lower=-limit,
                 limit_upper=limit,
             )
-            builder.add_articulation([fixed, joint])
+            finger = builder.add_link(label=f"/{name}/tip_right", mass=1.0)
+            finger_joint = builder.add_joint_fixed(
+                parent=tip, child=finger, parent_xform=wp.transform((-0.02, 0, 0), wp.quat_identity())
+            )
+            builder.add_articulation([fixed, joint, finger_joint])
         keyboard_x = 0.1 if count == 2 else 0.05
         placement = wp.transform((keyboard_x, 0, 0), wp.quat_identity())
         root = builder.add_link(label="/Keyboard/base", xform=placement, mass=1.0)
         joints = [builder.add_joint_fixed(parent=-1, child=root, parent_xform=placement)]
-        for key, x in enumerate((-0.2, 0.2)):
+        for key, x in enumerate((-0.2, -0.18, 0.09, 0.14, 0.2)):
             body = builder.add_link(
                 label=f"/Keyboard/key{key}", xform=wp.transform((keyboard_x + x, 0, 0), wp.quat_identity()), mass=1.0
             )
@@ -451,16 +455,16 @@ def test_native_reset_uses_each_present_arms_root_limits_and_keyboard_half_witho
         robot_joints=NewtonSelectorCfg(q, robot_path, policy_width=2),
         robot_dofs=NewtonSelectorCfg(qd, robot_path, policy_width=2),
         reset_roots=NewtonSelectorCfg(body, ("/Robot(?:_1)?/base", "/Keyboard/base"), policy_width=3),
-        reset_coords=NewtonSelectorCfg(q, (robot_path, key_path), policy_width=4),
-        reset_dofs=NewtonSelectorCfg(qd, (robot_path, key_path), policy_width=4),
-        key_bodies=NewtonSelectorCfg(body, "/Keyboard/key.*", policy_width=2),
+        reset_coords=NewtonSelectorCfg(q, (robot_path, key_path), policy_width=7),
+        reset_dofs=NewtonSelectorCfg(qd, (robot_path, key_path), policy_width=7),
+        key_bodies=NewtonSelectorCfg(body, "/Keyboard/key.*", policy_width=5),
         soft_joint_pos_limit_factor=1.0,
         reset=SimpleNamespace(
             ik=SimpleNamespace(
                 joints=NewtonSelectorCfg(q, robot_path, policy_width=2),
                 dofs=NewtonSelectorCfg(qd, robot_path, policy_width=2),
-                body=NewtonSelectorCfg(body, "/Robot(?:_1)?/tip", policy_width=2),
-                tip_offset=(0, 0, 0),
+                bodies=NewtonSelectorCfg(body, ("/Robot(?:_1)?/tip", "/Robot(?:_1)?/tip_right"), policy_width=4),
+                tip_offsets=((0, 0, 0), (0, 0, 0)),
             ),
             ik_seed_joint_noise=0.0,
             pre_solve_reset=SimpleNamespace(
@@ -483,21 +487,58 @@ def test_native_reset_uses_each_present_arms_root_limits_and_keyboard_half_witho
     )
     command.cfg = cfg
     cfg.reset_roots = SimpleNamespace(width=3)
-    cfg.reset_coords = SimpleNamespace(width=4)
+    cfg.reset_coords = SimpleNamespace(width=7)
     command._reset_ik, command._ik_iters = cfg.reset.ik, (1, 1)
     # Live rows describe a different prototype; native reset must use the prospective limits.
     command._robot_limits = command._ik_limits = torch.zeros((3, 2, 2))
-    command._ik_offset, command._ik_hover = torch.zeros((3, 3)), torch.zeros(3)
-    command.target = torch.zeros((3, 1), dtype=torch.long)
-    command.target_len = torch.ones(3, dtype=torch.long)
-    command.typed_len = command.prefix_len = torch.zeros(3, dtype=torch.long)
-    ids, snapshot = command._solve_reset_pose(torch.tensor([2, 0]), publish=False)
-    assert ids.tolist() == [2, 0]
-    torch.testing.assert_close(snapshot[0, 21:25], torch.tensor([-0.15 / 1.0025, 0.011, 0.012, 0.0]))
-    torch.testing.assert_close(snapshot[1, 21:25], torch.tensor([0.08, 0.07, 0.011, 0.012]))
-    torch.testing.assert_close(snapshot[:, 25:], torch.zeros((2, 4)))
-    torch.testing.assert_close(bank.reset_defaults, before, rtol=0, atol=0)
-    assert bank.variant_ids.tolist() == [0, 0, 0]
+    command._ik_offsets, command._ik_hover = torch.zeros((2, 3)), torch.zeros(3)
+    cases = (
+        ([0, 1, 2, 3], 0, 0, 0.01 / 1.0025),  # Skip other-half keys, choose the first owned future key.
+        ([2, 0, 0, 3, 2], 1, 1, 0.04 / 1.0025),  # Ignore consumed keys; repeats retain sequence order.
+        ([0, 2, 3], 0, 1, 0.07),  # Backspace takes priority over future letters for its owner.
+        ([0], 0, 0, None),  # No future work for the right arm: stay within its half.
+        ([0, 3], 2, 3, 0.07),  # Completed prefix with an extra character still needs Backspace.
+    )
+    for sequence, prefix, typed, right_q in cases:
+        command.target = torch.full((3, 6), -1, dtype=torch.long)
+        command.target[:, 0] = 0
+        command.target[0, : len(sequence)] = torch.tensor(sequence)
+        command.target_len = torch.ones(3, dtype=torch.long)
+        command.target_len[0] = len(sequence)
+        command.prefix_len = torch.tensor([prefix, 0, 0])
+        command.typed_len = torch.tensor([typed, 0, 0])
+        torch.manual_seed(721)
+        ids, snapshot = command._solve_reset_pose(torch.tensor([2, 0]), publish=False)
+        assert ids.tolist() == [2, 0]
+        torch.testing.assert_close(
+            snapshot[0, 21:28], torch.tensor([-0.13 / 1.0025, 0.011, 0.012, 0.013, 0.014, 0.015, 0.0])
+        )
+        torch.testing.assert_close(snapshot[1, 21], torch.tensor(0.08))
+        if right_q is None:
+            assert torch.isclose(snapshot[1, 22], torch.tensor([0.01 / 1.0025, 0.04 / 1.0025, 0.07]), atol=1e-7).any()
+        else:
+            torch.testing.assert_close(snapshot[1, 22], torch.tensor(right_q), atol=1e-7, rtol=0)
+        torch.testing.assert_close(snapshot[1, 23:28], torch.tensor([0.011, 0.012, 0.013, 0.014, 0.015]))
+        torch.testing.assert_close(snapshot[:, 28:], torch.zeros((2, 7)))
+        torch.testing.assert_close(bank.reset_defaults, before, rtol=0, atol=0)
+        assert bank.variant_ids.tolist() == [0, 0, 0]
+
+
+def test_reset_approach_keeps_camera_up_independently_of_seed_roll():
+    import math
+
+    from isaaclab.utils.math import quat_apply, quat_from_angle_axis
+
+    command = object.__new__(LetterTypingCommand)
+    command._env = SimpleNamespace(num_envs=3, device="cpu")
+    command._ik_finger_axis = torch.tensor([[0.0, 0.0, -1.0]]).expand(3, -1)
+    command._ik_roll, command._ik_pitch, command._ik_yaw = 0.0, math.pi / 4, 0.0
+    seeds = quat_from_angle_axis(torch.tensor([0.0, math.pi / 2, -math.pi / 2]), command._ik_finger_axis)
+    orientation = command._approach_target_quat(seeds)
+    finger = quat_apply(orientation, command._ik_finger_axis)
+    camera = quat_apply(orientation, torch.tensor([[0.0, 1.0, 0.0]]).expand(3, -1))
+    torch.testing.assert_close(finger, torch.tensor([[2**-0.5, 0.0, -(2**-0.5)]]).expand(3, -1), atol=1e-6, rtol=0)
+    torch.testing.assert_close(camera, torch.tensor([[2**-0.5, 0.0, 2**-0.5]]).expand(3, -1), atol=1e-6, rtol=0)
 
 
 def test_explicit_all_world_cohort_preserves_baseline_samples():
@@ -567,9 +608,9 @@ def test_buffer_restores_state_and_pending_reset(monkeypatch, heterogeneous, pen
     body_poses = torch.zeros((5, 1, 7))
     body_poses[:, 0, 0] = torch.arange(5) + 10
     body_poses[:, 0, -1] = 1
-    command.cfg.reset.ik = SimpleNamespace(body=SimpleNamespace(read_state=lambda _: body_poses))
+    command.cfg.reset.ik = SimpleNamespace(bodies=SimpleNamespace(read_state=lambda _: body_poses))
     command.cfg.reset_roots = command.cfg.reset_coords = command.cfg.reset_dofs = None
-    command._ik_offset = torch.zeros((5, 3))
+    command._ik_offsets = torch.zeros((1, 3))
     command._ik_hover = torch.zeros(3)
     command.target_key_pos_w = lambda: torch.zeros((5, 3))
     monkeypatch.setattr(typing_commands, "capture_reset_state", lambda _, ids, *args: physical[ids].clone())

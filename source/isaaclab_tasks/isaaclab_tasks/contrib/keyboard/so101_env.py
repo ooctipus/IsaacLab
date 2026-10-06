@@ -59,18 +59,32 @@ class SO101KeyboardEnv(ManagerBasedRLEnv):
                 self.event_manager.cfg,
             ):
                 bind_selectors(cfg, lambda query: resolve_selection(self.selections, query))
-            # Authored robot USD can carry a calibrated pose. The task's reset seed is zero.
-            state = NewtonManager.get_state_0()
-            robot = self.cfg.actions.action.joints
-            wp.to_torch(state.joint_q)[robot.dense_ids()] = 0.0
-            wp.to_torch(state.joint_qd).zero_()
+            # Task defaults own the initial pose and the matching actuator targets.
             model = NewtonManager.get_model()
+            state = NewtonManager.get_state_0()
+            control = NewtonManager.get_control()
+            robot_q, robot_qd = self.cfg.actions.action.joints, self.cfg.actions.action.dofs
+            positions = wp.array(
+                [
+                    self.cfg.robot_joint_positions[model.joint_label[joint].rsplit("/", 1)[-1]]
+                    for joint in robot_q.joint_ids.numpy()
+                ],
+                dtype=wp.float32,
+                device=model.device,
+            )
+            wp.indexedarray(model.joint_q, robot_q.ids).assign(positions)
+            wp.indexedarray(state.joint_q, robot_q.ids).assign(positions)
+            model.joint_qd.zero_()
+            state.joint_qd.zero_()
+            targets = robot_q if model.use_coord_layout_targets else robot_qd
+            wp.indexedarray(model.joint_target_q, targets.ids).assign(positions)
+            wp.indexedarray(control.joint_target_q, targets.ids).assign(positions)
+            model.joint_target_qd.zero_()
+            control.joint_target_qd.zero_()
             root_ids = self.selections.root_joint_ids[self.cfg.commands.typing.reset_roots.dense_ids()]
             if torch.any(root_ids < 0) or torch.any(wp.to_torch(model.joint_type)[root_ids] != int(JointType.FIXED)):
                 raise ValueError("Keyboard reset snapshots require fixed articulation roots.")
-            wp.to_torch(model.joint_target_mode)[self.cfg.actions.action.dofs.dense_ids()] = int(
-                JointTargetMode.POSITION_VELOCITY
-            )
+            wp.indexedarray(model.joint_target_mode, robot_qd.ids).fill_(int(JointTargetMode.POSITION_VELOCITY))
             NewtonManager.notify_model_changed(ModelFlags.JOINT_DOF_PROPERTIES)
             NewtonManager.invalidate_fk()
             self.sim.forward()

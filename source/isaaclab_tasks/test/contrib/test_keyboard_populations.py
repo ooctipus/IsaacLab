@@ -216,6 +216,64 @@ def test_failed_local_prototype_preparation_retires_unreturned_source_without_gc
             gc.enable()
 
 
+def test_prototype_joint_defaults_and_drive_targets_follow_names_for_both_arms():
+    from isaaclab_tasks.utils import resolve_task_config
+
+    cfg, _ = resolve_task_config("IsaacContrib-Keyboard-SO101-Worlds-MultiArm", "", overrides=["physics=newton_mjwarp"])
+    cfg.robot_joint_positions = {
+        "gripper": 0.25,
+        "wrist_roll": -np.pi / 2,
+        "wrist_flex": 0.1,
+        "elbow_flex": -0.2,
+        "shoulder_lift": 0.3,
+        "shoulder_pan": -0.4,
+    }
+    cfg.commands.typing.reset_roots = NewtonSelectorCfg(
+        newton.Model.AttributeFrequency.BODY, "/World/Robot(?:_1)?/base", count_per_world=2
+    )
+    names = ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper")
+
+    def add_usd(builder, *args, **kwargs):
+        for arm, joint_names in (("Robot", names), ("Robot_1", names[::-1])):
+            parent = builder.add_link(label=f"/World/{arm}/base")
+            joints = [builder.add_joint_fixed(-1, parent)]
+            for name in joint_names:
+                child = builder.add_link(label=f"/World/{arm}/{name}_link")
+                joints.append(
+                    builder.add_joint_revolute(parent, child, label=f"/World/{arm}/joints/{name}", target_pos=0.7)
+                )
+                builder.joint_q[-1] = 0.6
+                parent = child
+            builder.add_articulation(joints)
+        key = builder.add_link(label="/World/Keyboard/key")
+        joint = builder.add_joint_prismatic(-1, key, label="/World/Keyboard/key_joint", target_pos=0.8)
+        builder.joint_q[-1] = 0.02
+        builder.add_articulation([joint])
+
+    def create_solver(model, **kwargs):
+        expected = [-0.4, 0.3, -0.2, 0.1, -np.pi / 2, 0.25]
+        expected += expected[::-1]
+        np.testing.assert_allclose(model.joint_q.numpy(), [*expected, 0.02], atol=1e-7)
+        np.testing.assert_allclose(model.control().joint_target_q.numpy(), [*expected, 0.8], atol=1e-7)
+        np.testing.assert_array_equal(model.joint_qd.numpy(), 0.0)
+        np.testing.assert_array_equal(model.joint_target_qd.numpy(), 0.0)
+        np.testing.assert_array_equal(model.joint_target_mode.numpy()[:12], newton.JointTargetMode.POSITION_VELOCITY)
+        return SimpleNamespace(model=model)
+
+    env = SimpleNamespace(
+        cfg=cfg, device="cpu", sim=SimpleNamespace(physics_manager=SimpleNamespace(create_builder=newton.ModelBuilder))
+    )
+    spawn = SimpleNamespace(func=lambda *args, **kwargs: None)
+    for asset in (cfg.scene.robot, cfg.scene.plane):
+        asset.spawn = spawn
+    with (
+        patch.object(newton.ModelBuilder, "add_usd", new=add_usd),
+        patch("isaaclab_tasks.contrib.keyboard.keyboard_populations.SolverMuJoCo", new=create_solver),
+    ):
+        _, source = prepare_keyboard_prototype(env, spawn, cfg.sim.physics.prototype_physics, ())
+    source.retire()
+
+
 def _populations():
     populations = object.__new__(KeyboardPopulations)
     populations.env = object.__new__(SO101KeyboardPopulationEnv)

@@ -42,20 +42,20 @@ class LetterTypingCommandCfg(CommandTermCfg):
         # cfg). Runs on EVERY reset whenever `ik` is set - independent of the replay curriculum below (which
         # `enabled` gates); the curriculum's snapshots are built by running this same snap once per candidate.
         ik: KeyboardResetIKCfg | None = MISSING
-        """Differential-IK setup that snaps the arm so the moving-jaw tip hovers above the first key, angled
+        """Differential-IK setup that snaps the arm so the selected fingertip hovers above the first key, angled
         for a downward press, on every reset (no sim stepping; see
         :meth:`~...typing_commands.LetterTypingCommand._solve_reset_pose`). SO101-specific, so it is set in the
         env cfg rather than defaulted here; set to ``None`` to leave the arm wherever the other reset events
         place it. The task computes the fingertip Jacobian for the selected scalar arm joints."""
 
         ik_rpy_deg: tuple[float, float, float] = MISSING
-        """Approach orientation ``(roll, pitch, yaw)`` [deg] of the moving-jaw finger axis at reset.
+        """Approach orientation ``(roll, pitch, yaw)`` [deg] of the reference finger axis at reset.
 
         ``pitch`` tilts the finger axis below horizontal (``90`` points straight down, ``0`` is horizontal);
         ``yaw`` offsets the heading the arm settles into (``0`` keeps it); ``roll`` rotates the jaw about its
-        approach (finger) axis. These describe the *desired* approach pose only: the 5-DoF arm solves
-        orientation with a damped projection that gives position approximate priority. Roll/pitch/yaw
-        are tracked best-effort, and the orientation correction can perturb tip position."""
+        approach (finger) axis from the camera-upright orientation. The first selected body defines the
+        reference frame, with local +Y along the camera mount. These are orientation targets, not guarantees:
+        the 5-DoF arm gives position approximate priority, and orientation correction can perturb tip position."""
 
         ik_hover_height: float = MISSING
         """Height [m] above the target key at which the jaw tip is placed on reset."""

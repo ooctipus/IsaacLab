@@ -22,8 +22,10 @@ from isaaclab.utils import index_fill_
 from isaaclab.utils.math import (
     axis_angle_from_quat,
     quat_apply,
+    quat_apply_inverse,
     quat_conjugate,
     quat_from_angle_axis,
+    quat_from_matrix,
     quat_mul,
 )
 
@@ -304,7 +306,7 @@ class LetterTypingCommand(CommandTerm):
             upper = cfg.robot_dofs.read_model("joint_limit_upper")
             center, half = (lower + upper) * 0.5, (upper - lower) * (0.5 * cfg.soft_joint_pos_limit_factor)
             self._robot_limits = torch.stack((center - half, center + half), dim=-1)
-            self._default_robot_q = torch.zeros_like(lower)
+            self._default_robot_q = cfg.robot_joints.read_model("joint_q").clone()
 
         # key roles in global slot space, resolved once at the config layer (see so101_env_cfg)
         self._typeable = (
@@ -363,9 +365,9 @@ class LetterTypingCommand(CommandTerm):
         if cfg.reset.ik is not None:
             ik_cfg = cfg.reset.ik
             require_scalar_joint_pair(ik_cfg.joints, ik_cfg.dofs)
-            require_same_world_domain(ik_cfg.joints, ik_cfg.body)
+            require_same_world_domain(ik_cfg.joints, ik_cfg.bodies)
             if not staged:
-                require_count_per_world(ik_cfg.body, 1)
+                require_count_per_world(ik_cfg.bodies, len(ik_cfg.tip_offsets))
                 types = ik_cfg.dofs.joint_types()
                 if torch.any((types != newton.JointType.REVOLUTE) & (types != newton.JointType.PRISMATIC)):
                     raise ValueError("Reset IK supports scalar revolute and prismatic joints.")
@@ -376,9 +378,10 @@ class LetterTypingCommand(CommandTerm):
                 upper = ik_cfg.dofs.read_model("joint_limit_upper")
                 center, half = (lower + upper) * 0.5, (upper - lower) * (0.5 * cfg.soft_joint_pos_limit_factor)
                 self._ik_limits = torch.stack((center - half, center + half), dim=-1)
-            offset_pos = ik_cfg.tip_offset
-            offset = torch.tensor(offset_pos, device=self.device)
-            self._ik_offset = offset.expand(self.num_envs, 3)
+            self._ik_offsets = torch.tensor(ik_cfg.tip_offsets, device=self.device)
+            if self._ik_offsets.shape not in ((1, 3), (2, 3)) or not torch.isfinite(self._ik_offsets).all():
+                raise ValueError("Keyboard reset IK requires one tip or ordered left/right tips with finite offsets.")
+            offset = self._ik_offsets[0]
             # finger axis = direction from the link origin to the tip (used to aim the approach pitch).
             axis_norm = float(torch.linalg.norm(offset))
             finger_axis = (
@@ -724,14 +727,19 @@ class LetterTypingCommand(CommandTerm):
                         if self._buf_state is None:
                             self._buf_state = torch.zeros((cap, state.shape[1]), dtype=state.dtype, device=self.device)
                         self._buf_state[offset + start : offset + start + n] = state
-                        poses = self.cfg.reset.ik.body.read_state("body_q")
+                        poses = self.cfg.reset.ik.bodies.read_state("body_q")
                         if isinstance(bank, KeyboardWorlds):
                             arms = bank.key_arm_ids[bank.variant_ids, self.target_key_slot()]
-                            ee_pose = poses[all_ids, arms]
-                        else:
-                            ee_pose = poses[:, 0]
-                        tip = ee_pose[:, :3] + quat_apply(ee_pose[:, 3:], self._ik_offset)
-                        reach = torch.linalg.norm(tip - (self.target_key_pos_w() + self._ik_hover), dim=-1)
+                            columns = bank.reset_finger_columns[bank.variant_ids, arms]
+                            poses = poses[all_ids[:, None], columns]
+                        tip = poses[..., :3] + quat_apply(
+                            poses[..., 3:], self._ik_offsets.expand(self.num_envs, -1, -1)
+                        )
+                        reach = (
+                            torch.linalg.norm(tip - (self.target_key_pos_w() + self._ik_hover)[:, None], dim=-1)
+                            .min(1)
+                            .values
+                        )
                         self._buf_reach[offset + start : offset + start + n] = reach[ids]
                         pbar.update(n)
                     offset += size
@@ -1254,13 +1262,14 @@ class LetterTypingCommand(CommandTerm):
 
         Seeds the arm from its default pose (optionally jittered by ``reset.ik_seed_joint_noise``), then runs
         damped-least-squares differential IK on the
-        moving-jaw tip. Position is the primary task; the ``~40%`` of iterations
+        chosen fingertip. Position is the primary task; the ``~40%`` of iterations
         after the base pan settles also drive the approach orientation from ``reset.ik_rpy_deg`` (see
         :meth:`_approach_target_quat`). Damping makes the position-priority projection approximate, so
         orientation correction can perturb tip position. Native worlds evaluate a compact prospective
         robot/root payload, then publish the completed snapshot once. With two arms, the arm owning
-        the next shared key targets it; the other samples a key from its own keyboard half. Both
-        solve against the same prospective keyboard pose. Continuing episodes are never
+        the next shared key targets it; the other targets its first remaining sequence key, or samples
+        from its own half when the sequence has no remaining key for it. Both solve toward hover poses
+        above the same prospective keyboard. Continuing episodes are never
         used as reset scratch. Other backends evaluate selected live Newton FK/Jacobians and reconcile
         once with ``env.forward()``. Both paths
         preserve the full-environment iteration draw and use the same DLS equations and joint limits.
@@ -1279,7 +1288,9 @@ class LetterTypingCommand(CommandTerm):
         eligible = self.target_len > 0
         if not staged:
             eligible = (
-                eligible & self.cfg.robot_joints.dense_active().all(dim=1) & self.cfg.reset.ik.body.dense_active()[:, 0]
+                eligible
+                & self.cfg.robot_joints.dense_active().all(dim=1)
+                & self.cfg.reset.ik.bodies.dense_active().all(dim=1)
             )
         env_ids = env_ids[eligible[env_ids]]
         if len(env_ids) == 0:
@@ -1310,14 +1321,26 @@ class LetterTypingCommand(CommandTerm):
             if arm_roots.shape[1] > 1:
                 membership = bank.key_arm_ids[arm_variants] == arms[:, None]
                 sampled_slots = torch.multinomial(membership.float(), 1).squeeze(1)
+                arm_env_ids = env_ids[arm_rows]
+                sequence = self.target[arm_env_ids]
+                positions = torch.arange(sequence.shape[1], device=self.device)
+                upcoming = (positions >= self.prefix_len[arm_env_ids, None]) & (
+                    positions < self.target_len[arm_env_ids, None]
+                )
+                upcoming &= (sequence >= 0) & membership.gather(1, sequence.clamp(min=0))
+                first = upcoming.int().argmax(dim=1, keepdim=True)
+                waiting_slots = torch.where(upcoming.any(dim=1), sequence.gather(1, first).squeeze(1), sampled_slots)
                 owns_next = bank.key_arm_ids[arm_variants, arm_slots] == arms
-                arm_slots = torch.where(owns_next, arm_slots, sampled_slots)
+                arm_slots = torch.where(owns_next, arm_slots, waiting_slots)
             key_roots = roots[arm_rows, bank.reset_key_root[arm_variants, arm_slots]]
             target_w = (
                 key_roots[:, :3]
                 + quat_apply(key_roots[:, 3:], bank.reset_key_local[arm_variants, arm_slots])
                 + self._ik_hover
             )
+            arm_poses = roots[arm_rows, arm_roots[arm_rows, arms]]
+            local_target = quat_apply_inverse(arm_poses[:, 3:], target_w - arm_poses[:, :3])
+            tip_ids = (local_target[:, 0] < 0).long() if len(self._ik_offsets) == 2 else torch.zeros_like(arm_rows)
         elif pre is not None:
             # Mirror EventManager term resolution: class-based terms (ManagerTermBase subclasses)
             # are instantiated once with (cfg, env) and the callable instance replaces ``func``.
@@ -1331,7 +1354,7 @@ class LetterTypingCommand(CommandTerm):
         if staged:
             robot_columns = bank.reset_robot_columns[arm_variants, arms]
             limits = bank.reset_robot_limits[arm_variants, arms]
-            default_q = torch.zeros(robot_columns.shape, device=self.device)
+            default_q = snapshot[arm_rows[:, None], 7 * root_width + robot_columns]
             ik_limits = limits[:, bank.reset_ik_columns]
         else:
             default_q = self._default_robot_q[env_ids]
@@ -1348,15 +1371,25 @@ class LetterTypingCommand(CommandTerm):
             self.cfg.robot_dofs.write_state("joint_qd", torch.zeros_like(seed_q), env_ids)
             self._env.invalidate_fk(env_ids)
             kinematics = prepare_reset_kinematics(self.cfg.reset_roots, env_ids)
+            # The pre-solve reset may have moved the keyboard and robot roots.
+            # Resolve their new poses before freezing the target and fingertip choice.
+            for model, state, mask in kinematics:
+                newton.eval_fk(model, state.joint_q, state.joint_qd, state, mask=mask)
+            target_w = self.target_key_pos_w() + self._ik_hover
+            tip_ids = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
+            if len(self._ik_offsets) == 2:
+                arm_poses = self.cfg.reset_roots.read_state("body_q")[:, 0]
+                local_target = quat_apply_inverse(arm_poses[:, 3:], target_w - arm_poses[:, :3])
+                tip_ids = (local_target[:, 0] < 0).long()
         kinematic_graph = None
 
         def update_kinematics():
             if staged:
-                return bank.reset_kinematics.evaluate(seed_q, roots[arm_rows, arm_roots[arm_rows, arms]])
+                return bank.reset_kinematics.evaluate(seed_q, arm_poses, tip_ids)
             if kinematic_graph is None:
                 for model, state, mask in kinematics:
                     newton.eval_fk(model, state.joint_q, state.joint_qd, state, mask=mask)
-                tip_jacobian(self.cfg.reset.ik, self._ik_jacobian)
+                tip_jacobian(self.cfg.reset.ik, tip_ids, self._ik_offsets, self._ik_jacobian)
             else:
                 wp.capture_launch(kinematic_graph)
             return None
@@ -1367,9 +1400,6 @@ class LetterTypingCommand(CommandTerm):
                     update_kinematics()
                 kinematic_graph = capture.graph
         compact = update_kinematics()
-        # world-frame hover target above each env's first key (all envs; only env_ids are written back).
-        if not staged:
-            target_w = self.target_key_pos_w() + self._ik_hover
         lo, hi = self._ik_iters
         n_position = max(1, int(round(0.6 * hi)))
         # Per-env iteration budget: after an env hits its sampled count it stops refining (pose frozen), so
@@ -1385,12 +1415,15 @@ class LetterTypingCommand(CommandTerm):
         eye_joint = torch.eye(ik_width, device=self.device)
         quat_des: torch.Tensor | None = None
         for i in range(hi):
-            ee_pose = compact[0] if staged else self.cfg.reset.ik.body.read_state("body_q")[:, 0]
-            ee_pos_w, ee_quat_w = ee_pose[:, :3], ee_pose[:, 3:]
-            # shift the parent-body pose/Jacobian to the jaw tip (world frame).
-            lever_w = quat_apply(ee_quat_w, self._ik_offset[0].expand(len(ee_pose), -1))
-            tip_pos_w = ee_pos_w + lever_w
-            jac = compact[1] if staged else wp.to_torch(self._ik_jacobian)
+            if staged:
+                ee_pose, tip_pos_w, jac = compact
+                ee_quat_w = ee_pose[:, 3:]
+            else:
+                poses = self.cfg.reset.ik.bodies.read_state("body_q")
+                tip_pose = poses[torch.arange(self.num_envs, device=self.device), tip_ids]
+                ee_quat_w = poses[:, 0, 3:]
+                tip_pos_w = tip_pose[:, :3] + quat_apply(tip_pose[:, 3:], self._ik_offsets[tip_ids])
+                jac = wp.to_torch(self._ik_jacobian)
             q_arm = seed_q[:, bank.reset_ik_columns] if staged else self.cfg.reset.ik.joints.read_state("joint_q")
 
             # Task-priority damped least squares. The 5-DoF arm cannot reach an arbitrary key position AND
@@ -1444,34 +1477,40 @@ class LetterTypingCommand(CommandTerm):
     def _approach_target_quat(self, ee_quat_w: torch.Tensor) -> torch.Tensor:
         """Desired approach orientation from ``reset.ik_rpy_deg = (roll, pitch, yaw)``.
 
-        Tilts the finger axis ``pitch`` below horizontal along the arm's settled heading (rotated by
-        ``yaw`` about world ``+Z``), then rolls the jaw ``roll`` about that approach (finger) axis. The
-        pitch is realized as the minimal rotation of ``ee_quat_w`` onto the desired finger axis. This is
-        the *desired* pose only: the damped solve tracks it with approximate position priority, and it
-        need not be exactly reachable on the 5-DoF arm.
+        The first fingertip's body is the reference frame. Its local +Y points along the camera
+        mount. Zero roll keeps that axis as upright as the approach permits, independently of
+        seed roll and jaw opening; pitch aims below horizontal along the settled heading.
+        The position-priority solve tracks this orientation best-effort.
 
         Args:
-            ee_quat_w: Current moving-jaw link orientation (x, y, z, w), shape ``(num_envs, 4)``.
+            ee_quat_w: Reference-body orientation (x, y, z, w), shape ``(num_envs, 4)``.
         """
-        finger = quat_apply(ee_quat_w, self._ik_finger_axis[0].expand(len(ee_quat_w), -1))
-        heading = finger[:, :2] / torch.linalg.norm(finger[:, :2], dim=-1, keepdim=True).clamp_min(1.0e-6)
-        # yaw: rotate the horizontal heading about world +Z.
-        if self._ik_yaw != 0.0:
-            cos_y, sin_y = math.cos(self._ik_yaw), math.sin(self._ik_yaw)
-            hx, hy = heading[:, 0].clone(), heading[:, 1].clone()
-            heading = torch.stack([cos_y * hx - sin_y * hy, sin_y * hx + cos_y * hy], dim=-1)
-        cos_p, sin_p = math.cos(self._ik_pitch), math.sin(self._ik_pitch)
-        down = torch.full((finger.shape[0], 1), -sin_p, device=self.device)
-        target_axis = torch.cat([cos_p * heading, down], dim=-1)  # unit: finger pitched below horizontal
-        # pitch: minimal rotation tilting the current finger axis onto the desired one.
-        rot_axis = torch.linalg.cross(finger, target_axis)
-        rot_axis = rot_axis / torch.linalg.norm(rot_axis, dim=-1, keepdim=True).clamp_min(1.0e-6)
-        angle = torch.acos((finger * target_axis).sum(-1).clamp(-1.0, 1.0))
-        quat = quat_mul(quat_from_angle_axis(angle, rot_axis), ee_quat_w)
-        # roll: rotate the jaw about its approach (finger) axis.
+        local_forward = self._ik_finger_axis[0].expand(len(ee_quat_w), -1)
+        finger = quat_apply(ee_quat_w, local_forward)
+        horizontal = torch.linalg.norm(finger[:, :2], dim=-1, keepdim=True)
+        heading = finger[:, :2] / horizontal.clamp_min(1.0e-6)
+        heading = torch.where(horizontal > 1.0e-6, heading, torch.tensor((1.0, 0.0), device=self.device))
+        cos_y, sin_y = math.cos(self._ik_yaw), math.sin(self._ik_yaw)
+        hx, hy = heading[:, 0], heading[:, 1]
+        heading = torch.stack([cos_y * hx - sin_y * hy, sin_y * hx + cos_y * hy], dim=-1)
+        down = torch.full((len(heading), 1), -math.sin(self._ik_pitch), device=self.device)
+        forward = torch.cat((math.cos(self._ik_pitch) * heading, down), dim=-1)
+        # Two orthonormal frames give an absolute orientation, rather than preserving seed twist.
+        up = torch.tensor((0.0, 0.0, 1.0), device=self.device) - forward[:, 2:3] * forward
+        up = torch.where(
+            torch.linalg.norm(up, dim=-1, keepdim=True) > 1.0e-6,
+            up,
+            torch.cat((heading, torch.zeros_like(down)), dim=-1),
+        )
+        up = torch.nn.functional.normalize(up, dim=-1)
+        local_up = torch.tensor((0.0, 1.0, 0.0), device=self.device) - local_forward[:, 1:2] * local_forward
+        local_up = torch.nn.functional.normalize(local_up, dim=-1)
+        local_frame = torch.stack((local_forward, local_up, torch.linalg.cross(local_forward, local_up)), dim=-1)
+        world_frame = torch.stack((forward, up, torch.linalg.cross(forward, up)), dim=-1)
+        quat = quat_from_matrix(world_frame @ local_frame.transpose(-1, -2))
         if self._ik_roll != 0.0:
-            roll = torch.full((finger.shape[0],), self._ik_roll, device=self.device)
-            quat = quat_mul(quat_from_angle_axis(roll, target_axis), quat)
+            roll = torch.full((len(heading),), self._ik_roll, device=self.device)
+            quat = quat_mul(quat_from_angle_axis(roll, forward), quat)
         return quat
 
     """
