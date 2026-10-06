@@ -317,6 +317,8 @@ class SO101KeyboardPopulationEnv(gym.Env):
                 )
             self.episode_length_buf += 1
             self.common_step_counter += 1
+            if "post_physics" in self.event_manager.available_modes:
+                self.event_manager.apply(mode="post_physics")
             self.reset_buf = self.termination_manager.compute()
             terminated = self.termination_manager.terminated
             truncated = self.termination_manager.time_outs & ~terminated
@@ -327,12 +329,8 @@ class SO101KeyboardPopulationEnv(gym.Env):
             if self.cfg.compute_final_obs and (
                 len(reset_ids) or (redistribute and self.cfg.redistribution_mode == "truncate_pending")
             ):
-                # A continuing environment would update typing and record this sample before observing it.
-                # Preview that successor before replacing its model, without advancing live MDP state or RNG.
-                with (
-                    torch.random.fork_rng(devices=[torch.device(self.device)]),
-                    self.command_manager.get_term("typing").preview_step(self.step_dt),
-                ):
+                # Typing already reflects the completed control; preview only observation history.
+                with self.command_manager.get_term("typing").preview_housekeeping(self.step_dt):
                     self.extras["final_obs"] = self.observation_manager.preview()
             if len(reset_ids):
                 self.keyboard_variants.request_variants(reset_ids)

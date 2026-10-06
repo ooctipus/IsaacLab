@@ -230,6 +230,9 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
         # -- update env counters (used for curriculum generation)
         self.episode_length_buf += 1  # step in current episode (per env)
         self.common_step_counter += 1  # total step (common for all envs)
+        # -- update stateful tasks from the completed physics transition
+        if "post_physics" in self.event_manager.active_terms:
+            self.event_manager.apply(mode="post_physics")
         # -- check terminations
         self.reset_buf = self.termination_manager.compute()
         self.reset_terminated = self.termination_manager.terminated

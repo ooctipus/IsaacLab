@@ -45,6 +45,7 @@ class EventManager(ManagerBase):
       This is used to randomize USD-level properties of the simulation stage.
     - "startup": Event is applied once at the beginning of the training once simulation is started.
     - "reset": Event is applied at every reset.
+    - "post_physics": In RL environments, event is applied once after physics and before rewards and terminations.
     - "interval": Event is applied at pre-specified intervals of time.
 
     However, you can also define your own modes and use them in the training process as you see fit.

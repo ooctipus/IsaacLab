@@ -160,8 +160,11 @@ def _advance_typing(
     just_reset: wp.array[wp.bool],
     typed: wp.array2d[wp.int64],
     typed_len: wp.array[wp.int64],
+    consume_edges: bool,
 ):
     world = wp.tid()
+    if not consume_edges and not just_reset[world]:
+        return
     length = int(typed_len[world])
     adopt = just_reset[world]
     erase = int(backspace[world])
@@ -1064,9 +1067,7 @@ class LetterTypingCommand(CommandTerm):
         index_fill_(self.new_high, env_ids_t, False)
         index_fill_(self.new_low, env_ids_t, False)
 
-    def _update_command(self):
-        # Adopt held keys after reset; otherwise apply backspace first, then all
-        # new presses in slot order. Read the selected native fields directly.
+    def _apply_key_state(self, consume_edges: bool):
         wp.launch(
             _advance_typing,
             len(self.typed),
@@ -1079,54 +1080,14 @@ class LetterTypingCommand(CommandTerm):
                     wp.from_torch(value)
                     for value in (self._backspace, self._prev_pressed, self._just_reset, self.typed, self.typed_len)
                 ],
+                consume_edges,
             ],
             device=self.device,
         )
 
-    @contextmanager
-    def preview_step(self, dt: float):
-        """Expose the continuing command for a pre-reset observation without committing a step.
-
-        The actual command update owns press edges, progress, and timer resampling. Only its mutable
-        step state is copied here; curriculum snapshots and physical state remain untouched. Callers
-        must preserve the Torch RNG around this scope when timer resampling must not consume randomness.
-
-        Args:
-            dt: Control interval [s] for the continuing command update.
-        """
-        if self._episode_reset:
-            raise RuntimeError("Cannot preview a typing command during its episode reset.")
-        names = (
-            "target",
-            "typed",
-            "target_len",
-            "typed_len",
-            "_prev_pressed",
-            "_just_reset",
-            "distance",
-            "prefix_len",
-            "max_prefix",
-            "min_prefix",
-            "new_high",
-            "new_low",
-            "time_left",
-            "command_counter",
-        )
-        original = {name: getattr(self, name) for name in names}
-        metrics, seed = self.metrics, self._resample_seed
-        try:
-            for name, value in original.items():
-                setattr(self, name, value.clone())
-            self.metrics = self.metrics.copy()
-            self.compute(dt)
-            yield
-        finally:
-            for name, value in original.items():
-                setattr(self, name, value)
-            self.metrics, self._resample_seed = metrics, seed
-
-    def _update_metrics(self):
-        # Metrics intentionally precede press processing in CommandTerm.compute.
+    def advance(self):
+        """Consume this control's press edges and publish metrics before reward and termination."""
+        self._apply_key_state(consume_edges=True)
         wp.launch(
             _typing_metrics,
             len(self.typed),
@@ -1147,6 +1108,56 @@ class LetterTypingCommand(CommandTerm):
             ],
             device=self.device,
         )
+
+    @contextmanager
+    def preview_housekeeping(self, dt: float):
+        """Preview timer resampling for timeout bootstrap; completed typing never advances again.
+
+        Reset-only commands use their current state directly. Finite timers preview the
+        same post-decision housekeeping as a continuing world without committing RNG or state.
+        """
+        if self.cfg.resampling_time_range is None:
+            yield
+            return
+        if self._episode_reset:
+            raise RuntimeError("Cannot preview a typing command during its episode reset.")
+        names = (
+            "target",
+            "typed",
+            "target_len",
+            "typed_len",
+            "_prev_pressed",
+            "_just_reset",
+            "distance",
+            "prefix_len",
+            "max_prefix",
+            "min_prefix",
+            "new_high",
+            "new_low",
+            "time_left",
+            "command_counter",
+        )
+        original = {name: getattr(self, name) for name in names}
+        metrics, seed = self.metrics, self._resample_seed
+        device = torch.device(self.device)
+        with torch.random.fork_rng(devices=[device] if device.type == "cuda" else []):
+            try:
+                for name, value in original.items():
+                    setattr(self, name, value.clone())
+                self.metrics = self.metrics.copy()
+                self.compute(dt)
+                yield
+            finally:
+                for name, value in original.items():
+                    setattr(self, name, value)
+                self.metrics, self._resample_seed = metrics, seed
+
+    def _update_command(self):
+        # CommandManager runs after resets. Adopt held reset keys without consuming another control.
+        self._apply_key_state(consume_edges=False)
+
+    def _update_metrics(self):
+        # The post-physics transition owns metrics; the manager only exposes them for logging.
         self.metrics["distance"] = self.distance
 
     def _prefix_len(self) -> torch.Tensor:
@@ -1255,6 +1266,7 @@ class LetterTypingCommand(CommandTerm):
                 self._solve_reset_pose(snap_ids)
         if payload is not None:
             self._env.restore_reset_snapshot(ids, variants, payload)
+        self._update_command()  # Adopt reset-held keys before the first action of the new episode.
         return extras
 
     def _solve_reset_pose(self, env_ids: torch.Tensor, *, publish: bool = True):
@@ -1665,3 +1677,8 @@ class LetterTypingCommand(CommandTerm):
         if translations.shape[0] == 0:
             return
         self._typing_visualizer.visualize(translations=translations, marker_indices=indices)
+
+
+def advance_typing(env: ManagerBasedRLEnv, env_ids, command_name: str = "typing"):
+    """Apply one shared typing transition after physics and before rewards and terminations."""
+    env.command_manager.get_term(command_name).advance()

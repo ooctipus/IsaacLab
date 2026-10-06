@@ -37,13 +37,13 @@ def letter_typing_progress(env: ManagerBasedRLEnv, command_name: str) -> torch.T
     * ``-1`` on any step that sets a new episode minimum prefix length (destroying correct progress),
     * ``0`` otherwise - staying put, or re-reaching a prefix length already seen this episode.
 
-    Since one control step registers at most one keystroke, ``prefix_len`` moves by at most one, so each
-    integer level is crossed cleanly. Rewarding only *new* maxima means the total positive reward per
+    Simultaneous presses are processed in key-slot order and earn at most one progress bonus per control.
+    Rewarding only *new* maxima means the total positive reward per
     episode is bounded by ``target_len - prefix_0`` and the total penalty by ``prefix_0`` (with
     ``prefix_0`` the correct prefix of the reset buffer); consequently ``type-wrong -> backspace`` and
     ``backspace -> retype`` loops cannot farm reward - a re-reached level is neither a new max nor a new
     min. The marks are episode state seeded at reset, so they live on the command (see
-    :meth:`~...typing_commands.LetterTypingCommand._update_metrics`); this term only reads the resulting
+    :meth:`~...typing_commands.LetterTypingCommand.advance`); this term only reads the resulting
     per-step flags. With single-letter targets ``prefix_0`` is always ``0``, so the new-min penalty is
     inert and only the new-max bonus fires; it starts mattering for multi-letter targets.
 
