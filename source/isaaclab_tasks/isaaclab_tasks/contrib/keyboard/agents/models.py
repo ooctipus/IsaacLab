@@ -158,7 +158,7 @@ def _arm_observations(
     other_features = torch.cat((positions[:, 0], other_rotation, other[:, 7:]), dim=-1)
     raw = torch.cat(
         (
-            own,
+            own[:, 7:],
             torch.where(other_active, other_features, 0.0),
             other_active.to(own.dtype),
             torch.where(keys_active.unsqueeze(-1), positions[:, 1:], 0.0).flatten(1),
@@ -176,8 +176,10 @@ class SharedArmMLPModel(SharedEncoderMLPModel):
     ``robot_active[N, 2]``, ``key_positions[N, K, 3]`` and ``key_active[N, K]``.
     Each robot state holds root position [m], quaternion (wxyz), six joint
     positions [rad], velocities [rad/s], and previous actions. Each perspective
-    sees its own state, the other arm's relative root pose and joint state, and
-    root-relative key positions. Only active perspectives enter the shared MLP.
+    sees its own joint state, the other arm's root pose in its own root frame
+    and joint state, and root-relative key positions. Absolute root poses stay
+    in the world observations and do not enter the MLP. Only active perspectives
+    enter the shared MLP.
 
     The actor returns twelve padded world actions, with six Gaussian standard
     deviations shared across arms. The critic averages active perspective values
@@ -226,7 +228,7 @@ class SharedArmMLPModel(SharedEncoderMLPModel):
         for group, shape in expected_shapes.items():
             if tuple(obs[group].shape[1:]) != shape:
                 raise ValueError(f"Observation '{group}' must have trailing shape {shape}.")
-        return groups[1:], 51 + 4 * self.num_keys
+        return groups[1:], 44 + 4 * self.num_keys
 
     def get_latent(
         self, obs: TensorDict, masks: torch.Tensor | None = None, hidden_state: HiddenState = None

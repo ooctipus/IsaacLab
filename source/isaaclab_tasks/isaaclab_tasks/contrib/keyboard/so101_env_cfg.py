@@ -33,6 +33,7 @@ from .keyboards.keyboard_gen_cfg import KeyboardSpawnerCfg
 from .keyboards.keyboard_geometry import generate_keyboard
 from .keyboards.keyboard_pool import TYPING_KEYBOARD_VARIANTS
 from .mdp.actions import NewtonRelativeJointPositionActionCfg
+from .mdp.commands.typing_commands import advance_typing
 from .mdp.reset import KeyboardResetIKCfg
 from .selection_paths import NewtonSelectorCfg, bind_selectors
 
@@ -218,7 +219,9 @@ class SO101ObservationsCfg:
 
 @configclass
 class EventCfg:
-    """Reset-mode events (shared by all physics backends)."""
+    """Typing transitions and resets shared by all physics backends."""
+
+    advance_typing = EventTerm(func=advance_typing, mode="post_physics")
 
     reset_keyboard = EventTerm(
         func=mdp.reset_root_state_uniform,

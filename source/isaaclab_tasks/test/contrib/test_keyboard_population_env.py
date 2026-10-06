@@ -982,6 +982,41 @@ def test_native_multi_arm_reset_changes_policy_batch_and_preserves_other_worlds(
                     assert batches[-1] == count
                     assert obs["robot_active"].sum().item() == count
                     assert torch.count_nonzero(action.reshape(4, 2, 6)[obs["robot_active"] == 0]) == 0
+                    # Resolve actuators from the compiled physics model, independently
+                    # of the task selectors. Distinct arm/world targets expose swapped
+                    # columns, stale locations and writes from absent policy arms.
+                    probe = torch.tensor([0.25] * 6 + [-0.4] * 6, device=task.device)
+                    probe = probe[None] * torch.arange(1, 5, device=task.device)[:, None]
+                    handles = bank.world_id_by_env.numpy()
+                    slots = bank.backend.runtime.directory.slot.numpy()[handles]
+                    expected = []
+                    for world, prototype in enumerate(prototypes):
+                        group = bank.backend.runtime.populations[prototype]
+                        model = bank._solvers[prototype].mj_model
+                        qpos = wp.to_torch(group.data.qpos)[slots[world]].cpu().numpy()
+                        target = wp.to_torch(group.data.ctrl)[slots[world]].cpu().numpy().copy()
+                        robot_actuators = 0
+                        for actuator, joint in enumerate(model.actuator_trnid[:, 0]):
+                            name = model.joint(int(joint)).name
+                            arm = 1 if "_Robot_1_joints_" in name else 0 if "_Robot_joints_" in name else -1
+                            if arm < 0:
+                                continue
+                            robot_actuators += 1
+                            if model.actuator_biasprm[actuator, 1] != 0:
+                                target[actuator] = qpos[model.jnt_qposadr[joint]] + (
+                                    task.cfg.actions.action.scale * probe[world, 6 * arm].item()
+                                )
+                            else:
+                                assert model.actuator_biasprm[actuator, 2] != 0
+                                target[actuator] = 0
+                        assert robot_actuators == 12 * bank.robot_counts[prototype]
+                        expected.append((group, int(slots[world]), target))
+                    task.action_manager.process_action(probe)
+                    task.action_manager.apply_action()
+                    for group, slot, target in expected:
+                        np.testing.assert_allclose(
+                            wp.to_torch(group.data.ctrl)[slot].cpu().numpy(), target, rtol=1e-6, atol=1e-7
+                        )
                     obs, reward, *_ = env.step(action)
                     assert torch.isfinite(reward).all()
                     assert all(torch.isfinite(value).all() for value in obs.values())

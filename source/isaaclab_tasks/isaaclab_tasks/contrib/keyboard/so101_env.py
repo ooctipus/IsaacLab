@@ -113,12 +113,8 @@ class SO101KeyboardEnv(ManagerBasedRLEnv):
             self.sim.forward()
 
     def _compute_final_observations(self):
-        """Observe the continuing typing transition without committing it before reset."""
-        device = torch.device(self.device)
-        with (
-            torch.random.fork_rng(devices=[device] if device.type == "cuda" else []),
-            self.command_manager.get_term("typing").preview_step(self.step_dt),
-        ):
+        """Preview terminal observation history from the completed typing transition."""
+        with self.command_manager.get_term("typing").preview_housekeeping(self.step_dt):
             return self.observation_manager.preview()
 
     def reset_variant_ids(self, env_ids):

@@ -114,6 +114,17 @@ def _command(heterogeneous=True):
         letter_length=(1, 3), reset=SimpleNamespace(match_prob=0.5, bank_path=None, replay_only=False)
     )
     command.key_joints = SimpleNamespace(dense_active=lambda: active)
+    command.cfg.actuation_fraction = 0.5
+    command.cfg.key_dofs = SimpleNamespace(
+        scalar_field=lambda source, name: _dense_scalar_field(
+            -torch.ones(5, 12) if name == "joint_limit_lower" else torch.zeros(5, 12)
+        )
+    )
+    command.key_joints.scalar_field = lambda source, name: _dense_scalar_field(torch.zeros(5, 12), active)
+    command.typed = torch.full((5, 3), -1, dtype=torch.long)
+    command.typed_len = torch.zeros(5, dtype=torch.long)
+    command._prev_pressed = torch.zeros(5, 12, dtype=torch.bool)
+    command._just_reset = torch.zeros(5, dtype=torch.bool)
     command.num_keys = 12
     command.max_len = 3
     command._default_backspace = torch.full((5,), 3)
@@ -792,7 +803,7 @@ def test_typing_kernels_preserve_edges_order_overflow_and_prefix_extremes(keys, 
     q = _dense_scalar_field(-torch.from_numpy(pressed).float())
     lower = _dense_scalar_field(-torch.ones(worlds, keys))
     upper = _dense_scalar_field(torch.zeros(worlds, keys))
-    wp.launch(_advance_typing, worlds, inputs=[q, lower, upper, 0.5, *inputs], device="cpu")
+    wp.launch(_advance_typing, worlds, inputs=[q, lower, upper, 0.5, *inputs, True], device="cpu")
     np.testing.assert_array_equal(inputs[1].numpy(), pressed)
     assert not inputs[2].numpy().any()
     np.testing.assert_array_equal(inputs[3].numpy(), expected)
@@ -869,81 +880,183 @@ def _preview_command():
     return command, positions
 
 
-@pytest.mark.parametrize("case", ["press", "multiple", "backspace", "held", "just_reset", "timer"])
-def test_successor_preview_reuses_typing_update_preserving_live_state_and_rng(case):
-    from isaaclab_tasks.contrib.keyboard.mdp.observations import typed_keys_onehot
+def test_typing_transition_handles_simultaneous_presses_backspace_and_reset_edges_once():
+    from isaaclab_tasks.contrib.keyboard.mdp.rewards import letter_typing_progress, typing_success
+    from isaaclab_tasks.contrib.keyboard.mdp.terminations import typing_complete
 
     command, positions = _preview_command()
-    positions[0, 0] = -0.75
-    if case == "multiple":
-        positions[0, 1] = -0.75
-    elif case == "backspace":
-        positions.zero_()
-        positions[0, 3] = -0.75
-        command.typed[0, 0] = 0
-        command.typed_len[0] = 1
-    elif case == "held":
-        command._prev_pressed[0, 0] = True
-    elif case == "just_reset":
-        command._just_reset[0] = True
-    elif case == "timer":
-        command.time_left[0] = 0.01
-    references = {name: value for name, value in vars(command).items() if isinstance(value, torch.Tensor)}
-    values = {name: value.clone() for name, value in references.items()}
-    metrics, seed = command.metrics, command._resample_seed
-    rng = torch.random.get_rng_state().clone()
-    with torch.random.fork_rng(devices=[]), command.preview_step(0.04):
-        preview = {name: getattr(command, name).clone() for name in values}
-        observation = typed_keys_onehot(command._env, "typing")
-        successor_seed = command._resample_seed
-    assert torch.equal(torch.random.get_rng_state(), rng)
-    assert command.metrics is metrics and command._resample_seed == seed
-    for name, original in references.items():
-        assert getattr(command, name) is original
-        torch.testing.assert_close(original, values[name], rtol=0, atol=0)
-    command.compute(0.04)
-    for name, value in preview.items():
-        torch.testing.assert_close(getattr(command, name), value, rtol=0, atol=0)
-    torch.testing.assert_close(typed_keys_onehot(command._env, "typing"), observation, rtol=0, atol=0)
-    assert command._resample_seed == successor_seed
+    command.cfg.resampling_time_range = None
+    # Both collaborating arms press during one control; extra keys prevent success.
+    positions[0, :2] = -0.75
+    positions[1, :3] = -0.75
+    command.typed[2, :2] = torch.tensor([0, 2])
+    command.typed_len[2] = 2
+    positions[2, 1] = positions[2, 3] = -0.75  # Backspace then the correct replacement.
+    command._just_reset[3] = True
+    positions[3, 0] = -0.75  # A reset-held key is adopted, not typed.
+    command.advance()
+    assert command.typed.tolist() == [[0, 1, -1], [0, 1, 2], [0, 1, -1], [-1, -1, -1], [-1, -1, -1]]
+    assert typing_complete(command._env, "typing").tolist() == [True, False, True, False, False]
+    assert typing_success(command._env, "typing").tolist() == [1, 0, 1, 0, 0]
+    assert letter_typing_progress(command._env, "typing").tolist() == [1, 1, 1, 0, 0]
+    before = command.typed.clone()
+    command.compute(0.04)  # Manager housekeeping cannot consume another edge or erase this step's reward.
+    torch.testing.assert_close(command.typed, before)
+    assert command.new_high.tolist() == [True, True, True, False, False]
+    command.advance()  # Held keys do not repeat on the following control.
+    torch.testing.assert_close(command.typed, before)
+    assert not command.new_high.any()
 
 
-@pytest.mark.parametrize("inside_compute", [False, True])
-def test_successor_preview_restores_original_state_on_failure(monkeypatch, inside_compute):
+def test_episode_reset_adopts_snapshot_keys_before_the_first_action():
     command, positions = _preview_command()
+    command.cfg.resampling_time_range = None
+    command._env.episode_interrupted = torch.zeros(5, dtype=torch.bool)
+    command._buffer_built = False
+    command._reset_ik = command._buf_avg_distance = None
+    command._start_distance = torch.ones(5, dtype=torch.long)
+    command._distance_bands, command._split_last = (), {}
+    # With one typeable key and no Backspace, resets always start with an empty buffer.
+    active = torch.zeros(5, 12, dtype=torch.bool)
+    active[:, 0] = True
+    command.key_joints.dense_active = lambda: active
+    command.cfg.letter_length = (1, 1)
     positions[0, 0] = -0.75
-    original = {name: value for name, value in vars(command).items() if isinstance(value, torch.Tensor)}
-    values = {name: value.clone() for name, value in original.items()}
-    metrics = command.metrics
-    if inside_compute:
-        update = command._update_command
-
-        def fail():
-            update()
-            raise RuntimeError("preview failed")
-
-        monkeypatch.setattr(command, "_update_command", fail)
-    with pytest.raises(RuntimeError, match="preview failed"), command.preview_step(0.04):
-        raise RuntimeError("preview failed")
-    assert command.metrics is metrics
-    for name, value in original.items():
-        assert getattr(command, name) is value
-        torch.testing.assert_close(value, values[name], rtol=0, atol=0)
+    command.reset(torch.arange(5))
+    assert not command._just_reset.any()
+    assert command._prev_pressed[:, 0].tolist() == [True, False, False, False, False]
+    positions[1, 0] = -0.75
+    command.advance()
+    assert command.typed_len.tolist() == [0, 1, 0, 0, 0]
+    assert command.distance.tolist() == [1, 0, 1, 1, 1]
 
 
-@pytest.mark.parametrize("resample", [False, True, None])
-def test_final_observation_contains_current_press_and_successor_history_without_committing(resample):
-    from isaaclab.managers import ObservationGroupCfg, ObservationManager, ObservationTermCfg
+@pytest.mark.parametrize("native", [False, True])
+def test_completed_control_drives_typing_rewards_termination_and_terminal_observations(native):
+    from isaaclab.envs import ManagerBasedRLEnv
+    from isaaclab.managers import (
+        EventManager,
+        ObservationGroupCfg,
+        ObservationManager,
+        ObservationTermCfg,
+        RewardManager,
+        RewardTermCfg,
+        TerminationManager,
+        TerminationTermCfg,
+    )
 
     from isaaclab_tasks.contrib.keyboard.mdp.observations import typed_keys_onehot
     from isaaclab_tasks.contrib.keyboard.mdp.rewards import letter_typing_progress, typing_success
     from isaaclab_tasks.contrib.keyboard.mdp.terminations import typing_complete
     from isaaclab_tasks.contrib.keyboard.so101_env import SO101KeyboardEnv
+    from isaaclab_tasks.contrib.keyboard.so101_env_cfg import EventCfg
+    from isaaclab_tasks.contrib.keyboard.so101_population_env import SO101KeyboardPopulationEnv
 
     command, positions = _preview_command()
-    if resample is None:
-        command.cfg.resampling_time_range = None
-        command.time_left.fill_(float("inf"))
+    command.cfg.resampling_time_range = None
+    env = command._env
+    env.physics_dt = env.step_dt = 0.04
+    env.cfg = SimpleNamespace(
+        decimation=1,
+        sim=SimpleNamespace(render_interval=1, physics=None),
+        compute_final_obs=True,
+        redistribution_interval=1,
+        redistribution_mode="episode_boundary",
+    )
+    env.episode_length_buf = torch.zeros(5, dtype=torch.long)
+    env.common_step_counter = env._sim_step_counter = 0
+    env.episode_interrupted = torch.zeros(5, dtype=torch.bool)
+    env.extras = {}
+    env.render_enabled = env.has_rtx_sensors = env._physics_handles_decimation = False
+    env.video_recorders = []
+    env._check_active = env.forward = lambda: None
+    env.scene = SimpleNamespace(write_data_to_sim=lambda: None, update=lambda **kwargs: None)
+    env.action_manager = SimpleNamespace(process_action=lambda action: None, apply_action=lambda: None)
+    env.recorder_manager = SimpleNamespace(
+        active_terms=[],
+        record_pre_step=lambda: None,
+        record_post_physics_decimation_step=lambda: None,
+        record_pre_reset=lambda ids: None,
+        record_post_reset=lambda ids: None,
+    )
+
+    def physics(**kwargs):
+        positions[0, :2] = -0.75  # Both arms complete the shared sequence in this control.
+        positions[1, :3] = -0.75  # An extra simultaneous key prevents success.
+        positions[2, 0] = -0.75  # Progress on the exact timeout control must be credited.
+
+    env.sim = SimpleNamespace(
+        is_playing=lambda: True, is_rendering=False, step=physics, consume_reset_request=lambda: False
+    )
+    env.event_manager = EventManager({"typing": EventCfg().advance_typing}, env)
+    env.command_manager.compute = command.compute
+    env.termination_manager = TerminationManager(
+        {
+            "success": TerminationTermCfg(func=typing_complete, params={"command_name": "typing"}),
+            "timeout": TerminationTermCfg(
+                func=lambda env: torch.tensor([False, False, True, False, False]), time_out=True
+            ),
+        },
+        env,
+    )
+    env.reward_manager = RewardManager(
+        {
+            "progress": RewardTermCfg(func=letter_typing_progress, weight=2.0, params={"command_name": "typing"}),
+            "success": RewardTermCfg(func=typing_success, weight=50.0, params={"command_name": "typing"}),
+        },
+        env,
+    )
+    group = ObservationGroupCfg(concatenate_terms=True)
+    group.typed = ObservationTermCfg(func=typed_keys_onehot, params={"command_name": "typing"})
+    env.observation_manager = ObservationManager({"policy": group}, env)
+    env._compute_final_observations = lambda: SO101KeyboardEnv._compute_final_observations(env)
+    env.keyboard_variants = SimpleNamespace(
+        desired_variant_ids=torch.zeros(5),
+        variant_ids=torch.zeros(5),
+        request_variants=lambda ids: None,
+        redistribution_count=0,
+        last_changed_worlds=0,
+        last_redistribution_ms=0,
+        populated_prototype_count=1,
+        live_dof_count=6,
+    )
+    command._env.keyboard_variants.backspace_slots = torch.tensor([3])
+    env.keyboard_variants.variant_ids = env.keyboard_variants.variant_ids.long()
+    env._apply_variant_requests = lambda ids: torch.empty(0, dtype=torch.long)
+    resets = []
+
+    def reset(ids):
+        resets.append(ids.tolist())
+        command.typed[ids] = -1
+        command.typed_len[ids] = command.prefix_len[ids] = command.max_prefix[ids] = command.min_prefix[ids] = 0
+        command.distance[ids] = 2
+        command.new_high[ids] = command.new_low[ids] = False
+        command._just_reset[ids] = True
+        command._update_command()
+
+    env._reset_idx = reset
+    step = SO101KeyboardPopulationEnv.step if native else ManagerBasedRLEnv.step
+    obs, reward, terminated, truncated, extras = step(env, torch.zeros(5, 6))
+    assert terminated.tolist() == [True, False, False, False, False]
+    assert truncated.tolist() == [False, False, True, False, False]
+    torch.testing.assert_close(reward, 0.04 * torch.tensor([52.0, 2.0, 2.0, 0.0, 0.0]))
+    assert resets == [[0, 2]]
+    assert extras["final_obs"]["policy"][0, [0, 13]].tolist() == [1, 1]
+    assert extras["final_obs"]["policy"][2, 0] == 1
+    assert obs["policy"][0].count_nonzero() == obs["policy"][2].count_nonzero() == 0
+    assert command.typed[1].tolist() == [0, 1, 2]
+    assert command.distance[1] == 1  # No delayed stale success may survive the extra press.
+
+
+@pytest.mark.parametrize("timer", [None, "running", "expired"])
+def test_final_observation_preserves_completed_typing_and_pre_reset_history(timer):
+    from isaaclab.managers import ObservationGroupCfg, ObservationManager, ObservationTermCfg
+
+    from isaaclab_tasks.contrib.keyboard.mdp.observations import typed_keys_onehot
+    from isaaclab_tasks.contrib.keyboard.so101_env import SO101KeyboardEnv
+
+    command, positions = _preview_command()
+    command.cfg.resampling_time_range = None
     env = command._env
     env.sim = SimpleNamespace(is_playing=lambda: True)
     plain = ObservationGroupCfg(concatenate_terms=True)
@@ -953,26 +1066,30 @@ def test_final_observation_contains_current_press_and_successor_history_without_
     manager = ObservationManager({"plain": plain, "history": history}, env)
     env.observation_manager, env.step_dt = manager, 0.04
     manager.compute(update_history=True)
-    before = (letter_typing_progress(env, "typing"), typing_success(env, "typing"), typing_complete(env, "typing"))
-    positions[0, 0] = -0.75
-    if resample:
-        command.time_left[1] = 0.01
+    positions[0, :2] = -0.75
+    command.advance()
+    if timer is not None:
+        command.cfg.resampling_time_range = (10.0, 10.0)
+        command.time_left[1] = 0.01 if timer == "expired" else 10.0
+    references = {name: value for name, value in vars(command).items() if isinstance(value, torch.Tensor)}
+    before = {name: value.clone() for name, value in references.items()}
     seed = command._resample_seed
     rng = torch.random.get_rng_state().clone()
-    successor = SO101KeyboardEnv._compute_final_observations(env)
+    terminal = SO101KeyboardEnv._compute_final_observations(env)
     assert torch.equal(torch.random.get_rng_state(), rng)
     assert command._resample_seed == seed
-    assert command.typed[0, 0] == -1
-    assert successor["plain"][0, 0] == 1
-    assert successor["history"][0, 36] == 1
+    for name, original in references.items():
+        assert getattr(command, name) is original
+        torch.testing.assert_close(original, before[name], rtol=0, atol=0)
+    assert command.typed[0, :2].tolist() == [0, 1]
+    assert command.distance[0] == 0
+    assert terminal["plain"][0, 0] == terminal["plain"][0, 13] == 1
+    assert terminal["history"][0, 36] == terminal["history"][0, 49] == 1
     assert manager._group_obs_term_history_buffer["history"]["typed"]._num_pushes.tolist() == [1] * 5
-    after = (letter_typing_progress(env, "typing"), typing_success(env, "typing"), typing_complete(env, "typing"))
-    for old, current in zip(before, after, strict=True):
-        torch.testing.assert_close(current, old, rtol=0, atol=0)
     command.compute(0.04)
     actual = manager.compute(update_history=True)
-    for name in successor:
-        torch.testing.assert_close(successor[name], actual[name], rtol=0, atol=0)
+    for name in terminal:
+        torch.testing.assert_close(terminal[name], actual[name], rtol=0, atol=0)
 
 
 @pytest.mark.parametrize("source", [(2, -1, 1), (2, 0, 1), (-1, -1, -1)])

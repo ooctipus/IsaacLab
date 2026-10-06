@@ -7,6 +7,7 @@
 
 import ast
 import inspect
+import math
 import textwrap
 
 import onnx
@@ -15,6 +16,8 @@ import torch
 from onnx.reference import ReferenceEvaluator
 from rsl_rl.storage import RolloutStorage
 from tensordict import TensorDict
+
+from isaaclab.utils.math import quat_apply, quat_mul
 
 from isaaclab_tasks.contrib.keyboard.agents.models import SharedArmMLPModel, SharedEncoderMLPModel, SharedEncoderPPO
 
@@ -235,13 +238,14 @@ def test_shared_arm_world_likelihood_entropy_and_kl_exclude_absent_arms():
 
 def test_shared_arm_policy_uses_scalar_first_root_frames_and_other_joint_motion():
     observations = _multi_arm_observations()
-    actor = _multi_arm_algorithm(observations).actor
+    algorithm = _multi_arm_algorithm(observations)
+    actor = algorithm.actor
     actor.obs_normalizer = torch.nn.Identity()
-    # A calibrated head reads own x, other relative x/quaternion w/q/qd, and the first key's relative x.
+    # A calibrated head reads own q, other relative x/quaternion w/q/qd, and the first key's relative x.
     with torch.no_grad():
         for parameter in actor.mlp.parameters():
             parameter.zero_()
-        for output, feature in enumerate((0, 25, 28, 32, 38, 51)):
+        for output, feature in enumerate((0, 18, 21, 25, 31, 44)):
             actor.mlp[0].weight[output, feature] = 1.0
             actor.mlp[-1].weight[output, output] = 1.0
     # The first arm faces +y; the second faces -x and sits 2 m along that first arm's local +x.
@@ -249,10 +253,27 @@ def test_shared_arm_policy_uses_scalar_first_root_frames_and_other_joint_motion(
     observations["robot_state"][1, :, :7] = torch.tensor(
         [[1.0, 2.0, 3.0, half, 0.0, 0.0, half], [1.0, 4.0, 3.0, 0.0, 0.0, 0.0, 1.0]]
     )
+    observations["robot_state"][1, 0, 7] = 3.0
     observations["robot_state"][1, 1, 7] = 5.0
     observations["robot_state"][1, 1, 13] = 7.0
     observations["key_positions"][1, 0] = torch.tensor([1.0, 3.0, 3.0])
-    torch.testing.assert_close(actor(observations)[1, :6], torch.tensor([1.0, 2.0, half, 5.0, 7.0, 1.0]))
+    torch.testing.assert_close(actor(observations)[1, :6], torch.tensor([3.0, 2.0, half, 5.0, 7.0, 1.0]))
+
+    # Moving the entire scene changes stored world poses, but neither policy perspective.
+    moved = observations.clone()
+    # Isaac Lab's transform helpers take xyzw; the policy observations store wxyz.
+    rotation = torch.tensor([*(math.sin(0.37) * axis / math.sqrt(14) for axis in (1, 2, 3)), math.cos(0.37)])
+    translation = torch.tensor([3.0, -2.0, 4.0])
+    roots = observations["robot_state"]
+    moved["robot_state"][..., :3] = quat_apply(rotation.expand(2, 2, 4), roots[..., :3]) + translation
+    moved["robot_state"][..., 3:7] = quat_mul(rotation.expand(2, 2, 4), roots[..., (4, 5, 6, 3)])[..., (3, 0, 1, 2)]
+    moved["key_positions"] = quat_apply(rotation.expand(2, 4, 4), observations["key_positions"]) + translation
+    for model in (actor, algorithm.critic):
+        torch.testing.assert_close(model(moved), model(observations))
+        export = model.as_jit()
+        before = tuple(observations[group] for group in export.input_names)
+        after = tuple(moved[group] for group in export.input_names)
+        torch.testing.assert_close(export(*after), export(*before))
 
 
 def test_shared_arm_real_ppo_keeps_world_rows_across_resets_and_updates_weights():
