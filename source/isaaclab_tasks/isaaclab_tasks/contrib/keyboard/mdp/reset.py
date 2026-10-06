@@ -24,7 +24,11 @@ from ..selection_paths import NewtonSelectorCfg
 
 @configclass
 class KeyboardResetIKCfg:
-    """Selected scalar arm joints and the link-local fingertip offset [m]."""
+    """Selected scalar arm joints and the link-local fingertip offset [m].
+
+    Native worlds select one tip per authored arm. Their chains share topology,
+    while each arm's root pose, coordinate columns, and limits belong to its prototype.
+    """
 
     joints: NewtonSelectorCfg = MISSING
     dofs: NewtonSelectorCfg = MISSING
@@ -148,11 +152,15 @@ class ResetKinematics:
         if any(int(dof) not in dof_joints for dof in dofs):
             raise ValueError("IK DOFs must be scalar ancestors of the selected tip.")
         axes = model.joint_axis.numpy()
+        joint_parent = model.joint_X_p.numpy()[chain]
+        # The caller owns the root pose. Its authored placement is not part of
+        # the arm's topology, so translated instances share this workspace.
+        joint_parent[0] = [0, 0, 0, 0, 0, 0, 1]
         return (
             np.array([local.get(int(parent[j]), -1) for j in chain], dtype=np.int32),
             kinds[chain].copy(),
             np.array([coord_columns[int(qs[j])] if kinds[j] != JointType.FIXED else -1 for j in chain], dtype=np.int32),
-            model.joint_X_p.numpy()[chain],
+            joint_parent,
             xc,
             np.array([axes[ds[j]] if kinds[j] != JointType.FIXED else [0, 0, 0] for j in chain], dtype=np.float32),
             np.array([dof_joints[int(dof)] for dof in dofs], dtype=np.int32),

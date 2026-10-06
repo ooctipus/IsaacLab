@@ -285,6 +285,9 @@ class LetterTypingCommand(CommandTerm):
 
     def __init__(self, cfg: LetterTypingCommandCfg, env: ManagerBasedRLEnv):
         super().__init__(cfg, env)
+        from ...keyboard_worlds import KeyboardWorlds
+
+        staged = isinstance(env.keyboard_variants, KeyboardWorlds)
         self.key_joints, self.key_bodies = cfg.keys, cfg.key_bodies
         # Buffer/observation width. Decoupled from letter_length so the obs size (and a trained policy's
         # input layer) stays fixed when letter_length is varied for evaluation; defaults to letter_length[1].
@@ -296,11 +299,12 @@ class LetterTypingCommand(CommandTerm):
             )
 
         self.num_keys = cfg.keys.width
-        lower = cfg.robot_dofs.read_model("joint_limit_lower")
-        upper = cfg.robot_dofs.read_model("joint_limit_upper")
-        center, half = (lower + upper) * 0.5, (upper - lower) * (0.5 * cfg.soft_joint_pos_limit_factor)
-        self._robot_limits = torch.stack((center - half, center + half), dim=-1)
-        self._default_robot_q = torch.zeros_like(lower)
+        if not staged:
+            lower = cfg.robot_dofs.read_model("joint_limit_lower")
+            upper = cfg.robot_dofs.read_model("joint_limit_upper")
+            center, half = (lower + upper) * 0.5, (upper - lower) * (0.5 * cfg.soft_joint_pos_limit_factor)
+            self._robot_limits = torch.stack((center - half, center + half), dim=-1)
+            self._default_robot_q = torch.zeros_like(lower)
 
         # key roles in global slot space, resolved once at the config layer (see so101_env_cfg)
         self._typeable = (
@@ -360,20 +364,18 @@ class LetterTypingCommand(CommandTerm):
             ik_cfg = cfg.reset.ik
             require_scalar_joint_pair(ik_cfg.joints, ik_cfg.dofs)
             require_same_world_domain(ik_cfg.joints, ik_cfg.body)
-            require_count_per_world(ik_cfg.body, 1)
-            types = ik_cfg.dofs.joint_types()
-            if torch.any((types != newton.JointType.REVOLUTE) & (types != newton.JointType.PRISMATIC)):
-                raise ValueError("Reset IK supports scalar revolute and prismatic joints.")
-            from ...keyboard_worlds import KeyboardWorlds
-
-            if not isinstance(self._env.keyboard_variants, KeyboardWorlds):
+            if not staged:
+                require_count_per_world(ik_cfg.body, 1)
+                types = ik_cfg.dofs.joint_types()
+                if torch.any((types != newton.JointType.REVOLUTE) & (types != newton.JointType.PRISMATIC)):
+                    raise ValueError("Reset IK supports scalar revolute and prismatic joints.")
                 self._ik_jacobian = wp.zeros(
                     (self.num_envs, 6, ik_cfg.joints.width), dtype=wp.float32, device=self.device
                 )
-            lower = ik_cfg.dofs.read_model("joint_limit_lower")
-            upper = ik_cfg.dofs.read_model("joint_limit_upper")
-            center, half = (lower + upper) * 0.5, (upper - lower) * (0.5 * cfg.soft_joint_pos_limit_factor)
-            self._ik_limits = torch.stack((center - half, center + half), dim=-1)
+                lower = ik_cfg.dofs.read_model("joint_limit_lower")
+                upper = ik_cfg.dofs.read_model("joint_limit_upper")
+                center, half = (lower + upper) * 0.5, (upper - lower) * (0.5 * cfg.soft_joint_pos_limit_factor)
+                self._ik_limits = torch.stack((center - half, center + half), dim=-1)
             offset_pos = ik_cfg.tip_offset
             offset = torch.tensor(offset_pos, device=self.device)
             self._ik_offset = offset.expand(self.num_envs, 3)
@@ -681,6 +683,8 @@ class LetterTypingCommand(CommandTerm):
             return
         from tqdm import tqdm
 
+        from ...keyboard_worlds import KeyboardWorlds
+
         cap = self._cur_buffer_size
         bank = self._env.keyboard_variants
         all_ids = self._env.all_env_ids
@@ -720,7 +724,12 @@ class LetterTypingCommand(CommandTerm):
                         if self._buf_state is None:
                             self._buf_state = torch.zeros((cap, state.shape[1]), dtype=state.dtype, device=self.device)
                         self._buf_state[offset + start : offset + start + n] = state
-                        ee_pose = self.cfg.reset.ik.body.read_state("body_q")[:, 0]
+                        poses = self.cfg.reset.ik.body.read_state("body_q")
+                        if isinstance(bank, KeyboardWorlds):
+                            arms = bank.key_arm_ids[bank.variant_ids, self.target_key_slot()]
+                            ee_pose = poses[all_ids, arms]
+                        else:
+                            ee_pose = poses[:, 0]
                         tip = ee_pose[:, :3] + quat_apply(ee_pose[:, 3:], self._ik_offset)
                         reach = torch.linalg.norm(tip - (self.target_key_pos_w() + self._ik_hover), dim=-1)
                         self._buf_reach[offset + start : offset + start + n] = reach[ids]
@@ -737,6 +746,8 @@ class LetterTypingCommand(CommandTerm):
         """Load and validate portable physical/typing snapshots, with fresh curriculum history."""
         import hashlib
 
+        from ...keyboard_worlds import KeyboardWorlds
+
         payload = torch.load(path, map_location="cpu", weights_only=True)
         contract, tensors = payload["contract"], payload["bank"]
         fields = (
@@ -750,7 +761,7 @@ class LetterTypingCommand(CommandTerm):
         )
         widths = (self.cfg.reset_roots.width, self.cfg.reset_coords.width, self.cfg.reset_dofs.width)
         if (
-            contract.get("format") != 1
+            contract.get("format") not in (1, 2)
             or contract["buffer_size"] != self._cur_buffer_size
             or contract["max_len"] != self.max_len
             or tuple(contract[key] for key in ("root_width", "coord_width", "dof_width")) != widths
@@ -773,6 +784,21 @@ class LetterTypingCommand(CommandTerm):
                 raise ValueError(f"Reset-bank integrity check failed: {name}.")
         bank = self._env.keyboard_variants
         variant_count = len(contract["active_labels"])
+        arm_counts = contract.get("robot_counts", [1] * variant_count)
+        if (
+            not arm_counts
+            or len(arm_counts) != variant_count
+            or any(type(count) is not int or count not in (1, 2) for count in arm_counts)
+            or (
+                contract["format"] == 2
+                and (
+                    "robot_counts" not in contract
+                    or contract.get("arm_order") != ["Robot", "Robot_1"][: max(arm_counts)]
+                )
+            )
+            or (contract["format"] == 1 and any(count != 1 for count in arm_counts))
+        ):
+            raise ValueError("Reset-bank arm topology or ordering is invalid.")
         if not ((tensors["_buf_variant"] >= 0) & (tensors["_buf_variant"] < variant_count)).all():
             raise ValueError("Reset-bank prototype IDs are out of range.")
         positions = torch.arange(self.max_len)[None, :]
@@ -789,6 +815,9 @@ class LetterTypingCommand(CommandTerm):
             if variant_count < len(bank.layouts):
                 raise ValueError("Reset-bank prototype labels differ from the configured task.")
             for variant, layout in enumerate(bank.layouts):
+                count = bank.robot_counts[variant] if isinstance(bank, KeyboardWorlds) else 1
+                if arm_counts[variant] != count:
+                    raise ValueError("Reset-bank arm topology differs from a prepared prototype.")
                 labels = [key.label for key in layout.active_keys]
                 if labels != contract["active_labels"][variant]:
                     raise ValueError("Reset-bank key ordering differs from a prepared prototype.")
@@ -804,7 +833,13 @@ class LetterTypingCommand(CommandTerm):
 
             layout = generate_keyboard(self._env.cfg.scene.keyboard.spawn)
             labels = [key.label for key in layout.active_keys]
-            compatible = torch.tensor([entry == labels for entry in contract["active_labels"]], dtype=torch.bool)
+            compatible = torch.tensor(
+                [
+                    entry == labels and count == 1
+                    for entry, count in zip(contract["active_labels"], arm_counts, strict=True)
+                ],
+                dtype=torch.bool,
+            )
             selected_variant = self.cfg.reset.bank_variant
             if selected_variant is None:
                 matches = compatible.nonzero().flatten()
@@ -1215,7 +1250,7 @@ class LetterTypingCommand(CommandTerm):
         return extras
 
     def _solve_reset_pose(self, env_ids: torch.Tensor, *, publish: bool = True):
-        """Snap the arm so the moving-jaw tip hovers above the first key, angled to press, without stepping.
+        """Pose present arms above their owned keys, angled to press, without stepping.
 
         Seeds the arm from its default pose (optionally jittered by ``reset.ik_seed_joint_noise``), then runs
         damped-least-squares differential IK on the
@@ -1223,7 +1258,9 @@ class LetterTypingCommand(CommandTerm):
         after the base pan settles also drive the approach orientation from ``reset.ik_rpy_deg`` (see
         :meth:`_approach_target_quat`). Damping makes the position-priority projection approximate, so
         orientation correction can perturb tip position. Native worlds evaluate a compact prospective
-        robot/root payload, then publish the completed snapshot once; continuing episodes are never
+        robot/root payload, then publish the completed snapshot once. With two arms, the arm owning
+        the next shared key targets it; the other samples a key from its own keyboard half. Both
+        solve against the same prospective keyboard pose. Continuing episodes are never
         used as reset scratch. Other backends evaluate selected live Newton FK/Jacobians and reconcile
         once with ``env.forward()``. Both paths
         preserve the full-environment iteration draw and use the same DLS equations and joint limits.
@@ -1260,16 +1297,26 @@ class LetterTypingCommand(CommandTerm):
             roots = snapshot[:, : 7 * root_width].reshape(-1, root_width, 7)
             sampled = sample_root_poses(roots, pre.params["pose_range"], pre.params["velocity_range"])
             roots.copy_(torch.where(bank.reset_keyboard_roots[variants, :, None], sampled, roots))
-            rows = torch.arange(len(env_ids), device=self.device)
             nxt = torch.minimum(self.prefix_len[env_ids], (self.target_len[env_ids] - 1).clamp(min=0))
             slots = torch.where(
                 self.typed_len[env_ids] > self.prefix_len[env_ids],
                 bank.backspace_slots[variants],
                 self.target[env_ids, nxt],
             ).clamp(min=0)
-            key_roots = roots[rows, bank.reset_key_root[variants, slots]]
+            arm_roots = bank.reset_robot_roots[variants]
+            arm_rows, arms = (arm_roots >= 0).nonzero(as_tuple=True)
+            arm_variants = variants[arm_rows]
+            arm_slots = slots[arm_rows]
+            if arm_roots.shape[1] > 1:
+                membership = bank.key_arm_ids[arm_variants] == arms[:, None]
+                sampled_slots = torch.multinomial(membership.float(), 1).squeeze(1)
+                owns_next = bank.key_arm_ids[arm_variants, arm_slots] == arms
+                arm_slots = torch.where(owns_next, arm_slots, sampled_slots)
+            key_roots = roots[arm_rows, bank.reset_key_root[arm_variants, arm_slots]]
             target_w = (
-                key_roots[:, :3] + quat_apply(key_roots[:, 3:], bank.reset_key_local[variants, slots]) + self._ik_hover
+                key_roots[:, :3]
+                + quat_apply(key_roots[:, 3:], bank.reset_key_local[arm_variants, arm_slots])
+                + self._ik_hover
             )
         elif pre is not None:
             # Mirror EventManager term resolution: class-based terms (ManagerTermBase subclasses)
@@ -1281,11 +1328,18 @@ class LetterTypingCommand(CommandTerm):
         # reset_joints_by_offset event it replaces) so the reset start-states carry the same joint diversity as
         # the no-IK case; zero velocity. On low IK-iteration snapshots the offset survives into the pose, while
         # fully-converged solves reach the same hover regardless of the seed. noise == 0 -> exact default.
-        default_q = self._default_robot_q[env_ids]
+        if staged:
+            robot_columns = bank.reset_robot_columns[arm_variants, arms]
+            limits = bank.reset_robot_limits[arm_variants, arms]
+            default_q = torch.zeros(robot_columns.shape, device=self.device)
+            ik_limits = limits[:, bank.reset_ik_columns]
+        else:
+            default_q = self._default_robot_q[env_ids]
         noise = self.cfg.reset.ik_seed_joint_noise
         if noise > 0.0:
             seed_q = default_q + (torch.rand_like(default_q) * 2.0 - 1.0) * noise
-            limits = self._robot_limits[env_ids]
+            if not staged:
+                limits = self._robot_limits[env_ids]
             seed_q = torch.clamp(seed_q, limits[..., 0], limits[..., 1])
         else:
             seed_q = default_q
@@ -1298,7 +1352,7 @@ class LetterTypingCommand(CommandTerm):
 
         def update_kinematics():
             if staged:
-                return bank.reset_kinematics.evaluate(seed_q, roots[:, bank.reset_robot_root])
+                return bank.reset_kinematics.evaluate(seed_q, roots[arm_rows, arm_roots[arm_rows, arms]])
             if kinematic_graph is None:
                 for model, state, mask in kinematics:
                     newton.eval_fk(model, state.joint_q, state.joint_qd, state, mask=mask)
@@ -1320,19 +1374,21 @@ class LetterTypingCommand(CommandTerm):
         n_position = max(1, int(round(0.6 * hi)))
         # Per-env iteration budget: after an env hits its sampled count it stops refining (pose frozen), so
         # snapshots land at varying convergence - different tip-to-key distances - a reach-difficulty gradient.
-        iters_env = torch.randint(lo, hi + 1, (self.num_envs,), device=self.device)
+        iteration_shape = (self.num_envs, arm_roots.shape[1]) if staged else (self.num_envs,)
+        iters_env = torch.randint(lo, hi + 1, iteration_shape, device=self.device)
         if staged:
-            iters_env = iters_env[env_ids]
+            iters_env = iters_env[env_ids[arm_rows], arms]
         max_step = 0.2  # rad/iter cap so a near-singular DLS solve can't flip the arm on a hard key
         lambda_sq = 0.05**2  # damped-least-squares damping (squared), for the pseudo-inverses below
         eye_task = torch.eye(3, device=self.device)
-        eye_joint = torch.eye(self.cfg.reset.ik.joints.width, device=self.device)
+        ik_width = len(bank.reset_ik_columns) if staged else self.cfg.reset.ik.joints.width
+        eye_joint = torch.eye(ik_width, device=self.device)
         quat_des: torch.Tensor | None = None
         for i in range(hi):
             ee_pose = compact[0] if staged else self.cfg.reset.ik.body.read_state("body_q")[:, 0]
             ee_pos_w, ee_quat_w = ee_pose[:, :3], ee_pose[:, 3:]
             # shift the parent-body pose/Jacobian to the jaw tip (world frame).
-            lever_w = quat_apply(ee_quat_w, self._ik_offset[: len(ee_pose)])  # tip offset expressed in world
+            lever_w = quat_apply(ee_quat_w, self._ik_offset[0].expand(len(ee_pose), -1))
             tip_pos_w = ee_pos_w + lever_w
             jac = compact[1] if staged else wp.to_torch(self._ik_jacobian)
             q_arm = seed_q[:, bank.reset_ik_columns] if staged else self.cfg.reset.ik.joints.read_state("joint_q")
@@ -1365,7 +1421,7 @@ class LetterTypingCommand(CommandTerm):
                 dq = dq + null_proj @ (rot_pinv @ e_rot.unsqueeze(-1))
 
             q_des = q_arm + torch.clamp(dq.squeeze(-1), -max_step, max_step)
-            limits = self._ik_limits[env_ids] if staged else self._ik_limits
+            limits = ik_limits if staged else self._ik_limits
             q_des = torch.clamp(q_des, limits[..., 0], limits[..., 1])
             # Freeze envs that have spent their sampled iteration budget (write back their current pose).
             q_des = torch.where((i < iters_env)[:, None], q_des, q_arm)
@@ -1375,7 +1431,7 @@ class LetterTypingCommand(CommandTerm):
                 self.cfg.reset.ik.joints.write_state("joint_q", q_des[env_ids], env_ids)
             compact = update_kinematics()
         if staged:
-            snapshot[:, 7 * root_width + bank.reset_robot_columns] = seed_q
+            snapshot[arm_rows[:, None], 7 * root_width + robot_columns] = seed_q
             snapshot[:, 7 * root_width + q_width :] = 0
             if publish:
                 self._env.restore_reset_snapshot(env_ids, variants, snapshot)
@@ -1397,7 +1453,7 @@ class LetterTypingCommand(CommandTerm):
         Args:
             ee_quat_w: Current moving-jaw link orientation (x, y, z, w), shape ``(num_envs, 4)``.
         """
-        finger = quat_apply(ee_quat_w, self._ik_finger_axis[: len(ee_quat_w)])  # current finger axis in world
+        finger = quat_apply(ee_quat_w, self._ik_finger_axis[0].expand(len(ee_quat_w), -1))
         heading = finger[:, :2] / torch.linalg.norm(finger[:, :2], dim=-1, keepdim=True).clamp_min(1.0e-6)
         # yaw: rotate the horizontal heading about world +Z.
         if self._ik_yaw != 0.0:

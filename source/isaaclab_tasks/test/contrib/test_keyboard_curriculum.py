@@ -201,6 +201,7 @@ def test_homogeneous_sources_exclude_incompatible_superset_bank_rows():
 def test_homogeneous_bank_requires_explicit_ambiguous_variant_and_valid_typing_schema(tmp_path, monkeypatch):
     import hashlib
 
+    from isaaclab_tasks.contrib.keyboard.keyboard_worlds import KeyboardWorlds
     from isaaclab_tasks.contrib.keyboard.keyboards import keyboard_geometry
 
     command = _command(False)
@@ -246,6 +247,23 @@ def test_homogeneous_bank_requires_explicit_ambiguous_variant_and_valid_typing_s
     command.cfg.reset.bank_variant = 1
     command._load_buffer(path)
     assert command._buffer_compatible.tolist() == [False, True]
+    contract.update(format=2, robot_counts=[1, 2], arm_order=["Robot", "Robot_1"])
+    command.cfg.reset.bank_variant = None
+    save()
+    command._load_buffer(path)
+    assert command._buffer_compatible.tolist() == [True, False]
+    native = object.__new__(KeyboardWorlds)
+    native.layouts, native.robot_counts = (layout, layout), (2, 1)
+    command._env.keyboard_variants = native
+    with pytest.raises(ValueError, match="arm topology differs"):
+        command._load_buffer(path)
+    command._env.keyboard_variants = None
+    contract["arm_order"] = ["Robot_1", "Robot"]
+    save()
+    with pytest.raises(ValueError, match="arm topology or ordering"):
+        command._load_buffer(path)
+    contract.update(format=1, robot_counts=[1, 1])
+    command.cfg.reset.bank_variant = 1
     contract["active_labels"][1] = ["other"]
     save()
     with pytest.raises(ValueError, match="matching keyboard labels"):
@@ -289,8 +307,10 @@ def test_native_normal_ik_completes_prospective_payload_before_publication_and_p
     bank.reset_keyboard_roots = torch.tensor([[False, True], [False, True]])
     bank.reset_key_root = torch.ones((2, 2), dtype=torch.long)
     bank.reset_key_local = torch.zeros((2, 2, 3))
-    bank.reset_robot_columns = bank.reset_ik_columns = torch.tensor([0])
-    bank.reset_robot_root = 0
+    bank.reset_robot_columns = torch.tensor([[[0]], [[0]]])
+    bank.reset_ik_columns = torch.tensor([0])
+    bank.reset_robot_roots = torch.tensor([[0], [0]])
+    bank.reset_robot_limits = torch.tensor([-1.0, 1.0]).expand(2, 1, 1, 2)
     bank.reset_kinematics = ResetKinematics(model, [0], [0], tip, 3, (0, 0, 0))
     desired = torch.tensor([1, 0, 1])
     command = object.__new__(LetterTypingCommand)
@@ -366,6 +386,118 @@ def test_native_normal_ik_completes_prospective_payload_before_publication_and_p
     assert torch.equal(final_rng, torch.random.get_rng_state())
     expected = seed[:, 0] + torch.clamp((0.3 - seed[:, 0]) / (1 + 0.05**2), -0.2, 0.2)
     torch.testing.assert_close(payload[:, 14], expected, atol=1e-7, rtol=0)
+
+
+def test_native_reset_uses_each_present_arms_root_limits_and_keyboard_half_without_overwriting_keys():
+    import newton
+
+    from isaaclab_tasks.contrib.keyboard.keyboard_worlds import KeyboardWorlds
+    from isaaclab_tasks.contrib.keyboard.newton_selection import NewtonSelections
+    from isaaclab_tasks.contrib.keyboard.selection_paths import NewtonSelectorCfg
+
+    bank = object.__new__(KeyboardWorlds)
+    bank.env = SimpleNamespace(device="cpu", num_envs=3)
+    bank.robot_counts = (1, 2)
+    bank.key_arm_ids = torch.tensor([[0, 0], [0, 1]])
+    bank.variant_ids = torch.zeros(3, dtype=torch.long)
+    bank.backspace_slots = torch.ones(2, dtype=torch.long)
+    bank._q_offset, bank._qd_offset = 21, 25
+    bank._sources, bank._solvers = [], []
+    for count in bank.robot_counts:
+        builder = newton.ModelBuilder()
+        builder.begin_world()
+        for arm in range(count):
+            name = "Robot" if arm == 0 else "Robot_1"
+            placement = wp.transform(((arm * 2 - 1) * 0.2 if count == 2 else 0.0, 0.0, 0.0), wp.quat_identity())
+            root = builder.add_link(label=f"/{name}/base", xform=placement, mass=1.0)
+            tip = builder.add_link(label=f"/{name}/tip", xform=placement, mass=1.0)
+            fixed = builder.add_joint_fixed(parent=-1, child=root, parent_xform=placement)
+            limit = (0.08 if arm == 0 else 0.07) if count == 2 else 1.0
+            joint = builder.add_joint_prismatic(
+                parent=root,
+                child=tip,
+                axis=(1, 0, 0),
+                label=f"/{name}/joint",
+                limit_lower=-limit,
+                limit_upper=limit,
+            )
+            builder.add_articulation([fixed, joint])
+        keyboard_x = 0.1 if count == 2 else 0.05
+        placement = wp.transform((keyboard_x, 0, 0), wp.quat_identity())
+        root = builder.add_link(label="/Keyboard/base", xform=placement, mass=1.0)
+        joints = [builder.add_joint_fixed(parent=-1, child=root, parent_xform=placement)]
+        for key, x in enumerate((-0.2, 0.2)):
+            body = builder.add_link(
+                label=f"/Keyboard/key{key}", xform=wp.transform((keyboard_x + x, 0, 0), wp.quat_identity()), mass=1.0
+            )
+            joints.append(
+                builder.add_joint_prismatic(
+                    parent=root,
+                    child=body,
+                    axis=(0, 0, 1),
+                    label=f"/Keyboard/joint{key}",
+                    parent_xform=wp.transform((x, 0, 0), wp.quat_identity()),
+                )
+            )
+            builder.joint_q[-1] = 0.011 + 0.001 * key
+        builder.add_articulation(joints)
+        builder.end_world()
+        model = builder.finalize("cpu")
+        bank._sources.append(NewtonSelections(model))
+        bank._solvers.append(SimpleNamespace(model=model))
+    body, q, qd = (getattr(newton.Model.AttributeFrequency, name) for name in ("BODY", "JOINT_COORD", "JOINT_DOF"))
+    robot_path, key_path = "/Robot(?:_1)?/joint", "/Keyboard/joint.*"
+    cfg = SimpleNamespace(
+        robot_joints=NewtonSelectorCfg(q, robot_path, policy_width=2),
+        robot_dofs=NewtonSelectorCfg(qd, robot_path, policy_width=2),
+        reset_roots=NewtonSelectorCfg(body, ("/Robot(?:_1)?/base", "/Keyboard/base"), policy_width=3),
+        reset_coords=NewtonSelectorCfg(q, (robot_path, key_path), policy_width=4),
+        reset_dofs=NewtonSelectorCfg(qd, (robot_path, key_path), policy_width=4),
+        key_bodies=NewtonSelectorCfg(body, "/Keyboard/key.*", policy_width=2),
+        soft_joint_pos_limit_factor=1.0,
+        reset=SimpleNamespace(
+            ik=SimpleNamespace(
+                joints=NewtonSelectorCfg(q, robot_path, policy_width=2),
+                dofs=NewtonSelectorCfg(qd, robot_path, policy_width=2),
+                body=NewtonSelectorCfg(body, "/Robot(?:_1)?/tip", policy_width=2),
+                tip_offset=(0, 0, 0),
+            ),
+            ik_seed_joint_noise=0.0,
+            pre_solve_reset=SimpleNamespace(
+                params={
+                    "roots": NewtonSelectorCfg(body, "/Keyboard/base"),
+                    "pose_range": {},
+                    "velocity_range": {},
+                }
+            ),
+        ),
+    )
+    bank._prepare_reset_staging(cfg)
+    before = bank.reset_defaults.clone()
+    command = object.__new__(LetterTypingCommand)
+    command._env = SimpleNamespace(
+        num_envs=3,
+        device="cpu",
+        keyboard_variants=bank,
+        reset_variant_ids=lambda ids: torch.tensor([1, 0, 0])[ids],
+    )
+    command.cfg = cfg
+    cfg.reset_roots = SimpleNamespace(width=3)
+    cfg.reset_coords = SimpleNamespace(width=4)
+    command._reset_ik, command._ik_iters = cfg.reset.ik, (1, 1)
+    # Live rows describe a different prototype; native reset must use the prospective limits.
+    command._robot_limits = command._ik_limits = torch.zeros((3, 2, 2))
+    command._ik_offset, command._ik_hover = torch.zeros((3, 3)), torch.zeros(3)
+    command.target = torch.zeros((3, 1), dtype=torch.long)
+    command.target_len = torch.ones(3, dtype=torch.long)
+    command.typed_len = command.prefix_len = torch.zeros(3, dtype=torch.long)
+    ids, snapshot = command._solve_reset_pose(torch.tensor([2, 0]), publish=False)
+    assert ids.tolist() == [2, 0]
+    torch.testing.assert_close(snapshot[0, 21:25], torch.tensor([-0.15 / 1.0025, 0.011, 0.012, 0.0]))
+    torch.testing.assert_close(snapshot[1, 21:25], torch.tensor([0.08, 0.07, 0.011, 0.012]))
+    torch.testing.assert_close(snapshot[:, 25:], torch.zeros((2, 4)))
+    torch.testing.assert_close(bank.reset_defaults, before, rtol=0, atol=0)
+    assert bank.variant_ids.tolist() == [0, 0, 0]
 
 
 def test_explicit_all_world_cohort_preserves_baseline_samples():

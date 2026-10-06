@@ -36,7 +36,7 @@ from newton.solvers import (
 from isaaclab.utils import replace
 
 from .keyboard_populations import prepare_keyboard_prototype
-from .keyboards.keyboard_geometry import generate_keyboard
+from .keyboards.keyboard_geometry import generate_keyboard, quat_rotate
 from .mdp.reset import ResetKinematics, reset_root_state_uniform
 from .mujoco_selection import (
     MuJoCoSelections,
@@ -220,7 +220,18 @@ class KeyboardWorlds:
             if reset.replay_only and (not reset.enabled or reset.ik is None):
                 raise ValueError("Native replay-only resets require an enabled typing curriculum with reset IK.")
             configs = env.cfg.keyboard_variants or (env.cfg.scene.keyboard.spawn,)
-            if reset.replay_only and reset.bank_path is None and reset.buffer_size < len(configs):
+            robot_counts = env.cfg.robot_counts
+            if (
+                not robot_counts
+                or any(type(count) is not int or count not in (1, 2) for count in robot_counts)
+                or len(set(robot_counts)) != len(robot_counts)
+            ):
+                raise ValueError("Native keyboard robot_counts must contain unique choices of one or two arms.")
+            self.configs = tuple(
+                replace(cfg, topology_mode="exact", partition_mode="fixed_dof") for cfg in configs for _ in robot_counts
+            )
+            self.robot_counts = tuple(count for _ in configs for count in robot_counts)
+            if reset.replay_only and reset.bank_path is None and reset.buffer_size < len(self.configs):
                 raise ValueError("Replay-only online buffers require at least one snapshot per keyboard prototype.")
             if not reset.replay_only or reset.bank_path is None:
                 if (
@@ -250,8 +261,7 @@ class KeyboardWorlds:
                 or physics.deterministic_mode != "not_guaranteed"
             ):
                 raise ValueError("Deterministic native world execution is not yet supported.")
-            configs = tuple(replace(cfg, topology_mode="exact", partition_mode="fixed_dof") for cfg in configs)
-            self.layouts = tuple(generate_keyboard(cfg) for cfg in configs)
+            self.layouts = tuple(generate_keyboard(cfg) for cfg in self.configs)
             if any(layout.active_key_count % 6 or not 6 <= layout.active_key_count <= 108 for layout in self.layouts):
                 raise ValueError("Keyboard prototypes require 6..108 keys in multiples of six.")
             self.key_counts = torch.tensor([layout.active_key_count for layout in self.layouts], device=env.device)
@@ -267,7 +277,7 @@ class KeyboardWorlds:
             )
             # Last successful task publication; the directory owns lifetime and placement.
             self.variant_ids = torch.full((env.num_envs,), -1, dtype=torch.long, device=env.device)
-            self.desired_variant_ids = env.all_env_ids.remainder(len(configs)).long()
+            self.desired_variant_ids = env.all_env_ids.remainder(len(self.configs)).long()
             self._staged_variant_ids = self.desired_variant_ids.clone()
             self.world_id_by_env = wp.full(env.num_envs, -1, dtype=wp.int32, device=env.device)
             self.world_generation_by_env = wp.zeros(env.num_envs, dtype=wp.uint64, device=env.device)
@@ -278,8 +288,8 @@ class KeyboardWorlds:
             self._request_variants = torch.empty(env.num_envs, dtype=torch.long, device=env.device)
             self._payload_enabled = wp.zeros(1, dtype=wp.int32, device=env.device)
             self._failed = wp.zeros(1, dtype=wp.int32, device=env.device)
-            self._demand = wp.empty((len(configs), 2), dtype=wp.int32, device=env.device)
-            self.overflow = wp.zeros(len(configs), dtype=wp.int32, device=env.device)
+            self._demand = wp.empty((len(self.configs), 2), dtype=wp.int32, device=env.device)
+            self.overflow = wp.zeros(len(self.configs), dtype=wp.int32, device=env.device)
             self._selector_cfgs = {}
 
             def remember(cfg):
@@ -295,32 +305,17 @@ class KeyboardWorlds:
             self._q_offset, self._qd_offset = 7 * root_width, 7 * root_width + coord_width
             self._payload = torch.empty((env.num_envs, self._qd_offset + dof_width), device=env.device)
             self._payload_wp = wp.from_torch(self._payload)
-            self._snapshot_maps, self._prototype_maps, prepared = [], [], []
-            for cfg, layout in zip(configs, self.layouts, strict=True):
-                solver, source = prepare_keyboard_prototype(
-                    env, cfg, physics, self._selector_cfgs.values(), contact_capacity=96 + 8 * layout.active_key_count
-                )
-                self._solvers.append(solver)
-                self._sources.append(source)
-                solver.mjw_model.opt.timestep.fill_(env.physics_dt / physics.num_substeps)
-                defaults = mjw.replicate_data(solver.mjw_data, 1)
-                mjw.forward(solver.mjw_model, defaults)
-                warm = mjw.replicate_data(defaults, 1)
-                mjw.step(solver.mjw_model, warm)
-                prepared.append((solver.mjw_model, defaults))
-                mapping = solver.model_mapping
-                validate_native_mapping(source, mapping)
-                self._prototype_maps.append(mapping)
-                self._snapshot_maps.append(self._snapshot_columns(mapping, source, command))
+            prepared = self._prepare_prototypes(physics, command)
             self.reset_kinematics = None
             if not reset.replay_only or reset.bank_path is None:
                 self._prepare_reset_staging(command)
             initial_counts = [
-                env.num_envs // len(configs) + int(i < env.num_envs % len(configs)) for i in range(len(configs))
+                env.num_envs // len(self.configs) + int(i < env.num_envs % len(self.configs))
+                for i in range(len(self.configs))
             ]
             # Reserve addresses for the largest simultaneous old + replacement batch,
             # while backing only initial populations and bounded reset headroom.
-            capacities = (2 * env.num_envs,) * len(configs)
+            capacities = (2 * env.num_envs,) * len(self.configs)
             ready = tuple(min(2 * env.num_envs, n + max(8, n // 2)) for n in initial_counts)
             self.backend = env.sim.get_or_create_backend(
                 NewtonWorldsBackendCfg(
@@ -453,6 +448,63 @@ class KeyboardWorlds:
         cfg = self.env.cfg
         return cfg.commands, cfg.actions, cfg.observations, cfg.rewards, cfg.terminations, cfg.events
 
+    def _prepare_prototypes(self, physics, command):
+        """Compile exact arm/keyboard models and their native reset and half-key mappings."""
+        spacing = self.env.cfg.robot_base_min_spacing
+        if type(spacing) not in (int, float) or not np.isfinite(spacing) or spacing < 0:
+            raise ValueError("Robot base minimum spacing must be a finite nonnegative number.")
+        half_spacing = spacing * 0.5
+        key_arms = np.full((len(self.configs), 108), -1, dtype=np.int64)
+        for prototype, (layout, count) in enumerate(zip(self.layouts, self.robot_counts, strict=True)):
+            key_arms[prototype, : layout.active_key_count] = 0
+            if count == 2:
+                xs = np.array([key.center[0] for key in layout.active_keys])
+                right = xs >= np.median(xs)
+                if right.all() or not right.any():
+                    right[:] = False
+                    right[np.argsort(xs, kind="stable")[len(xs) // 2 :]] = True
+                key_arms[prototype, : layout.active_key_count] = right
+        self.key_arm_ids = torch.tensor(key_arms, device=self.env.device)
+        self._snapshot_maps, self._prototype_maps, prepared = [], [], []
+        for prototype, (cfg, layout, count) in enumerate(
+            zip(self.configs, self.layouts, self.robot_counts, strict=True)
+        ):
+            robot_positions = (self.env.cfg.scene.robot.init_state.pos,)
+            if count == 2:
+                positions = []
+                for arm in range(count):
+                    center = np.mean(
+                        [key.center[0] for key in layout.active_keys if key_arms[prototype, key.slot] == arm]
+                    )
+                    center = min(center, -half_spacing) if arm == 0 else max(center, half_spacing)
+                    shift = quat_rotate(self.env.cfg.scene.keyboard.init_state.rot, (float(center), 0.0, 0.0))
+                    positions.append(tuple(a + b for a, b in zip(self.env.cfg.scene.robot.init_state.pos, shift)))
+                robot_positions = tuple(positions)
+            solver, source = prepare_keyboard_prototype(
+                self.env,
+                cfg,
+                physics,
+                self._selector_cfgs.values(),
+                contact_capacity=96 * count + 8 * layout.active_key_count,
+                robot_positions=robot_positions,
+            )
+            self._solvers.append(solver)
+            self._sources.append(source)
+            solver.mjw_model.opt.timestep.fill_(self.env.physics_dt / physics.num_substeps)
+            defaults = mjw.replicate_data(solver.mjw_data, 1)
+            mjw.forward(solver.mjw_model, defaults)
+            warm = mjw.replicate_data(defaults, 1)
+            mjw.step(solver.mjw_model, warm)
+            prepared.append((solver.mjw_model, defaults))
+            mapping = solver.model_mapping
+            validate_native_mapping(source, mapping)
+            self._prototype_maps.append(mapping)
+            self._snapshot_maps.append(self._snapshot_columns(mapping, source, command))
+        self._dof_counts = torch.tensor(
+            [solver.model.joint_dof_count for solver in self._solvers], device=self.env.device
+        )
+        return prepared
+
     def _snapshot_columns(self, mapping, source, command):
         qids = query_selection_indices(source.model, command.reset_coords)
         qdids = query_selection_indices(source.model, command.reset_dofs)
@@ -480,9 +532,11 @@ class KeyboardWorlds:
         )
 
     def _prepare_reset_staging(self, command):
-        """Compile immutable snapshot/key tables and one compact robot reset workspace."""
+        """Compile prototype-specific snapshot tables and one workspace shared by all present arms."""
         root_width = self._q_offset // 7
         defaults, key_roots, key_local, root_active, keyboard_columns = [], [], [], [], []
+        robot_roots, robot_columns, robot_limits = [], [], []
+        max_arms = max(self.robot_counts)
         self.reset_kinematics = None
         for prototype, (solver, source) in enumerate(zip(self._solvers, self._sources, strict=True)):
             model = solver.model
@@ -532,37 +586,66 @@ class KeyboardWorlds:
             root_mask[[root_index[int(body)] for body in selected_roots]] = True
             keyboard_columns.append(root_mask)
             robot = resolve_selection(source, command.robot_joints).ids.numpy()
+            robot_dofs = resolve_selection(source, command.robot_dofs).ids.numpy()
             ik_dofs = resolve_selection(source, command.reset.ik.dofs).ids.numpy()
             ik_coords = resolve_selection(source, command.reset.ik.joints).ids.numpy()
-            tip = int(resolve_selection(source, command.reset.ik.body).ids.numpy()[0])
-            root = tip
-            while root not in root_index:
-                root = body_parent[root]
+            tips = resolve_selection(source, command.reset.ik.body).ids.numpy()
+            if len(tips) != self.robot_counts[prototype]:
+                raise ValueError("Reset IK must select exactly one tip for every authored arm.")
+            body_roots = np.empty(model.body_count, dtype=np.int64)
+            for body in range(model.body_count):
+                root = body
+                while root not in root_index:
+                    root = body_parent[root]
+                    if root < 0:
+                        raise ValueError("Every reset body must descend from a selected fixed root.")
+                body_roots[body] = root
+            qs, ds = model.joint_q_start.numpy(), model.joint_qd_start.numpy()
+            coord_roots = body_roots[child[np.searchsorted(qs[1:], robot, side="right")]]
+            dof_roots = body_roots[child[np.searchsorted(ds[1:], robot_dofs, side="right")]]
+            ik_coord_roots = body_roots[child[np.searchsorted(qs[1:], ik_coords, side="right")]]
+            ik_dof_roots = body_roots[child[np.searchsorted(ds[1:], ik_dofs, side="right")]]
             qids = resolve_selection(source, replace(command.reset_coords, policy_width=None)).ids.numpy()
             qcolumn = {int(coord): column for column, coord in enumerate(qids)}
-            robot_columns = np.array([qcolumn[int(coord)] for coord in robot], dtype=np.int64)
-            robot_column = {int(coord): column for column, coord in enumerate(robot)}
-            ik_columns = np.array([robot_column[int(coord)] for coord in ik_coords], dtype=np.int64)
-            if prototype == 0:
-                self.reset_robot_columns = torch.tensor(robot_columns, device=self.env.device)
-                self.reset_ik_columns = torch.tensor(ik_columns, device=self.env.device)
-                self.reset_robot_root = root_index[root]
-                self.reset_kinematics = ResetKinematics(
-                    model, robot, ik_dofs, tip, self.env.num_envs, command.reset.ik.tip_offset
-                )
-            else:
-                if (
-                    root_index[root] != self.reset_robot_root
-                    or not np.array_equal(robot_columns, self.reset_robot_columns.cpu().numpy())
-                    or not np.array_equal(ik_columns, self.reset_ik_columns.cpu().numpy())
-                ):
-                    raise ValueError("Keyboard snapshots must share the robot coordinate and root columns.")
-                self.reset_kinematics.validate_model(model, robot, ik_dofs, tip)
+            roots_for_arms = np.full(max_arms, -1, dtype=np.int64)
+            columns_for_arms = limits_for_arms = None
+            lower, upper = model.joint_limit_lower.numpy(), model.joint_limit_upper.numpy()
+            for arm, tip in enumerate(tips):
+                root = body_roots[tip]
+                arm_coords, arm_dofs = robot[coord_roots == root], robot_dofs[dof_roots == root]
+                arm_ik_coords, arm_ik_dofs = ik_coords[ik_coord_roots == root], ik_dofs[ik_dof_roots == root]
+                if len(arm_coords) != len(arm_dofs):
+                    raise ValueError("Reset arms require matching scalar robot coordinates and DOFs.")
+                robot_column = {int(coord): column for column, coord in enumerate(arm_coords)}
+                ik_columns = np.array([robot_column[int(coord)] for coord in arm_ik_coords], dtype=np.int64)
+                if self.reset_kinematics is None:
+                    self.reset_ik_columns = torch.tensor(ik_columns, device=self.env.device)
+                    self.reset_kinematics = ResetKinematics(
+                        model, arm_coords, arm_ik_dofs, tip, self.env.num_envs * max_arms, command.reset.ik.tip_offset
+                    )
+                else:
+                    if not np.array_equal(ik_columns, self.reset_ik_columns.cpu().numpy()):
+                        raise ValueError("Keyboard arms must share local IK coordinate ordering.")
+                    self.reset_kinematics.validate_model(model, arm_coords, arm_ik_dofs, tip)
+                if columns_for_arms is None:
+                    columns_for_arms = np.full((max_arms, len(arm_coords)), -1, dtype=np.int64)
+                    limits_for_arms = np.zeros((max_arms, len(arm_coords), 2), dtype=np.float32)
+                roots_for_arms[arm] = root_index[root]
+                columns_for_arms[arm] = [qcolumn[int(coord)] for coord in arm_coords]
+                center = (lower[arm_dofs] + upper[arm_dofs]) * 0.5
+                half = (upper[arm_dofs] - lower[arm_dofs]) * (0.5 * command.soft_joint_pos_limit_factor)
+                limits_for_arms[arm] = np.stack((center - half, center + half), axis=-1)
+            robot_roots.append(roots_for_arms)
+            robot_columns.append(columns_for_arms)
+            robot_limits.append(limits_for_arms)
         self.reset_defaults = torch.stack(defaults)
         self.reset_root_active = torch.stack(root_active)
         self.reset_keyboard_roots = torch.stack(keyboard_columns)
         self.reset_key_root = torch.tensor(np.stack(key_roots), device=self.env.device)
         self.reset_key_local = torch.tensor(np.stack(key_local), device=self.env.device)
+        self.reset_robot_roots = torch.tensor(np.stack(robot_roots), device=self.env.device)
+        self.reset_robot_columns = torch.tensor(np.stack(robot_columns), device=self.env.device)
+        self.reset_robot_limits = torch.tensor(np.stack(robot_limits), device=self.env.device)
 
     def resolve(self, cfg):
         """Compile task paths once before returning a numeric runtime binding."""
@@ -742,7 +825,7 @@ class KeyboardWorlds:
     @property
     def live_dof_count(self):
         counts = wp.to_torch(self.backend.runtime.directory.live_count)
-        return (counts * (self.key_counts + 6)).sum()
+        return (counts * self._dof_counts).sum()
 
     def reconcile_state(self, dirty_worlds, flags):
         if flags:

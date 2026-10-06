@@ -30,7 +30,9 @@ from .newton_selection import NewtonSelectionGroup, NewtonSelections
 from .selection_paths import bind_selectors, resolve_selection, selector_key
 
 
-def prepare_keyboard_prototype(env, keyboard_cfg, physics, selector_cfgs, *, contact_capacity=None):
+def prepare_keyboard_prototype(
+    env, keyboard_cfg, physics, selector_cfgs, *, contact_capacity=None, robot_positions=None
+):
     """Author and finalize one immutable source; replication never repeats this work."""
     stage = Usd.Stage.CreateInMemory()
     UsdGeom.SetStageUpAxis(stage, "Z")
@@ -38,8 +40,16 @@ def prepare_keyboard_prototype(env, keyboard_cfg, physics, selector_cfgs, *, con
     stage.SetDefaultPrim(UsdGeom.Xform.Define(stage, "/World").GetPrim())
     scene = env.cfg.scene
     with use_stage(stage):
+        positions = (scene.robot.init_state.pos,) if robot_positions is None else robot_positions
+        for index, position in enumerate(positions):
+            scene.robot.spawn.func(
+                "/World/Robot" if index == 0 else f"/World/Robot_{index}",
+                scene.robot.spawn,
+                translation=position,
+                orientation=scene.robot.init_state.rot,
+                stage=stage,
+            )
         for name, asset, spawn in (
-            ("Robot", scene.robot, scene.robot.spawn),
             ("Keyboard", scene.keyboard, keyboard_cfg),
             ("GroundPlane", scene.plane, scene.plane.spawn),
         ):

@@ -32,6 +32,7 @@ __all__ = [
 
 from .commands import LetterTypingCommand, LetterTypingCommandCfg
 from .observations import last_action, joint_pos, joint_vel, key_positions_b, target_keys_onehot, typed_keys_onehot
+from .observations import robot_state, selection_active, key_positions_w
 from .rewards import letter_typing_progress, mechanical_power, reach_key, typing_success
 from .terminations import illegal_contact, joint_vel_out_of_limit, typing_complete, typing_mistake
 from .reset import reset_root_state_uniform

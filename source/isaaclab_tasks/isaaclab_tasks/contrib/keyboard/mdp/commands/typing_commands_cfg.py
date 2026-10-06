@@ -130,7 +130,11 @@ class LetterTypingCommandCfg(CommandTermCfg):
         ``num_envs`` to bound the one-time build cost."""
 
         bank_path: str | None = None
-        """Optional portable reset-bank file, loaded before the first episode instead of rebuilding IK samples."""
+        """Optional portable reset-bank file, loaded before the first episode instead of rebuilding IK samples.
+
+        Mixed-arm banks use contract format 2 with ``robot_counts`` in prototype order and ``arm_order``
+        equal to ``["Robot", "Robot_1"]``. Format 1 remains supported for single-arm banks.
+        """
 
         bank_variant: int | None = None
         """Source bank prototype for a homogeneous keyboard. Required when several prototypes share its labels."""

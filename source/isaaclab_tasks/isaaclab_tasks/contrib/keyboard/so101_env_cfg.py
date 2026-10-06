@@ -409,6 +409,10 @@ class SO101KeyboardWorldsEnvCfg(SO101KeyboardPopulationEnvCfg):
     """
 
     sim: SimulationCfg = SimulationCfg(physics=WorldsPhysicsCfg(), dt=0.01)
+    robot_counts: tuple[int, ...] = (1,)
+    """Robot counts to prepare for each keyboard layout."""
+    robot_base_min_spacing: float = 0.16
+    """Minimum separation between two robot bases [m]; wider keyboards use their half centers."""
     redistribution_interval: int = 1
     redistribution_mode: str = "episode_boundary"
     worlds_memory_budget_bytes: int = 16 * 1024**3
@@ -420,4 +424,62 @@ class SO101KeyboardWorldsEnvCfg(SO101KeyboardPopulationEnvCfg):
 class SO101KeyboardWorldsEnvPresets(PresetCfg):
     heterogeneous = SO101KeyboardWorldsEnvCfg()
     partitioned_108 = SO101KeyboardWorldsEnvCfg(keyboard_variants=())
+    default = heterogeneous
+
+
+@configclass
+class SO101MultiArmObservationsCfg:
+    """Unique world state; the shared policy constructs the active arms' views."""
+
+    @configclass
+    class RobotStateCfg(ObsGroup):
+        state = ObsTerm(func=mdp.robot_state, params={"roots": ROBOT_ROOT, "joints": ROBOT_Q, "dofs": ROBOT_QD})
+
+    @configclass
+    class RobotActiveCfg(ObsGroup):
+        active = ObsTerm(func=mdp.selection_active, params={"selection": ROBOT_ROOT})
+
+    @configclass
+    class KeyPositionsCfg(ObsGroup):
+        positions = ObsTerm(func=mdp.key_positions_w, params={"keys": KEY_BODIES})
+
+    @configclass
+    class KeyActiveCfg(ObsGroup):
+        active = ObsTerm(func=mdp.selection_active, params={"selection": KEY_BODIES})
+
+    policy: SO101ObservationsCfg.PolicyCfg = SO101ObservationsCfg.PolicyCfg()
+    robot_state: RobotStateCfg = RobotStateCfg()
+    robot_active: RobotActiveCfg = RobotActiveCfg()
+    key_positions: KeyPositionsCfg = KeyPositionsCfg()
+    key_active: KeyActiveCfg = KeyActiveCfg()
+
+
+@configclass
+class SO101KeyboardMultiArmEnvCfg(SO101KeyboardWorldsEnvCfg):
+    """One or two SO101 arms cooperate on one typing sequence per world."""
+
+    robot_counts: tuple[int, ...] = (1, 2)
+    observations: SO101MultiArmObservationsCfg = SO101MultiArmObservationsCfg()
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        def robot_slots(cfg):
+            paths = (cfg.path,) if isinstance(cfg.path, str) else cfg.path
+            if not any("/Robot/" in path for path in paths):
+                return cfg
+            width = cfg.count_per_world if cfg.count_per_world is not None else cfg.policy_width
+            # Combined reset snapshots retain all keyboard columns after the robots.
+            extra = 1 if cfg.index_domain == Model.AttributeFrequency.BODY else 6
+            width = width + extra if any("/Keyboard/" in path for path in paths) else 2 * width
+            paths = tuple(path.replace("/Robot/", "/Robot(?:_1)?/") for path in paths)
+            return replace(cfg, path=paths, count_per_world=None, policy_width=width)
+
+        for cfg in (self.commands, self.actions, self.observations, self.rewards, self.terminations, self.events):
+            bind_selectors(cfg, robot_slots)
+
+
+@configclass
+class SO101KeyboardMultiArmEnvPresets(PresetCfg):
+    heterogeneous = SO101KeyboardMultiArmEnvCfg()
     default = heterogeneous

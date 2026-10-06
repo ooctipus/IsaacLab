@@ -115,3 +115,35 @@ def last_action(env: ManagerBasedRLEnv) -> torch.Tensor:
     """Previous policy actions with episode-excluded DOFs cleared."""
     active = env.action_manager.get_term("action").dofs.dense_active()
     return torch.where(active, env.action_manager.action, 0.0)
+
+
+def robot_state(
+    env: ManagerBasedRLEnv, roots: NewtonSelection, joints: NewtonSelection, dofs: NewtonSelection
+) -> torch.Tensor:
+    """One record per arm: world root pose (wxyz), q, qd and previous action.
+
+    The policy gathers present arms and constructs each arm's perspective. The
+    task stores each root and joint state once, including zeros for absent arms.
+    """
+    pose = roots.read_state("body_q")
+    shape = (*pose.shape[:2], 6)
+    return torch.cat(
+        (
+            pose[..., :3],
+            pose[..., (6, 3, 4, 5)],
+            joints.read_state("joint_q").reshape(shape),
+            dofs.read_state("joint_qd").reshape(shape),
+            last_action(env).reshape(shape),
+        ),
+        dim=-1,
+    )
+
+
+def selection_active(env: ManagerBasedRLEnv, selection: NewtonSelection) -> torch.Tensor:
+    """Presence of each selected entity in the world's current prototype."""
+    return selection.dense_active().float()
+
+
+def key_positions_w(env: ManagerBasedRLEnv, keys: NewtonSelection) -> torch.Tensor:
+    """World-space key positions, stored once regardless of the number of arms."""
+    return keys.read_state("body_q")[..., :3]

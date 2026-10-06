@@ -93,3 +93,18 @@ class SO101PPORunnerCfg(RslRlOnPolicyRunnerCfg):
         desired_kl=0.01,
         max_grad_norm=1.0,
     )
+
+
+@configclass
+class SO101MultiArmPPORunnerCfg(SO101PPORunnerCfg):
+    """One world transition and one shared policy for one or two active SO-101 arms."""
+
+    experiment_name = "so101_keyboard_multi_arm"
+    obs_groups = {
+        "actor": ["policy", "robot_state", "robot_active", "key_positions", "key_active"],
+        "critic": ["policy", "robot_state", "robot_active", "key_positions", "key_active"],
+    }
+
+    def __post_init__(self):
+        self.actor.class_name = "isaaclab_tasks.contrib.keyboard.agents.models:SharedArmMLPModel"
+        self.critic.class_name = "isaaclab_tasks.contrib.keyboard.agents.models:SharedArmMLPModel"

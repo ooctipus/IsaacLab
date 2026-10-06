@@ -35,7 +35,7 @@ def test_deterministic_population_modes_are_rejected_before_authoring(setting):
         KeyboardPopulations(SimpleNamespace(cfg=cfg))
 
 
-@pytest.mark.parametrize("missing", ["enabled", "ik", "prototype_coverage", "single_coverage"])
+@pytest.mark.parametrize("missing", ["enabled", "ik", "prototype_coverage", "single_coverage", "multiarm_coverage"])
 def test_native_replay_rejects_incomplete_snapshot_curriculum_before_authoring(missing):
     from isaaclab_tasks.contrib.keyboard.keyboard_worlds import KeyboardWorlds
     from isaaclab_tasks.utils import resolve_task_config
@@ -50,6 +50,9 @@ def test_native_replay_rejects_incomplete_snapshot_curriculum_before_authoring(m
         cfg.keyboard_variants = None if missing == "single_coverage" else (cfg.scene.keyboard.spawn,) * 3
         cfg.commands.typing.reset.bank_path = None
         cfg.commands.typing.reset.buffer_size = 0 if missing == "single_coverage" else 2
+        if missing == "multiarm_coverage":
+            cfg.robot_counts = (1, 2)
+            cfg.commands.typing.reset.buffer_size = 3
         message = "at least one snapshot per keyboard prototype"
     with (
         patch("isaaclab_tasks.contrib.keyboard.keyboard_worlds.generate_keyboard") as generate,
@@ -60,15 +63,24 @@ def test_native_replay_rejects_incomplete_snapshot_curriculum_before_authoring(m
 
 
 @pytest.mark.parametrize(
-    "prototype_count, buffer_size, replay_only, bank_path",
-    [(3, 3, True, None), (3, 2, False, None), (3, 0, True, "unused.pt"), (None, 1, True, None)],
+    "prototype_count, buffer_size, replay_only, bank_path, robot_counts",
+    [
+        (3, 3, True, None, (1,)),
+        (3, 2, False, None, (1,)),
+        (3, 0, True, "unused.pt", (1,)),
+        (None, 1, True, None, (1,)),
+        (3, 6, True, None, (1, 2)),
+    ],
 )
-def test_native_buffer_coverage_preserves_admitted_reset_modes(prototype_count, buffer_size, replay_only, bank_path):
+def test_native_buffer_coverage_preserves_admitted_reset_modes(
+    prototype_count, buffer_size, replay_only, bank_path, robot_counts
+):
     from isaaclab_tasks.contrib.keyboard.keyboard_worlds import KeyboardWorlds
     from isaaclab_tasks.utils import resolve_task_config
 
     cfg, _ = resolve_task_config("IsaacContrib-Keyboard-SO101-Worlds", "", overrides=["physics=newton_mjwarp"])
     cfg.keyboard_variants = None if prototype_count is None else (cfg.scene.keyboard.spawn,) * prototype_count
+    cfg.robot_counts = robot_counts
     reset = cfg.commands.typing.reset
     reset.buffer_size, reset.replay_only, reset.bank_path = buffer_size, replay_only, bank_path
     with (
@@ -588,18 +600,35 @@ def test_failed_native_world_construction_retires_sources_without_gc(phase, clea
             gc.enable()
 
 
-@pytest.mark.parametrize("spare_bytes", [-1, True, 1.5])
-def test_native_spare_budget_rejects_invalid_values_before_prototype_allocation(spare_bytes):
+@pytest.mark.parametrize(
+    "setting, value, message",
+    [
+        ("worlds_spare_memory_budget_bytes", -1, "spare backing budget"),
+        ("worlds_spare_memory_budget_bytes", True, "spare backing budget"),
+        ("worlds_spare_memory_budget_bytes", 1.5, "spare backing budget"),
+        ("robot_counts", (), "robot_counts"),
+        ("robot_counts", (0,), "robot_counts"),
+        ("robot_counts", (True,), "robot_counts"),
+        ("robot_counts", (1, 1), "robot_counts"),
+        ("robot_counts", (1, 3), "robot_counts"),
+        ("robot_base_min_spacing", -0.1, "minimum spacing"),
+        ("robot_base_min_spacing", float("nan"), "minimum spacing"),
+        ("robot_base_min_spacing", float("inf"), "minimum spacing"),
+        ("robot_base_min_spacing", True, "minimum spacing"),
+    ],
+)
+def test_native_configuration_rejects_invalid_values_before_prototype_allocation(setting, value, message):
     from isaaclab_tasks.contrib.keyboard import keyboard_worlds
     from isaaclab_tasks.utils import resolve_task_config
 
     cfg, _ = resolve_task_config("IsaacContrib-Keyboard-SO101-Worlds", "", overrides=["physics=newton_mjwarp"])
-    cfg.worlds_spare_memory_budget_bytes = spare_bytes
+    cfg.keyboard_variants = cfg.keyboard_variants[:1]
+    setattr(cfg, setting, value)
     with (
         patch.object(keyboard_worlds, "prepare_keyboard_prototype", side_effect=AssertionError("prototype allocation")),
-        pytest.raises(ValueError, match="spare backing budget"),
+        pytest.raises(ValueError, match=message),
     ):
-        keyboard_worlds.KeyboardWorlds(SimpleNamespace(cfg=cfg))
+        keyboard_worlds.KeyboardWorlds(SimpleNamespace(cfg=cfg, device="cpu", num_envs=1, all_env_ids=torch.arange(1)))
 
 
 def test_backing_demand_only_releases_valid_source_lifetimes():

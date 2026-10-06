@@ -53,3 +53,13 @@ gym.register(
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:SO101PPORunnerCfg",
     },
 )
+
+gym.register(
+    id="IsaacContrib-Keyboard-SO101-Worlds-MultiArm",
+    entry_point=f"{__name__}.so101_population_env:SO101KeyboardPopulationEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.so101_env_cfg:SO101KeyboardMultiArmEnvPresets",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:SO101MultiArmPPORunnerCfg",
+    },
+)

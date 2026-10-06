@@ -64,6 +64,12 @@ def test_population_task_ownership_boundaries():
                 assert node.func.attr not in {"ModelBuilder", "register_custom_attributes"}
     for path in (directory / "mdp").rglob("*.py"):
         assert "NewtonManager" not in path.read_text()
+        # MDP observations describe the world; per-arm projection belongs to the agent.
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.ImportFrom):
+                assert not {"agents", "rsl_rl"}.intersection((node.module or "").split("."))
+            elif isinstance(node, ast.Import):
+                assert all("rsl_rl" not in alias.name.split(".") for alias in node.names)
     for forbidden in (
         "population_mdp",
         "population_selection.py",
@@ -914,5 +920,85 @@ def test_exact_population_reset_resize_and_survivor_continuation(use_graph):
             for population in bank.backend.populations:
                 assert np.isfinite(population.state_0.joint_q.numpy()).all()
                 np.testing.assert_array_equal(population.solver.mjw_data.overflow.numpy(), 0)
+        finally:
+            env.close()
+
+
+def test_native_multi_arm_reset_changes_policy_batch_and_preserves_other_worlds():
+    """One/two physical arms share a sequence, with only present arms entering the policy."""
+    if not wp.is_cuda_available():
+        pytest.skip("MJWarp requires CUDA")
+    import gymnasium as gym
+    from tensordict import TensorDict
+
+    from isaaclab.app import launch_simulation
+
+    from isaaclab_tasks.contrib.keyboard.agents.models import SharedArmMLPModel
+    from isaaclab_tasks.utils import resolve_task_config
+
+    task_name = "IsaacContrib-Keyboard-SO101-Worlds-MultiArm"
+    cfg, _ = resolve_task_config(task_name, "", overrides=["physics=newton_mjwarp"])
+    cfg.scene.num_envs = 4
+    cfg.keyboard_variants = cfg.keyboard_variants[:2]
+    cfg.commands.typing.reset.buffer_size = 8
+    cfg.sim.physics.prototype_physics.load_visual_shapes = False
+    cfg.seed = 42
+    with launch_simulation(cfg, {"headless": True}), wp.ScopedStream(wp.stream_from_torch(torch.cuda.current_stream())):
+        env = gym.make(task_name, cfg=cfg)
+        try:
+            task = env.unwrapped
+            obs, _ = env.reset()
+            assert {name: tuple(value.shape) for name, value in obs.items()} == {
+                "policy": (4, 1080),
+                "robot_state": (4, 2, 25),
+                "robot_active": (4, 2),
+                "key_positions": (4, 108, 3),
+                "key_active": (4, 108),
+            }
+            bank = task.keyboard_variants
+            assert bank.robot_counts == (1, 2, 1, 2)
+            assert [source.model.joint_dof_count for source in bank._sources] == [114, 120, 12, 18]
+            command = task.command_manager.get_term("typing")
+            assert command.target.shape == command.typed.shape == (4, 5)
+            assert len(np.unique(command.cfg.reset.ik.body.parts[1].ids.numpy())) == 2
+            observations = TensorDict(obs, batch_size=[4])
+            actor = SharedArmMLPModel(
+                observations,
+                {"actor": list(obs)},
+                "actor",
+                12,
+                hidden_dims=[16],
+                encoder_cfg={"policy": {"hidden_dims": [8], "latent_dim": 4}},
+                distribution_cfg={"class_name": "GaussianDistribution"},
+            ).to(task.device)
+            batches = []
+            hook = actor.mlp.register_forward_pre_hook(lambda _, args: batches.append(len(args[0])))
+            try:
+                for prototypes, count in (([0, 1, 2, 3], 6), ([1, 1, 3, 3], 8), ([0, 0, 2, 2], 4)):
+                    task.reset_keyboard(task.all_env_ids, torch.tensor(prototypes, device=task.device))
+                    obs = task.observation_manager.compute()
+                    with torch.inference_mode():
+                        action = actor(TensorDict(obs, batch_size=[4]), stochastic_output=True)
+                    assert batches[-1] == count
+                    assert obs["robot_active"].sum().item() == count
+                    assert torch.count_nonzero(action.reshape(4, 2, 6)[obs["robot_active"] == 0]) == 0
+                    obs, reward, *_ = env.step(action)
+                    assert torch.isfinite(reward).all()
+                    assert all(torch.isfinite(value).all() for value in obs.values())
+
+                # A selected reset changes only that world's physical lifetime.
+                before_q = command.cfg.reset_coords.read_state("joint_q")[1:].clone()
+                before_qd = command.cfg.reset_dofs.read_state("joint_qd")[1:].clone()
+                before_bodies = command.cfg.key_bodies.read_state("body_q")[1:].clone()
+                task.reset_keyboard(torch.tensor([0], device=task.device), torch.tensor([1], device=task.device))
+                torch.testing.assert_close(command.cfg.reset_coords.read_state("joint_q")[1:], before_q, rtol=0, atol=0)
+                torch.testing.assert_close(command.cfg.reset_dofs.read_state("joint_qd")[1:], before_qd, rtol=0, atol=0)
+                torch.testing.assert_close(
+                    command.cfg.key_bodies.read_state("body_q")[1:], before_bodies, rtol=0, atol=0
+                )
+                assert bank.variant_ids[0] == 1
+                assert ((wp.to_torch(bank.overflow) & bank.capacity_overflow_mask) == 0).all()
+            finally:
+                hook.remove()
         finally:
             env.close()
