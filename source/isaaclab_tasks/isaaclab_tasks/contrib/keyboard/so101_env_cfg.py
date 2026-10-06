@@ -483,6 +483,7 @@ class SO101KeyboardMultiArmEnvCfg(SO101KeyboardWorldsEnvCfg):
 
     def __post_init__(self):
         super().__post_init__()
+        self.commands.typing.reset.balance_next_key_arm = True
 
         def robot_slots(cfg):
             paths = (cfg.path,) if isinstance(cfg.path, str) else cfg.path

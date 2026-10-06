@@ -142,6 +142,13 @@ class LetterTypingCommandCfg(CommandTermCfg):
         replay_only: bool = False
         """Sample exclusively from compatible snapshots, excluding the normal IK path even at the weight floor."""
 
+        balance_next_key_arm: bool = False
+        """Choose a present arm uniformly before sampling the next required key's reset state.
+
+        Applies to native multi-arm keyboards. Success weights rank replay snapshots within the chosen
+        arm's group. Missing replay coverage uses a fresh reset, or raises when ``replay_only`` is enabled.
+        """
+
         beta_target: float = 0.5
         """Target success rate the replay sampler is peaked at. A snapshot's sampling score is the Beta kernel
         ``rate**(a-1) * (1-rate)**(b-1)`` with ``a = 1 + kappa*target`` and ``b = 1 + kappa*(1-target)`` (mode

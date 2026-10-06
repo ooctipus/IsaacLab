@@ -105,13 +105,23 @@ def _command(heterogeneous=True):
             active[torch.tensor(ids)[:, None], slots] = True
     else:
         active[:, :4] = True
-    bank = SimpleNamespace(variant_ids=variants, layouts=(0, 1, 2), backspace_slots=torch.tensor([3, 6, 11]))
+    owners = torch.full((3, 12), -1, dtype=torch.long)
+    owners[0, :4], owners[1, 4:7], owners[2, 7:] = 0, torch.tensor([0, 1, 1]), torch.tensor([0, 0, 1, 1, 1])
+    bank = SimpleNamespace(
+        variant_ids=variants,
+        layouts=(0, 1, 2),
+        backspace_slots=torch.tensor([3, 6, 11]),
+        robot_counts=(1, 2, 2),
+        key_arm_ids=owners,
+        reset_robot_roots=torch.tensor([[0, -1], [0, 1], [0, 1]]),
+    )
     command._env = SimpleNamespace(
         num_envs=5, device="cpu", all_env_ids=torch.arange(5), keyboard_variants=bank if heterogeneous else None
     )
     command._env.reset_variant_ids = lambda ids: variants[ids]
     command.cfg = SimpleNamespace(
-        letter_length=(1, 3), reset=SimpleNamespace(match_prob=0.5, bank_path=None, replay_only=False)
+        letter_length=(1, 3),
+        reset=SimpleNamespace(match_prob=0.5, bank_path=None, replay_only=False, balance_next_key_arm=False),
     )
     command.key_joints = SimpleNamespace(dense_active=lambda: active)
     command.cfg.actuation_fraction = 0.5
@@ -162,19 +172,123 @@ def test_replay_only_samples_requested_prototypes_without_normal_weight_floor():
     assert not torch.equal(desired, command._env.keyboard_variants.variant_ids)
 
 
-def test_candidate_sampling_uses_only_the_requested_noncontiguous_cohort(monkeypatch):
+@pytest.mark.parametrize("mode", ["normal", "replay", "mixed", "missing_arm", "invalid_replay", "timer"])
+def test_reset_sampling_balances_next_key_owners_before_curriculum_weights(mode):
+    from isaaclab_tasks.contrib.keyboard.keyboard_worlds import KeyboardWorlds
+
     command = _command()
+    bank = object.__new__(KeyboardWorlds)
+    bank.__dict__.update(vars(command._env.keyboard_variants))
+    command._env.keyboard_variants = bank
+    command.cfg.reset.balance_next_key_arm = True
+    command.cfg.reset.replay_only = mode == "replay"
+    count = 3072
+    ids = torch.arange(1, count, 2).flip(0)
+    desired = torch.zeros(count, dtype=torch.long)
+    desired[ids] = torch.arange(len(ids)) % 3
+    bank.variant_ids = desired.clone() if mode == "timer" else torch.zeros(count, dtype=torch.long)
+    committed = bank.variant_ids.clone()
+    command._env.num_envs, command._env.all_env_ids = count, torch.arange(count)
+    requested = (desired + 1) % 3 if mode == "timer" else desired
+    command._env.reset_variant_ids = lambda rows: requested[rows]
+    command.key_joints.dense_active = lambda: (
+        command._prototype_membership[bank.variant_ids]
+        if mode == "timer"
+        else pytest.fail("Reset sampling must use prospective keyboard membership")
+    )
+    command._cur_enabled, command._episode_reset, command._buffer_built = mode != "normal", mode != "timer", True
+    command._cur_sample_eps, command._cur_normal_weight = 1e-8, 1e-6
+    command._env_source = torch.full((count,), -9, dtype=torch.long)
+    command.target = torch.full((count, 3), -1, dtype=torch.long)
+    command.typed = torch.full_like(command.target, -1)
+    for name in ("target_len", "typed_len", "prefix_len", "max_prefix", "min_prefix"):
+        setattr(command, name, torch.zeros(count, dtype=torch.long))
+    for name in ("_just_reset", "new_high", "new_low"):
+        setattr(command, name, torch.zeros(count, dtype=torch.bool))
+    command._prev_pressed, command.distance = torch.zeros((count, 12), dtype=torch.bool), torch.zeros(count)
+
+    # Twelve high-weight Backspace starts compete with one low-weight start for the other arm.
+    snapshots = [(0, 0, -1, 1.0), (3, 0, -1, 1e12)]  # The superseded prototype must never be sampled.
+    for prototype, right, left in ((1, 4, 5), (2, 7, 9)):
+        snapshots.extend([(prototype, right, left, 1e6)] * 12)
+        snapshots.append((prototype, left, -1, 0.01))
+        if mode != "missing_arm":
+            snapshots.append((prototype, right, -1, 1.0))
+    command._buf_variant = torch.tensor([row[0] for row in snapshots])
+    command._buf_target = torch.tensor([[row[1], -1, -1] for row in snapshots])
+    command._buf_typed = torch.tensor([[row[2], -1, -1] for row in snapshots])
+    command._buf_target_len = torch.ones(len(snapshots), dtype=torch.long)
+    command._buf_typed_len = (command._buf_typed[:, 0] >= 0).long()
+    command._buf_state = torch.zeros((len(snapshots), 1))
+    command.success_monitor = SimpleNamespace(target_weights=lambda: torch.tensor([row[3] for row in snapshots]))
+    command._prepare_buffer_sampling()
+    if mode == "invalid_replay":
+        # A stale payload fails restoration after source selection; its fresh replacement keeps that arm.
+        stale = (command._buf_variant > 0) & (command._buf_typed_len == 0)
+        command._buf_target[stale, 0] = 0
+
+    torch.manual_seed(901)
+    command._resample_command(ids)
+    next_key = torch.where(
+        command.typed_len[ids] > command.prefix_len[ids],
+        bank.backspace_slots[desired[ids]],
+        command.target[ids, command.prefix_len[ids].clamp(max=2)],
+    )
+    owner = bank.key_arm_ids[desired[ids], next_key]
+    assert command.distance[ids].min() > 0
+    assert (owner[desired[ids] == 0] == 0).all()
+    for prototype in (1, 2):
+        rows = desired[ids] == prototype
+        assert 0.4 < owner[rows].float().mean() < 0.6
+        if mode not in ("normal", "timer", "invalid_replay"):
+            # Success weighting still selects Backspace within its owner's stratum.
+            left = rows & (owner == 1)
+            assert (next_key[left] == bank.backspace_slots[prototype]).float().mean() > 0.95
+        if mode in ("missing_arm", "invalid_replay"):
+            assert (command._env_source[ids[rows & (owner == 0)]] == -1).all()
+    if mode == "replay":
+        assert (command._env_source[ids] >= 0).all()
+    replay = command._env_source[ids] >= 0
+    torch.testing.assert_close(command._buf_variant[command._env_source[ids[replay]]], desired[ids[replay]])
+    untouched = torch.arange(0, count, 2)
+    assert (command.target[untouched] == -1).all()
+    assert (command.typed[untouched] == -1).all()
+    assert (command._env_source[untouched] == -9).all()
+    torch.testing.assert_close(bank.variant_ids, committed)
+    if mode == "missing_arm":
+        command.cfg.reset.replay_only = True
+        with pytest.raises(ValueError, match="every present arm"):
+            command._prepare_buffer_sampling()
+
+
+@pytest.mark.parametrize("next_arm", [-1, 0, 1])
+def test_candidate_sampling_uses_only_the_requested_noncontiguous_cohort(monkeypatch, next_arm):
+    command = _command()
+    command.cfg.reset.balance_next_key_arm = next_arm >= 0
     monkeypatch.setattr(wp, "synchronize", lambda: pytest.fail("Sampling must preserve the task's stream ordering"))
     worlds = torch.tensor([4, 1])
-    keys, counts, backspace = command._sampling_keys(worlds)
+    keys, counts, backspace = command._sampling_keys(worlds)[:3]
     assert wp.to_torch(keys)[:, :2].tolist() == [[4, 5], [4, 5]]
     assert wp.to_torch(counts).tolist() == [2, 2]
     assert wp.to_torch(backspace).tolist() == [True, True]
-    for sample in (command._oversample(64, worlds), command._sample_diverse_states(16, worlds)):
+    for sample in (
+        command._oversample(64, worlds, next_arm=next_arm),
+        command._sample_diverse_states(16, worlds, next_arm=next_arm),
+    ):
         target, typed, lengths, typed_lengths = sample[:4]
         assert torch.isin(target[target >= 0], torch.tensor([4, 5])).all()
         assert torch.isin(typed[typed >= 0], torch.tensor([4, 5])).all()
         assert ((lengths != typed_lengths) | (target != typed).any(dim=1)).all()
+        if next_arm >= 0:
+            for word, entered, length, entered_length in zip(
+                target.tolist(), typed.tolist(), lengths.tolist(), typed_lengths.tolist(), strict=True
+            ):
+                prefix = next(
+                    (i for i in range(min(length, entered_length)) if word[i] != entered[i]),
+                    min(length, entered_length),
+                )
+                key = 6 if entered_length > prefix else word[prefix]
+                assert key in ([4] if next_arm == 0 else [5, 6])
     assert sample[0].shape == (16, 3)
     with pytest.raises(ValueError, match="nonempty"):
         command._sampling_keys(torch.empty(0, dtype=torch.long))
@@ -184,7 +298,7 @@ def test_prospective_sampling_uses_requested_layout_without_changing_committed_m
     command = _command()
     original = command.key_joints.dense_active().clone()
     requested = torch.tensor([2, 0])
-    keys, counts, backspace = command._sampling_keys(torch.tensor([4, 1]), requested)
+    keys, counts, backspace = command._sampling_keys(torch.tensor([4, 1]), requested)[:3]
     assert wp.to_torch(keys)[0, :4].tolist() == [7, 8, 9, 10]
     assert wp.to_torch(keys)[1, :3].tolist() == [0, 1, 2]
     assert wp.to_torch(counts).tolist() == [4, 3]
@@ -558,12 +672,27 @@ def test_explicit_all_world_cohort_preserves_baseline_samples():
         implicit._oversample(64), explicit._oversample(64, explicit._env.all_env_ids), strict=True
     ):
         torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    baseline, balanced = _command(), _command()
+    balanced.cfg.reset.balance_next_key_arm = True
+    single_arm_worlds = torch.tensor([2, 0])
+    for expected, actual in zip(
+        baseline._oversample(64, single_arm_worlds),
+        balanced._oversample(64, single_arm_worlds, next_arm=0),
+        strict=True,
+    ):
+        torch.testing.assert_close(actual, expected, rtol=0, atol=0)
 
 
-@pytest.mark.parametrize(("heterogeneous", "pending_first_reset"), [(False, False), (True, False), (True, True)])
+@pytest.mark.parametrize(
+    ("heterogeneous", "pending_first_reset", "balance_arms"),
+    [(False, False, False), (True, False, False), (True, True, False), (True, True, True)],
+)
 @pytest.mark.parametrize("fail_during_build", [False, True])
-def test_buffer_restores_state_and_pending_reset(monkeypatch, heterogeneous, pending_first_reset, fail_during_build):
+def test_buffer_restores_state_and_pending_reset(
+    monkeypatch, heterogeneous, pending_first_reset, balance_arms, fail_during_build
+):
     command = _command(heterogeneous)
+    command.cfg.reset.balance_next_key_arm = balance_arms
     env = command._env
     original = torch.arange(5, dtype=torch.float32)[:, None]
     physical = original.clone()
@@ -648,6 +777,9 @@ def test_buffer_restores_state_and_pending_reset(monkeypatch, heterogeneous, pen
             for variant, allowed in enumerate(([0, 1, 2], [4, 5], [7, 8, 9, 10])):
                 target = command._buf_target[command._buf_variant == variant]
                 assert torch.isin(target[target >= 0], torch.tensor(allowed)).all()
+            if balance_arms:
+                for variant in (1, 2):
+                    assert torch.bincount(command._buf_next_arm[command._buf_variant == variant]).tolist() == [2, 2]
     torch.testing.assert_close(physical, original)
     assert len(finished) == 1
     if heterogeneous:
@@ -1115,7 +1247,7 @@ def test_native_reset_publishes_one_complete_mixed_payload(monkeypatch, source, 
     if source == (2, 0, 1) and not invalid_replay:
         del bank.reset_defaults  # A replay-only bank has no normal IK staging metadata.
     command._cur_enabled = command._buffer_built = True
-    command._sample_sources = lambda ids: torch.tensor(source)
+    command._sample_sources = lambda ids, arms=None: torch.tensor(source)
     command.success_monitor = SuccessMonitor(SuccessMonitorCfg(), 1, 3, "cpu")
     command._buf_variant = torch.arange(3)
     command._buf_state = torch.tensor([[100.0, 200.0], [101.0, 201.0], [102.0, 202.0]])
@@ -1137,7 +1269,7 @@ def test_native_reset_publishes_one_complete_mixed_payload(monkeypatch, source, 
     publications, solved = [], []
     original_variants = bank.variant_ids.clone()
 
-    def normal(ids):
+    def normal(ids, arms=None):
         command.target[ids] = -1
         command.target[ids, 0] = torch.tensor([0, 4, 7])[desired[ids]]
         command.typed[ids] = -1

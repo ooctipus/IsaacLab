@@ -48,10 +48,13 @@ def _resample_reset_kernel(
     typeable: wp.array2d(dtype=wp.int64),
     typeable_count: wp.array(dtype=wp.int32),
     backspace_active: wp.array(dtype=wp.bool),
+    key_arms: wp.array2d[wp.int64],
+    backspace_slots: wp.array[wp.int64],
     lo: wp.int32,
     hi: wp.int32,
     seed: wp.int32,
     match_prob: wp.float32,
+    next_arms: wp.array[wp.int64],
     target: wp.array2d(dtype=wp.int64),
     typed: wp.array2d(dtype=wp.int64),
     target_len: wp.array(dtype=wp.int64),
@@ -132,6 +135,29 @@ def _resample_reset_kernel(
         if typed[e, p] != target[e, p]:
             break
         p = p + 1
+
+    arm = next_arms[i]
+    if arm >= 0:
+        next_key = backspace_slots[world]
+        if t == p:
+            next_key = target[e, wp.min(p, n - 1)]
+        if key_arms[world, next_key] != arm:
+            # Keep a correct, incomplete prefix and put a key from the chosen half next.
+            # The remaining word still spans the whole keyboard. Backspace starts survive
+            # when their owner was chosen; they cannot dominate the other arm's resets.
+            p = wp.min(p, n - 1)
+            t = p
+            count = int(0)
+            for j in range(m):
+                if key_arms[world, typeable[world, j]] == arm:
+                    count += 1
+                    if wp.randi(rng, 0, count) == 0:
+                        target[e, p] = typeable[world, j]
+            for j in range(width):
+                if j < p:
+                    typed[e, j] = target[e, j]
+                else:
+                    typed[e, j] = wp.int64(-1)
 
     target_len[e] = wp.int64(n)
     typed_len[e] = wp.int64(t)
@@ -293,6 +319,8 @@ class LetterTypingCommand(CommandTerm):
         from ...keyboard_worlds import KeyboardWorlds
 
         staged = isinstance(env.keyboard_variants, KeyboardWorlds)
+        if cfg.reset.balance_next_key_arm and not staged:
+            raise ValueError("Arm-balanced resets require native keyboard prototypes.")
         self.key_joints, self.key_bodies = cfg.keys, cfg.key_bodies
         # Buffer/observation width. Decoupled from letter_length so the obs size (and a trained policy's
         # input layer) stays fixed when letter_length is varied for evaluation; defaults to letter_length[1].
@@ -324,6 +352,14 @@ class LetterTypingCommand(CommandTerm):
             for variant, layout in enumerate(env.keyboard_variants.layouts):
                 membership[variant, [key.slot for key in layout.active_keys]] = True
             self._prototype_membership = membership.to(self.device)
+        if cfg.reset.balance_next_key_arm:
+            bank = env.keyboard_variants
+            typeable = self._prototype_membership.clone()
+            typeable.scatter_(1, bank.backspace_slots[:, None], False)
+            for arm in range(bank.reset_robot_roots.shape[1]):
+                covered = (typeable & (bank.key_arm_ids == arm)).any(dim=1)
+                if not (covered | (bank.reset_robot_roots[:, arm] < 0)).all():
+                    raise ValueError("Every present arm needs a typeable key for arm-balanced resets.")
 
         # per-key press threshold (filled lazily once joint limits are available)
 
@@ -485,17 +521,17 @@ class LetterTypingCommand(CommandTerm):
         source picked for each env is recorded so the ending episode's success can be attributed to the right
         snapshot in :meth:`reset`.
         """
+        env_ids_t = self._env.all_env_ids[env_ids]
+        if len(env_ids_t) == 0:
+            return
+        arms = self._sample_reset_arms(env_ids_t)
         if not self._cur_enabled or not self._episode_reset:
             # No curriculum, or the mid-episode resampling timer: just re-draw the word/buffer, no teleport.
-            self._resample_normal(env_ids)
+            self._resample_normal(env_ids_t, arms)
             return
         if not self._buffer_built:
             self._build_buffer()
-        env_ids_t = self._env.all_env_ids[env_ids]
-        k = int(env_ids_t.numel())
-        if k == 0:
-            return
-        source = self._sample_sources(env_ids_t)  # -1 normal reset, else a compatible snapshot
+        source = self._sample_sources(env_ids_t, arms)  # -1 normal reset, else a compatible snapshot
         self._env_source[env_ids_t] = source
         if self.cfg.reset.replay_only:
             # Sampling guarantees a snapshot for every request. Snapshot validation
@@ -503,13 +539,13 @@ class LetterTypingCommand(CommandTerm):
             from ...keyboard_worlds import KeyboardWorlds
 
             self._restore_snapshot(
-                env_ids_t, source, publish=not isinstance(self._env.keyboard_variants, KeyboardWorlds)
+                env_ids_t, source, arms=arms, publish=not isinstance(self._env.keyboard_variants, KeyboardWorlds)
             )
             return
         normal_mask = source < 0
         normal_ids = env_ids_t[normal_mask]
         if normal_ids.numel() > 0:
-            self._resample_normal(normal_ids)
+            self._resample_normal(normal_ids, None if arms is None else arms[normal_mask])
         buf_mask = ~normal_mask
         if bool(buf_mask.any()):
             from ...keyboard_worlds import KeyboardWorlds
@@ -517,10 +553,20 @@ class LetterTypingCommand(CommandTerm):
             self._restore_snapshot(
                 env_ids_t[buf_mask],
                 source[buf_mask],
+                arms=None if arms is None else arms[buf_mask],
                 publish=not isinstance(self._env.keyboard_variants, KeyboardWorlds),
             )
 
-    def _sample_sources(self, env_ids: torch.Tensor) -> torch.Tensor:
+    def _sample_reset_arms(self, env_ids: torch.Tensor) -> torch.Tensor | None:
+        """Choose reset ownership independently of the curriculum's source and success weights."""
+        if not self.cfg.reset.balance_next_key_arm:
+            return None
+        bank = self._env.keyboard_variants
+        variants = self._env.reset_variant_ids(env_ids) if self._episode_reset else bank.variant_ids[env_ids]
+        counts = (bank.reset_robot_roots[variants] >= 0).sum(dim=1)
+        return (torch.rand(len(env_ids), device=self.device) * counts).long()
+
+    def _sample_sources(self, env_ids: torch.Tensor, arms: torch.Tensor | None = None) -> torch.Tensor:
         """Pick a reset source per env: ``-1`` for the normal reset, else a snapshot index in ``[0, cap)``.
 
         Each snapshot's weight is the Beta kernel at its success rate (peaked at the target). The normal path's
@@ -535,6 +581,8 @@ class LetterTypingCommand(CommandTerm):
         if bank is not None:
             variants = self._env.reset_variant_ids(env_ids)
             compatible = self._buf_variant[None, :] == variants[:, None]
+            if arms is not None:
+                compatible &= self._buf_next_arm[None, :] == arms[:, None]
             if self.cfg.reset.replay_only:
                 torch._assert_async(compatible.any(dim=1).all(), "Every reset prototype needs a compatible snapshot.")
                 weights = scores.clamp(min=self._cur_sample_eps)[None, :] * compatible
@@ -555,7 +603,7 @@ class LetterTypingCommand(CommandTerm):
         idx = torch.multinomial(weights, len(env_ids), replacement=True)  # (k,) in [0, cap]
         return idx - 1  # 0 -> -1 (normal); j -> snapshot j - 1
 
-    def _oversample(self, m_candidates: int, world_ids: torch.Tensor | None = None, variant_ids=None):
+    def _oversample(self, m_candidates: int, world_ids: torch.Tensor | None = None, variant_ids=None, next_arm=-1):
         """Draw ``m_candidates`` random typing states from the optional logical-world cohort in one launch.
 
         Returns ``(target, typed, target_len, typed_len, prefix_len)`` as torch tensors (``target``/``typed``
@@ -583,6 +631,7 @@ class LetterTypingCommand(CommandTerm):
                 int(hi),
                 int(self._resample_seed),
                 float(self.cfg.reset.match_prob),
+                wp.full(m_candidates, next_arm, dtype=wp.int64, device=self.device),
             ],
             outputs=[
                 wp.from_torch(target, dtype=wp.int64),
@@ -598,7 +647,7 @@ class LetterTypingCommand(CommandTerm):
         )
         return target, typed, target_len, typed_len, prefix_len
 
-    def _sample_diverse_states(self, cap: int, world_ids: torch.Tensor | None = None, variant_ids=None):
+    def _sample_diverse_states(self, cap: int, world_ids: torch.Tensor | None = None, variant_ids=None, next_arm=-1):
         """Oversample candidate states and grid-bucket-downsample to ``cap`` with uniform coverage.
 
         The feature is the (per-axis weighted) ``(target, next_key, wrongness, prefix_complete, remaining)``
@@ -611,7 +660,7 @@ class LetterTypingCommand(CommandTerm):
         Returns the chosen ``(target, typed, target_len, typed_len)`` (each ``cap`` rows).
         """
         m_candidates = cap * self._cur_oversample
-        target, typed, target_len, typed_len, prefix = self._oversample(m_candidates, world_ids, variant_ids)
+        target, typed, target_len, typed_len, prefix = self._oversample(m_candidates, world_ids, variant_ids, next_arm)
         rows = torch.arange(m_candidates, device=self.device)
         nxt = torch.minimum(prefix, (target_len - 1).clamp(min=0))
         needs_bs = typed_len > prefix
@@ -711,7 +760,19 @@ class LetterTypingCommand(CommandTerm):
                     if len(world_ids) == 0:
                         raise ValueError("Curriculum variants require a nonempty logical-world cohort.")
                     variants = None if bank is None else self._env.reset_variant_ids(world_ids)
-                    tgt, typd, tlen, typlen = self._sample_diverse_states(size, world_ids, variants)
+                    if self.cfg.reset.balance_next_key_arm:
+                        samples = [
+                            self._sample_diverse_states(
+                                size // bank.robot_counts[variant] + int(arm < size % bank.robot_counts[variant]),
+                                world_ids,
+                                variants,
+                                arm,
+                            )
+                            for arm in range(min(size, bank.robot_counts[variant]))
+                        ]
+                        tgt, typd, tlen, typlen = (torch.cat(values) for values in zip(*samples, strict=True))
+                    else:
+                        tgt, typd, tlen, typlen = self._sample_diverse_states(size, world_ids, variants)
                     self._buf_target[offset : offset + size] = tgt
                     self._buf_typed[offset : offset + size] = typd
                     self._buf_target_len[offset : offset + size] = tlen
@@ -750,6 +811,7 @@ class LetterTypingCommand(CommandTerm):
             self._env.finish_curriculum(original_requested)
             variants = torch.zeros_like(all_ids) if original_variants is None else original_variants
             self._env.restore_reset_snapshot(all_ids, variants, original_state)
+        self._prepare_buffer_sampling()
         self._buffer_built = True
         self._log_buffer_stats()
 
@@ -872,7 +934,34 @@ class LetterTypingCommand(CommandTerm):
         for name in fields:
             setattr(self, name, tensors[name].to(self.device, copy=True))
         self._buf_avg_distance = payload["avg_distance"]
+        self._prepare_buffer_sampling()
         self._buffer_built = True
+
+    def _prepare_buffer_sampling(self):
+        """Derive immutable replay ownership from the loaded or freshly built typing states."""
+        if not self.cfg.reset.balance_next_key_arm:
+            return
+        bank = self._env.keyboard_variants
+        rows = (self._buf_variant < len(bank.layouts)).nonzero().flatten()
+        variants = self._buf_variant[rows]
+        pos = torch.arange(self.max_len, device=self.device)
+        length = torch.minimum(self._buf_typed_len[rows], self._buf_target_len[rows])
+        matching = (self._buf_typed[rows] == self._buf_target[rows]) & (pos < length[:, None])
+        prefix = matching.cumprod(dim=1).sum(dim=1)
+        next_keys = torch.where(
+            self._buf_typed_len[rows] > prefix,
+            bank.backspace_slots[variants],
+            self._buf_target[rows, torch.minimum(prefix, self._buf_target_len[rows] - 1)],
+        )
+        self._buf_next_arm = torch.full_like(self._buf_variant, -1)
+        self._buf_next_arm[rows] = bank.key_arm_ids[variants, next_keys]
+        if self.cfg.reset.replay_only:
+            covered = torch.zeros_like(bank.reset_robot_roots, dtype=torch.bool)
+            covered[variants, self._buf_next_arm[rows]] = True
+            if not (covered | (bank.reset_robot_roots < 0)).all():
+                raise ValueError(
+                    "Arm-balanced replay-only resets need a snapshot for every present arm of each prototype."
+                )
 
     def _log_buffer_stats(self):
         """Print one-time coverage/distribution stats for the freshly built snapshot buffer."""
@@ -950,7 +1039,7 @@ class LetterTypingCommand(CommandTerm):
             f" {lo_cm:.1f}/{med:.1f}/{mean_cm:.1f}/{p90:.1f}/{hi_cm:.1f} cm"
         )
 
-    def _restore_snapshot(self, env_ids: torch.Tensor, snap: torch.Tensor, *, publish: bool = True):
+    def _restore_snapshot(self, env_ids: torch.Tensor, snap: torch.Tensor, *, arms=None, publish: bool = True):
         """Restore typing state; native episode reset may assemble the physical publication later."""
         assert self._buf_state is not None  # allocated in _build_buffer, which always runs first
         if publish:
@@ -998,10 +1087,10 @@ class LetterTypingCommand(CommandTerm):
             ],
             device=self.device,
         )
-        invalid = env_ids[invalid]
-        if invalid.numel():
-            self._env_source[invalid] = -1
-            self._resample_normal(invalid)
+        invalid_ids = env_ids[invalid]
+        if invalid_ids.numel():
+            self._env_source[invalid_ids] = -1
+            self._resample_normal(invalid_ids, None if arms is None else arms[invalid])
 
     def _sampling_keys(self, world_ids: torch.Tensor | None = None, variant_ids: torch.Tensor | None = None):
         """Pack committed or explicitly prospective topology for one logical-world cohort."""
@@ -1023,9 +1112,22 @@ class LetterTypingCommand(CommandTerm):
         keys = self._typeable.expand(len(membership), -1).gather(1, order).contiguous()
         counts = active.sum(dim=1).to(torch.int32).contiguous()
         backspace = membership.gather(1, backspace_slots[:, None]).squeeze(1).contiguous()
-        return wp.from_torch(keys, dtype=wp.int64), wp.from_torch(counts, dtype=wp.int32), wp.from_torch(backspace)
+        owners = wp.empty((0, 0), dtype=wp.int64, device=self.device)
+        if self.cfg.reset.balance_next_key_arm:
+            bank = self._env.keyboard_variants
+            variants = variant_ids if variant_ids is not None else bank.variant_ids
+            if variant_ids is None and world_ids is not None:
+                variants = variants[world_ids]
+            owners = wp.from_torch(bank.key_arm_ids[variants])
+        return (
+            wp.from_torch(keys, dtype=wp.int64),
+            wp.from_torch(counts, dtype=wp.int32),
+            wp.from_torch(backspace),
+            owners,
+            wp.from_torch(backspace_slots.contiguous()),
+        )
 
-    def _resample_normal(self, env_ids: Sequence[int] | torch.Tensor):
+    def _resample_normal(self, env_ids: Sequence[int] | torch.Tensor, arms: torch.Tensor | None = None):
         # Normal (random) reset path: draw the target word + a match_prob-typed start buffer, guard against an
         # instant success, and seed the typing metrics + progress water marks - one Warp thread per resetting
         # env, so the ragged fill reads as a per-thread loop instead of padded-matrix masking, with no sum(t)
@@ -1034,11 +1136,16 @@ class LetterTypingCommand(CommandTerm):
         k = int(env_ids_t.numel())
         if k == 0:
             return
+        if arms is None:
+            arms = self._sample_reset_arms(env_ids_t)
         lo, hi = self.cfg.letter_length
         self._resample_seed += 1
         variants = None
         if self._episode_reset and self._env.keyboard_variants is not None:
             variants = self._env.reset_variant_ids(self._env.all_env_ids)
+        next_arms = (
+            wp.full(k, -1, dtype=wp.int64, device=self.device) if arms is None else wp.from_torch(arms.contiguous())
+        )
         wp.launch(
             _resample_reset_kernel,
             dim=k,
@@ -1049,6 +1156,7 @@ class LetterTypingCommand(CommandTerm):
                 int(hi),
                 int(self._resample_seed),
                 float(self.cfg.reset.match_prob),
+                next_arms,
             ],
             outputs=[
                 wp.from_torch(self.target, dtype=wp.int64),
