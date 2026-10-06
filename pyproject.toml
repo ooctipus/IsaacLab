@@ -441,7 +441,7 @@ egl-probe = { CMAKE_POLICY_VERSION_MINIMUM = "3.5" }
 [tool.uv.sources]
 mujoco = { index = "mujoco-nightly" }
 # See the native Newton integration guide for authenticated wheel setup.
-warp-lang = { path = "_build/dependency-wheels/warp_lang-1.19.0.dev0-py3-none-manylinux_2_38_x86_64.whl", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" }
+warp-lang = { path = "docker/wheels/warp_lang-1.19.0.dev0-py3-none-manylinux_2_38_x86_64.whl", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" }
 # Matching published implementation commits for prepared dynamic-world execution.
 gpu-components = { git = "https://github.com/ooctipus/gpu-components.git", rev = "6cc307cd5066dbd434dc6e7fc1b21b6327e2100f" }
 newton = { git = "https://github.com/ooctipus/newton.git", rev = "44714f493e4f703b207b1bf77b7277a83d042e54" }

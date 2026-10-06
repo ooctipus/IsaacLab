@@ -96,3 +96,6 @@ benchmark_*.json
 
 # Superpowers (Claude Code plugin artifacts)
 docs/superpowers/
+
+# Pinned build artifacts are fetched from docker/wheels/manifest.json.
+docker/wheels/*.whl
