@@ -17,6 +17,62 @@ their output. Multiple visualizers can display the same sensor with different ti
    The streaming camera view is supported in Kit, Newton GL, Newton RTX, Rerun, and Viser.
 
 
+Sharing a view with recording
+-----------------------------
+
+``ImageViewCfg`` selects pixels independently of their destination. A scene sensor name binds
+an existing camera; its renderer and capture cadence remain owned by the scene. ``WindowCfg``
+controls presentation, and ``VideoRecorderCfg`` can consume the same view:
+
+.. code-block:: python
+
+   from isaaclab.envs import VideoRecorderCfg
+   from isaaclab.visualizers import ImageViewCfg, WindowCfg
+   from isaaclab_visualizers.newton import NewtonGLVisualizerCfg
+
+   view = ImageViewCfg(
+       source="front_camera", envs=(0, 2), channels=("rgb", "depth"), size=(1280, 720)
+   )
+   env_cfg.sim.visualizer_cfgs = [NewtonGLVisualizerCfg(window=WindowCfg(view=view))]
+   env_cfg.video_recorders = [VideoRecorderCfg(view=view, output_dir="videos")]
+
+Use ``--viz newton_gl`` (or ``--viz newton_rtx`` for the RTX example) to display the window.
+Omit ``--viz`` for recording alone. The scene must declare ``front_camera`` with both requested outputs. The view preserves environment
+order, places channels beside each other, and scales the grid with black letterboxing into ``size``
+(width, height). Leaving ``size=None`` retains native tile dimensions. ``WindowCfg.size`` sets the
+initial window dimensions independently of the view. Resizing a sensor's window leaves both sensor
+and composed-image storage unchanged. Only encoding downloads pixels; display uses the device image.
+
+Reusing the same ``ImageViewCfg`` shares one runtime frame within a simulation, including through
+copies of the enclosing configuration. Use ``isaaclab.utils.replace(view, ...)`` for an independent
+selection. Reading the shared view twice in one physics step reuses its frame and sensor acquisition.
+Changing the view's selection or output size rebuilds composition state; captured composition graphs
+must then be recreated. This does not resize the sensor's render product.
+
+A perspective source uses a visualizer's renderer without creating a scene camera sensor:
+
+.. code-block:: python
+
+   from isaaclab.visualizers import PerspectiveCameraCfg
+   from isaaclab_visualizers.newton import NewtonRTXVisualizerCfg
+
+   view = ImageViewCfg(source=PerspectiveCameraCfg(eye=(4.0, -4.0, 3.0)), size=(1280, 720))
+   env_cfg.sim.visualizer_cfgs = [
+       NewtonRTXVisualizerCfg(window=WindowCfg(view=view, size=(960, 540)))
+   ]
+   env_cfg.video_recorders = [VideoRecorderCfg(view=view)]
+
+Newton RTX retains its fixed perspective render resolution while the window scales its image.
+The recorder reads the completed native render without requesting a second render for that step.
+Perspective views currently provide one RGB image, so keep ``envs=(0,)`` and ``channels=("rgb",)``.
+A recorded perspective view requires exactly one configured rendering visualizer. In headless runs,
+the launcher retains that producer without opening a window; recording a sensor view needs no visualizer.
+
+``WindowCfg.view`` is supported by Newton GL and RTX. Existing ``cameras`` and
+``streaming_*`` configurations and CLI recording source strings remain supported; they are translated
+at initialization. Use ``window.view`` instead of combining it with legacy camera selection fields.
+
+
 Quick Start
 -----------
 
@@ -98,7 +154,7 @@ The ``cameras`` field is shared across visualizers. Kit, Rerun, and Viser use th
 camera for their image panel; Newton GL and RTX provide the source dropdown shown above.
 ``SceneCameraCfg`` selects an existing sensor; ``PerspectiveCameraCfg`` configures the viewer's
 own interactive camera. Neither creates a camera sensor. Newton RTX keeps its perspective
-render resolution fixed at the configured ``WindowCfg.size``; resizing
+render resolution fixed at ``ImageViewCfg.size`` (or ``WindowCfg.size`` without an explicit view size); resizing
 its window scales the displayed image. Sensor resolution remains controlled by ``CameraCfg``.
 Window resizing does not reallocate either camera's image buffers.
 Newton windows present at up to ``WindowCfg.fps`` (30 by default), measured in wall-clock time.

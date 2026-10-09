@@ -131,7 +131,7 @@ class KitVisualizer(BaseVisualizer):
                 ("headless", self._runtime_headless),
             ],
         )
-        self._setup_streaming_view(num_envs)
+        self._create_camera_image_panel()
 
         from isaaclab_physx.renderers.fabric import FabricBackendCfg  # noqa: PLC0415 - requires Kit
 
@@ -221,6 +221,10 @@ class KitVisualizer(BaseVisualizer):
         import omni.kit.app
         import omni.replicator.core as rep
 
+        if not self._sim.is_rendering:
+            self._sim.forward()
+            if self.supports_markers():
+                self._sim.vis_marker_registry.dispatch_callbacks()
         provider = self._sim.get_scene_data_provider()
         self._fabric.update_transforms(provider)
         self._fabric.update_geometries(provider, self._sim.render_generation)
@@ -584,14 +588,11 @@ class KitVisualizer(BaseVisualizer):
         self._refresh_controlled_camera_path()
         asyncio.ensure_future(self._setup_backend_menubar_label_async())
 
-    def _setup_streaming_view(self, num_envs: int) -> None:
-        """Bind a scene camera and create its Kit display panel."""
-        super()._setup_streaming_view(
-            num_envs,
-            visible_env_ids=self._env_ids,
-            target_aspect=self.cfg.window.size[0] / self.cfg.window.size[1],
-        )
-        if self._camera_sensor is None or self._runtime_headless:
+    def _create_camera_image_panel(self) -> None:
+        """Present the shared sensor view in Kit's dockable panel."""
+        for view in self._image_views:
+            view.aspect = self.cfg.window.size[0] / self.cfg.window.size[1]
+        if (self.image_view is None or self.image_view.camera is None) or self._runtime_headless:
             return
         import omni.ui
 
@@ -629,7 +630,9 @@ class KitVisualizer(BaseVisualizer):
 
     def _update_camera_image_panel(self) -> None:
         """Present device pixels; CPU images are uploaded only for CPU-backed sources."""
-        image = self._streaming_frame.data if self.is_training_paused() else self.render_tiled_rgba_array()
+        if self.image_view is None:
+            return
+        image = self.image_view.frame.data if self.is_training_paused() else self.render_tiled_rgba_array()
         if image is None or self._camera_image_provider is None:
             return
         height, width = image.shape[:2]
