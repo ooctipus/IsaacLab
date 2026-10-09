@@ -112,7 +112,7 @@ class VideoRecorder:
             if frame is None and self._source is not None and self._source[0] == "viz":
                 raise RuntimeError(f"No frame available from {self.cfg.source!r}.")
             return frame
-        except RuntimeError as exc:
+        except (RuntimeError, ValueError, KeyError) as exc:
             logger.error(
                 "[VideoRecorder] Frame capture failed for source=%r: %s. Capture stopped.", self.cfg.source, exc
             )
@@ -123,17 +123,19 @@ class VideoRecorder:
         """Bind one frame reader; image views own selection and composition."""
         sim = self._env.sim
         cfg = self.cfg.view
+        camera = None
         kind, name, channel = self._source or (None, None, None)
         if kind == "sensor":
             if name not in self._env.scene.sensors:
                 raise RuntimeError(f"Sensor {name!r} not found; available sensors: {sorted(self._env.scene.sensors)}.")
+            camera = self._env.scene.sensors[name]
             cfg = ImageViewCfg(
                 source=name,
                 channels=(channel or "rgb",),
                 depth_range=(self.cfg.depth_colormap_min, self.cfg.depth_colormap_max),
             )
         if cfg is not None:
-            view = sim.get_image_view(cfg)
+            view = sim.get_image_view(cfg, camera=camera)
             return lambda: view.read_rgb(sim.get_physics_step_count())
         candidates = [
             viz

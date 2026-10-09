@@ -77,7 +77,7 @@ def _make_env(visualizers=(), sensors: dict | None = None):
 
     env.sim._image_views = {}
     env.sim._scene_data_provider.get_camera_sensors.return_value = env.scene.sensors
-    env.sim.get_image_view.side_effect = lambda cfg: SimulationContext.get_image_view(env.sim, cfg)
+    env.sim.get_image_view.side_effect = lambda cfg, **kwargs: SimulationContext.get_image_view(env.sim, cfg, **kwargs)
     env.sim.get_physics_step_count.return_value = 0
     return env
 
@@ -264,7 +264,10 @@ def _rgb_sensor():
     ids=["auto_visualizer", "newton_gl", "sensor_rgb"],
 )
 def test_source_resolves_frame(source, make_env):
-    frame = VideoRecorder(_cfg(source=source), make_env())._get_frame()
+    env = make_env()
+    if source.startswith("sensor:"):
+        env.sim._scene_data_provider.get_camera_sensors.return_value = {}
+    frame = VideoRecorder(_cfg(source=source), env)._get_frame()
     assert frame is not None
     assert frame.shape == _FRAME.shape
 
@@ -274,6 +277,7 @@ def test_source_resolves_frame(source, make_env):
     [
         ("viz", lambda: _make_env(visualizers=[]), "no recording-capable visualizer"),
         ("sensor:missing", lambda: _make_env(sensors={"tiled_camera": MagicMock()}), "tiled_camera"),
+        ("sensor:tiled_camera:depth", lambda: _make_env(sensors={"tiled_camera": _rgb_sensor()}), "depth"),
     ],
 )
 def test_unavailable_source_logs_error_and_returns_none(caplog, source, make_env, message):
@@ -281,7 +285,9 @@ def test_unavailable_source_logs_error_and_returns_none(caplog, source, make_env
     recorder = VideoRecorder(_cfg(source=source), make_env())
     with caplog.at_level(logging.ERROR, logger="isaaclab.envs.utils.video_recorder"):
         assert recorder._get_frame() is None
-    assert any(message in r.message for r in caplog.records)
+        assert recorder._get_frame() is None
+    assert len(caplog.records) == 1
+    assert message in caplog.records[0].message
 
 
 # ---------------------------------------------------------------------------

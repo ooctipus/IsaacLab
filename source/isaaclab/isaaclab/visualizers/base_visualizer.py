@@ -107,14 +107,13 @@ class BaseVisualizer(ABC):
             env_ids = resolve_streaming_envs(num_envs, self.cfg.streaming_envs, sample_from=self._env_ids)
         for camera in cameras:
             perspective = isinstance(camera, PerspectiveCameraCfg)
-            cfg = ImageViewCfg(
+            view_cfg = ImageViewCfg(
                 source=camera if perspective else camera.cfg.prim_path,
                 envs=(0,) if perspective else tuple(map(int, env_ids)),
                 channels=("rgb",) if perspective else tuple(self.cfg.streaming_gt_types),
                 depth_range=(self.cfg.streaming_depth_min, self.cfg.streaming_depth_max),
             )
-            view = self._sim.get_image_view(cfg, camera=None if perspective else camera)
-            self._image_views.append(view)
+            self._image_views.append(self._sim.get_image_view(view_cfg, camera=None if perspective else camera))
         self.image_view = next((view for view in self._image_views if view.camera is not None), None)
 
     def render_tiled_rgba_array(self) -> wp.array | None:

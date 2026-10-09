@@ -46,6 +46,7 @@ if TYPE_CHECKING:
 
     from ..cloner.clone_plan import ClonePlan
     from ..sensors import Camera
+    from ..sensors.ray_caster.base_ray_caster_camera import BaseRayCasterCamera
 
 from .simulation_cfg import BackendCfg, SimulationCfg
 from .spawners import DomeLightCfg, GroundPlaneCfg
@@ -457,10 +458,8 @@ class SimulationContext:
         for visualizer in tuple(self._pending_visualizers):
             if config_filter is not None and not config_filter(visualizer.cfg):
                 continue
-            if visualizer.cfg.window.view is not None:
-                view = self.get_image_view(visualizer.cfg.window.view)
-                cameras = [view.camera if view.camera is not None else view.cfg.source]
-            else:
+            cameras = []
+            if visualizer.cfg.window.view is None:
                 camera_sensors = self._scene_data_provider.get_camera_sensors() if visualizer.cfg.streaming_view else {}
                 env_template = self._clone_plan.env_template if self._clone_plan is not None else DEFAULT_ENV_TEMPLATE
                 cameras = resolve_camera_sources(visualizer.cfg, camera_sensors, env_template=env_template)
@@ -473,12 +472,12 @@ class SimulationContext:
         if not self._pending_visualizers:
             self._pending_camera_view = None
 
-    def get_image_view(self, cfg: ImageViewCfg, *, camera: Camera | None = None) -> ImageView:
+    def get_image_view(self, cfg: ImageViewCfg, *, camera: Camera | BaseRayCasterCamera | None = None) -> ImageView:
         """Bind a shared image declaration once for all windows and recorders in this simulation.
 
         Args:
             cfg: Shared view declaration. Copies of a consumer retain this declaration by reference.
-            camera: Already resolved sensor for legacy prim-path camera selections.
+            camera: Already resolved image sensor, including ray-cast cameras used for recording.
 
         Returns:
             The simulation-owned view. Perspective producers bind their rendering callback during initialization.

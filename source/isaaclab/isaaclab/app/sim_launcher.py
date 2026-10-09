@@ -17,7 +17,7 @@ import logging
 import os
 import sys
 import traceback
-from collections.abc import Generator, Sequence
+from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
@@ -37,7 +37,12 @@ from ..sim.simulation_cfg import SimulationCfg
 from ..utils.assets import configure_storage_profile
 from ..utils.device import set_cuda_device
 from ..utils.string import string_to_callable
-from ..visualizers.visualizer_cfg import VisualizerCfg, parse_visualizer_csv, resolve_visualizer_cfgs
+from ..visualizers.visualizer_cfg import (
+    VisualizerCfg,
+    _make_visualizer_cfg,
+    parse_visualizer_csv,
+    resolve_visualizer_cfgs,
+)
 from .logging_utils import apply_python_logging_level, ensure_console_handlers, resolve_python_logging_level
 from .settings_manager import get_settings_manager
 
@@ -196,15 +201,15 @@ def _resolve_launcher_args(args: dict) -> None:
 
 
 def _resolve_video_sources(
-    video_recorders: list[VideoRecorderCfg], visualizers: list[str], visualizer_cfgs: Sequence[VisualizerCfg] = ()
-) -> list[str]:
+    video_recorders: list[VideoRecorderCfg], visualizers: list[str], visualizer_cfgs: list[VisualizerCfg]
+) -> list[VisualizerCfg]:
     """Rewrite each visualizer source of *video_recorders* to the concrete ``viz:<type>[:streaming_view]``.
 
     A bare ``viz`` records from the first capture-capable type of the *visualizers* selection, else from
     ``newton_gl``. Rewriting is idempotent, so a second scan resolves the same sources.
 
     Returns:
-        The visualizer types the recorders record from, in canonical names.
+        The configured producers required by the recorders, in recording order.
 
     Raises:
         ValueError: If a recorder names a streaming visualizer, which cannot be recorded from.
@@ -217,7 +222,8 @@ def _resolve_video_sources(
             owners = [cfg for cfg in visualizer_cfgs if cfg.window.view is recorder.view]
             if len(owners) != 1:
                 raise ValueError("A recorded perspective view requires exactly one configured visualizer.")
-            video_visualizers.append(owners[0].visualizer_type)
+            if not any(cfg is owners[0] for cfg in video_visualizers):
+                video_visualizers.append(owners[0])
             continue
         kind, name, sub = parse_video_source(recorder.source)
         if kind == "sensor":
@@ -230,8 +236,13 @@ def _resolve_video_sources(
                 " headless when --viz does not select them, or from a scene camera with 'sensor:<name>'."
             )
         recorder.source = f"viz:{name}:{sub}" if sub else f"viz:{name}"
-        video_visualizers.append(name)
-    return list(dict.fromkeys(video_visualizers))
+        producer = next((cfg for cfg in visualizer_cfgs if cfg.visualizer_type == name), None)
+        if producer is None:
+            producer = _make_visualizer_cfg(name)
+            visualizer_cfgs.append(producer)
+        if not any(cfg is producer for cfg in video_visualizers):
+            video_visualizers.append(producer)
+    return video_visualizers
 
 
 """
@@ -263,8 +274,8 @@ class Scan:
     has_ovphysx_physics: bool
     needs_kit: bool
     launcher_types: list[str] = field(default_factory=list)  # named by the physics and renderer configs
-    # visualizer types the video recorders record from; the ones --visualizer did not select run headless
-    video_visualizers: list[str] = field(default_factory=list)
+    # Exact recording producers; those not selected for display run headless.
+    video_visualizers: list[VisualizerCfg] = field(default_factory=list)
 
 
 def _refresh_physics_scan_flags(config_scan: Scan, concrete_physics_cfgs: list[PhysicsCfg], has_physics: bool) -> None:
@@ -361,15 +372,17 @@ def scan(cfg, launcher_args: argparse.Namespace | dict | None = None) -> Scan:
 
     visit(cfg, None, None)
 
+    if sim_cfg is not None:
+        sim_cfg.visualizer_cfgs = resolve_visualizer_cfgs(sim_cfg.visualizer_cfgs, None)
     video_visualizers = _resolve_video_sources(
-        video_recorders, args["visualizer"], sim_cfg.visualizer_cfgs if sim_cfg is not None else ()
+        video_recorders, args["visualizer"], sim_cfg.visualizer_cfgs if sim_cfg is not None else []
     )
     has_physics = bool(physics_cfgs)
     config_scan = Scan(
         resolved_physics_cfg=physics_cfgs[0] if physics_cfgs else None,
         effective_cfg=effective_cfg,
         sim_cfg=sim_cfg,
-        has_ovrtx=has_ovrtx or "newton_rtx" in video_visualizers,
+        has_ovrtx=has_ovrtx or any(cfg.visualizer_type == "newton_rtx" for cfg in video_visualizers),
         has_kit_camera=has_kit_camera,
         has_kit_physics=False,
         has_ovphysx_physics=False,
@@ -437,7 +450,7 @@ def _get_kit_runtime_sources(config_scan: Scan, args: dict) -> tuple[str, ...]:
         kit_sources.append('a Kit-based renderer (`IsaacRtxRendererCfg`, `renderer_type="isaac_rtx"`)')
     if "kit" in args["visualizer"]:
         kit_sources.append("the Kit visualizer (`--visualizer kit`)")
-    elif "kit" in config_scan.video_visualizers:
+    elif any(cfg.visualizer_type == "kit" for cfg in config_scan.video_visualizers):
         kit_sources.append("a headless Kit visualizer recording video (`viz:kit`)")
     if args.get("experience", ""):
         kit_sources.append("an explicit Kit experience")
@@ -611,7 +624,11 @@ def launch_simulation(
         cfg.visualizer_type == "kit" and cfg.streaming_view for cfg in sim_cfg.visualizer_cfgs
     )
 
-    if needs_kit and (config_scan.has_kit_camera or has_kit_streaming_view or "kit" in config_scan.video_visualizers):
+    if needs_kit and (
+        config_scan.has_kit_camera
+        or has_kit_streaming_view
+        or any(cfg.visualizer_type == "kit" for cfg in config_scan.video_visualizers)
+    ):
         if not args.get("enable_cameras", False):
             logger.info(
                 "Auto-enabling camera rendering because the scene contains Kit camera sensors, "

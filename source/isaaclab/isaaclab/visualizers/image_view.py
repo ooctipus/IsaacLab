@@ -23,6 +23,7 @@ from .visualizer_cfg import ImageViewCfg
 
 if TYPE_CHECKING:
     from ..sensors import Camera
+    from ..sensors.ray_caster.base_ray_caster_camera import BaseRayCasterCamera
 
 
 class ImageView:
@@ -33,7 +34,7 @@ class ImageView:
     only :meth:`read_rgb` transfers pixels to the host.
     """
 
-    def __init__(self, cfg: ImageViewCfg, camera: Camera | None = None) -> None:
+    def __init__(self, cfg: ImageViewCfg, camera: Camera | BaseRayCasterCamera | None = None) -> None:
         """Bind a view declaration to a scene sensor or an initially unbound perspective producer."""
         validate(cfg)
         self.cfg = cfg
