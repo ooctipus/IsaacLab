@@ -194,7 +194,9 @@ def test_window_and_recorder_share_fixed_device_image(device, monkeypatch):
     sim = object.__new__(SimulationContext)
     sim._scene_data_provider = SimpleNamespace(get_camera_sensors=Mock(return_value={"front": camera}))
     sim._image_views, sim._physics_step_count = {}, 0
-    declaration = ImageViewCfg(source="front", envs=(2, 0), channels=("rgb", "depth"), size=(16, 20))
+    with pytest.raises(TypeError, match="size"):
+        ImageViewCfg(source="front", size=(16, 20))
+    declaration = ImageViewCfg(source="front", envs=(2, 0), channels=("rgb", "depth"))
     window = deepcopy(WindowCfg(view=declaration, size=(320, 240)))
     recorder_cfg = deepcopy(VideoRecorderCfg(view=declaration))
     monkeypatch.setattr("isaaclab.envs.utils.video_recorder.ImageSequenceClip", Mock())
@@ -206,10 +208,12 @@ def test_window_and_recorder_share_fixed_device_image(device, monkeypatch):
     assert acquired.call_count == 1
     assert image.device == wp.get_device(device)
     colors = (colormaps["turbo"]((2.0 - 0.1) / 9.9)[:3] * np.array(255)).astype(np.uint8)
-    expected = np.zeros((20, 16, 3), np.uint8)
-    expected[2:10, :8] = 2
-    expected[2:18, 8:] = colors
+    expected = np.zeros((4, 4, 3), np.uint8)
+    expected[:2, :2] = 2
+    expected[:, 2:] = colors
     np.testing.assert_array_equal(pixels, expected)
+    np.testing.assert_array_equal(depth.numpy(), np.full((3, 2, 2, 1), 2.0, np.float32))
+    assert camera.cfg.data_types == ["rgba", "distance_to_image_plane"]
 
     # The window is only a consumer. Changing its dimensions leaves the sensor and view allocations intact.
     pointer, source_pointer = image.ptr, rgb.ptr
@@ -225,9 +229,8 @@ def test_window_and_recorder_share_fixed_device_image(device, monkeypatch):
     wp.capture_launch(capture.graph)
     assert image.ptr == pointer and rgb.ptr == source_pointer
     replayed = image.numpy()[..., :3]
-    assert np.all(replayed[2:18, :8] == 7)
-    np.testing.assert_array_equal(replayed[2:18, 8:], expected[2:18, 8:])
-    assert not replayed[:2].any() and not replayed[-2:].any()
+    assert np.all(replayed[:, :2] == 7)
+    np.testing.assert_array_equal(replayed[:, 2:], expected[:, 2:])
     camera.update.assert_not_called()
     camera.close.assert_not_called()
     declaration.envs = ()

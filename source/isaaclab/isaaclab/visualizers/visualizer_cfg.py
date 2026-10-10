@@ -171,20 +171,17 @@ class ImageViewCfg:
     """Sensor rows to display, in the requested order."""
 
     channels: tuple[str, ...] = ("rgb",)
-    """Display channels, left-to-right within each environment: rgb, depth, normals, or segmentation."""
-
-    size: tuple[int, int] | None = None
-    """Output width and height [px]. None retains native tile sizes. Window resizing does not change this."""
+    """Existing source outputs to display, left-to-right: rgb, depth, normals, or segmentation."""
 
     depth_range: tuple[float, float] = (0.1, 10.0)
-    """Near and far limits [m] for depth colorization."""
+    """Display color scale limits [m]. Source depth values and camera clipping planes remain unchanged."""
 
     def __deepcopy__(self, memo):
         """Keep this explicitly shared declaration when its consumers' configurations are copied."""
         return self
 
     def validate_config(self) -> None:
-        """Reject unsupported channels, negative row indices, and invalid output dimensions."""
+        """Reject unsupported channels, negative row indices, and invalid display color limits."""
         from ..envs.utils.camera_view import sensor_key_for_gt_type
 
         if not isinstance(self.source, (str, PerspectiveCameraCfg)) or self.source == "":
@@ -197,8 +194,6 @@ class ImageViewCfg:
             sensor_key_for_gt_type(channel)
         if isinstance(self.source, PerspectiveCameraCfg) and (self.envs != (0,) or self.channels != ("rgb",)):
             raise ValueError("Perspective image views provide one RGB image; use envs=(0,) and channels=('rgb',).")
-        if self.size is not None and (len(self.size) != 2 or any(not isinstance(i, int) or i < 1 for i in self.size)):
-            raise ValueError("ImageViewCfg.size must contain positive integer width and height.")
         if len(self.depth_range) != 2 or not 0 <= self.depth_range[0] < self.depth_range[1]:
             raise ValueError("ImageViewCfg.depth_range must contain increasing non-negative limits.")
 

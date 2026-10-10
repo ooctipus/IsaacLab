@@ -775,7 +775,7 @@ class NewtonGLVisualizer(NewtonVisualizerBase):
             # pyglet sets WM_CLASS from the window caption, which ViewerGL defaults to "Newton".
             write_desktop_entry("isaaclab-newton-gl-viewer", "Newton", "Newton", _NEWTON_ICON_DIR / "icon_64.png")
         window = self.cfg.window
-        width, height = (window.view.size or window.size) if window.view is not None else window.size
+        width, height = window.size
         self._viewer = NewtonViewerGL(
             width=width,
             height=height,
@@ -797,8 +797,6 @@ class NewtonGLVisualizer(NewtonVisualizerBase):
         if window.view is None:
             for view in self._image_views:
                 view.aspect = width / height
-        else:
-            self._viewer.renderer.window.set_size(*window.size)
 
         self._viewer.register_ui_callback(self._draw_streaming_view_controls, position="side")
         self._select_camera(self._camera_index)
@@ -1157,7 +1155,7 @@ class NewtonRTXVisualizer(NewtonVisualizerBase):
             settings["omni:rtx:background:source:type"] = ("Token", "color")
             settings["omni:rtx:background:source:color"] = ("Color3f", cfg.background_color)
         window = cfg.window
-        width, height = (window.view.size or window.size) if window.view is not None else window.size
+        width, height = window.size
         self._viewer = NewtonViewerRTX(
             width=width,
             height=height,
@@ -1173,7 +1171,6 @@ class NewtonRTXVisualizer(NewtonVisualizerBase):
             },
             window_cfg=cfg.window,
         )
-        self._viewer._window_width, self._viewer._window_height = window.size
         self._viewer.set_model(self.backend.model)
         self._viewer.marker_groups = sim.vis_marker_registry.get_groups().values()
         self._viewer.picking_enabled = False

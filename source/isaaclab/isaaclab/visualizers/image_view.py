@@ -18,7 +18,7 @@ from matplotlib import colormaps
 from ..envs.utils.camera_view import image_grid_columns, sensor_key_for_gt_type
 from ..utils import validate
 from ..utils.buffers import TimestampedBuffer
-from ..utils.images import _resize_rgba_image, compose_image
+from ..utils.images import compose_image
 from .visualizer_cfg import ImageViewCfg
 
 if TYPE_CHECKING:
@@ -44,7 +44,6 @@ class ImageView:
         self.frame = TimestampedBuffer()
         self._host_frame: np.ndarray | None = None
         self._render_buffer: wp.array | None = None
-        self._tiles: wp.array | None = None
         self._env_ids: wp.array | None = None
         self._depth_colors: wp.array | None = None
         self._selection = self._layout = None
@@ -55,7 +54,7 @@ class ImageView:
         cfg, camera = self.cfg, self.camera
         if not cfg.envs:
             return None
-        selection = (tuple(cfg.envs), tuple(cfg.channels), cfg.size, cfg.depth_range, self.aspect)
+        selection = (tuple(cfg.envs), tuple(cfg.channels), cfg.depth_range, self.aspect)
         if selection != self._selection:
             validate(cfg)
             available = frozenset(camera.cfg.data_types) if camera is not None else frozenset({"rgb"})
@@ -89,29 +88,20 @@ class ImageView:
                 raise ValueError("Image channels must have the same batch size, resolution, and device.")
             if max(cfg.envs) >= count:
                 raise ValueError(f"Image row selection is outside the source batch of {count} rows.")
-            aspect = cfg.size[0] / cfg.size[1] if cfg.size is not None else self.aspect
-            columns = image_grid_columns(len(cfg.envs), len(sources), height, width, aspect)
+            columns = image_grid_columns(len(cfg.envs), len(sources), height, width, self.aspect)
             shape = (math.ceil(len(cfg.envs) / columns) * height, columns * len(sources) * width, 4)
             colors = np.empty((0, 3), dtype=np.uint8)
             if "depth" in cfg.channels:
                 colors = (colormaps["turbo"](np.arange(256) / 255.0)[..., :3] * 255).astype(np.uint8)
             self._env_ids = wp.array(cfg.envs, dtype=wp.int32, device=device)
             self._depth_colors = wp.array(colors, dtype=wp.uint8, device=device)
-            self._tiles = wp.empty(shape, dtype=wp.uint8, device=device)
-            output_shape = (cfg.size[1], cfg.size[0], 4) if cfg.size is not None else shape
-            if output_shape == shape:
-                self.frame.data = self._tiles
-            elif self.frame.data is None or self.frame.data.shape != output_shape or self.frame.data.device != device:
-                self.frame.data = wp.empty(output_shape, dtype=wp.uint8, device=device)
+            self.frame.data = wp.empty(shape, dtype=wp.uint8, device=device)
             self._layout = layout
 
         compose_image(
-            self._tiles, sources, self._env_ids, cfg.channels, self._depth_colors,
+            self.frame.data, sources, self._env_ids, cfg.channels, self._depth_colors,
             depth_min=cfg.depth_range[0], depth_max=cfg.depth_range[1],
         )  # fmt: skip
-        if self.frame.data is not self._tiles:
-            output = self.frame.data
-            wp.launch(_resize_rgba_image, dim=output.shape[:2], inputs=[self._tiles, output], device=output.device)
         self.frame.timestamp = frame_id
         self._host_frame = None
         return self.frame.data
@@ -135,5 +125,5 @@ class ImageView:
         self.camera = self.render = self._render_buffer = None
         self.frame = TimestampedBuffer()
         self._host_frame = None
-        self._tiles = self._env_ids = self._depth_colors = None
+        self._env_ids = self._depth_colors = None
         self._layout = self._selection = None

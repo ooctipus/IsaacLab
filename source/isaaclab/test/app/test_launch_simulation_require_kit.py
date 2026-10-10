@@ -196,8 +196,8 @@ def test_shared_view_recording_selects_its_producer_without_a_window(producer_co
     from isaaclab.sim import SimulationCfg
     from isaaclab.visualizers import ImageViewCfg, PerspectiveCameraCfg, WindowCfg
 
-    views = [ImageViewCfg(source=PerspectiveCameraCfg(), size=(128, 96)) for _ in range(producer_count)]
-    visualizers = [NewtonGLVisualizerCfg(window=WindowCfg(view=view)) for view in views]
+    views = [ImageViewCfg(source=PerspectiveCameraCfg()) for _ in range(producer_count)]
+    visualizers = [NewtonGLVisualizerCfg(window=WindowCfg(view=view, size=(128, 96))) for view in views]
     if producer_count == 1:
         visualizers = visualizers[0]  # SimulationCfg also accepts a single configuration.
     else:
@@ -211,7 +211,7 @@ def test_shared_view_recording_selects_its_producer_without_a_window(producer_co
         for producer, recorder in zip(cfg.sim.visualizer_cfgs, cfg.video_recorders):
             assert producer.headless
             assert producer.window.view is recorder.view
-            assert producer.window.view.size == (128, 96)
+            assert producer.window.size == (128, 96)
 
 
 @pytest.mark.parametrize("visualizers", [[], ["newton_gl"]])
