@@ -32,11 +32,7 @@ from ..utils.string import clear_resolve_matching_names_cache
 from ..utils.version import has_kit
 from ..visualizers.base_visualizer import BaseVisualizer
 from ..visualizers.image_view import ImageView
-from ..visualizers.visualizer_cfg import (
-    get_visualizer_install_hint,
-    parse_visualizer_csv,
-    resolve_visualizer_cfgs,
-)
+from ..visualizers.visualizer_cfg import _make_visualizer_cfg, get_visualizer_install_hint
 from .utils import create_new_stage
 from .utils import stage as stage_utils
 
@@ -167,16 +163,20 @@ class SimulationContext:
 
         # Acquire settings interface (SettingsManager: standalone dict or Omniverse when available)
         self.settings = get_settings_manager()
-        # Normalize the visualizers to a list, applying the --visualizer selection a launch recorded for the
-        # config built afterwards. Without a selection (the setting absent or empty), a config built by the caller
-        # keeps the visualizers it lists.
+        # Bare-physics launches defer their CLI selection until this SimulationCfg exists.
+        if not isinstance(self.cfg.visualizer_cfgs, list):
+            self.cfg.visualizer_cfgs = [] if self.cfg.visualizer_cfgs is None else [self.cfg.visualizer_cfgs]
         pending_visualizers = self.get_setting("/isaaclab/visualizer/types")
+        if pending_visualizers:
+            names = pending_visualizers.split(",")
+            self.cfg.visualizer_cfgs = [cfg for cfg in self.cfg.visualizer_cfgs if cfg.visualizer_type in names]
+            for name in names:
+                if not any(cfg.visualizer_type == name for cfg in self.cfg.visualizer_cfgs):
+                    self.cfg.visualizer_cfgs.append(_make_visualizer_cfg(name))
         max_visible_envs = self.get_setting("/isaaclab/visualizer/max_visible_envs")
-        self.cfg.visualizer_cfgs = resolve_visualizer_cfgs(
-            self.cfg.visualizer_cfgs,
-            parse_visualizer_csv(pending_visualizers) if pending_visualizers else None,
-            None if max_visible_envs is None or max_visible_envs < 0 else max_visible_envs,
-        )
+        if max_visible_envs is not None and max_visible_envs >= 0:
+            for visualizer in self.cfg.visualizer_cfgs:
+                visualizer.max_visible_envs = int(max_visible_envs)
 
         # Initialize USD physics scene and physics manager
         self._init_usd_physics_scene()

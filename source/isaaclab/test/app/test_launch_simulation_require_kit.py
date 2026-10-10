@@ -194,8 +194,10 @@ def test_shared_view_recording_selects_its_producer_without_a_window(producer_co
 
     from isaaclab.envs.utils.video_recorder_cfg import VideoRecorderCfg
     from isaaclab.sim import SimulationCfg
-    from isaaclab.visualizers import ImageViewCfg, PerspectiveCameraCfg, WindowCfg
+    from isaaclab.visualizers import ImageViewCfg, PerspectiveCameraCfg, WindowCfg, visualizer_cfg
 
+    assert "_resolve_video_sources" not in vars(sim_launcher)
+    assert "resolve_visualizer_cfgs" not in vars(visualizer_cfg)
     views = [ImageViewCfg(source=PerspectiveCameraCfg()) for _ in range(producer_count)]
     visualizers = [NewtonGLVisualizerCfg(window=WindowCfg(view=view, size=(128, 96))) for view in views]
     if producer_count == 1:
@@ -206,6 +208,10 @@ def test_shared_view_recording_selects_its_producer_without_a_window(producer_co
         sim=SimulationCfg(device="cpu", physics=NewtonCfg(), visualizer_cfgs=visualizers),
         video_recorders=[VideoRecorderCfg(view=view) for view in views or [ImageViewCfg(source="front")]],
     )
+    declared = cfg.sim.visualizer_cfgs
+    preview = sim_launcher.scan(cfg, {"visualizer": [], "headless": True})
+    assert cfg.sim.visualizer_cfgs is declared
+    assert len(preview.visualizer_cfgs) == producer_count
     with launch_simulation(cfg, {"visualizer": [], "headless": True}):
         assert len(cfg.sim.visualizer_cfgs) == producer_count
         for producer, recorder in zip(cfg.sim.visualizer_cfgs, cfg.video_recorders):

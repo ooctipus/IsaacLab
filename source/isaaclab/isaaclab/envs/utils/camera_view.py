@@ -7,53 +7,16 @@
 
 from __future__ import annotations
 
-import math
 import re
 from typing import TYPE_CHECKING
 
 from ...cloner.cloner_cfg import DEFAULT_ENV_TEMPLATE, expand_env_regex_ns
+from ...utils.images import sensor_key_for_gt_type
 from ...visualizers.visualizer_cfg import PerspectiveCameraCfg, SceneCameraCfg
 
 if TYPE_CHECKING:
     from ...sensors.camera import Camera
     from ...visualizers.visualizer_cfg import VisualizerCfg
-
-_CAMERA_CHANNEL_KEYS = {
-    "rgb": ("rgb", "rgba"),
-    "depth": ("depth", "distance_to_image_plane"),
-    "segmentation": ("semantic_segmentation",),
-    "normals": ("normals",),
-}
-
-
-def sensor_key_for_gt_type(
-    gt_type: str, available_keys: frozenset[str] | None = None, *, required: bool = True
-) -> str | None:
-    """Bind a display channel to its available sensor output.
-
-    Args:
-        gt_type: Display channel: rgb, depth, normals, or segmentation.
-        available_keys: Sensor output names. None returns the primary output name.
-        required: Whether a missing output raises; False skips incompatible automatic sources.
-
-    Returns:
-        The matching sensor key, or None when absent and not required.
-
-    Raises:
-        ValueError: If the display channel is unknown.
-        KeyError: If no matching output is available and required is True.
-    """
-    if gt_type not in _CAMERA_CHANNEL_KEYS:
-        raise ValueError(f"GT type {gt_type!r} is not supported. Valid types: {sorted(_CAMERA_CHANNEL_KEYS)}")
-    keys = _CAMERA_CHANNEL_KEYS[gt_type]
-    if available_keys is None:
-        return keys[0]
-    for key in keys:
-        if key in available_keys:
-            return key
-    if not required:
-        return None
-    raise KeyError(f"No sensor output found for GT type {gt_type!r}. Tried {keys}; available: {sorted(available_keys)}")
 
 
 def resolve_camera_sources(
@@ -107,18 +70,3 @@ def resolve_camera_sources(
             sensor_key_for_gt_type(gt_type, available)
         sources[index] = camera
     return sources
-
-
-def image_grid_columns(n_envs: int, n_gt: int, height: int, width: int, target_aspect: float = 1.0) -> int:
-    """Choose complete environment rows first, then the closest display aspect ratio."""
-    if not (math.isfinite(target_aspect) and target_aspect > 0):
-        target_aspect = 1.0
-    best_cols, best_score = 1, float("inf")
-    for columns in range(1, n_envs + 1):
-        rows = math.ceil(n_envs / columns)
-        empty = rows * columns - n_envs
-        aspect = columns * n_gt * width / (rows * height)
-        score = empty * 10.0 + abs(math.log(aspect / target_aspect)) - columns * 1e-6
-        if score < best_score:
-            best_cols, best_score = columns, score
-    return best_cols

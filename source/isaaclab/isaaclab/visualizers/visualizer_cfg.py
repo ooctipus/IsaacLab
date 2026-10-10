@@ -85,53 +85,6 @@ def _make_visualizer_cfg(visualizer_type: str) -> VisualizerCfg:
     return cfg_class()
 
 
-def resolve_visualizer_cfgs(
-    visualizer_cfgs: list[VisualizerCfg] | VisualizerCfg | None,
-    visualizers: list[str] | None,
-    max_visible_envs=None,
-    headless_visualizers: tuple[str | VisualizerCfg, ...] | list[str | VisualizerCfg] = (),
-) -> list[VisualizerCfg]:
-    """Return the visualizers a run uses: exactly the selected types, configured by *visualizer_cfgs*.
-
-    Each selected type reuses the configured visualizer of that type, with its settings, or else gets its default
-    config; configured visualizers of unselected types do not run. Recording producers absent from the
-    selection are added headless. Passing a configuration retains that exact producer; a type name uses
-    the first configured visualizer of that type or its default settings.
-
-    Args:
-        visualizer_cfgs: Configured visualizers, e.g. :attr:`~isaaclab.sim.SimulationCfg.visualizer_cfgs`.
-        visualizers: Selection in canonical names (see :func:`parse_visualizer_csv`), empty for no visualizers.
-            None applies no selection and keeps the configured visualizers, for a simulation built without a
-            launch.
-        max_visible_envs: ``--max_visible_envs`` applied to every resulting visualizer, or None.
-        headless_visualizers: Capture-capable configurations or canonical type names to add headless
-            when not selected for display.
-    """
-    if visualizer_cfgs is None:
-        visualizer_cfgs = []
-    elif not isinstance(visualizer_cfgs, list):
-        visualizer_cfgs = [visualizer_cfgs]
-    if visualizers is not None:
-        configured = {cfg.visualizer_type: cfg for cfg in reversed(visualizer_cfgs)}
-        visualizer_cfgs = [cfg for cfg in visualizer_cfgs if cfg.visualizer_type in visualizers]
-        configured_types = {cfg.visualizer_type for cfg in visualizer_cfgs}
-        visualizer_cfgs += [_make_visualizer_cfg(name) for name in visualizers if name not in configured_types]
-        for producer in headless_visualizers:
-            if isinstance(producer, str):
-                if producer in visualizers:
-                    continue
-                producer = configured[producer] if producer in configured else _make_visualizer_cfg(producer)
-            elif any(cfg is producer for cfg in visualizer_cfgs):
-                continue
-            cfg = producer.copy()
-            cfg.headless = True
-            visualizer_cfgs.append(cfg)
-    if max_visible_envs is not None:
-        for cfg in visualizer_cfgs:
-            cfg.max_visible_envs = int(max_visible_envs)
-    return visualizer_cfgs
-
-
 @configclass
 class PerspectiveCameraCfg:
     """Initial pose and optics for a visualizer-owned interactive perspective camera."""
@@ -190,8 +143,6 @@ class ImageViewCfg(BackendCfg):
 
     def validate_config(self) -> None:
         """Reject unsupported channels, negative row indices, and invalid display color limits."""
-        from ..envs.utils.camera_view import sensor_key_for_gt_type
-
         if not isinstance(self.source, (str, PerspectiveCameraCfg)) or self.source == "":
             raise ValueError("ImageViewCfg.source must name a scene camera or declare a perspective camera.")
         if any(not isinstance(i, int) or i < 0 for i in self.envs):
@@ -199,7 +150,8 @@ class ImageViewCfg(BackendCfg):
         if not self.channels:
             raise ValueError("ImageViewCfg.channels must contain at least one display channel.")
         for channel in self.channels:
-            sensor_key_for_gt_type(channel)
+            if channel not in ("rgb", "depth", "normals", "segmentation"):
+                raise ValueError(f"Unsupported image channel: {channel!r}.")
         if isinstance(self.source, PerspectiveCameraCfg) and (self.envs != (0,) or self.channels != ("rgb",)):
             raise ValueError("Perspective image views provide one RGB image; use envs=(0,) and channels=('rgb',).")
         if len(self.depth_range) != 2 or not 0 <= self.depth_range[0] < self.depth_range[1]:

@@ -41,7 +41,6 @@ from ..visualizers.visualizer_cfg import (
     VisualizerCfg,
     _make_visualizer_cfg,
     parse_visualizer_csv,
-    resolve_visualizer_cfgs,
 )
 from .logging_utils import apply_python_logging_level, ensure_console_handlers, resolve_python_logging_level
 from .settings_manager import get_settings_manager
@@ -200,51 +199,6 @@ def _resolve_launcher_args(args: dict) -> None:
     args["visualizer"] = visualizers
 
 
-def _resolve_video_sources(
-    video_recorders: list[VideoRecorderCfg], visualizers: list[str], visualizer_cfgs: list[VisualizerCfg]
-) -> list[VisualizerCfg]:
-    """Rewrite each visualizer source of *video_recorders* to the concrete ``viz:<type>[:streaming_view]``.
-
-    A bare ``viz`` records from the first capture-capable type of the *visualizers* selection, else from
-    ``newton_gl``. Rewriting is idempotent, so a second scan resolves the same sources.
-
-    Returns:
-        The configured producers required by the recorders, in recording order.
-
-    Raises:
-        ValueError: If a recorder names a streaming visualizer, which cannot be recorded from.
-    """
-    video_visualizers = []
-    for recorder in video_recorders:
-        if recorder.view is not None:
-            if isinstance(recorder.view.source, str):
-                continue
-            owners = [cfg for cfg in visualizer_cfgs if cfg.window.view is recorder.view]
-            if len(owners) != 1:
-                raise ValueError("A recorded perspective view requires exactly one configured visualizer.")
-            if not any(cfg is owners[0] for cfg in video_visualizers):
-                video_visualizers.append(owners[0])
-            continue
-        kind, name, sub = parse_video_source(recorder.source)
-        if kind == "sensor":
-            continue
-        name = name or next((v for v in visualizers if v in CAPTURE_VISUALIZER_TYPES), "newton_gl")
-        if name not in CAPTURE_VISUALIZER_TYPES:
-            raise ValueError(
-                f"Cannot record video source {recorder.source!r}: the {name!r} visualizer streams to a viewer and"
-                " has no frame capture. Record from 'viz:kit', 'viz:newton_gl' or 'viz:newton_rtx', which run"
-                " headless when --viz does not select them, or from a scene camera with 'sensor:<name>'."
-            )
-        recorder.source = f"viz:{name}:{sub}" if sub else f"viz:{name}"
-        producer = next((cfg for cfg in visualizer_cfgs if cfg.visualizer_type == name), None)
-        if producer is None:
-            producer = _make_visualizer_cfg(name)
-            visualizer_cfgs.append(producer)
-        if not any(cfg is producer for cfg in video_visualizers):
-            video_visualizers.append(producer)
-    return video_visualizers
-
-
 """
 The Single Scan.
 """
@@ -274,8 +228,7 @@ class Scan:
     has_ovphysx_physics: bool
     needs_kit: bool
     launcher_types: list[str] = field(default_factory=list)  # named by the physics and renderer configs
-    # Exact recording producers; those not selected for display run headless.
-    video_visualizers: list[VisualizerCfg] = field(default_factory=list)
+    visualizer_cfgs: list[VisualizerCfg] = field(default_factory=list)  # final display and recording producers
 
 
 def _refresh_physics_scan_flags(config_scan: Scan, concrete_physics_cfgs: list[PhysicsCfg], has_physics: bool) -> None:
@@ -286,7 +239,7 @@ def _refresh_physics_scan_flags(config_scan: Scan, concrete_physics_cfgs: list[P
     config_scan.needs_kit = config_scan.has_kit_camera or config_scan.has_kit_physics or not has_physics
 
 
-def scan(cfg, launcher_args: argparse.Namespace | dict | None = None) -> Scan:
+def scan(cfg, launcher_args: argparse.Namespace | dict | None = None) -> Scan:  # noqa: C901
     """Walk *cfg* once, collecting all launch signals and applying ``--physics``.
 
     When the ``physics`` key is present in *launcher_args*, every physics config is
@@ -294,8 +247,8 @@ def scan(cfg, launcher_args: argparse.Namespace | dict | None = None) -> Scan:
     in place, a root config via :attr:`Scan.effective_cfg` (it cannot be mutated in
     place). Automatic PhysX configurations and RTX
     renderer placeholders (``renderer_type="auto_rtx"``) are also resolved
-    at this stage using the full *launcher_args* context, and so are the visualizer
-    sources of video recorders (see :func:`_resolve_video_sources`).
+    at this stage using the full *launcher_args* context. The selected display and recording
+    producers are returned in :attr:`Scan.visualizer_cfgs`; launch installs this final list in the simulation.
 
     The walk mutates *cfg* in place, and resolving a placeholder consumes it, so
     a second walk of the same config observes the same signals and reaches the
@@ -372,23 +325,58 @@ def scan(cfg, launcher_args: argparse.Namespace | dict | None = None) -> Scan:
 
     visit(cfg, None, None)
 
+    # Select producers once. Keep the declarations intact for callers that preview a launch with scan().
+    configured = sim_cfg.visualizer_cfgs if sim_cfg is not None else []
+    if not isinstance(configured, list):
+        configured = [] if configured is None else [configured]
+    visualizer_cfgs = [cfg for cfg in configured if cfg.visualizer_type in args["visualizer"]]
     if sim_cfg is not None:
-        sim_cfg.visualizer_cfgs = resolve_visualizer_cfgs(sim_cfg.visualizer_cfgs, None)
-    video_visualizers = _resolve_video_sources(
-        video_recorders, args["visualizer"], sim_cfg.visualizer_cfgs if sim_cfg is not None else []
-    )
+        for name in args["visualizer"]:
+            if not any(cfg.visualizer_type == name for cfg in visualizer_cfgs):
+                visualizer_cfgs.append(_make_visualizer_cfg(name))
+
+    for recorder in video_recorders:
+        if recorder.view is not None:
+            if isinstance(recorder.view.source, str):
+                continue
+            owners = [cfg for cfg in configured if cfg.window.view is recorder.view]
+            if len(owners) != 1:
+                raise ValueError("A recorded perspective view requires exactly one configured visualizer.")
+            producer = owners[0]
+        else:
+            kind, name, sub = parse_video_source(recorder.source)
+            if kind == "sensor":
+                continue
+            name = name or next((v for v in args["visualizer"] if v in CAPTURE_VISUALIZER_TYPES), "newton_gl")
+            if name not in CAPTURE_VISUALIZER_TYPES:
+                raise ValueError(
+                    f"Cannot record video source {recorder.source!r}: the {name!r} visualizer streams to a viewer and"
+                    " has no frame capture. Use 'viz:kit', 'viz:newton_gl', 'viz:newton_rtx', or 'sensor:<name>'."
+                )
+            recorder.source = f"viz:{name}:{sub}" if sub else f"viz:{name}"
+            producer = next((cfg for cfg in configured + visualizer_cfgs if cfg.visualizer_type == name), None)
+            if producer is None:
+                producer = _make_visualizer_cfg(name)
+        if not any(cfg is producer for cfg in visualizer_cfgs):
+            visualizer_cfgs.append(producer)
+        if producer.visualizer_type == "kit":
+            args["enable_cameras"] = True
+
+    visualizer_cfgs = [
+        cfg if cfg.visualizer_type in args["visualizer"] else cfg.replace(headless=True) for cfg in visualizer_cfgs
+    ]
     has_physics = bool(physics_cfgs)
     config_scan = Scan(
         resolved_physics_cfg=physics_cfgs[0] if physics_cfgs else None,
         effective_cfg=effective_cfg,
         sim_cfg=sim_cfg,
-        has_ovrtx=has_ovrtx or any(cfg.visualizer_type == "newton_rtx" for cfg in video_visualizers),
+        has_ovrtx=has_ovrtx or any(cfg.visualizer_type == "newton_rtx" for cfg in visualizer_cfgs),
         has_kit_camera=has_kit_camera,
         has_kit_physics=False,
         has_ovphysx_physics=False,
         needs_kit=False,
         launcher_types=launcher_types,
-        video_visualizers=video_visualizers,
+        visualizer_cfgs=visualizer_cfgs,
     )
     _refresh_physics_scan_flags(config_scan, concrete_physics_cfgs, has_physics)
 
@@ -450,7 +438,7 @@ def _get_kit_runtime_sources(config_scan: Scan, args: dict) -> tuple[str, ...]:
         kit_sources.append('a Kit-based renderer (`IsaacRtxRendererCfg`, `renderer_type="isaac_rtx"`)')
     if "kit" in args["visualizer"]:
         kit_sources.append("the Kit visualizer (`--visualizer kit`)")
-    elif any(cfg.visualizer_type == "kit" for cfg in config_scan.video_visualizers):
+    elif any(cfg.visualizer_type == "kit" for cfg in config_scan.visualizer_cfgs):
         kit_sources.append("a headless Kit visualizer recording video (`viz:kit`)")
     if args.get("experience", ""):
         kit_sources.append("an explicit Kit experience")
@@ -616,23 +604,19 @@ def launch_simulation(
     # holds none.
     sim_cfg = config_scan.sim_cfg
     if sim_cfg is not None:
-        # Decide the visualizers once, into the SimulationCfg.
-        sim_cfg.visualizer_cfgs = resolve_visualizer_cfgs(
-            sim_cfg.visualizer_cfgs, args["visualizer"], args.get("max_visible_envs"), config_scan.video_visualizers
-        )
+        sim_cfg.visualizer_cfgs = config_scan.visualizer_cfgs
+        if args.get("max_visible_envs") is not None:
+            for visualizer in sim_cfg.visualizer_cfgs:
+                visualizer.max_visible_envs = int(args["max_visible_envs"])
     has_kit_streaming_view = sim_cfg is not None and any(
         cfg.visualizer_type == "kit" and cfg.streaming_view for cfg in sim_cfg.visualizer_cfgs
     )
 
-    if needs_kit and (
-        config_scan.has_kit_camera
-        or has_kit_streaming_view
-        or any(cfg.visualizer_type == "kit" for cfg in config_scan.video_visualizers)
-    ):
+    if needs_kit and (config_scan.has_kit_camera or has_kit_streaming_view):
         if not args.get("enable_cameras", False):
             logger.info(
                 "Auto-enabling camera rendering because the scene contains Kit camera sensors, "
-                "a Kit visualizer with streaming_view=True, or a video recorded from the Kit visualizer."
+                "or a Kit visualizer with streaming_view=True."
             )
             args["enable_cameras"] = True
 

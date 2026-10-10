@@ -5,6 +5,8 @@
 
 """Streaming display channel, colorization, and pixel layout contracts."""
 
+import ast
+import inspect
 import math
 from colorsys import hsv_to_rgb
 from importlib.util import find_spec
@@ -17,9 +19,8 @@ import warp as wp
 from matplotlib import colormaps
 
 from isaaclab.envs.utils import camera_view
-from isaaclab.envs.utils.camera_view import image_grid_columns, sensor_key_for_gt_type
 from isaaclab.test.utils import DeviceScope, test_devices
-from isaaclab.utils.images import compose_image
+from isaaclab.utils.images import compose_image, image_grid_columns, sensor_key_for_gt_type
 
 
 def _reference_colorize(data, channel):
@@ -176,8 +177,11 @@ def test_window_and_recorder_share_fixed_device_image(device, monkeypatch):
     from isaaclab.envs.utils.video_recorder_cfg import VideoRecorderCfg
     from isaaclab.sim import SimulationContext
     from isaaclab.utils.warp import ProxyArray
-    from isaaclab.visualizers import ImageViewCfg, WindowCfg
+    from isaaclab.visualizers import ImageViewCfg, WindowCfg, image_view, visualizer_cfg
 
+    for module in (image_view, visualizer_cfg):
+        imports = (node for node in ast.walk(ast.parse(inspect.getsource(module))) if isinstance(node, ast.ImportFrom))
+        assert not any("envs" in (node.module or "").split(".") for node in imports)
     assert find_spec("isaaclab.envs.utils.camera_colorizer") is None
     assert not {
         "camera_gt_batch",

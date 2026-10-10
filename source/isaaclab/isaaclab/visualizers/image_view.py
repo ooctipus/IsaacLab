@@ -15,10 +15,9 @@ import numpy as np
 import warp as wp
 from matplotlib import colormaps
 
-from ..envs.utils.camera_view import image_grid_columns, sensor_key_for_gt_type
 from ..utils import validate
 from ..utils.buffers import TimestampedBuffer
-from ..utils.images import compose_image
+from ..utils.images import compose_image, image_grid_columns, sensor_key_for_gt_type
 from .visualizer_cfg import ImageViewCfg
 
 if TYPE_CHECKING:
