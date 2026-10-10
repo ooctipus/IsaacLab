@@ -105,7 +105,41 @@ class VideoRecorder:
             return None
         try:
             if self._capture is None:
-                self._capture = self._bind_source()
+                sim = self._env.sim
+                cfg = self.cfg.view
+                kind, name, channel = self._source or (None, None, None)
+                if kind == "sensor":
+                    cfg = ImageViewCfg(
+                        source=name,
+                        channels=(channel or "rgb",),
+                        depth_range=(self.cfg.depth_colormap_min, self.cfg.depth_colormap_max),
+                    )
+                if cfg is not None:
+                    view = sim.get_or_create_backend(cfg, cameras=self._env.scene.sensors)
+                    self._capture = lambda: view.read_rgb(sim.get_physics_step_count())
+                else:
+                    for viz in sim.visualizers:
+                        if viz.cfg.visualizer_type in CAPTURE_VISUALIZER_TYPES and (
+                            not name or viz.cfg.visualizer_type == name
+                        ):
+                            break
+                    else:
+                        active = [viz.cfg.visualizer_type for viz in sim.visualizers]
+                        raise RuntimeError(
+                            f"Source {self.cfg.source!r} has no recording-capable visualizer (active: {active}). "
+                            "Use --viz kit, --viz newton_gl, --viz newton_rtx, or source='sensor:<name>'."
+                        )
+                    if channel == "streaming_view" and not viz.cfg.streaming_view:
+                        raise RuntimeError(
+                            f"Enable streaming_view on {viz.cfg.visualizer_type!r} to record its sensor view."
+                        )
+                    if viz.cfg.visualizer_type == "kit" and sim.physics_manager.video_capture_backend() == "newton_gl":
+                        logger.warning(
+                            "[VideoRecorder] Kit with Newton physics requires cubric to propagate transforms to RTX. "
+                            "Use source='viz:newton_gl' if cubric is unavailable."
+                        )
+                    # Legacy visualizer recording follows camera selection in the window.
+                    self._capture = viz.render_tiled_rgb_array if channel == "streaming_view" else viz.render_rgb_array
             frame = self._capture()
             if frame is None and self._source is not None and self._source[0] == "viz":
                 raise RuntimeError(f"No frame available from {self.cfg.source!r}.")
@@ -116,42 +150,6 @@ class VideoRecorder:
             )
             self._frame_error_logged = True
             return None
-
-    def _bind_source(self) -> Callable[[], np.ndarray | None]:
-        """Bind one frame reader; image views own selection and composition."""
-        sim = self._env.sim
-        cfg = self.cfg.view
-        kind, name, channel = self._source or (None, None, None)
-        if kind == "sensor":
-            cfg = ImageViewCfg(
-                source=name,
-                channels=(channel or "rgb",),
-                depth_range=(self.cfg.depth_colormap_min, self.cfg.depth_colormap_max),
-            )
-        if cfg is not None:
-            view = sim.get_or_create_backend(cfg, cameras=self._env.scene.sensors)
-            return lambda: view.read_rgb(sim.get_physics_step_count())
-        candidates = [
-            viz
-            for viz in sim.visualizers
-            if viz.cfg.visualizer_type in CAPTURE_VISUALIZER_TYPES and (not name or viz.cfg.visualizer_type == name)
-        ]
-        if not candidates:
-            active = [viz.cfg.visualizer_type for viz in sim.visualizers]
-            raise RuntimeError(
-                f"Source {self.cfg.source!r} has no recording-capable visualizer (active: {active}). "
-                "Use --viz kit, --viz newton_gl, --viz newton_rtx, or source='sensor:<name>'."
-            )
-        viz = candidates[0]
-        if channel == "streaming_view" and not viz.cfg.streaming_view:
-            raise RuntimeError(f"Enable streaming_view on {viz.cfg.visualizer_type!r} to record its sensor view.")
-        if viz.cfg.visualizer_type == "kit" and sim.physics_manager.video_capture_backend() == "newton_gl":
-            logger.warning(
-                "[VideoRecorder] Kit with Newton physics requires cubric to propagate transforms to RTX. "
-                "Use source='viz:newton_gl' if cubric is unavailable."
-            )
-        # Legacy visualizer recording follows camera selection in the window.
-        return viz.render_tiled_rgb_array if channel == "streaming_view" else viz.render_rgb_array
 
     def _clip_path(self, index: int) -> str:
         return os.path.join(self.cfg.output_dir or "videos", f"{self.cfg.output_filename_prefix}_{index:04d}.mp4")

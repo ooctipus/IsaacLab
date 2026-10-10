@@ -35,7 +35,6 @@ from isaaclab_visualizers.newton_adapter import (
 from matplotlib import colormaps
 
 from isaaclab.assets import AssetBaseCfg
-from isaaclab.envs.utils.camera_view import resolve_camera_sources
 from isaaclab.sim import SimulationContext
 from isaaclab.test.utils import DeviceScope, test_devices
 from isaaclab.utils import instantiate, validate
@@ -217,13 +216,11 @@ def test_visualizers_borrow_scene_camera_outputs(monkeypatch):
     sim = object.__new__(SimulationContext)
     sim._scene_data_provider, sim._backend_registry, sim._physics_step_count = provider, [], 0
     sim.physics_manager = newton_visualizer_module.NewtonManager
-    camera_sensors = {"camera": camera}
     viewers = []
     for ids in ([0, 2], [1, 3]):
         cfg = NewtonGLVisualizerCfg(streaming_envs=ids, cameras=[SceneCameraCfg(prim_path="{ENV_REGEX_NS}/Camera")])
         visualizer = instantiate(cfg)
-        cameras = resolve_camera_sources(cfg, camera_sensors, env_template="/Scenes/world_{}")
-        BaseVisualizer.initialize(visualizer, sim, cameras=cameras)
+        BaseVisualizer.initialize(visualizer, sim, cameras=[camera])
         assert not hasattr(visualizer, "_clone_plan")
         assert not hasattr(visualizer, "_resolve_camera_pose_from_usd_path")
         assert not hasattr(visualizer, "_streaming_params")
@@ -249,7 +246,6 @@ def test_visualizers_borrow_scene_camera_outputs(monkeypatch):
     SimulationContext.instance.assert_not_called()
 
     visualizer = viewers[0]
-    cfg = visualizer.cfg
     rgba = camera.data.output["rgba"]
     camera.data.output["rgba"] = ProxyArray(rgba.warp[:, :, :, :1])
     sim._physics_step_count += 1
@@ -266,37 +262,6 @@ def test_visualizers_borrow_scene_camera_outputs(monkeypatch):
         image = visualizer.render_tiled_rgb_array()
         expected = (np.array(colormaps["turbo"](1.0 / (depth_max - 1.0))[:3]) * 255).astype(np.uint8)
         np.testing.assert_array_equal(image, np.broadcast_to(expected, image.shape))
-    camera.cfg.data_types.remove("depth")
-    del camera.data.output["depth"]
-    cfg.streaming_gt_types = ("rgb",)
-
-    cfg.cameras = [SceneCameraCfg(prim_path="/Missing/Camera")]
-    with pytest.raises(ValueError, match="No scene Camera matches"):
-        resolve_camera_sources(cfg, camera_sensors)
-    cfg.cameras = None
-    assert resolve_camera_sources(cfg, camera_sensors)[1:] == [camera]
-    cfg.streaming_gt_types = ("depth",)
-    assert len(resolve_camera_sources(cfg, camera_sensors)) == 1
-    cfg.cameras = [SceneCameraCfg(prim_path="{ENV_REGEX_NS}/Camera")]
-    with pytest.raises(KeyError, match="No sensor output"):
-        resolve_camera_sources(cfg, camera_sensors, env_template="/Scenes/world_{}")
-    cfg.streaming_gt_types = ("optical_flow",)
-    with pytest.raises(ValueError, match="optical_flow"):
-        resolve_camera_sources(cfg, camera_sensors)
-
-    from pxr import Usd, UsdGeom
-
-    stage = Usd.Stage.CreateInMemory()
-    camera._view = SimpleNamespace(
-        prims=[UsdGeom.Camera.Define(stage, f"/Scenes/world_{i}/Camera").GetPrim() for i in range(4)]
-    )
-    cfg.streaming_gt_types = ("rgb",)
-    for path in ("/Scenes/world_2/Camera", "/Scenes/world_.*/Camera"):
-        cfg.cameras = [SceneCameraCfg(prim_path=path)]
-        assert resolve_camera_sources(cfg, camera_sensors) == [camera]
-    cfg.cameras = None
-    cfg.streaming_sensor_prim_path = "/Scenes/world_2/Camera"
-    assert resolve_camera_sources(cfg, camera_sensors)[0] is camera
 
 
 @pytest.mark.parametrize("components", [3, 4], ids=["gl-rgb", "rtx-rgba"])
@@ -319,6 +284,7 @@ def test_newton_visualizer_render_rgb_array_returns_viewer_frame(monkeypatch, co
 
 
 def test_newton_visualizer_render_rgb_array_requires_initialized_viewer():
+    assert NewtonRTXVisualizer.render_rgb_array is NewtonGLVisualizer.render_rgb_array
     visualizer = NewtonGLVisualizer(NewtonGLVisualizerCfg())
 
     with pytest.raises(RuntimeError, match="must be initialized"):
@@ -774,7 +740,9 @@ def test_newton_scene_camera_replaces_perspective_rendering(monkeypatch):
     cameras = [SceneCameraCfg(prim_path="/Camera"), PerspectiveCameraCfg()]
     visualizer = _make_newton_visualizer(viewer, cfg=NewtonGLVisualizerCfg(cameras=cameras, enable_markers=False))
     image = wp.full((4, 6, 4), 127, dtype=wp.uint8, device="cpu")
+    visualizer.image_view.cfg.source = "/Camera"
     visualizer.image_view.camera = Mock()
+    visualizer._select_camera(0)
     visualizer.image_view.frame.data = image
     visualizer.image_view.frame.timestamp = 0.0
     visualizer.image_view.read = Mock(return_value=image)
@@ -1308,12 +1276,6 @@ def test_newton_rtx_scene_sky_and_background_override(tmp_path, monkeypatch, lig
             assert np.ptp(camera.data.output["rgba"].warp.numpy()) > 0
         finally:
             env.close()
-
-
-def test_newton_rtx_visualizer_render_rgb_array_returns_none_when_viewer_unavailable():
-    visualizer = NewtonRTXVisualizer(NewtonRTXVisualizerCfg())
-
-    assert visualizer.render_rgb_array() is None
 
 
 def test_newton_rtx_visualizer_rejects_kit_physics_backend():

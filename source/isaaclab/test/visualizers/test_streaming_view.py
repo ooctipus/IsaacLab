@@ -10,6 +10,7 @@ import inspect
 import math
 from colorsys import hsv_to_rgb
 from importlib.util import find_spec
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import numpy as np
@@ -18,9 +19,10 @@ import torch
 import warp as wp
 from matplotlib import colormaps
 
-from isaaclab.envs.utils import camera_view
 from isaaclab.test.utils import DeviceScope, test_devices
-from isaaclab.utils.images import compose_image, image_grid_columns, sensor_key_for_gt_type
+from isaaclab.utils.images import compose_image, sensor_key_for_gt_type
+from isaaclab.utils.warp import ProxyArray
+from isaaclab.visualizers import ImageView, ImageViewCfg
 
 
 def _reference_colorize(data, channel):
@@ -82,28 +84,32 @@ def test_sensor_key_missing_or_unknown():
         (6, 2, 1.0, 2),
         (6, 1, 1.0, 2),
         (6, 1, 16 / 9, 3),
+        (4, 1, float("nan"), 2),
+        (4, 1, 0.0, 2),
+        (4, 1, -1.0, 2),
+        (4, 1, math.inf, 2),
     ],
 )
 @pytest.mark.parametrize("device", test_devices(DeviceScope.DEFAULT_CUDA))
 def test_compose_grid_pixels_placed_correctly(envs, channels, aspect, columns, device):
     height, width = 6, 8
-    frames = [np.full((height, width, 3), i + 1, dtype=np.uint8) for i in range(envs * channels)]
-    actual_columns = image_grid_columns(envs, channels, height, width, aspect)
-    shape = (math.ceil(envs / actual_columns) * height, actual_columns * channels * width, 4)
-    assert shape == (math.ceil(envs / columns) * height, columns * channels * width, 4)
+    frames = [np.full((height, width, 3), i + 1, dtype=np.uint8) for i in range(envs) for _ in range(channels)]
 
     # Use non-consecutive source rows to catch a composer that ignores the selection.
     selected = list(range(envs * 2 - 1, 0, -2))
-    sources = []
-    for channel in range(channels):
-        batch = np.full((envs * 2, height, width, 4), 255, dtype=np.uint8)
-        for row, env in enumerate(selected):
-            batch[env, ..., :3] = frames[row * channels + channel]
-        sources.append(wp.array(batch, device=device))
-    env_ids = wp.array(selected, dtype=wp.int32, device=device)
-    depth_colors = wp.empty((0, 3), dtype=wp.uint8, device=device)
-    output = wp.empty(shape, dtype=wp.uint8, device=device)
-    compose_image(output, tuple(sources), env_ids, ("rgb",) * channels, depth_colors)
+    batch = np.full((envs * 2, height, width, 4), 255, dtype=np.uint8)
+    for row, env in enumerate(selected):
+        batch[env, ..., :3] = row + 1
+    camera = SimpleNamespace(
+        cfg=SimpleNamespace(data_types=["rgba"]),
+        data=SimpleNamespace(output={"rgba": ProxyArray(wp.array(batch, device=device))}),
+    )
+    view = ImageView(
+        ImageViewCfg(source="camera", envs=tuple(selected), channels=("rgb",) * channels), cameras={"camera": camera}
+    )
+    view.aspect = aspect
+    output = view.read(0)
+    assert output.shape == (math.ceil(envs / columns) * height, columns * channels * width, 4)
     # Read complete tiles independently of the kernel's destination-index calculation.
     pixels = output.numpy()
     tiles = pixels[..., :3].reshape(-1, height, columns * channels, width, 3).transpose(0, 2, 1, 3, 4)
@@ -160,35 +166,22 @@ def test_device_colorization_matches_reference_and_reuses_storage(device, monkey
         sources[1].assign(depth)
 
 
-def test_image_grid_columns_invalid_target_aspect():
-    """Invalid legacy display aspects retain the default grid shape."""
-    for aspect in (float("nan"), 0.0, -1.0, math.inf):
-        assert image_grid_columns(4, 1, 48, 64, aspect) == 2
-
-
 @pytest.mark.parametrize("device", test_devices(DeviceScope.DEFAULT_CUDA))
 def test_window_and_recorder_share_fixed_device_image(device, monkeypatch):
     """One selected frame serves both consumers; resizing presentation preserves captured storage."""
     from copy import deepcopy
-    from types import SimpleNamespace
     from unittest.mock import PropertyMock
 
     from isaaclab.envs.utils.video_recorder import VideoRecorder
     from isaaclab.envs.utils.video_recorder_cfg import VideoRecorderCfg
-    from isaaclab.sim import SimulationContext
-    from isaaclab.utils.warp import ProxyArray
-    from isaaclab.visualizers import ImageViewCfg, WindowCfg, image_view, visualizer_cfg
+    from isaaclab.sim import SimulationContext, simulation_context
+    from isaaclab.visualizers import WindowCfg, image_view, visualizer_cfg
 
-    for module in (image_view, visualizer_cfg):
+    for module in (image_view, visualizer_cfg, simulation_context):
         imports = (node for node in ast.walk(ast.parse(inspect.getsource(module))) if isinstance(node, ast.ImportFrom))
         assert not any("envs" in (node.module or "").split(".") for node in imports)
     assert find_spec("isaaclab.envs.utils.camera_colorizer") is None
-    assert not {
-        "camera_gt_batch",
-        "camera_rgb_batch",
-        "compose_streaming_grid",
-        "compose_rgb_grid_tensor",
-    }.intersection(vars(camera_view))
+    assert find_spec("isaaclab.envs.utils.camera_view") is None
     rgb = wp.array(np.arange(3, dtype=np.uint8)[:, None, None, None] * np.ones((3, 2, 2, 4), np.uint8), device=device)
     depth = wp.full((3, 2, 2, 1), 2.0, dtype=wp.float32, device=device)
     data = SimpleNamespace(output={"rgba": ProxyArray(rgb), "distance_to_image_plane": ProxyArray(depth)})

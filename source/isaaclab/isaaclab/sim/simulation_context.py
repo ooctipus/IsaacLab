@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import gc
 import logging
+import re
 import traceback
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -19,8 +20,7 @@ import warp as wp
 
 from .. import sim as sim_utils
 from ..app.settings_manager import get_settings_manager
-from ..cloner.cloner_cfg import DEFAULT_ENV_TEMPLATE
-from ..envs.utils.camera_view import resolve_camera_sources
+from ..cloner.cloner_cfg import DEFAULT_ENV_TEMPLATE, expand_env_regex_ns
 from ..markers.vis_marker_registry import VisMarkerRegistry
 from ..physics import PhysicsCfg, PhysicsEvent, PhysicsManager
 from ..physics.physics_manager_cfg import _resolve_physx_auto_cfg
@@ -28,11 +28,17 @@ from ..renderers.render_context import RenderContext
 from ..renderers.renderer_cfg import RendererCfg
 from ..scene_data import REQUIRES_STAGE_AND_MODEL, SceneDataProvider
 from ..utils import instantiate
+from ..utils.images import sensor_key_for_gt_type
 from ..utils.string import clear_resolve_matching_names_cache
 from ..utils.version import has_kit
 from ..visualizers.base_visualizer import BaseVisualizer
 from ..visualizers.image_view import ImageView
-from ..visualizers.visualizer_cfg import _make_visualizer_cfg, get_visualizer_install_hint
+from ..visualizers.visualizer_cfg import (
+    PerspectiveCameraCfg,
+    SceneCameraCfg,
+    _make_visualizer_cfg,
+    get_visualizer_install_hint,
+)
 from .utils import create_new_stage
 from .utils import stage as stage_utils
 
@@ -452,13 +458,52 @@ class SimulationContext:
                 initialize, e.g. only the consumers needed before graph capture. Defaults to None (all).
         """
         for visualizer in tuple(self._pending_visualizers):
-            if config_filter is not None and not config_filter(visualizer.cfg):
+            cfg = visualizer.cfg
+            if config_filter is not None and not config_filter(cfg):
                 continue
             cameras = []
-            if visualizer.cfg.window.view is None:
-                camera_sensors = self._scene_data_provider.get_camera_sensors() if visualizer.cfg.streaming_view else {}
+            if cfg.window.view is None:
+                cameras = list(
+                    cfg.cameras or [PerspectiveCameraCfg(eye=cfg.eye, lookat=cfg.lookat, focal_length=cfg.focal_length)]
+                )
+            if cfg.window.view is None and cfg.streaming_view:
+                sensors = self._scene_data_provider.get_camera_sensors()
                 env_template = self._clone_plan.env_template if self._clone_plan is not None else DEFAULT_ENV_TEMPLATE
-                cameras = resolve_camera_sources(visualizer.cfg, camera_sensors, env_template=env_template)
+                for gt_type in cfg.streaming_gt_types:
+                    sensor_key_for_gt_type(gt_type)
+                if cfg.cameras is None:
+                    if cfg.streaming_sensor_prim_path is not None:
+                        cameras.insert(0, SceneCameraCfg(prim_path=cfg.streaming_sensor_prim_path))
+                    else:
+                        for camera in sensors.values():
+                            available = frozenset(camera.cfg.data_types)
+                            if all(
+                                sensor_key_for_gt_type(gt, available, required=False) is not None
+                                for gt in cfg.streaming_gt_types
+                            ):
+                                cameras.append(camera)
+                for index, source in enumerate(cameras):
+                    if not isinstance(source, SceneCameraCfg):
+                        continue
+                    path = expand_env_regex_ns(source.prim_path, env_template)
+                    pattern = path.replace("%d", "[^/]+").replace("{}", "[^/]+")
+                    pattern = pattern.replace("/World/envs/*", "/World/envs/env_[^/]+")
+                    for camera in sensors.values():
+                        if camera.cfg.prim_path == path or (
+                            camera._view is not None
+                            and any(re.fullmatch(pattern, str(prim.GetPath())) for prim in camera._view.prims)
+                        ):
+                            break
+                    else:
+                        available_paths = sorted(camera.cfg.prim_path for camera in sensors.values())
+                        raise ValueError(
+                            f"No scene Camera matches prim_path={path!r}. "
+                            f"Declare a CameraCfg in the scene; available paths: {available_paths}."
+                        )
+                    available = frozenset(camera.cfg.data_types)
+                    for gt_type in cfg.streaming_gt_types:
+                        sensor_key_for_gt_type(gt_type, available)
+                    cameras[index] = camera
             visualizer.initialize(self, cameras=cameras)
             self._pending_visualizers.remove(visualizer)
             self._visualizers.append(visualizer)

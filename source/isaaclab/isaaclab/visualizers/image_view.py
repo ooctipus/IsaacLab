@@ -17,7 +17,7 @@ from matplotlib import colormaps
 
 from ..utils import validate
 from ..utils.buffers import TimestampedBuffer
-from ..utils.images import compose_image, image_grid_columns, sensor_key_for_gt_type
+from ..utils.images import compose_image, sensor_key_for_gt_type
 from .visualizer_cfg import ImageViewCfg
 
 if TYPE_CHECKING:
@@ -86,7 +86,16 @@ class ImageView:
                     raise ValueError("Image channels must have the same batch size, resolution, and device.")
                 if max(cfg.envs) >= count:
                     raise ValueError(f"Image row selection is outside the source batch of {count} rows.")
-                columns = image_grid_columns(len(cfg.envs), len(sources), height, width, self.aspect)
+                # Prefer complete rows, then the closest legacy display aspect.
+                aspect = self.aspect if math.isfinite(self.aspect) and self.aspect > 0 else 1.0
+                columns, best_score = 1, math.inf
+                for candidate in range(1, len(cfg.envs) + 1):
+                    rows = math.ceil(len(cfg.envs) / candidate)
+                    empty = rows * candidate - len(cfg.envs)
+                    ratio = candidate * len(sources) * width / (rows * height)
+                    score = empty * 10.0 + abs(math.log(ratio / aspect)) - candidate * 1e-6
+                    if score < best_score:
+                        columns, best_score = candidate, score
                 shape = (math.ceil(len(cfg.envs) / columns) * height, columns * len(sources) * width, 4)
                 colors = np.empty((0, 3), dtype=np.uint8)
                 if "depth" in cfg.channels:

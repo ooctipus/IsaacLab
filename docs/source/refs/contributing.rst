@@ -333,7 +333,8 @@ before changing an interface. Apply these rules when adding code or cleaning up 
   filtering pass or cache.
   Launch owns visualizer selection, including producers retained for recording. Return the final list
   from the config scan; do not maintain a second producer list for a later resolution pass. Image
-  processing belongs in ``utils.images`` and must not depend on ``envs.utils``.
+  processing belongs in ``utils.images`` and must not depend on ``envs.utils``. Bind scene references
+  in simulation initialization; core simulation must not depend on environment camera adapters.
   Before adding a parameter record and preparation helper for one consumer, check which values already
   exist in its configuration or array metadata. Keep the remaining setup with that owner and cache only
   the buffers or calculations that need reuse.

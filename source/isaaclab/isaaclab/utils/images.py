@@ -19,7 +19,6 @@ Shared camera-image operations:
 
 from __future__ import annotations
 
-import math
 from collections.abc import Callable, Sequence
 from typing import Any
 
@@ -563,21 +562,6 @@ def sensor_key_for_gt_type(
     if not required:
         return None
     raise KeyError(f"No sensor output found for GT type {gt_type!r}. Tried {keys}; available: {sorted(available_keys)}")
-
-
-def image_grid_columns(n_envs: int, n_gt: int, height: int, width: int, target_aspect: float = 1.0) -> int:
-    """Choose complete environment rows first, then the closest display aspect ratio."""
-    if not (math.isfinite(target_aspect) and target_aspect > 0):
-        target_aspect = 1.0
-    best_cols, best_score = 1, float("inf")
-    for columns in range(1, n_envs + 1):
-        rows = math.ceil(n_envs / columns)
-        empty = rows * columns - n_envs
-        aspect = columns * n_gt * width / (rows * height)
-        score = empty * 10.0 + abs(math.log(aspect / target_aspect)) - columns * 1e-6
-        if score < best_score:
-            best_cols, best_score = columns, score
-    return best_cols
 
 
 def compose_image(

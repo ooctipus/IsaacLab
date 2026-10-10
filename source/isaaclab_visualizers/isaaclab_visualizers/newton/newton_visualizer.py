@@ -508,7 +508,6 @@ class NewtonVisualizerBase(BaseVisualizer):
         self._runtime_headless = cfg.headless
         self._last_present_time = -math.inf
         self._camera_index = 0
-        self._navigation_view = None
         self._last_render_step = -1
 
     def initialize(self, sim: SimulationContext, *, cameras: list[PerspectiveCameraCfg | Camera]) -> None:
@@ -572,14 +571,12 @@ class NewtonVisualizerBase(BaseVisualizer):
         self._navigation_view = self._viewer.camera.get_view_matrix().reshape(4, 4).T.copy()
 
     def _navigate_scene_camera(self) -> None:
-        camera, viewer = self.image_view.camera if self.image_view is not None else None, self._viewer
-        if camera is None or viewer is None or self._runtime_headless:
-            return
-        if viewer.is_paused():
+        camera, viewer = self.image_view.camera, self._viewer
+        if self._runtime_headless or viewer.is_paused():
             return
         current = viewer.camera.get_view_matrix().reshape(4, 4).T
         previous, self._navigation_view = self._navigation_view, current.copy()
-        if previous is None or np.array_equal(previous, current):
+        if np.array_equal(previous, current):
             return
         delta = previous @ np.linalg.inv(current)
         positions, orientations = camera.get_world_poses(convention="opengl")
@@ -610,8 +607,7 @@ class NewtonVisualizerBase(BaseVisualizer):
         self._sim_time += dt
         if self._runtime_headless:
             self._last_render_step = -1
-            if self.image_view is not None:
-                self.image_view.invalidate()
+            self.image_view.invalidate()
             return
         now = time.monotonic()
         if now - self._last_present_time < 1.0 / self.cfg.window.fps:
@@ -834,8 +830,8 @@ class NewtonGLVisualizer(NewtonVisualizerBase):
         viewer = self._viewer
         viewer.begin_frame(self._sim_time)
         try:
-            self._navigate_scene_camera()
-            if self.image_view is not None and self.image_view.camera is not None:
+            if self.image_view.camera is not None:
+                self._navigate_scene_camera()
                 self._log_streaming_image()
             else:
                 if not viewer.is_paused():
@@ -862,7 +858,7 @@ class NewtonGLVisualizer(NewtonVisualizerBase):
             if not viewer.is_running():
                 self._viewer_picking_binding.deactivate()
         self._last_render_step = self._sim.get_physics_step_count()
-        if self.image_view is not None and self.image_view.camera is None:
+        if self.image_view.camera is None:
             self.image_view.invalidate()
 
     def reset(self, soft: bool = False) -> None:
@@ -1178,8 +1174,8 @@ class NewtonRTXVisualizer(NewtonVisualizerBase):
         viewer = self._viewer
         viewer.begin_frame(self._sim_time)
         try:
-            self._navigate_scene_camera()
-            if self.image_view is not None and self.image_view.camera is not None:
+            if self.image_view.camera is not None:
+                self._navigate_scene_camera()
                 self._log_streaming_image()
             else:
                 if not viewer.is_paused():
@@ -1189,7 +1185,7 @@ class NewtonRTXVisualizer(NewtonVisualizerBase):
         finally:
             viewer.end_frame()
         self._last_render_step = self._sim.get_physics_step_count()
-        if self.image_view is not None and self.image_view.camera is None:
+        if self.image_view.camera is None:
             self.image_view.invalidate()
 
     def reset(self, soft: bool = False) -> None:
@@ -1199,10 +1195,6 @@ class NewtonRTXVisualizer(NewtonVisualizerBase):
         if self.backend is not previous:
             self._viewer.picking_enabled = False
             self._select_camera(self._camera_index)
-
-    def render_rgb_array(self) -> np.ndarray | None:
-        """Return the shared view when the native renderer is available."""
-        return super().render_rgb_array() if self._viewer is not None else None
 
     def close(self) -> None:
         """Close Newton's viewer before the simulation releases the borrowed scene."""

@@ -2638,14 +2638,13 @@ The :class:`~isaaclab.envs.ui.ViewportCameraController` class is also deprecated
 tracking is handled directly by :class:`~isaaclab_visualizers.kit.KitVisualizer`.
 
 
-Custom visualizers now receive resolved ``cameras`` and the optional USD ``stage`` in ``initialize()``.
-Accept these arguments and forward them to ``super().initialize(scene_data_provider, cameras=cameras,
-stage=stage)``. ``SimulationContext`` resolves scene-camera references before initialization;
-visualizers consume those borrowed sensors without a clone plan or a simulation lookup.
-Code that initializes a visualizer directly must supply ordered ``PerspectiveCameraCfg`` objects
-and existing ``Camera`` sensors through ``cameras``. Use ``resolve_camera_sources`` from
-``isaaclab.envs.utils.camera_view`` to bind configured path references against a camera registry.
+Custom visualizers receive their owning ``sim`` and bound ``cameras`` in ``initialize()``.
+Forward these to ``super().initialize(sim, cameras=cameras)`` and use ``self._sim`` to access
+the stage, scene data provider, and backend registry. ``SimulationContext`` binds scene-camera
+references before initialization. Code that initializes a visualizer directly must supply ordered
+``PerspectiveCameraCfg`` objects and existing ``Camera`` sensors through ``cameras``.
 Call ``super().close()`` after releasing native viewer resources to drop borrowed scene references.
+GL and RTX image capture both require an initialized visualizer; capture after ``sim.reset()``.
 The base ``initialize()`` also selects visible environments once. Pass ``get_visualized_env_ids()``
 to the viewer instead of calling ``newton_adapter.resolve_visible_env_indices`` or
 ``apply_viewer_visible_worlds``; both helpers have been removed. The returned selection already
