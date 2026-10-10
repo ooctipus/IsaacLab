@@ -54,7 +54,7 @@ def _cfg(**overrides) -> VideoRecorderCfg:
 
 class _FakeViz:
     def __init__(self, viz_type: str, frame: np.ndarray | None = None):
-        self.cfg = SimpleNamespace(visualizer_type=viz_type)
+        self.cfg = SimpleNamespace(visualizer_type=viz_type, streaming_view=False)
         self._frame = frame if frame is not None else _FRAME.copy()
         self.render_calls = 0
 
@@ -262,19 +262,32 @@ def _rgb_sensor():
     ],
     ids=["auto_visualizer", "newton_gl", "sensor_rgb"],
 )
-def test_source_resolves_frame(source, make_env):
+def test_source_resolves_frame(source, make_env, caplog):
     env = make_env()
+    visualizers, env.sim.visualizers = env.sim.visualizers, []
+    recorder = VideoRecorder(_cfg(source=source), env)
+    env.sim.visualizers = visualizers
     if source.startswith("sensor:"):
         env.sim._scene_data_provider.get_camera_sensors.return_value = {}
-    frame = VideoRecorder(_cfg(source=source), env)._get_frame()
+    if source == "viz:newton_gl":
+        visualizers[0]._frame = None
+        assert recorder._get_frame() is None
+        visualizers[0]._frame = _FRAME.copy()
+    frame = recorder._get_frame()
     assert frame is not None
     assert frame.shape == _FRAME.shape
+    assert not caplog.records
 
 
 @pytest.mark.parametrize(
     "source,make_env,message",
     [
         ("viz", lambda: _make_env(visualizers=[]), "no recording-capable visualizer"),
+        (
+            "viz:newton_gl:streaming_view",
+            lambda: _make_env(visualizers=[_FakeViz("newton_gl")]),
+            "Enable streaming_view",
+        ),
         ("sensor:missing", lambda: _make_env(sensors={"tiled_camera": MagicMock()}), "tiled_camera"),
         ("sensor:tiled_camera:depth", lambda: _make_env(sensors={"tiled_camera": _rgb_sensor()}), "depth"),
     ],

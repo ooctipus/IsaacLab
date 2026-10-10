@@ -104,46 +104,45 @@ class VideoRecorder:
         if self._frame_error_logged:
             return None
         try:
-            if self._capture is None:
-                sim = self._env.sim
-                cfg = self.cfg.view
-                kind, name, channel = self._source or (None, None, None)
+            if self._capture is not None:
+                return self._capture()
+            sim = self._env.sim
+            cfg = self.cfg.view
+            if cfg is None:
+                kind, name, channel = self._source
                 if kind == "sensor":
                     cfg = ImageViewCfg(
                         source=name,
                         channels=(channel or "rgb",),
                         depth_range=(self.cfg.depth_colormap_min, self.cfg.depth_colormap_max),
                     )
-                if cfg is not None:
-                    view = sim.get_or_create_backend(cfg, cameras=self._env.scene.sensors)
-                    self._capture = lambda: view.read_rgb(sim.get_physics_step_count())
+            if cfg is not None:
+                view = sim.get_or_create_backend(cfg, cameras=self._env.scene.sensors)
+                self._capture = lambda: view.read_rgb(sim.get_physics_step_count())
+            else:
+                for viz in sim.visualizers:
+                    if viz.cfg.visualizer_type in CAPTURE_VISUALIZER_TYPES and (
+                        not name or viz.cfg.visualizer_type == name
+                    ):
+                        break
                 else:
-                    for viz in sim.visualizers:
-                        if viz.cfg.visualizer_type in CAPTURE_VISUALIZER_TYPES and (
-                            not name or viz.cfg.visualizer_type == name
-                        ):
-                            break
-                    else:
-                        active = [viz.cfg.visualizer_type for viz in sim.visualizers]
-                        raise RuntimeError(
-                            f"Source {self.cfg.source!r} has no recording-capable visualizer (active: {active}). "
-                            "Use --viz kit, --viz newton_gl, --viz newton_rtx, or source='sensor:<name>'."
-                        )
-                    if channel == "streaming_view" and not viz.cfg.streaming_view:
-                        raise RuntimeError(
-                            f"Enable streaming_view on {viz.cfg.visualizer_type!r} to record its sensor view."
-                        )
-                    if viz.cfg.visualizer_type == "kit" and sim.physics_manager.video_capture_backend() == "newton_gl":
-                        logger.warning(
-                            "[VideoRecorder] Kit with Newton physics requires cubric to propagate transforms to RTX. "
-                            "Use source='viz:newton_gl' if cubric is unavailable."
-                        )
-                    # Legacy visualizer recording follows camera selection in the window.
-                    self._capture = viz.render_tiled_rgb_array if channel == "streaming_view" else viz.render_rgb_array
-            frame = self._capture()
-            if frame is None and self._source is not None and self._source[0] == "viz":
-                raise RuntimeError(f"No frame available from {self.cfg.source!r}.")
-            return frame
+                    active = [viz.cfg.visualizer_type for viz in sim.visualizers]
+                    raise RuntimeError(
+                        f"Source {self.cfg.source!r} has no recording-capable visualizer (active: {active}). "
+                        "Use --viz kit, --viz newton_gl, --viz newton_rtx, or source='sensor:<name>'."
+                    )
+                if channel == "streaming_view" and not viz.cfg.streaming_view:
+                    raise RuntimeError(
+                        f"Enable streaming_view on {viz.cfg.visualizer_type!r} to record its sensor view."
+                    )
+                if viz.cfg.visualizer_type == "kit" and sim.physics_manager.video_capture_backend() == "newton_gl":
+                    logger.warning(
+                        "[VideoRecorder] Kit with Newton physics requires cubric to propagate transforms to RTX. "
+                        "Use source='viz:newton_gl' if cubric is unavailable."
+                    )
+                # Legacy visualizer recording follows camera selection in the window.
+                self._capture = viz.render_tiled_rgb_array if channel == "streaming_view" else viz.render_rgb_array
+            return self._capture()
         except (RuntimeError, ValueError, KeyError) as exc:
             logger.error(
                 "[VideoRecorder] Frame capture failed for source=%r: %s. Capture stopped.", self.cfg.source, exc

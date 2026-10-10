@@ -11,5 +11,6 @@
 * Retained each configured perspective producer during headless recording, including multiple viewers
   of the same backend. Bound legacy sensor recordings directly to their scene sensor and stopped
   invalid image streams with one error instead of interrupting simulation.
+  Skipped empty viewer frames without disabling subsequent recording.
   Selected display and recording producers together during launch, removing the separate recording
   producer list and repeated configuration resolution.
