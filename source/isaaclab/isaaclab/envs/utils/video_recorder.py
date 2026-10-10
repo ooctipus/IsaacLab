@@ -44,8 +44,6 @@ class VideoRecorder:
     Raises:
         ImportError: If ``moviepy`` is not installed.
         ValueError: If :attr:`~VideoRecorderCfg.source` does not follow the source grammar.
-        RuntimeError: On the first recording step if the requested visualizer or
-            sensor cannot be found or does not support frame capture.
     """
 
     def __init__(self, cfg: VideoRecorderCfg, env: object):
@@ -123,19 +121,15 @@ class VideoRecorder:
         """Bind one frame reader; image views own selection and composition."""
         sim = self._env.sim
         cfg = self.cfg.view
-        camera = None
         kind, name, channel = self._source or (None, None, None)
         if kind == "sensor":
-            if name not in self._env.scene.sensors:
-                raise RuntimeError(f"Sensor {name!r} not found; available sensors: {sorted(self._env.scene.sensors)}.")
-            camera = self._env.scene.sensors[name]
             cfg = ImageViewCfg(
                 source=name,
                 channels=(channel or "rgb",),
                 depth_range=(self.cfg.depth_colormap_min, self.cfg.depth_colormap_max),
             )
         if cfg is not None:
-            view = sim.get_image_view(cfg, camera=camera)
+            view = sim.get_or_create_backend(cfg, cameras=self._env.scene.sensors)
             return lambda: view.read_rgb(sim.get_physics_step_count())
         candidates = [
             viz
@@ -192,23 +186,19 @@ class VideoRecorder:
             clip.write_videofile(path, codec="libx264", audio=False, logger=None)
             logger.info("[VideoRecorder] Wrote %d frames to %s", len(self._frames), path)
             self._clip_index += 1
-            self._maybe_delete_old_clips()
+            if self.cfg.keep_last_n_clips is not None:
+                cutoff = self._clip_index - self.cfg.keep_last_n_clips
+                for index in self._existing_clip_indices():
+                    if index >= cutoff:
+                        continue
+                    path = self._clip_path(index)
+                    try:
+                        os.remove(path)
+                        logger.debug("[VideoRecorder] Deleted old clip %s", path)
+                    except FileNotFoundError:
+                        pass
         except Exception:
             logger.exception("[VideoRecorder] Failed to write clip.")
         finally:
             self._frames = []
             self._recording = False
-
-    def _maybe_delete_old_clips(self) -> None:
-        if self.cfg.keep_last_n_clips is None:
-            return
-        cutoff = self._clip_index - self.cfg.keep_last_n_clips
-        for index in self._existing_clip_indices():
-            if index >= cutoff:
-                continue
-            path = self._clip_path(index)
-            try:
-                os.remove(path)
-                logger.debug("[VideoRecorder] Deleted old clip %s", path)
-            except FileNotFoundError:
-                pass

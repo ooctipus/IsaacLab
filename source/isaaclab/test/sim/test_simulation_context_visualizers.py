@@ -141,7 +141,7 @@ class _FakeVisualizer(BaseVisualizer):
 
 def _make_context(visualizers, provider=None):
     ctx = object.__new__(SimulationContext)
-    ctx._image_views = {}
+    ctx._backend_registry = []
     ctx._visualizers = list(visualizers)
     ctx._visualizers_started = bool(visualizers)
     ctx._scene_data_provider = provider
@@ -305,7 +305,10 @@ def test_reset_initializes_visualizers_before_playing_timeline():
     """Initial visualizers must see the PhysX views created by reset before play() pumps timeline events."""
     events: list[str] = []
     ctx = object.__new__(SimulationContext)
-    ctx._image_views = {}
+    from isaaclab.visualizers import ImageView
+
+    view = Mock(spec=ImageView, invalidate=Mock(side_effect=lambda: events.append("invalidate_image")))
+    ctx._backend_registry = [(object(), view)]
     ctx.cfg = SimpleNamespace(physics=object())
     ctx._visualizers = [
         SimpleNamespace(
@@ -342,7 +345,14 @@ def test_reset_initializes_visualizers_before_playing_timeline():
 
     ctx.reset()
 
-    assert events == ["reset:False", "viewer_reset", "initialize_visualizers", "finalize_consumers:1:True", "play"]
+    assert events == [
+        "reset:False",
+        "invalidate_image",
+        "viewer_reset",
+        "initialize_visualizers",
+        "finalize_consumers:1:True",
+        "play",
+    ]
     assert ctx.is_playing()
     assert not ctx.is_stopped()
 
@@ -369,6 +379,7 @@ def web_backend(monkeypatch):
     backend = SimpleNamespace(model=model, state_0=SimpleNamespace(body_q=None), geometry_offsets={})
     sim = SimpleNamespace(
         cfg=SimpleNamespace(physics=object(), device="cpu"),
+        physics_manager=type("NewtonManager", (), {}),
         device="cpu",
         get_or_create_backend=Mock(return_value=backend),
         vis_marker_registry=VisMarkerRegistry(),
@@ -500,7 +511,11 @@ def test_viser_visualizer_create_viewer_applies_visible_worlds(
     )
     visualizer = viser_visualizer.ViserVisualizer(cfg)
     visualizer.backend = SimpleNamespace(model="dummy-model")
-    sim = Mock(stage=None, get_scene_data_provider=Mock(return_value=SimpleNamespace(num_envs=8)))
+    sim = Mock(
+        stage=None,
+        physics_manager=type("NewtonManager", (), {}),
+        get_scene_data_provider=Mock(return_value=SimpleNamespace(num_envs=8)),
+    )
     BaseVisualizer.initialize(visualizer, sim, cameras=[])
     visualizer._create_viewer(record_to_viser="record.viser", metadata={"num_envs": 8})
 
@@ -823,7 +838,7 @@ def _make_context_with_settings(
         },
     )()
     ctx = object.__new__(SimulationContext)
-    ctx._image_views = {}
+    ctx._backend_registry = []
     ctx.cfg = cfg
     ctx._has_gui = has_gui
     ctx._has_offscreen_render = has_offscreen_render

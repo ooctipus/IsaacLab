@@ -6,7 +6,6 @@
 """Tests for shared physics-manager lifecycle behavior."""
 
 import gc
-import inspect
 import weakref
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -35,7 +34,6 @@ def test_backend_registry_identity_and_lifecycle():
     assert not hasattr(RenderContext, "get_renderer")
     assert "BACKEND_CFG_READY" not in PhysicsEvent.__members__
     assert "_renderer_entries" not in RenderContext.__slots__
-    assert tuple(inspect.signature(SimulationContext.get_or_create_backend).parameters) == ("self", "cfg")
     assert all(
         "resource_key" not in cfg_type.__dataclass_fields__ for cfg_type in (PhysicsCfg, RendererCfg, VisualizerCfg)
     )
@@ -299,7 +297,6 @@ def test_clear_instance_closes_renderers_before_native_backends(monkeypatch, ren
     context._render_context._visual_material_writers = (Resource("writers"),)
     context._visualizers = [Resource("visualizer_failed", ValueError("visualizer failed")), Resource("visualizer_last")]
     context._pending_visualizers = [Resource("visualizer_pending")]
-    context._image_views = {0: Resource("image_view")}
     context.clone_contexts = {object: object()}
     groups = (
         (RendererCfg, (("renderer_failed", OSError("renderer failed")), ("renderer_last", None))),
@@ -311,6 +308,9 @@ def test_clear_instance_closes_renderers_before_native_backends(monkeypatch, ren
                 cfg_type(class_type=lambda cfg, name=name, error=error: Resource(name, error))
             )
     context.get_or_create_backend(SimpleNamespace(class_type=lambda cfg: Resource("data")))
+    from isaaclab.visualizers import ImageViewCfg
+
+    context.get_or_create_backend(ImageViewCfg(source="front", class_type=lambda cfg: Resource("image_view")))
     monkeypatch.setattr(SimulationContext, "_instance", context)
     monkeypatch.setattr(context_module.stage_utils, "close_stage", lambda: events.append("stage"))
     monkeypatch.setattr(context_module, "clear_resolve_matching_names_cache", lambda: events.append("cache"))
@@ -349,7 +349,6 @@ def test_clear_instance_closes_renderers_before_native_backends(monkeypatch, ren
     ]
     assert context._visualizers == []
     assert context._pending_visualizers == []
-    assert context._image_views == {}
     assert context._backend_registry == []
     assert context.clone_contexts == {}
     assert SimulationContext.instance() is None
@@ -378,7 +377,6 @@ def test_clear_instance_drops_owned_context_references_before_garbage_collection
     context._render_context = RenderContext()
     context._visualizers = []
     context._pending_visualizers = []
-    context._image_views = {}
     context._backend_registry = []
     context.clone_contexts = {}
     context_ref = weakref.ref(context)

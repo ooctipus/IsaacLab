@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import math
-import random
 import re
 from typing import TYPE_CHECKING
 
@@ -18,9 +17,6 @@ from ...visualizers.visualizer_cfg import PerspectiveCameraCfg, SceneCameraCfg
 if TYPE_CHECKING:
     from ...sensors.camera import Camera
     from ...visualizers.visualizer_cfg import VisualizerCfg
-
-VISUALIZER_TILED_CAMERA_MAX_TILES = 100
-
 
 _CAMERA_CHANNEL_KEYS = {
     "rgb": ("rgb", "rgba"),
@@ -111,33 +107,6 @@ def resolve_camera_sources(
             sensor_key_for_gt_type(gt_type, available)
         sources[index] = camera
     return sources
-
-
-def resolve_streaming_envs(
-    num_envs: int,
-    streaming_envs: int | list[int],
-    max_tiles: int = VISUALIZER_TILED_CAMERA_MAX_TILES,
-    sample_from: list[int] | None = None,
-) -> list[int]:
-    """Resolve ``streaming_envs`` to a concrete list of env indices.
-
-    Args:
-        num_envs: Total number of simulation environments.
-        streaming_envs: ``int`` → randomly sample that many envs;
-            ``list[int]`` → use exactly those indices (capped at ``max_tiles``).
-        max_tiles: Hard cap on the number of returned indices.
-        sample_from: When ``streaming_envs`` is an ``int``, sample from this
-            subset rather than all envs (e.g. visible env indices).
-
-    Returns:
-        Sorted list of env indices, length ≤ ``max_tiles``.
-    """
-    if isinstance(streaming_envs, list):
-        indices = [i for i in streaming_envs if 0 <= i < num_envs]
-        return sorted(indices[:max_tiles])
-    pool = sample_from if sample_from is not None else list(range(num_envs))
-    count = min(int(streaming_envs), max_tiles, len(pool))
-    return sorted(random.sample(pool, count))
 
 
 def image_grid_columns(n_envs: int, n_gt: int, height: int, width: int, target_aspect: float = 1.0) -> int:

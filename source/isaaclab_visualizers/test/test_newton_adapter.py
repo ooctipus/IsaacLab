@@ -215,7 +215,8 @@ def test_visualizers_borrow_scene_camera_outputs(monkeypatch):
         num_envs=4, get_camera_sensors=Mock(side_effect=AssertionError("Sources must already be bound"))
     )
     sim = object.__new__(SimulationContext)
-    sim._scene_data_provider, sim._image_views, sim._physics_step_count = provider, {}, 0
+    sim._scene_data_provider, sim._backend_registry, sim._physics_step_count = provider, [], 0
+    sim.physics_manager = newton_visualizer_module.NewtonManager
     camera_sensors = {"camera": camera}
     viewers = []
     for ids in ([0, 2], [1, 3]):
@@ -229,6 +230,7 @@ def test_visualizers_borrow_scene_camera_outputs(monkeypatch):
         assert not hasattr(visualizer, "_resolved_visible_env_ids")
         assert not hasattr(visualizer, "_resolve_initial_camera_pose")
         assert visualizer.image_view.camera is camera
+        assert visualizer.physics_backend == "newton"
         image = visualizer.render_tiled_rgb_array()
         np.testing.assert_array_equal(np.unique(image), ids)
         assert visualizer.render_tiled_rgb_array() is image
@@ -297,14 +299,23 @@ def test_visualizers_borrow_scene_camera_outputs(monkeypatch):
     assert resolve_camera_sources(cfg, camera_sensors)[0] is camera
 
 
-def test_newton_visualizer_render_rgb_array_returns_viewer_frame():
-    frame = wp.full((4, 6, 3), 128, dtype=wp.uint8, device="cpu")
+@pytest.mark.parametrize("components", [3, 4], ids=["gl-rgb", "rtx-rgba"])
+def test_newton_visualizer_render_rgb_array_returns_viewer_frame(monkeypatch, components):
+    frame = wp.full((4, 6, components), 128, dtype=wp.uint8, device="cpu")
     viewer = _Viewer()
     viewer.get_frame = lambda output: frame
     visualizer = _make_newton_visualizer(viewer)
 
-    np.testing.assert_array_equal(visualizer.render_rgb_array(), frame.numpy())
+    monkeypatch.setattr(
+        "isaaclab.visualizers.image_view.compose_image",
+        Mock(side_effect=AssertionError("Perspective frames need no image composition")),
+    )
+    pixels = visualizer.render_rgb_array()
+    np.testing.assert_array_equal(pixels, frame.numpy()[..., :3])
+    assert visualizer.image_view.frame.data is frame
     assert visualizer.render_rgb_array() is visualizer.render_rgb_array()
+    frame.zero_()
+    np.testing.assert_array_equal(pixels, np.full((4, 6, 3), 128, dtype=np.uint8))
 
 
 def test_newton_visualizer_render_rgb_array_requires_initialized_viewer():
@@ -581,10 +592,11 @@ def _make_newton_visualizer(viewer, scene_data_provider=None, state=None, *, cfg
         get_scene_data_provider=lambda: provider,
         get_physics_step_count=lambda: visualizer._sim_time,
         is_rendering=True,
+        physics_manager=newton_visualizer_module.NewtonManager,
     )
     from isaaclab.visualizers import ImageView, ImageViewCfg
 
-    view = ImageView(ImageViewCfg(source=PerspectiveCameraCfg()))
+    view = ImageView(ImageViewCfg(source=PerspectiveCameraCfg()), cameras={})
     view.render = visualizer._capture_perspective
     visualizer.image_view, visualizer._image_views = view, [view]
     if viewer is not None:
@@ -1304,19 +1316,10 @@ def test_newton_rtx_visualizer_render_rgb_array_returns_none_when_viewer_unavail
     assert visualizer.render_rgb_array() is None
 
 
-@pytest.mark.parametrize("backend", ["physx", "isaacsim_physx"])
-def test_newton_rtx_visualizer_rejects_kit_physics_backend(monkeypatch, backend):
-    """OVRTX is kitless and must fail fast instead of crashing the render thread on first step().
-
-    "physx" is what FactoryBase._get_backend() reports at runtime (covers both an explicit
-    ``physics=isaacsim_physx`` and the ``physics=physx`` auto selector once resolved to Kit);
-    "isaacsim_physx" is checked too in case a future/alternate backend-name source reports the
-    explicit selector string instead.
-    """
-    from isaaclab.visualizers.base_visualizer import BaseVisualizer
-
-    monkeypatch.setattr(BaseVisualizer, "physics_backend", property(lambda self: backend))
+def test_newton_rtx_visualizer_rejects_kit_physics_backend():
+    """Reject Kit physics before constructing the incompatible kitless RTX resources."""
     visualizer = NewtonRTXVisualizer(NewtonRTXVisualizerCfg())
+    sim = SimpleNamespace(physics_manager=SimpleNamespace(video_capture_backend=lambda: "kit"))
 
     with pytest.raises(RuntimeError, match="Newton RTX"):
-        visualizer.initialize(Mock(), cameras=[])
+        visualizer.initialize(sim, cameras=[])

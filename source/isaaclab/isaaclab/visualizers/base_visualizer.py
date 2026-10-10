@@ -19,7 +19,6 @@ from urllib.parse import urlparse
 import numpy as np
 import warp as wp
 
-from ..envs.utils.camera_view import resolve_streaming_envs
 from ..utils import validate
 from .image_view import ImageView
 from .visualizer_cfg import ImageViewCfg, PerspectiveCameraCfg
@@ -99,12 +98,18 @@ class BaseVisualizer(ABC):
 
         self._image_views.clear()
         if self.cfg.window.view is not None:
-            self.image_view = self._sim.get_image_view(self.cfg.window.view)
+            self.image_view = sim.get_or_create_backend(
+                cfg.window.view, cameras=scene_data_provider.get_camera_sensors()
+            )
             self._image_views = [self.image_view]
             return
         env_ids = []
         if any(not isinstance(camera, PerspectiveCameraCfg) for camera in cameras):
-            env_ids = resolve_streaming_envs(num_envs, self.cfg.streaming_envs, sample_from=self._env_ids)
+            if isinstance(cfg.streaming_envs, list):
+                env_ids = sorted([i for i in cfg.streaming_envs if 0 <= i < num_envs][:100])
+            else:
+                pool = self._env_ids if self._env_ids is not None else range(num_envs)
+                env_ids = sorted(random.sample(pool, min(int(cfg.streaming_envs), 100, len(pool))))
         for camera in cameras:
             perspective = isinstance(camera, PerspectiveCameraCfg)
             view_cfg = ImageViewCfg(
@@ -113,7 +118,9 @@ class BaseVisualizer(ABC):
                 channels=("rgb",) if perspective else tuple(self.cfg.streaming_gt_types),
                 depth_range=(self.cfg.streaming_depth_min, self.cfg.streaming_depth_max),
             )
-            self._image_views.append(self._sim.get_image_view(view_cfg, camera=None if perspective else camera))
+            self._image_views.append(
+                sim.get_or_create_backend(view_cfg, cameras={} if perspective else {camera.cfg.prim_path: camera})
+            )
         self.image_view = next((view for view in self._image_views if view.camera is not None), None)
 
     def render_tiled_rgba_array(self) -> wp.array | None:
@@ -208,15 +215,7 @@ class BaseVisualizer(ABC):
         Returns:
             Backend name string, or ``None`` when no simulation context is active yet.
         """
-        try:
-            from ..sim.simulation_context import SimulationContext
-            from ..utils.backend_utils import FactoryBase
-
-            if SimulationContext.instance() is None:
-                return None
-            return FactoryBase._get_backend()
-        except Exception:
-            return None
+        return self._sim.physics_manager.__name__.removesuffix("Manager").lower() if self._sim is not None else None
 
     def supports_markers(self) -> bool:
         """Check if visualizer supports VisualizationMarkers.
@@ -257,9 +256,7 @@ class BaseVisualizer(ABC):
                 ``None`` (default) collects all terms for every manager.
             env_idx: Environment index to sample each step.  Defaults to ``0``.
         """
-        if not self.supports_live_plots():
-            return
-        if not getattr(self.cfg, "enable_live_plots", True):
+        if not self.supports_live_plots() or not self.cfg.enable_live_plots:
             return
 
         if os.environ.get("ISAACLAB_DISABLE_LIVE_PLOTS", "0") == "1":
@@ -272,11 +269,9 @@ class BaseVisualizer(ABC):
         for name, mgr in managers.items():
             # Skip managers that have no active terms — they contribute nothing to plots
             # and would create empty panels in Rerun, Viser, and the Kit live-plot window.
-            active = getattr(mgr, "active_terms", None)
-            if active is not None:
-                has_terms = any(active.values()) if isinstance(active, dict) else bool(active)
-                if not has_terms:
-                    continue
+            active = mgr.active_terms
+            if not (any(active.values()) if isinstance(active, dict) else active):
+                continue
             self._live_plot_sources.append(ManagerLivePlots(name, mgr, (term_names or {}).get(name)))
         self._live_plot_env_idx = env_idx
 
@@ -345,8 +340,7 @@ class BaseVisualizer(ABC):
         Args:
             soft: Whether to perform a soft reset.
         """
-        for view in self._image_views:
-            view.invalidate()
+        pass
 
     def _log_initialization_table(self, logger: logging.Logger, title: str, rows: list[tuple[str, Any]]) -> None:
         """Log a compact initialization table for a visualizer.

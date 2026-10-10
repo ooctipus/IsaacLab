@@ -33,7 +33,6 @@ from ..utils.version import has_kit
 from ..visualizers.base_visualizer import BaseVisualizer
 from ..visualizers.image_view import ImageView
 from ..visualizers.visualizer_cfg import (
-    ImageViewCfg,
     get_visualizer_install_hint,
     parse_visualizer_csv,
     resolve_visualizer_cfgs,
@@ -45,8 +44,6 @@ if TYPE_CHECKING:
     from pxr import Usd
 
     from ..cloner.clone_plan import ClonePlan
-    from ..sensors import Camera
-    from ..sensors.ray_caster.base_ray_caster_camera import BaseRayCasterCamera
 
 from .simulation_cfg import BackendCfg, SimulationCfg
 from .spawners import DomeLightCfg, GroundPlaneCfg
@@ -206,7 +203,6 @@ class SimulationContext:
         # Construct visualizers before cloning; initialize their runtime bindings after physics is ready.
         self._scene_data_provider = SceneDataProvider(self.physics_manager.get_scene_data_backend())
         self._visualizers: list[BaseVisualizer] = []
-        self._image_views: dict[int, ImageView] = {}
         self._pending_visualizers: list[BaseVisualizer] = []
         self._visualizers_started = False
         self._reset_requested: bool = False
@@ -472,26 +468,6 @@ class SimulationContext:
         if not self._pending_visualizers:
             self._pending_camera_view = None
 
-    def get_image_view(self, cfg: ImageViewCfg, *, camera: Camera | BaseRayCasterCamera | None = None) -> ImageView:
-        """Bind a shared image declaration once for all windows and recorders in this simulation.
-
-        Args:
-            cfg: Shared view declaration. Copies of a consumer retain this declaration by reference.
-            camera: Already resolved image sensor, including ray-cast cameras used for recording.
-
-        Returns:
-            The simulation-owned view. Perspective producers bind their rendering callback during initialization.
-        """
-        key = id(cfg)
-        if key not in self._image_views:
-            if camera is None and isinstance(cfg.source, str):
-                cameras = self._scene_data_provider.get_camera_sensors()
-                if cfg.source not in cameras:
-                    raise ValueError(f"No scene Camera named {cfg.source!r}; available cameras: {sorted(cameras)}.")
-                camera = cameras[cfg.source]
-            self._image_views[key] = ImageView(cfg, camera)
-        return self._image_views[key]
-
     def get_scene_data_provider(self) -> SceneDataProvider:
         """Return the scene data provider shared by visualizers and renderers."""
         return self._scene_data_provider
@@ -566,11 +542,7 @@ class SimulationContext:
     @staticmethod
     def _requires_pre_capture_newton_init(cfg: Any) -> bool:
         """Return whether a config contributes Newton picking inputs to capture."""
-        return (
-            cfg.visualizer_type == "newton_gl"
-            and bool(getattr(cfg, "enable_picking", False))
-            and not bool(getattr(cfg, "headless", False))
-        )
+        return cfg.visualizer_type == "newton_gl" and cfg.enable_picking and not cfg.headless
 
     def reset(self, soft: bool = False) -> None:
         """Reset the simulation.
@@ -579,8 +551,9 @@ class SimulationContext:
             soft: If True, skip full reinitialization.
         """
         self.physics_manager.reset(soft)
-        for view in self._image_views.values():
-            view.invalidate()
+        for _, resource in self._backend_registry:
+            if isinstance(resource, ImageView):
+                resource.invalidate()
         for viz in self._visualizers:
             viz.reset(soft)
         # Initialize visualizers not prepared by a backend-specific pre-capture hook.
@@ -656,7 +629,7 @@ class SimulationContext:
         for viz in self._visualizers:
             viz.flush_startup_messages()
 
-        if self._should_forward_before_visualizer_update():
+        if any(viz.requires_forward_before_step() for viz in self._visualizers):
             self.physics_manager.forward()
 
         # Marker callbacks update VisualizationMarkers state; visualizer step()
@@ -700,10 +673,6 @@ class SimulationContext:
                 logger.info("Removed visualizer: %s", type(viz).__name__)
             except Exception as exc:
                 logger.error("Error closing visualizer: %s", exc)
-
-    def _should_forward_before_visualizer_update(self) -> bool:
-        """Return True if any visualizer requires pre-step forward kinematics."""
-        return any(viz.requires_forward_before_step() for viz in self._visualizers)
 
     def play(self) -> None:
         """Start or resume the simulation."""
@@ -767,7 +736,7 @@ class SimulationContext:
         """Get a setting value."""
         return self.settings.get(name)
 
-    def get_or_create_backend(self, cfg: Any) -> Any:
+    def get_or_create_backend(self, cfg: Any, **kwargs: Any) -> Any:
         """Return the simulation-owned object for a construction configuration.
 
         Equal configurations of the same concrete type share a resource. Finalize configurations
@@ -775,7 +744,8 @@ class SimulationContext:
         ``BackendCfg`` declares a resource requiring ``close()``; other cfgs declare Python-owned data.
 
         Args:
-            cfg: Construction inputs. A cache miss constructs ``instantiate(cfg)``.
+            cfg: Construction inputs. A cache miss constructs ``instantiate(cfg, **kwargs)``.
+            **kwargs: Simulation-owned dependencies, passed only on construction; cfg defines sharing.
 
         Returns:
             The existing or newly constructed resource.
@@ -785,7 +755,7 @@ class SimulationContext:
                 return resource
         if isinstance(cfg, RendererCfg):
             self._render_context.validate_renderer_cfg(cfg)
-        resource = instantiate(cfg)
+        resource = instantiate(cfg, **kwargs)
         self._backend_registry.append((cfg, resource))
         if isinstance(cfg, RendererCfg):
             self._render_context.register_renderer(cfg, resource)
@@ -844,9 +814,6 @@ class SimulationContext:
                     run_cleanup(viz.close)
                 instance._visualizers.clear()
                 instance._pending_visualizers.clear()
-                for view in instance._image_views.values():
-                    run_cleanup(view.close)
-                instance._image_views.clear()
 
                 instance.clone_contexts.clear()
                 # Newest first: the Kit USD-context backend, registered first, closes last but

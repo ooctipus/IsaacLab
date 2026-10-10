@@ -514,6 +514,9 @@ class NewtonVisualizerBase(BaseVisualizer):
     def initialize(self, sim: SimulationContext, *, cameras: list[PerspectiveCameraCfg | Camera]) -> None:
         """Bind scene data and the Newton model shared with the simulation."""
         super().initialize(sim, cameras=cameras)
+        if self.cfg.window.view is None:
+            for view in self._image_views:
+                view.aspect = self.cfg.window.size[0] / self.cfg.window.size[1]
         self.newton_cfg = NewtonBackendCfg(physics_cfg=sim.cfg.physics, device=sim.device)
         self.backend = self._sim.get_or_create_backend(self.newton_cfg)
         self._transform_mapping = self._sim.get_scene_data_provider().create_mapping(
@@ -774,11 +777,9 @@ class NewtonGLVisualizer(NewtonVisualizerBase):
         if not self._runtime_headless:
             # pyglet sets WM_CLASS from the window caption, which ViewerGL defaults to "Newton".
             write_desktop_entry("isaaclab-newton-gl-viewer", "Newton", "Newton", _NEWTON_ICON_DIR / "icon_64.png")
-        window = self.cfg.window
-        width, height = window.size
         self._viewer = NewtonViewerGL(
-            width=width,
-            height=height,
+            width=self.cfg.window.size[0],
+            height=self.cfg.window.size[1],
             headless=self._runtime_headless,
             metadata={"num_envs": num_envs, "physics_backend": self.physics_backend, "gravity": sim.cfg.gravity},
             window_cfg=self.cfg.window,
@@ -793,10 +794,6 @@ class NewtonGLVisualizer(NewtonVisualizerBase):
         self._viewer._paused = False
         self._viewer.picking_enabled = self._picking_enabled
         self._configure_viewer()
-
-        if window.view is None:
-            for view in self._image_views:
-                view.aspect = width / height
 
         self._viewer.register_ui_callback(self._draw_streaming_view_controls, position="side")
         self._select_camera(self._camera_index)
@@ -1141,7 +1138,7 @@ class NewtonRTXVisualizer(NewtonVisualizerBase):
 
         if self._is_initialized:
             return
-        if self.physics_backend in ("physx", "isaacsim_physx"):
+        if sim.physics_manager.video_capture_backend() == "kit":
             raise RuntimeError(
                 "Newton RTX is kitless and cannot share a process with Kit physics; use Newton or OVPhysX."
             )
@@ -1154,11 +1151,9 @@ class NewtonRTXVisualizer(NewtonVisualizerBase):
         if cfg.background_color is not None:
             settings["omni:rtx:background:source:type"] = ("Token", "color")
             settings["omni:rtx:background:source:color"] = ("Color3f", cfg.background_color)
-        window = cfg.window
-        width, height = window.size
         self._viewer = NewtonViewerRTX(
-            width=width,
-            height=height,
+            width=self.cfg.window.size[0],
+            height=self.cfg.window.size[1],
             headless=self._runtime_headless,
             async_rendering=not self._runtime_headless,
             ovstage=scene.stage,
@@ -1174,10 +1169,6 @@ class NewtonRTXVisualizer(NewtonVisualizerBase):
         self._viewer.set_model(self.backend.model)
         self._viewer.marker_groups = sim.vis_marker_registry.get_groups().values()
         self._viewer.picking_enabled = False
-        if window.view is None:
-            for view in self._image_views:
-                view.aspect = width / height
-
         self._viewer.register_ui_callback(self._draw_streaming_view_controls, position="side")
         self._select_camera(self._camera_index)
         self._is_initialized = True

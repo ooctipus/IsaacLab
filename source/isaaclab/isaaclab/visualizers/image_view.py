@@ -34,23 +34,24 @@ class ImageView:
     only :meth:`read_rgb` transfers pixels to the host.
     """
 
-    def __init__(self, cfg: ImageViewCfg, camera: Camera | BaseRayCasterCamera | None = None) -> None:
+    def __init__(self, cfg: ImageViewCfg, *, cameras: dict[str, Camera | BaseRayCasterCamera]) -> None:
         """Bind a view declaration to a scene sensor or an initially unbound perspective producer."""
         validate(cfg)
         self.cfg = cfg
-        self.camera = camera
+        if isinstance(cfg.source, str) and cfg.source not in cameras:
+            raise ValueError(f"No scene camera named {cfg.source!r}; available cameras: {sorted(cameras)}.")
+        self.camera = cameras[cfg.source] if isinstance(cfg.source, str) else None
         self.render: Callable[[wp.array | None], wp.array] | None = None
         self.aspect = 1.0
         self.frame = TimestampedBuffer()
         self._host_frame: np.ndarray | None = None
-        self._render_buffer: wp.array | None = None
         self._env_ids: wp.array | None = None
         self._depth_colors: wp.array | None = None
         self._selection = self._layout = None
         self._keys: tuple[str, ...] = ()
 
     def read(self, frame_id: int | float) -> wp.array | None:
-        """Return borrowed uint8 [H, W, 4] pixels, or None for an empty row selection."""
+        """Return native perspective pixels or composed uint8 [H, W, 4] sensor tiles; None for no rows."""
         cfg, camera = self.cfg, self.camera
         if not cfg.envs:
             return None
@@ -64,44 +65,42 @@ class ImageView:
         if self.frame.timestamp == frame_id:
             return self.frame.data
 
-        if camera is not None:
-            outputs = camera.data.output
-            sources = tuple(outputs[key].warp for key in self._keys)
-        else:
+        if camera is None:
             if self.render is None:
                 raise RuntimeError("Bind a perspective image view to a visualizer before reading or recording it.")
-            self._render_buffer = self.render(self._render_buffer)
-            pixels = self._render_buffer
-            sources = (pixels.reshape((1, *pixels.shape)),)
+            self.frame.data = self.render(self.frame.data)
+        else:
+            outputs = camera.data.output
+            sources = tuple(outputs[key].warp for key in self._keys)
 
-        layout = tuple((source.shape, source.dtype, source.device) for source in sources)
-        if layout != self._layout:
-            for source, channel in zip(sources, cfg.channels, strict=True):
-                components = 3 if channel in ("rgb", "normals") else 1
-                if source.ndim != 4 or min(source.shape) < 1 or source.shape[3] < components:
-                    raise ValueError(
-                        f"Channel {channel!r} requires nonempty [N, H, W, C] arrays with C >= {components}."
-                    )
-            device = sources[0].device
-            count, height, width, _ = sources[0].shape
-            if any(source.device != device or source.shape[:3] != (count, height, width) for source in sources):
-                raise ValueError("Image channels must have the same batch size, resolution, and device.")
-            if max(cfg.envs) >= count:
-                raise ValueError(f"Image row selection is outside the source batch of {count} rows.")
-            columns = image_grid_columns(len(cfg.envs), len(sources), height, width, self.aspect)
-            shape = (math.ceil(len(cfg.envs) / columns) * height, columns * len(sources) * width, 4)
-            colors = np.empty((0, 3), dtype=np.uint8)
-            if "depth" in cfg.channels:
-                colors = (colormaps["turbo"](np.arange(256) / 255.0)[..., :3] * 255).astype(np.uint8)
-            self._env_ids = wp.array(cfg.envs, dtype=wp.int32, device=device)
-            self._depth_colors = wp.array(colors, dtype=wp.uint8, device=device)
-            self.frame.data = wp.empty(shape, dtype=wp.uint8, device=device)
-            self._layout = layout
+            layout = tuple((source.shape, source.dtype, source.device) for source in sources)
+            if layout != self._layout:
+                for source, channel in zip(sources, cfg.channels, strict=True):
+                    components = 3 if channel in ("rgb", "normals") else 1
+                    if source.ndim != 4 or min(source.shape) < 1 or source.shape[3] < components:
+                        raise ValueError(
+                            f"Channel {channel!r} requires nonempty [N, H, W, C] arrays with C >= {components}."
+                        )
+                device = sources[0].device
+                count, height, width, _ = sources[0].shape
+                if any(source.device != device or source.shape[:3] != (count, height, width) for source in sources):
+                    raise ValueError("Image channels must have the same batch size, resolution, and device.")
+                if max(cfg.envs) >= count:
+                    raise ValueError(f"Image row selection is outside the source batch of {count} rows.")
+                columns = image_grid_columns(len(cfg.envs), len(sources), height, width, self.aspect)
+                shape = (math.ceil(len(cfg.envs) / columns) * height, columns * len(sources) * width, 4)
+                colors = np.empty((0, 3), dtype=np.uint8)
+                if "depth" in cfg.channels:
+                    colors = (colormaps["turbo"](np.arange(256) / 255.0)[..., :3] * 255).astype(np.uint8)
+                self._env_ids = wp.array(cfg.envs, dtype=wp.int32, device=device)
+                self._depth_colors = wp.array(colors, dtype=wp.uint8, device=device)
+                self.frame.data = wp.empty(shape, dtype=wp.uint8, device=device)
+                self._layout = layout
 
-        compose_image(
-            self.frame.data, sources, self._env_ids, cfg.channels, self._depth_colors,
-            depth_min=cfg.depth_range[0], depth_max=cfg.depth_range[1],
-        )  # fmt: skip
+            compose_image(
+                self.frame.data, sources, self._env_ids, cfg.channels, self._depth_colors,
+                depth_min=cfg.depth_range[0], depth_max=cfg.depth_range[1],
+            )  # fmt: skip
         self.frame.timestamp = frame_id
         self._host_frame = None
         return self.frame.data
@@ -112,7 +111,7 @@ class ImageView:
         if image is None:
             return None
         if self._host_frame is None:
-            self._host_frame = np.ascontiguousarray(image.numpy()[..., :3])
+            self._host_frame = image.numpy()[..., :3].copy()
         return self._host_frame
 
     def invalidate(self) -> None:
@@ -122,7 +121,7 @@ class ImageView:
 
     def close(self) -> None:
         """Release source references and owned storage after the consumers have closed."""
-        self.camera = self.render = self._render_buffer = None
+        self.camera = self.render = None
         self.frame = TimestampedBuffer()
         self._host_frame = None
         self._env_ids = self._depth_colors = None

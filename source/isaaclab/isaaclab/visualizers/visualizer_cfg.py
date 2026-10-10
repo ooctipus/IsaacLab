@@ -13,6 +13,7 @@ import warnings
 from dataclasses import MISSING
 from typing import TYPE_CHECKING
 
+from ..sim.simulation_cfg import BackendCfg
 from ..utils import configclass
 from ..utils.string import string_to_callable
 
@@ -157,12 +158,15 @@ class SceneCameraCfg:
 
 
 @configclass
-class ImageViewCfg:
+class ImageViewCfg(BackendCfg):
     """A shared image selection consumed by windows and recorders.
 
     Reusing this declaration shares one runtime view within a simulation, including across copies
     of an environment configuration. Use :func:`isaaclab.utils.replace` to declare an independent view.
     """
+
+    class_type: str = "{DIR}.image_view:ImageView"
+    """Runtime image selection and composition."""
 
     source: str | PerspectiveCameraCfg = MISSING
     """Scene sensor name, or the initial camera for a visualizer-owned perspective render product."""
@@ -175,6 +179,10 @@ class ImageViewCfg:
 
     depth_range: tuple[float, float] = (0.1, 10.0)
     """Display color scale limits [m]. Source depth values and camera clipping planes remain unchanged."""
+
+    def __eq__(self, other) -> bool:
+        """Share explicit declarations; equal initial poses can belong to independent cameras."""
+        return self is other
 
     def __deepcopy__(self, memo):
         """Keep this explicitly shared declaration when its consumers' configurations are copied."""
@@ -291,7 +299,7 @@ class VisualizerCfg:
 
     # Shared settings
     streaming_envs: int | list[int] = 32
-    """Environments to display.
+    """Environments to display, limited to 100 tiles.
 
     * ``int`` — sample this many envs once at initialization (from all visible envs).
     * ``list[int]`` — display exactly these env indices.

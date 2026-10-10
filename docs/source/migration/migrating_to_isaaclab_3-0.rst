@@ -2690,13 +2690,6 @@ The corresponding ``tiled_cam_eye`` and ``tiled_cam_target_prim_path`` aliases a
 Visualizers only display the selected sensor's output; they no longer create a renderer or
 camera, force a capture, or remove camera prims on close. See :doc:`/source/features/visualizer_tiled_camera`.
 
-The generated-camera helpers ``resolve_tiled_env_indices``, ``resolve_mono_env_index``,
-``compute_tile_resolution``, ``apply_camera_view_from_origins``, and ``sensor_keys_for_gt_types``
-have also been removed. Declare resolution, output channels, and initial pose in ``CameraCfg``.
-Use ``resolve_streaming_envs`` for display tile selection and ``Camera.set_world_poses_from_view``
-for explicit sensor pose updates.
-
-
 .. code-block:: python
 
    # Before (Isaac Lab 2.x)
@@ -2766,6 +2759,39 @@ Similarly, when importing the config class directly:
 The ``newton`` type in a :class:`~isaaclab.envs.utils.video_recorder_cfg.VideoRecorderCfg` source (e.g.
 ``source="visualizer:newton"``) continues to work as a deprecated alias for ``newton_gl``; use
 ``"viz:newton_gl"`` or ``"viz:newton_rtx"``.
+
+
+.. rubric:: Window settings and RTX scene ownership
+
+Move Newton's ``window_width`` and ``window_height`` into ``WindowCfg.size``. Replace
+``update_frequency`` with ``WindowCfg.fps``:
+
+.. code-block:: python
+
+   # Before
+   viewer = NewtonGLVisualizerCfg(window_width=1920, window_height=1080, update_frequency=2)
+
+   # After
+   from isaaclab.visualizers import WindowCfg
+   from isaaclab_visualizers.newton import NewtonGLVisualizerCfg
+
+   viewer = NewtonGLVisualizerCfg(window=WindowCfg(size=(1920, 1080), fps=30.0))
+
+``fps`` limits presentation by elapsed wall-clock time, rather than rendering every N simulation
+steps. Choose the desired display rate; there is no fixed conversion from ``update_frequency``
+when simulation speed varies. Headless recording captures on demand independently of this limit.
+
+Newton RTX now uses authored scene lighting and environment placement. Remove ``rtx_environment``
+and RTX ``world_spacing`` settings; author lights and transforms in the scene instead. An unlit
+scene stays unlit. ``background_color=None`` preserves the scene background; an explicit color
+changes only the visible background. Use Newton GL for model overlays, live plots, and rigid-body
+dragging; RTX retains visualization markers and camera controls.
+
+Sensor image dimensions remain configured on ``CameraCfg``. Newton RTX perspective resolution
+uses the initial ``WindowCfg.size`` and scales for later window resizes. Newton GL perspective
+resolution follows its framebuffer. For windows and recorders sharing one image selection, use
+``ImageViewCfg`` as described in :doc:`/source/features/visualizer_tiled_camera`; existing CLI
+recording source strings remain supported.
 
 
 .. rubric:: Video Recording (``gym.wrappers.RecordVideo`` replaced)

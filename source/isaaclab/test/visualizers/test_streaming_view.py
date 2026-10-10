@@ -193,18 +193,21 @@ def test_window_and_recorder_share_fixed_device_image(device, monkeypatch):
     type(camera).data = acquired
     sim = object.__new__(SimulationContext)
     sim._scene_data_provider = SimpleNamespace(get_camera_sensors=Mock(return_value={"front": camera}))
-    sim._image_views, sim._physics_step_count = {}, 0
+    sim._backend_registry, sim._physics_step_count = [], 0
     with pytest.raises(TypeError, match="size"):
         ImageViewCfg(source="front", size=(16, 20))
     declaration = ImageViewCfg(source="front", envs=(2, 0), channels=("rgb", "depth"))
     window = deepcopy(WindowCfg(view=declaration, size=(320, 240)))
     recorder_cfg = deepcopy(VideoRecorderCfg(view=declaration))
     monkeypatch.setattr("isaaclab.envs.utils.video_recorder.ImageSequenceClip", Mock())
-    recorder = VideoRecorder(recorder_cfg, SimpleNamespace(sim=sim))
-    view = sim.get_image_view(window.view)
+    recorder = VideoRecorder(recorder_cfg, SimpleNamespace(sim=sim, scene=SimpleNamespace(sensors={"front": camera})))
+    view = sim.get_or_create_backend(window.view, cameras={"front": camera})
     image = view.read(0)
     pixels = recorder._get_frame()
-    assert sim.get_image_view(recorder_cfg.view) is view
+    assert sim.get_or_create_backend(recorder_cfg.view, cameras={"front": camera}) is view
+    assert sim.get_or_create_backend(declaration.copy(), cameras={"front": camera}) is not view
+    assert "get_image_view" not in vars(SimulationContext)
+    assert "_image_views" not in vars(sim)
     assert acquired.call_count == 1
     assert image.device == wp.get_device(device)
     colors = (colormaps["turbo"]((2.0 - 0.1) / 9.9)[:3] * np.array(255)).astype(np.uint8)
@@ -236,5 +239,6 @@ def test_window_and_recorder_share_fixed_device_image(device, monkeypatch):
     declaration.envs = ()
     assert view.read(2) is None
     assert recorder._get_frame() is None
-    view.close()
+    sim.close_backend(view)
+    assert view.frame.data is None
     camera.close.assert_not_called()

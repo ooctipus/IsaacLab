@@ -49,10 +49,7 @@ def _patch_moviepy():
 
 def _cfg(**overrides) -> VideoRecorderCfg:
     defaults = dict(source="viz", output_dir="/tmp/test_videos", fps=30, video_length=4, video_interval=0)
-    cfg = VideoRecorderCfg()
-    for k, v in {**defaults, **overrides}.items():
-        setattr(cfg, k, v)
-    return cfg
+    return VideoRecorderCfg(**(defaults | overrides))
 
 
 class _FakeViz:
@@ -75,9 +72,11 @@ def _make_env(visualizers=(), sensors: dict | None = None):
     env.scene.sensors = sensors or {}
     from isaaclab.sim import SimulationContext
 
-    env.sim._image_views = {}
+    env.sim._backend_registry = []
     env.sim._scene_data_provider.get_camera_sensors.return_value = env.scene.sensors
-    env.sim.get_image_view.side_effect = lambda cfg, **kwargs: SimulationContext.get_image_view(env.sim, cfg, **kwargs)
+    env.sim.get_or_create_backend.side_effect = lambda cfg, **kwargs: SimulationContext.get_or_create_backend(
+        env.sim, cfg, **kwargs
+    )
     env.sim.get_physics_step_count.return_value = 0
     return env
 
@@ -379,10 +378,13 @@ def test_apply_deprecated_viewer_skips_when_default_visualizer_cfg_already_set()
 
 def test_keep_last_n_clips_prunes_only_older_clips(tmp_path):
     """Pruning deletes this recorder's clips older than the last N and leaves other prefixes alone."""
-    for name in ["clip_0001.mp4", "clip_9997.mp4", "clip_9998.mp4", "clip_9999.mp4", "other_0000.mp4"]:
+    for name in ["clip_0001.mp4", "clip_9997.mp4", "clip_9998.mp4", "other_0000.mp4"]:
         (tmp_path / name).touch()
-    recorder = VideoRecorder(_cfg(output_dir=str(tmp_path), keep_last_n_clips=2), _make_env())
-
-    recorder._maybe_delete_old_clips()
+    recorder = VideoRecorder(
+        _cfg(output_dir=str(tmp_path), keep_last_n_clips=2, video_length=1), _make_env([_FakeViz("newton_gl")])
+    )
+    with patch("isaaclab.envs.utils.video_recorder.ImageSequenceClip") as encoder:
+        encoder.return_value.write_videofile.side_effect = lambda path, **kwargs: (tmp_path / path).touch()
+        recorder.step()
 
     assert sorted(path.name for path in tmp_path.iterdir()) == ["clip_9998.mp4", "clip_9999.mp4", "other_0000.mp4"]
