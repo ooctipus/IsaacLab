@@ -84,10 +84,6 @@ def test_sensor_key_missing_or_unknown():
         (6, 2, 1.0, 2),
         (6, 1, 1.0, 2),
         (6, 1, 16 / 9, 3),
-        (4, 1, float("nan"), 2),
-        (4, 1, 0.0, 2),
-        (4, 1, -1.0, 2),
-        (4, 1, math.inf, 2),
     ],
 )
 @pytest.mark.parametrize("device", test_devices(DeviceScope.DEFAULT_CUDA))

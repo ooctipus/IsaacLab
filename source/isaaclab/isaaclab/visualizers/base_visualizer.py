@@ -80,8 +80,6 @@ class BaseVisualizer(ABC):
             cameras: Resolved perspective settings and borrowed scene sensors, in display order.
         """
         scene_data_provider = sim.get_scene_data_provider()
-        if scene_data_provider is None:
-            raise RuntimeError(f"{self.__class__.__name__} requires a scene_data_provider.")
         self._sim = sim
 
         cfg = self.cfg

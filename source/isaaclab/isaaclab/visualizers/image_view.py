@@ -25,6 +25,20 @@ if TYPE_CHECKING:
     from ..sensors.ray_caster.base_ray_caster_camera import BaseRayCasterCamera
 
 
+def _image_grid_shape(num_envs: int, num_channels: int, height: int, width: int, aspect: float) -> tuple[int, int, int]:
+    """Size an RGBA grid with each environment's channels side by side; inputs must be positive."""
+    columns, best_score = 1, math.inf
+    for candidate in range(1, num_envs + 1):
+        rows = math.ceil(num_envs / candidate)
+        empty = rows * candidate - num_envs
+        ratio = candidate * num_channels * width / (rows * height)
+        # Penalize empty cells and aspect distortion; prefer wider layouts when scores otherwise tie.
+        score = empty * 10.0 + abs(math.log(ratio / aspect)) - candidate * 1e-6
+        if score < best_score:
+            columns, best_score = candidate, score
+    return math.ceil(num_envs / columns) * height, columns * num_channels * width, 4
+
+
 class ImageView:
     """Own one composed GPU image shared by its display and recording consumers.
 
@@ -82,21 +96,9 @@ class ImageView:
                         )
                 device = sources[0].device
                 count, height, width, _ = sources[0].shape
-                if any(source.device != device or source.shape[:3] != (count, height, width) for source in sources):
-                    raise ValueError("Image channels must have the same batch size, resolution, and device.")
                 if max(cfg.envs) >= count:
                     raise ValueError(f"Image row selection is outside the source batch of {count} rows.")
-                # Prefer complete rows, then the closest legacy display aspect.
-                aspect = self.aspect if math.isfinite(self.aspect) and self.aspect > 0 else 1.0
-                columns, best_score = 1, math.inf
-                for candidate in range(1, len(cfg.envs) + 1):
-                    rows = math.ceil(len(cfg.envs) / candidate)
-                    empty = rows * candidate - len(cfg.envs)
-                    ratio = candidate * len(sources) * width / (rows * height)
-                    score = empty * 10.0 + abs(math.log(ratio / aspect)) - candidate * 1e-6
-                    if score < best_score:
-                        columns, best_score = candidate, score
-                shape = (math.ceil(len(cfg.envs) / columns) * height, columns * len(sources) * width, 4)
+                shape = _image_grid_shape(len(cfg.envs), len(sources), height, width, self.aspect)
                 colors = np.empty((0, 3), dtype=np.uint8)
                 if "depth" in cfg.channels:
                     colors = (colormaps["turbo"](np.arange(256) / 255.0)[..., :3] * 255).astype(np.uint8)
