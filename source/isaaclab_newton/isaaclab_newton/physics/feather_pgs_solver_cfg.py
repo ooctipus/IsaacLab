@@ -42,6 +42,8 @@ class FeatherPGSSolverCfg(NewtonSolverCfg):
 
     ``auto`` uses supported topology and device resources. ``on`` requires that path;
     ``off`` keeps the ordinary representation. Research packed-factor paths are separate.
+    Supported split sweeps, velocity limits and grouped dynamics compose automatically.
+    Legacy sparse-composition opt-outs apply to ``auto``; ``on`` overrides those optional gates.
     Explicit dense kernel choices disable automatic native sparse factors and conflict with ``on``.
     """
 

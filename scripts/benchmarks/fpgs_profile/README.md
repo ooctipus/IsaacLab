@@ -28,6 +28,11 @@ private cache flags for the held-block, held-Cholesky or packed-tree consumers.
 Use `"on"` to require an admitted cache or `"off"` for ordinary prediction and
 publication. These choices retain the scene's numerical policy and budgets.
 
+`sparse_mass_matrix="auto"` also composes supported split sweeps, velocity limits
+and grouped dynamics without private enable flags. Legacy zero opt-outs remain
+effective under `"auto"`; `"on"` overrides those optional gates while preserving
+physical and resource admission. `"off"` retains ordinary factors.
+
 Three consecutive 64-step timing blocks follow 200 warmup steps in one environment
 instance. CUDA events bracket only the physics graph on its launch stream;
 auxiliary graphs are excluded. Times sum the physics launches in each environment
