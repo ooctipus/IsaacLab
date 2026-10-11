@@ -23,7 +23,7 @@ you want to pin; the remaining choices stay automatic.
      - Automatic behavior
    * - ``convex_collision``
      - ``auto``, ``ordinary``, ``rejection``, ``convex_cells``
-     - Predicted query cost chooses ordinary or rejection; unsupported pipelines use ordinary.
+     - Predicted cost chooses ordinary queries, rejection screening or convex cells; unsupported pipelines use ordinary.
    * - ``sparse_mass_matrix``
      - ``auto``, ``on``, ``off``
      - Uses native sparse factors where topology, solver policy and device resources permit.
@@ -46,9 +46,18 @@ and Delassus selectors in matrix-free mode, where those stages are unused.
 Selection does not change timestep, iteration budgets, friction coefficients
 or the selected solver formulation.
 
-Collision and native sparse-factor selectors are experimental. Convex cells
-are available as a forced choice; they are not yet candidates in automatic
-collision selection. Research dynamics/publication paths still use their
+Collision and native sparse-factor selectors are experimental. Automatic
+collision includes convex cells where immutable hull geometry supports them.
+Cells reduce support searches in screening, queries and contact generation;
+the selector includes descriptor, fallback and dispatch costs. Calibration
+uses independent synthetic primitives and samples current geometric work.
+Cell tables and calibration are built before graph capture; they add setup
+time. Selection can change during replay. Call
+``CollisionPipeline.invalidate_convex_cells()`` before modifying mesh geometry.
+Existing graphs then use ordinary support scans; rebuild the pipeline to
+enable cells for the changed geometry.
+
+Research dynamics/publication paths still use their
 existing controls. The kernel selectors use structural rules; only collision
 currently uses the sampled cost model described here.
 

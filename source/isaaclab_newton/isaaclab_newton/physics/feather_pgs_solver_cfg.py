@@ -32,10 +32,9 @@ class FeatherPGSSolverCfg(NewtonSolverCfg):
     convex_collision: Literal["auto", "ordinary", "rejection", "convex_cells"] = "auto"
     """Experimental convex collision implementation.
 
-    ``auto`` selects ordinary queries or rejection screening from predicted cost;
+    ``auto`` selects ordinary queries, rejection screening or convex cells from predicted cost;
     unsupported pipelines use ordinary queries. Other values force the named method
-    or raise an error. ``convex_cells`` is currently available only as an explicit
-    choice. Overrides legacy coherent-convex/cells environment variables.
+    or raise an error. Overrides legacy coherent-convex/cells environment variables.
     """
 
     sparse_mass_matrix: Literal["auto", "on", "off"] = "auto"
