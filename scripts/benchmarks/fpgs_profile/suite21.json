@@ -1,0 +1,664 @@
+{
+  "schema": 1,
+  "description": "Existing 21-scene point-friction research recipes; world count and observation window are runner options.",
+  "scenes": [
+    {
+      "id": "allegro",
+      "task": "Isaac-Reorient-Cube-Allegro",
+      "solver_attrs": {
+        "grouped_dynamics": "True",
+        "mf_gs_parallel_rows": "128",
+        "mf_gs_parallel_matrix_free": "True",
+        "lazy_kinematics": "True",
+        "dense_max_constraints": "192",
+        "friction_anchor_beta": "0",
+        "convex_collision": "auto"
+      },
+      "storage_at_16384_worlds": {
+        "rigid_contact_max": 286720
+      },
+      "environment": {
+        "FEATHER_PGS_GROUP_LANES": "16",
+        "FEATHER_PGS_ROWS_MASKED": "1",
+        "NEWTON_NARROW_PHASE_THREADS_X": "4",
+        "FEATHER_PGS_INK": "1",
+        "FEATHER_PGS_TIER_BLOCKS": "16384",
+        "FEATHER_PGS_ALLEGRO_KINETIC_ROWS": "1",
+        "NEWTON_NARROW_PHASE_COHERENT_CONVEX": "0",
+        "NEWTON_NARROW_PHASE_CONVEX_CELLS": "0",
+        "NEWTON_HEIGHTFIELD_GEOMETRIC_CULL": "1",
+        "NEWTON_HEIGHTFIELD_PRIMITIVE_QUERY": "1",
+        "NEWTON_HEIGHTFIELD_CYLINDER_SPLIT": "1",
+        "NEWTON_REDUCER_EXPORT_CLEANUP": "1",
+        "FEATHER_PGS_SPARSE_CONTACT_TRIPLETS": "1",
+        "FEATHER_PGS_SPARSE_VELOCITY_LIMITS": "1",
+        "FEATHER_PGS_SPARSE_SPLIT": "1",
+        "FEATHER_PGS_SPARSE_BRANCH_SWEEPS": "0",
+        "NEWTON_NARROW_PHASE_COHERENT_STATS": "0"
+      }
+    },
+    {
+      "id": "ant",
+      "task": "Isaac-Ant",
+      "solver_attrs": {
+        "dense_max_constraints": "64",
+        "friction_anchor_beta": "0",
+        "grouped_dynamics": "True",
+        "convex_collision": "auto"
+      },
+      "storage_at_16384_worlds": {
+        "rigid_contact_max": 67584
+      },
+      "environment": {
+        "FEATHER_PGS_GROUP_LANES": "16",
+        "FEATHER_PGS_ROWS_MASKED": "1",
+        "NEWTON_NARROW_PHASE_THREADS_X": "4",
+        "NEWTON_HEIGHTFIELD_GEOMETRIC_CULL": "1",
+        "NEWTON_HEIGHTFIELD_PRIMITIVE_QUERY": "1",
+        "NEWTON_HEIGHTFIELD_CYLINDER_SPLIT": "1",
+        "NEWTON_REDUCER_EXPORT_CLEANUP": "1",
+        "FEATHER_PGS_SPARSE_CONTACT_TRIPLETS": "1",
+        "FEATHER_PGS_SPARSE_VELOCITY_LIMITS": "1",
+        "FEATHER_PGS_SPARSE_SPLIT": "1",
+        "FEATHER_PGS_SPARSE_BRANCH_SWEEPS": "0",
+        "FEATHER_PGS_SPARSE_GROUPED_DYNAMICS": "1",
+        "NEWTON_NARROW_PHASE_COHERENT_CONVEX": "0",
+        "NEWTON_NARROW_PHASE_CONVEX_CELLS": "0",
+        "NEWTON_NARROW_PHASE_COHERENT_STATS": "0"
+      }
+    },
+    {
+      "id": "anymald",
+      "task": "Isaac-Velocity-Flat-AnymalD",
+      "solver_attrs": {
+        "grouped_dynamics": "True",
+        "mf_gs_parallel_rows": "48",
+        "mf_gs_parallel_matrix_free": "True",
+        "lazy_kinematics": "True",
+        "dense_max_constraints": "72",
+        "friction_anchor_beta": "0",
+        "convex_collision": "auto"
+      },
+      "storage_at_16384_worlds": {
+        "rigid_contact_max": 212992
+      },
+      "environment": {
+        "FEATHER_PGS_GROUP_LANES": "16",
+        "FEATHER_PGS_ROWS_MASKED": "1",
+        "NEWTON_NARROW_PHASE_THREADS_X": "4",
+        "FEATHER_PGS_INK": "1",
+        "FEATHER_PGS_MF_EXACT_ROWSUM": "1",
+        "FEATHER_PGS_WORLD_ROWS": "1",
+        "FEATHER_PGS_SIMPLE_WORLD_ZERO": "1",
+        "NEWTON_HEIGHTFIELD_GEOMETRIC_CULL": "1",
+        "NEWTON_HEIGHTFIELD_PRIMITIVE_QUERY": "1",
+        "NEWTON_HEIGHTFIELD_CYLINDER_SPLIT": "1",
+        "NEWTON_REDUCER_EXPORT_CLEANUP": "1",
+        "FEATHER_PGS_SPARSE_CONTACT_TRIPLETS": "1",
+        "FEATHER_PGS_SPARSE_VELOCITY_LIMITS": "1",
+        "FEATHER_PGS_SPARSE_SPLIT": "1",
+        "FEATHER_PGS_SPARSE_BRANCH_SWEEPS": "0",
+        "NEWTON_NARROW_PHASE_COHERENT_CONVEX": "0",
+        "NEWTON_NARROW_PHASE_CONVEX_CELLS": "0",
+        "NEWTON_NARROW_PHASE_COHERENT_STATS": "0"
+      }
+    },
+    {
+      "id": "anymald-rough",
+      "task": "Isaac-Velocity-Rough-AnymalD",
+      "solver_attrs": {
+        "friction_anchor_beta": "0",
+        "grouped_dynamics": "True",
+        "dense_max_constraints": "256",
+        "convex_collision": "auto"
+      },
+      "storage_at_16384_worlds": {
+        "rigid_contact_max": 566272,
+        "max_triangle_pairs": 11452416
+      },
+      "environment": {
+        "FEATHER_PGS_GROUP_LANES": "16",
+        "FEATHER_PGS_ROWS_MASKED": "1",
+        "NEWTON_NARROW_PHASE_THREADS_X": "4",
+        "NEWTON_HEIGHTFIELD_GEOMETRIC_CULL": "1",
+        "NEWTON_HEIGHTFIELD_PRIMITIVE_QUERY": "1",
+        "NEWTON_HEIGHTFIELD_CYLINDER_SPLIT": "1",
+        "NEWTON_REDUCER_EXPORT_CLEANUP": "1",
+        "FEATHER_PGS_SPARSE_CONTACT_TRIPLETS": "1",
+        "FEATHER_PGS_SPARSE_VELOCITY_LIMITS": "1",
+        "FEATHER_PGS_SPARSE_SPLIT": "1",
+        "FEATHER_PGS_SPARSE_BRANCH_SWEEPS": "0",
+        "FEATHER_PGS_SPARSE_GROUPED_DYNAMICS": "1",
+        "NEWTON_NARROW_PHASE_COHERENT_CONVEX": "0",
+        "NEWTON_NARROW_PHASE_CONVEX_CELLS": "0",
+        "NEWTON_NARROW_PHASE_COHERENT_STATS": "0"
+      }
+    },
+    {
+      "id": "cartpole",
+      "task": "Isaac-Cartpole",
+      "solver_attrs": {
+        "dense_max_constraints": "8",
+        "friction_anchor_beta": "0",
+        "convex_collision": "auto"
+      },
+      "storage_at_16384_worlds": {
+        "rigid_contact_max": 16384
+      },
+      "environment": {
+        "FEATHER_PGS_GROUP_LANES": "16",
+        "FEATHER_PGS_ROWS_MASKED": "1",
+        "NEWTON_NARROW_PHASE_THREADS_X": "4",
+        "NEWTON_HEIGHTFIELD_GEOMETRIC_CULL": "1",
+        "NEWTON_HEIGHTFIELD_PRIMITIVE_QUERY": "1",
+        "NEWTON_HEIGHTFIELD_CYLINDER_SPLIT": "1",
+        "NEWTON_REDUCER_EXPORT_CLEANUP": "1",
+        "FEATHER_PGS_SPARSE_CONTACT_TRIPLETS": "1",
+        "FEATHER_PGS_SPARSE_VELOCITY_LIMITS": "1",
+        "FEATHER_PGS_SPARSE_SPLIT": "1",
+        "FEATHER_PGS_SPARSE_BRANCH_SWEEPS": "0",
+        "NEWTON_NARROW_PHASE_COHERENT_CONVEX": "0",
+        "NEWTON_NARROW_PHASE_CONVEX_CELLS": "0",
+        "NEWTON_NARROW_PHASE_COHERENT_STATS": "0"
+      }
+    },
+    {
+      "id": "cassie-flat",
+      "task": "Isaac-Velocity-Flat-Cassie",
+      "solver_attrs": {
+        "dense_max_constraints": "48",
+        "friction_anchor_beta": "0",
+        "grouped_dynamics": "True",
+        "convex_collision": "auto"
+      },
+      "storage_at_16384_worlds": {
+        "rigid_contact_max": 83968
+      },
+      "environment": {
+        "FEATHER_PGS_GROUP_LANES": "16",
+        "FEATHER_PGS_ROWS_MASKED": "1",
+        "NEWTON_NARROW_PHASE_THREADS_X": "4",
+        "NEWTON_HEIGHTFIELD_GEOMETRIC_CULL": "1",
+        "NEWTON_HEIGHTFIELD_PRIMITIVE_QUERY": "1",
+        "NEWTON_HEIGHTFIELD_CYLINDER_SPLIT": "1",
+        "NEWTON_REDUCER_EXPORT_CLEANUP": "1",
+        "FEATHER_PGS_SPARSE_CONTACT_TRIPLETS": "1",
+        "FEATHER_PGS_SPARSE_VELOCITY_LIMITS": "1",
+        "FEATHER_PGS_SPARSE_SPLIT": "1",
+        "FEATHER_PGS_SPARSE_BRANCH_SWEEPS": "0",
+        "FEATHER_PGS_SPARSE_GROUPED_DYNAMICS": "1",
+        "NEWTON_NARROW_PHASE_COHERENT_CONVEX": "0",
+        "NEWTON_NARROW_PHASE_CONVEX_CELLS": "0",
+        "NEWTON_NARROW_PHASE_COHERENT_STATS": "0"
+      }
+    },
+    {
+      "id": "cassie-rough",
+      "task": "Isaac-Velocity-Rough-Cassie",
+      "solver_attrs": {
+        "dense_max_constraints": "80",
+        "friction_anchor_beta": "0",
+        "grouped_dynamics": "True",
+        "convex_collision": "auto"
+      },
+      "storage_at_16384_worlds": {
+        "rigid_contact_max": 186368,
+        "max_triangle_pairs": 3948544
+      },
+      "environment": {
+        "FEATHER_PGS_GROUP_LANES": "16",
+        "FEATHER_PGS_ROWS_MASKED": "1",
+        "NEWTON_NARROW_PHASE_THREADS_X": "4",
+        "NEWTON_HEIGHTFIELD_GEOMETRIC_CULL": "1",
+        "NEWTON_HEIGHTFIELD_PRIMITIVE_QUERY": "1",
+        "NEWTON_HEIGHTFIELD_CYLINDER_SPLIT": "1",
+        "NEWTON_REDUCER_EXPORT_CLEANUP": "1",
+        "FEATHER_PGS_SPARSE_CONTACT_TRIPLETS": "1",
+        "FEATHER_PGS_SPARSE_VELOCITY_LIMITS": "1",
+        "FEATHER_PGS_SPARSE_SPLIT": "1",
+        "FEATHER_PGS_SPARSE_BRANCH_SWEEPS": "0",
+        "FEATHER_PGS_SPARSE_GROUPED_DYNAMICS": "1",
+        "NEWTON_NARROW_PHASE_COHERENT_CONVEX": "0",
+        "NEWTON_NARROW_PHASE_CONVEX_CELLS": "0",
+        "NEWTON_NARROW_PHASE_COHERENT_STATS": "0"
+      }
+    },
+    {
+      "id": "franka",
+      "task": "Isaac-Lift-Franka",
+      "solver_attrs": {
+        "dense_max_constraints": "192",
+        "friction_anchor_beta": "0",
+        "convex_collision": "auto"
+      },
+      "storage_at_16384_worlds": {},
+      "environment": {
+        "FEATHER_PGS_GROUP_LANES": "16",
+        "FEATHER_PGS_ROWS_MASKED": "1",
+        "NEWTON_NARROW_PHASE_THREADS_X": "4",
+        "FEATHER_PGS_SIMPLE_WORLD_ZERO": "1",
+        "FEATHER_PGS_LOCAL_ROW_PACKETS": "1",
+        "FEATHER_PGS_FRANKA_KINETIC_STATE": "1",
+        "FEATHER_PGS_FRANKA_COMPACT_WORKSPACE": "1",
+        "NEWTON_HEIGHTFIELD_GEOMETRIC_CULL": "1",
+        "NEWTON_HEIGHTFIELD_PRIMITIVE_QUERY": "1",
+        "NEWTON_HEIGHTFIELD_CYLINDER_SPLIT": "1",
+        "NEWTON_REDUCER_EXPORT_CLEANUP": "1",
+        "FEATHER_PGS_SPARSE_CONTACT_TRIPLETS": "1",
+        "FEATHER_PGS_SPARSE_VELOCITY_LIMITS": "1",
+        "FEATHER_PGS_SPARSE_SPLIT": "1",
+        "FEATHER_PGS_SPARSE_BRANCH_SWEEPS": "0",
+        "NEWTON_NARROW_PHASE_COHERENT_CONVEX": "0",
+        "NEWTON_NARROW_PHASE_CONVEX_CELLS": "0",
+        "NEWTON_NARROW_PHASE_COHERENT_STATS": "0"
+      }
+    },
+    {
+      "id": "franka-cabinet",
+      "task": "Isaac-Open-Drawer-Franka",
+      "solver_attrs": {
+        "friction_anchor_beta": "0",
+        "convex_collision": "auto"
+      },
+      "storage_at_16384_worlds": {},
+      "environment": {
+        "FEATHER_PGS_GROUP_LANES": "16",
+        "FEATHER_PGS_ROWS_MASKED": "1",
+        "NEWTON_NARROW_PHASE_THREADS_X": "4",
+        "FEATHER_PGS_MIXED_TREE_KINETIC_STATE": "0",
+        "NEWTON_NARROW_PHASE_COHERENT_CONVEX": "0",
+        "NEWTON_NARROW_PHASE_COHERENT_STATS": "0",
+        "NEWTON_NARROW_PHASE_CONVEX_CELLS": "0"
+      }
+    },
+    {
+      "id": "franka-reach",
+      "task": "Isaac-Reach-Franka",
+      "solver_attrs": {
+        "dense_max_constraints": "64",
+        "friction_anchor_beta": "0",
+        "convex_collision": "auto"
+      },
+      "storage_at_16384_worlds": {
+        "rigid_contact_max": 94208
+      },
+      "environment": {
+        "FEATHER_PGS_GROUP_LANES": "16",
+        "FEATHER_PGS_ROWS_MASKED": "1",
+        "NEWTON_NARROW_PHASE_THREADS_X": "4",
+        "NEWTON_HEIGHTFIELD_GEOMETRIC_CULL": "1",
+        "NEWTON_HEIGHTFIELD_PRIMITIVE_QUERY": "1",
+        "NEWTON_HEIGHTFIELD_CYLINDER_SPLIT": "1",
+        "NEWTON_REDUCER_EXPORT_CLEANUP": "1",
+        "FEATHER_PGS_SPARSE_CONTACT_TRIPLETS": "1",
+        "FEATHER_PGS_SPARSE_VELOCITY_LIMITS": "1",
+        "FEATHER_PGS_SPARSE_SPLIT": "1",
+        "FEATHER_PGS_SPARSE_BRANCH_SWEEPS": "0",
+        "NEWTON_NARROW_PHASE_COHERENT_CONVEX": "0",
+        "NEWTON_NARROW_PHASE_CONVEX_CELLS": "0",
+        "NEWTON_NARROW_PHASE_COHERENT_STATS": "0"
+      }
+    },
+    {
+      "id": "g1",
+      "task": "Isaac-Velocity-Rough-G1",
+      "solver_attrs": {
+        "grouped_dynamics": "True",
+        "dense_max_constraints": "100",
+        "friction_anchor_beta": "0",
+        "convex_collision": "auto"
+      },
+      "storage_at_16384_worlds": {
+        "rigid_contact_max": 294912,
+        "max_triangle_pairs": 1769472
+      },
+      "environment": {
+        "FEATHER_PGS_GROUP_LANES": "16",
+        "FEATHER_PGS_ROWS_MASKED": "1",
+        "NEWTON_NARROW_PHASE_THREADS_X": "4",
+        "FEATHER_PGS_SPARSE_FACTOR": "1",
+        "FEATHER_PGS_SPARSE_PARALLEL_LIMITS": "1",
+        "FEATHER_PGS_SPARSE_LEVEL_UPDATE": "1",
+        "FEATHER_PGS_SPARSE_METRIC_TANGENTS": "1",
+        "FEATHER_PGS_G1_KINETIC_STATE": "1",
+        "FEATHER_PGS_G1_CHAIN_SCAN": "1",
+        "FEATHER_PGS_SPARSE_SPECTRAL_TANGENTS": "1",
+        "FEATHER_PGS_SPARSE_LIMIT_JACOBI": "1",
+        "NEWTON_HEIGHTFIELD_CELL_REJECT": "1",
+        "NEWTON_HEIGHTFIELD_FINITE_QUERY": "1",
+        "NEWTON_HEIGHTFIELD_GEOMETRIC_CULL": "1",
+        "NEWTON_HEIGHTFIELD_WELD_FLAT_SEAMS": "1",
+        "NEWTON_HEIGHTFIELD_PAIR_CSR": "1",
+        "NEWTON_HEIGHTFIELD_PAIR_CSR_SHELL": "1",
+        "NEWTON_NARROW_PHASE_PACKED_HEIGHTFIELD_PAIRS": "1",
+        "NEWTON_HEIGHTFIELD_PRIMITIVE_QUERY": "1",
+        "NEWTON_HEIGHTFIELD_CYLINDER_SPLIT": "1",
+        "NEWTON_REDUCER_EXPORT_CLEANUP": "1",
+        "FEATHER_PGS_SPARSE_CONTACT_TRIPLETS": "1",
+        "FEATHER_PGS_SPARSE_VELOCITY_LIMITS": "1",
+        "FEATHER_PGS_SPARSE_SPLIT": "1",
+        "FEATHER_PGS_SPARSE_BRANCH_SWEEPS": "0",
+        "NEWTON_NARROW_PHASE_COHERENT_CONVEX": "0",
+        "NEWTON_NARROW_PHASE_CONVEX_CELLS": "0",
+        "NEWTON_NARROW_PHASE_COHERENT_STATS": "0"
+      }
+    },
+    {
+      "id": "g1-flat",
+      "task": "Isaac-Velocity-Flat-G1",
+      "solver_attrs": {
+        "grouped_dynamics": "True",
+        "dense_max_constraints": "56",
+        "friction_anchor_beta": "0",
+        "convex_collision": "auto"
+      },
+      "storage_at_16384_worlds": {
+        "rigid_contact_max": 196608
+      },
+      "environment": {
+        "FEATHER_PGS_GROUP_LANES": "16",
+        "FEATHER_PGS_ROWS_MASKED": "1",
+        "NEWTON_NARROW_PHASE_THREADS_X": "4",
+        "NEWTON_HEIGHTFIELD_GEOMETRIC_CULL": "1",
+        "NEWTON_HEIGHTFIELD_PRIMITIVE_QUERY": "1",
+        "NEWTON_HEIGHTFIELD_CYLINDER_SPLIT": "1",
+        "NEWTON_REDUCER_EXPORT_CLEANUP": "1",
+        "FEATHER_PGS_SPARSE_CONTACT_TRIPLETS": "1",
+        "FEATHER_PGS_SPARSE_VELOCITY_LIMITS": "1",
+        "FEATHER_PGS_SPARSE_SPLIT": "1",
+        "FEATHER_PGS_SPARSE_BRANCH_SWEEPS": "0",
+        "FEATHER_PGS_SPARSE_FACTOR": "1",
+        "FEATHER_PGS_SPARSE_LEVEL_UPDATE": "1",
+        "FEATHER_PGS_SPARSE_PARALLEL_LIMITS": "1",
+        "FEATHER_PGS_G1_KINETIC_STATE": "1",
+        "NEWTON_NARROW_PHASE_COHERENT_CONVEX": "0",
+        "NEWTON_NARROW_PHASE_CONVEX_CELLS": "0",
+        "NEWTON_NARROW_PHASE_COHERENT_STATS": "0"
+      }
+    },
+    {
+      "id": "go2-flat",
+      "task": "Isaac-Velocity-Flat-UnitreeGo2",
+      "solver_attrs": {
+        "dense_max_constraints": "112",
+        "friction_anchor_beta": "0",
+        "grouped_dynamics": "True",
+        "convex_collision": "auto"
+      },
+      "storage_at_16384_worlds": {
+        "rigid_contact_max": 120832
+      },
+      "environment": {
+        "FEATHER_PGS_GROUP_LANES": "16",
+        "FEATHER_PGS_ROWS_MASKED": "1",
+        "NEWTON_NARROW_PHASE_THREADS_X": "4",
+        "NEWTON_HEIGHTFIELD_GEOMETRIC_CULL": "1",
+        "NEWTON_HEIGHTFIELD_PRIMITIVE_QUERY": "1",
+        "NEWTON_HEIGHTFIELD_CYLINDER_SPLIT": "1",
+        "NEWTON_REDUCER_EXPORT_CLEANUP": "1",
+        "FEATHER_PGS_SPARSE_CONTACT_TRIPLETS": "1",
+        "FEATHER_PGS_SPARSE_VELOCITY_LIMITS": "1",
+        "FEATHER_PGS_SPARSE_SPLIT": "1",
+        "FEATHER_PGS_SPARSE_BRANCH_SWEEPS": "0",
+        "FEATHER_PGS_SPARSE_GROUPED_DYNAMICS": "1",
+        "NEWTON_NARROW_PHASE_COHERENT_CONVEX": "0",
+        "NEWTON_NARROW_PHASE_CONVEX_CELLS": "0",
+        "NEWTON_NARROW_PHASE_COHERENT_STATS": "0"
+      }
+    },
+    {
+      "id": "go2-rough",
+      "task": "Isaac-Velocity-Rough-UnitreeGo2",
+      "solver_attrs": {
+        "friction_anchor_beta": "0",
+        "grouped_dynamics": "True",
+        "dense_max_constraints": "256",
+        "convex_collision": "auto"
+      },
+      "storage_at_16384_worlds": {
+        "rigid_contact_max": 321536,
+        "max_triangle_pairs": 8224768
+      },
+      "environment": {
+        "FEATHER_PGS_GROUP_LANES": "16",
+        "FEATHER_PGS_ROWS_MASKED": "1",
+        "NEWTON_NARROW_PHASE_THREADS_X": "4",
+        "NEWTON_HEIGHTFIELD_GEOMETRIC_CULL": "1",
+        "NEWTON_HEIGHTFIELD_PRIMITIVE_QUERY": "1",
+        "NEWTON_HEIGHTFIELD_CYLINDER_SPLIT": "1",
+        "NEWTON_REDUCER_EXPORT_CLEANUP": "1",
+        "FEATHER_PGS_SPARSE_CONTACT_TRIPLETS": "1",
+        "FEATHER_PGS_SPARSE_VELOCITY_LIMITS": "1",
+        "FEATHER_PGS_SPARSE_SPLIT": "1",
+        "FEATHER_PGS_SPARSE_BRANCH_SWEEPS": "0",
+        "FEATHER_PGS_SPARSE_GROUPED_DYNAMICS": "1",
+        "NEWTON_NARROW_PHASE_COHERENT_CONVEX": "0",
+        "NEWTON_NARROW_PHASE_CONVEX_CELLS": "0",
+        "NEWTON_NARROW_PHASE_COHERENT_STATS": "0"
+      }
+    },
+    {
+      "id": "h1-flat",
+      "task": "Isaac-Velocity-Flat-H1",
+      "solver_attrs": {
+        "dense_max_constraints": "48",
+        "friction_anchor_beta": "0",
+        "grouped_dynamics": "True",
+        "convex_collision": "auto"
+      },
+      "storage_at_16384_worlds": {
+        "rigid_contact_max": 103424
+      },
+      "environment": {
+        "FEATHER_PGS_GROUP_LANES": "16",
+        "FEATHER_PGS_ROWS_MASKED": "1",
+        "NEWTON_NARROW_PHASE_THREADS_X": "4",
+        "NEWTON_HEIGHTFIELD_GEOMETRIC_CULL": "1",
+        "NEWTON_HEIGHTFIELD_PRIMITIVE_QUERY": "1",
+        "NEWTON_HEIGHTFIELD_CYLINDER_SPLIT": "1",
+        "NEWTON_REDUCER_EXPORT_CLEANUP": "1",
+        "FEATHER_PGS_SPARSE_CONTACT_TRIPLETS": "1",
+        "FEATHER_PGS_SPARSE_VELOCITY_LIMITS": "1",
+        "FEATHER_PGS_SPARSE_SPLIT": "1",
+        "FEATHER_PGS_SPARSE_BRANCH_SWEEPS": "0",
+        "FEATHER_PGS_SPARSE_GROUPED_DYNAMICS": "1",
+        "NEWTON_NARROW_PHASE_COHERENT_CONVEX": "0",
+        "NEWTON_NARROW_PHASE_CONVEX_CELLS": "0",
+        "NEWTON_NARROW_PHASE_COHERENT_STATS": "0"
+      }
+    },
+    {
+      "id": "h1-rough",
+      "task": "Isaac-Velocity-Rough-H1",
+      "solver_attrs": {
+        "dense_max_constraints": "128",
+        "friction_anchor_beta": "0",
+        "grouped_dynamics": "True",
+        "convex_collision": "auto"
+      },
+      "storage_at_16384_worlds": {
+        "rigid_contact_max": 236544,
+        "max_triangle_pairs": 3457024
+      },
+      "environment": {
+        "FEATHER_PGS_GROUP_LANES": "16",
+        "FEATHER_PGS_ROWS_MASKED": "1",
+        "NEWTON_NARROW_PHASE_THREADS_X": "4",
+        "NEWTON_HEIGHTFIELD_GEOMETRIC_CULL": "1",
+        "NEWTON_HEIGHTFIELD_PRIMITIVE_QUERY": "1",
+        "NEWTON_HEIGHTFIELD_CYLINDER_SPLIT": "1",
+        "NEWTON_REDUCER_EXPORT_CLEANUP": "1",
+        "FEATHER_PGS_SPARSE_CONTACT_TRIPLETS": "1",
+        "FEATHER_PGS_SPARSE_VELOCITY_LIMITS": "1",
+        "FEATHER_PGS_SPARSE_SPLIT": "1",
+        "FEATHER_PGS_SPARSE_BRANCH_SWEEPS": "0",
+        "FEATHER_PGS_SPARSE_GROUPED_DYNAMICS": "1",
+        "NEWTON_NARROW_PHASE_COHERENT_CONVEX": "0",
+        "NEWTON_NARROW_PHASE_CONVEX_CELLS": "0",
+        "NEWTON_NARROW_PHASE_COHERENT_STATS": "0"
+      }
+    },
+    {
+      "id": "humanoid",
+      "task": "Isaac-Humanoid",
+      "solver_attrs": {
+        "dense_max_constraints": "128",
+        "friction_anchor_beta": "0",
+        "grouped_dynamics": "True",
+        "convex_collision": "auto"
+      },
+      "storage_at_16384_worlds": {
+        "rigid_contact_max": 99328
+      },
+      "environment": {
+        "FEATHER_PGS_GROUP_LANES": "16",
+        "FEATHER_PGS_ROWS_MASKED": "1",
+        "NEWTON_NARROW_PHASE_THREADS_X": "4",
+        "NEWTON_HEIGHTFIELD_GEOMETRIC_CULL": "1",
+        "NEWTON_HEIGHTFIELD_PRIMITIVE_QUERY": "1",
+        "NEWTON_HEIGHTFIELD_CYLINDER_SPLIT": "1",
+        "NEWTON_REDUCER_EXPORT_CLEANUP": "1",
+        "FEATHER_PGS_SPARSE_CONTACT_TRIPLETS": "1",
+        "FEATHER_PGS_SPARSE_VELOCITY_LIMITS": "1",
+        "FEATHER_PGS_SPARSE_SPLIT": "1",
+        "FEATHER_PGS_SPARSE_BRANCH_SWEEPS": "0",
+        "FEATHER_PGS_SPARSE_GROUPED_DYNAMICS": "1",
+        "NEWTON_NARROW_PHASE_COHERENT_CONVEX": "0",
+        "NEWTON_NARROW_PHASE_CONVEX_CELLS": "0",
+        "NEWTON_NARROW_PHASE_COHERENT_STATS": "0"
+      }
+    },
+    {
+      "id": "keyboard-so101",
+      "task": "IsaacContrib-Keyboard-SO101",
+      "solver_attrs": {
+        "dense_max_constraints": "736",
+        "friction_anchor_beta": "0",
+        "convex_collision": "auto"
+      },
+      "storage_at_16384_worlds": {
+        "rigid_contact_max": 589824
+      },
+      "environment": {
+        "FEATHER_PGS_GROUP_LANES": "16",
+        "FEATHER_PGS_ROWS_MASKED": "1",
+        "NEWTON_NARROW_PHASE_THREADS_X": "4",
+        "FEATHER_PGS_SPARSE_CONTACT_DIRECT": "1",
+        "FEATHER_PGS_PRISMATIC_PUBLICATION": "1",
+        "FEATHER_PGS_COMPACT_CONTACT_BOUNDARY": "1",
+        "FEATHER_PGS_PRISMATIC_LINEAR_STATE": "1",
+        "NEWTON_HEIGHTFIELD_GEOMETRIC_CULL": "1",
+        "NEWTON_HEIGHTFIELD_PRIMITIVE_QUERY": "1",
+        "NEWTON_HEIGHTFIELD_CYLINDER_SPLIT": "1",
+        "NEWTON_REDUCER_EXPORT_CLEANUP": "1",
+        "FEATHER_PGS_SPARSE_CONTACT_TRIPLETS": "1",
+        "FEATHER_PGS_SPARSE_VELOCITY_LIMITS": "1",
+        "FEATHER_PGS_SPARSE_SPLIT": "1",
+        "FEATHER_PGS_SPARSE_BRANCH_SWEEPS": "0",
+        "NEWTON_NARROW_PHASE_COHERENT_CONVEX": "0",
+        "NEWTON_NARROW_PHASE_CONVEX_CELLS": "0",
+        "NEWTON_NARROW_PHASE_COHERENT_STATS": "0"
+      }
+    },
+    {
+      "id": "kuka",
+      "task": "Isaac-Lift-KukaAllegro",
+      "solver_attrs": {
+        "dense_max_constraints": "192",
+        "friction_anchor_beta": "0",
+        "convex_collision": "auto"
+      },
+      "storage_at_16384_worlds": {
+        "rigid_contact_max": 311296
+      },
+      "environment": {
+        "FEATHER_PGS_GROUP_LANES": "16",
+        "FEATHER_PGS_ROWS_MASKED": "1",
+        "NEWTON_NARROW_PHASE_THREADS_X": "4",
+        "FEATHER_PGS_SIMPLE_WORLD_ZERO": "1",
+        "FEATHER_PGS_LOCAL_ROW_PACKETS": "1",
+        "FEATHER_PGS_INDEPENDENT_COMPONENTS": "1",
+        "FEATHER_PGS_PAIRED_GENERAL_OVERLAP": "1",
+        "FEATHER_PGS_KUKA_JOINT_WORLD": "1",
+        "FEATHER_PGS_WORLD_SCAN_PUBLICATION": "1",
+        "FEATHER_PGS_KUKA_KINETIC_WORLD": "1",
+        "FEATHER_PGS_KUKA_CURRENT_CONTACT": "1",
+        "NEWTON_HEIGHTFIELD_GEOMETRIC_CULL": "1",
+        "NEWTON_HEIGHTFIELD_PRIMITIVE_QUERY": "1",
+        "NEWTON_HEIGHTFIELD_CYLINDER_SPLIT": "1",
+        "NEWTON_REDUCER_EXPORT_CLEANUP": "1",
+        "FEATHER_PGS_SPARSE_CONTACT_TRIPLETS": "1",
+        "FEATHER_PGS_SPARSE_VELOCITY_LIMITS": "1",
+        "FEATHER_PGS_SPARSE_SPLIT": "1",
+        "FEATHER_PGS_SPARSE_BRANCH_SWEEPS": "0",
+        "NEWTON_NARROW_PHASE_COHERENT_CONVEX": "0",
+        "NEWTON_NARROW_PHASE_CONVEX_CELLS": "0",
+        "NEWTON_NARROW_PHASE_COHERENT_STATS": "0"
+      }
+    },
+    {
+      "id": "kuka-reorient",
+      "task": "Isaac-Reorient-KukaAllegro",
+      "solver_attrs": {
+        "dense_max_constraints": "192",
+        "friction_anchor_beta": "0",
+        "convex_collision": "auto"
+      },
+      "storage_at_16384_worlds": {
+        "rigid_contact_max": 311296
+      },
+      "environment": {
+        "FEATHER_PGS_GROUP_LANES": "16",
+        "FEATHER_PGS_ROWS_MASKED": "1",
+        "NEWTON_NARROW_PHASE_THREADS_X": "4",
+        "FEATHER_PGS_SIMPLE_WORLD_ZERO": "1",
+        "FEATHER_PGS_LOCAL_ROW_PACKETS": "1",
+        "FEATHER_PGS_INDEPENDENT_COMPONENTS": "1",
+        "FEATHER_PGS_PAIRED_GENERAL_OVERLAP": "1",
+        "FEATHER_PGS_KUKA_JOINT_WORLD": "1",
+        "FEATHER_PGS_WORLD_SCAN_PUBLICATION": "1",
+        "FEATHER_PGS_KUKA_KINETIC_WORLD": "1",
+        "FEATHER_PGS_KUKA_CURRENT_CONTACT": "1",
+        "NEWTON_HEIGHTFIELD_GEOMETRIC_CULL": "1",
+        "NEWTON_HEIGHTFIELD_PRIMITIVE_QUERY": "1",
+        "NEWTON_HEIGHTFIELD_CYLINDER_SPLIT": "1",
+        "NEWTON_REDUCER_EXPORT_CLEANUP": "1",
+        "FEATHER_PGS_SPARSE_CONTACT_TRIPLETS": "1",
+        "FEATHER_PGS_SPARSE_VELOCITY_LIMITS": "1",
+        "FEATHER_PGS_SPARSE_SPLIT": "1",
+        "FEATHER_PGS_SPARSE_BRANCH_SWEEPS": "0",
+        "NEWTON_NARROW_PHASE_COHERENT_CONVEX": "0",
+        "NEWTON_NARROW_PHASE_CONVEX_CELLS": "0",
+        "NEWTON_NARROW_PHASE_COHERENT_STATS": "0"
+      }
+    },
+    {
+      "id": "ur10-reach",
+      "task": "Isaac-Reach-UR10",
+      "solver_attrs": {
+        "dense_max_constraints": "16",
+        "friction_anchor_beta": "0",
+        "convex_collision": "auto"
+      },
+      "storage_at_16384_worlds": {
+        "rigid_contact_max": 59392
+      },
+      "environment": {
+        "FEATHER_PGS_GROUP_LANES": "16",
+        "FEATHER_PGS_ROWS_MASKED": "1",
+        "NEWTON_NARROW_PHASE_THREADS_X": "4",
+        "NEWTON_HEIGHTFIELD_GEOMETRIC_CULL": "1",
+        "NEWTON_HEIGHTFIELD_PRIMITIVE_QUERY": "1",
+        "NEWTON_HEIGHTFIELD_CYLINDER_SPLIT": "1",
+        "NEWTON_REDUCER_EXPORT_CLEANUP": "1",
+        "FEATHER_PGS_SPARSE_CONTACT_TRIPLETS": "1",
+        "FEATHER_PGS_SPARSE_VELOCITY_LIMITS": "1",
+        "FEATHER_PGS_SPARSE_SPLIT": "1",
+        "FEATHER_PGS_SPARSE_BRANCH_SWEEPS": "0",
+        "NEWTON_NARROW_PHASE_COHERENT_CONVEX": "0",
+        "NEWTON_NARROW_PHASE_CONVEX_CELLS": "0",
+        "NEWTON_NARROW_PHASE_COHERENT_STATS": "0"
+      }
+    }
+  ]
+}
