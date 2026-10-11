@@ -101,6 +101,11 @@ class GraphTimer:
         return [sum(row) for row in values]
 
 
+def physics_launches_per_step(env):
+    """Read the environment's selected physics stepping schedule."""
+    return 1 if env.unwrapped._physics_handles_decimation else int(env.unwrapped.cfg.decimation)
+
+
 def worker(job_path):
     """Run one isolated scene, retaining the task's physics settings and checking a reset."""
     started = time.perf_counter()
@@ -197,9 +202,13 @@ def worker(job_path):
                 result["checks"].append(check("warm", env))
                 phase = time.perf_counter()
                 steps = protocol["steps"] * protocol["blocks"]
-                decimation = int(env.unwrapped.cfg.decimation)
+                launches_per_step = physics_launches_per_step(env)
                 action_hash = hashlib.sha256()
-                timer = GraphTimer(wp, NewtonManager, "cuda:0", steps * decimation) if job["mode"] == "perf" else None
+                timer = (
+                    GraphTimer(wp, NewtonManager, "cuda:0", steps * launches_per_step)
+                    if job["mode"] == "perf"
+                    else None
+                )
                 with timer if timer else contextlib.nullcontext():
                     for step in range(steps):
                         if timer:
@@ -211,7 +220,7 @@ def worker(job_path):
                 wp.synchronize_device("cuda:0")
                 result["phases_seconds"]["run"] = time.perf_counter() - phase
                 if timer:
-                    timings = timer.milliseconds(steps, decimation)
+                    timings = timer.milliseconds(steps, launches_per_step)
                     blocks = [
                         statistics.mean(timings[i : i + protocol["steps"]]) for i in range(0, steps, protocol["steps"])
                     ]
@@ -220,6 +229,7 @@ def worker(job_path):
                         "mean_ms": statistics.mean(timings),
                         "blocks_ms": blocks,
                         "per_step_ms": timings,
+                        "graph_launches_per_step": launches_per_step,
                         "last_action_sha256": action_hash.hexdigest(),
                     }
                 result["checks"].append(check("after_run", env))

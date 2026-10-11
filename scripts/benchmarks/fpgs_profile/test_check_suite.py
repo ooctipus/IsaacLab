@@ -8,7 +8,7 @@
 import unittest
 from types import SimpleNamespace
 
-from check_suite import PRESETS, GraphTimer, comparison
+from check_suite import PRESETS, GraphTimer, comparison, physics_launches_per_step
 
 
 class TestSuiteScale(unittest.TestCase):
@@ -63,6 +63,17 @@ class TestQuickGraphTiming(unittest.TestCase):
         self.assertIs(warp.capture_launch, original)
         with self.assertRaisesRegex(RuntimeError, "Missing physics"):
             timer.milliseconds(1, 2)
+
+    def test_graph_that_contains_the_full_decimation_loop(self):
+        warp, manager, physics, _, _, _ = self.fixture()
+        env = SimpleNamespace(
+            unwrapped=SimpleNamespace(cfg=SimpleNamespace(decimation=4), _physics_handles_decimation=True)
+        )
+        with GraphTimer(warp, manager, "cuda:0", 1) as timer:
+            warp.capture_launch(physics)
+        self.assertEqual(timer.milliseconds(1, physics_launches_per_step(env)), [0.5])
+        env.unwrapped._physics_handles_decimation = False
+        self.assertEqual(physics_launches_per_step(env), 4)
 
 
 class TestCachedComparison(unittest.TestCase):
