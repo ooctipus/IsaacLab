@@ -487,7 +487,7 @@
       "id": "keyboard-so101",
       "task": "IsaacContrib-Keyboard-SO101",
       "solver_attrs": {
-        "dense_max_constraints": "736",
+        "dense_max_constraints": "1024",
         "friction_anchor_beta": "0",
         "convex_collision": "auto"
       },
