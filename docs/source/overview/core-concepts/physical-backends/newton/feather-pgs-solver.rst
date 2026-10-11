@@ -72,9 +72,8 @@ values trade memory, kernel work, and feature support:
 * ``"matrix_free"`` avoids the full Delassus matrix and recomputes the
   articulated response during PGS iterations.
 
-The automatic kernel selectors use
-:attr:`~isaaclab_newton.physics.FeatherPGSSolverCfg.small_dof_threshold` to
-choose between loop and tiled implementations. Set
+The automatic kernel selectors use articulation topology, size and device
+resources. See :doc:`feather-pgs-selection` for defaults and explicit overrides. Set
 :attr:`~isaaclab_newton.physics.FeatherPGSSolverCfg.nvtx` to ``True`` to
 emit solver-stage ranges when profiling.
 

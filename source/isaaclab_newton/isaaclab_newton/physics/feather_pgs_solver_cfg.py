@@ -29,6 +29,23 @@ class FeatherPGSSolverCfg(NewtonSolverCfg):
     solver_type: str = "feather_pgs"
     """Solver type metadata."""
 
+    convex_collision: Literal["auto", "ordinary", "rejection", "convex_cells"] = "auto"
+    """Experimental convex collision implementation.
+
+    ``auto`` selects ordinary queries or rejection screening from predicted cost;
+    unsupported pipelines use ordinary queries. Other values force the named method
+    or raise an error. ``convex_cells`` is currently available only as an explicit
+    choice. Overrides legacy coherent-convex/cells environment variables.
+    """
+
+    sparse_mass_matrix: Literal["auto", "on", "off"] = "auto"
+    """Experimental native sparse factor selection.
+
+    ``auto`` uses supported topology and device resources. ``on`` requires that path;
+    ``off`` keeps the ordinary representation. Research packed-factor paths are separate.
+    Explicit dense kernel choices disable automatic native sparse factors and conflict with ``on``.
+    """
+
     angular_damping: float = 0.05
     """Angular velocity damping rate [s^-1]."""
 
@@ -228,8 +245,12 @@ class FeatherPGSSolverCfg(NewtonSolverCfg):
     delassus_kernel: Literal["tiled", "par_row_col", "auto"] = "auto"
     """Delassus accumulation kernel: ``"tiled"``, ``"par_row_col"``, or ``"auto"``."""
 
-    pgs_kernel: Literal["loop", "tiled_row", "tiled_contact", "streaming"] = "tiled_row"
-    """PGS kernel: ``"loop"``, ``"tiled_row"``, ``"tiled_contact"``, or ``"streaming"``."""
+    pgs_kernel: Literal["auto", "loop", "tiled_row", "tiled_contact", "streaming"] = "auto"
+    """Dense PGS kernel. ``auto`` uses ``loop`` on CPU and ``tiled_row`` on CUDA.
+
+    Explicit choices require a supported device and split mode. Matrix-free mode
+    owns its sweep kernel and requires ``auto`` here.
+    """
 
     delassus_chunk_size: int | None = None
     """Chunk size for streaming Delassus kernels. ``None`` selects automatically."""

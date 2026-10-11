@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import warp as wp
-from newton import State
+from newton import CollisionPipeline, State
 from newton.solvers import SolverFeatherPGS
 
 from .newton_solver import NewtonSolver
@@ -25,6 +25,24 @@ class FeatherPGSSolver(NewtonSolver):
     cfg: FeatherPGSSolverCfg
 
     solver_class = SolverFeatherPGS
+
+    collision_pipeline: CollisionPipeline | None = None
+    """The collision pipeline built over the solver's model, once contacts are allocated."""
+
+    def create_collision_pipeline(self, **kwargs) -> CollisionPipeline:
+        """Construct the collision pipeline with the configured FeatherPGS collision choices."""
+        kwargs["convex_collision"] = self.cfg.convex_collision
+        self.collision_pipeline = super().create_collision_pipeline(**kwargs)
+        return self.collision_pipeline
+
+    def path_selection(self) -> dict:
+        """Read the solver's and collision pipeline's path choices after initialization, outside graph capture."""
+        if self.collision_pipeline is None:
+            raise RuntimeError("Initialize FeatherPGS before inspecting selected paths")
+        return {
+            "solver": self.native.get_path_selection(),
+            "collision": self.collision_pipeline.get_collision_selection(),
+        }
 
     def reset(self, state: State, world_mask: wp.array) -> None:
         """Clear solver history for the masked environment worlds.
