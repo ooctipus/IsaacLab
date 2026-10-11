@@ -8,52 +8,40 @@ All scripts run from the repository root with the uv environment. Outputs defaul
 
 ## Fast checks across the 21 research scenes
 
-Start with a functional screen after an implementation change:
+Every mode uses **16,384 worlds**. The default checks and times all 21 scenes:
 
 ```bash
 uv run --no-project /path/to/existing/isaaclab/.venv/bin/python3 \
     scripts/benchmarks/fpgs_profile/check_suite.py --newton /path/to/newton \
-    --output /path/to/new-results/smoke
+    --output /path/to/new-results/full21
 ```
 
-This checks all 21 scenes at 256 worlds: construction, captured stepping, finite
-state, sticky solver/collision capacity flags, and a second reset. It preserves
-each scene's timestep, substeps, solver iterations, row budget and friction law.
-Global contact/triangle storage scales with world count. It checks one candidate
-once, without Nsight or a baseline rerun. Every scene gets its own process and
-log; failures and timeouts remain visible. Warp caches are keyed by Newton source
-content. The first use can take longer because of compilation.
+The runner preserves each scene's timestep, substeps, solver iterations, row
+budgets, collision storage and friction law. It checks finite state, sticky
+solver/collision capacity flags, and reset replay. Every scene gets its own
+process and log; failures and timeouts remain visible. Warp caches are keyed by
+Newton source content. The first use can take longer because of compilation.
 
-The small-world screen does **not** certify full-world capacity, performance,
-long-rollout physical behavior, or every automatically selected path.
+Three consecutive 64-step timing blocks follow 200 warmup steps in one environment
+instance. CUDA events bracket only the physics graph on its launch stream;
+auxiliary graphs are excluded. Times sum the physics launches in each environment
+step. Missing launches invalidate the result. No Nsight capture, SQLite export,
+separate throughput window or repeated setup is needed.
 
-For performance-sensitive changes, select affected scenes at 16,384 worlds:
+An explicit `--baseline /path/to/prior/full21/summary.json` screens against saved
+event measurements. Hardware/driver, runtime packages, Lab code, recipes, runner
+and protocol must match; changes to Newton are allowed. Different initial states
+are flagged. Mean changes or block spreads of 3% or more are marked `investigate`.
+Saved baselines avoid routinely rebuilding the old revision; confirm a flagged
+change with fresh paired measurements. Nsight is only needed to explain a result.
+Small changes below the threshold remain unqualified.
 
-```bash
-uv run --no-project /path/to/existing/isaaclab/.venv/bin/python3 \
-    scripts/benchmarks/fpgs_profile/check_suite.py --newton /path/to/newton \
-    --mode perf --task allegro --task keyboard-so101 --output /path/to/new-results/perf
-```
-
-Omit `--task` for full-size coverage of all 21 scenes. This mode measures three
-consecutive 64-step blocks after 200 warmup steps, keeping the environment alive
-between blocks. CUDA events bracket only the physics graph on its launch stream;
-auxiliary graphs are excluded. Whole-physics times sum the launches in each
-environment step. Missing launches invalidate the result. No Nsight capture,
-SQLite export, separate throughput window or repeated setup is needed.
-
-An explicit `--baseline /path/to/prior/perf/summary.json` screens against saved
-event measurements. Hardware/driver, Lab code, recipes, runner and protocol must
-match; changes to Newton are allowed. Different initial states are flagged.
-Mean changes or block spreads of 3% or more are marked `investigate`. Saved
-baselines are screening references, not fresh paired speedup evidence. Run a
-targeted paired check before claiming a gain or regression; reserve Nsight for
-explaining that result. Small changes below the threshold remain unqualified.
-
-`--gpu` selects one idle GPU, `--task` accepts repeated scene IDs, and `--timeout`
-limits each scene (default 120 seconds for smoke, 900 for perf). Different GPUs
-have separate performance references. The `suite21.json` file contains the
-existing point-friction research recipes; this is not a survey of task defaults.
+`--task ID` can select scenes for follow-up, but omitting it always runs all 21.
+`--mode smoke` skips timing and shortens the observation window while retaining
+16,384 worlds. `--gpu` selects one idle GPU; `--timeout` limits each scene to 900
+seconds by default. Different GPUs have separate performance references.
+The `suite21.json` file contains the existing point-friction research recipes;
+this is not a survey of task defaults or long-rollout physical equivalence.
 
 ```bash
 # 1. FPS plus host-phase breakdown and model/solver metadata (no profiler)

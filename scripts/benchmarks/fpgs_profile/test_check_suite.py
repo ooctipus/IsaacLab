@@ -8,7 +8,14 @@
 import unittest
 from types import SimpleNamespace
 
-from check_suite import GraphTimer, comparison
+from check_suite import PRESETS, GraphTimer, comparison
+
+
+class TestSuiteScale(unittest.TestCase):
+    def test_every_check_retains_the_required_world_count(self):
+        for name, protocol in PRESETS.items():
+            with self.subTest(mode=name):
+                self.assertEqual(protocol["worlds"], 16384)
 
 
 class TestQuickGraphTiming(unittest.TestCase):

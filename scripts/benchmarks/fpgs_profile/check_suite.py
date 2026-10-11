@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Check every scene cheaply; reserve full-size CUDA-event timings for selected scenes."""
+"""Check all 21 scenes at 16,384 worlds without a profiler or repeated setup."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 LAB = HERE.parents[2]
 PRESETS = {
-    "smoke": {"worlds": 256, "warmup": 8, "steps": 64, "blocks": 1},
+    "smoke": {"worlds": 16384, "warmup": 8, "steps": 64, "blocks": 1},
     "perf": {"worlds": 16384, "warmup": 200, "steps": 64, "blocks": 3},
 }
 
@@ -128,6 +128,8 @@ def worker(job_path):
         result["phases_seconds"]["imports"] = time.perf_counter() - started
         setup = time.perf_counter()
         scene, protocol = job["scene"], job["protocol"]
+        if protocol["worlds"] != 16384:
+            raise ValueError("The 21-scene check requires 16,384 worlds")
         torch.manual_seed(0)
         cfg = harness.parse_env_cfg(
             scene["task"], device="cuda:0", num_envs=protocol["worlds"], overrides=["physics=feather_pgs"]
@@ -141,8 +143,7 @@ def worker(job_path):
             if cfg.sim.physics.collision_cfg is None:
                 cfg.sim.physics.collision_cfg = NewtonCollisionPipelineCfg()
             for key, value in scene["storage_at_16384_worlds"].items():
-                # Scale allocation only; do not shrink per-world row budgets.
-                setattr(cfg.sim.physics.collision_cfg, key, math.ceil(value * protocol["worlds"] / 16384))
+                setattr(cfg.sim.physics.collision_cfg, key, value)
         cfg.validate()
         launch_args = {"device": "cuda:0", "headless": True, "visualizer": None, "visualizer_explicit": True}
 
@@ -274,11 +275,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--newton", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--mode", choices=PRESETS, default="smoke")
+    parser.add_argument(
+        "--mode", choices=PRESETS, default="perf", help="Both modes retain 16,384 worlds; default: perf"
+    )
     parser.add_argument("--task", action="append", help="Scene ID; omit to check all 21")
     parser.add_argument("--gpu", default="0", help="GPU index or UUID")
     parser.add_argument("--baseline", type=Path, help="Prior perf summary.json with the identical protocol")
-    parser.add_argument("--timeout", type=int, help="Per-scene timeout in seconds (smoke 120; perf 900)")
+    parser.add_argument("--timeout", type=int, default=900, help="Per-scene timeout in seconds (default: 900)")
     parser.add_argument("--cache-root", type=Path, default=Path.home() / ".cache/fpgs-suite")
     args = parser.parse_args()
     if args.timeout is not None and args.timeout <= 0:
@@ -315,7 +318,7 @@ def main():
         "mode": args.mode,
         "sources": identity,
         "comparison_key": key,
-        "scope": "Small-world functional screen; no full-scale performance claim"
+        "scope": "16,384-world functional screen without timing"
         if args.mode == "smoke"
         else "Full-world CUDA-event performance screen; confirm changes with fresh paired measurements",
         "results": [],
@@ -365,7 +368,7 @@ def main():
                 start_new_session=True,
             )
             try:
-                code = process.wait(timeout=args.timeout or (120 if args.mode == "smoke" else 900))
+                code = process.wait(timeout=args.timeout)
             except subprocess.TimeoutExpired:
                 os.killpg(process.pid, signal.SIGKILL)
                 process.wait()
