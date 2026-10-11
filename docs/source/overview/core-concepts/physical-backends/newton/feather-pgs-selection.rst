@@ -27,6 +27,12 @@ you want to pin; the remaining choices stay automatic.
    * - ``sparse_mass_matrix``
      - ``auto``, ``on``, ``off``
      - Uses native sparse factors where topology, solver policy and device resources permit.
+   * - ``contact_export``
+     - ``auto``, ``tiled``, ``compact``
+     - Uses compact reduced-contact export for supported CUDA mesh/heightfield pipelines.
+   * - ``cached_dynamics``
+     - ``auto``, ``on``, ``off``
+     - Pairs cached prediction with next-state publication where the topology and solver policy permit.
    * - ``cholesky_kernel`` / ``trisolve_kernel``
      - ``auto``, ``loop``, ``tiled``
      - Uses existing size and device rules.
@@ -57,9 +63,11 @@ time. Selection can change during replay. Call
 Existing graphs then use ordinary support scans; rebuild the pipeline to
 enable cells for the changed geometry.
 
-Research dynamics/publication paths still use their
-existing controls. The kernel selectors use structural rules; only collision
-currently uses the sampled cost model described here.
+Cached prediction, native sparse composition and contact export use structural
+admission rules. Convex collision uses the sampled cost model described here.
+Automatic compact export excludes deterministic, speculative, hydroelastic and
+alternate heightfield export modes; these retain their existing exporter.
+Inspect ``choices["collision"]["contact_export"]`` for the selected mapping.
 
 Migration
 ---------
@@ -75,3 +83,8 @@ pass the same choice to ``CollisionPipeline``; omitting that argument retains
 the legacy environment behavior. Recreate the solver/pipeline after changing
 a configuration choice. Collision inspection reads the latest device choice
 and must run outside capture.
+
+``contact_export`` overrides ``NEWTON_REDUCER_COMPACT_EXPORT``. Use ``tiled`` to
+retain the original export mapping, or ``compact`` to require compact admission.
+Direct Newton callers can pass the same choice to ``CollisionPipeline``;
+omitting it preserves legacy environment selection.

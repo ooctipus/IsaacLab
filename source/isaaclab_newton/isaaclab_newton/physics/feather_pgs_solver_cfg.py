@@ -37,6 +37,15 @@ class FeatherPGSSolverCfg(NewtonSolverCfg):
     or raise an error. Overrides legacy coherent-convex/cells environment variables.
     """
 
+    contact_export: Literal["auto", "tiled", "compact"] = "auto"
+    """Experimental reduced-contact export mapping.
+
+    ``auto`` uses compact workers for supported CUDA mesh/heightfield reducers;
+    other pipelines retain tiled export. ``compact`` requires admission and
+    ``tiled`` forces the original mapping. Overrides ``NEWTON_REDUCER_COMPACT_EXPORT``.
+    Contact selection and reduction policy are unchanged.
+    """
+
     sparse_mass_matrix: Literal["auto", "on", "off"] = "auto"
     """Experimental native sparse factor selection.
 

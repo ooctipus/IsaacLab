@@ -32,6 +32,7 @@ class FeatherPGSSolver(NewtonSolver):
     def create_collision_pipeline(self, **kwargs) -> CollisionPipeline:
         """Construct the collision pipeline with the configured FeatherPGS collision choices."""
         kwargs["convex_collision"] = self.cfg.convex_collision
+        kwargs["contact_export"] = self.cfg.contact_export
         self.collision_pipeline = super().create_collision_pipeline(**kwargs)
         return self.collision_pipeline
 
