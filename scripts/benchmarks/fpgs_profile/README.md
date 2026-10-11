@@ -22,6 +22,12 @@ solver/collision capacity flags, and reset replay. Every scene gets its own
 process and log; failures and timeouts remain visible. Warp caches are keyed by
 Newton source content. The first use can take longer because of compilation.
 
+Cached prediction and its paired publication now use the public
+`FeatherPGSSolverCfg.cached_dynamics="auto"` default. The suite no longer needs
+private cache flags for the held-block, held-Cholesky or packed-tree consumers.
+Use `"on"` to require an admitted cache or `"off"` for ordinary prediction and
+publication. These choices retain the scene's numerical policy and budgets.
+
 Three consecutive 64-step timing blocks follow 200 warmup steps in one environment
 instance. CUDA events bracket only the physics graph on its launch stream;
 auxiliary graphs are excluded. Times sum the physics launches in each environment

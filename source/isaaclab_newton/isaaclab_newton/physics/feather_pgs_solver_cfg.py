@@ -48,6 +48,17 @@ class FeatherPGSSolverCfg(NewtonSolverCfg):
     angular_damping: float = 0.05
     """Angular velocity damping rate [s^-1]."""
 
+    cached_dynamics: Literal["auto", "on", "off"] = "auto"
+    """Experimental paired cached prediction and next-state publication.
+
+    ``auto`` selects an admitted cache for the topology and existing factor/row
+    policy. ``on`` requires admission; ``off`` uses ordinary prediction/publication.
+    Explicit choices override legacy cache environment settings. ``auto`` honors
+    those settings when present. Mixed held factors require an explicit opt-in.
+    Explicit dense kernels disable automatic caches and conflict with ``on``.
+    This choice preserves factor refresh intervals and numerical budgets.
+    """
+
     update_mass_matrix_interval: int = 1
     """How often to update the mass matrix, in simulation steps."""
 
