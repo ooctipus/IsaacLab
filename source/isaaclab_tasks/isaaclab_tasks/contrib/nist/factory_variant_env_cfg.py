@@ -74,6 +74,9 @@ class FactoryVariantObservationsCfg:
                 "held_num_points": 256,
                 "robot_num_points": 256,
                 "flatten": True,
+                "sampling_variant_order": None,
+                "sampling_seed": 42,
+                "robot_geometry_usd_path": None,
             },
         )
 

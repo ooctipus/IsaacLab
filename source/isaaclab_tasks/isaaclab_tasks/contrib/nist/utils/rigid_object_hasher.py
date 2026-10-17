@@ -26,6 +26,7 @@ class RigidObjectHasher:
     ``authored_collision`` preserves observation geometry: all authored colliders in traversal order.
     ``collision`` selects enabled colliders; ``collision_or_visual`` additionally uses visible meshes
     for bodies without enabled colliders. Reset safety checks select these policies explicitly.
+    An explicit ``stage`` reads geometry independently of the simulation and requires ``source_paths``.
     """
 
     def __init__(
@@ -38,10 +39,13 @@ class RigidObjectHasher:
         source_paths: Sequence[str] | None = None,
         geometry_policy: Literal["authored_collision", "collision", "collision_or_visual"] = "authored_collision",
         body_names: Sequence[str] | None = None,
+        stage: Usd.Stage | None = None,
     ):
         self.prim_path_pattern = prim_path_pattern
         self.device = device
         sources = tuple(source_paths) if source_paths is not None else None
+        if (stage is not None or sources is not None) and (sources is None or not compact_sources):
+            raise ValueError("Explicit geometry sources require source_paths and compact_sources=True.")
         body_names = tuple(sorted(set(body_names))) if body_names is not None else None
         if geometry_policy not in ("authored_collision", "collision", "collision_or_visual"):
             raise ValueError(f"Unknown collision geometry policy: {geometry_policy!r}.")
@@ -58,12 +62,10 @@ class RigidObjectHasher:
         self.point_cloud_cache: dict[tuple, torch.Tensor] = {}
 
         xform_cache = UsdGeom.XformCache()
-        stage = get_current_stage()
+        stage = get_current_stage() if stage is None else stage
 
         source_rows = []
         if sources is not None:
-            if not compact_sources:
-                raise ValueError("Explicit source paths require compact_sources=True.")
             source_rows = [(path, ()) for path in sources]
         else:
             # Resolve authored sources through native world-prototype membership.
@@ -117,6 +119,7 @@ class RigidObjectHasher:
                     source_path,
                     predicate=lambda prim: prim.HasAPI(UsdPhysics.RigidBodyAPI),
                     traverse_instance_prims=True,
+                    stage=stage,
                 )
                 if len(rigid_bodies) != 1:
                     raise ValueError(f"Expected one rigid body below '{source_path}', found {len(rigid_bodies)}.")
@@ -126,6 +129,7 @@ class RigidObjectHasher:
                 source_path,
                 predicate=lambda prim: prim.GetTypeName() in ("Mesh", "Cube", "Sphere", "Cylinder", "Capsule", "Cone"),
                 traverse_instance_prims=True,
+                stage=stage,
             )
             geometry_by_body: dict[str, list[Usd.Prim]] = {}
             for prim in geometry_prims:

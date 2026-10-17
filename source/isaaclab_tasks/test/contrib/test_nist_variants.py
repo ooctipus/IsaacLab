@@ -11,9 +11,14 @@ from types import SimpleNamespace
 
 import pytest
 import torch
+import warp as wp
 from tensordict import TensorDict
 
-from isaaclab.managers import EventTermCfg
+from pxr import Usd, UsdGeom, UsdPhysics
+
+from isaaclab.managers import EventTermCfg, ObservationTermCfg
+from isaaclab.sim import SimulationContext
+from isaaclab.sim.utils import use_stage
 from isaaclab.utils import math as math_utils
 
 from isaaclab_tasks.contrib.nist.assembly_profile import AssemblyProfile
@@ -21,7 +26,9 @@ from isaaclab_tasks.contrib.nist.assembly_variants import ASSEMBLY_VARIANTS
 from isaaclab_tasks.contrib.nist.config.agents.models import MLPEncoder, SimBaModel
 from isaaclab_tasks.contrib.nist.factory_env_cfg import FactoryEnvCfg
 from isaaclab_tasks.contrib.nist.factory_variant_env_cfg import FactoryVariantEnvCfg
+from isaaclab_tasks.contrib.nist.mdp.observations import scene_point_cloud_b
 from isaaclab_tasks.contrib.nist.utils import reset_state
+from isaaclab_tasks.contrib.nist.utils.rigid_object_hasher import RigidObjectHasher
 from isaaclab_tasks.contrib.nist.utils.sampling import SamplerCfg
 from isaaclab_tasks.contrib.nist.utils.variant_event_combinators import variant_reset_accumulator
 from isaaclab_tasks.utils.hydra import resolve_task_config
@@ -78,6 +85,94 @@ def test_simba_point_cloud_encoder_trains_and_exports():
     assert all(torch.isfinite(parameter.grad).all() for parameter in model.parameters())
     exported = torch.jit.script(model.as_jit())
     torch.testing.assert_close(exported(observations["policy"], observations["perception"]), output)
+
+
+def test_point_cloud_sampling_preserves_checkpoint_order_and_observation_geometry(tmp_path, monkeypatch):
+    """Catalog insertions preserve prior samples, and observation meshes do not modify physics."""
+    stage = Usd.Stage.CreateInMemory()
+    geometry = Usd.Stage.CreateInMemory()
+    for target, root, size, collider_count in (
+        (stage, "/Parts/extra", 0.3, 1),
+        (stage, "/Parts/small", 0.1, 1),
+        (stage, "/Parts/compound", 0.2, 2),
+        (stage, "/World/envs/env_0/Robot/tool", 4.0, 1),
+        (geometry, "/Observation/tool", 1.0, 1),
+    ):
+        body = UsdGeom.Xform.Define(target, root)
+        UsdPhysics.RigidBodyAPI.Apply(body.GetPrim())
+        for index in range(collider_count):
+            cube = UsdGeom.Cube.Define(target, f"{root}/collider_{index}")
+            cube.CreateSizeAttr(size)
+            cube.AddTranslateOp().Set((index * size, 0.0, 0.0))
+            UsdPhysics.CollisionAPI.Apply(cube.GetPrim())
+    geometry_path = str(tmp_path / "observation.usda")
+    geometry.GetRootLayer().Export(geometry_path)
+    physical_layer = stage.GetRootLayer().ExportToString()
+    with pytest.raises(ValueError, match="Explicit geometry sources require source_paths"):
+        RigidObjectHasher(1, "/Observation/tool", stage=geometry)
+    monkeypatch.setattr(SimulationContext, "instance", lambda: SimpleNamespace(get_clone_plan=lambda: None))
+
+    def observe(names, sampling_order=None, seed=42, geometry_source=geometry_path):
+        num_envs = len(names)
+        poses = wp.from_torch(torch.tensor([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]).repeat(num_envs, 1, 1), wp.transformf)
+        asset = SimpleNamespace(
+            cfg=SimpleNamespace(
+                prim_path="/Parts",
+                spawn=SimpleNamespace(spawn_paths=tuple(f"/Parts/{name}" for name in names)),
+            ),
+            num_mesh_variants=num_envs,
+            mesh_variant_ids=SimpleNamespace(warp=wp.from_torch(torch.arange(num_envs, dtype=torch.int32))),
+            data=SimpleNamespace(body_link_pose_w=SimpleNamespace(warp=poses)),
+        )
+        robot = SimpleNamespace(
+            cfg=SimpleNamespace(prim_path="/World/envs/env_.*/Robot"),
+            num_bodies=1,
+            body_names=["tool"],
+            data=SimpleNamespace(
+                body_link_pose_w=SimpleNamespace(warp=poses),
+                root_link_pose_w=SimpleNamespace(
+                    warp=wp.from_torch(wp.to_torch(poses)[:, 0].contiguous(), wp.transformf)
+                ),
+            ),
+        )
+        env = SimpleNamespace(
+            num_envs=num_envs,
+            device="cpu",
+            scene={"fixed_asset": asset, "held_asset": asset, "robot": robot},
+            event_manager=SimpleNamespace(
+                get_term_cfg=lambda _: SimpleNamespace(func=SimpleNamespace(variant_names=names))
+            ),
+        )
+        cfg = ObservationTermCfg(
+            func=scene_point_cloud_b,
+            params={
+                "fixed_num_points": 16,
+                "held_num_points": 16,
+                "robot_num_points": 16,
+                "flatten": False,
+                "sampling_variant_order": sampling_order,
+                "sampling_seed": seed,
+                "robot_geometry_usd_path": geometry_source,
+            },
+        )
+        term = scene_point_cloud_b(cfg, env)
+        return term(env, **cfg.params).clone()
+
+    with use_stage(stage):
+        reference = observe(("small", "compound"))
+        names = ("extra", "small", "compound")
+        restored = observe(names, ("small", "compound", "extra"))
+        torch.testing.assert_close(restored[1:], reference, rtol=0, atol=0)
+        assert not torch.equal(observe(names)[1:, :32], reference[:, :32])
+        assert not torch.equal(observe(names, ("small", "compound", "extra"), seed=43), restored)
+        with pytest.raises(ValueError, match="full permutation"):
+            observe(names, ("small", "small", "extra"))
+        live_geometry = observe(names, geometry_source=None)
+
+    # The pinned unit cube, not the physical four-meter cube, supplies robot surface points.
+    torch.testing.assert_close(restored[:, 32:].abs().amax(dim=-1), torch.full((3, 16), 0.5), rtol=0, atol=1.0e-6)
+    torch.testing.assert_close(live_geometry[:, 32:].abs().amax(dim=-1), torch.full((3, 16), 2.0), rtol=0, atol=1.0e-6)
+    assert stage.GetRootLayer().ExportToString() == physical_layer
 
 
 def test_cached_reset_restores_variant_before_pose_and_preserves_input():

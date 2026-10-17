@@ -124,7 +124,9 @@ def _body_index(asset_cfg: SceneEntityCfg) -> int:
     return body_ids[0]
 
 
-def _sample_variant_points(env: ManagerBasedEnv, asset: RigidObject, num_points: int) -> torch.Tensor:
+def _sample_variant_points(
+    env: ManagerBasedEnv, asset: RigidObject, num_points: int, source_indices: tuple[int, ...], seed: int
+) -> torch.Tensor:
     from ..utils import mesh_ops
     from ..utils.rigid_object_hasher import RigidObjectHasher
 
@@ -134,7 +136,7 @@ def _sample_variant_points(env: ManagerBasedEnv, asset: RigidObject, num_points:
         device=env.device,
         rigid_body_root=True,
         compact_sources=True,
-        source_paths=asset.cfg.spawn.spawn_paths,
+        source_paths=tuple(asset.cfg.spawn.spawn_paths[index] for index in source_indices),
     )
     if hasher.num_root != asset.num_mesh_variants:
         raise ValueError(
@@ -147,16 +149,27 @@ def _sample_variant_points(env: ManagerBasedEnv, asset: RigidObject, num_points:
         asset.cfg.prim_path,
         env.device,
         rigid_object_hasher=hasher,
+        seed=seed,
     )
     if points is None:
         raise ValueError(f"No collision geometry found below {asset.cfg.prim_path!r}.")
-    return points.contiguous()
+    # Sampling order belongs to the checkpoint; kernel rows follow the live mesh-variant IDs.
+    inverse = torch.tensor(source_indices, device=env.device).argsort()
+    return points[inverse].contiguous()
 
 
 def _sample_articulation_points(
-    env: ManagerBasedEnv, asset: Articulation, asset_cfg: SceneEntityCfg, num_points: int
+    env: ManagerBasedEnv,
+    asset: Articulation,
+    asset_cfg: SceneEntityCfg,
+    num_points: int,
+    seed: int,
+    geometry_usd_path: str | None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    from pxr import UsdPhysics
+    from pxr import Usd, UsdPhysics
+
+    from isaaclab.sim.utils import get_all_matching_child_prims
+    from isaaclab.utils.assets import retrieve_file_path
 
     from ..utils import mesh_ops
     from ..utils.rigid_object_hasher import RigidObjectHasher
@@ -171,21 +184,44 @@ def _sample_articulation_points(
 
     point_clouds = []
     point_body_ids = []
+    # A checkpoint may retain an observation mesh after the physical asset is updated.
+    geometry_stage = Usd.Stage.Open(retrieve_file_path(geometry_usd_path)) if geometry_usd_path else None
     for body_id, body_name, body_count in zip(body_ids, body_names, body_counts, strict=True):
         if body_count == 0:
             continue
-        _, prim_path = resolve_matching_prims_from_source(
-            asset.cfg.prim_path,
-            predicate=lambda candidate, name=body_name: (
-                candidate.GetName() == name and candidate.HasAPI(UsdPhysics.RigidBodyAPI)
-            ),
-            expected_num_matches=1,
-        )[0]
-        hasher = RigidObjectHasher(env.num_envs, prim_path, device=env.device, compact_sources=True)
+        if geometry_stage is None:
+            source_prim, _ = resolve_matching_prims_from_source(
+                asset.cfg.prim_path,
+                predicate=lambda candidate, name=body_name: (
+                    candidate.GetName() == name and candidate.HasAPI(UsdPhysics.RigidBodyAPI)
+                ),
+                expected_num_matches=1,
+            )[0]
+            prim_path = source_prim.GetPath().pathString
+        else:
+            matches = get_all_matching_child_prims(
+                "/",
+                predicate=lambda candidate, name=body_name: (
+                    candidate.GetName() == name and candidate.HasAPI(UsdPhysics.RigidBodyAPI)
+                ),
+                stage=geometry_stage,
+                traverse_instance_prims=True,
+            )
+            if len(matches) != 1:
+                raise ValueError(f"Observation geometry must contain exactly one rigid body named {body_name!r}.")
+            prim_path = matches[0].GetPath().pathString
+        hasher = RigidObjectHasher(
+            env.num_envs,
+            prim_path,
+            device=env.device,
+            compact_sources=True,
+            source_paths=(prim_path,),
+            stage=geometry_stage,
+        )
         if hasher.num_root != 1:
             raise ValueError(f"Robot body {prim_path!r} must have one clone source.")
         points = mesh_ops.sample_object_point_cloud(
-            1, body_count, prim_path, env.device, rigid_object_hasher=hasher, seed=42 + body_id
+            1, body_count, prim_path, env.device, rigid_object_hasher=hasher, seed=seed + body_id
         )
         if points is None:
             raise ValueError(f"No collision geometry found below {prim_path!r}.")
@@ -201,7 +237,14 @@ def _sample_articulation_points(
 
 
 class scene_point_cloud_b(ManagerTermBase):
-    """Fixed-asset, held-asset, and robot surface points in the robot root frame."""
+    """Fixed-asset, held-asset, and robot surface points in the robot root frame.
+
+    ``sampling_variant_order`` is an optional full permutation of the assembly names. It
+    preserves sampling streams when a scene's catalog order changes; output rows still follow
+    scene variant IDs. ``sampling_seed`` defaults to 42. ``robot_geometry_usd_path`` optionally
+    pins the robot's observation geometry independently of its physical asset. It must retain
+    the selected rigid-body names and local frames. No reference points are loaded from disk.
+    """
 
     def __init__(self, cfg: ObservationTermCfg, env: ManagerBasedEnv):
         super().__init__(cfg, env)
@@ -220,9 +263,19 @@ class scene_point_cloud_b(ManagerTermBase):
         if any(count <= 0 for count in point_counts):
             raise ValueError(f"Point counts must be positive, got {point_counts}.")
 
-        fixed_points = _sample_variant_points(env, fixed_asset, point_counts[0])
-        held_points = _sample_variant_points(env, held_asset, point_counts[1])
-        robot_points, robot_body_ids = _sample_articulation_points(env, robot_asset, robot_asset_cfg, point_counts[2])
+        variant_names = assembly_variant_context(env).variant_names
+        sampling_order = cfg.params.get("sampling_variant_order")
+        if sampling_order is None:
+            sampling_order = variant_names
+        if len(sampling_order) != len(variant_names) or set(sampling_order) != set(variant_names):
+            raise ValueError("sampling_variant_order must be a full permutation of the scene's assembly names.")
+        source_indices = tuple(variant_names.index(name) for name in sampling_order)
+        seed = cfg.params.get("sampling_seed", 42)
+        fixed_points = _sample_variant_points(env, fixed_asset, point_counts[0], source_indices, seed)
+        held_points = _sample_variant_points(env, held_asset, point_counts[1], source_indices, seed)
+        robot_points, robot_body_ids = _sample_articulation_points(
+            env, robot_asset, robot_asset_cfg, point_counts[2], seed, cfg.params.get("robot_geometry_usd_path")
+        )
         self._kernel_inputs = (
             wp.from_torch(fixed_points, dtype=wp.vec3f),
             wp.from_torch(held_points, dtype=wp.vec3f),
@@ -251,6 +304,9 @@ class scene_point_cloud_b(ManagerTermBase):
         held_num_points: int = 256,
         robot_num_points: int = 256,
         flatten: bool = True,
+        sampling_variant_order: tuple[str, ...] | None = None,
+        sampling_seed: int = 42,
+        robot_geometry_usd_path: str | None = None,
     ) -> torch.Tensor:
         """Return ordered surface points [m], with fixed, held, then robot points."""
         wp.launch(

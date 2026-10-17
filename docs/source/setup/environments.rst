@@ -190,6 +190,26 @@ beta sampling. Play mode uses uniformly sampled random-start states. Checkpoints
 must match this task's observation and policy configuration; multi-component
 checkpoints are not interchangeable with this task.
 
+Point-cloud samples also form part of the checkpoint's observation configuration.
+Matching the random seed alone is insufficient if collider geometry or its sampling
+order has changed. The ``scene_point_cloud`` term in the ``perception`` observation
+group accepts these parameters:
+
+* ``sampling_seed``: the point sampler seed, independent of the environment reset
+  seed. The default is 42; robot body streams use this seed plus the body index.
+* ``sampling_variant_order``: a full permutation of the scene's assembly names.
+  Points are sampled in this order, then mapped back to the live variant IDs.
+  When adding variants to a checkpoint's catalog, place them after the original
+  names to preserve the original collider sampling streams. The default uses the
+  scene's catalog order.
+* ``robot_geometry_usd_path``: an optional USD geometry source for robot observation
+  points. It must retain the trained rigid-body names and local frames. This does
+  not change the physical robot; the default samples its current asset.
+
+These settings regenerate points from USD geometry at initialization, without a
+saved point-cloud tensor. They do not compensate for other changes to a
+checkpoint's observation or action configuration.
+
 Reset-time geometry switching uses Newton's external contact pipeline with
 sleeping disabled. Mesh resources are loaded once; changing the selected variant
 does not require a custom Newton solver or its precaching API. MuJoCo's compiled
