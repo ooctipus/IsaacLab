@@ -7,6 +7,7 @@
 
 import argparse
 import logging
+import os
 import signal
 import sys
 from types import SimpleNamespace
@@ -98,7 +99,7 @@ def _resolve_devices_and_kit_args(launcher_args: dict, monkeypatch, *, xr: bool 
 )
 def test_devices_selected_by_cuda_index(launcher_args, expected_renderer_args, monkeypatch):
     """Select physics and single-GPU rendering devices by CUDA index."""
-    for name in ("PXR_WORK_THREAD_LIMIT", "OPENBLAS_NUM_THREADS"):
+    for name in ("PXR_WORK_THREAD_LIMIT", "OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
         monkeypatch.setenv(name, "0")
     args, kit_args = _resolve_devices_and_kit_args(launcher_args, monkeypatch)
 
@@ -106,6 +107,22 @@ def test_devices_selected_by_cuda_index(launcher_args, expected_renderer_args, m
     assert renderer_args == expected_renderer_args
     assert args["physics_gpu"] == 1
     assert "active_gpu" not in args
+
+
+@pytest.mark.parametrize(("cpu_count", "expected"), [(32, 8), (1, 1), (None, 1)])
+def test_distributed_threads_use_local_world_size(cpu_count, expected, monkeypatch):
+    """Divide each node's CPU budget among local ranks, with at least one thread per rank."""
+    monkeypatch.setattr(kit_launcher_module.os, "cpu_count", lambda: cpu_count)
+    monkeypatch.setenv("WORLD_SIZE", "16")
+    monkeypatch.setenv("LOCAL_WORLD_SIZE", "4")
+    thread_vars = ("PXR_WORK_THREAD_LIMIT", "OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS")
+    for name in thread_vars:
+        monkeypatch.setenv(name, "0")
+
+    _resolve_devices_and_kit_args({"device": "cuda:0", "distributed": True}, monkeypatch)
+
+    assert all(os.environ[name] == str(expected) for name in thread_vars)
+    assert f"--/plugins/carb.tasking.plugin/threadCount={expected}" in sys.argv
 
 
 @pytest.mark.parametrize(

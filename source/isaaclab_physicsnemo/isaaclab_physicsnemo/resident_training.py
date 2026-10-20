@@ -210,6 +210,7 @@ def fit_resident(
     checkpoint_path: Path,
     identity: Mapping[str, Any],
     on_checkpoint: Callable[[int], None] | None = None,
+    on_metrics: Callable[[int, Mapping[str, float]], None] | None = None,
 ) -> tuple[int, dict[str, float]]:
     """Train ``network`` on resident windows with uniform sampling with replacement.
 
@@ -230,6 +231,7 @@ def fit_resident(
         checkpoint_path: Resumable checkpoint file.
         identity: Run identity that a checkpoint must match to be resumed.
         on_checkpoint: Called on rank zero after each checkpoint with the completed update count.
+        on_metrics: Called on rank zero with training and validation metrics at their configured intervals.
 
     Returns:
         The completed update count and the final validation metrics.
@@ -250,6 +252,7 @@ def fit_resident(
             checkpoint_path=checkpoint_path,
             identity=identity,
             on_checkpoint=on_checkpoint,
+            on_metrics=on_metrics,
         )
 
 
@@ -264,6 +267,7 @@ def _fit_resident(
     checkpoint_path: Path,
     identity: Mapping[str, Any],
     on_checkpoint: Callable[[int], None] | None,
+    on_metrics: Callable[[int, Mapping[str, float]], None] | None,
 ) -> tuple[int, dict[str, float]]:
     manager = DistributedManager()
     world_size, rank = manager.world_size, manager.rank
@@ -366,20 +370,33 @@ def _fit_resident(
         loss_sum, loss_count = loss_sum + loss.detach(), loss_count + 1
         if completed % options.log_every == 0 and rank == 0:
             elapsed = time.perf_counter() - started
+            train_metrics = {
+                "train/normalized_delta_mse": float(loss_sum) / loss_count,
+                "train/learning_rate": scheduler.get_last_lr()[0],
+                "train/updates_per_second": loss_count / elapsed,
+            }
             _LOGGER.info(
                 f"update {completed}/{options.max_updates} ({100.0 * completed / options.max_updates:.1f}%)"
-                f"  normalized_delta_mse={float(loss_sum) / loss_count:.3e}  lr={scheduler.get_last_lr()[0]:.2e}"
+                f"  normalized_delta_mse={train_metrics['train/normalized_delta_mse']:.3e}"
+                f"  lr={train_metrics['train/learning_rate']:.2e}"
                 f"  {1000.0 * elapsed / loss_count:.1f} ms/update ({loss_count / elapsed:.1f}/s)"
             )
+            if on_metrics is not None:
+                on_metrics(completed, train_metrics)
             loss_sum, loss_count, started = 0.0, 0, time.perf_counter()
         if options.validate_every and completed % options.validate_every == 0 and rank == 0:
             metrics = validate_resident(predictor, validation, normalizer, mixed_precision=options.mixed_precision)
             _LOGGER.info(f"update {completed} validation {metrics}")
+            if on_metrics is not None:
+                on_metrics(completed, {f"validation/{name}": value for name, value in metrics.items()})
             model.train()
         if options.checkpoint_every and completed % options.checkpoint_every == 0 and completed < options.max_updates:
             save_checkpoint()
     save_checkpoint()
-    return completed, validate_resident(predictor, validation, normalizer, mixed_precision=options.mixed_precision)
+    final_validation = validate_resident(predictor, validation, normalizer, mixed_precision=options.mixed_precision)
+    if rank == 0 and on_metrics is not None and (not options.validate_every or completed % options.validate_every):
+        on_metrics(completed, {f"validation/{name}": value for name, value in final_validation.items()})
+    return completed, final_validation
 
 
 @torch.inference_mode()

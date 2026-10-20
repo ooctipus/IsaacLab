@@ -83,21 +83,26 @@ def test_preempted_training_resumes_from_its_last_checkpoint(tmp_path):
             on_checkpoint=preempt,
         )
     resumed_checkpoints = []
+    reported_metrics = []
     updates, metrics = fit_resident(
         _LastFrameModel(),
         train,
         validation,
         normalizer,
-        _options(),
+        _options(log_every=100, validate_every=100),
         device=torch.device("cpu"),
         checkpoint_path=checkpoint,
         identity={"run": 1},
         on_checkpoint=resumed_checkpoints.append,
+        on_metrics=lambda update, values: reported_metrics.append((update, values)),
     )
 
     # Only the remaining half ran: a restart from scratch would checkpoint at update 100 again.
     assert resumed_checkpoints == [200]
     assert updates == 200
+    assert [update for update, _ in reported_metrics] == [200, 200]
+    assert "train/normalized_delta_mse" in reported_metrics[0][1]
+    assert reported_metrics[1][1]["validation/delta_rmse"] == metrics["delta_rmse"]
     assert metrics["normalized_delta_rmse"] < 0.05
 
 

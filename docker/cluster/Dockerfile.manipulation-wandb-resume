@@ -1,0 +1,13 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+ARG BASE_IMAGE=oocti/isaaclab-manipulation:latest
+FROM ${BASE_IMAGE}
+
+# The pinned manipulation image predates display-name checkpoint lookup. Keep
+# behavior owned by the canonical modules in this worktree and overlay only
+# those modules; the 28 GB base layers remain shared.
+COPY source/isaaclab/isaaclab/utils/wandb.py /workspace/isaaclab/source/isaaclab/isaaclab/utils/wandb.py
+COPY source/isaaclab_rl/isaaclab_rl/entrypoints/backends/cli_args_rsl_rl.py /workspace/isaaclab/scripts/reinforcement_learning/rsl_rl/cli_args.py

@@ -215,6 +215,16 @@ def test_exported_asset_root_constants_follow_china_storage_profile(monkeypatch)
         importlib.reload(assets_utils)
 
 
+@pytest.mark.parametrize("exists", [False, True])
+def test_check_absolute_path_without_asset_client(tmp_path, monkeypatch, exists):
+    """Local existence checks never initialize the remote asset client."""
+    path = tmp_path / "asset.usda"
+    if exists:
+        path.touch()
+    monkeypatch.setattr(assets_utils, "_get_omni_client", lambda: pytest.fail("Unexpected asset client"))
+    assert assets_utils.check_file_path(str(path)) == int(exists)
+
+
 def test_check_file_path_nucleus():
     """Test checking a file path on the Nucleus server."""
     # robot file path

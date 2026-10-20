@@ -46,52 +46,89 @@ def main() -> None:
         "--cache-dataset", action="store_true", help="Keep the loaded trajectories for later runs in --output."
     )
     parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--wandb-project", default=None, help="Log training metrics and the final artifact to W&B.")
+    parser.add_argument("--wandb-name", default=None)
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
     device = f"cuda:{os.environ['LOCAL_RANK']}" if "LOCAL_RANK" in os.environ else args.device
+    rank = int(os.environ.get("RANK", "0"))
+    wandb_run = None
+    if rank == 0 and args.wandb_project:
+        import wandb
 
-    # The codec and probes are built from the deployment scene, whose Newton model equals the teacher's.
-    cfg = AnymalCTargetControlEnvCfg()
-    cfg.scene.num_envs = 1
-    cfg.sim.device = device
-    env = ManagerBasedRLEnv(cfg=cfg)
-    try:
-        model = env.sim.physics_manager.get_model()
-        codec = HeadingJointStateCodec(model)
-        summary = train_dynamics_artifact(
-            args.dataset,
-            model,
-            args.output,
-            codec=codec,
-            features=anymal_dynamics_features(codec, anymal_foot_contacts(model)),
-            settings=TrainingSettings(
-                history=13,
-                max_updates=args.max_updates,
-                batch_size=args.batch_size,
-                validation_fraction=0.05,
-                log_every=1000,
-                seed=args.seed,
-                architecture="parallel_nerd",
-                model_kwargs=ANYMAL_MODEL_CONFIG,
-                mixed_precision=True,
-                compile=True,
-                checkpoint_every=args.checkpoint_every,
-                validate_every=args.checkpoint_every,
-                read_workers=args.read_workers,
-                normalizer_windows=args.normalizer_windows,
-                cache_dataset=args.cache_dataset,
-            ),
-            device=device,
+        args.output.mkdir(parents=True, exist_ok=True)
+        wandb_run = wandb.init(
+            project=args.wandb_project,
+            name=args.wandb_name,
+            dir=str(args.output),
+            config={
+                "dataset": [str(path) for path in args.dataset],
+                "max_updates": args.max_updates,
+                "batch_size": args.batch_size,
+                "history": 13,
+                "seed": args.seed,
+                "architecture": "parallel_nerd",
+            },
         )
+        wandb_run.define_metric("update")
+        wandb_run.define_metric("train/*", step_metric="update")
+        wandb_run.define_metric("validation/*", step_metric="update")
+
+    try:
+        # The codec and probes are built from the deployment scene, whose Newton model equals the teacher's.
+        cfg = AnymalCTargetControlEnvCfg()
+        cfg.scene.num_envs = 1
+        cfg.sim.device = device
+        env = ManagerBasedRLEnv(cfg=cfg)
+        try:
+            model = env.sim.physics_manager.get_model()
+            codec = HeadingJointStateCodec(model)
+            summary = train_dynamics_artifact(
+                args.dataset,
+                model,
+                args.output,
+                codec=codec,
+                features=anymal_dynamics_features(codec, anymal_foot_contacts(model)),
+                settings=TrainingSettings(
+                    history=13,
+                    max_updates=args.max_updates,
+                    batch_size=args.batch_size,
+                    validation_fraction=0.05,
+                    log_every=1000,
+                    seed=args.seed,
+                    architecture="parallel_nerd",
+                    model_kwargs=ANYMAL_MODEL_CONFIG,
+                    mixed_precision=True,
+                    compile=True,
+                    checkpoint_every=args.checkpoint_every,
+                    validate_every=args.checkpoint_every,
+                    read_workers=args.read_workers,
+                    normalizer_windows=args.normalizer_windows,
+                    cache_dataset=args.cache_dataset,
+                ),
+                device=device,
+                on_metrics=(
+                    (lambda update, metrics: wandb_run.log({"update": update, **metrics})) if wandb_run else None
+                ),
+            )
+        finally:
+            env.close()
+        if wandb_run is not None:
+            artifact = wandb.Artifact("anymal-c-nerd", type="model", metadata={"updates": summary.parameter_updates})
+            artifact.add_dir(str(summary.artifact_path))
+            wandb_run.log_artifact(artifact)
+            wandb_run.summary.update({f"final/{name}": value for name, value in summary.validation.items()})
+            print(f"W&B: {wandb_run.url}")
+        print(
+            f"Trained {summary.parameter_updates} updates on {len(summary.train_trajectory_ids)} trajectories,"
+            f" validated on {len(summary.validation_trajectory_ids)}"
+        )
+        for name, value in summary.validation.items():
+            print(f"  validation {name}: {value:.6g}")
+        print(f"Artifact: {summary.artifact_path}")
     finally:
-        env.close()
-    print(
-        f"Trained {summary.parameter_updates} updates on {len(summary.train_trajectory_ids)} trajectories,"
-        f" validated on {len(summary.validation_trajectory_ids)}"
-    )
-    for name, value in summary.validation.items():
-        print(f"  validation {name}: {value:.6g}")
-    print(f"Artifact: {summary.artifact_path}")
+        if wandb_run is not None:
+            wandb_run.finish()
 
 
 if __name__ == "__main__":

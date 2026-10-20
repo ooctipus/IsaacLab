@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -157,6 +157,7 @@ def train_dynamics_artifact(
     settings: TrainingSettings | None = None,
     device: str = "cuda:0",
     on_checkpoint: Callable[[int, Path], None] | None = None,
+    on_metrics: Callable[[int, Mapping[str, float]], None] | None = None,
 ) -> TrainingSummary:
     """Train a control-conditioned NeRD on recorded trajectories and package it as an artifact.
 
@@ -183,6 +184,7 @@ def train_dynamics_artifact(
         on_checkpoint: Called on rank zero after every checkpoint with the completed update count and an
             artifact packaged from the current parameters, for example to track rollout error over the
             training budget.
+        on_metrics: Called on rank zero with training and validation metrics at their configured intervals.
 
     Returns:
         The artifact location and final validation metrics.
@@ -328,6 +330,7 @@ def train_dynamics_artifact(
         checkpoint_path=output_dir / "training_checkpoints" / "resident.pt",
         identity=identity,
         on_checkpoint=checkpoint_callback,
+        on_metrics=on_metrics,
     )
 
     artifact_path = output_dir / "artifact"
