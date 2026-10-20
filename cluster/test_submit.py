@@ -709,6 +709,8 @@ class TestWorkflowSpecArchitecture:
         spec = self._spec()
         dockerfile = (Path(__file__).resolve().parents[1] / "source/isaaclab_physicsnemo/docker/Dockerfile").read_text()
         assert "ENV ISAACLAB_SKIP_UV_SYNC=1" in dockerfile
+        assert dockerfile.index("USER isaaclab") < dockerfile.index("RUN export UV_NO_CACHE=1")
+        assert 'chown -R isaaclab:isaaclab "${VIRTUAL_ENV}"' not in dockerfile
         assert 'if [ "${ISAACLAB_SKIP_UV_SYNC:-0}" != "1" ]; then' in spec
         assert spec.index('if [ "${ISAACLAB_SKIP_UV_SYNC:-0}" != "1" ]; then') < spec.index("uv sync --locked")
 

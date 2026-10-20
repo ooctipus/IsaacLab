@@ -31,15 +31,14 @@ COPY --chown=isaaclab:isaaclab source/isaaclab_physicsnemo/ ${ISAACLAB_PATH}/sou
 
 # PhysicsNeMo Robotics pins older Newton, Warp, and Torch releases than Isaac Lab, so it is installed
 # without its pins next to the locked Isaac Lab environment, followed by its remaining dependencies.
+USER isaaclab
 RUN export UV_NO_CACHE=1 \
  && uv pip install --python "${VIRTUAL_ENV}/bin/python" --no-deps -e /opt/physicsnemo-robotics \
  && uv pip install --python "${VIRTUAL_ENV}/bin/python" \
       "nvidia-physicsnemo==2.1.1" "jaxtyping>=0.3.3" "tensordict>=0.11,<0.12" "zarr>=3,<4" \
- && uv pip install --python "${VIRTUAL_ENV}/bin/python" --no-deps -e "${ISAACLAB_PATH}/source/isaaclab_physicsnemo" \
- && chown -R isaaclab:isaaclab "${VIRTUAL_ENV}" "${HOME}"
+ && uv pip install --python "${VIRTUAL_ENV}/bin/python" --no-deps -e "${ISAACLAB_PATH}/source/isaaclab_physicsnemo"
 
 # Import as the runtime user, so that caches such as Warp's kernel cache belong to it.
-USER isaaclab
 WORKDIR ${ISAACLAB_PATH}
 RUN python -c "import isaaclab_physicsnemo, physicsnemo_robotics, torch, newton; \
       print('torch', torch.__version__, 'newton', newton.__version__)"
