@@ -123,11 +123,15 @@ workflow:
             echo "[INFO] No writable AMLFS cache root found; using container-local caches."
           fi
 
-          echo "[INFO] Syncing Python environment from uv.lock..."
           cd /workspace/isaaclab
-          # Use the package set selected by the image's Dockerfile.
-          read -r -a UV_SYNC_ARGS <<< "${ISAACLAB_UV_SYNC_ARGS:?Image must declare its dependency selection}"
-          uv sync --locked --no-progress --inexact --no-install-local "${UV_SYNC_ARGS[@]}"
+          if [ "${ISAACLAB_SKIP_UV_SYNC:-0}" != "1" ]; then
+            echo "[INFO] Syncing Python environment from uv.lock..."
+            # Use the package set selected by the image's Dockerfile.
+            read -r -a UV_SYNC_ARGS <<< "${ISAACLAB_UV_SYNC_ARGS:?Image must declare its dependency selection}"
+            uv sync --locked --no-progress --inexact --no-install-local "${UV_SYNC_ARGS[@]}"
+          else
+            echo "[INFO] Using the image's installed Python environment."
+          fi
 
           # Kit bootstrap is only needed by tasks that use the Isaac Sim runtime.
           {% if kitless == 1 %}

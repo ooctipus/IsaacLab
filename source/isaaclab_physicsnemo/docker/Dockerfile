@@ -15,6 +15,10 @@
 ARG BASE_IMAGE=isaac-lab-kitless
 FROM ${BASE_IMAGE}
 
+# The PhysicsNeMo overlay intentionally differs from uv.lock (notably tensordict). The generic
+# cluster launcher must keep this tested environment intact instead of syncing the base lock again.
+ENV ISAACLAB_SKIP_UV_SYNC=1
+
 USER root
 # Triton, which compiles ParallelNeRD inference kernels and torch.compile graphs at run time, needs a C toolchain.
 RUN apt-get update \

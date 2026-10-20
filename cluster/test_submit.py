@@ -705,6 +705,13 @@ class TestWorkflowSpecArchitecture:
         assert spec.count("--no-install-local") == 1
         assert spec.count("--inexact") == 1
 
+    def test_physicsnemo_image_preserves_its_tested_dependencies(self):
+        spec = self._spec()
+        dockerfile = (Path(__file__).resolve().parents[1] / "source/isaaclab_physicsnemo/docker/Dockerfile").read_text()
+        assert "ENV ISAACLAB_SKIP_UV_SYNC=1" in dockerfile
+        assert 'if [ "${ISAACLAB_SKIP_UV_SYNC:-0}" != "1" ]; then' in spec
+        assert spec.index('if [ "${ISAACLAB_SKIP_UV_SYNC:-0}" != "1" ]; then') < spec.index("uv sync --locked")
+
     def test_workflow_reuses_the_uv_cache(self):
         spec = self._spec()
         assert 'export UV_CACHE_DIR="${CLUSTER_CACHE_ROOT}/uv"' in spec
