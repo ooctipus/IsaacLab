@@ -520,6 +520,10 @@ def _run(args: argparse.Namespace) -> int:
                 if any(viz.backend.visualizer_type in ("kit", "newton_rtx") for viz in cfg.sim.visualizer_cfgs)
                 else "studio"
             )
+        if backdrop == "studio":
+            for viz in cfg.sim.visualizer_cfgs:
+                if viz.backend.visualizer_type == "newton_gl":
+                    viz.backend.texture_max_size = 1024
         rack_path = configure_visual_scene(cfg, backdrop)
         env = instantiate(cfg)
         try:

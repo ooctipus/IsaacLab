@@ -216,6 +216,7 @@ def _make_env_cfg(args, video_stride):
         view.replace(
             backend=CoffeeGLBackendCfg(
                 backdrop=args.backdrop,
+                texture_max_size=1024 if args.backdrop == "studio" else None,
                 show_particles=args.grains_per_particle == 0,
                 particle_color=(0.095, 0.029, 0.010) if not args.water else None,
                 enable_picking=False,

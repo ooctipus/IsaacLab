@@ -515,7 +515,11 @@ def create_sim_cfg():
         visualizer_cfgs=VisualizerCfg(
             eye=CAMERA_EYE,
             lookat=CAMERA_TARGET,
-            backend=NewtonGLBackendCfg(show_particles=SHOW_FLUID_PARTICLES, particle_color=WATER_COLOR),
+            backend=NewtonGLBackendCfg(
+                show_particles=SHOW_FLUID_PARTICLES,
+                particle_color=WATER_COLOR,
+                texture_max_size=1024 if args_cli.backdrop == "studio" else None,
+            ),
         ),
         physics=NewtonCfg(
             solver_cfg=MPMSolverCfg(
