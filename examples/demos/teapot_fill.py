@@ -14,6 +14,9 @@ The teapot is a hollow, double-walled shell, so the fluid is seeded in its enclo
     uvx isaaclab demo teapot-fill --device cuda:0 --visualizer newton_gl
     # Display both the raw particles and reconstructed surface:
     uvx isaaclab demo teapot-fill --visualizer newton_gl --fluid_render_mode both
+    # Kit and OVRTX visualizers:
+    uvx --from 'isaaclab[isaacsim]' isaaclab demo teapot-fill --visualizer kit
+    uvx --from 'isaaclab[ovrtx]' isaaclab demo teapot-fill --visualizer newton_rtx
     # Fuller / coarser (faster) fill:
     uvx isaaclab demo teapot-fill --fill_level 1.0 --fill_spacing 0.003
 """
@@ -34,6 +37,7 @@ from isaaclab_visualizers.newton import NewtonGLBackendCfg
 
 from isaaclab.app import add_launcher_args, launch_simulation
 from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.sensors import CameraCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR, retrieve_file_path
 from isaaclab.visualizers import VisualizerCfg
 
@@ -66,7 +70,7 @@ def _unit_interval_float(value: str) -> float:
     return resolved
 
 
-parser = argparse.ArgumentParser(description="Newton implicit MPM teapot-fill demo.", conflict_handler="resolve")
+parser = argparse.ArgumentParser(description="Newton implicit MPM teapot-fill demo.")
 parser.add_argument("--robot", choices=["none", "rizon_sharpa"], default="none", help="Use the fixed physical grasp.")
 parser.add_argument(
     "--max_steps",
@@ -142,7 +146,7 @@ parser.add_argument(
     help="SimReady catch-bowl USD used for both visualization and fluid collisions.",
 )
 add_launcher_args(parser)
-parser.add_argument("--visualizer", "--viz", choices=["newton_gl"], default="newton_gl", help="Visualizer backend.")
+parser.set_defaults(visualizer=["newton_gl"])
 args_cli = parser.parse_args()
 ROBOT_ENABLED = args_cli.robot == "rizon_sharpa"
 
@@ -787,11 +791,17 @@ def run_simulator(sim, scene, surface_renderer: ParticleSurfaceRenderer | None, 
 def main() -> None:
     """Set up and run the Isaac Lab Newton MPM teapot-fill demo."""
     sim_cfg = create_sim_cfg()
-    with launch_simulation(sim_cfg, args_cli):
+    viewer_scene_cfg = InteractiveSceneCfg(num_envs=1, env_spacing=0.0)
+    with launch_simulation({"sim": sim_cfg, "scene": viewer_scene_cfg}, args_cli):
         if ROBOT_ENABLED:
             from rizon_sharpa_teapot import configured_asset_path
 
             configured_asset_path()
+        if any(viewer.backend.visualizer_type == "kit" for viewer in sim_cfg.visualizer_cfgs):
+            from isaaclab_physx.renderers import IsaacRtxRendererGlobalSettingsCfg
+            from isaaclab_physx.renderers.isaac_rtx_renderer_utils import apply_isaac_rtx_global_settings
+
+            apply_isaac_rtx_global_settings(IsaacRtxRendererGlobalSettingsCfg(enable_translucency=True))
         container_usd = retrieve_file_path(args_cli.container_usd)
         island_usd = retrieve_file_path(args_cli.island_usd)
         bowl_usd = retrieve_file_path(args_cli.bowl_usd)
@@ -800,7 +810,12 @@ def main() -> None:
         from isaaclab.scene import InteractiveScene
 
         sim = sim_utils.SimulationContext(sim_cfg)
-        scene = InteractiveScene(create_scene_cfg(container_usd, island_usd, bowl_usd))
+        scene_cfg = create_scene_cfg(container_usd, island_usd, bowl_usd)
+        # Keep perspective cameras declared by launch before native RTX scene construction.
+        vars(scene_cfg).update(
+            {name: cfg for name, cfg in vars(viewer_scene_cfg).items() if isinstance(cfg, CameraCfg)}
+        )
+        scene = InteractiveScene(scene_cfg)
         sim.reset()
         robot_motion = None
         if ROBOT_ENABLED:

@@ -11,8 +11,10 @@ this scenery adds no physics bodies or colliders. Cinematic overlays remain loca
 ```bash
 uv run isaaclab example sharpa-rj45
 uv run --extra ovrtx isaaclab example sharpa-rj45 --viz newton_rtx
-uv run --extra isaacsim --extra video isaaclab example sharpa-rj45 --viz kit --video
+uv run --extra isaacsim isaaclab example sharpa-rj45 --viz kit
 ```
+
+Omitting `--viz` selects Newton GL. Add `--extra video` and `--video` to record a run.
 
 The example supplies absolute palm/finger targets through Isaac Lab's Newton IK
 and action manager. Native hydroelastic hand–housing/clip contact is enabled;

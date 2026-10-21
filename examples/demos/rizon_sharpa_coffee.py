@@ -118,7 +118,7 @@ def _parse_args():
     parser.add_argument("--max_steps", type=int, default=8000)
     parser.add_argument("--camera", choices=("follow", "fixed"), default="follow")
     parser.add_argument(
-        "--backdrop", choices=("kitchen", "studio"), default="kitchen", help="Kit and RTX render backdrop."
+        "--backdrop", choices=("kitchen", "studio"), default="kitchen", help="Render backdrop for GL, Kit and RTX."
     )
     parser.add_argument("--video", action="store_true", help="Record an MP4 at 1x simulation speed.")
     parser.add_argument("--video_fps", type=int, choices=(25, 30, 50, 60, 100), default=None)
@@ -154,12 +154,12 @@ def _parse_args():
 
 def _make_env_cfg(args, video_stride):
     from isaaclab_physx.renderers import IsaacRtxRendererGlobalSettingsCfg
-    from isaaclab_visualizers.newton import NewtonGLBackendCfg
 
     from isaaclab.visualizers import VisualizerCfg, WindowCfg
 
     from isaaclab_tasks.contrib.rizon_sharpa_coffee.demo_env_cfg import (
         CoffeeDemoEnvCfg,
+        CoffeeGLBackendCfg,
         CoffeeKitBackendCfg,
         CoffeeRTXVisualizerCfg,
     )
@@ -203,10 +203,12 @@ def _make_env_cfg(args, video_stride):
         focal_length=24.0,
         background_color=(0.008, 0.014, 0.022),
     )
+    if args.backdrop == "kitchen":
+        view.eye, view.lookat = (0.86, -0.61, 0.70), (0.53, -0.03, 0.10)
     cfg.sim.visualizer_cfgs = [
         view.replace(
-            backend=NewtonGLBackendCfg(
-                class_type="isaaclab_tasks.contrib.rizon_sharpa_coffee.rendering:CoffeeGLVisualizer",
+            backend=CoffeeGLBackendCfg(
+                backdrop=args.backdrop,
                 show_particles=args.grains_per_particle == 0,
                 particle_color=(0.095, 0.029, 0.010) if not args.water else None,
                 enable_picking=False,
@@ -243,9 +245,6 @@ def _make_env_cfg(args, video_stride):
             ),
         ),
     ]
-    if args.backdrop == "kitchen":
-        for visualizer in cfg.sim.visualizer_cfgs[1:]:
-            visualizer.eye, visualizer.lookat = (0.86, -0.61, 0.70), (0.53, -0.03, 0.10)
     return cfg
 
 

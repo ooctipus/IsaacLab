@@ -9,11 +9,12 @@ uv run isaaclab demo rizon-sharpa-coffee
 
 The default is a dry Newton GL scene with a 4 mm grid and one visual grain
 per physical particle. Add `--water` for a filled cup, physical coffee-to-liquid
-conversion, conservative colour diffusion and stirring. Kit and Newton RTX
-load the same full kitchen presentation; use `--water --visualizer kit` or
-`--water --visualizer newton_rtx`. Both support `--backdrop studio` for the
-plain studio. Newton GL keeps its tabletop scene. `--visualizer none --headless`
-runs physics without presentation.
+conversion, conservative colour diffusion and stirring. GL, Kit and Newton RTX
+load the same full kitchen presentation by default. Use
+`uv run --extra isaacsim isaaclab demo rizon-sharpa-coffee --water --visualizer kit`
+or `uv run --extra ovrtx isaaclab demo rizon-sharpa-coffee --water --visualizer newton_rtx`
+for the other visualizers. All three support `--backdrop studio` for the plain studio.
+`--visualizer none --headless` runs physics without presentation.
 Use `--help` for voxel, solver-rate and rendering options. Material properties,
 tool margins and solver iteration limits belong to `CoffeeDemoEnvCfg`.
 
@@ -64,8 +65,8 @@ shared renderer; Newton GL displays the completed image.
 The custom MPM solver retains its manager's USD configuration preparation and
 only specializes solver construction. Task-specific RTX material paths and updates
 belong to the camera product and are released with it.
-Kit and RTX use the same backdrop declared in the scene configuration.
-The scene owns its lights, geometry and lifetime. Both use the
+All three visualizers use the backdrop declared in the scene configuration.
+The scene owns its lights, geometry and lifetime. Kit and RTX use the
 authored refracting water material, with local coffee colour driving optical
 absorption. GL uses its native textured surface.
 
