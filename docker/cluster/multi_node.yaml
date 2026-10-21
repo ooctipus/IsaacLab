@@ -31,6 +31,7 @@ workflow:
       args: ["/tmp/run.sh"]
       environment:
         ISAACLAB_WORKFLOW_ID: "{{workflow_id}}"
+        LOCAL_CACHE: /osmo/run/workspace/.cache/physicsnemo
         OMNI_KIT_ACCEPT_EULA: "YES"
         ACCEPT_EULA: Y
         NO_NUCLEUS: Y
