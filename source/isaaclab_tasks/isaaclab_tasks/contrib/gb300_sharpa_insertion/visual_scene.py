@@ -38,6 +38,8 @@ if TYPE_CHECKING:
 
 # The socket face is near composed CAD X=0.355 m; crop 55 mm behind it.
 _RACK_FRONT_MIN_X_M = 0.30
+# The two SN2201 rows and their gold bezel occupy this composed CAD Z range.
+_SWITCH_FRONT_Z_RANGE_M = (1.97, 2.16)
 
 
 def configure_visual_scene(cfg: GB300SharpaInsertionEnvCfg, backdrop: str = "datacenter") -> str | None:
@@ -75,7 +77,7 @@ def configure_visual_scene(cfg: GB300SharpaInsertionEnvCfg, backdrop: str = "dat
 
 
 def add_gl_visuals(env: GB300SharpaInsertionEnv, rack_path: str | None, *, front_only: bool = False) -> None:
-    """Register a compact panel, detailed rack front, or full rack without physics shapes.
+    """Register a compact panel, detailed switch front, or full rack without physics shapes.
 
     Call after the initial environment reset. Native USD mesh loading preserves
     the CAD normals and scalar materials; material batches avoid thousands
@@ -112,17 +114,20 @@ def add_gl_visuals(env: GB300SharpaInsertionEnv, rack_path: str | None, *, front
             continue
         clip_front = False
         if front_only:
-            bound = bounds.ComputeWorldBound(prim).ComputeAlignedRange()
-            if bound.GetMax()[0] < _RACK_FRONT_MIN_X_M:
+            if not str(prim.GetPath()).startswith(
+                (
+                    "/external/tn__0000_NV_MSN2201TOR_08132024",
+                    "/external/tn__01_TORBEZELKIT2U_",
+                    "/external/silver_meshes/",
+                    "/external/bezel_back_plates/",
+                )
+            ):
                 continue
-            if bound.GetMin()[0] < _RACK_FRONT_MIN_X_M:
-                # Switch shells and frame posts merge front and rear faces into one mesh.
-                if not (
-                    str(prim.GetPath()).startswith("/external/tn__0000_NV_MSN2201TOR_08132024")
-                    or prim.GetParent().GetName().startswith("tn__1_FRONTPOST")
-                ):
-                    continue
-                clip_front = True
+            bound = bounds.ComputeWorldBound(prim).ComputeAlignedRange()
+            if bound.GetMin()[2] < _SWITCH_FRONT_Z_RANGE_M[0] or bound.GetMax()[2] > _SWITCH_FRONT_Z_RANGE_M[1]:
+                continue
+            # The merged switch shells include the rear chassis; retain their front faces.
+            clip_front = bound.GetMin()[0] < _RACK_FRONT_MIN_X_M
         source = prim.GetPrimInPrototype() if prim.IsInstanceProxy() else prim
         key = str(source.GetPath())
         if key not in sources:

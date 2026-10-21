@@ -80,7 +80,7 @@ def main() -> int:
     parser.add_argument("--video", action="store_true", help="Record with the standard task video recorder.")
     parser.add_argument(
         "--backdrop", choices=("auto", "studio", "datacenter"), default="auto",
-        help="Scenery: auto shows the detailed rack front in GL and the datacenter in Kit or Newton RTX.",
+        help="Scenery: auto shows the gold switch front and RJ45 ports in GL, or the datacenter in Kit/RTX.",
     )  # fmt: skip
     parser.add_argument(
         "--failure_tail_s", type=float, default=0.0, help="Simulate with held targets after a fault [s]."

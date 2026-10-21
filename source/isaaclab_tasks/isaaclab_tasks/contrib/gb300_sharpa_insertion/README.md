@@ -4,8 +4,8 @@ Non-RL manager-based environment with a Rizon 4s / Sharpa hand, two sockets,
 a spring-clip connector and a VBD cable. One end is fixed; the loose end starts
 physically grasped. The example inserts, releases, regrasps, presses the clip and
 extracts in one continuous simulation.
-Newton GL starts with the detailed full-height CAD rack facade and ports, without
-the full cabinet or surrounding data-center facility.
+Newton GL starts with the detailed gold switch front and all RJ45 ports, without
+the rack or surrounding data-center facility.
 Kit and Newton RTX default to the data-center USD and eight foreground racks
 through USD-only scene cloning. Scenery adds no physics bodies or colliders.
 Cinematic overlays remain local.
@@ -19,8 +19,9 @@ uv run --extra isaacsim isaaclab example sharpa-rj45 --viz kit
 ```
 
 Omitting `--viz` selects Newton GL. Add `--extra video` and `--video` to record a run.
-The default `--backdrop auto` shows the detailed rack front in Newton GL and the
-full facility with eight foreground racks in Kit and Newton RTX. In GL,
+The default `--backdrop auto` shows the detailed gold switch front and all RJ45
+ports in Newton GL and the full facility with eight foreground racks in Kit and
+Newton RTX. In GL,
 `--backdrop datacenter` loads one full rack without the facility.
 `--backdrop studio` selects the optional simpler patch panel and sockets with any
 visualizer, avoiding the full rack CAD conversion.

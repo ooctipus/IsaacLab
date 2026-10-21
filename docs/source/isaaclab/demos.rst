@@ -282,7 +282,7 @@ Focused examples
          uvx isaaclab example sharpa-rj45
 
       From a checkout, use ``uv run isaaclab example sharpa-rj45``.
-      Newton GL displays the detailed GB300 rack facade and ports; add
+      Newton GL displays the detailed gold switch front and all RJ45 ports; add
       ``--backdrop datacenter`` for one full rack. ``--viz kit`` and
       ``--viz newton_rtx`` load the full render-only data center without adding physics geometry.
       Requires the external Rizon/SHARPA robot asset bundle; see the
