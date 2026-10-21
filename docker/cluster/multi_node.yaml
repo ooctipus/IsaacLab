@@ -32,6 +32,7 @@ workflow:
       environment:
         ISAACLAB_WORKFLOW_ID: "{{workflow_id}}"
         LOCAL_CACHE: /osmo/run/workspace/.cache/physicsnemo
+        WANDB_CACHE_DIR: /osmo/run/workspace/.cache/wandb
         OMNI_KIT_ACCEPT_EULA: "YES"
         ACCEPT_EULA: Y
         NO_NUCLEUS: Y
