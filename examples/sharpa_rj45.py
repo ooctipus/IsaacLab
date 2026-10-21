@@ -12,6 +12,7 @@ sequence. The managed dependencies include the Newton hydroelastic contact corre
 .. code-block:: bash
 
     uv run isaaclab example sharpa-rj45
+    uv run isaaclab example sharpa-rj45 --backdrop datacenter
     uv run isaaclab example sharpa-rj45 --backdrop studio
     uv run --extra isaacsim --extra video isaaclab example sharpa-rj45 --viz kit --video
     uv run isaaclab example sharpa-rj45 --viz none
@@ -79,7 +80,7 @@ def main() -> int:
     parser.add_argument("--video", action="store_true", help="Record with the standard task video recorder.")
     parser.add_argument(
         "--backdrop", choices=("auto", "studio", "datacenter"), default="auto",
-        help="Scenery: auto shows one full rack in GL and the datacenter in Kit or Newton RTX.",
+        help="Scenery: auto shows the detailed rack front in GL and the datacenter in Kit or Newton RTX.",
     )  # fmt: skip
     parser.add_argument(
         "--failure_tail_s", type=float, default=0.0, help="Simulate with held targets after a fault [s]."
@@ -522,7 +523,7 @@ def _run(args: argparse.Namespace) -> int:
         env = instantiate(cfg)
         try:
             observations, _ = env.reset(seed=args.seed)
-            add_gl_visuals(env, rack_path)
+            add_gl_visuals(env, rack_path, front_only=args.backdrop == "auto")
             if env.action_manager.total_action_dim != 29:
                 raise RuntimeError("The example must provide absolute TCP and 22 finger targets.")
             robot = env.scene["robot"]
