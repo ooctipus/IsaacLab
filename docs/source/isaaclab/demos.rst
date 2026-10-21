@@ -271,7 +271,7 @@ Focused examples
          :width: 100%
          :alt: A SHARPA hand holding a green RJ45 connector at a GB300 switch port.
 
-         Kit preview with optional GB300 rack visuals.
+         Kit preview with the full GB300 rack and data-center scenery.
 
       A scripted Rizon 4s and SHARPA hand insert, release, regrasp and extract an
       RJ45 connector in one continuous simulation. The non-RL manager-based
