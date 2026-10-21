@@ -12,6 +12,7 @@ sequence. The managed dependencies include the Newton hydroelastic contact corre
 .. code-block:: bash
 
     uv run isaaclab example sharpa-rj45
+    uv run isaaclab example sharpa-rj45 --backdrop datacenter
     uv run --extra isaacsim --extra video isaaclab example sharpa-rj45 --viz kit --video
     uv run isaaclab example sharpa-rj45 --viz none
 
@@ -76,6 +77,10 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=17)
     parser.add_argument("--settle_duration_s", type=float, default=0.0, help="Initial physical grasp hold [s].")
     parser.add_argument("--video", action="store_true", help="Record with the standard task video recorder.")
+    parser.add_argument(
+        "--backdrop", choices=("auto", "studio", "datacenter"), default="auto",
+        help="Scenery: auto uses studio in GL and datacenter when Kit or Newton RTX is selected.",
+    )  # fmt: skip
     parser.add_argument(
         "--failure_tail_s", type=float, default=0.0, help="Simulate with held targets after a fault [s]."
     )
@@ -505,7 +510,17 @@ def _run(args: argparse.Namespace) -> int:
             )
         ]
     with launch_simulation(cfg, args):
-        rack_path = configure_visual_scene(cfg)
+        cfg.sim.physics.load_visual_shapes = any(
+            viz.backend.visualizer_type == "newton_gl" for viz in cfg.sim.visualizer_cfgs
+        )
+        backdrop = args.backdrop
+        if backdrop == "auto":
+            backdrop = (
+                "datacenter"
+                if any(viz.backend.visualizer_type in ("kit", "newton_rtx") for viz in cfg.sim.visualizer_cfgs)
+                else "studio"
+            )
+        rack_path = configure_visual_scene(cfg, backdrop)
         env = instantiate(cfg)
         try:
             observations, _ = env.reset(seed=args.seed)

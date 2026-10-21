@@ -40,7 +40,9 @@ def main() -> None:
 
         # Launch owns the final display and recording producers, including Kit
         # added for livestreaming. Resolve render allocation before scene construction.
-        cfg.sim.physics.load_visual_shapes = bool(cfg.sim.visualizer_cfgs)
+        cfg.sim.physics.load_visual_shapes = any(
+            visualizer.backend.visualizer_type == "newton_gl" for visualizer in cfg.sim.visualizer_cfgs
+        )
         cfg.grains_per_particle = args.grains_per_particle if cfg.sim.visualizer_cfgs else 0
         if args.keep_open and not any(not visualizer.headless for visualizer in cfg.sim.visualizer_cfgs):
             parser.error("--keep_open requires a desktop visualizer.")
@@ -118,7 +120,10 @@ def _parse_args():
     parser.add_argument("--max_steps", type=int, default=8000)
     parser.add_argument("--camera", choices=("follow", "fixed"), default="follow")
     parser.add_argument(
-        "--backdrop", choices=("kitchen", "studio"), default="kitchen", help="Render backdrop for GL, Kit and RTX."
+        "--backdrop",
+        choices=("auto", "kitchen", "studio"),
+        default="auto",
+        help="Render backdrop; auto uses the studio in GL and kitchen in Kit/RTX.",
     )
     parser.add_argument("--video", action="store_true", help="Record an MP4 at 1x simulation speed.")
     parser.add_argument("--video_fps", type=int, choices=(25, 30, 50, 60, 100), default=None)
@@ -143,6 +148,8 @@ def _parse_args():
         parser.error("--video_fps must divide the control rate (60 Hz at 120 Hz physics, otherwise 100 Hz).")
     if args.visualizer is None:
         args.visualizer = ["newton_rtx" if args.video else "newton_gl"]
+    if args.backdrop == "auto":
+        args.backdrop = "kitchen" if {"kit", "newton_rtx"}.intersection(args.visualizer) else "studio"
     if any(name not in ("newton_gl", "newton_rtx", "kit", "none") for name in args.visualizer):
         parser.error("This demo's grain/surface presentation supports newton_gl, newton_rtx, kit or none.")
     if args.keep_open and args.headless:

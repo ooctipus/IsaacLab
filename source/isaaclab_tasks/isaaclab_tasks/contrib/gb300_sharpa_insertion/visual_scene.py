@@ -23,27 +23,41 @@ from .workcell import (
     GB300_PRESENTATION_TRANSLATION_E,
     GB300_SIMREADY_COMPOSED_BOUNDS_MAX_M,
     GB300_SIMREADY_COMPOSED_BOUNDS_MIN_M,
+    SOCKET_POSITION_E,
+    UPPER_SOCKET_POSITION_E,
+    _service_face_boxes,
 )
 
 if TYPE_CHECKING:
+    import trimesh
+
     from pxr import Usd
 
     from .env import GB300SharpaInsertionEnv
     from .env_cfg import GB300SharpaInsertionEnvCfg
 
 
-def configure_visual_scene(cfg: GB300SharpaInsertionEnvCfg) -> str:
-    """Configure USD-only facility assets and return the working rack's USD path.
+def configure_visual_scene(cfg: GB300SharpaInsertionEnvCfg, backdrop: str = "datacenter") -> str | None:
+    """Configure renderer-only scenery and return the optional full rack's USD path.
 
     Call after launcher resolution and before environment construction. USD-only
     cloning keeps every visual rack and facility mesh out of the Newton model.
     """
+    usd_only = ("isaaclab.cloner:UsdReplicateContext",)
+    usd_view = any(viz.backend.visualizer_type in ("kit", "newton_rtx") for viz in cfg.sim.visualizer_cfgs)
+    if backdrop == "studio":
+        if usd_view:
+            cfg.scene.visual_scene = AssetBaseCfg(
+                prim_path="{ENV_REGEX_NS}/VisualScene",
+                spawn=sim_utils.SpawnerCfg(func=_spawn_task_panel),
+                cloning_contexts=usd_only,
+            )
+        return None
     root = os.environ.get(
         "ISAACLAB_SHARPA_RJ45_VISUAL_ROOT", f"{ISAACLAB_NUCLEUS_DIR}/Environments/RizonSharpaRJ45"
     ).rstrip("/")
     rack_path = f"{root}/Environments/GB300/external.usd"
-    if any(viz.backend.visualizer_type in ("kit", "newton_rtx") for viz in cfg.sim.visualizer_cfgs):
-        usd_only = ("isaaclab.cloner:UsdReplicateContext",)
+    if usd_view:
         cfg.scene.visual_scene = AssetBaseCfg(
             prim_path="{ENV_REGEX_NS}/VisualScene",
             spawn=sim_utils.UsdFileCfg(usd_path=f"{root}/Environments/Datacenter/datacenter.usdc"),
@@ -57,20 +71,31 @@ def configure_visual_scene(cfg: GB300SharpaInsertionEnvCfg) -> str:
     return rack_path
 
 
-def add_gl_visuals(env: GB300SharpaInsertionEnv, rack_path: str) -> None:
-    """Register one full-detail, static CAD rack without adding physics shapes.
+def add_gl_visuals(env: GB300SharpaInsertionEnv, rack_path: str | None) -> None:
+    """Register a compact task panel or a full-detail rack without physics shapes.
 
     Call after the initial environment reset. Native USD mesh loading preserves
     the CAD normals and scalar materials; six material batches avoid thousands
     of draw calls. The canonical rack has no albedo textures.
     """
+    viewers = [viz for viz in env.sim.visualizers if viz.cfg.backend.visualizer_type == "newton_gl"]
+    if not viewers:
+        return
+    if rack_path is None:
+        for name, mesh, color in _task_panel_meshes():
+            points = wp.array(np.asarray(mesh.vertices, dtype=np.float32), dtype=wp.vec3, device=env.device)
+            indices = wp.array(mesh.faces.reshape(-1).astype(np.int32), dtype=wp.int32, device=env.device)
+            normals = wp.array(np.asarray(mesh.vertex_normals, dtype=np.float32), dtype=wp.vec3, device=env.device)
+            for viewer in viewers:
+                viewer.log_mesh(
+                    f"/Presentation/GB300/{name}", points, indices, normals=normals,
+                    color=color, roughness=0.55, metallic=0.8, backface_culling=False,
+                )  # fmt: skip
+        return
     import newton.usd
 
     from pxr import Usd, UsdGeom, UsdShade
 
-    viewers = [viz for viz in env.sim.visualizers if viz.cfg.backend.visualizer_type == "newton_gl"]
-    if not viewers:
-        return
     stage = Usd.Stage.Open(retrieve_file_path(rack_path))
     transform = np.eye(4)
     transform[:3, :3] = ((0, 1, 0), (-1, 0, 0), (0, 0, 1))
@@ -110,6 +135,51 @@ def add_gl_visuals(env: GB300SharpaInsertionEnv, rack_path: str) -> None:
                 color=mesh.color, roughness=mesh.roughness, metallic=mesh.metallic,
                 opacity=mesh.opacity, backface_culling=False,
             )  # fmt: skip
+
+
+def _task_panel_meshes() -> tuple[tuple[str, trimesh.Trimesh, tuple[float, float, float]], ...]:
+    """Reuse the physical socket surfaces and a cropped service panel, without CAD I/O."""
+    import trimesh
+
+    from .socket_geometry import _socket_surface_mesh
+
+    sockets = (SOCKET_POSITION_E, UPPER_SOCKET_POSITION_E)
+    bottom, top = min(p[2] for p in sockets) - 0.03, max(p[2] for p in sockets) + 0.03
+    panel = []
+    for _, center, size in _service_face_boxes():
+        lower, upper = np.asarray(center) - np.asarray(size) / 2, np.asarray(center) + np.asarray(size) / 2
+        lower[2], upper[2] = max(lower[2], bottom), min(upper[2], top)
+        if upper[2] > lower[2]:
+            box = trimesh.creation.box(extents=upper - lower)
+            box.apply_translation((lower + upper) / 2)
+            panel.append(box)
+    mesh = _socket_surface_mesh()
+    socket_surfaces = [
+        trimesh.Trimesh(vertices=mesh.vertices + position, faces=mesh.indices.reshape(-1, 3), process=False)
+        for position in sockets
+    ]
+    return (
+        ("Panel", trimesh.util.concatenate(panel), (0.90734, 0.54447, 0.42039)),
+        ("Sockets", trimesh.util.concatenate(socket_surfaces), (0.55, 0.57, 0.60)),
+    )
+
+
+def _spawn_task_panel(
+    prim_path: str,
+    cfg: sim_utils.SpawnerCfg,
+    translation: tuple[float, float, float] | None = None,
+    orientation: tuple[float, float, float, float] | None = None,
+    **kwargs,
+) -> Usd.Prim:
+    """Author the compact task panel through the existing in-memory mesh spawner."""
+    root = sim_utils.create_prim(prim_path, translation=translation, orientation=orientation)
+    for name, mesh, color in _task_panel_meshes():
+        mesh_cfg = sim_utils.MeshFileCfg(
+            mesh=sim_utils.MeshFileCfg.TriangleMeshCfg(vertices=mesh.vertices, faces=mesh.faces),
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=color, roughness=0.55, metallic=0.8),
+        )
+        mesh_cfg.func(f"{prim_path}/{name}", mesh_cfg)
+    return root
 
 
 def _spawn_visual_racks(

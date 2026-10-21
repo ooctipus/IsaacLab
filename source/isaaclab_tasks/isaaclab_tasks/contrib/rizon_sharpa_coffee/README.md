@@ -9,8 +9,9 @@ uv run isaaclab demo rizon-sharpa-coffee
 
 The default is a dry Newton GL scene with a 4 mm grid and one visual grain
 per physical particle. Add `--water` for a filled cup, physical coffee-to-liquid
-conversion, conservative colour diffusion and stirring. GL, Kit and Newton RTX
-load the same full kitchen presentation by default. Use
+conversion, conservative colour diffusion and stirring. GL starts with the lightweight
+studio; add `--backdrop kitchen` to load the full kitchen. Kit and Newton RTX
+use the kitchen by default. Use
 `uv run --extra isaacsim isaaclab demo rizon-sharpa-coffee --water --visualizer kit`
 or `uv run --extra ovrtx isaaclab demo rizon-sharpa-coffee --water --visualizer newton_rtx`
 for the other visualizers. All three support `--backdrop studio` for the plain studio.

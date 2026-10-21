@@ -125,17 +125,8 @@ def _latch_barb_engagement_margins(latch_pose_in_socket: torch.Tensor) -> torch.
 
 
 @lru_cache(maxsize=1)
-def local_socket_mesh() -> newton.Mesh:
-    """Return one CAD-measured socket SDF in the task's socket frame [m].
-
-    The visual CAD contains duplicate, open and non-manifold surfaces; baking
-    it directly falsely fills the cavity. This closed collision proxy retains
-    its measured keyhole profile, entry chamfer, lower entry support, latch
-    shoulders and both front and rear guides. Flexible electrical contacts and
-    the deeper lower rear step remain simplified.
-    Both active jacks share this immutable mesh and its cached 0.05 mm SDF.
-    The checked-in measurements do not require the render-only CAD payload.
-    """
+def _socket_surface_mesh() -> newton.Mesh:
+    """Return the measured socket surface without cooking its collision SDF [m]."""
     import newton
 
     aperture = np.asarray(SOCKET_APERTURE_PROFILE_M)
@@ -234,11 +225,26 @@ def local_socket_mesh() -> newton.Mesh:
     trimesh.repair.fix_normals(mesh)
     if not mesh.is_watertight or not mesh.is_volume:
         raise ValueError("The measured SN2201 socket proxy must define a closed collision volume.")
-    contact_mesh = newton.Mesh(
+    return newton.Mesh(
         np.asarray(mesh.vertices, dtype=np.float32),
         np.asarray(mesh.faces, dtype=np.int32).reshape(-1),
         compute_inertia=False,
     )
+
+
+@lru_cache(maxsize=1)
+def local_socket_mesh() -> newton.Mesh:
+    """Return one CAD-measured socket SDF in the task's socket frame [m].
+
+    The visual CAD contains duplicate, open and non-manifold surfaces; baking
+    it directly falsely fills the cavity. This closed collision proxy retains
+    its measured keyhole profile, entry chamfer, lower entry support, latch
+    shoulders and both front and rear guides. Flexible electrical contacts and
+    the deeper lower rear step remain simplified.
+    Both active jacks share this immutable mesh and its cached 0.05 mm SDF.
+    The checked-in measurements do not require the render-only CAD payload.
+    """
+    contact_mesh = _socket_surface_mesh()
     contact_mesh.build_sdf(
         target_voxel_size=0.00005,
         narrow_band_range=(-0.002, 0.002),

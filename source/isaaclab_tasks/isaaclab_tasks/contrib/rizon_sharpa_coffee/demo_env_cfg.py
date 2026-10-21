@@ -106,7 +106,7 @@ class CoffeeGLBackendCfg(NewtonGLBackendCfg):
     """Coffee presentation with an optional render-only public kitchen."""
 
     class_type: str = "isaaclab_tasks.contrib.rizon_sharpa_coffee.rendering:CoffeeGLVisualizer"
-    backdrop: Literal["kitchen", "studio"] = "kitchen"
+    backdrop: Literal["kitchen", "studio"] = "studio"
     """Presentation backdrop: ``kitchen`` or the original ``studio``."""
 
 
@@ -386,7 +386,7 @@ def _particle_cfg(
     return MPMObjectCfg(
         prim_path="{ENV_REGEX_NS}/" + name,
         spawn=MPMPointsCfg(
-            positions=points.astype(np.float32).tolist(),
+            positions=points.astype(np.float32),
             radius=spacing / 2.0,
             mass=density * spacing**3,
             material=material,

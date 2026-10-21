@@ -9,6 +9,8 @@ from collections.abc import Callable, Sequence
 from dataclasses import MISSING
 from typing import Literal
 
+import numpy as np
+
 from isaaclab.sim.spawners.materials.visual_materials_cfg import VisualMaterialCfg
 from isaaclab.sim.spawners.spawner_cfg import SpawnerCfg
 from isaaclab.utils import configclass
@@ -144,10 +146,13 @@ class MPMGridCfg(MPMParticleSpawnerCfg):
 class MPMPointsCfg(MPMParticleSpawnerCfg):
     """Generate MPM particles from explicit local-space positions."""
 
-    positions: Sequence[Sequence[float]] = MISSING
-    """Local-space particle positions [m], shape ``(num_particles, 3)``."""
+    positions: Sequence[Sequence[float]] | np.ndarray = MISSING
+    """Local-space particle positions [m], shape ``(num_particles, 3)``.
 
-    velocities: Sequence[Sequence[float]] | None = None
+    NumPy arrays avoid recursive scalar-list copies when configuring large particle clouds.
+    """
+
+    velocities: Sequence[Sequence[float]] | np.ndarray | None = None
     """Local-space particle velocities [m/s], shape ``(num_particles, 3)``.
 
     If ``None``, all initial velocities are zero.

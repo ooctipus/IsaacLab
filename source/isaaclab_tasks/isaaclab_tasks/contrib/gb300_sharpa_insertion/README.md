@@ -4,17 +4,22 @@ Non-RL manager-based environment with a Rizon 4s / Sharpa hand, two sockets,
 a spring-clip connector and a VBD cable. One end is fixed; the loose end starts
 physically grasped. The example inserts, releases, regrasps, presses the clip and
 extracts in one continuous simulation.
-NewtonGL shows one full-detail GB300 rack. Kit and Newton RTX compose the full
-data-center USD and eight foreground racks through USD-only scene cloning;
-this scenery adds no physics bodies or colliders. Cinematic overlays remain local.
+NewtonGL starts in a studio with the working patch panel and sockets, without
+loading the full cabinet CAD. Kit and Newton RTX default to the data-center USD
+and eight foreground racks through USD-only scene cloning. Scenery adds no
+physics bodies or colliders. Cinematic overlays remain local.
 
 ```bash
 uv run isaaclab example sharpa-rj45
+uv run isaaclab example sharpa-rj45 --backdrop datacenter
 uv run --extra ovrtx isaaclab example sharpa-rj45 --viz newton_rtx
 uv run --extra isaacsim isaaclab example sharpa-rj45 --viz kit
 ```
 
 Omitting `--viz` selects Newton GL. Add `--extra video` and `--video` to record a run.
+`--backdrop studio` selects the compact task scene with any visualizer;
+`--backdrop datacenter` restores the full cabinet in GL. The default `auto` uses
+the data center whenever Kit or Newton RTX participates, and the studio otherwise.
 
 The example supplies absolute palm/finger targets through Isaac Lab's Newton IK
 and action manager. Native hydroelastic hand–housing/clip contact is enabled;
