@@ -13,6 +13,9 @@ existing policy is evaluated without training, for example a MuJoCo Warp policy 
 """
 
 import argparse
+import json
+import math
+import os
 from pathlib import Path
 
 import torch
@@ -80,7 +83,9 @@ def evaluate(
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--artifact", type=Path, default=None, help="Train in learned physics from this artifact.")
+    artifact_source = parser.add_mutually_exclusive_group()
+    artifact_source.add_argument("--artifact", type=Path, default=None, help="Use a local NeRD artifact.")
+    artifact_source.add_argument("--wandb-artifact", default=None, help="Download a NeRD artifact from W&B.")
     parser.add_argument("--output", type=Path, required=True, help="Directory receiving the policy checkpoints.")
     parser.add_argument("--num-envs", type=int, default=16384)
     parser.add_argument("--iterations", type=int, default=300)
@@ -88,6 +93,7 @@ def main():
     parser.add_argument("--eval-steps", type=int, default=1000, help="Policy steps of each evaluation.")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--checkpoint", type=Path, default=None, help="Evaluate this RSL-RL checkpoint, no training.")
+    parser.add_argument("--wandb-project", default=None, help="Log PPO metrics and checkpoints to W&B.")
     parser.add_argument(
         "--eval-artifact", type=Path, default=None, help="Also evaluate in learned physics. Defaults to --artifact."
     )
@@ -98,13 +104,24 @@ def main():
         help="Precision of the learned model's projections.",
     )
     args = parser.parse_args()
+    args.output.mkdir(parents=True, exist_ok=True)
+    if args.wandb_project and args.checkpoint is None:
+        os.environ.setdefault("WANDB_DIR", str(args.output))
+    artifact = args.artifact
+    if args.wandb_artifact:
+        import wandb
+
+        artifact = Path(wandb.Api().artifact(args.wandb_artifact).download(root=str(args.output / "dynamics_artifact")))
 
     agent_cfg = AnymalDFlatPPORunnerCfg()
     agent_cfg.max_iterations = args.iterations
     agent_cfg.seed = args.seed
+    if args.wandb_project and args.checkpoint is None:
+        agent_cfg.logger = "wandb"
+        agent_cfg.wandb_project = args.wandb_project
     num_envs = args.eval_envs if args.checkpoint is not None else args.num_envs
     env = RslRlVecEnvWrapper(
-        ManagerBasedRLEnv(cfg=make_cfg(num_envs, args.seed, args.artifact, args.inference_dtype)),
+        ManagerBasedRLEnv(cfg=make_cfg(num_envs, args.seed, artifact, args.inference_dtype)),
         clip_actions=agent_cfg.clip_actions,
     )
     runner = OnPolicyRunner(env, to_dict(agent_cfg), log_dir=str(args.output), device=agent_cfg.device)
@@ -116,15 +133,18 @@ def main():
     env.close()
     SimulationContext.clear_instance()
 
-    source = args.checkpoint or f"training with {'learned' if args.artifact is not None else 'MuJoCo Warp'} physics"
+    source = args.checkpoint or f"training with {'learned' if artifact is not None else 'MuJoCo Warp'} physics"
     evaluations: dict[str, Path | None] = {"MuJoCo Warp": None}
-    if (args.eval_artifact or args.artifact) is not None:
-        evaluations["learned"] = args.eval_artifact or args.artifact
+    if (args.eval_artifact or artifact) is not None:
+        evaluations["learned"] = args.eval_artifact or artifact
+    results = {}
     for physics, artifact in evaluations.items():
         metrics = evaluate(policy, args.eval_envs, args.eval_steps, args.seed + 1, artifact, args.inference_dtype)
+        results[physics] = {name: value if math.isfinite(value) else None for name, value in metrics.items()}
         print(f"Policy from {source}, evaluated with {physics} physics:")
         for name, value in metrics.items():
             print(f"  {name}: {value:.4g}")
+    (args.output / "evaluation.json").write_text(json.dumps(results, indent=2, sort_keys=True, allow_nan=False) + "\n")
 
 
 if __name__ == "__main__":
