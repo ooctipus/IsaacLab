@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
-from isaaclab_visualizers.newton import NewtonGLBackendCfg
+from isaaclab_visualizers.newton import NewtonGLBackendCfg, NewtonRTXBackendCfg
 
 from isaaclab.app import add_launcher_args, launch_simulation
 from isaaclab.scene import InteractiveSceneCfg
@@ -515,6 +515,7 @@ def create_sim_cfg():
         visualizer_cfgs=VisualizerCfg(
             eye=CAMERA_EYE,
             lookat=CAMERA_TARGET,
+            focal_length=24.0 if ROBOT_ENABLED else 12.0,
             backend=NewtonGLBackendCfg(
                 show_particles=SHOW_FLUID_PARTICLES,
                 particle_color=WATER_COLOR,
@@ -546,6 +547,15 @@ def create_sim_cfg():
     if ROBOT_ENABLED:
         from rizon_sharpa_teapot import make_solver_cfg
 
+        cfg.visualizer_cfgs.backend = [
+            cfg.visualizer_cfgs.backend,
+            NewtonRTXBackendCfg(
+                render_settings={
+                    "omni:rtx:rt:ambientLight:color": ("Color3f", (0.1, 0.1, 0.1)),
+                    "omni:rtx:rt:ambientLight:intensity": ("Float", 1.0),
+                }
+            ),
+        ]
         solver_cfg = cfg.physics.solver_cfg
         solver_cfg.air_drag = 1.0
         solver_cfg.strain_basis = "P1d"

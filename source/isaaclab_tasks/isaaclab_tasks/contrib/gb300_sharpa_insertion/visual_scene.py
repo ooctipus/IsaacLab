@@ -158,10 +158,13 @@ def _task_panel_meshes() -> tuple[tuple[str, trimesh.Trimesh, tuple[float, float
         trimesh.Trimesh(vertices=mesh.vertices + position, faces=mesh.indices.reshape(-1, 3), process=False)
         for position in sockets
     ]
-    return (
+    meshes = (
         ("Panel", trimesh.util.concatenate(panel), (0.90734, 0.54447, 0.42039)),
         ("Sockets", trimesh.util.concatenate(socket_surfaces), (0.55, 0.57, 0.60)),
     )
+    for _, mesh, _ in meshes:
+        mesh.unmerge_vertices()
+    return meshes
 
 
 def _spawn_task_panel(
