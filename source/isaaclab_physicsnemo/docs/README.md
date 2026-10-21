@@ -260,6 +260,10 @@ python $E/train_policy.py --output /tmp/anymal-c/eval-mjwarp --checkpoint /tmp/a
   --eval-artifact /tmp/anymal-c/train/artifact
 ```
 
+With `--wandb-project`, ANYmal-C training uploads a deployable model at each `--checkpoint-every` interval
+and uploads the validated final model with the `final` alias. The local `training_checkpoints/resident.pt`
+also retains optimizer state for resuming the run.
+
 For ten million transitions, record with several processes per GPU, each with its own seed and with
 bounded shards, and train on all of them for 200,000 updates; FP16 projections halve the cost of each learned
 step:

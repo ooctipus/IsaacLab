@@ -74,6 +74,15 @@ def main() -> None:
         wandb_run.define_metric("train/*", step_metric="update")
         wandb_run.define_metric("validation/*", step_metric="update")
 
+    def upload_checkpoint(updates: int, path: Path) -> None:
+        if updates == args.max_updates:
+            return  # The validated final artifact is uploaded below.
+        artifact = wandb.Artifact("anymal-c-nerd", type="model", metadata={"updates": updates})
+        artifact.add_dir(str(path))
+        logged = wandb_run.log_artifact(artifact, aliases=[f"step-{updates}", "latest"])
+        if wandb_run.settings.mode != "offline":
+            logged.wait()  # Keep the staged files intact until the upload completes.
+
     try:
         # The codec and probes are built from the deployment scene, whose Newton model equals the teacher's.
         cfg = AnymalCTargetControlEnvCfg()
@@ -110,13 +119,14 @@ def main() -> None:
                 on_metrics=(
                     (lambda update, metrics: wandb_run.log({"update": update, **metrics})) if wandb_run else None
                 ),
+                on_checkpoint=upload_checkpoint if wandb_run else None,
             )
         finally:
             env.close()
         if wandb_run is not None:
             artifact = wandb.Artifact("anymal-c-nerd", type="model", metadata={"updates": summary.parameter_updates})
             artifact.add_dir(str(summary.artifact_path))
-            wandb_run.log_artifact(artifact)
+            wandb_run.log_artifact(artifact, aliases=["latest", "final"])
             wandb_run.summary.update({f"final/{name}": value for name, value in summary.validation.items()})
             print(f"W&B: {wandb_run.url}")
         print(
