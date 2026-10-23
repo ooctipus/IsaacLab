@@ -280,7 +280,7 @@
       "task": "Isaac-Velocity-Rough-G1",
       "solver_attrs": {
         "grouped_dynamics": "True",
-        "dense_max_constraints": "100",
+        "dense_max_constraints": "128",
         "friction_anchor_beta": "0",
         "convex_collision": "auto"
       },
