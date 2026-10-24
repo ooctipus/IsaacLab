@@ -514,7 +514,19 @@ class NewtonBackend:
         captured = bool(self.graphs)
         if not self.device.is_capturing:
             self.solver_ops.check_step(captured, self.cfg.debug_mode)
+            self._service_contact_capacity()
         return captured
+
+    def _service_contact_capacity(self) -> None:
+        """Grow the collision pipeline's contact buffers from the demand it measured, once per step.
+
+        A growth changes array lengths baked into the captured step, so the stale graphs are released (some Newton
+        owners admit only one live graph) and the next step runs eagerly and is captured again. Pipelines without
+        a capacity service skip this.
+        """
+        service_capacity = getattr(self.collision_pipeline, "service_capacity", None)
+        if service_capacity is not None and service_capacity() and self.graphs:
+            self.invalidate_graph()
 
     def state_pointers(self) -> tuple[int, int]:
         """Addresses of :attr:`state_0`'s body and particle arrays, ``0`` for an absent array.
