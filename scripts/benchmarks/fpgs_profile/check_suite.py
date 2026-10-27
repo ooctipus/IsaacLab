@@ -107,13 +107,7 @@ def physics_launches_per_step(env):
 
 
 def collision_work_snapshot(narrow):
-    """Read retained reducer populations outside the physics timing region.
-
-    Distinct attempted raw IDs are not final contacts: the writer can reject
-    attempts, and other producers can write contacts without this reducer.
-    """
-    import numpy as np
-
+    """Read retained reducer populations outside the physics timing region."""
     reducer = narrow.global_contact_reducer
     if reducer is None:
         return None
@@ -121,22 +115,11 @@ def collision_work_snapshot(narrow):
     active = int(reducer.hashtable.active_slots[-1:].numpy()[0])
     if not 0 <= raw <= reducer.capacity or not 0 <= active <= reducer.hashtable.capacity:
         raise ValueError("Reducer work exceeds the recorded capacity")
-    slots = active * int(reducer.values_per_key)
-    attempts = distinct = None
-    if reducer.exported_flags.shape[0]:
-        flags = reducer.exported_flags[1 : raw + 1].numpy() if raw else np.empty(0, dtype=np.int32)
-        attempts = int(np.sum(flags, dtype=np.int64))
-        distinct = int(np.count_nonzero(flags))
-        if len(flags) != raw or np.any(flags < 0) or attempts > slots:
-            raise ValueError("Invalid retained export counts")
     return {
         "raw_contacts": raw,
         "active_keys": active,
         "slots_per_key": int(reducer.values_per_key),
-        "candidate_slots": slots,
-        "export_attempts": attempts,
-        "distinct_attempted_ids": distinct,
-        "repeated_export_attempts": None if attempts is None else attempts - distinct,
+        "candidate_slots": active * int(reducer.values_per_key),
     }
 
 

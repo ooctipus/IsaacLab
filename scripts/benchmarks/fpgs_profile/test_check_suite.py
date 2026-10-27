@@ -24,37 +24,30 @@ class TestCollisionWorkSnapshot(unittest.TestCase):
         def numpy(self):
             return self.values
 
-    def fixture(self, raw=3, flags=(99, 3, 0, 1, 77, 88)):
+    def fixture(self, raw=3, active=2):
         return SimpleNamespace(
             global_contact_reducer=SimpleNamespace(
                 contact_count=self.Array([raw]),
                 capacity=5,
                 values_per_key=7,
-                hashtable=SimpleNamespace(active_slots=self.Array([8, 9, 2]), capacity=2),
-                exported_flags=self.Array(flags),
+                hashtable=SimpleNamespace(active_slots=self.Array([8, 9, active]), capacity=2),
             )
         )
 
-    def test_live_raw_ids_exclude_sentinel_and_stale_tail(self):
+    def test_counts_read_the_live_populations(self):
         work = collision_work_snapshot(self.fixture())
         self.assertEqual(work["raw_contacts"], 3)
+        self.assertEqual(work["active_keys"], 2)
         self.assertEqual(work["candidate_slots"], 14)
-        self.assertEqual(work["export_attempts"], 4)
-        self.assertEqual(work["distinct_attempted_ids"], 2)
-        self.assertEqual(work["repeated_export_attempts"], 2)
 
     def test_empty_and_unavailable_are_distinct(self):
         self.assertIsNone(collision_work_snapshot(SimpleNamespace(global_contact_reducer=None)))
-        empty = collision_work_snapshot(self.fixture(raw=0))
-        self.assertEqual(empty["export_attempts"], 0)
-        unavailable = collision_work_snapshot(self.fixture(flags=()))
-        self.assertIsNone(unavailable["export_attempts"])
-        self.assertEqual(unavailable["raw_contacts"], 3)
+        self.assertEqual(collision_work_snapshot(self.fixture(raw=0))["raw_contacts"], 0)
 
     def test_invalid_counts_are_rejected(self):
-        for raw, flags in ((6, ()), (3, (0, 1, -1, 0)), (3, (0, 20, 0, 0))):
-            with self.subTest(raw=raw, flags=flags), self.assertRaises(ValueError):
-                collision_work_snapshot(self.fixture(raw=raw, flags=flags))
+        for raw, active in ((6, 2), (3, 3), (-1, 2)):
+            with self.subTest(raw=raw, active=active), self.assertRaises(ValueError):
+                collision_work_snapshot(self.fixture(raw=raw, active=active))
 
 
 class TestSuiteScale(unittest.TestCase):
