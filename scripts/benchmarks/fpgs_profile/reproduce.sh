@@ -18,7 +18,7 @@ else
 fi
 export OUT_DIR REPEATS=1 STEPS=40 PROFILE_STEPS=3
 for option in ${!FEATHER_PGS_@} ${!NEWTON_NARROW_PHASE_@}; do unset "$option"; done
-export FEATHER_PGS_GROUP_LANES=16 FEATHER_PGS_ROWS_MASKED=1 NEWTON_NARROW_PHASE_THREADS_X=4
+export FEATHER_PGS_GROUP_LANES=16 NEWTON_NARROW_PHASE_THREADS_X=4
 command -v nsys >/dev/null
 command -v uv >/dev/null
 printf 'Results: %s\n' "$OUT_DIR"

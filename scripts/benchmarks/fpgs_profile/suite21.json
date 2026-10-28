@@ -17,7 +17,6 @@
       },
       "environment": {
         "FEATHER_PGS_GROUP_LANES": "16",
-        "FEATHER_PGS_ROWS_MASKED": "1",
         "NEWTON_NARROW_PHASE_THREADS_X": "4",
         "FEATHER_PGS_INK": "1",
         "FEATHER_PGS_TIER_BLOCKS": "16384",
@@ -46,7 +45,6 @@
       },
       "environment": {
         "FEATHER_PGS_GROUP_LANES": "16",
-        "FEATHER_PGS_ROWS_MASKED": "1",
         "NEWTON_NARROW_PHASE_THREADS_X": "4",
         "NEWTON_HEIGHTFIELD_GEOMETRIC_CULL": "1",
         "NEWTON_HEIGHTFIELD_PRIMITIVE_QUERY": "1",
@@ -74,7 +72,6 @@
       },
       "environment": {
         "FEATHER_PGS_GROUP_LANES": "16",
-        "FEATHER_PGS_ROWS_MASKED": "1",
         "NEWTON_NARROW_PHASE_THREADS_X": "4",
         "FEATHER_PGS_INK": "1",
         "FEATHER_PGS_MF_EXACT_ROWSUM": "1",
@@ -105,7 +102,6 @@
       },
       "environment": {
         "FEATHER_PGS_GROUP_LANES": "16",
-        "FEATHER_PGS_ROWS_MASKED": "1",
         "NEWTON_NARROW_PHASE_THREADS_X": "4",
         "NEWTON_HEIGHTFIELD_GEOMETRIC_CULL": "1",
         "NEWTON_HEIGHTFIELD_PRIMITIVE_QUERY": "1",
@@ -131,7 +127,6 @@
       },
       "environment": {
         "FEATHER_PGS_GROUP_LANES": "16",
-        "FEATHER_PGS_ROWS_MASKED": "1",
         "NEWTON_NARROW_PHASE_THREADS_X": "4",
         "NEWTON_HEIGHTFIELD_GEOMETRIC_CULL": "1",
         "NEWTON_HEIGHTFIELD_PRIMITIVE_QUERY": "1",
@@ -157,7 +152,6 @@
       },
       "environment": {
         "FEATHER_PGS_GROUP_LANES": "16",
-        "FEATHER_PGS_ROWS_MASKED": "1",
         "NEWTON_NARROW_PHASE_THREADS_X": "4",
         "NEWTON_HEIGHTFIELD_GEOMETRIC_CULL": "1",
         "NEWTON_HEIGHTFIELD_PRIMITIVE_QUERY": "1",
@@ -184,7 +178,6 @@
       },
       "environment": {
         "FEATHER_PGS_GROUP_LANES": "16",
-        "FEATHER_PGS_ROWS_MASKED": "1",
         "NEWTON_NARROW_PHASE_THREADS_X": "4",
         "NEWTON_HEIGHTFIELD_GEOMETRIC_CULL": "1",
         "NEWTON_HEIGHTFIELD_PRIMITIVE_QUERY": "1",
@@ -208,7 +201,6 @@
       "storage_at_16384_worlds": {},
       "environment": {
         "FEATHER_PGS_GROUP_LANES": "16",
-        "FEATHER_PGS_ROWS_MASKED": "1",
         "NEWTON_NARROW_PHASE_THREADS_X": "4",
         "FEATHER_PGS_SIMPLE_WORLD_ZERO": "1",
         "FEATHER_PGS_LOCAL_ROW_PACKETS": "1",
@@ -234,7 +226,6 @@
       "storage_at_16384_worlds": {},
       "environment": {
         "FEATHER_PGS_GROUP_LANES": "16",
-        "FEATHER_PGS_ROWS_MASKED": "1",
         "NEWTON_NARROW_PHASE_THREADS_X": "4",
         "NEWTON_NARROW_PHASE_COHERENT_CONVEX": "0",
         "NEWTON_NARROW_PHASE_COHERENT_STATS": "0",
@@ -254,7 +245,6 @@
       },
       "environment": {
         "FEATHER_PGS_GROUP_LANES": "16",
-        "FEATHER_PGS_ROWS_MASKED": "1",
         "NEWTON_NARROW_PHASE_THREADS_X": "4",
         "NEWTON_HEIGHTFIELD_GEOMETRIC_CULL": "1",
         "NEWTON_HEIGHTFIELD_PRIMITIVE_QUERY": "1",
@@ -281,7 +271,6 @@
       },
       "environment": {
         "FEATHER_PGS_GROUP_LANES": "16",
-        "FEATHER_PGS_ROWS_MASKED": "1",
         "NEWTON_NARROW_PHASE_THREADS_X": "4",
         "FEATHER_PGS_SPARSE_FACTOR": "1",
         "FEATHER_PGS_SPARSE_PARALLEL_LIMITS": "1",
@@ -320,7 +309,6 @@
       },
       "environment": {
         "FEATHER_PGS_GROUP_LANES": "16",
-        "FEATHER_PGS_ROWS_MASKED": "1",
         "NEWTON_NARROW_PHASE_THREADS_X": "4",
         "NEWTON_HEIGHTFIELD_GEOMETRIC_CULL": "1",
         "NEWTON_HEIGHTFIELD_PRIMITIVE_QUERY": "1",
@@ -349,7 +337,6 @@
       },
       "environment": {
         "FEATHER_PGS_GROUP_LANES": "16",
-        "FEATHER_PGS_ROWS_MASKED": "1",
         "NEWTON_NARROW_PHASE_THREADS_X": "4",
         "NEWTON_HEIGHTFIELD_GEOMETRIC_CULL": "1",
         "NEWTON_HEIGHTFIELD_PRIMITIVE_QUERY": "1",
@@ -376,7 +363,6 @@
       },
       "environment": {
         "FEATHER_PGS_GROUP_LANES": "16",
-        "FEATHER_PGS_ROWS_MASKED": "1",
         "NEWTON_NARROW_PHASE_THREADS_X": "4",
         "NEWTON_HEIGHTFIELD_GEOMETRIC_CULL": "1",
         "NEWTON_HEIGHTFIELD_PRIMITIVE_QUERY": "1",
@@ -402,7 +388,6 @@
       },
       "environment": {
         "FEATHER_PGS_GROUP_LANES": "16",
-        "FEATHER_PGS_ROWS_MASKED": "1",
         "NEWTON_NARROW_PHASE_THREADS_X": "4",
         "NEWTON_HEIGHTFIELD_GEOMETRIC_CULL": "1",
         "NEWTON_HEIGHTFIELD_PRIMITIVE_QUERY": "1",
@@ -429,7 +414,6 @@
       },
       "environment": {
         "FEATHER_PGS_GROUP_LANES": "16",
-        "FEATHER_PGS_ROWS_MASKED": "1",
         "NEWTON_NARROW_PHASE_THREADS_X": "4",
         "NEWTON_HEIGHTFIELD_GEOMETRIC_CULL": "1",
         "NEWTON_HEIGHTFIELD_PRIMITIVE_QUERY": "1",
@@ -455,7 +439,6 @@
       },
       "environment": {
         "FEATHER_PGS_GROUP_LANES": "16",
-        "FEATHER_PGS_ROWS_MASKED": "1",
         "NEWTON_NARROW_PHASE_THREADS_X": "4",
         "NEWTON_HEIGHTFIELD_GEOMETRIC_CULL": "1",
         "NEWTON_HEIGHTFIELD_PRIMITIVE_QUERY": "1",
@@ -481,7 +464,6 @@
       },
       "environment": {
         "FEATHER_PGS_GROUP_LANES": "16",
-        "FEATHER_PGS_ROWS_MASKED": "1",
         "NEWTON_NARROW_PHASE_THREADS_X": "4",
         "FEATHER_PGS_SPARSE_CONTACT_DIRECT": "1",
         "FEATHER_PGS_PRISMATIC_PUBLICATION": "1",
@@ -511,7 +493,6 @@
       },
       "environment": {
         "FEATHER_PGS_GROUP_LANES": "16",
-        "FEATHER_PGS_ROWS_MASKED": "1",
         "NEWTON_NARROW_PHASE_THREADS_X": "4",
         "FEATHER_PGS_SIMPLE_WORLD_ZERO": "1",
         "FEATHER_PGS_LOCAL_ROW_PACKETS": "1",
@@ -544,7 +525,6 @@
       },
       "environment": {
         "FEATHER_PGS_GROUP_LANES": "16",
-        "FEATHER_PGS_ROWS_MASKED": "1",
         "NEWTON_NARROW_PHASE_THREADS_X": "4",
         "FEATHER_PGS_SIMPLE_WORLD_ZERO": "1",
         "FEATHER_PGS_LOCAL_ROW_PACKETS": "1",
@@ -577,7 +557,6 @@
       },
       "environment": {
         "FEATHER_PGS_GROUP_LANES": "16",
-        "FEATHER_PGS_ROWS_MASKED": "1",
         "NEWTON_NARROW_PHASE_THREADS_X": "4",
         "NEWTON_HEIGHTFIELD_GEOMETRIC_CULL": "1",
         "NEWTON_HEIGHTFIELD_PRIMITIVE_QUERY": "1",

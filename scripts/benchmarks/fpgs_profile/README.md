@@ -182,7 +182,7 @@ export CUDA_VISIBLE_DEVICES=0
 mkdir -p outputs/fpgs_profile
 PARITY_DIR=$(mktemp -d outputs/fpgs_profile/sweep_parity_XXXXXX)
 for option in ${!FEATHER_PGS_@} ${!NEWTON_NARROW_PHASE_@}; do unset "$option"; done
-export FEATHER_PGS_GROUP_LANES=16 FEATHER_PGS_ROWS_MASKED=1 NEWTON_NARROW_PHASE_THREADS_X=4
+export FEATHER_PGS_GROUP_LANES=16 NEWTON_NARROW_PHASE_THREADS_X=4
 
 FEATHER_PGS_INK=1 FEATHER_PGS_MF_EXACT_ROWSUM=1 FEATHER_PGS_WORLD_ROWS=1 \
     uv run --no-sync python scripts/benchmarks/fpgs_profile/check_sweep_parity.py \
