@@ -35,7 +35,7 @@ RECIPES = {
             "mf_gs_parallel_rows=48",
             "mf_gs_parallel_matrix_free=True",
         ),
-        {"FEATHER_PGS_INK": "1", "FEATHER_PGS_MF_EXACT_ROWSUM": "1", "FEATHER_PGS_WORLD_ROWS": "1"},
+        {"FEATHER_PGS_INK": "1", "FEATHER_PGS_MF_EXACT_ROWSUM": "1"},
     ),
     "allegro": (
         "Isaac-Reorient-Cube-Allegro",
@@ -54,7 +54,6 @@ RECIPES = {
 }
 DEFAULT_TASKS = ("anymald", "allegro")
 COMMON_ENVIRONMENT = {
-    "FEATHER_PGS_GROUP_LANES": "16",
     "NEWTON_NARROW_PHASE_THREADS_X": "4",
     "UV_NO_SYNC": "1",
     "PYTHONUNBUFFERED": "1",

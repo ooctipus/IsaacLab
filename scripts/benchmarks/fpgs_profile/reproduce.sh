@@ -18,7 +18,7 @@ else
 fi
 export OUT_DIR REPEATS=1 STEPS=40 PROFILE_STEPS=3
 for option in ${!FEATHER_PGS_@} ${!NEWTON_NARROW_PHASE_@}; do unset "$option"; done
-export FEATHER_PGS_GROUP_LANES=16 NEWTON_NARROW_PHASE_THREADS_X=4
+export NEWTON_NARROW_PHASE_THREADS_X=4
 command -v nsys >/dev/null
 command -v uv >/dev/null
 printf 'Results: %s\n' "$OUT_DIR"
@@ -37,7 +37,7 @@ run() {
     bash "$here/nsys_run.sh" "$name" "$physics" "$task" --num-envs 16384 --seed 0 --warmup-steps 200 "$@"
     rg 'graph_span_us_per_step' "$OUT_DIR/${name}_analysis.txt"
 }
-FEATHER_PGS_INK=1 FEATHER_PGS_MF_EXACT_ROWSUM=1 FEATHER_PGS_WORLD_ROWS=1 \
+FEATHER_PGS_INK=1 FEATHER_PGS_MF_EXACT_ROWSUM=1 \
     run fpgs_anymald feather_pgs Isaac-Velocity-Flat-AnymalD \
     --solver-attr mf_gs_parallel_rows=48 \
     --solver-attr mf_gs_parallel_matrix_free=True
