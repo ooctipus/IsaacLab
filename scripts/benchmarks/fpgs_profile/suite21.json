@@ -6,10 +6,8 @@
       "id": "allegro",
       "task": "Isaac-Reorient-Cube-Allegro",
       "solver_attrs": {
-        "grouped_dynamics": "True",
         "mf_gs_parallel_rows": "128",
         "mf_gs_parallel_matrix_free": "True",
-        "lazy_kinematics": "True",
         "dense_max_constraints": "192",
         "friction_anchor_beta": "0",
         "convex_collision": "auto"
@@ -41,7 +39,6 @@
       "solver_attrs": {
         "dense_max_constraints": "64",
         "friction_anchor_beta": "0",
-        "grouped_dynamics": "True",
         "convex_collision": "auto"
       },
       "storage_at_16384_worlds": {
@@ -66,10 +63,8 @@
       "id": "anymald",
       "task": "Isaac-Velocity-Flat-AnymalD",
       "solver_attrs": {
-        "grouped_dynamics": "True",
         "mf_gs_parallel_rows": "48",
         "mf_gs_parallel_matrix_free": "True",
-        "lazy_kinematics": "True",
         "dense_max_constraints": "72",
         "friction_anchor_beta": "0",
         "convex_collision": "auto"
@@ -101,7 +96,6 @@
       "task": "Isaac-Velocity-Rough-AnymalD",
       "solver_attrs": {
         "friction_anchor_beta": "0",
-        "grouped_dynamics": "True",
         "dense_max_constraints": "256",
         "convex_collision": "auto"
       },
@@ -156,7 +150,6 @@
       "solver_attrs": {
         "dense_max_constraints": "48",
         "friction_anchor_beta": "0",
-        "grouped_dynamics": "True",
         "convex_collision": "auto"
       },
       "storage_at_16384_worlds": {
@@ -183,7 +176,6 @@
       "solver_attrs": {
         "dense_max_constraints": "80",
         "friction_anchor_beta": "0",
-        "grouped_dynamics": "True",
         "convex_collision": "auto"
       },
       "storage_at_16384_worlds": {
@@ -279,7 +271,6 @@
       "id": "g1",
       "task": "Isaac-Velocity-Rough-G1",
       "solver_attrs": {
-        "grouped_dynamics": "True",
         "dense_max_constraints": "128",
         "friction_anchor_beta": "0",
         "convex_collision": "auto"
@@ -320,7 +311,6 @@
       "id": "g1-flat",
       "task": "Isaac-Velocity-Flat-G1",
       "solver_attrs": {
-        "grouped_dynamics": "True",
         "dense_max_constraints": "56",
         "friction_anchor_beta": "0",
         "convex_collision": "auto"
@@ -352,7 +342,6 @@
       "solver_attrs": {
         "dense_max_constraints": "112",
         "friction_anchor_beta": "0",
-        "grouped_dynamics": "True",
         "convex_collision": "auto"
       },
       "storage_at_16384_worlds": {
@@ -378,7 +367,6 @@
       "task": "Isaac-Velocity-Rough-UnitreeGo2",
       "solver_attrs": {
         "friction_anchor_beta": "0",
-        "grouped_dynamics": "True",
         "dense_max_constraints": "256",
         "convex_collision": "auto"
       },
@@ -407,7 +395,6 @@
       "solver_attrs": {
         "dense_max_constraints": "48",
         "friction_anchor_beta": "0",
-        "grouped_dynamics": "True",
         "convex_collision": "auto"
       },
       "storage_at_16384_worlds": {
@@ -434,7 +421,6 @@
       "solver_attrs": {
         "dense_max_constraints": "128",
         "friction_anchor_beta": "0",
-        "grouped_dynamics": "True",
         "convex_collision": "auto"
       },
       "storage_at_16384_worlds": {
@@ -462,7 +448,6 @@
       "solver_attrs": {
         "dense_max_constraints": "128",
         "friction_anchor_beta": "0",
-        "grouped_dynamics": "True",
         "convex_collision": "auto"
       },
       "storage_at_16384_worlds": {

@@ -162,16 +162,6 @@ class FeatherPGSSolverCfg(NewtonSolverCfg):
     mf_gs_response_block_lane_rows: int = 16
     """Row bound of the lane-per-world class of the response-block sweep (at most 24)."""
 
-    grouped_dynamics: bool = False
-    """Experimental: level-synchronous forward kinematics and inverse dynamics with a lane group per
-    articulation instead of one serial thread per articulation (same math and accumulation order)."""
-
-    lazy_kinematics: bool = False
-    """Skip the per-substep kinematics publish when the fused world-dynamics kernel is active.
-
-    Body poses and CoM velocities are then published only before collision detection and sensor updates.
-    """
-
     pgs_iterations: int = 8
     """Number of Gauss-Seidel iterations per simulation step."""
 

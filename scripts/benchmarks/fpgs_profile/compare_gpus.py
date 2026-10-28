@@ -32,24 +32,20 @@ RECIPES = {
     "anymald": (
         "Isaac-Velocity-Flat-AnymalD",
         (
-            "grouped_dynamics=True",
             "mf_gs_parallel_rows=48",
             "mf_gs_parallel_matrix_free=True",
-            "lazy_kinematics=True",
         ),
         {"FEATHER_PGS_INK": "1", "FEATHER_PGS_MF_EXACT_ROWSUM": "1", "FEATHER_PGS_WORLD_ROWS": "1"},
     ),
     "allegro": (
         "Isaac-Reorient-Cube-Allegro",
         (
-            "grouped_dynamics=True",
             "mf_gs_parallel_rows=128",
             "mf_gs_parallel_matrix_free=True",
-            "lazy_kinematics=True",
         ),
         {"FEATHER_PGS_INK": "1", "FEATHER_PGS_TIER_BLOCKS": "16384"},
     ),
-    "g1": ("Isaac-Velocity-Rough-G1", ("grouped_dynamics=True",), {}),
+    "g1": ("Isaac-Velocity-Rough-G1", (), {}),
     "kuka": ("Isaac-Lift-KukaAllegro", (), {}),
     "franka": ("Isaac-Lift-Franka", (), {}),
     "cartpole": ("Isaac-Cartpole", (), {}),

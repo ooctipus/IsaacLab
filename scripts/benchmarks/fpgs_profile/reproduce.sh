@@ -39,15 +39,15 @@ run() {
 }
 FEATHER_PGS_INK=1 FEATHER_PGS_MF_EXACT_ROWSUM=1 FEATHER_PGS_WORLD_ROWS=1 \
     run fpgs_anymald feather_pgs Isaac-Velocity-Flat-AnymalD \
-    --solver-attr grouped_dynamics=True --solver-attr mf_gs_parallel_rows=48 \
-    --solver-attr mf_gs_parallel_matrix_free=True --solver-attr lazy_kinematics=True
+    --solver-attr mf_gs_parallel_rows=48 \
+    --solver-attr mf_gs_parallel_matrix_free=True
 run mjwarp_anymald newton_mjwarp Isaac-Velocity-Flat-AnymalD
 FEATHER_PGS_INK=1 FEATHER_PGS_TIER_BLOCKS=16384 \
     run fpgs_allegro feather_pgs Isaac-Reorient-Cube-Allegro \
-    --solver-attr grouped_dynamics=True --solver-attr mf_gs_parallel_rows=128 \
-    --solver-attr mf_gs_parallel_matrix_free=True --solver-attr lazy_kinematics=True
+    --solver-attr mf_gs_parallel_rows=128 \
+    --solver-attr mf_gs_parallel_matrix_free=True
 run mjwarp_allegro newton_mjwarp Isaac-Reorient-Cube-Allegro
-run fpgs_g1 feather_pgs Isaac-Velocity-Rough-G1 --solver-attr grouped_dynamics=True
+run fpgs_g1 feather_pgs Isaac-Velocity-Rough-G1
 run mjwarp_g1 newton_mjwarp Isaac-Velocity-Rough-G1
 run fpgs_kuka feather_pgs Isaac-Lift-KukaAllegro
 run mjwarp_kuka newton_mjwarp Isaac-Lift-KukaAllegro

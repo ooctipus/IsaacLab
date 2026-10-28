@@ -190,9 +190,9 @@ FEATHER_PGS_INK=1 FEATHER_PGS_MF_EXACT_ROWSUM=1 FEATHER_PGS_WORLD_ROWS=1 \
     --parity-output "$PARITY_DIR/anymald_parity.json" -- \
     --task Isaac-Velocity-Flat-AnymalD --physics feather_pgs --device cuda:0 \
     --num-envs 512 --seed 0 --warmup-steps 200 --steps 8 --repeats 1 --profile-steps 0 \
-    --no-graph --no-nvtx --solver-attr grouped_dynamics=True \
+    --no-graph --no-nvtx \
     --solver-attr mf_gs_parallel_rows=48 --solver-attr mf_gs_parallel_matrix_free=True \
-    --solver-attr lazy_kinematics=True --output "$PARITY_DIR/anymald_run.json"
+    --output "$PARITY_DIR/anymald_run.json"
 
 FEATHER_PGS_INK=1 FEATHER_PGS_TIER_BLOCKS=16384 \
     uv run --no-sync python scripts/benchmarks/fpgs_profile/check_sweep_parity.py \
@@ -200,9 +200,9 @@ FEATHER_PGS_INK=1 FEATHER_PGS_TIER_BLOCKS=16384 \
     --parity-output "$PARITY_DIR/allegro_parity.json" -- \
     --task Isaac-Reorient-Cube-Allegro --physics feather_pgs --device cuda:0 \
     --num-envs 512 --seed 0 --warmup-steps 200 --steps 8 --repeats 1 --profile-steps 0 \
-    --no-graph --no-nvtx --solver-attr grouped_dynamics=True \
+    --no-graph --no-nvtx \
     --solver-attr mf_gs_parallel_rows=128 --solver-attr mf_gs_parallel_matrix_free=True \
-    --solver-attr lazy_kinematics=True --output "$PARITY_DIR/allegro_run.json"
+    --output "$PARITY_DIR/allegro_run.json"
 ```
 
 The default checks 16 launches per tier after warmup; `--checks-per-tier` and
