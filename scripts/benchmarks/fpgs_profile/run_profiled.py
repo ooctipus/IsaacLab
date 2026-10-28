@@ -136,31 +136,6 @@ def _trace_step(env, i: int, physics: str) -> None:
         valid = getattr(s, "_fk_id_cache_valid", None)
         nvalid = int(valid.numpy().sum()) if valid is not None else -1
         extra = f" body_q_vs_fk={dq:.3e} body_qd_vs_fk={dqd:.3e} cache_valid={nvalid}"
-        diff = getattr(s, "_debug_cache_diff", None)
-        sc = getattr(s, "_debug_cache_scratch", None)
-        if diff is not None and sc is not None and "cached_f" in sc:
-            fc = sc["cached_f"].numpy()
-            ff = sc["fresh_f"].numpy()
-            d = np.abs(fc - ff).max(axis=1)
-            top = np.argsort(-d)[:4]
-            print("  in-graph stage-1 detail (body, art, |df|, mass, cached f, fresh f, |da|, |dqcom|):")
-            mass = model.body_mass.numpy()
-            b2a = s.body_to_articulation.numpy()
-            da = np.abs(sc["cached_a"].numpy() - sc["fresh_a"].numpy()).max(axis=1)
-            dq = np.abs(sc["cached_qcom"].numpy() - sc["fresh_qcom"].numpy()).max(axis=1)
-            for b in top:
-                print(
-                    f"    {b} art={b2a[b]} {d[b]:.3e} m={mass[b]:.3f} {np.round(fc[b], 2)} {np.round(ff[b], 2)} "
-                    f"da={da[b]:.2e} dq={dq[b]:.2e}"
-                )
-            print(
-                f"  bodies with |df|>1: {int((d > 1).sum())} of {d.size}; per-body-slot histogram of |df|>1: "
-                f"{np.bincount((np.flatnonzero(d > 1) % 17), minlength=17).tolist()}"
-            )
-        if diff is not None:
-            d = diff.numpy()
-            extra += " cache_vs_fresh[q,qcom,origin,S,v,a,f,f_sub0,f_sub1]=" + ",".join(f"{x:.2e}" for x in d[:9])
-            diff.zero_()
     print(
         f"TRACE step={i} contacts={m.get('contacts_active')} pairs={m.get('broad_phase_pairs')} "
         f"gjk={m.get('gjk_items')} manifold={m.get('manifold_items')} resets={resets} "
