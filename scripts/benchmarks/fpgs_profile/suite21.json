@@ -17,7 +17,6 @@
       },
       "environment": {
         "NEWTON_NARROW_PHASE_THREADS_X": "4",
-        "FEATHER_PGS_INK": "1",
         "FEATHER_PGS_TIER_BLOCKS": "16384",
         "NEWTON_NARROW_PHASE_COHERENT_CONVEX": "0",
         "NEWTON_NARROW_PHASE_CONVEX_CELLS": "0",
@@ -67,7 +66,6 @@
       },
       "environment": {
         "NEWTON_NARROW_PHASE_THREADS_X": "4",
-        "FEATHER_PGS_INK": "1",
         "FEATHER_PGS_MF_EXACT_ROWSUM": "1",
         "NEWTON_HEIGHTFIELD_GEOMETRIC_CULL": "1",
         "NEWTON_HEIGHTFIELD_PRIMITIVE_QUERY": "1",

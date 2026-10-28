@@ -184,7 +184,7 @@ PARITY_DIR=$(mktemp -d outputs/fpgs_profile/sweep_parity_XXXXXX)
 for option in ${!FEATHER_PGS_@} ${!NEWTON_NARROW_PHASE_@}; do unset "$option"; done
 export NEWTON_NARROW_PHASE_THREADS_X=4
 
-FEATHER_PGS_INK=1 FEATHER_PGS_MF_EXACT_ROWSUM=1 \
+FEATHER_PGS_MF_EXACT_ROWSUM=1 \
     uv run --no-sync python scripts/benchmarks/fpgs_profile/check_sweep_parity.py \
     --baseline "$NEWTON_BASELINE" --candidate "$NEWTON_CANDIDATE" \
     --parity-output "$PARITY_DIR/anymald_parity.json" -- \
@@ -194,7 +194,7 @@ FEATHER_PGS_INK=1 FEATHER_PGS_MF_EXACT_ROWSUM=1 \
     --solver-attr mf_gs_parallel_rows=48 --solver-attr mf_gs_parallel_matrix_free=True \
     --output "$PARITY_DIR/anymald_run.json"
 
-FEATHER_PGS_INK=1 FEATHER_PGS_TIER_BLOCKS=16384 \
+FEATHER_PGS_TIER_BLOCKS=16384 \
     uv run --no-sync python scripts/benchmarks/fpgs_profile/check_sweep_parity.py \
     --baseline "$NEWTON_BASELINE" --candidate "$NEWTON_CANDIDATE" \
     --parity-output "$PARITY_DIR/allegro_parity.json" -- \
