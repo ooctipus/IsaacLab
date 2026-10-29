@@ -62,7 +62,6 @@ class CartpolePhysicsCfg(PresetCfg):
             pgs_iterations=4,
             dense_max_constraints=8,
             mf_max_constraints=64,
-            pgs_kernel="loop",
         ),
     )
     newton_kamino: NewtonCfg = NewtonCfg(

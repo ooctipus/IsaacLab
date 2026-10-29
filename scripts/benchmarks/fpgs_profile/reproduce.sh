@@ -42,8 +42,7 @@ FEATHER_PGS_MF_EXACT_ROWSUM=1 \
     --solver-attr mf_gs_parallel_rows=48 \
     --solver-attr mf_gs_parallel_matrix_free=True
 run mjwarp_anymald newton_mjwarp Isaac-Velocity-Flat-AnymalD
-FEATHER_PGS_TIER_BLOCKS=16384 \
-    run fpgs_allegro feather_pgs Isaac-Reorient-Cube-Allegro \
+run fpgs_allegro feather_pgs Isaac-Reorient-Cube-Allegro \
     --solver-attr mf_gs_parallel_rows=128 \
     --solver-attr mf_gs_parallel_matrix_free=True
 run mjwarp_allegro newton_mjwarp Isaac-Reorient-Cube-Allegro

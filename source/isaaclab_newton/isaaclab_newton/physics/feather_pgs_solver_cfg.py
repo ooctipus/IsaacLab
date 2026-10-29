@@ -46,29 +46,8 @@ class FeatherPGSSolverCfg(NewtonSolverCfg):
     Contact selection and reduction policy are unchanged.
     """
 
-    sparse_mass_matrix: Literal["auto", "on", "off"] = "auto"
-    """Experimental native sparse factor selection.
-
-    ``auto`` uses supported topology and device resources. ``on`` requires that path;
-    ``off`` keeps the ordinary representation. Research packed-factor paths are separate.
-    Supported split sweeps, velocity limits and grouped dynamics compose automatically.
-    Legacy sparse-composition opt-outs apply to ``auto``; ``on`` overrides those optional gates.
-    Explicit dense kernel choices disable automatic native sparse factors and conflict with ``on``.
-    """
-
     angular_damping: float = 0.05
     """Angular velocity damping rate [s^-1]."""
-
-    cached_dynamics: Literal["auto", "on", "off"] = "auto"
-    """Experimental paired cached prediction and next-state publication.
-
-    ``auto`` selects an admitted cache for the topology and existing factor/row
-    policy. ``on`` requires admission; ``off`` uses ordinary prediction/publication.
-    Explicit choices override legacy cache environment settings. ``auto`` honors
-    those settings when present. Mixed held factors require an explicit opt-in.
-    Explicit dense kernels disable automatic caches and conflict with ``on``.
-    This choice preserves factor refresh intervals and numerical budgets.
-    """
 
     update_mass_matrix_interval: int = 1
     """How often to update the mass matrix, in simulation steps."""
@@ -81,9 +60,6 @@ class FeatherPGSSolverCfg(NewtonSolverCfg):
 
     contact_friction_shared_anchor: bool = False
     """Whether contact-friction rows use shared anchors."""
-
-    contact_friction_anchor_limit: int = 0
-    """Maximum stored contact-friction anchors per world."""
 
     contact_friction_scale: float = 1.0
     """Dimensionless scale factor applied to contact friction limits."""
@@ -117,9 +93,6 @@ class FeatherPGSSolverCfg(NewtonSolverCfg):
     one-step activation delay. Set this to ``0.0`` to allocate rows for every limited degree
     of freedom on every step.
     """
-
-    fuse_joint_velocity_limits: bool = True
-    """Whether to fuse joint velocity-limit rows into the matrix-free constraint solve."""
 
     mf_gs_incremental_rows: int = 0
     """Row budget of the incremental-residual matrix-free Gauss-Seidel kernel.
@@ -174,32 +147,12 @@ class FeatherPGSSolverCfg(NewtonSolverCfg):
     pgs_warmstart: bool = False
     """Whether to warm-start impulses from the previous frame."""
 
-    mf_warmstart: bool = False
-    """Whether to reuse matched matrix-free contact impulses from the previous frame."""
-
-    mf_warmstart_decay: float = 1.0
-    """Scale applied to matched matrix-free contact impulses before reuse."""
-
     pgs_mode: Literal["dense", "split", "matrix_free"] = "split"
     """Constraint solve layout.
 
     ``"dense"`` builds the full Delassus matrix, ``"split"`` uses dense articulated rows and matrix-free free-body
     rows, and ``"matrix_free"`` avoids constructing the dense matrix.
     """
-
-    articulated_contact_response: Literal["immediate", "propagation", "propagation-fused", "propagation-colored"] = (
-        "immediate"
-    )
-    """Response algorithm for matrix-free contacts on articulated bodies."""
-
-    propagation_same_articulation_rows: bool = False
-    """Whether propagation batches rows that belong to the same articulation."""
-
-    propagation_cached_response: bool = True
-    """Whether propagation reuses cached articulated-body responses."""
-
-    propagation_cached_response_max_bodies: int = 8
-    """Maximum body count for cached articulated-body responses."""
 
     pgs_schedule: Literal["interleaved", "contact_then_internal", "physx_grasp"] = "interleaved"
     """Ordering schedule for matrix-free contact and internal rows.
@@ -209,34 +162,6 @@ class FeatherPGSSolverCfg(NewtonSolverCfg):
 
     mf_max_constraints: int = 512
     """Maximum matrix-free constraints per world."""
-
-    cholesky_kernel: Literal["tiled", "loop", "auto"] = "auto"
-    """Cholesky kernel: ``"tiled"``, ``"loop"``, or ``"auto"``."""
-
-    trisolve_kernel: Literal["tiled", "loop", "auto"] = "auto"
-    """Tri-solve kernel: ``"tiled"``, ``"loop"``, or ``"auto"``."""
-
-    hinv_jt_kernel: Literal["tiled", "par_row", "auto"] = "auto"
-    """H^-1 J^T kernel: ``"tiled"``, ``"par_row"``, or ``"auto"``."""
-
-    delassus_kernel: Literal["tiled", "par_row_col", "auto"] = "auto"
-    """Delassus accumulation kernel: ``"tiled"``, ``"par_row_col"``, or ``"auto"``."""
-
-    pgs_kernel: Literal["auto", "loop", "tiled_row", "tiled_contact", "streaming"] = "auto"
-    """Dense PGS kernel. ``auto`` uses ``loop`` on CPU and ``tiled_row`` on CUDA.
-
-    Explicit choices require a supported device and split mode. Matrix-free mode
-    owns its sweep kernel and requires ``auto`` here.
-    """
-
-    pgs_chunk_size: int | None = None
-    """Chunk size for streaming PGS kernels. ``None`` selects default behavior."""
-
-    use_parallel_streams: bool = True
-    """Whether to dispatch size groups on separate CUDA streams."""
-
-    double_buffer: bool = True
-    """Whether to use double buffering for solver internals."""
 
     nvtx: bool = False
     """Whether to enable NVTX profiling ranges."""
@@ -253,9 +178,6 @@ class FeatherPGSSolverCfg(NewtonSolverCfg):
 
     serial_kernel_block_dim: int = 256
     """Block dimension for serial matrix-free kernels."""
-
-    tile_threads: int = 64
-    """Thread count for tiled kernels."""
 
     row_watermark: bool = False
     """Whether to enable row high-water watermark diagnostics/allocation path."""

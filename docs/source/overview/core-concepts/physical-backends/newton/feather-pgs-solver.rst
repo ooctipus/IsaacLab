@@ -98,5 +98,3 @@ The current Newton implementation also has these restrictions:
 * Joint velocity-limit constraints require ``pgs_mode="matrix_free"``.
 * Friction modes other than ``"current"`` require
   ``pgs_mode="matrix_free"``.
-* Joint limits are incompatible with the ``"tiled_contact"`` and
-  ``"streaming"`` dense PGS kernels.

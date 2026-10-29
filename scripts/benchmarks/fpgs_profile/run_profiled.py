@@ -208,7 +208,6 @@ def _model_meta(physics: str) -> dict:
                 "max_world_dofs",
                 "pgs_mode",
                 "pgs_iterations",
-                "use_parallel_streams",
                 "_paired_response_primary_size",
                 "_paired_response_secondary_size",
                 "_sparse_diagonal_response_size",
@@ -216,7 +215,6 @@ def _model_meta(physics: str) -> dict:
                 "_has_free_rigid_bodies",
                 "_jy_world_aliased",
                 "_hinv_jt_writes_world",
-                "articulated_contact_response",
                 "world_count",
             ):
                 v = getattr(s, attr, None)

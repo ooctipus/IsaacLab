@@ -1,0 +1,1 @@
+Dropped the FeatherPGS preset keywords the solver now derives from the device and the scene (tile_threads, pgs_kernel, contact_friction_anchor_limit).

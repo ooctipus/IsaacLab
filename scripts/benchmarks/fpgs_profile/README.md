@@ -22,16 +22,8 @@ solver/collision capacity flags, and reset replay. Every scene gets its own
 process and log; failures and timeouts remain visible. Warp caches are keyed by
 Newton source content. The first use can take longer because of compilation.
 
-Cached prediction and its paired publication now use the public
-`FeatherPGSSolverCfg.cached_dynamics="auto"` default. The suite no longer needs
-private cache flags for the held-block, held-Cholesky or packed-tree consumers.
-Use `"on"` to require an admitted cache or `"off"` for ordinary prediction and
-publication. These choices retain the scene's numerical policy and budgets.
-
-`sparse_mass_matrix="auto"` also composes supported split sweeps, velocity limits
-and grouped dynamics without private enable flags. Legacy zero opt-outs remain
-effective under `"auto"`; `"on"` overrides those optional gates while preserving
-physical and resource admission. `"off"` retains ordinary factors.
+FeatherPGS chooses its factor, cached prediction, kernels, streams and buffers
+from the device and the scene, so the suite pins none of them.
 
 Three consecutive 64-step timing blocks follow 200 warmup steps in one environment
 instance. CUDA events bracket only the physics graph on its launch stream;
@@ -194,8 +186,7 @@ FEATHER_PGS_MF_EXACT_ROWSUM=1 \
     --solver-attr mf_gs_parallel_rows=48 --solver-attr mf_gs_parallel_matrix_free=True \
     --output "$PARITY_DIR/anymald_run.json"
 
-FEATHER_PGS_TIER_BLOCKS=16384 \
-    uv run --no-sync python scripts/benchmarks/fpgs_profile/check_sweep_parity.py \
+uv run --no-sync python scripts/benchmarks/fpgs_profile/check_sweep_parity.py \
     --baseline "$NEWTON_BASELINE" --candidate "$NEWTON_CANDIDATE" \
     --parity-output "$PARITY_DIR/allegro_parity.json" -- \
     --task Isaac-Reorient-Cube-Allegro --physics feather_pgs --device cuda:0 \
