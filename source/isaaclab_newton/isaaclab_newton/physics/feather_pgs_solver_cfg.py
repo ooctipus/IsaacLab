@@ -147,9 +147,6 @@ class FeatherPGSSolverCfg(NewtonSolverCfg):
     pgs_warmstart: bool = False
     """Whether to warm-start impulses from the previous frame."""
 
-    pgs_mode: Literal["dense", "split", "matrix_free"] = "split"
-    """Not read by FeatherPGS, which chooses its formulation from the device. Remove it from configurations."""
-
     pgs_schedule: Literal["interleaved", "contact_then_internal", "physx_grasp"] = "interleaved"
     """Ordering schedule for matrix-free contact and internal rows.
 
@@ -171,9 +168,6 @@ class FeatherPGSSolverCfg(NewtonSolverCfg):
     ``"augmented"`` uses implicit PD, while ``"physx_pgs"`` uses PhysX-style rows and requires a CUDA
     device.
     """
-
-    serial_kernel_block_dim: int = 256
-    """Not read by FeatherPGS. Remove it from configurations."""
 
     row_watermark: bool = False
     """Whether to enable row high-water watermark diagnostics/allocation path."""

@@ -1,0 +1,1 @@
+Dropped pgs_mode and serial_kernel_block_dim from the FeatherPGS keyboard preset; FeatherPGS reads neither.
