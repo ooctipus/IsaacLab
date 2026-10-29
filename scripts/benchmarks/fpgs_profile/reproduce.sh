@@ -37,14 +37,9 @@ run() {
     bash "$here/nsys_run.sh" "$name" "$physics" "$task" --num-envs 16384 --seed 0 --warmup-steps 200 "$@"
     rg 'graph_span_us_per_step' "$OUT_DIR/${name}_analysis.txt"
 }
-FEATHER_PGS_MF_EXACT_ROWSUM=1 \
-    run fpgs_anymald feather_pgs Isaac-Velocity-Flat-AnymalD \
-    --solver-attr mf_gs_parallel_rows=48 \
-    --solver-attr mf_gs_parallel_matrix_free=True
+run fpgs_anymald feather_pgs Isaac-Velocity-Flat-AnymalD
 run mjwarp_anymald newton_mjwarp Isaac-Velocity-Flat-AnymalD
-run fpgs_allegro feather_pgs Isaac-Reorient-Cube-Allegro \
-    --solver-attr mf_gs_parallel_rows=128 \
-    --solver-attr mf_gs_parallel_matrix_free=True
+run fpgs_allegro feather_pgs Isaac-Reorient-Cube-Allegro
 run mjwarp_allegro newton_mjwarp Isaac-Reorient-Cube-Allegro
 run fpgs_g1 feather_pgs Isaac-Velocity-Rough-G1
 run mjwarp_g1 newton_mjwarp Isaac-Velocity-Rough-G1

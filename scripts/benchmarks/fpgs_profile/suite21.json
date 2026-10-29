@@ -6,8 +6,6 @@
       "id": "allegro",
       "task": "Isaac-Reorient-Cube-Allegro",
       "solver_attrs": {
-        "mf_gs_parallel_rows": "128",
-        "mf_gs_parallel_matrix_free": "True",
         "dense_max_constraints": "192",
         "friction_anchor_beta": "0",
         "convex_collision": "auto"
@@ -52,8 +50,6 @@
       "id": "anymald",
       "task": "Isaac-Velocity-Flat-AnymalD",
       "solver_attrs": {
-        "mf_gs_parallel_rows": "48",
-        "mf_gs_parallel_matrix_free": "True",
         "dense_max_constraints": "72",
         "friction_anchor_beta": "0",
         "convex_collision": "auto"
@@ -63,7 +59,6 @@
       },
       "environment": {
         "NEWTON_NARROW_PHASE_THREADS_X": "4",
-        "FEATHER_PGS_MF_EXACT_ROWSUM": "1",
         "NEWTON_HEIGHTFIELD_GEOMETRIC_CULL": "1",
         "NEWTON_HEIGHTFIELD_PRIMITIVE_QUERY": "1",
         "NEWTON_HEIGHTFIELD_CYLINDER_SPLIT": "1",

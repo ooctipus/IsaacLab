@@ -29,22 +29,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[3]
 HARNESS = Path(__file__).resolve().parent
 RECIPES = {
-    "anymald": (
-        "Isaac-Velocity-Flat-AnymalD",
-        (
-            "mf_gs_parallel_rows=48",
-            "mf_gs_parallel_matrix_free=True",
-        ),
-        {"FEATHER_PGS_MF_EXACT_ROWSUM": "1"},
-    ),
-    "allegro": (
-        "Isaac-Reorient-Cube-Allegro",
-        (
-            "mf_gs_parallel_rows=128",
-            "mf_gs_parallel_matrix_free=True",
-        ),
-        {},
-    ),
+    "anymald": ("Isaac-Velocity-Flat-AnymalD", (), {}),
+    "allegro": ("Isaac-Reorient-Cube-Allegro", (), {}),
     "g1": ("Isaac-Velocity-Rough-G1", (), {}),
     "kuka": ("Isaac-Lift-KukaAllegro", (), {}),
     "franka": ("Isaac-Lift-Franka", (), {}),

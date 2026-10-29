@@ -99,8 +99,7 @@ uv run --no-sync python scripts/benchmarks/fpgs_profile/compare_gpus.py \
 Each task/revision runs concurrently on the selected GPUs, with both processes finishing before the next batch.
 Rounds alternate revision order. Defaults match the handoff: AnymalD and Allegro, 16,384 environments, seed 0,
 200 warmup steps, one 40-step timing batch, and three profiled steps. Repeated `--task` options select any of
-`anymald`, `allegro`, `g1`, `kuka`, `franka`, `cartpole`, `ant`, and `humanoid`, each with its exact handoff recipe.
-Only AnymalD/Allegro enable in-kernel rows and parallel projection; the other tasks retain their original solver
+`anymald`, `allegro`, `g1`, `kuka`, `franka`, `cartpole`, `ant`, and `humanoid`, each with its preset's solver
 settings. A single `--newton` option performs a baseline-only survey. Override counts with `--num-envs`,
 `--warmup-steps`, `--steps`, and `--profile-steps`.
 
@@ -176,14 +175,12 @@ PARITY_DIR=$(mktemp -d outputs/fpgs_profile/sweep_parity_XXXXXX)
 for option in ${!FEATHER_PGS_@} ${!NEWTON_NARROW_PHASE_@}; do unset "$option"; done
 export NEWTON_NARROW_PHASE_THREADS_X=4
 
-FEATHER_PGS_MF_EXACT_ROWSUM=1 \
-    uv run --no-sync python scripts/benchmarks/fpgs_profile/check_sweep_parity.py \
+uv run --no-sync python scripts/benchmarks/fpgs_profile/check_sweep_parity.py \
     --baseline "$NEWTON_BASELINE" --candidate "$NEWTON_CANDIDATE" \
     --parity-output "$PARITY_DIR/anymald_parity.json" -- \
     --task Isaac-Velocity-Flat-AnymalD --physics feather_pgs --device cuda:0 \
     --num-envs 512 --seed 0 --warmup-steps 200 --steps 8 --repeats 1 --profile-steps 0 \
     --no-graph --no-nvtx \
-    --solver-attr mf_gs_parallel_rows=48 --solver-attr mf_gs_parallel_matrix_free=True \
     --output "$PARITY_DIR/anymald_run.json"
 
 uv run --no-sync python scripts/benchmarks/fpgs_profile/check_sweep_parity.py \
@@ -192,7 +189,6 @@ uv run --no-sync python scripts/benchmarks/fpgs_profile/check_sweep_parity.py \
     --task Isaac-Reorient-Cube-Allegro --physics feather_pgs --device cuda:0 \
     --num-envs 512 --seed 0 --warmup-steps 200 --steps 8 --repeats 1 --profile-steps 0 \
     --no-graph --no-nvtx \
-    --solver-attr mf_gs_parallel_rows=128 --solver-attr mf_gs_parallel_matrix_free=True \
     --output "$PARITY_DIR/allegro_run.json"
 ```
 
