@@ -55,7 +55,7 @@ uv run python scripts/benchmarks/fpgs_profile/run_profiled.py --task Isaac-Lift-
 GPU=1 bash scripts/benchmarks/fpgs_profile/nsys_run.sh lift_fpgs feather_pgs Isaac-Lift-Franka
 GPU=1 bash scripts/benchmarks/fpgs_profile/nsys_run.sh lift_mjwarp newton_mjwarp Isaac-Lift-Franka
 # A/B a solver field without editing presets:
-GPU=1 bash scripts/benchmarks/fpgs_profile/nsys_run.sh ant_mf feather_pgs Isaac-Ant --solver-attr pgs_mode=matrix_free
+GPU=1 bash scripts/benchmarks/fpgs_profile/nsys_run.sh ant_it16 feather_pgs Isaac-Ant --solver-attr pgs_iterations=16
 # Direct whole-graph timing without per-node instrumentation:
 GPU=1 FPGS_NSYS_TRACE_MODE=graph bash scripts/benchmarks/fpgs_profile/nsys_run.sh ant_graph feather_pgs Isaac-Ant
 

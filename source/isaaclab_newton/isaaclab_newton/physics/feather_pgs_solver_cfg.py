@@ -83,7 +83,7 @@ class FeatherPGSSolverCfg(NewtonSolverCfg):
     enable_joint_velocity_limits: bool = False
     """Whether to enforce per-DOF joint velocity limits as PGS constraints.
 
-    This option requires :attr:`pgs_mode` to be ``"matrix_free"``.
+    This option requires a CUDA device.
     """
 
     velocity_limit_activation_fraction: float = 0.7
@@ -148,16 +148,12 @@ class FeatherPGSSolverCfg(NewtonSolverCfg):
     """Whether to warm-start impulses from the previous frame."""
 
     pgs_mode: Literal["dense", "split", "matrix_free"] = "split"
-    """Constraint solve layout.
-
-    ``"dense"`` builds the full Delassus matrix, ``"split"`` uses dense articulated rows and matrix-free free-body
-    rows, and ``"matrix_free"`` avoids constructing the dense matrix.
-    """
+    """Not read by FeatherPGS, which chooses its formulation from the device. Remove it from configurations."""
 
     pgs_schedule: Literal["interleaved", "contact_then_internal", "physx_grasp"] = "interleaved"
     """Ordering schedule for matrix-free contact and internal rows.
 
-    Values other than ``"interleaved"`` require :attr:`pgs_mode` to be ``"matrix_free"``.
+    Values other than ``"interleaved"`` require a CUDA device.
     """
 
     mf_max_constraints: int = 512
@@ -172,12 +168,12 @@ class FeatherPGSSolverCfg(NewtonSolverCfg):
     drive_mode: Literal["augmented", "physx_pgs"] = "augmented"
     """Joint drive model.
 
-    ``"augmented"`` uses implicit PD, while ``"physx_pgs"`` uses PhysX-style rows and requires
-    :attr:`pgs_mode` to be ``"matrix_free"``.
+    ``"augmented"`` uses implicit PD, while ``"physx_pgs"`` uses PhysX-style rows and requires a CUDA
+    device.
     """
 
     serial_kernel_block_dim: int = 256
-    """Block dimension for serial matrix-free kernels."""
+    """Not read by FeatherPGS. Remove it from configurations."""
 
     row_watermark: bool = False
     """Whether to enable row high-water watermark diagnostics/allocation path."""

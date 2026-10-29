@@ -106,7 +106,6 @@ class PhysicsCfg(PresetCfg):
             enable_joint_velocity_limits=True,
             pgs_iterations=12,
             dense_max_constraints=192,
-            pgs_mode="matrix_free",
             mf_max_constraints=64,
         ),
         num_substeps=2,

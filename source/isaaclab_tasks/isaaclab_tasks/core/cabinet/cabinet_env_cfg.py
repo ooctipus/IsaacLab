@@ -115,7 +115,6 @@ class CabinetPhysicsCfg(PresetCfg):
     )
     feather_pgs: NewtonCfg = NewtonCfg(
         solver_cfg=FeatherPGSSolverCfg(
-            pgs_mode="matrix_free",
             enable_joint_limits=True,
             dense_max_constraints=256,
             mf_max_constraints=32,

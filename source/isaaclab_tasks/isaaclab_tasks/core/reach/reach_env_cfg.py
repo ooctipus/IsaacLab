@@ -70,7 +70,6 @@ class ReachPhysicsCfg(PresetCfg):
     )
     feather_pgs: NewtonCfg = NewtonCfg(
         solver_cfg=FeatherPGSSolverCfg(
-            pgs_mode="matrix_free",
             update_mass_matrix_interval=2,
             enable_joint_limits=True,
             enable_joint_velocity_limits=True,

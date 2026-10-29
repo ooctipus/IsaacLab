@@ -544,7 +544,6 @@ class PhysicsCfg(PresetCfg):
     )
     feather_pgs = NewtonCfg(
         solver_cfg=FeatherPGSSolverCfg(
-            pgs_mode="matrix_free",
             update_mass_matrix_interval=2,
             enable_joint_limits=True,
             joint_limit_activation_gap=0.1,

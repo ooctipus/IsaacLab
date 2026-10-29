@@ -206,7 +206,6 @@ def _model_meta(physics: str) -> dict:
                 "dense_max_constraints",
                 "mf_max_constraints",
                 "max_world_dofs",
-                "pgs_mode",
                 "pgs_iterations",
                 "_paired_response_primary_size",
                 "_paired_response_secondary_size",

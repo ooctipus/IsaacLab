@@ -30,7 +30,6 @@ Select FeatherPGS by assigning its solver configuration to
     solver_cfg = FeatherPGSSolverCfg(
         enable_joint_limits=True,
         pgs_iterations=8,
-        pgs_mode="split",
         dense_max_constraints=64,
         mf_max_constraints=512,
         pgs_beta=0.05,
@@ -49,8 +48,6 @@ The important accuracy and runtime controls are:
   increases constraint-solve work and usually improves constraint fidelity.
 * :attr:`~isaaclab_newton.physics.NewtonCfg.num_substeps`: repeats collision,
   integration, and the solve at a shorter effective time step.
-* :attr:`~isaaclab_newton.physics.FeatherPGSSolverCfg.pgs_mode`: selects the
-  dense, split, or matrix-free constraint layout.
 * :attr:`~isaaclab_newton.physics.FeatherPGSSolverCfg.dense_max_constraints`
   and
   :attr:`~isaaclab_newton.physics.FeatherPGSSolverCfg.mf_max_constraints`:
@@ -60,20 +57,16 @@ The important accuracy and runtime controls are:
   :attr:`~isaaclab_newton.physics.FeatherPGSSolverCfg.pgs_cfm`: control
   position correction and solver regularization.
 
-Solve Layouts
--------------
+Solve Formulation
+-----------------
 
-The three :attr:`~isaaclab_newton.physics.FeatherPGSSolverCfg.pgs_mode`
-values trade memory, kernel work, and feature support:
+FeatherPGS chooses its formulation from the device. On CUDA it solves every
+model matrix-free: it never assembles the Delassus matrix, and its sweeps read
+each constraint row's response from the factored mass matrix. On the CPU it
+assembles the Delassus rows and sweeps them one thread per world.
 
-* ``"dense"`` constructs a full Delassus matrix for all constraints.
-* ``"split"`` uses the dense path for articulated contacts and a
-  matrix-free path for free rigid bodies.
-* ``"matrix_free"`` avoids the full Delassus matrix and recomputes the
-  articulated response during PGS iterations.
-
-The automatic kernel selectors use articulation topology, size and device
-resources. See :doc:`feather-pgs-selection` for defaults and explicit overrides. Set
+Kernels, factors and buffers follow from the device and the model's topology.
+See :doc:`feather-pgs-selection` for the collision choices that remain. Set
 :attr:`~isaaclab_newton.physics.FeatherPGSSolverCfg.nvtx` to ``True`` to
 emit solver-stage ranges when profiling.
 
@@ -95,6 +88,5 @@ The current Newton implementation also has these restrictions:
 
 * Floating-base systems require an explicit free joint connecting the root body
   to the world.
-* Joint velocity-limit constraints require ``pgs_mode="matrix_free"``.
-* Friction modes other than ``"current"`` require
-  ``pgs_mode="matrix_free"``.
+* Joint velocity-limit constraints, schedules other than ``"interleaved"``,
+  velocity iterations and ``drive_mode="physx_pgs"`` require a CUDA device.

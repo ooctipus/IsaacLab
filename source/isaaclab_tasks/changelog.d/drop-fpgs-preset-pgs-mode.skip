@@ -1,0 +1,1 @@
+Dropped pgs_mode from the FeatherPGS cabinet, allegro, velocity, reach and lift presets; FeatherPGS chooses its formulation from the device.

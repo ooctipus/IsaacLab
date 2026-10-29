@@ -74,7 +74,6 @@ class RoughPhysicsCfg(PresetCfg):
         solver_cfg=FeatherPGSSolverCfg(
             update_mass_matrix_interval=2,
             enable_joint_limits=True,
-            pgs_mode="matrix_free",
             contact_friction_gap_threshold=0.02,
             dense_max_constraints=192,
             mf_max_constraints=32,
