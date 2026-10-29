@@ -1,0 +1,1 @@
+Dropped the dead serial_kernel_block_dim keyword from the FeatherPGS cabinet, velocity and lift presets; FeatherPGS has no such option.

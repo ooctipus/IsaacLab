@@ -79,7 +79,6 @@ class RoughPhysicsCfg(PresetCfg):
             contact_friction_anchor_limit=2,
             dense_max_constraints=192,
             mf_max_constraints=32,
-            serial_kernel_block_dim=32,
             tile_threads=128,
         ),
         collision_cfg=NewtonCollisionPipelineCfg(max_triangle_pairs=12_000_000),

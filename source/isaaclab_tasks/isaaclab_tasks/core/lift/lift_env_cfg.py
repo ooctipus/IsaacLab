@@ -550,7 +550,6 @@ class PhysicsCfg(PresetCfg):
             joint_limit_activation_gap=0.1,
             dense_max_constraints=192,
             mf_max_constraints=64,
-            serial_kernel_block_dim=64,
         ),
         collision_cfg=NewtonCollisionPipelineCfg(rigid_contact_max=4_000_000),
         default_shape_cfg=NewtonShapeCfg(),

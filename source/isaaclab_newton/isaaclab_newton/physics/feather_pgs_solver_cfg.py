@@ -73,9 +73,6 @@ class FeatherPGSSolverCfg(NewtonSolverCfg):
     update_mass_matrix_interval: int = 1
     """How often to update the mass matrix, in simulation steps."""
 
-    friction_smoothing: float = 1.0
-    """Huber delta for normalizing tangential contact velocity [m/s]."""
-
     contact_friction_gap_threshold: float = math.inf
     """Gap threshold [m] for enabling tangential contact friction rows."""
 
@@ -149,24 +146,8 @@ class FeatherPGSSolverCfg(NewtonSolverCfg):
     mf_gs_parallel_nesterov: bool = True
     """Whether the parallel sweep uses Nesterov momentum."""
 
-    mf_gs_response_block_rows: int = 0
-    """Row budget of the experimental response-block matrix-free Gauss-Seidel sweep.
-
-    Worlds whose dense plus matrix-free row count is at most this many rows are swept from a
-    per-world response block built once per launch (lane-per-world for small worlds,
-    warp-per-world above :attr:`mf_gs_response_block_lane_rows`). Larger worlds keep the
-    legacy sweep. Only ``64`` or ``0`` (disabled) are supported. Off by default: measured
-    neutral on flat quadruped locomotion and slower on dexterous manipulation at 16k worlds.
-    """
-
-    mf_gs_response_block_lane_rows: int = 16
-    """Row bound of the lane-per-world class of the response-block sweep (at most 24)."""
-
     pgs_iterations: int = 8
     """Number of Gauss-Seidel iterations per simulation step."""
-
-    pgs_inner_substeps: int = 1
-    """Number of frozen-basis position-solve and integration cycles per simulation step."""
 
     pgs_velocity_iterations: int = 0
     """Number of velocity-level Gauss-Seidel iterations per simulation step."""
@@ -181,17 +162,8 @@ class FeatherPGSSolverCfg(NewtonSolverCfg):
     rows.
     """
 
-    dense_contact_compliance: float = 0.0
-    """Normal contact compliance for dense articulated contact rows [m/N]."""
-
-    speculative_dense_contact_compliance: float = 0.0
-    """Additional normal contact compliance for speculative dense contact rows [m/N]."""
-
     pgs_omega: float = 1.0
     """Dimensionless successive over-relaxation factor for PGS."""
-
-    pgs_velocity_omega: float | None = None
-    """Dimensionless velocity-level relaxation factor. ``None`` uses :attr:`pgs_omega`."""
 
     pgs_velocity_drive_mode: Literal["active", "freeze"] = "freeze"
     """Drive-row handling during velocity-only PGS: ``"active"`` updates rows and ``"freeze"`` holds impulses."""
@@ -235,12 +207,6 @@ class FeatherPGSSolverCfg(NewtonSolverCfg):
     Values other than ``"interleaved"`` require :attr:`pgs_mode` to be ``"matrix_free"``.
     """
 
-    friction_mode: Literal["current", "bisection", "bisection_desaxce", "coulomb_newton"] = "current"
-    """Per-row Coulomb friction strategy.
-
-    Values other than ``"current"`` require :attr:`pgs_mode` to be ``"matrix_free"``.
-    """
-
     mf_max_constraints: int = 512
     """Maximum matrix-free constraints per world."""
 
@@ -263,14 +229,8 @@ class FeatherPGSSolverCfg(NewtonSolverCfg):
     owns its sweep kernel and requires ``auto`` here.
     """
 
-    delassus_chunk_size: int | None = None
-    """Chunk size for streaming Delassus kernels. ``None`` selects automatically."""
-
     pgs_chunk_size: int | None = None
     """Chunk size for streaming PGS kernels. ``None`` selects default behavior."""
-
-    small_dof_threshold: int = 12
-    """DOF threshold for automatic kernel selection."""
 
     use_parallel_streams: bool = True
     """Whether to dispatch size groups on separate CUDA streams."""
@@ -290,9 +250,6 @@ class FeatherPGSSolverCfg(NewtonSolverCfg):
     ``"augmented"`` uses implicit PD, while ``"physx_pgs"`` uses PhysX-style rows and requires
     :attr:`pgs_mode` to be ``"matrix_free"``.
     """
-
-    effort_limit_mode: Literal["actuator"] = "actuator"
-    """Effort-limit policy. FeatherPGS supports actuator-drive clamping only."""
 
     serial_kernel_block_dim: int = 256
     """Block dimension for serial matrix-free kernels."""

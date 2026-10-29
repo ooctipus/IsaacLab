@@ -119,7 +119,6 @@ class CabinetPhysicsCfg(PresetCfg):
             enable_joint_limits=True,
             dense_max_constraints=256,
             mf_max_constraints=32,
-            serial_kernel_block_dim=64,
         ),
         num_substeps=1,
     )
