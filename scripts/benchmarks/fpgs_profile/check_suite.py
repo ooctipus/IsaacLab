@@ -197,7 +197,7 @@ def worker(job_path):
                 "decimation": int(env.unwrapped.cfg.decimation),
                 "solver_dt": float(NewtonManager._solver_dt),
                 "substeps": int(NewtonManager._num_substeps),
-                "pgs_iterations": int(solver.pgs_iterations),
+                "pgs_iterations": int(solver.options.pgs_iterations),
             }
 
         with harness.launch_simulation(cfg, launch_args):

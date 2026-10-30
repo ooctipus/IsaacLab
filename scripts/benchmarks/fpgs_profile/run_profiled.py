@@ -200,23 +200,25 @@ def _model_meta(physics: str) -> dict:
         meta["body_z_min"] = float(bq[:, 2].min()) if bq.size else 0.0
         meta["body_z_max"] = float(bq[:, 2].max()) if bq.size else 0.0
         if physics == "feather_pgs":
-            for attr in (
-                "size_groups",
-                "n_arts_by_size",
+            for path in (
+                "forest.size_groups",
+                "forest.n_arts_by_size",
                 "dense_max_constraints",
                 "mf_max_constraints",
-                "max_world_dofs",
-                "pgs_iterations",
+                "forest.max_world_dofs",
+                "options.pgs_iterations",
                 "_paired_response_primary_size",
                 "_paired_response_secondary_size",
                 "_sparse_diagonal_response_size",
                 "_compact_diagonal_mass_size",
-                "_has_free_rigid_bodies",
+                "forest.has_free_rigid_bodies",
                 "_jy_world_aliased",
                 "_hinv_jt_writes_world",
-                "world_count",
+                "forest.world_count",
             ):
-                v = getattr(s, attr, None)
+                # A missing attribute raises: a silent None would hide a renamed field.
+                v = functools.reduce(getattr, path.split("."), s)
+                attr = path.rsplit(".", 1)[-1]
                 if isinstance(v, dict):
                     v = {str(k): int(x) for k, x in v.items()}
                 elif isinstance(v, (list, tuple)):
