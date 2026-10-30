@@ -97,9 +97,6 @@ class FeatherPGSSolverCfg(NewtonSolverCfg):
     pgs_iterations: int = 8
     """Number of Gauss-Seidel iterations per simulation step."""
 
-    pgs_velocity_iterations: int = 0
-    """Number of velocity-level Gauss-Seidel iterations per simulation step."""
-
     pgs_beta: float = 0.05
     """Dimensionless ERP-style position correction factor."""
 
@@ -113,20 +110,11 @@ class FeatherPGSSolverCfg(NewtonSolverCfg):
     pgs_omega: float = 1.0
     """Dimensionless successive over-relaxation factor for PGS."""
 
-    pgs_velocity_drive_mode: Literal["active", "freeze"] = "freeze"
-    """Drive-row handling during velocity-only PGS: ``"active"`` updates rows and ``"freeze"`` holds impulses."""
-
     dense_max_constraints: int = 32
     """Maximum articulation-contact constraints per world."""
 
     pgs_warmstart: bool = False
     """Whether to warm-start impulses from the previous frame."""
-
-    pgs_schedule: Literal["interleaved", "contact_then_internal", "physx_grasp"] = "interleaved"
-    """Ordering schedule for matrix-free contact and internal rows.
-
-    Values other than ``"interleaved"`` require a CUDA device.
-    """
 
     mf_max_constraints: int = 512
     """Maximum matrix-free constraints per world."""
@@ -136,13 +124,6 @@ class FeatherPGSSolverCfg(NewtonSolverCfg):
 
     pgs_debug: bool = False
     """Whether to enable PGS debug diagnostics."""
-
-    drive_mode: Literal["augmented", "physx_pgs"] = "augmented"
-    """Joint drive model.
-
-    ``"augmented"`` uses implicit PD, while ``"physx_pgs"`` uses PhysX-style rows and requires a CUDA
-    device.
-    """
 
     row_watermark: bool = False
     """Whether to enable row high-water watermark diagnostics/allocation path."""

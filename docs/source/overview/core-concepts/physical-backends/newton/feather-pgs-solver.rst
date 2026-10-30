@@ -88,5 +88,4 @@ The current Newton implementation also has these restrictions:
 
 * Floating-base systems require an explicit free joint connecting the root body
   to the world.
-* Joint velocity-limit constraints, schedules other than ``"interleaved"``,
-  velocity iterations and ``drive_mode="physx_pgs"`` require a CUDA device.
+* Joint velocity-limit constraints require a CUDA device.
