@@ -111,7 +111,7 @@ class FeatherPGSSolverCfg(NewtonSolverCfg):
     """Whether to enable NVTX profiling ranges."""
 
     pgs_debug: bool = False
-    """Whether to enable PGS debug diagnostics."""
+    """Whether to keep the stage-3 debug snapshots."""
 
     row_watermark: bool = False
     """Whether to enable row high-water watermark diagnostics/allocation path."""
