@@ -132,9 +132,7 @@ def _trace_step(env, i: int, physics: str) -> None:
         eval_fk(model, st.joint_q, st.joint_qd, scratch)
         dq = np.abs(scratch.body_q.numpy() - st.body_q.numpy()).max()
         dqd = np.abs(scratch.body_qd.numpy() - st.body_qd.numpy()).max()
-        s = NewtonManager._solver
-        valid = getattr(s, "_fk_id_cache_valid", None)
-        nvalid = int(valid.numpy().sum()) if valid is not None else -1
+        nvalid = int(NewtonManager._solver.factor.fk_id_cache_valid.numpy().sum())
         extra = f" body_q_vs_fk={dq:.3e} body_qd_vs_fk={dqd:.3e} cache_valid={nvalid}"
     print(
         f"TRACE step={i} contacts={m.get('contacts_active')} pairs={m.get('broad_phase_pairs')} "
