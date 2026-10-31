@@ -214,9 +214,20 @@ def _model_meta(physics: str) -> dict:
                 "_hinv_jt_writes_world",
                 "forest.world_count",
             ):
-                # A missing attribute raises: a silent None would hide a renamed field.
-                v = functools.reduce(getattr, path.split("."), s)
+                # A missing attribute raises: a silent None would hide a renamed field. Both shapes: a tree with the
+                # placement (SC4) holds these there, without the leading underscore.
                 attr = path.rsplit(".", 1)[-1]
+                placed = path.lstrip("_") in (
+                    "dense_max_constraints",
+                    "mf_max_constraints",
+                    "sparse_diagonal_response_size",
+                    "jy_world_aliased",
+                    "hinv_jt_writes_world",
+                )
+                if placed and hasattr(s, "placement"):
+                    v = getattr(s.placement, path.lstrip("_"))
+                else:
+                    v = functools.reduce(getattr, path.split("."), s)
                 if isinstance(v, dict):
                     v = {str(k): int(x) for k, x in v.items()}
                 elif isinstance(v, (list, tuple)):
@@ -227,7 +238,7 @@ def _model_meta(physics: str) -> dict:
                     v = v.tolist()
                 meta[attr] = v
             for name in ("constraint_count", "mf_constraint_count", "propagation_constraint_count"):
-                arr = getattr(s, name, None)
+                arr = getattr(getattr(s, "placement", s), name, None)
                 if arr is not None:
                     a = arr.numpy()
                     meta[name] = {
