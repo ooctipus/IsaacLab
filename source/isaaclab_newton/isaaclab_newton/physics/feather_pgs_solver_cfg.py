@@ -55,18 +55,6 @@ class FeatherPGSSolverCfg(NewtonSolverCfg):
     contact_friction_gap_threshold: float = math.inf
     """Gap threshold [m] for enabling tangential contact friction rows."""
 
-    contact_friction_position_iterations: int = -1
-    """Number of position iterations used for contact-friction anchoring."""
-
-    contact_friction_shared_anchor: bool = False
-    """Whether contact-friction rows use shared anchors."""
-
-    contact_friction_scale: float = 1.0
-    """Dimensionless scale factor applied to contact friction limits."""
-
-    contact_shared_anchor: bool = False
-    """Whether normal contact rows use shared anchors."""
-
     enable_contact_friction: bool = True
     """Whether to enable Coulomb contact friction in PGS."""
 
