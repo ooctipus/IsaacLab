@@ -7,8 +7,10 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
+import numpy as np
 import warp as wp
 from newton import CollisionPipeline, State
 from newton.solvers import SolverFeatherPGS
@@ -17,6 +19,8 @@ from .newton_solver import NewtonSolver
 
 if TYPE_CHECKING:
     from .feather_pgs_solver_cfg import FeatherPGSSolverCfg
+
+logger = logging.getLogger(__name__)
 
 
 class FeatherPGSSolver(NewtonSolver):
@@ -28,6 +32,18 @@ class FeatherPGSSolver(NewtonSolver):
 
     collision_pipeline: CollisionPipeline | None = None
     """The collision pipeline built over the solver's model, once contacts are allocated."""
+
+    contact_drop_worlds: np.ndarray | None = None
+    """Worlds whose rigid contacts the last step's status check found dropped, or ``None``.
+
+    A boolean mask of one entry per world; a task may end those episodes.
+    """
+
+    _contact_drop_passes: int = 0
+    """Collision passes that dropped contacts, as of the last status check."""
+
+    _contact_drop_seen: int = 0
+    """The last collision pass whose dropped contacts the status check reported."""
 
     def create_collision_pipeline(self, **kwargs) -> CollisionPipeline:
         """Construct the collision pipeline with the configured FeatherPGS collision choices."""
@@ -52,3 +68,30 @@ class FeatherPGSSolver(NewtonSolver):
         """
         solver = self.native
         solver.reset(state, world_mask=world_mask[: solver.model.world_count], flags=0)
+
+    def check_step(self, captured: bool, debug: bool) -> None:
+        """Report the rigid contacts the collision passes dropped for want of rows, without a synchronization.
+
+        The pipeline's contact pool grows past a pass that dropped contacts; each step whose completed passes dropped
+        some logs them, with their worlds, which :attr:`contact_drop_worlds` holds until the next step.
+        """
+        contact_drops = getattr(self.collision_pipeline, "contact_drops", None)
+        self.contact_drop_worlds = None
+        if contact_drops is None:
+            return
+        drops = contact_drops()
+        if drops.passes == self._contact_drop_passes:
+            return
+        latched = drops.worlds > self._contact_drop_seen
+        self.contact_drop_worlds = latched[:-1].copy()
+        logger.warning(
+            "FeatherPGS: %d collision pass(es) up to pass %d dropped rigid contacts for want of rows (%d dropped so"
+            " far) in %d world(s)%s; the contact buffers grow for the next step",
+            drops.passes - self._contact_drop_passes,
+            drops.last_pass,
+            drops.contacts,
+            int(self.contact_drop_worlds.sum()),
+            " and between global shapes" if latched[-1] else "",
+        )
+        self._contact_drop_passes = drops.passes
+        self._contact_drop_seen = drops.last_pass

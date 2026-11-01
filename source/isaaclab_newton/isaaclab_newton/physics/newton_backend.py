@@ -228,6 +228,8 @@ class NewtonBackend:
         """Records the step as a Warp graph, or ``None`` when the step runs eagerly; set by :meth:`init_solver`."""
         self.graphs: dict[str | tuple[str, int], wp.Graph] = {}
         """Captured parts of the step, keyed by part; empty until the first step is captured."""
+        self.graphs_measured = False
+        """Whether the collision pipeline measured the state the first replay of :attr:`graphs` starts from."""
 
     def create_visual_material_writer(self, batches: tuple[VisualMaterialBatch, ...]) -> VisualMaterialWriter:
         """Bind material writes to this resource's native shape-color buffer."""
@@ -476,6 +478,7 @@ class NewtonBackend:
     def invalidate_graph(self) -> None:
         """Drop the captured step; with capture enabled, the next step runs eagerly and is captured again."""
         self.graphs = {}
+        self.graphs_measured = False
 
     def step(self) -> bool:
         """Advance one physics step, or the whole decimation loop when :meth:`handles_decimation`.
@@ -494,6 +497,7 @@ class NewtonBackend:
         actuators = self.actuators
         with wp.ScopedDevice(self.device):
             self.forward()
+            self._measure_contact_demand()
             if actuators is None or actuators.is_all_graphable:
                 self._launch(("simulate", steps), partial(self._simulate, steps))
             else:
@@ -516,6 +520,18 @@ class NewtonBackend:
             self.solver_ops.check_step(captured, self.cfg.debug_mode)
             self._service_contact_capacity()
         return captured
+
+    def _measure_contact_demand(self) -> None:
+        """Size the collision pipeline's contact rows from the state the first replay of new graphs starts from.
+
+        A replay cannot map contact rows, so the pipeline sizes its storage from that state and from a forecast its
+        collision passes keep for the whole run. Pipelines without a capacity service skip this.
+        """
+        service_capacity = getattr(self.collision_pipeline, "service_capacity", None)
+        if service_capacity is None or not self.graphs or self.graphs_measured or self.device.is_capturing:
+            return
+        service_capacity(self.state_0, dt=self.solver_dt * (self.cfg.collision_decimation or self.num_substeps))
+        self.graphs_measured = True
 
     def _service_contact_capacity(self) -> None:
         """Grow the collision pipeline's contact buffers from the demand it measured, once per step.
