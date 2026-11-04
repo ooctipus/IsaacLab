@@ -299,8 +299,8 @@ def main() -> None:
         setattr(env_cfg.sim.physics, k, v)
         print(f"[CFG] physics.{k} = {v!r}")
     result_cfg = {"solver_attr": args.solver_attr, "physics_attr": args.physics_attr}
-    if args.solver_nvtx and hasattr(env_cfg.sim.physics.solver_cfg, "nvtx"):
-        env_cfg.sim.physics.solver_cfg.nvtx = True
+    if args.solver_nvtx and hasattr(env_cfg.sim.physics.solver_cfg, "diagnostics"):
+        env_cfg.sim.physics.solver_cfg.diagnostics.nvtx = True
     env_cfg.validate()
     launcher_args = {"device": args.device, "headless": True, "visualizer": None, "visualizer_explicit": True}
 

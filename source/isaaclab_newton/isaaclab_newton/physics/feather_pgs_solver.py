@@ -12,10 +12,10 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import warp as wp
-from newton import CollisionPipeline, State
+from newton import CollisionPipeline, Model, State
 from newton.solvers import SolverFeatherPGS
 
-from .newton_solver import NewtonSolver
+from .newton_solver import NewtonSolver, solver_kwargs
 
 if TYPE_CHECKING:
     from .feather_pgs_solver_cfg import FeatherPGSSolverCfg
@@ -44,6 +44,15 @@ class FeatherPGSSolver(NewtonSolver):
 
     _contact_drop_seen: int = 0
     """The last collision pass whose dropped contacts the status check reported."""
+
+    def build(self, model: Model, mode: wp.DeterministicMode, env_template: str | None) -> SolverFeatherPGS:
+        """Construct FeatherPGS, passing its diagnostics as Newton's one record."""
+        kwargs = solver_kwargs(self.solver_class, self.cfg, mode)
+        diagnostics = self.cfg.diagnostics.to_dict()
+        if diagnostics["sync_timings"] is not None:
+            diagnostics["sync_timings"] = tuple(diagnostics["sync_timings"])
+        kwargs["diagnostics"] = SolverFeatherPGS.Diagnostics(**diagnostics)
+        return self.solver_class(model, **kwargs)
 
     def create_collision_pipeline(self, **kwargs) -> CollisionPipeline:
         """Construct the collision pipeline with the configured FeatherPGS collision choices."""

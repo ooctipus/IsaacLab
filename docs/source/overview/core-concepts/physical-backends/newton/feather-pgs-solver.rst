@@ -67,8 +67,9 @@ assembles the Delassus rows and sweeps them one thread per world.
 
 Kernels, factors and buffers follow from the device and the model's topology.
 See :doc:`feather-pgs-selection` for the collision choices that remain. Set
-:attr:`~isaaclab_newton.physics.FeatherPGSSolverCfg.nvtx` to ``True`` to
-emit solver-stage ranges when profiling.
+:attr:`~isaaclab_newton.physics.FeatherPGSDiagnosticsCfg.nvtx` of
+:attr:`~isaaclab_newton.physics.FeatherPGSSolverCfg.diagnostics` to ``True``
+to emit solver-stage ranges when profiling.
 
 Current Limitations
 -------------------

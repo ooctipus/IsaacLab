@@ -16,6 +16,38 @@ from .newton_manager_cfg import NewtonSolverCfg
 
 
 @configclass
+class FeatherPGSDiagnosticsCfg:
+    """What FeatherPGS reads out beside the step: Newton's ``SolverFeatherPGS.Diagnostics``, field for field.
+
+    No field changes the published state.
+    """
+
+    nvtx: bool = False
+    """Whether to emit NVTX ranges for the solver's stages."""
+
+    snapshots: bool = False
+    """Whether to copy the stage-3 joint velocity, acceleration and predicted velocity every substep (NaN dumps)."""
+
+    row_watermark: bool = False
+    """Whether to accumulate each row family's high-water mark, read by ``constraint_row_watermarks()``."""
+
+    overflow_warning: bool = True
+    """Whether to warn on the device the first time a row family exceeds its per-world capacity."""
+
+    solve_readout: Literal["off", "sweeps", "trace"] = "off"
+    """Counters of the Gauss-Seidel sweeps: ``"sweeps"`` counts them, ``"trace"`` adds the exit-law trace."""
+
+    audit: bool = False
+    """Whether to audit each step's energy gap and dual violation, read by ``read_audit()``."""
+
+    stage_clocks: bool = False
+    """Whether to compile per-stage cycle counters into the held tree's kernels."""
+
+    sync_timings: tuple[int, int] | None = None
+    """``(first_step, steps)``: synchronize around each stage of those steps and print its time."""
+
+
+@configclass
 class FeatherPGSSolverCfg(NewtonSolverCfg):
     """Configuration for Newton's reduced-coordinate FeatherPGS solver.
 
@@ -107,14 +139,8 @@ class FeatherPGSSolverCfg(NewtonSolverCfg):
     mf_max_constraints: int = 512
     """Maximum matrix-free constraints per world."""
 
-    nvtx: bool = False
-    """Whether to enable NVTX profiling ranges."""
-
-    pgs_debug: bool = False
-    """Whether to keep the stage-3 debug snapshots."""
-
-    row_watermark: bool = False
-    """Whether to enable row high-water watermark diagnostics/allocation path."""
+    diagnostics: FeatherPGSDiagnosticsCfg = FeatherPGSDiagnosticsCfg()
+    """What the solver reads out beside the step (:class:`FeatherPGSDiagnosticsCfg`)."""
 
     restitution_velocity_threshold: float = 0.5
     """Relative normal velocity threshold below which restitution is disabled [m/s]."""

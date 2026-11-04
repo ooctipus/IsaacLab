@@ -5,6 +5,7 @@
 
 __all__ = [
     "create_newton_builder",
+    "FeatherPGSDiagnosticsCfg",
     "FeatherPGSSolver",
     "FeatherPGSSolverCfg",
     "FeatherstoneSolver",
@@ -47,7 +48,7 @@ __all__ = [
 ]
 
 from .feather_pgs_solver import FeatherPGSSolver
-from .feather_pgs_solver_cfg import FeatherPGSSolverCfg
+from .feather_pgs_solver_cfg import FeatherPGSDiagnosticsCfg, FeatherPGSSolverCfg
 from .featherstone_solver import FeatherstoneSolver
 from .featherstone_solver_cfg import FeatherstoneSolverCfg
 from .kamino_solver import KaminoSolver
