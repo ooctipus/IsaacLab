@@ -7,7 +7,6 @@
       "task": "Isaac-Reorient-Cube-Allegro",
       "solver_attrs": {
         "dense_max_constraints": "192",
-        "friction_anchor_beta": "0",
         "convex_collision": "auto"
       },
       "storage_at_16384_worlds": {
@@ -29,7 +28,6 @@
       "task": "Isaac-Ant",
       "solver_attrs": {
         "dense_max_constraints": "64",
-        "friction_anchor_beta": "0",
         "convex_collision": "auto"
       },
       "storage_at_16384_worlds": {
@@ -51,7 +49,6 @@
       "task": "Isaac-Velocity-Flat-AnymalD",
       "solver_attrs": {
         "dense_max_constraints": "72",
-        "friction_anchor_beta": "0",
         "convex_collision": "auto"
       },
       "storage_at_16384_worlds": {
@@ -72,7 +69,6 @@
       "id": "anymald-rough",
       "task": "Isaac-Velocity-Rough-AnymalD",
       "solver_attrs": {
-        "friction_anchor_beta": "0",
         "dense_max_constraints": "256",
         "convex_collision": "auto"
       },
@@ -96,7 +92,6 @@
       "task": "Isaac-Cartpole",
       "solver_attrs": {
         "dense_max_constraints": "8",
-        "friction_anchor_beta": "0",
         "convex_collision": "auto"
       },
       "storage_at_16384_worlds": {
@@ -118,7 +113,6 @@
       "task": "Isaac-Velocity-Flat-Cassie",
       "solver_attrs": {
         "dense_max_constraints": "48",
-        "friction_anchor_beta": "0",
         "convex_collision": "auto"
       },
       "storage_at_16384_worlds": {
@@ -140,7 +134,6 @@
       "task": "Isaac-Velocity-Rough-Cassie",
       "solver_attrs": {
         "dense_max_constraints": "80",
-        "friction_anchor_beta": "0",
         "convex_collision": "auto"
       },
       "storage_at_16384_worlds": {
@@ -163,7 +156,6 @@
       "task": "Isaac-Lift-Franka",
       "solver_attrs": {
         "dense_max_constraints": "192",
-        "friction_anchor_beta": "0",
         "convex_collision": "auto"
       },
       "storage_at_16384_worlds": {},
@@ -182,7 +174,6 @@
       "id": "franka-cabinet",
       "task": "Isaac-Open-Drawer-Franka",
       "solver_attrs": {
-        "friction_anchor_beta": "0",
         "convex_collision": "auto"
       },
       "storage_at_16384_worlds": {},
@@ -198,7 +189,6 @@
       "task": "Isaac-Reach-Franka",
       "solver_attrs": {
         "dense_max_constraints": "64",
-        "friction_anchor_beta": "0",
         "convex_collision": "auto"
       },
       "storage_at_16384_worlds": {
@@ -220,7 +210,6 @@
       "task": "Isaac-Velocity-Rough-G1",
       "solver_attrs": {
         "dense_max_constraints": "128",
-        "friction_anchor_beta": "0",
         "convex_collision": "auto"
       },
       "storage_at_16384_worlds": {
@@ -249,7 +238,6 @@
       "task": "Isaac-Velocity-Flat-G1",
       "solver_attrs": {
         "dense_max_constraints": "56",
-        "friction_anchor_beta": "0",
         "convex_collision": "auto"
       },
       "storage_at_16384_worlds": {
@@ -271,7 +259,6 @@
       "task": "Isaac-Velocity-Flat-UnitreeGo2",
       "solver_attrs": {
         "dense_max_constraints": "112",
-        "friction_anchor_beta": "0",
         "convex_collision": "auto"
       },
       "storage_at_16384_worlds": {
@@ -292,7 +279,6 @@
       "id": "go2-rough",
       "task": "Isaac-Velocity-Rough-UnitreeGo2",
       "solver_attrs": {
-        "friction_anchor_beta": "0",
         "dense_max_constraints": "256",
         "convex_collision": "auto"
       },
@@ -316,7 +302,6 @@
       "task": "Isaac-Velocity-Flat-H1",
       "solver_attrs": {
         "dense_max_constraints": "48",
-        "friction_anchor_beta": "0",
         "convex_collision": "auto"
       },
       "storage_at_16384_worlds": {
@@ -338,7 +323,6 @@
       "task": "Isaac-Velocity-Rough-H1",
       "solver_attrs": {
         "dense_max_constraints": "128",
-        "friction_anchor_beta": "0",
         "convex_collision": "auto"
       },
       "storage_at_16384_worlds": {
@@ -361,7 +345,6 @@
       "task": "Isaac-Humanoid",
       "solver_attrs": {
         "dense_max_constraints": "128",
-        "friction_anchor_beta": "0",
         "convex_collision": "auto"
       },
       "storage_at_16384_worlds": {
@@ -383,7 +366,6 @@
       "task": "IsaacContrib-Keyboard-SO101",
       "solver_attrs": {
         "dense_max_constraints": "1024",
-        "friction_anchor_beta": "0",
         "convex_collision": "auto"
       },
       "storage_at_16384_worlds": {
@@ -405,7 +387,6 @@
       "task": "Isaac-Lift-KukaAllegro",
       "solver_attrs": {
         "dense_max_constraints": "192",
-        "friction_anchor_beta": "0",
         "convex_collision": "auto"
       },
       "storage_at_16384_worlds": {
@@ -427,7 +408,6 @@
       "task": "Isaac-Reorient-KukaAllegro",
       "solver_attrs": {
         "dense_max_constraints": "192",
-        "friction_anchor_beta": "0",
         "convex_collision": "auto"
       },
       "storage_at_16384_worlds": {
@@ -449,7 +429,6 @@
       "task": "Isaac-Reach-UR10",
       "solver_attrs": {
         "dense_max_constraints": "16",
-        "friction_anchor_beta": "0",
         "convex_collision": "auto"
       },
       "storage_at_16384_worlds": {
