@@ -18,6 +18,7 @@ import pytest
 import warp as wp
 from isaaclab_newton.cloner import newton_physics_replicate
 from isaaclab_newton.physics import (
+    FeatherPGSSolver,
     FeatherPGSSolverCfg,
     FeatherstoneSolverCfg,
     KaminoDVICfg,
@@ -37,8 +38,9 @@ from isaaclab_newton.physics import (
     XPBDSolverCfg,
 )
 from isaaclab_newton.physics.mpm_solver import _make_solver_config, implicit_mpm_solvers, mpm_supports_graph_capture
+from isaaclab_newton.physics.newton_backend import NewtonBackend
 from isaaclab_newton.physics.newton_builder import register_builder_attributes
-from isaaclab_newton.physics.newton_solver import solver_kwargs
+from isaaclab_newton.physics.newton_solver import NewtonSolver, solver_kwargs
 from isaaclab_newton.test.fixtures.mock_newton import solver_driver
 from newton import ModelBuilder
 from newton.solvers import SolverImplicitMPM, SolverMuJoCo, SolverXPBD
@@ -520,3 +522,92 @@ def test_vbd_rebuilds_its_particle_bvh_before_each_physics_step(particle_count):
     solver_driver(VBDSolver, VBDSolverCfg(), solver).pre_step("state")
 
     assert rebuilt == ["state"] * particle_count
+
+
+# ----- FeatherPGS ----------------------------------------------------------------------------
+
+
+def test_feather_pgs_resets_only_model_worlds():
+    """Isaac Lab's final mask entry is Newton's global world, which FeatherPGS has no slot for."""
+    calls = []
+    native = SimpleNamespace(
+        model=SimpleNamespace(world_count=3), reset=lambda state, world_mask, flags: calls.append((world_mask, flags))
+    )
+    world_mask = wp.array([True, False, True, False], dtype=wp.bool, device="cpu")
+
+    solver_driver(FeatherPGSSolver, FeatherPGSSolverCfg(), native).reset(None, world_mask)
+
+    ((mask, flags),) = calls
+    assert mask.numpy().tolist() == [True, False, True]
+    assert flags == 0
+
+
+def test_feather_pgs_collision_choices_reach_the_pipeline(monkeypatch):
+    """The configured collision choices are passed to the pipeline, which the solver keeps for path queries."""
+    received = {}
+    pipeline = SimpleNamespace(get_collision_selection=lambda: {"method": "ordinary"})
+
+    def create(self, **kwargs):
+        received.update(kwargs)
+        return pipeline
+
+    monkeypatch.setattr(NewtonSolver, "create_collision_pipeline", create)
+    native = SimpleNamespace(get_path_selection=lambda: {"factor": "tree"})
+    cfg = FeatherPGSSolverCfg(convex_collision="ordinary", contact_export="tiled")
+    solver = solver_driver(FeatherPGSSolver, cfg, native)
+
+    with pytest.raises(RuntimeError, match="Initialize FeatherPGS"):
+        solver.path_selection()
+    assert solver.create_collision_pipeline(broad_phase="explicit") is pipeline
+
+    assert received == {"broad_phase": "explicit", "convex_collision": "ordinary", "contact_export": "tiled"}
+    assert solver.path_selection() == {"solver": {"factor": "tree"}, "collision": {"method": "ordinary"}}
+
+
+def test_feather_pgs_reports_each_contact_drop_once(caplog):
+    """A step whose collision passes dropped contacts reports their worlds until the next step."""
+    record = SimpleNamespace(passes=0, last_pass=0, contacts=0, worlds=np.zeros(4, dtype=np.int64))
+    solver = solver_driver(FeatherPGSSolver, FeatherPGSSolverCfg(), None)
+    solver.collision_pipeline = SimpleNamespace(contact_drops=lambda: record)
+
+    solver.check_step(True, False)
+    assert solver.contact_drop_worlds is None
+
+    record.passes, record.last_pass, record.contacts = 1, 7, 5
+    record.worlds = np.array([0, 7, 0, 7])
+    with caplog.at_level(logging.WARNING):
+        solver.check_step(True, False)
+    assert solver.contact_drop_worlds.tolist() == [False, True, False]
+    assert "between global shapes" in caplog.text
+
+    solver.check_step(True, False)
+    assert solver.contact_drop_worlds is None
+
+
+def test_backend_measures_new_graphs_once_and_recaptures_after_growth():
+    """The pipeline measures the first replay of each captured step, and a contact growth drops the stale graphs."""
+    calls = []
+    grow = [False]
+
+    def service_capacity(state=None, dt=None):
+        calls.append(("measure", dt) if state is not None else ("grow",))
+        return grow[0]
+
+    backend = object.__new__(NewtonBackend)
+    backend.collision_pipeline = SimpleNamespace(service_capacity=service_capacity)
+    backend.device = SimpleNamespace(is_capturing=False)
+    backend.state_0, backend.solver_dt, backend.num_substeps = object(), 0.005, 2
+    backend.cfg = SimpleNamespace(collision_decimation=0)
+    backend.graphs, backend.graphs_measured = {}, False
+
+    backend._measure_contact_demand()
+    backend.graphs = {("simulate", 1): object()}
+    backend._measure_contact_demand()
+    backend._measure_contact_demand()
+    assert calls == [("measure", 0.01)]
+
+    backend._service_contact_capacity()
+    assert backend.graphs
+    grow[0] = True
+    backend._service_contact_capacity()
+    assert not backend.graphs and not backend.graphs_measured

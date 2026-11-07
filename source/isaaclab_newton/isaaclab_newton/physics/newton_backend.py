@@ -10,6 +10,7 @@ from __future__ import annotations
 import contextlib
 import gc
 import logging
+import os
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -601,16 +602,22 @@ class NewtonBackend:
         else:
             args = collision_cfg.to_pipeline_args() if collision_cfg is not None else {"broad_phase": "explicit"}
             args["deterministic"] = self.deterministic_mode != wp.DeterministicMode.NOT_GUARANTEED
+            # Experiments registered in Newton's environment flags (owner: Isaac Lab): box-box pairs through the
+            # analytic SAT collider, and contact identity across steps for a solver's warm start.
+            if os.environ.get("NEWTON_COLLISION_BOX_SAT") == "1":
+                args["box_box_sat"] = True
+            if contact_matching := os.environ.get("NEWTON_CONTACT_MATCHING"):
+                args["contact_matching"] = contact_matching
             required = getattr(solver, "get_max_contact_count", lambda: 0)()
             if self.collision_pipeline is None:
-                self.collision_pipeline = ops.create_collision_pipeline(**args)
+                self.collision_pipeline = _scale_narrow_phase_threads(ops.create_collision_pipeline(**args))
             self.contacts = self.collision_pipeline.contacts()
             # MuJoCo Warp can require more contacts than the pipeline estimates.
             if required > self.contacts.rigid_contact_max:
                 if args["deterministic"]:
                     # The deterministic sort buffer is sized at construction, so rebuild the pipeline to match.
                     args["rigid_contact_max"] = required
-                    self.collision_pipeline = ops.create_collision_pipeline(**args)
+                    self.collision_pipeline = _scale_narrow_phase_threads(ops.create_collision_pipeline(**args))
                     self.contacts = self.collision_pipeline.contacts()
                 else:
                     self.contacts = Contacts(
@@ -724,6 +731,19 @@ class NewtonBackend:
             model.bvh_refit_shapes(state)
         if model.particle_count:
             model.bvh_refit_particles(state)
+
+
+def _scale_narrow_phase_threads(pipeline: CollisionPipeline) -> CollisionPipeline:
+    """Scale the grid-stride thread count of the narrow-phase kernels by ``NEWTON_NARROW_PHASE_THREADS_X``.
+
+    An experiment registered in Newton's environment flags (owner: Isaac Lab); the default 1 leaves the pipeline as
+    built.
+    """
+    scale = int(os.environ.get("NEWTON_NARROW_PHASE_THREADS_X", "1"))
+    narrow_phase = getattr(pipeline, "narrow_phase", None)
+    if scale > 1 and narrow_phase is not None and hasattr(narrow_phase, "total_num_threads"):
+        narrow_phase.total_num_threads = int(narrow_phase.total_num_threads) * scale
+    return pipeline
 
 
 def capture_graph(device: wp.DeviceLike, fn: Callable[[], None], *, relaxed: bool = False) -> wp.Graph:

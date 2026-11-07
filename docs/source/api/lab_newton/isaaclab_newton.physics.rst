@@ -33,6 +33,7 @@
     FeatherstoneSolverCfg
     SteelSolverCfg
     FeatherPGSSolverCfg
+    FeatherPGSDiagnosticsCfg
     KaminoCollisionDetectorCfg
     KaminoConstraintsCfg
     KaminoDVICfg
@@ -163,6 +164,11 @@ Physics Configuration
   :exclude-members: __init__
 
 .. autoclass:: FeatherPGSSolverCfg
+  :members:
+  :show-inheritance:
+  :exclude-members: __init__
+
+.. autoclass:: FeatherPGSDiagnosticsCfg
   :members:
   :show-inheritance:
   :exclude-members: __init__

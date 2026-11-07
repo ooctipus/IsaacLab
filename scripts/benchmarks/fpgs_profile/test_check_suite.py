@@ -60,7 +60,7 @@ class TestSuiteScale(unittest.TestCase):
 class TestQuickGraphTiming(unittest.TestCase):
     def fixture(self):
         physics, auxiliary = object(), object()
-        manager = SimpleNamespace(_graph=physics)
+        backend = SimpleNamespace(graphs={("simulate", 1): physics})
         records = []
         default = SimpleNamespace(record_event=lambda event: records.append(("default", event)))
         explicit = SimpleNamespace(record_event=lambda event: records.append(("explicit", event)))
@@ -76,15 +76,15 @@ class TestQuickGraphTiming(unittest.TestCase):
             synchronize_device=lambda device: None,
             get_event_elapsed_time=lambda *args, **kwargs: 0.5,
         )
-        return warp, manager, physics, auxiliary, explicit, records
+        return warp, backend, physics, auxiliary, explicit, records
 
     def test_physics_only_and_explicit_stream(self):
-        warp, manager, physics, auxiliary, explicit, records = self.fixture()
+        warp, backend, physics, auxiliary, explicit, records = self.fixture()
         original = warp.capture_launch
-        with GraphTimer(warp, manager, "cuda:0", 2) as timer:
+        with GraphTimer(warp, backend, "cuda:0", 2) as timer:
             self.assertEqual(warp.capture_launch(auxiliary), "result")
             warp.capture_launch(physics, stream=explicit)
-            manager._graph = auxiliary
+            backend.graphs = {("simulate", 1): auxiliary}
             warp.capture_launch(auxiliary)
         self.assertIs(warp.capture_launch, original)
         self.assertEqual(timer.milliseconds(1, 2), [1.0])
@@ -93,10 +93,10 @@ class TestQuickGraphTiming(unittest.TestCase):
         )
 
     def test_missing_launch_fails_and_wrapper_is_restored(self):
-        warp, manager, physics, _, _, _ = self.fixture()
+        warp, backend, physics, _, _, _ = self.fixture()
         original = warp.capture_launch
         with self.assertRaisesRegex(RuntimeError, "expected"):
-            with GraphTimer(warp, manager, "cuda:0", 2) as timer:
+            with GraphTimer(warp, backend, "cuda:0", 2) as timer:
                 warp.capture_launch(physics)
                 raise RuntimeError("expected")
         self.assertIs(warp.capture_launch, original)
@@ -104,11 +104,11 @@ class TestQuickGraphTiming(unittest.TestCase):
             timer.milliseconds(1, 2)
 
     def test_graph_that_contains_the_full_decimation_loop(self):
-        warp, manager, physics, _, _, _ = self.fixture()
+        warp, backend, physics, _, _, _ = self.fixture()
         env = SimpleNamespace(
             unwrapped=SimpleNamespace(cfg=SimpleNamespace(decimation=4), _physics_handles_decimation=True)
         )
-        with GraphTimer(warp, manager, "cuda:0", 1) as timer:
+        with GraphTimer(warp, backend, "cuda:0", 1) as timer:
             warp.capture_launch(physics)
         self.assertEqual(timer.milliseconds(1, physics_launches_per_step(env)), [0.5])
         env.unwrapped._physics_handles_decimation = False

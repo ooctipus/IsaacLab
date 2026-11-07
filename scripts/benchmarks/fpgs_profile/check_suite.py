@@ -57,8 +57,8 @@ def source_identity(root):
 class GraphTimer:
     """Time only the current physics graph on its actual launch stream."""
 
-    def __init__(self, warp, manager, device, capacity):
-        self.wp, self.manager, self.device = warp, manager, device
+    def __init__(self, warp, backend, device, capacity):
+        self.wp, self.backend, self.device = warp, backend, device
         self.events = [
             (warp.Event(device, enable_timing=True), warp.Event(device, enable_timing=True)) for _ in range(capacity)
         ]
@@ -69,7 +69,7 @@ class GraphTimer:
         self.original = self.wp.capture_launch
 
         def launch(graph, stream=None):
-            if graph is not self.manager._graph:
+            if not any(graph is part for part in self.backend.graphs.values()):
                 return self.original(graph, stream=stream)
             index = len(self.records)
             if index >= len(self.events):
@@ -140,7 +140,6 @@ def worker(job_path):
         import numpy as np
         import torch
         import warp as wp
-        from isaaclab_newton.physics import NewtonFeatherPGSManager, NewtonManager
         from isaaclab_newton.physics.newton_collision_cfg import NewtonCollisionPipelineCfg
 
         if not Path(newton.__file__).resolve().is_relative_to(Path(job["newton"])):
@@ -170,12 +169,13 @@ def worker(job_path):
         launch_args = {"device": "cuda:0", "headless": True, "visualizer": None, "visualizer_explicit": True}
 
         def check(label, env):
-            state = NewtonManager.get_state_0()
+            backend = env.unwrapped.sim.backend_manager.backend
+            state = backend.state_0
             arrays = {name: getattr(state, name).numpy() for name in ("joint_q", "joint_qd", "body_q", "body_qd")}
             if not all(np.isfinite(value).all() for value in arrays.values()):
                 raise RuntimeError(f"Nonfinite state at {label}")
-            solver = NewtonManager._solver
-            narrow = NewtonManager._collision_pipeline.narrow_phase
+            solver = backend.solver
+            narrow = backend.collision_pipeline.narrow_phase
             if not narrow.verify_buffers:
                 raise RuntimeError("Collision buffer checking is disabled")
             solver.check_constraint_capacity()
@@ -183,27 +183,28 @@ def worker(job_path):
             flags = {"solver": solver.constraint_capacity_status(), "collision": narrow.buffer_capacity_status()}
             if any(any(group.values()) for group in flags.values()):
                 raise RuntimeError(f"Capacity overflow at {label}: {flags}")
-            if NewtonManager._graph is None:
+            # The backend captures the step on its first run, so the reset check precedes any graph.
+            if label != "reset" and not backend.graphs:
                 raise RuntimeError("Missing captured physics graph")
             return {
                 "label": label,
                 "finite": True,
                 "capacity_flags": flags,
                 "collision_work": collision_work_snapshot(narrow),
-                "selection": NewtonFeatherPGSManager.get_path_selection(),
+                "selection": backend.solver_ops.path_selection(),
                 "state_sha256": {name: hashlib.sha256(value.tobytes()).hexdigest() for name, value in arrays.items()},
                 "body_velocity_rms": float(np.sqrt(np.mean(arrays["body_qd"].astype(float) ** 2))),
                 "sim_dt": float(env.unwrapped.cfg.sim.dt),
                 "decimation": int(env.unwrapped.cfg.decimation),
-                "solver_dt": float(NewtonManager._solver_dt),
-                "substeps": int(NewtonManager._num_substeps),
+                "solver_dt": float(backend.solver_dt),
+                "substeps": int(backend.num_substeps),
                 "pgs_iterations": int(solver.options.pgs_iterations),
             }
 
         with harness.launch_simulation(cfg, launch_args):
             with contextlib.closing(harness.gym.make(scene["task"], cfg=cfg)) as env, torch.inference_mode():
                 env.reset()
-                model = NewtonManager.get_model()
+                model = env.unwrapped.sim.backend_manager.backend.model
                 result["model"] = {
                     name: int(getattr(model, name))
                     for name in ("world_count", "body_count", "joint_count", "joint_dof_count", "shape_count")
@@ -223,7 +224,7 @@ def worker(job_path):
                 launches_per_step = physics_launches_per_step(env)
                 action_hash = hashlib.sha256()
                 timer = (
-                    GraphTimer(wp, NewtonManager, "cuda:0", steps * launches_per_step)
+                    GraphTimer(wp, env.unwrapped.sim.backend_manager.backend, "cuda:0", steps * launches_per_step)
                     if job["mode"] == "perf"
                     else None
                 )

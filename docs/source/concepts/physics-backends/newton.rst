@@ -39,6 +39,8 @@ list configuration fields and defaults.
    * - :class:`~isaaclab_newton.physics.KaminoPADMMSolverCfg` and
        :class:`~isaaclab_newton.physics.KaminoDVISolverCfg`
      - :ref:`kamino-solver-tuning` for Kamino configuration
+   * - :class:`~isaaclab_newton.physics.FeatherPGSSolverCfg`
+     - :ref:`feather-pgs-solver-tuning` for the experimental reduced-coordinate PGS solver
    * - :class:`~isaaclab_newton.physics.VBDSolverCfg`
      - :ref:`newton-using-vbd` for cloth, soft bodies, and coupled scenes
    * - :class:`~isaaclab_newton.physics.MPMSolverCfg`

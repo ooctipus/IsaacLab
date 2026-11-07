@@ -85,17 +85,18 @@ def _instrument(env):
     _wrap(u.sim, "step", "sim.step")
     _wrap(u.scene, "update", "scene.update")
     _wrap(u, "_reset_idx", "reset_idx")
-    # Physics manager internals.
+    # Newton backend internals.
     try:
-        from isaaclab_newton.physics import NewtonManager
+        from isaaclab_newton.physics import NewtonBackend, NewtonSolver
 
-        _wrap(NewtonManager, "forward", "newton.forward")
-        _wrap(NewtonManager, "_reset_solver_internals_delegate", "newton.reset_internals")
+        _wrap(NewtonBackend, "forward", "newton.forward")
+        _wrap(NewtonSolver, "reset", "newton.reset_internals")
         real_launch = wp.capture_launch
 
         def timed_launch(graph, *a, **k):
             # Sensors can launch separate graphs from observation updates.
-            label = "physics_graph" if graph is NewtonManager._graph else "auxiliary_graph"
+            physics = any(graph is part for part in _backend().graphs.values())
+            label = "physics_graph" if physics else "auxiliary_graph"
             if _NVTX:
                 torch.cuda.nvtx.range_push(label)
             t0 = time.perf_counter()
@@ -112,6 +113,13 @@ def _instrument(env):
         print(f"[WARN] Newton instrumentation skipped: {exc}")
 
 
+def _backend():
+    """The active simulation's Newton backend."""
+    from isaaclab.sim import SimulationContext
+
+    return SimulationContext.instance().backend_manager.backend
+
+
 def _trace_step(env, i: int, physics: str) -> None:
     """Print one line of physics statistics after env step ``i``."""
     torch.cuda.synchronize()
@@ -120,11 +128,11 @@ def _trace_step(env, i: int, physics: str) -> None:
     extra = ""
     if physics == "feather_pgs":
         # Consistency of the published poses with joint coordinates, and the FK/ID cache state.
-        from isaaclab_newton.physics.newton_manager import NewtonManager
         from newton import eval_fk
 
-        st = NewtonManager.get_state_0()
-        model = NewtonManager._model
+        backend = _backend()
+        st = backend.state_0
+        model = backend.model
         scratch = getattr(_trace_step, "_scratch", None)
         if scratch is None:
             scratch = model.state()
@@ -132,7 +140,7 @@ def _trace_step(env, i: int, physics: str) -> None:
         eval_fk(model, st.joint_q, st.joint_qd, scratch)
         dq = np.abs(scratch.body_q.numpy() - st.body_q.numpy()).max()
         dqd = np.abs(scratch.body_qd.numpy() - st.body_qd.numpy()).max()
-        nvalid = int(NewtonManager._solver.factor.fk_id_cache_valid.numpy().sum())
+        nvalid = int(backend.solver.factor.fk_id_cache_valid.numpy().sum())
         extra = f" body_q_vs_fk={dq:.3e} body_qd_vs_fk={dqd:.3e} cache_valid={nvalid}"
     print(
         f"TRACE step={i} contacts={m.get('contacts_active')} pairs={m.get('broad_phase_pairs')} "
@@ -146,9 +154,8 @@ def _trace_step(env, i: int, physics: str) -> None:
 def _model_meta(physics: str) -> dict:
     meta: dict = {}
     try:
-        from isaaclab_newton.physics import NewtonManager
-
-        m = NewtonManager.get_model()
+        backend = _backend()
+        m = backend.model
         meta.update(
             worlds=int(m.world_count),
             bodies=int(m.body_count),
@@ -159,12 +166,12 @@ def _model_meta(physics: str) -> dict:
             articulations=int(m.articulation_count),
             rigid_contact_max=int(getattr(m, "rigid_contact_max", 0) or 0),
         )
-        s = NewtonManager._solver
+        s = backend.solver
         meta["solver_class"] = type(s).__name__
-        meta["decimation"] = int(NewtonManager._decimation)
-        meta["num_substeps"] = int(NewtonManager._num_substeps)
-        meta["solver_dt"] = float(NewtonManager._solver_dt)
-        c = NewtonManager.get_contacts()
+        meta["decimation"] = int(backend.decimation)
+        meta["num_substeps"] = int(backend.num_substeps)
+        meta["solver_dt"] = float(backend.solver_dt)
+        c = backend.contacts
         if c is not None and getattr(c, "rigid_contact_count", None) is not None:
             meta["contacts_active"] = int(c.rigid_contact_count.numpy().sum())
         st_types = getattr(m, "shape_type", None)
@@ -179,7 +186,7 @@ def _model_meta(physics: str) -> dict:
                     v = arr.numpy()
                     print(f"SHAPES {attr}: min={v.min():.4g} max={v.max():.4g} mean={v.mean():.4g}")
             _trace_step._shapes_printed = True
-        cp = getattr(NewtonManager, "_collision_pipeline", None)
+        cp = backend.collision_pipeline
         if cp is not None:
             bp = getattr(cp, "broad_phase_pair_count", None)
             if bp is not None:
@@ -189,7 +196,7 @@ def _model_meta(physics: str) -> dict:
                 arr = getattr(npz, attr, None) if npz is not None else None
                 if arr is not None:
                     meta[key] = int(arr.numpy()[0])
-        st = NewtonManager.get_state_0()
+        st = backend.state_0
         bq = st.body_q.numpy()
         jq = st.joint_q.numpy()
         jqd = st.joint_qd.numpy()

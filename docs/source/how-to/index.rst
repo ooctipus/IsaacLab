@@ -478,6 +478,16 @@ How-to Guides
 
       .. container:: guide-entry
 
+         :doc:`Tuning the FeatherPGS solver </source/how-to/solver_tuning_feather_pgs>`
+
+         Configure experimental Newton FeatherPGS iterations, substeps, constraint capacity, and collision choices.
+
+         .. container:: guide-metadata
+
+            :guide-tag-newton:`Newton`
+
+      .. container:: guide-entry
+
          :doc:`Tuning the VBD solver </source/how-to/solver_tuning_vbd>`
 
          Tune Newton Vertex Block Descent (VBD) materials, contacts, cloth, soft bodies, and proxy or ADMM coupling.

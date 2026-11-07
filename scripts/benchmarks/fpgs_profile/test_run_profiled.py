@@ -26,7 +26,7 @@ class TestGraphInstrumentation(unittest.TestCase):
             node for node in source.body if isinstance(node, ast.FunctionDef) and node.name == "_instrument"
         )
         physics, auxiliary = object(), object()
-        manager = SimpleNamespace(_graph=physics)
+        backend = SimpleNamespace(graphs={("simulate", 1): physics})
         labels, calls = [], []
 
         def launch(graph, *args, **kwargs):
@@ -51,14 +51,16 @@ class TestGraphInstrumentation(unittest.TestCase):
             "HOST": defaultdict(float),
             "COUNTS": counters,
             "time": time,
+            "_backend": lambda: backend,
         }
         exec(compile(ast.Module(body=[function], type_ignores=[]), str(path), "exec"), globals_)
         env = SimpleNamespace(unwrapped=SimpleNamespace(scene=None, sim=None))
-        with patch.dict(sys.modules, {"isaaclab_newton.physics": SimpleNamespace(NewtonManager=manager)}):
+        newton_physics = SimpleNamespace(NewtonBackend=object(), NewtonSolver=object())
+        with patch.dict(sys.modules, {"isaaclab_newton.physics": newton_physics}):
             globals_["_instrument"](env)
         self.assertEqual(warp.capture_launch(physics, 7, stream="stream"), "unchanged return")
         self.assertEqual(warp.capture_launch(auxiliary), "unchanged return")
-        manager._graph = auxiliary
+        backend.graphs = {("simulate", 1): auxiliary}
         with self.assertRaisesRegex(RuntimeError, "expected"):
             warp.capture_launch(auxiliary, fail=True)
         self.assertEqual(labels, ["physics_graph", "pop", "auxiliary_graph", "pop", "physics_graph", "pop"])

@@ -2,7 +2,7 @@ Added
 ^^^^^
 
 * Added :class:`~isaaclab_newton.physics.FeatherPGSSolverCfg` and
-  :class:`~isaaclab_newton.physics.NewtonFeatherPGSManager` for Newton's
+  :class:`~isaaclab_newton.physics.FeatherPGSSolver` for Newton's
   reduced-coordinate FeatherPGS solver.
 
 Changed
@@ -17,8 +17,6 @@ Changed
 * Changed the default FeatherPGS velocity-limit activation fraction from
   ``0.0`` to ``0.7`` so inactive limit rows do not consume solver work. Set
   ``velocity_limit_activation_fraction=0.0`` to retain always-allocated rows.
-* Changed FeatherPGS CUDA-graph capture to seed asynchronous double-buffer
-  events before captured solver work.
 
 Fixed
 ^^^^^
