@@ -1,0 +1,1 @@
+Applied the Kuka-Allegro friction profile in place instead of subclassing the lift physics presets; the resolved presets are unchanged.
