@@ -209,7 +209,6 @@
       "id": "g1",
       "task": "Isaac-Velocity-Rough-G1",
       "solver_attrs": {
-        "dense_max_constraints": "128",
         "convex_collision": "auto"
       },
       "storage_at_16384_worlds": {
