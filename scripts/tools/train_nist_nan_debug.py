@@ -44,6 +44,7 @@ def resolve_debug_task(task: str, agent: str):
         record_model=True,
         record_control=True,
         record_solver=True,
+        include_private_fields=False,
         detect_nonfinite_in=("state",),
     )
     return env_cfg, agent_cfg
