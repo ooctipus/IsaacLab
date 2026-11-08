@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import functools
 import logging
+import re
 import warnings
 import weakref
 from abc import ABCMeta, abstractmethod
@@ -163,6 +164,49 @@ class PhysicsManager(metaclass=_PhysicsManagerMeta):
         self._callback_id: int = 0
         self.views: dict[str, Any] = {}
         """Backend views by prim path expression, shared by the consumers of this manager."""
+        self._debug_context_providers: dict[str, Callable[[], Any]] = {}
+
+    def set_debug_context_provider(self, name: str, provider: Callable[[], Any], *, replace: bool = False) -> None:
+        """Register a named, lazily evaluated value for physics incident archives."""
+        if not isinstance(name, str):
+            raise TypeError("Debug context provider name must be a string.")
+        if _DEBUG_CONTEXT_NAME_PATTERN.fullmatch(name) is None:
+            raise ValueError(f"Debug context provider name {name!r} must be lower snake case.")
+        if not callable(provider):
+            raise TypeError(f"Debug context provider {name!r} must be callable.")
+        if not isinstance(replace, bool):
+            raise TypeError("Debug context provider replace must be a bool.")
+        if name in self._debug_context_providers and not replace:
+            raise ValueError(f"Debug context provider {name!r} is already registered.")
+        self._debug_context_providers[name] = provider
+
+    def get_debug_context(self) -> dict[str, Any]:
+        """Resolve workflow values at incident time."""
+        values = {}
+        for name, provider in sorted(self._debug_context_providers.items()):
+            try:
+                value = provider()
+            except Exception as exc:
+                raise RuntimeError(f"Debug context provider {name!r} failed: {exc}") from exc
+            if value is None:
+                raise RuntimeError(f"Debug context provider {name!r} returned None.")
+            values[name] = value
+        return values
+
+    def remove_debug_context_provider(self, name: str) -> None:
+        """Remove a named workflow value."""
+        if not isinstance(name, str):
+            raise TypeError("Debug context provider name must be a string.")
+        if _DEBUG_CONTEXT_NAME_PATTERN.fullmatch(name) is None:
+            raise ValueError(f"Debug context provider name {name!r} must be lower snake case.")
+        try:
+            del self._debug_context_providers[name]
+        except KeyError as exc:
+            raise KeyError(f"Debug context provider {name!r} is not registered.") from exc
+
+    def clear_debug_context_providers(self) -> None:
+        """Release all workflow values owned by this manager."""
+        self._debug_context_providers.clear()
 
     @classmethod
     def _deprecated_active(cls, owner: str) -> PhysicsManager:
@@ -584,6 +628,7 @@ class PhysicsManager(metaclass=_PhysicsManagerMeta):
             self.clear_callbacks()
         finally:
             self.views.clear()
+            self.clear_debug_context_providers()
             self._sim_time = 0.0
             self._sim = None
 

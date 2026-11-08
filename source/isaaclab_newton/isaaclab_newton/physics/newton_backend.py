@@ -107,6 +107,8 @@ class NewtonCloneRecord:
     """Body indices per replicated cable prim path."""
     geometry_batches: list
     """Shape batches the scene data backend publishes as geometry."""
+    initial_body_variants: tuple[tuple[int, int], ...] = ()
+    """Initial ``(body, variant)`` selections resolved by the clone composition root."""
 
 
 class NewtonBackend:
@@ -115,7 +117,14 @@ class NewtonBackend:
     A render-only backend (non-Newton physics) holds only the model and :attr:`state_0`.
     """
 
-    def __init__(self, cfg: NewtonBackendCfg, builder: ModelBuilder | None = None, *, dt: float | None = None):
+    def __init__(
+        self,
+        cfg: NewtonBackendCfg,
+        builder: ModelBuilder | None = None,
+        *,
+        dt: float | None = None,
+        initial_body_variants: tuple[tuple[int, int], ...] = (),
+    ):
         """Finalize a builder and allocate the buffers bound to its model.
 
         Args:
@@ -123,11 +132,20 @@ class NewtonBackend:
                 physics makes it render-only.
             builder: Builder to finalize. Defaults to the simulation's shared builder for ``cfg.physics_cfg``.
             dt: Duration of one physics step [s]. Required for a simulation backend.
+            initial_body_variants: Initial selections resolved from the clone plan.
         """
         if builder is None:
             builder = SimulationContext.instance().get_or_create_backend(NewtonBuilderCfg(physics_cfg=cfg.physics_cfg))
         self.model = builder.finalize(device=cfg.device)
         """Finalized Newton model; :attr:`model.num_envs` is its world count."""
+        if initial_body_variants:
+            bodies, variants = zip(*initial_body_variants, strict=True)
+            self.model.select_body_variants(
+                wp.array(variants, dtype=wp.int32, device=cfg.device),
+                bodies=wp.array(bodies, dtype=wp.int32, device=cfg.device),
+            )
+        self.geometry_change_version = 0
+        """Incremented when native body selection changes shape type or source after initialization."""
         self.model.num_envs = self.model.world_count
         self.device: wp.Device = self.model.device
         self.state_version = 0
@@ -188,6 +206,9 @@ class NewtonBackend:
         """Contacts produced by the collision pipeline or the solver."""
         self.contact_observables: SolverBase.Observables | None = None
         """Solver-owned contact forces when registered sensors require them."""
+        self.debug_substep: Callable[[State, bool, int], None] | None = None
+        """Optional manager-owned callback before and after each solver substep."""
+        self._debug_substep_index = 0
         self.staged_body_f: wp.array | None = None
         """Body forces [N, N·m] written before the step, re-applied before every substep."""
         self.world_mask = wp.zeros(self.model.world_count + 1, dtype=wp.bool, device=self.device)
@@ -486,6 +507,8 @@ class NewtonBackend:
             Whether the step replays captured graphs.
         """
         steps = self.decimation if self.handles_decimation() else 1
+        if self.debug_substep is not None:
+            self._debug_substep_index = 0
         actuators = self.actuators
         with wp.ScopedDevice(self.device):
             self.forward()
@@ -652,12 +675,15 @@ class NewtonBackend:
         collide_every = self.cfg.collision_decimation
         # The last substep is skipped: its contacts would only feed the next physics step's collision.
         collide_mid_loop = collide_every > 0 and self.collision_pipeline is not None and contacts is not None
+        debug_substep = self.debug_substep
         for i in range(num_substeps):
             state = self.state_0
             if self.staged_body_f is not None:
                 wp.copy(state.body_f, self.staged_body_f)
             for callback in self.state_force_callbacks:
                 callback(state)
+            if debug_substep is not None:
+                debug_substep(state, False, self._debug_substep_index)
             state_out = state if ops.single_state else self.state_1
             # Only final-substep contact forces are read by sensors.
             step_observables = observables if i == num_substeps - 1 else None
@@ -667,6 +693,9 @@ class NewtonBackend:
                     state.assign(self.state_1)
                 else:
                     self.state_0, self.state_1 = self.state_1, self.state_0
+            if debug_substep is not None:
+                debug_substep(self.state_0, True, self._debug_substep_index)
+                self._debug_substep_index += 1
             self.state_0.clear_forces()
             # Derived data read by the next substep's state-force callbacks must see this substep's state.
             self.state_version += 1

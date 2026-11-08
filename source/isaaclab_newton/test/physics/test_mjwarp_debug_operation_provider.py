@@ -94,6 +94,17 @@ def test_bind_requires_exactly_one_mjwarp_backed_solver():
         provider.bind({"uninitialized": missing_selector})
 
 
+def test_clean_close_allows_binding_after_a_hard_reset(mjwarp_solver):
+    solver, _ = mjwarp_solver
+    provider = MJWarpDebugOperationProvider()
+
+    provider.bind(solver)
+    provider.close()
+    provider.bind(solver)
+    assert provider.snapshot() is not None
+    provider.close()
+
+
 def test_coupled_mapping_selects_mjwarp_solver_and_ignores_native_cpu(mjwarp_solver):
     """A native MuJoCo CPU entry does not make one MJWarp-backed entry ambiguous."""
     solver, _ = mjwarp_solver

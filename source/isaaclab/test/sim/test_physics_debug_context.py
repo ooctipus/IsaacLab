@@ -3,54 +3,57 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Tests for backend-neutral physics diagnostic context providers."""
+"""Diagnostic context belongs to the active physics manager instance."""
 
-from __future__ import annotations
-
-import builtins
 from types import SimpleNamespace
 
 import pytest
 
-from isaaclab.envs import manager_based_env as manager_based_env_module
 from isaaclab.envs.manager_based_env import ManagerBasedEnv
+from isaaclab.envs.manager_based_rl_env import ManagerBasedRLEnv
 from isaaclab.physics import PhysicsManager
 
 
-@pytest.fixture(autouse=True)
-def _clear_debug_context_providers():
-    PhysicsManager.clear_debug_context_providers()
-    yield
-    PhysicsManager.clear_debug_context_providers()
+class _Manager(PhysicsManager):
+    def reset(self, soft=False):
+        pass
+
+    def forward(self):
+        pass
+
+    def get_scene_data_backend(self):
+        return None
+
+    def step(self):
+        pass
 
 
-def test_debug_context_provider_resolves_current_value():
-    """Providers are resolved lazily so replacing a workflow buffer stays visible."""
+@pytest.fixture
+def manager():
+    return _Manager(SimpleNamespace())
+
+
+def test_context_is_lazy_and_owned_by_one_manager(manager):
     state = {"value": [1, 2]}
-    PhysicsManager.set_debug_context_provider("episode_length", lambda: state["value"])
-
-    assert PhysicsManager.get_debug_context() == {"episode_length": [1, 2]}
-
+    manager.set_debug_context_provider("episode_length", lambda: state["value"])
+    assert manager.get_debug_context() == {"episode_length": [1, 2]}
     state["value"] = [3, 4]
-    assert PhysicsManager.get_debug_context() == {"episode_length": [3, 4]}
+    assert manager.get_debug_context() == {"episode_length": [3, 4]}
+    assert _Manager(SimpleNamespace()).get_debug_context() == {}
 
 
 @pytest.mark.parametrize("name", ["", "EpisodeLength", "episode-length", "1_episode"])
-def test_debug_context_provider_rejects_invalid_names(name):
-    """Context names have one stable lower-snake-case archive spelling."""
+def test_context_rejects_invalid_names(manager, name):
     with pytest.raises(ValueError, match="lower snake case"):
-        PhysicsManager.set_debug_context_provider(name, lambda: 1)
+        manager.set_debug_context_provider(name, lambda: 1)
 
 
-def test_debug_context_provider_rejects_duplicates_unless_explicitly_replaced():
-    """A duplicate registration cannot silently replace diagnostic data."""
-    PhysicsManager.set_debug_context_provider("step_count", lambda: 1)
-
+def test_context_requires_explicit_replacement(manager):
+    manager.set_debug_context_provider("step_count", lambda: 1)
     with pytest.raises(ValueError, match="already registered"):
-        PhysicsManager.set_debug_context_provider("step_count", lambda: 2)
-
-    PhysicsManager.set_debug_context_provider("step_count", lambda: 2, replace=True)
-    assert PhysicsManager.get_debug_context() == {"step_count": 2}
+        manager.set_debug_context_provider("step_count", lambda: 2)
+    manager.set_debug_context_provider("step_count", lambda: 2, replace=True)
+    assert manager.get_debug_context() == {"step_count": 2}
 
 
 @pytest.mark.parametrize(
@@ -60,81 +63,45 @@ def test_debug_context_provider_rejects_duplicates_unless_explicitly_replaced():
         (lambda: (_ for _ in ()).throw(RuntimeError("provider broke")), "provider broke"),
     ],
 )
-def test_debug_context_provider_failures_propagate(provider, message):
-    """Broken providers fail with their exact registered name and cause."""
-    PhysicsManager.set_debug_context_provider("workflow_value", provider)
-
+def test_context_provider_errors_propagate(manager, provider, message):
+    manager.set_debug_context_provider("workflow_value", provider)
     with pytest.raises(RuntimeError, match=rf"workflow_value.*{message}"):
-        PhysicsManager.get_debug_context()
+        manager.get_debug_context()
 
 
-def test_debug_context_provider_remove_is_strict():
-    """Removing an unknown provider is an actionable error."""
+def test_context_remove_and_close_are_strict(manager):
     with pytest.raises(KeyError, match="not registered"):
-        PhysicsManager.remove_debug_context_provider("missing")
+        manager.remove_debug_context_provider("missing")
+    manager.set_debug_context_provider("present", lambda: 1)
+    manager.remove_debug_context_provider("present")
+    assert manager.get_debug_context() == {}
+    manager.set_debug_context_provider("present", lambda: 2)
+    manager.close()
+    assert manager.get_debug_context() == {}
 
-    PhysicsManager.set_debug_context_provider("present", lambda: 1)
-    PhysicsManager.remove_debug_context_provider("present")
-    assert PhysicsManager.get_debug_context() == {}
 
+@pytest.mark.parametrize("init_fails", [False, True])
+def test_rl_context_registers_before_solver_init_and_rolls_back_on_failure(monkeypatch, manager, init_fails):
+    manager.set_debug_context_provider("existing", lambda: "original")
+    env = object.__new__(ManagerBasedRLEnv)
+    env.sim = SimpleNamespace(physics_manager=manager)
+    env.episode_length_buf = [1, 2]
+    env.common_step_counter = 3
+    seen = []
 
-@pytest.mark.parametrize("failure_phase", ["register", "init"])
-def test_manager_env_init_failure_restores_exact_context_registry(monkeypatch, failure_phase: str):
-    """Extension-mode failures restore additions and replacements without touching prior providers."""
-
-    def original_existing():
-        return "original"
-
-    def original_unrelated():
-        return "unrelated"
-
-    PhysicsManager.set_debug_context_provider("existing", original_existing)
-    PhysicsManager.set_debug_context_provider("unrelated", original_unrelated)
-    registry_before = dict(PhysicsManager._debug_context_providers)
-    existing_sim = SimpleNamespace(physics_manager=PhysicsManager)
-
-    class _Cfg:
-        seed = None
-
-        def validate(self) -> None:
-            pass
-
-    class _FailingEnv(ManagerBasedEnv):
-        def _register_physics_debug_context(self) -> None:
-            PhysicsManager.set_debug_context_provider("existing", lambda: "replacement", replace=True)
-            PhysicsManager.set_debug_context_provider("new_value", lambda: "new")
-            if failure_phase == "register":
-                raise RuntimeError("registration failed")
-
-        def _init_sim(self) -> None:
+    def init_base(self):
+        seen.append(manager.get_debug_context())
+        if init_fails:
             raise RuntimeError("initialization failed")
 
-    monkeypatch.setattr(builtins, "ISAAC_LAUNCHED_FROM_TERMINAL", True, raising=False)
-    monkeypatch.setattr(
-        manager_based_env_module.SimulationContext,
-        "instance",
-        staticmethod(lambda: existing_sim),
-    )
-    monkeypatch.setattr(manager_based_env_module, "resolve_cfg_presets", lambda cfg: None)
+    monkeypatch.setattr(ManagerBasedEnv, "_init_sim", init_base)
+    if init_fails:
+        with pytest.raises(RuntimeError, match="initialization failed"):
+            env._init_sim()
+    else:
+        env._init_sim()
 
-    with pytest.raises(RuntimeError, match="failed"):
-        _FailingEnv(_Cfg())
-
-    assert PhysicsManager._debug_context_providers == registry_before
-    assert PhysicsManager._debug_context_providers["existing"] is original_existing
-    assert PhysicsManager._debug_context_providers["unrelated"] is original_unrelated
-    assert "new_value" not in PhysicsManager._debug_context_providers
-
-
-@pytest.mark.parametrize(
-    ("name", "error_type"),
-    [
-        (None, TypeError),
-        ("EpisodeLength", ValueError),
-        ("episode-length", ValueError),
-    ],
-)
-def test_debug_context_provider_remove_validates_name(name, error_type):
-    """Removal applies the same stable name contract as registration."""
-    with pytest.raises(error_type):
-        PhysicsManager.remove_debug_context_provider(name)
+    assert seen == [{"common_step_counter": 3, "episode_length": [1, 2], "existing": "original"}]
+    expected = {"existing": "original"} if init_fails else seen[0]
+    assert manager.get_debug_context() == expected
+    assert "_register_physics_debug_context" not in vars(ManagerBasedEnv)

@@ -18,12 +18,10 @@ Attach :class:`~isaaclab_newton.physics.NewtonDebugCaptureCfg` to
     from isaaclab_newton.physics import (
         NewtonCfg,
         NewtonDebugCaptureCfg,
-        NewtonDebugReplayCfg,
     )
 
     physics_cfg = NewtonCfg(
         use_cuda_graph=False,
-        solver_reset=NewtonCfg.SolverResetCfg(enabled=True),
         debug_capture=NewtonDebugCaptureCfg(
             history_length=200,
             output_dir="./physics_debug",
@@ -41,15 +39,6 @@ Attach :class:`~isaaclab_newton.physics.NewtonDebugCaptureCfg` to
             record_operations=False,
             detect_nonfinite_in=("state", "solver"),
             include_private_fields=True,
-            replay=NewtonDebugReplayCfg(
-                enabled=True,
-                record_state=True,
-                record_control=True,
-                record_solver=True,
-                record_contacts=False,
-                record_collision_pipeline=False,
-                record_operations=False,
-            ),
         ),
     )
     sim_cfg = SimulationCfg(physics=physics_cfg)
@@ -116,7 +105,9 @@ Register custom incident triggers
 Use :meth:`~isaaclab_newton.physics.NewtonManager.set_debug_incident_trigger`
 for values that remain finite but are physically invalid. Register each trigger
 after the simulation has installed ``NewtonCfg.debug_capture`` and before the
-solver is initialized. Names must be unique lower-snake-case strings.
+solver is initialized. In the examples, ``sim`` is the active
+:class:`~isaaclab.sim.SimulationContext` before ``sim.reset()``. Names must be
+unique lower-snake-case strings.
 
 The following trigger watches one known joint degree of freedom per world:
 
@@ -150,7 +141,7 @@ The following trigger watches one known joint degree of freedom per world:
         return joint_velocity_spike
 
 
-    NewtonManager.set_debug_incident_trigger(
+    sim.physics_manager.set_debug_incident_trigger(
         "joint_velocity_spike",
         make_joint_velocity_spike_trigger(
             joint_row_by_world={0: 4, 1: 11}, velocity_limit=30.0
@@ -192,7 +183,7 @@ function that returns the maximum impulse [N·s] for each world from
         return collision_impulse
 
 
-    NewtonManager.set_debug_incident_trigger(
+    sim.physics_manager.set_debug_incident_trigger(
         "collision_impulse",
         make_collision_impulse_trigger(read_solver_impulses, impulse_limit=100.0),
     )
@@ -255,18 +246,13 @@ Halting and environment resets are independent policies. The safe default,
 ``False`` only when continued diagnostics are intentional; a clean observation
 re-arms that scope for a later incident, while ``max_incidents`` limits only
 artifact retention.
-:attr:`~isaaclab_newton.physics.NewtonCfg.solver_reset` clears solver-owned
-state after task-authored environment writes when explicitly enabled, regardless
-of the incident halt policy.
 
 Capture timing and reset independence
 -------------------------------------
 
 Regular capture freezes one transition in this order:
 
-#. Apply model notifications and the explicitly enabled
-   :attr:`~isaaclab_newton.physics.NewtonCfg.solver_reset` for task-authored
-   environment writes.
+#. Apply model notifications for task-authored environment writes.
 #. Refresh forward kinematics, clear the consumed reset masks, and save the
    post-reset, pre-dispatch state before actuator execution.
 #. Apply actuators and run physics integration. Replay pre-state, when
@@ -279,8 +265,7 @@ Regular capture freezes one transition in this order:
 This post-step observation and cold artifact export are synchronous. A task
 reset cannot overwrite the failing post-state between integration and export.
 The next task-authored reset remains independent: it dirties its normal reset
-mask, and the enabled ``solver_reset`` consumes that mask before the next
-pre-state even when ``halt_on_incident=False``.
+mask before the next pre-state even when ``halt_on_incident=False``.
 
 With ``capture_per_substep=True``, each solver substep instead records
 post-actuator replay pre-state, integrates once, records replay post-state, and
@@ -305,11 +290,14 @@ a lazy, lower-snake-case provider before the first simulator reset:
 
 
     class MyEnv(ManagerBasedRLEnv):
-        def _register_physics_debug_context(self) -> None:
-            super()._register_physics_debug_context()
-            self.sim.physics_manager.set_debug_context_provider(
-                "curriculum_level", lambda: self.curriculum_level
-            )
+        def _init_sim(self) -> None:
+            manager = self.sim.physics_manager
+            manager.set_debug_context_provider("curriculum_level", lambda: self.curriculum_level)
+            try:
+                super()._init_sim()
+            except Exception:
+                manager.remove_debug_context_provider("curriculum_level")
+                raise
 
 Manager-based RL environments already register ``episode_length`` and
 ``common_step_counter``. Providers are resolved when a snapshot is taken, must
@@ -322,17 +310,16 @@ Record solver operations
 ------------------------
 
 Incident archives and transition replay can include transient operations that
-are not retained on the solver object. For exactly one compatible MJWarp-backed
-``SolverMuJoCo``, whether direct or within a coupled mapping and running on a
-Warp CPU or CUDA device, enabling either
+are not retained on the solver object. For a MJWarp-backed ``SolverMuJoCo``
+(``use_mujoco_cpu=False``) on a Warp CPU or CUDA device, enabling either
 :attr:`~isaaclab_newton.physics.NewtonDebugCaptureCfg.record_operations` or
 :attr:`~isaaclab_newton.physics.NewtonDebugReplayCfg.record_operations`
 automatically installs
 :class:`~isaaclab_newton.physics.MJWarpDebugOperationProvider`. The built-in
 provider interposes installed Python call boundaries without patching MJWarp or
 producing an installed-source diff, and records the final ``SolverContext`` and
-``CollisionContext``. Native ``SolverMuJoCo(use_mujoco_cpu=True)``, ambiguous
-mappings, and other solvers require an explicit compatible provider. An
+``CollisionContext``. Native ``SolverMuJoCo(use_mujoco_cpu=True)`` and other
+solvers require an explicit compatible provider. An
 explicitly registered provider always wins.
 
 Operation recording requires ``use_cuda_graph=False`` for every provider.
@@ -351,9 +338,6 @@ A custom provider implements ``bind(solver)``, ``snapshot()``, and ``close()``:
 
     from collections.abc import Callable
 
-    from isaaclab_newton.physics import NewtonManager
-
-
     class OperationProvider:
         def __init__(self, snapshot_fn: Callable):
             self._snapshot_fn = snapshot_fn
@@ -371,11 +355,11 @@ A custom provider implements ``bind(solver)``, ``snapshot()``, and ``close()``:
             self._solver = None
 
 
-    NewtonManager.set_debug_operation_provider(
+    sim.physics_manager.set_debug_operation_provider(
         OperationProvider(lambda solver: solver.operation_snapshot)
     )
 
-The recorder calls ``bind(solver)`` once during physics initialization and owns
+The recorder calls ``bind(solver)`` once per solver initialization and owns
 the provider after binding. ``snapshot()`` must return a non-``None``,
 discoverable object whose schema remains stable across incident and replay
 snapshots. ``close()`` releases hooks and solver references when the recorder
@@ -393,21 +377,7 @@ operation snapshot:
 
 .. code-block:: python
 
-    from isaaclab_newton.physics import (
-        MJWarpDebugOperationProvider,
-        NewtonDebugCaptureCfg,
-        NewtonDebugReplayCfg,
-        NewtonManager,
-    )
-
-    NewtonManager.set_debug_operation_provider(
-        MJWarpDebugOperationProvider(
-            first_nonfinite_include_fields=(
-                "mjwarp_solver_context.h",
-                "mjwarp_solver_context.hfactor",
-            ),
-        )
-    )
+    from isaaclab_newton.physics import MJWarpDebugOperationProvider, NewtonDebugCaptureCfg, NewtonDebugReplayCfg
 
     debug_capture = NewtonDebugCaptureCfg(
         record_solver=True,
@@ -424,6 +394,16 @@ operation snapshot:
             record_solver=True,
             record_operations=True,
         ),
+    )
+
+    # Use debug_capture in NewtonCfg when constructing sim, then register before sim.reset().
+    sim.physics_manager.set_debug_operation_provider(
+        MJWarpDebugOperationProvider(
+            first_nonfinite_include_fields=(
+                "mjwarp_solver_context.h",
+                "mjwarp_solver_context.hfactor",
+            ),
+        )
     )
 
 The provider validates every configured full-path glob against the installed
@@ -483,9 +463,7 @@ Newton version, then follow the relevant data path:
 * **Failure immediately before a reset:** The synchronous dispatch-post or
   solver-post export freezes the failing state, solver, contacts, and workflow
   context before the next task reset can mutate them. Compare ``pre__*`` with
-  ``history__*`` or ``replay__pre__*`` with ``replay__post__*``; keep
-  ``solver_reset`` enabled independently to clear solver-owned state on the
-  following task-authored reset.
+  ``history__*`` or ``replay__pre__*`` with ``replay__post__*``.
 
 Inspect, validate, compare, and replay
 --------------------------------------

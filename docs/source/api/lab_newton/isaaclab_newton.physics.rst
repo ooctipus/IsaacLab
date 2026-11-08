@@ -15,14 +15,11 @@
     NewtonBackendCfg
     NewtonBuilderCfg
     NewtonSoftContactCfg
-    MJWarpDebugOperationProvider
-    ReplayAdapter
-    ReplayCapability
-    ReplayRequest
     NewtonCollisionPipelineCfg
     NewtonShapeCfg
     NewtonSolver
     MJWarpSolver
+    MJWarpDebugOperationProvider
     VBDSolver
     XPBDSolver
     FeatherstoneSolver
@@ -54,6 +51,9 @@ Physics Manager
   :members:
   :inherited-members:
   :show-inheritance:
+
+.. autoclass:: MJWarpDebugOperationProvider
+  :members:
 
 .. autofunction:: create_builder
 

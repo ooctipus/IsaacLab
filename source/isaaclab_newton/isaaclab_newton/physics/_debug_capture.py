@@ -32,7 +32,7 @@ import warp as wp
 class DebugMappingKey:
     """Explicit deterministic key step in a captured mapping path."""
 
-    key: str | int
+    key: str | int | None
 
 
 type DebugPathStep = str | int | DebugMappingKey
@@ -595,7 +595,7 @@ class _PlanBuilder:
             invalid_keys = [
                 key
                 for key in value
-                if isinstance(key, bool) or not isinstance(key, (str, int))
+                if isinstance(key, bool) or not (key is None or isinstance(key, (str, int)))
             ]
             if invalid_keys:
                 if len(invalid_keys) == len(value) and all(
@@ -606,11 +606,13 @@ class _PlanBuilder:
                 invalid_types = sorted({_qualified_type_name(type(key)) for key in invalid_keys})
                 raise DebugSchemaError(
                     f"Debug capture mapping at '{display_path}' has unsupported key types "
-                    f"{invalid_types}; only deterministic str and int keys are supported."
+                    f"{invalid_types}; only deterministic str, int, and None keys are supported."
                 )
             if not self._enter_container(value, path, annotation):
                 return
-            keys = sorted(value, key=lambda key: (0 if isinstance(key, str) else 1, str(key)))
+            keys = sorted(
+                value, key=lambda key: (0 if isinstance(key, str) else 1 if isinstance(key, int) else 2, str(key))
+            )
             for key in keys:
                 self.walk(value[key], (*path, DebugMappingKey(key)), None)
             return
@@ -1162,7 +1164,7 @@ def _path_sort_key(path: DebugPath) -> tuple[str, ...]:
     output: list[str] = []
     for step in path:
         if isinstance(step, DebugMappingKey):
-            key_type = "s" if isinstance(step.key, str) else "i"
+            key_type = "s" if isinstance(step.key, str) else "i" if isinstance(step.key, int) else "n"
             output.append(f"m:{key_type}:{step.key}")
         elif isinstance(step, int):
             output.append(f"i:{step:020d}")

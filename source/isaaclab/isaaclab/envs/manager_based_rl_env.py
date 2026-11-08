@@ -90,10 +90,20 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
         self.has_rtx_sensors = self.sim.get_setting("/isaaclab/render/rtx_sensors")
         logger.info("Completed setting up the environment...")
 
-    def _register_physics_debug_context(self) -> None:
-        """Expose live RL workflow counters to physics incident capture."""
-        self.sim.physics_manager.set_debug_context_provider("episode_length", lambda: self.episode_length_buf)
-        self.sim.physics_manager.set_debug_context_provider("common_step_counter", lambda: self.common_step_counter)
+    def _init_sim(self) -> None:
+        """Expose RL counters before solver initialization, then build the environment."""
+        manager = self.sim.physics_manager
+        registered = []
+        try:
+            manager.set_debug_context_provider("episode_length", lambda: self.episode_length_buf)
+            registered.append("episode_length")
+            manager.set_debug_context_provider("common_step_counter", lambda: self.common_step_counter)
+            registered.append("common_step_counter")
+            super()._init_sim()
+        except Exception:
+            for name in reversed(registered):
+                manager.remove_debug_context_provider(name)
+            raise
 
     """
     Properties.

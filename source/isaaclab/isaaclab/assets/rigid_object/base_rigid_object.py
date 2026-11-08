@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 import torch
 import warp as wp
 
+from ...cloner import num_spawn_variants
 from ...utils.warp import ProxyArray
 from ...utils.wrench_composer import WrenchComposer
 from ..asset_base import AssetBase
@@ -77,6 +78,16 @@ class BaseRigidObject(AssetBase):
     def body_names(self) -> list[str]:
         """Ordered names of bodies in the rigid object."""
         raise NotImplementedError()
+
+    @property
+    def num_mesh_variants(self) -> int:
+        """Number of variants in the configured spawner, independent of backend switching support."""
+        return num_spawn_variants(self.cfg.spawn)
+
+    @property
+    def mesh_variant_ids(self) -> ProxyArray:
+        """Selected variant index for each environment on backends supporting reset-time selection."""
+        raise NotImplementedError(f"Backend {self.__backend_name__!r} does not support reset-time mesh selection.")
 
     @property
     @abstractmethod
@@ -180,6 +191,21 @@ class BaseRigidObject(AssetBase):
     """
     Operations - Write to simulation.
     """
+
+    def write_mesh_variant_to_sim(
+        self,
+        variant_ids: torch.Tensor | wp.array,
+        env_ids: Sequence[int] | torch.Tensor | wp.array | None = None,
+    ) -> None:
+        """Select the configured shape and inertial variant for each requested environment.
+
+        IDs follow the spawner's list order. Unsupported backends raise :class:`NotImplementedError`.
+
+        Args:
+            variant_ids: One signed int32/int64 variant ID per selected environment, on the asset's device.
+            env_ids: Environment indices on the asset's device. If ``None``, select every environment.
+        """
+        raise NotImplementedError(f"Backend {self.__backend_name__!r} does not support reset-time mesh selection.")
 
     @abstractmethod
     def write_root_pose_to_sim_index(

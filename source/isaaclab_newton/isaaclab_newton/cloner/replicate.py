@@ -13,11 +13,11 @@ from typing import Any
 
 import numpy as np
 import warp as wp
-from newton import Axis, ModelBuilder
+from newton import Axis, BodyFlags, JointType, ModelBuilder
 
 from pxr import Sdf, Usd, UsdGeom
 
-from isaaclab.assets import AssetBaseCfg
+from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
 from isaaclab.cloner import ClonePlan, PrototypeWorldTopology, ReplicateContext
 from isaaclab.cloner import path as cloner_path
 from isaaclab.cloner.cloner_cfg import DEFAULT_ENV_TEMPLATE
@@ -36,7 +36,7 @@ from isaaclab_newton.cloner.newton_clone_utils import (
     build_source_builders,
     replicate_builder_mapping,
 )
-from isaaclab_newton.physics import NewtonBuilderCfg, NewtonCfg, NewtonCloneRecord
+from isaaclab_newton.physics import MJWarpSolverCfg, NewtonBuilderCfg, NewtonCfg, NewtonCloneRecord
 from isaaclab_newton.physics.newton_builder import create_builder, inject_terrain_heightfields, usd_schema_resolvers
 from isaaclab_newton.sim.spawners.mpm.mpm import _SIMULATION_POINTS_SUFFIX
 
@@ -98,7 +98,7 @@ def newton_builder_world_hook(
             hooks.remove(hook)
 
 
-def _replicate_newton(
+def _replicate_newton(  # noqa: C901 -- Resolve source ownership and native geometry in one clone pass.
     stage: Usd.Stage,
     env_ids: np.ndarray,
     sim: SimulationContext,
@@ -111,12 +111,48 @@ def _replicate_newton(
 ) -> tuple[ModelBuilder, object, dict]:
     """Import and replicate the plan's Newton representation, with or without Newton physics."""
     cfg = sim.cfg.physics
-    sources = cloner_path.get_asset_prototype_paths(plan)
+    sources = list(cloner_path.get_asset_prototype_paths(plan))
     templates, starts = cloner_path.get_world_prototype_asset_templates(plan)
     shared = templates[: starts[1]]
     global_paths = tuple(
         root for root, parent in zip(shared, cloner_path.get_parent_indices(shared), strict=True) if parent == -1
     )
+    simulation = isinstance(cfg, NewtonCfg)
+    variant_groups = []
+    if simulation and isinstance(cfg.solver_cfg, MJWarpSolverCfg) and not cfg.solver_cfg.use_mujoco_contacts:
+        seen_paths = set()
+        for asset_id in asset_prototype_ids:
+            asset = plan.asset_cfgs[asset_id]
+            if not isinstance(asset, RigidObjectCfg) or asset.spawn is None or asset.prim_path in seen_paths:
+                continue
+            seen_paths.add(asset.prim_path)
+            rows = tuple(
+                row
+                for row, candidate in enumerate(plan.asset_cfgs)
+                if isinstance(candidate, RigidObjectCfg)
+                and candidate.spawn is not None
+                and candidate.prim_path == asset.prim_path
+            )
+            if len(rows) < 2:
+                continue
+            members = [
+                [
+                    index
+                    for index in range(starts[prototype + 1], starts[prototype + 2])
+                    if plan.topology.world_prototypes[index] in rows
+                ]
+                for prototype in plan.topology.world_prototype_layout
+            ]
+            if any(len(indices) != 1 for indices in members):
+                continue
+            variant_groups.append((rows, [indices[0] for indices in members]))
+            for row in rows:
+                if sources[row] is None:
+                    asset = plan.asset_cfgs[row]
+                    spawn = asset.spawn
+                    sources[row] = spawn.spawn_path = f"/World/IsaacLabPrototypes/asset_{row}"
+                    spawn.spawn_paths = [sources[row]]
+                    spawn.func(sources[row], spawn, translation=asset.init_state.pos, orientation=asset.init_state.rot)
     routed_sources = tuple(sources[index] for index in asset_prototype_ids if sources[index] is not None)
     world_assets = plan.topology.world_prototypes[starts[1] :]
     has_world_source = any(asset in asset_prototype_ids and sources[asset] is not None for asset in world_assets)
@@ -128,7 +164,7 @@ def _replicate_newton(
         if not isinstance(plan.asset_cfgs[index], SensorBaseCfg)
         if not any(cloner_path.relative_to(source, owner) is not None for owner in routed_sources)
     )
-    simulation = isinstance(cfg, NewtonCfg)
+    variant_sources = tuple(dict.fromkeys(sources[row] for rows, _ in variant_groups for row in rows))
     if positions is None:
         positions = np.zeros((len(env_ids), 3), dtype=np.float32)
     if quaternions is None:
@@ -170,7 +206,7 @@ def _replicate_newton(
                     f"Cannot clone {source!r} to {target!r}: {parent_target!r} already owns that subtree "
                     f"from {parent_source!r}. A nested Newton source must be {expected!r}."
                 )
-    source_paths = list(dict.fromkeys(source for source in routed_sources if source in needed))
+    source_paths = list(dict.fromkeys([*(source for source in routed_sources if source in needed), *variant_sources]))
     # A parent source also owns deformables declared beneath it, even when the child has its own asset config.
     entries = deformable_prototypes(stage, plan, exclude_paths=exclude_paths)
     ignore_paths = [*exclude_paths, *(entry.root_path for entry in entries)]
@@ -184,10 +220,78 @@ def _replicate_newton(
             allow_unsafe_torch_checkpoints=True,
         )
 
+    ignore_paths = [path for path in ignore_paths if path not in variant_sources]
+
     import_results: dict[str, dict[str, Any]] = {}
     options = dict(ignore_paths=ignore_paths, load_visual_shapes=load_visual_shapes)
     options.update(skip_mesh_approximation=not simulation, import_results_out=import_results)
-    source_builders = build_source_builders(stage, source_paths, builder_factory, schema_resolvers, **options)
+    retained_sources = build_source_builders(stage, source_paths, builder_factory, schema_resolvers, **options)
+    source_builders = dict(retained_sources)
+    initial_selections = []
+    for rows, members in variant_groups:
+        variants = tuple(retained_sources[sources[row]] for row in rows)
+        if any(source.body_count != 1 or source.joint_count != 1 for source in variants):
+            continue
+        joint_types = {source.joint_type[0] for source in variants}
+        body_flags = {source.body_flags[0] for source in variants}
+        if len(joint_types) != 1 or joint_types.pop() not in (JointType.FREE, JointType.FIXED) or len(body_flags) != 1:
+            continue
+        if any(source.joint_parent[0] != -1 or source.joint_child[0] != 0 for source in variants):
+            continue
+        variant_by_asset = {row: variant for variant, row in enumerate(rows)}
+        for world, member in enumerate(members):
+            row = plan.topology.world_prototypes[member]
+            target = cloner_path.rebase(variants[0].body_label[0], sources[rows[0]], templates[member].format(world))
+            initial_selections.append((target, variant_by_asset[row]))
+        inertia_offset = plan.asset_cfgs[rows[0]].mesh_variant_inertia_diagonal_offset
+        if not np.isfinite(inertia_offset) or inertia_offset < 0.0:
+            raise ValueError("mesh_variant_inertia_diagonal_offset must be finite and non-negative.")
+        if inertia_offset:
+            for source in variants:
+                source.body_inertia[0] = wp.mat33(
+                    np.asarray(source.body_inertia[0]).reshape(3, 3) + np.eye(3) * inertia_offset
+                )
+        imported = variants[0]
+        template = builder_factory()
+        body = template.add_link(
+            xform=imported.body_q[0],
+            label=imported.body_label[0],
+            lock_inertia=True,
+            is_kinematic=bool(imported.body_flags[0] & BodyFlags.KINEMATIC),
+        )
+        joint_options = dict(
+            parent_xform=imported.joint_X_p[0],
+            child_xform=imported.joint_X_c[0],
+            label=imported.joint_label[0],
+            enabled=imported.joint_enabled[0],
+            collision_filter_parent=imported.joint_collision_filter_parent[0],
+        )
+        joint = (
+            template.add_joint_free(body, **joint_options)
+            if imported.joint_type[0] == JointType.FREE
+            else template.add_joint_fixed(-1, body, **joint_options)
+        )
+        template.add_articulation([joint], label=imported.articulation_label[0])
+        template.add_body_variants(body, variants, labels=[source.body_label[0] for source in variants])
+        for row, imported in zip(rows, variants, strict=True):
+            clone_source = builder_factory()
+            clone_source.add_builder(template)
+            clone_source.body_q[0] = imported.body_q[0]
+            clone_source.joint_X_p[0] = imported.joint_X_p[0]
+            clone_source.joint_X_c[0] = imported.joint_X_c[0]
+            clone_source.joint_q[:] = imported.joint_q
+            clone_source.joint_qd[:] = imported.joint_qd
+            first_source = sources[rows[0]]
+            for labels in (
+                clone_source.body_label,
+                clone_source.joint_label,
+                clone_source.articulation_label,
+                clone_source.shape_label,
+            ):
+                for index, label in enumerate(labels):
+                    if label == first_source or label.startswith((first_source + "/", first_source + "_")):
+                        labels[index] = sources[row] + label[len(first_source) :]
+            source_builders[sources[row]] = clone_source
     # Imports contain authored USD poses, which need not include the planned world placement.
     source_inverse = {}
     xforms = UsdGeom.XformCache()
@@ -249,8 +353,7 @@ def _replicate_newton(
                 visual_ranges[cloner_path.rebase(particle_visual_paths[path], source, destination)] = native_range
 
     options = dict(env_ids=env_ids, source_site_indices=source_sites, env_root_sites=root_sites)
-    world_hooks = _PER_WORLD_BUILDER_HOOKS if simulation else ()
-    options["per_world_builder_hooks"] = world_hooks
+    options["per_world_builder_hooks"] = _PER_WORLD_BUILDER_HOOKS if simulation else ()
     has_geometry = any(source_cables.values()) or any(result["path_particle_map"] for result in import_results.values())
     options["source_builder_added"] = record_geometry if has_geometry else None
     local_site_map, world_xforms = replicate_builder_mapping(
@@ -266,12 +369,15 @@ def _replicate_newton(
         batches = deformable_geometry_batches(geometry, offsets, device=sim.device)
         if visual_ranges:
             batches.append((SceneDataFormat.Points(), visual_ranges))
+        bodies = {label: index for index, label in enumerate(builder.body_label)}
+        initial_body_variants = tuple((bodies[target], variant) for target, variant in initial_selections)
         record = NewtonCloneRecord(
             world_xforms=world_xforms,
-            source_builders=source_builders,
+            source_builders=retained_sources,
             particle_ranges=particle_ranges,
             cable_bindings=cable_bindings,
             geometry_batches=batches,
+            initial_body_variants=initial_body_variants,
         )
         sim.backend_manager.record_clone(record, site_index_map)
     return builder, stage_info, site_index_map

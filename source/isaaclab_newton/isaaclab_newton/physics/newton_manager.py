@@ -10,13 +10,15 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Protocol
 
 import numpy as np
 import warp as wp
 from newton import Axis, ModelBuilder, ModelFlags, State
 from newton.selection import ArticulationView
 from newton.sensors import SensorContact, SensorIMU
+from newton.solvers import SolverMuJoCo
 
 from pxr import UsdGeom
 
@@ -24,6 +26,7 @@ import isaaclab.cloner as cloner
 from isaaclab.physics import CallbackHandle, PhysicsEvent, PhysicsManager
 from isaaclab.scene_data import SceneDataBackend, SceneDataProvider
 from isaaclab.sim import SimulationContext
+from isaaclab.sim.utils.stage import get_current_stage
 from isaaclab.utils.string import resolve_matching_names
 from isaaclab.utils.timer import Timer
 from isaaclab.utils.version import has_kit
@@ -40,15 +43,19 @@ from .newton_backend import NewtonBackend, NewtonCloneRecord, SiteEntry
 from .newton_builder import create_builder
 from .newton_scene_data import NewtonSceneDataBackend
 
-from ._incident_recorder import PhysicsIncidentRecorder, _OperationProviderCleanupError
-
 if TYPE_CHECKING:
     from isaaclab.assets import BaseArticulation
     from isaaclab.renderers.base_renderer import VisualMaterialBatch
 
+    from ._incident_recorder import PhysicsIncidentRecorder
+
 
 logger = logging.getLogger(__name__)
-_DEBUG_INCIDENT_TRIGGER_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
+_TRIGGER_NAME = re.compile(r"^[a-z][a-z0-9_]*$")
+
+
+class _DebugHalt(Exception):
+    """Stop the current solver dispatch after a captured incident."""
 
 
 def create_newton_builder(cfg: NewtonBuilderCfg) -> ModelBuilder:
@@ -76,6 +83,36 @@ class NewtonManager(PhysicsManager):
 
     backend_name = "newton"
 
+    class DebugOperationProvider(Protocol):
+        """Solver-specific transient operation recorder."""
+
+        def bind(self, solver: object) -> None: ...
+        def snapshot(self) -> object: ...
+        def close(self) -> None: ...
+
+    @dataclass(frozen=True, slots=True)
+    class DebugTriggerContext:
+        """Live state supplied to an incident trigger."""
+
+        model: object
+        state: State
+        control: object
+        solver: object
+        contacts: object | None
+        collision_pipeline: object | None
+        operations: object | None
+        sim_time: float
+        phase: str
+        substep_idx: int | None
+
+    @dataclass(frozen=True, slots=True)
+    class DebugTriggerResult:
+        """Worlds, or global state, affected by a custom incident."""
+
+        reason: str
+        world_ids: tuple[int, ...] = ()
+        global_scope: bool = False
+
     def __init__(self, cfg: NewtonCfg):
         super().__init__(cfg)
         self._cfg: NewtonCfg = cfg
@@ -83,6 +120,11 @@ class NewtonManager(PhysicsManager):
         """Shared construction builder, acquired at :meth:`initialize` and kept across hard resets."""
         self.backend: NewtonBackend | None = None
         """Data bound to the finalized model; replaced on every hard reset."""
+        self._incident_recorder: PhysicsIncidentRecorder | None = None
+        self._debug_operation_provider: NewtonManager.DebugOperationProvider | None = None
+        self._auto_debug_operation_provider = False
+        self._pending_operation_provider: NewtonManager.DebugOperationProvider | None = None
+        self._debug_incident_triggers: dict[str, Callable] = {}
         self.clear()
         self._scene_data_backend = NewtonSceneDataBackend(self)
 
@@ -156,6 +198,15 @@ class NewtonManager(PhysicsManager):
 
     def _close_backend(self, *, dispatch_stop: bool = True) -> None:
         """Stop consumers, drop their views, and close the backend."""
+        if self._incident_recorder is not None:
+            self._incident_recorder.clear()
+            self._incident_recorder = None
+        if self._pending_operation_provider is not None:
+            self._pending_operation_provider.close()
+            self._pending_operation_provider = None
+        if self._auto_debug_operation_provider:
+            self._debug_operation_provider = None
+            self._auto_debug_operation_provider = False
         backend = self.backend
         if backend is None:
             return
@@ -168,6 +219,14 @@ class NewtonManager(PhysicsManager):
     def forward(self) -> None:
         """Update articulation kinematics without stepping physics; see :meth:`NewtonBackend.forward`."""
         if self.backend is not None:
+            recorder = self._incident_recorder
+            if recorder is not None and self.backend.kinematics_dirty:
+                reset_worlds = self.backend.world_mask.numpy()[: self.backend.model.world_count].nonzero()[0]
+                if len(reset_worlds):
+                    recorder.rearm_reset_worlds(
+                        tuple(int(world) for world in reset_worlds),
+                        all_worlds=len(reset_worlds) == self.backend.model.world_count,
+                    )
             self.backend.forward()
 
     def video_capture_backend(self) -> str:
@@ -197,8 +256,28 @@ class NewtonManager(PhysicsManager):
             return
         backend = self.backend
         physics_steps = backend.decimation if backend.handles_decimation() else 1
-        backend.step()
+        recorder = self._incident_recorder
+        if recorder is not None:
+            with wp.ScopedDevice(backend.device):
+                recorder.capture_pre(backend.state_0)
+        debug_halt = False
+        try:
+            backend.step()
+        except _DebugHalt:
+            debug_halt = True
+        finally:
+            if recorder is not None and not recorder.capture_per_substep:
+                end_time = self._sim_time + backend.dt * physics_steps
+                with wp.ScopedDevice(backend.device):
+                    results = self._evaluate_debug_incident_triggers("dispatch_post", None, end_time)
+                    recorder.step(backend.state_0, end_time, trigger_results=results)
         self._sim_time += backend.dt * physics_steps
+        if recorder is not None:
+            if recorder.halted or debug_halt:
+                raise RuntimeError(
+                    f"Physics incident artifacts were exported to {self._cfg.debug_capture.output_dir};"
+                    " halting simulation."
+                )
         self._mark_transforms_changed()
 
     def close(self) -> None:
@@ -206,6 +285,8 @@ class NewtonManager(PhysicsManager):
         super().close()
         self.clear()
         self.builder = None
+        self._debug_operation_provider = None
+        self._debug_incident_triggers.clear()
 
     def get_scene_data_backend(self) -> SceneDataBackend | None:
         """Return the SceneDataBackend for the SceneDataProvider."""
@@ -240,6 +321,118 @@ class NewtonManager(PhysicsManager):
         self._site_index_map: dict[str, SiteEntry] = {}
         self._clone: NewtonCloneRecord | None = None
         self.views.clear()
+
+    def set_debug_operation_provider(self, provider: DebugOperationProvider) -> None:
+        """Register an operation provider before solver initialization."""
+        methods = ("bind", "snapshot", "close")
+        if provider is None or any(not callable(getattr(provider, name, None)) for name in methods):
+            raise TypeError("Debug operation provider must define bind(), snapshot(), and close().")
+        if self._debug_operation_provider is not None or self._incident_recorder is not None:
+            raise RuntimeError("Debug operation provider is already registered or capture has started.")
+        self._debug_operation_provider = provider
+
+    def set_debug_incident_trigger(
+        self, name: str, trigger: Callable[[DebugTriggerContext], DebugTriggerResult | None]
+    ) -> None:
+        """Register a named trigger before the recorder freezes its schema."""
+        if not isinstance(name, str):
+            raise TypeError("Debug trigger name must be a string.")
+        if _TRIGGER_NAME.fullmatch(name) is None:
+            raise ValueError(f"Debug trigger name {name!r} must be lower snake case.")
+        if not callable(trigger):
+            raise TypeError(f"Debug trigger {name!r} must be callable.")
+        if self._cfg.debug_capture is None or self._incident_recorder is not None:
+            raise RuntimeError("Debug triggers require capture enabled before solver initialization.")
+        if name in self._debug_incident_triggers:
+            raise ValueError(f"Debug trigger {name!r} is already registered.")
+        self._debug_incident_triggers[name] = trigger
+
+    def _evaluate_debug_incident_triggers(self, phase: str, substep_idx: int | None, sim_time: float) -> dict:
+        """Evaluate triggers in name order against the current backend state."""
+        if not self._debug_incident_triggers:
+            return {}
+        backend = self.backend
+        operations = None
+        cfg = self._cfg.debug_capture
+        if cfg.record_operations or cfg.replay.record_operations:
+            provider = self._debug_operation_provider
+            if provider is None:
+                raise RuntimeError("Debug operation provider is unavailable for trigger evaluation.")
+            operations = provider.snapshot()
+            if operations is None:
+                raise RuntimeError("Debug operation provider returned no trigger snapshot.")
+        context = self.DebugTriggerContext(
+            backend.model,
+            backend.state_0,
+            backend.control,
+            backend.solver,
+            backend.contacts,
+            backend.collision_pipeline,
+            operations,
+            float(sim_time),
+            phase,
+            substep_idx,
+        )
+        results = {}
+        for name, trigger in sorted(self._debug_incident_triggers.items()):
+            try:
+                result = trigger(context)
+            except Exception as exc:
+                raise RuntimeError(f"Debug incident trigger {name!r} failed: {exc}") from exc
+            if result is not None:
+                if not isinstance(result, self.DebugTriggerResult):
+                    raise TypeError(f"Debug incident trigger {name!r} must return DebugTriggerResult or None.")
+                results[name] = result
+        return results
+
+    def _capture_debug_substep(self, state: State, post: bool, index: int) -> None:
+        """Record replay transitions and inspect a solver substep when configured."""
+        recorder = self._incident_recorder
+        backend = self.backend
+        sim_time = self._sim_time + (index + int(post)) * backend.solver_dt
+        if not post:
+            recorder.record_step_replay_pre(state, sim_time=sim_time, substep_idx=index)
+            return
+        recorder.record_step_replay_post(state)
+        if recorder.capture_per_substep:
+            results = self._evaluate_debug_incident_triggers("solver_post", index, sim_time)
+            recorder.observe_substep(state, sim_time, substep_idx=index, trigger_results=results)
+            if recorder.halted:
+                raise _DebugHalt
+
+    def _export_incident_scene(self, usd_path: str, world_ids: list[int]) -> None:
+        """Export a flattened static USD scene; recorded arrays carry the dynamic state."""
+        from pxr import Usd  # noqa: PLC0415
+
+        stage = get_current_stage()
+        plan = self._sim.get_clone_plan() if self._sim is not None else None
+        if stage is None or plan is None:
+            raise RuntimeError("Incident scene export requires a USD stage and clone plan.")
+        topology = plan.topology
+        world_count = len(topology.world_prototype_layout)
+        if any(not isinstance(i, int) or isinstance(i, bool) or i < 0 or i >= world_count for i in world_ids):
+            raise ValueError(f"Incident world IDs must be in [0, {world_count}).")
+        starts, assets = topology.world_prototype_starts, topology.world_prototypes
+        selected = {int(asset) for asset in assets[int(starts[0]) : int(starts[1])]}
+        for world in world_ids or range(world_count):
+            prototype = int(topology.world_prototype_layout[world])
+            selected.update(int(asset) for asset in assets[int(starts[prototype + 1]) : int(starts[prototype + 2])])
+        paths = cloner.path.get_asset_prototype_paths(plan)
+        source_paths = list(dict.fromkeys(paths[asset] for asset in sorted(selected)))
+        if any(not source for source in source_paths):
+            raise RuntimeError("Clone plan contains a selected asset without an authored scene source.")
+        if not source_paths:
+            raise RuntimeError("Clone plan contains no authored scene sources.")
+        flat_layer = stage.Flatten()
+        flat_stage = Usd.Stage.Open(flat_layer)
+        if flat_stage is None:
+            raise RuntimeError("Cannot open the flattened incident scene.")
+        for source in source_paths:
+            if not flat_stage.GetPrimAtPath(source).IsValid():
+                raise RuntimeError(f"Clone-plan source {source!r} is absent from the flattened scene.")
+        flat_stage.SetDefaultPrim(flat_stage.GetPrimAtPath(source_paths[0]))
+        if flat_layer.Export(usd_path) is False:
+            raise RuntimeError(f"Failed to export incident scene to {usd_path!r}.")
 
     def register_site(self, body_pattern: str | None, xform: wp.transform, *, per_world: bool = False) -> str:
         """Request a site for injection into prototypes before replication.
@@ -350,6 +543,8 @@ class NewtonManager(PhysicsManager):
     def add_model_change(self, change: ModelFlags) -> None:
         """Register a model change to notify the solver at the next step."""
         self.backend.model_changes.add(change)
+        if change & ModelFlags.SHAPE_TYPE_AND_SOURCE:
+            self.backend.geometry_change_version += 1
 
     def invalidate_fk(
         self,
@@ -461,7 +656,10 @@ class NewtonManager(PhysicsManager):
             device=device,
         ):
             cfg = NewtonBackendCfg(physics_cfg=self._cfg, device=sim.device)
-            self.backend = sim.get_or_create_backend(cfg, builder=builder, dt=self.get_physics_dt())
+            initial = () if self._clone is None else self._clone.initial_body_variants
+            self.backend = sim.get_or_create_backend(
+                cfg, builder=builder, dt=self.get_physics_dt(), initial_body_variants=initial
+            )
             self.backend.model.set_gravity(sim.cfg.gravity)
 
         self.backend.decimation = self._decimation
@@ -493,6 +691,44 @@ class NewtonManager(PhysicsManager):
             device=self.get_device(),
         ):
             backend.init_solver(None if plan is None else plan.env_template, relaxed_capture=self._relaxed_capture)
+        capture_cfg = self._cfg.debug_capture
+        if capture_cfg is not None:
+            from ._incident_recorder import PhysicsIncidentRecorder, _OperationProviderCleanupError  # noqa: PLC0415
+
+            operation_requested = capture_cfg.record_operations or capture_cfg.replay.record_operations
+            provider = self._debug_operation_provider
+            if provider is not None and not operation_requested:
+                raise RuntimeError("An operation provider is registered but operation recording is disabled.")
+            if operation_requested and provider is None:
+                if not isinstance(backend.solver, SolverMuJoCo) or backend.solver.use_mujoco_cpu:
+                    raise RuntimeError(
+                        "Automatic operation capture requires a MJWarp-backed SolverMuJoCo; "
+                        "register an explicit provider."
+                    )
+                from .mjwarp_debug import MJWarpDebugOperationProvider  # noqa: PLC0415
+
+                provider = MJWarpDebugOperationProvider()
+                self._debug_operation_provider = provider
+                self._auto_debug_operation_provider = True
+            try:
+                self._incident_recorder = PhysicsIncidentRecorder(
+                    backend.model,
+                    capture_cfg,
+                    state=backend.state_0,
+                    control=backend.control,
+                    solver=backend.solver,
+                    contacts=backend.contacts,
+                    collision_pipeline=backend.collision_pipeline,
+                    scene_exporter=self._export_incident_scene if capture_cfg.record_scene else None,
+                    context_provider=self.get_debug_context,
+                    operation_provider=provider,
+                    triggers=dict(self._debug_incident_triggers),
+                )
+            except _OperationProviderCleanupError:
+                self._pending_operation_provider = provider
+                raise
+            if capture_cfg.capture_per_substep or capture_cfg.replay.enabled:
+                backend.debug_substep = self._capture_debug_substep
         self._mark_transforms_changed()
 
     def _relaxed_capture(self) -> bool:

@@ -301,6 +301,13 @@ def test_mapping_discovery_is_deterministic_and_getters_preserve_key_types():
     np.testing.assert_array_equal(arrays["source.values[10]"], [110])
 
 
+def test_none_mapping_key_is_stable_for_newton_runtime_caches():
+    root = SimpleNamespace(values={None: np.array([3], dtype=np.int32)})
+    plan = capture.DebugCapturePlan.build(root, root_name="source")
+    assert plan.fields[0].display_path == "source.values[None]"
+    np.testing.assert_array_equal(plan.to_numpy(root)["source.values[None]"], [3])
+
+
 def test_mapping_key_schema_drift_and_missing_getter_are_reported_exactly():
     """Renaming a mapping key invalidates both rediscovery and its compiled getter."""
     root = SimpleNamespace(values={"before": np.arange(2, dtype=np.float32)})
@@ -322,7 +329,7 @@ def test_mapping_discovery_rejects_unsupported_key_types(key):
     """Mappings fail discovery when any key is not a deterministic string or integer."""
     with pytest.raises(
         capture.DebugSchemaError,
-        match=r"mapping.*unsupported key types.*only deterministic str and int keys are supported",
+        match=r"mapping.*unsupported key types.*only deterministic str, int, and None keys are supported",
     ):
         capture.DebugCapturePlan.build({key: np.ones(1, dtype=np.float32)}, root_name="mapping")
 

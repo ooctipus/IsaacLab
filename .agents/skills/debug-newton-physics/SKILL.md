@@ -30,7 +30,7 @@ Use the branch-owned physics incident recorder as the source of evidence. Prefer
 State the physical invariant that failed, the expected scope, and the earliest observable phase before changing configuration.
 
 - For a retained NaN or infinity, scan `state`, `solver`, or another recorded provider with `detect_nonfinite_in`.
-- For a finite but invalid result, register a named `NewtonManager.set_debug_incident_trigger()` callback before solver initialization.
+- For a finite but invalid result, register a named `sim.physics_manager.set_debug_incident_trigger()` callback before solver initialization.
 - For a transient MJWarp local, enable operation recording. Use the built-in provider for final solver and collision contexts, or configure first-iteration scanning for a deep workspace.
 - For a transition or reset-boundary failure, enable replay and compare pre/post values. Rely on synchronous post-step capture to preserve the failing state before the next task reset.
 - For a multi-world failure, keep `failed_worlds_only=True` unless cross-world coupling is itself under investigation.
@@ -45,12 +45,10 @@ Start from this shape and adjust providers to the hypothesis:
 from isaaclab_newton.physics import (
     NewtonCfg,
     NewtonDebugCaptureCfg,
-    NewtonDebugReplayCfg,
 )
 
 physics_cfg = NewtonCfg(
     use_cuda_graph=False,
-    solver_reset=NewtonCfg.SolverResetCfg(enabled=False),
     debug_capture=NewtonDebugCaptureCfg(
         output_dir="./physics_debug",
         history_length=200,
@@ -66,12 +64,6 @@ physics_cfg = NewtonCfg(
         record_collision_pipeline=False,
         record_operations=False,
         detect_nonfinite_in=("state", "solver"),
-        replay=NewtonDebugReplayCfg(
-            enabled=True,
-            record_state=True,
-            record_control=True,
-            record_solver=True,
-        ),
     ),
 )
 ```
@@ -84,12 +76,11 @@ Apply these rules:
 - Size `max_gpu_bytes` deliberately. Let initialization report the exact field allocation instead of dropping fields.
 - Enable `record_contacts` and `record_collision_pipeline` only for a finalized external Newton collision pipeline.
 - For internal MJWarp collision, leave those options off and use `record_solver=True` for retained `mjw_data` plus `record_operations=True` for transient solver and collision contexts.
-- Treat `solver_reset` as independent. Enable it only when stale solver-owned reset state is relevant; capture still works without it.
 - Keep `halt_on_incident=True` by default. Continue only when collecting multiple incidents is intentional and safe.
 
 ## Probe finite failures
 
-Register custom triggers after installing `NewtonCfg.debug_capture` and before solver initialization. Return `NewtonManager.DebugTriggerResult` with exact `world_ids`, or use `global_scope=True` only for genuinely world-independent evidence.
+Register custom triggers through the active `sim.physics_manager` after installing `NewtonCfg.debug_capture` and before `sim.reset()` initializes the solver. Return `NewtonManager.DebugTriggerResult` with exact `world_ids`, or use `global_scope=True` only for genuinely world-independent evidence.
 
 Make trigger extraction solver-aware and fail if its expected schema is unavailable. Do not use `getattr(..., default)`, broad exception handling, or guessed field aliases. Inspect `context.state`, `context.control`, `context.contacts`, `context.collision_pipeline`, `context.solver`, `context.operations`, `context.phase`, and `context.substep_idx` as appropriate.
 
@@ -103,14 +94,14 @@ Use finite triggers for conditions such as:
 
 ## Probe MJWarp without source patches
 
-For exactly one MJWarp-backed `SolverMuJoCo`, including one selected from a coupled solver mapping, set incident or replay `record_operations=True`. The manager automatically installs `MJWarpDebugOperationProvider`, validates the live private call path, discovers the installed `Data`, `SolverContext`, and `CollisionContext` schemas, and restores all interposed functions on close.
+For a MJWarp-backed `SolverMuJoCo` (`use_mujoco_cpu=False`), set incident or replay `record_operations=True`. The manager automatically installs `MJWarpDebugOperationProvider`, validates the live private call path, discovers the installed `Data`, `SolverContext`, and `CollisionContext` schemas, and restores all interposed functions on close.
 
 For first-bad-iteration evidence, register an explicit provider before solver initialization:
 
 ```python
-from isaaclab_newton.physics import MJWarpDebugOperationProvider, NewtonManager
+from isaaclab_newton.physics import MJWarpDebugOperationProvider
 
-NewtonManager.set_debug_operation_provider(
+sim.physics_manager.set_debug_operation_provider(
     MJWarpDebugOperationProvider(
         first_nonfinite_include_fields=(
             "mjwarp_solver_context.h",
@@ -129,7 +120,7 @@ Do not keep or inject a local MJWarp kernel diff. A value created and overwritte
 - For a convex hull sinking into a box, trace broad-phase pair generation, narrow-phase geometry, active contact rows, solver constraints, and applied impulses in order. Compare the last finite pre-state with the failing state; do not assume the first array dimension is a world dimension.
 - For a Hessian or factorization NaN, scan the narrow workspace per iteration and preserve `pre_solve_data`, `first_nonfinite_context`, and `first_nonfinite_data`.
 - For a finite joint-velocity explosion, trigger on the physical threshold and retain applied control, model parameters, solver state, and replay pre/post history.
-- For a post-step pre-reset NaN, inspect the incident post-state and solver snapshot first, then compare history or replay pre/post arrays. Keep solver reset independent so it cannot become a prerequisite for capture.
+- For a post-step pre-reset NaN, inspect the incident post-state and solver snapshot first, then compare history or replay pre/post arrays.
 
 ## Inspect and compare artifacts
 
