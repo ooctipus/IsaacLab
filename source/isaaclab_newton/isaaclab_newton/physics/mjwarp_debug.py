@@ -203,8 +203,14 @@ class MJWarpDebugOperationProvider:
         """
         if self._bound:
             raise DebugCaptureError("MJWarp debug operation provider is already bound.")
-        if self._closed:
-            raise DebugCaptureError("MJWarp debug operation provider was closed and cannot be rebound.")
+
+        # A hard simulation reset finalizes a new solver. A clean close releases every
+        # interposition hook, so the same registered provider may bind to that solver.
+        self._closed = False
+        self._graph_conditional_restored = False
+        self._solver_local = threading.local()
+        self._collision_local = threading.local()
+        self._iteration_index = 0
 
         target = _select_mjwarp_solver(solver)
         modules = _load_mjwarp_modules()

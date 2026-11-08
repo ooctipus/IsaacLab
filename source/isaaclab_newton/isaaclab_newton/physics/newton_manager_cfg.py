@@ -624,6 +624,7 @@ class NewtonCfg(PhysicsCfg):
     """
 
     def __post_init__(self):
+        _validate_debug_capture_cfg(self.debug_capture, self.use_cuda_graph)
         if self.class_type is None:
             raise ValueError("NewtonCfg.class_type must select a NewtonManager class; omit it for the default.")
         if self.deterministic_mode not in ("not_guaranteed", "run_to_run", "gpu_to_gpu"):

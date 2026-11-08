@@ -397,6 +397,9 @@ class NewtonBackend:
         """Contacts produced by the collision pipeline or the solver."""
         self.contact_observables: SolverBase.Observables | None = None
         """Solver-owned contact forces when registered sensors require them."""
+        self.debug_substep: Callable[[State, bool, int], None] | None = None
+        """Optional manager-owned callback before and after each solver substep."""
+        self._debug_substep_index = 0
         self.staged_body_f: wp.array | None = None
         """Body forces [N, N·m] written before the step, re-applied before every substep."""
         self.world_mask = wp.zeros(self.model.world_count + 1, dtype=wp.bool, device=self.device)
@@ -695,6 +698,8 @@ class NewtonBackend:
             Whether the step replays captured graphs.
         """
         steps = self.decimation if self.handles_decimation() else 1
+        if self.debug_substep is not None:
+            self._debug_substep_index = 0
         actuators = self.actuators
         with wp.ScopedDevice(self.device):
             self.forward()
@@ -861,12 +866,15 @@ class NewtonBackend:
         collide_every = self.cfg.collision_decimation
         # The last substep is skipped: its contacts would only feed the next physics step's collision.
         collide_mid_loop = collide_every > 0 and self.collision_pipeline is not None and contacts is not None
+        debug_substep = self.debug_substep
         for i in range(num_substeps):
             state = self.state_0
             if self.staged_body_f is not None:
                 wp.copy(state.body_f, self.staged_body_f)
             for callback in self.state_force_callbacks:
                 callback(state)
+            if debug_substep is not None:
+                debug_substep(state, False, self._debug_substep_index)
             state_out = state if ops.single_state else self.state_1
             # Only final-substep contact forces are read by sensors.
             step_observables = observables if i == num_substeps - 1 else None
@@ -876,6 +884,9 @@ class NewtonBackend:
                     state.assign(self.state_1)
                 else:
                     self.state_0, self.state_1 = self.state_1, self.state_0
+            if debug_substep is not None:
+                debug_substep(self.state_0, True, self._debug_substep_index)
+                self._debug_substep_index += 1
             self.state_0.clear_forces()
             # Derived data read by the next substep's state-force callbacks must see this substep's state.
             self.state_version += 1

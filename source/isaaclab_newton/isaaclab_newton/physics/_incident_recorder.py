@@ -237,6 +237,10 @@ class _WorldLayout:
         self._attribute_frequency = {
             name: _frequency_name(frequency) for name, frequency in frequency_map.items()
         }
+        specs = vars(model).get("attribute_specs", {})
+        self._empty_sentinels = {
+            name for name, spec in specs.items() if getattr(spec, "requires_empty_sentinel", False)
+        }
         for field in model_plan.fields:
             if not field.path or any(not isinstance(step, str) for step in field.path):
                 continue
@@ -246,7 +250,9 @@ class _WorldLayout:
                 continue
             owners = debug_value_to_numpy(field.get(model), field.display_path)
             if owners.ndim != 1 or not np.issubdtype(owners.dtype, np.integer):
-                raise DebugSchemaError(f"World owner array {field.display_path} must be a one-dimensional integer array.")
+                raise DebugSchemaError(
+                    f"World owner array {field.display_path} must be a one-dimensional integer array."
+                )
             owners = owners.astype(np.int64, copy=False)
             if np.any((owners < -1) | (owners >= self.world_count)):
                 raise DebugSchemaError(
@@ -340,9 +346,14 @@ class _WorldLayout:
                     f"'{frequency}' without a matching discovered '*_world_start' or '*_world' ownership anchor."
                 )
             expected = int(starts[-1]) if starts is not None else int(owners.size)
-            if starts is not None and isinstance(field.path[-1], str) and field.path[-1].endswith("_start"):
-                expected += 1
+            # A '*_start' array may contain one offset per owner or a final sentinel.
+            # Newton's body-variant inertia starts use the former representation.
+            if isinstance(field.path[-1], str) and field.path[-1].endswith("_start"):
+                if int(field.shape[0]) == expected + 1:
+                    expected += 1
         actual = int(field.shape[0])
+        if expected == 0 and actual == 1 and ":".join(str(part) for part in field.path) in self._empty_sentinels:
+            expected = 1
         if actual != expected:
             raise DebugSchemaError(
                 f"Explicit ownership {source} for '{field.display_path}' has leading extent {actual}; "
@@ -2013,7 +2024,8 @@ class PhysicsIncidentRecorder:
             details = ", ".join(f"{path}={size}" for path, size in report)
             raise DebugCaptureError(
                 f"Replay requires {replay_bytes} GPU bytes for pre/post history, but only "
-                f"remaining budget is {remaining_bytes} bytes within max_gpu_bytes={self._max_gpu_bytes}. Fields: {details}"
+                f"remaining budget is {remaining_bytes} bytes within max_gpu_bytes={self._max_gpu_bytes}. "
+                f"Fields: {details}"
             )
 
         self._replay_plan = plan

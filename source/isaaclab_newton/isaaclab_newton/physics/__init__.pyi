@@ -20,6 +20,7 @@ __all__ = [
     "KaminoSolver",
     "MJWarpSolver",
     "MJWarpSolverCfg",
+    "MJWarpDebugOperationProvider",
     "MjWarpActuatorBridge",
     "MPMSolver",
     "MPMSolverCfg",
@@ -27,6 +28,8 @@ __all__ = [
     "NewtonBackendCfg",
     "NewtonBuilderCfg",
     "NewtonCfg",
+    "NewtonDebugCaptureCfg",
+    "NewtonDebugReplayCfg",
     "NewtonCloneRecord",
     "NewtonCollisionPipelineCfg",
     "NewtonManager",
@@ -57,6 +60,7 @@ from .kamino_solver_cfg import (
     KaminoPADMMSolverCfg,
 )
 from .mjwarp_actuator_bridge import MjWarpActuatorBridge
+from .mjwarp_debug import MJWarpDebugOperationProvider
 from .mjwarp_solver import MJWarpSolver
 from .mjwarp_solver_cfg import MJWarpSolverCfg
 from .mpm_solver import MPMSolver, reset_mpm_solver_state
@@ -67,7 +71,14 @@ from .newton_builder import create_builder
 from .newton_builder_cfg import NewtonBuilderCfg
 from .newton_collision_cfg import HydroelasticSDFCfg, NewtonCollisionPipelineCfg
 from .newton_manager import NewtonManager, create_newton_builder
-from .newton_manager_cfg import NewtonCfg, NewtonShapeCfg, NewtonSoftContactCfg, NewtonSolverCfg
+from .newton_manager_cfg import (
+    NewtonCfg,
+    NewtonDebugCaptureCfg,
+    NewtonDebugReplayCfg,
+    NewtonShapeCfg,
+    NewtonSoftContactCfg,
+    NewtonSolverCfg,
+)
 from .newton_solver import NewtonSolver
 from .vbd_solver import VBDSolver
 from .vbd_solver_cfg import VBDSolverCfg

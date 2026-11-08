@@ -22,6 +22,7 @@ import warp as wp
 from isaaclab_newton.physics import (
     FeatherstoneSolverCfg,
     KaminoPADMMSolverCfg,
+    MJWarpDebugOperationProvider,
     MJWarpSolverCfg,
     MPMSolverCfg,
     NewtonBackend,
@@ -29,6 +30,8 @@ from isaaclab_newton.physics import (
     NewtonBuilderCfg,
     NewtonCfg,
     NewtonCollisionPipelineCfg,
+    NewtonDebugCaptureCfg,
+    NewtonDebugReplayCfg,
     NewtonManager,
     NewtonShapeCfg,
     NewtonSolver,
@@ -167,6 +170,90 @@ def test_reset_lets_consumers_bind_each_new_backend_before_the_solver_exists(mon
 
     assert events == ["ready", "prepare"] * 2
     assert backends[0] is not backends[1]
+
+
+def test_debugger_replays_and_observes_each_substep_on_current_backend(tmp_path):
+    """Manager-owned capture brackets the current backend's native solver loop."""
+    capture = NewtonDebugCaptureCfg(
+        output_dir=str(tmp_path), history_length=2, max_gpu_bytes=16 * 1024**2,
+        record_model=False, record_control=False, record_solver=False,
+        capture_per_substep=True,
+        replay=NewtonDebugReplayCfg(enabled=True, record_control=False, record_solver=False),
+    )
+    sim_cfg = SimulationCfg(
+        dt=1.0 / 120.0,
+        device="cpu",
+        physics=NewtonCfg(
+            solver_cfg=FeatherstoneSolverCfg(), num_substeps=2, use_cuda_graph=False, debug_capture=capture
+        ),
+    )
+    phases = []
+
+    with build_simulation_context(sim_cfg=sim_cfg) as sim:
+        builder = sim.get_or_create_backend(NewtonBuilderCfg(physics_cfg=sim.cfg.physics))
+        body = builder.add_body(mass=1.0)
+        builder.add_joint_revolute(parent=-1, child=body, axis=(0, 0, 1))
+        sim.backend_manager.set_debug_incident_trigger(
+            "observe_step", lambda context: phases.append((context.phase, context.substep_idx)) or None
+        )
+        sim.reset()
+        recorder = sim.backend_manager._incident_recorder
+        sim.step(render=False)
+        assert recorder._replay_valid_count == 2
+        assert recorder._substep_counter == 2
+        assert phases == [("solver_post", 0), ("solver_post", 1)]
+
+
+def test_debugger_exports_finite_trigger_before_task_reset(tmp_path):
+    capture = NewtonDebugCaptureCfg(
+        output_dir=str(tmp_path), history_length=2, max_gpu_bytes=16 * 1024**2,
+        record_model=False, record_control=False, record_solver=False,
+    )
+    sim_cfg = SimulationCfg(
+        dt=1.0 / 120.0, device="cpu",
+        physics=NewtonCfg(solver_cfg=FeatherstoneSolverCfg(), use_cuda_graph=False, debug_capture=capture),
+    )
+    with build_simulation_context(sim_cfg=sim_cfg) as sim:
+        builder = sim.get_or_create_backend(NewtonBuilderCfg(physics_cfg=sim.cfg.physics))
+        body = builder.add_body(mass=1.0)
+        builder.add_joint_revolute(parent=-1, child=body, axis=(0, 0, 1))
+        sim.backend_manager.set_debug_incident_trigger(
+            "finite_failure", lambda context: NewtonManager.DebugTriggerResult("test threshold", global_scope=True)
+        )
+        sim.reset()
+
+        with pytest.raises(RuntimeError, match="Physics incident artifacts"):
+            sim.step(render=False)
+
+        assert len(list(tmp_path.glob("physics_incident_*.npz"))) == 1
+
+
+@pytest.mark.parametrize("explicit_provider", [False, True], ids=["automatic", "registered"])
+def test_debugger_binds_mjwarp_operations_on_current_solver(tmp_path, explicit_provider):
+    capture = NewtonDebugCaptureCfg(
+        output_dir=str(tmp_path), history_length=2, max_gpu_bytes=64 * 1024**2,
+        record_model=False, record_control=False, record_solver=False, record_operations=True,
+    )
+    sim_cfg = SimulationCfg(
+        dt=1.0 / 120.0, device="cpu",
+        physics=NewtonCfg(solver_cfg=MJWarpSolverCfg(), use_cuda_graph=False, debug_capture=capture),
+    )
+    with build_simulation_context(sim_cfg=sim_cfg) as sim:
+        builder = sim.get_or_create_backend(NewtonBuilderCfg(physics_cfg=sim.cfg.physics))
+        body = builder.add_body(mass=1.0)
+        builder.add_joint_revolute(parent=-1, child=body, axis=(0, 0, 1))
+        if explicit_provider:
+            sim.backend_manager.set_debug_operation_provider(MJWarpDebugOperationProvider())
+        sim.reset()
+        recorder = sim.backend_manager._incident_recorder
+        assert recorder._operation_provider is sim.backend_manager._debug_operation_provider
+
+        sim.step(render=False)
+
+        assert recorder._valid_count == 1
+        sim.reset()
+        assert sim.backend_manager._incident_recorder is not recorder
+        assert (sim.backend_manager._debug_operation_provider is recorder._operation_provider) is explicit_provider
 
 
 @pytest.mark.parametrize(
@@ -350,6 +437,8 @@ def _recording_backend(
         post_step_callbacks=[],
         solver_init_callbacks=[],
         decimation=1,
+        debug_substep=None,
+        _debug_substep_index=0,
         capture=None,
         graphs={},
     )
