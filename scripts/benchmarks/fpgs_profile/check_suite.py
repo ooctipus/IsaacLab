@@ -163,8 +163,14 @@ def worker(job_path):
         if protocol["worlds"] != 16384:
             raise ValueError("The 21-scene check requires 16,384 worlds")
         torch.manual_seed(0)
+        # "feather_pgs" applies the scene's FeatherPGS recipe; another preset (e.g. "newton_mjwarp", the reference)
+        # runs the task's own preset as upstream declares it, without the recipe.
+        physics = job.get("physics", "feather_pgs")
+        feather_pgs = physics == "feather_pgs"
+        if not feather_pgs and (scene["solver_attrs"] or scene["storage_at_16384_worlds"] or scene["environment"]):
+            raise ValueError(f"The {physics} reference takes no FeatherPGS recipe")
         cfg = harness.parse_env_cfg(
-            scene["task"], device="cuda:0", num_envs=protocol["worlds"], overrides=["physics=feather_pgs"]
+            scene["task"], device="cuda:0", num_envs=protocol["worlds"], overrides=[f"physics={physics}"]
         )
         cfg.seed = 0
         for key, value in scene["solver_attrs"].items():
@@ -186,6 +192,38 @@ def worker(job_path):
             if not all(np.isfinite(value).all() for value in arrays.values()):
                 raise RuntimeError(f"Nonfinite state at {label}")
             solver = backend.solver
+            # The backend captures the step on its first run, so the reset check precedes any graph.
+            if label != "reset" and not backend.graphs:
+                raise RuntimeError("Missing captured physics graph")
+            common = {
+                "label": label,
+                "finite": True,
+                "state_sha256": {name: hashlib.sha256(value.tobytes()).hexdigest() for name, value in arrays.items()},
+                "body_velocity_rms": float(np.sqrt(np.mean(arrays["body_qd"].astype(float) ** 2))),
+                "sim_dt": float(env.unwrapped.cfg.sim.dt),
+                "decimation": int(env.unwrapped.cfg.decimation),
+                "solver_dt": float(backend.solver_dt),
+                "substeps": int(backend.num_substeps),
+                "solver": type(solver).__name__,
+            }
+            if not feather_pgs:
+                solver_cfg = env.unwrapped.cfg.sim.physics.solver_cfg
+                return common | {
+                    "collision_pipeline": backend.collision_pipeline is not None,
+                    "solver_cfg": {
+                        key: getattr(solver_cfg, key)
+                        for key in (
+                            "iterations",
+                            "ls_iterations",
+                            "njmax",
+                            "nconmax",
+                            "cone",
+                            "integrator",
+                            "use_mujoco_contacts",
+                        )
+                        if hasattr(solver_cfg, key)
+                    },
+                }
             narrow = backend.collision_pipeline.narrow_phase
             if not narrow.verify_buffers:
                 raise RuntimeError("Collision buffer checking is disabled")
@@ -194,21 +232,10 @@ def worker(job_path):
             flags = {"solver": solver.constraint_capacity_status(), "collision": narrow.buffer_capacity_status()}
             if any(any(group.values()) for group in flags.values()):
                 raise RuntimeError(f"Capacity overflow at {label}: {flags}")
-            # The backend captures the step on its first run, so the reset check precedes any graph.
-            if label != "reset" and not backend.graphs:
-                raise RuntimeError("Missing captured physics graph")
-            return {
-                "label": label,
-                "finite": True,
+            return common | {
                 "capacity_flags": flags,
                 "collision_work": collision_work_snapshot(narrow),
                 "selection": backend.solver_ops.path_selection(),
-                "state_sha256": {name: hashlib.sha256(value.tobytes()).hexdigest() for name, value in arrays.items()},
-                "body_velocity_rms": float(np.sqrt(np.mean(arrays["body_qd"].astype(float) ** 2))),
-                "sim_dt": float(env.unwrapped.cfg.sim.dt),
-                "decimation": int(env.unwrapped.cfg.decimation),
-                "solver_dt": float(backend.solver_dt),
-                "substeps": int(backend.num_substeps),
                 "pgs_iterations": int(solver.options.pgs_iterations),
             }
 
