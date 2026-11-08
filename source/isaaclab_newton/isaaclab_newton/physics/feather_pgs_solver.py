@@ -55,9 +55,14 @@ class FeatherPGSSolver(NewtonSolver):
         return self.solver_class(model, **kwargs)
 
     def create_collision_pipeline(self, **kwargs) -> CollisionPipeline:
-        """Construct the collision pipeline with the configured FeatherPGS collision choices."""
+        """Construct the collision pipeline with the configured FeatherPGS collision choices.
+
+        FeatherPGS follows its contact rows as they grow, so its pipeline's buffers grow from demand
+        (``growable_contacts``) instead of holding the resolved ``rigid_contact_max`` rows.
+        """
         kwargs["convex_collision"] = self.cfg.convex_collision
         kwargs["contact_export"] = self.cfg.contact_export
+        kwargs["growable_contacts"] = True
         self.collision_pipeline = super().create_collision_pipeline(**kwargs)
         return self.collision_pipeline
 
