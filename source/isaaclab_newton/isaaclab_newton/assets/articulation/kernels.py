@@ -640,21 +640,19 @@ def concat_joint_pos_limits_lower_and_upper(
 @wp.kernel
 def gather_jacobian_rows(
     src: wp.array4d(dtype=wp.float32),
-    art_ids: wp.array(dtype=wp.int32),
     jacobian_body_user_to_backend: wp.array(dtype=wp.int32),
     joint_user_to_backend: wp.array(dtype=wp.int32),
     num_base_dofs: wp.int32,
     has_joint_ordering: bool,
     dst: wp.array4d(dtype=wp.float32),
 ):
-    """Copy per-view articulation jacobian rows from a model-sized buffer into a view-sized buffer.
+    """Copy the view's Jacobian rows from Newton's view-sized Jacobian into the public layout.
 
-    Newton's ``eval_jacobian`` writes every articulation in the model (across all
-    :class:`~newton.selection.ArticulationView` instances) into a single 4-D output
-    shaped ``(model.articulation_count, max_links, 6, max_dofs)``. An
-    ``ArticulationView`` owns only the subset indexed by ``articulation_ids``. This
-    kernel gathers those rows into a contiguous view-sized destination so the
-    caller-facing
+    :meth:`newton.selection.ArticulationView.eval_jacobian` writes the Jacobian of
+    each articulation of the view into its own block, shaped
+    ``(num_instances, max_links, 6, max_dofs)`` after a reshape, with the view's
+    ``max_joints_per_articulation`` and ``max_dofs_per_articulation``. This kernel
+    gathers the public rows and columns so the caller-facing
     :attr:`~isaaclab.assets.BaseArticulationData.body_com_jacobian_w` contract
     ``(num_instances, num_jacobi_bodies, 6, num_joints + num_base_dofs)`` is
     preserved.
@@ -674,10 +672,8 @@ def gather_jacobian_rows(
     is safe under CUDA graph capture.
 
     Args:
-        src: Input jacobian buffer reshaped to 4-D. Shape is
-            (model.articulation_count, max_links, 6, max_dofs).
-        art_ids: Model-level articulation indices owned by this view. Shape is
-            (num_instances,).
+        src: The view's Jacobian buffer reshaped to 4-D. Shape is
+            (num_instances, max_links, 6, max_dofs).
         jacobian_body_user_to_backend: Map from public Jacobian body row to
             backend Jacobian body row in Newton's full-row layout. Built for
             every view (also under identity ordering); for fixed-base
@@ -699,31 +695,28 @@ def gather_jacobian_rows(
     if has_joint_ordering and user_dof >= num_base_dofs:
         backend_dof = num_base_dofs + joint_user_to_backend[user_dof - num_base_dofs]
 
-    dst[i, user_link, s, user_dof] = src[art_ids[i], backend_link, s, backend_dof]
+    dst[i, user_link, s, user_dof] = src[i, backend_link, s, backend_dof]
 
 
 @wp.kernel
 def gather_mass_matrix_rows(
     src: wp.array3d(dtype=wp.float32),
-    art_ids: wp.array(dtype=wp.int32),
     joint_user_to_backend: wp.array(dtype=wp.int32),
     num_base_dofs: wp.int32,
     has_joint_ordering: bool,
     dst: wp.array3d(dtype=wp.float32),
 ):
-    """Copy per-view articulation mass-matrix rows from a model-sized buffer into a view-sized buffer.
+    """Copy the view's mass-matrix rows from Newton's view-sized mass matrix into the public layout.
 
     3-D analogue of :func:`gather_jacobian_rows` for the joint-space mass
-    matrix written by :func:`newton.sim.articulation.eval_mass_matrix`. The
+    matrix written by :meth:`newton.selection.ArticulationView.eval_mass_matrix`. The
     DoF axis is preserved in full (including the leading 6 free-root rows/cols
     for floating-base articulations), matching the cross-library industry
     convention used by PhysX, Pinocchio, Drake, MuJoCo, RBDL, OCS2, and iDynTree.
 
     Args:
-        src: Input mass-matrix buffer. Shape is
-            (model.articulation_count, max_dofs, max_dofs).
-        art_ids: Model-level articulation indices owned by this view. Shape is
-            (num_instances,).
+        src: The view's mass-matrix buffer. Shape is
+            (num_instances, max_dofs, max_dofs).
         joint_user_to_backend: Map from public actuated-joint index to backend
             actuated-joint index.
         num_base_dofs: Number of leading floating-base DoF rows/columns.
@@ -741,7 +734,7 @@ def gather_mass_matrix_rows(
         if user_col >= num_base_dofs:
             backend_col = num_base_dofs + joint_user_to_backend[user_col - num_base_dofs]
 
-    dst[i, user_row, user_col] = src[art_ids[i], backend_row, backend_col]
+    dst[i, user_row, user_col] = src[i, backend_row, backend_col]
 
 
 @wp.kernel

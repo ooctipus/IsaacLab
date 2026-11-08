@@ -331,6 +331,16 @@ class MockNewtonArticulationView:
         return self._joint_dof_count
 
     @property
+    def max_joints_per_articulation(self) -> int:
+        """Tree joints of each articulation: the Jacobian's row blocks."""
+        return self._link_count
+
+    @property
+    def max_dofs_per_articulation(self) -> int:
+        """DoFs of each articulation, floating-base root DoFs included: the Jacobian's columns."""
+        return self._joint_dof_count + (0 if self._is_fixed_base else 6)
+
+    @property
     def joint_dof_counts(self) -> list[int]:
         """DOF count per selected joint. One DOF per joint unless a ball layout was requested."""
         if self._joint_coord_counts_override is None:

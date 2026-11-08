@@ -214,7 +214,8 @@ def _newton_articulation(N, J, B, FT, ST, device, is_fixed_base, joint_ordering,
     view._attributes["mujoco.tendon_range"] = wp.array(tendon_range, dtype=wp.vec2f, device=device)
 
     manager = newton_manager(N, device)
-    # Sizes of the lazy task-space buffers; the mock model holds only this homogeneous articulation batch.
+    # Model counts of this homogeneous articulation batch: the lazy motion-subspace, spatial-inertia and gravity
+    # scratch is sized by them; the Jacobian and mass matrix by the view.
     model = view.model = manager.backend.model
     total_dofs = J + (0 if is_fixed_base else 6)
     model.articulation_count = N
