@@ -10,7 +10,6 @@ import os
 import signal
 import sys
 import threading
-import time
 from pathlib import Path
 
 import warp as wp
@@ -24,7 +23,6 @@ TASK = "IsaacContrib-Factory-Variant-Franka"
 WORKFLOW_ID = os.environ.get("ISAACLAB_WORKFLOW_ID", "local")
 OUTPUT_DIR = Path("logs") / "nist_nan_debug" / WORKFLOW_ID
 MAX_INCIDENTS = 5
-MAX_SECONDS = 4 * 60 * 60
 
 
 def resolve_debug_task(task: str, agent: str):
@@ -76,9 +74,8 @@ def main() -> int:
     done = threading.Event()
 
     def stop_when_done() -> None:
-        deadline = time.monotonic() + MAX_SECONDS
         while not done.wait(10):
-            if len(list(OUTPUT_DIR.glob("physics_incident_*.npz"))) >= MAX_INCIDENTS or time.monotonic() >= deadline:
+            if len(list(OUTPUT_DIR.glob("physics_incident_*.npz"))) >= MAX_INCIDENTS:
                 os.kill(os.getpid(), signal.SIGINT)
                 return
 
@@ -88,7 +85,7 @@ def main() -> int:
     try:
         train_rsl_rl.run(sys.argv[1:])
     except KeyboardInterrupt:
-        print("Stopped NIST diagnostic training after the incident or time limit.", flush=True)
+        print("Stopped NIST diagnostic training after capturing five incidents.", flush=True)
     except Exception as exc:
         error = f"{type(exc).__name__}: {exc}"
         raise
