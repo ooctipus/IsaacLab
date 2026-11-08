@@ -102,8 +102,19 @@ class GraphTimer:
 
 
 def physics_launches_per_step(env):
-    """Read the environment's selected physics stepping schedule."""
-    return 1 if env.unwrapped._physics_handles_decimation else int(env.unwrapped.cfg.decimation)
+    """Count the physics graphs the Newton backend launches per environment step.
+
+    One backend step runs the whole decimation loop when Newton actuators run in it, else one physics step. A step
+    whose actuators all capture is one graph; otherwise each physics step launches the graphs before and after the
+    eager actuators, and the step ends with one more (NewtonBackend.step).
+    """
+    unwrapped = env.unwrapped
+    decimation = int(unwrapped.cfg.decimation)
+    backend = unwrapped.sim.backend_manager.backend
+    physics_steps, calls = (decimation, 1) if unwrapped._physics_handles_decimation else (1, decimation)
+    actuators = backend.actuators
+    per_call = 1 if actuators is None or actuators.is_all_graphable else 2 * physics_steps + 1
+    return calls * per_call
 
 
 def collision_work_snapshot(narrow):

@@ -105,14 +105,26 @@ class TestQuickGraphTiming(unittest.TestCase):
 
     def test_graph_that_contains_the_full_decimation_loop(self):
         warp, backend, physics, _, _, _ = self.fixture()
+        sim = SimpleNamespace(backend_manager=SimpleNamespace(backend=SimpleNamespace(actuators=None)))
         env = SimpleNamespace(
-            unwrapped=SimpleNamespace(cfg=SimpleNamespace(decimation=4), _physics_handles_decimation=True)
+            unwrapped=SimpleNamespace(cfg=SimpleNamespace(decimation=4), _physics_handles_decimation=True, sim=sim)
         )
         with GraphTimer(warp, backend, "cuda:0", 1) as timer:
             warp.capture_launch(physics)
         self.assertEqual(timer.milliseconds(1, physics_launches_per_step(env)), [0.5])
         env.unwrapped._physics_handles_decimation = False
         self.assertEqual(physics_launches_per_step(env), 4)
+
+    def test_eager_actuators_split_the_step_into_graphs(self):
+        """Actuators that cannot be captured run between a before and an after graph per physics step."""
+        actuators = SimpleNamespace(is_all_graphable=False)
+        sim = SimpleNamespace(backend_manager=SimpleNamespace(backend=SimpleNamespace(actuators=actuators)))
+        env = SimpleNamespace(
+            unwrapped=SimpleNamespace(cfg=SimpleNamespace(decimation=4), _physics_handles_decimation=True, sim=sim)
+        )
+        self.assertEqual(physics_launches_per_step(env), 9)
+        actuators.is_all_graphable = True
+        self.assertEqual(physics_launches_per_step(env), 1)
 
 
 class TestCachedComparison(unittest.TestCase):
