@@ -543,7 +543,7 @@ def test_feather_pgs_resets_only_model_worlds():
 
 
 def test_feather_pgs_collision_choices_reach_the_pipeline(monkeypatch):
-    """The configured collision choices are passed to the pipeline, which the solver keeps for path queries."""
+    """The configured collision choices and the growable-contacts opt-in reach the pipeline, which the solver keeps."""
     received = {}
     pipeline = SimpleNamespace(get_collision_selection=lambda: {"method": "ordinary"})
 
@@ -560,7 +560,12 @@ def test_feather_pgs_collision_choices_reach_the_pipeline(monkeypatch):
         solver.path_selection()
     assert solver.create_collision_pipeline(broad_phase="explicit") is pipeline
 
-    assert received == {"broad_phase": "explicit", "convex_collision": "ordinary", "contact_export": "tiled"}
+    assert received == {
+        "broad_phase": "explicit",
+        "convex_collision": "ordinary",
+        "contact_export": "tiled",
+        "growable_contacts": True,
+    }
     assert solver.path_selection() == {"solver": {"factor": "tree"}, "collision": {"method": "ordinary"}}
 
 
