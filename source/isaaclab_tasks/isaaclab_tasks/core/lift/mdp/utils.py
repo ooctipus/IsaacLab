@@ -133,8 +133,7 @@ def sample_object_point_cloud(num_envs: int, num_points: int, prim_path: str, de
         if env_hash in _FINAL_SAMPLE_CACHE:
             arr = _FINAL_SAMPLE_CACHE[env_hash]  # (num_points,3) in root frame
             scaled_samples = torch.from_numpy(arr).to(device) * base_scale.unsqueeze(0)
-            for env_id in env_ids:
-                points[env_id] = scaled_samples
+            points[torch.as_tensor(env_ids, dtype=torch.long, device=device)] = scaled_samples
             continue
 
         # otherwise build per-prim samples (with per-prim cache)
@@ -191,8 +190,7 @@ def sample_object_point_cloud(num_envs: int, num_points: int, prim_path: str, de
 
         # apply root scale and write out
         scaled_samples = samples_final * base_scale.unsqueeze(0)
-        for env_id in env_ids:
-            points[env_id] = scaled_samples
+        points[torch.as_tensor(env_ids, dtype=torch.long, device=device)] = scaled_samples
 
     return points
 
