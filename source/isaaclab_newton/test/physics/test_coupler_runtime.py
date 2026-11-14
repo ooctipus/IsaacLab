@@ -19,6 +19,8 @@ from isaaclab_newton.physics import (
     NewtonBackendCfg,
     NewtonCfg,
     NewtonManager,
+    NewtonWorldLayout,
+    NewtonWorldLayoutCfg,
     XPBDSolverCfg,
 )
 from isaaclab_newton.physics.coupling import (
@@ -42,7 +44,7 @@ def _bind_coupler(builder: ModelBuilder, solver_cfg: CouplerProxyCfg | CouplerAd
     manager = NewtonManager(cfg)
     manager._device = "cpu"
     manager._sim = SimpleNamespace(
-        get_or_create_backend=lambda _: builder,
+        get_or_create_backend=lambda cfg: NewtonWorldLayout() if isinstance(cfg, NewtonWorldLayoutCfg) else builder,
         get_clone_plan=lambda: SimpleNamespace(env_template="/Lab/Cells/Cell{}"),
         _prepare_newton_visualizer_for_capture=lambda: None,
     )

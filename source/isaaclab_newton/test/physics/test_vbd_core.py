@@ -18,6 +18,7 @@ from isaaclab_newton.physics import (
     NewtonCfg,
     NewtonManager,
     NewtonSoftContactCfg,
+    NewtonWorldLayoutCfg,
 )
 from isaaclab_newton.physics.newton_solver import solver_kwargs
 from newton import ModelBuilder
@@ -53,6 +54,9 @@ def test_soft_contact_cfg_updates_finalized_model(monkeypatch, soft_contact_cfg,
         device = "cpu"
         world_count = 0
         articulation_count = 0
+        surface_label = volume_label = ()
+        surface_particle_start = surface_particle_end = wp.empty(0, dtype=wp.int32, device="cpu")
+        volume_particle_start = volume_particle_end = surface_particle_start
 
         def state(self):
             state_values.append((self.soft_contact_ke, self.soft_contact_kd, self.soft_contact_mu))
@@ -86,6 +90,7 @@ def test_soft_contact_cfg_updates_finalized_model(monkeypatch, soft_contact_cfg,
     assert backend.model is backend.state_0 is backend.state_1 is backend.control is None
     assert sim.get_or_create_backend(builder_cfg) is builder
     sim.close_backend(builder)
+    sim.close_backend(sim.get_or_create_backend(NewtonWorldLayoutCfg(physics_cfg=physics_cfg)))
     assert sim._backend_registry == []
 
 
