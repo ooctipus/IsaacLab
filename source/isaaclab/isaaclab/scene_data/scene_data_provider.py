@@ -293,12 +293,16 @@ class SceneDataProvider:
         input_paths, paths = tuple(self.backend.transform_paths), tuple(paths)
         key = input_paths, paths
         if key not in self._transform_mappings:
-            sources = {path: index for index, path in enumerate(input_paths)}
-            destinations = {path: index for index, path in enumerate(paths) if path is not None}
-            if len(sources) != len(input_paths) or len(destinations) != len(paths) - paths.count(None):
-                raise ValueError("Transform paths must be unique; only destination None slots may repeat.")
             result = None
-            if input_paths != paths:
+            if input_paths == paths:
+                # Identical layouts map to themselves; their paths only have to be unique.
+                if len(set(input_paths)) != len(input_paths):
+                    raise ValueError("Transform paths must be unique; only destination None slots may repeat.")
+            else:
+                sources = {path: index for index, path in enumerate(input_paths)}
+                destinations = {path: index for index, path in enumerate(paths) if path is not None}
+                if len(sources) != len(input_paths) or len(destinations) != len(paths) - paths.count(None):
+                    raise ValueError("Transform paths must be unique; only destination None slots may repeat.")
                 mapping = np.full(len(input_paths), -1, dtype=np.int32)
                 for path, index in destinations.items():
                     mapping[sources[path]] = index
