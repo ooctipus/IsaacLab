@@ -14,7 +14,7 @@
 Builder Utilities
 -----------------
 
-.. autofunction:: newton_builder_world_hook
+.. autofunction:: newton_world_prototype_hook
 
 Additional Public Classes
 -------------------------

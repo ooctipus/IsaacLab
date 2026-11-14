@@ -14,6 +14,8 @@
     NewtonCfg
     NewtonBackendCfg
     NewtonBuilderCfg
+    NewtonWorldLayout
+    NewtonWorldLayoutCfg
     NewtonSoftContactCfg
     NewtonCollisionPipelineCfg
     NewtonShapeCfg
@@ -127,6 +129,14 @@ Physics Configuration
   :exclude-members: __init__
 
 .. autofunction:: create_newton_builder
+
+.. autoclass:: NewtonWorldLayout
+  :members:
+
+.. autoclass:: NewtonWorldLayoutCfg
+  :members:
+  :show-inheritance:
+  :exclude-members: __init__
 
 .. autoclass:: NewtonSoftContactCfg
   :members:
