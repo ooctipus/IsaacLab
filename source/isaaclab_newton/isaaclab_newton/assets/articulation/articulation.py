@@ -178,61 +178,77 @@ class Articulation(BaseArticulation):
         )
 
     def _configure_joint_target_modes(self, _event) -> None:
-        """Apply configured actuator modes to the shared builder before model allocation."""
+        """Apply configured actuator modes to the shared builder before model allocation.
+
+        The first matched articulation resolves the modes from the actuator configuration; every other one is a
+        replica and takes them position by position.
+        """
         builder = SimulationContext.instance().backend_manager.builder
         root_prim_path_regex = _resolve_articulation_root_prim_path_expr(self.cfg)
         articulation_ids, _ = resolve_matching_names(
             root_prim_path_regex, builder.articulation_label, raise_when_no_match=False
         )
-        source_dof_ids = None
-        for articulation_id in articulation_ids:
-            joint_start = builder.articulation_start[articulation_id]
-            joint_end = builder.articulation_end[articulation_id]
-            dof_ids: list[int] = []
-            dof_names: list[str] = []
-            for joint_id in range(joint_start, joint_end):
-                if builder.joint_type[joint_id] in (JointType.FREE, JointType.FIXED):
-                    continue
-                dof_start = builder.joint_qd_start[joint_id]
-                dof_end = (
-                    builder.joint_qd_start[joint_id + 1]
-                    if joint_id + 1 < len(builder.joint_qd_start)
-                    else len(builder.joint_target_mode)
-                )
-                joint_name = builder.joint_label[joint_id].rsplit("/", maxsplit=1)[-1]
-                for axis_index, dof_id in enumerate(range(dof_start, dof_end)):
-                    dof_ids.append(dof_id)
-                    dof_names.append(joint_name if dof_end - dof_start == 1 else f"{joint_name}:{axis_index}")
+        if not articulation_ids:
+            return
+        # Each matched articulation's actuated DOFs, in joint and axis order: its joints, less free and fixed ones.
+        articulations = np.asarray(articulation_ids, dtype=np.int64)
+        joint_start = np.asarray(builder.articulation_start, dtype=np.int64)[articulations]
+        joint_count = np.asarray(builder.articulation_end, dtype=np.int64)[articulations] - joint_start
+        joint_owner = np.repeat(np.arange(len(articulations)), joint_count)
+        joint_first = np.cumsum(joint_count) - joint_count
+        joints = joint_start[joint_owner] + np.arange(joint_owner.size) - joint_first[joint_owner]
+        joint_type = np.asarray(builder.joint_type, dtype=np.int64)[joints]
+        actuated = (joint_type != int(JointType.FREE)) & (joint_type != int(JointType.FIXED))
+        joints, joint_owner = joints[actuated], joint_owner[actuated]
+        mode = np.asarray(builder.joint_target_mode, dtype=np.int64)
+        dof_start = np.append(np.asarray(builder.joint_qd_start, dtype=np.int64), mode.size)
+        dof_count = dof_start[joints + 1] - dof_start[joints]
+        dof_owner = np.repeat(joint_owner, dof_count)
+        dof_joint = np.repeat(np.arange(joints.size), dof_count)
+        dof_axis = np.arange(dof_joint.size) - (np.cumsum(dof_count) - dof_count)[dof_joint]
+        dof_ids = dof_start[joints[dof_joint]] + dof_axis
+        per_articulation = np.bincount(dof_owner, minlength=len(articulations))
+        if np.any(per_articulation != per_articulation[0]):
+            raise ValueError(
+                f"Articulations matching '{root_prim_path_regex}' differ in their actuated DOF counts:"
+                f" {sorted(set(per_articulation.tolist()))}."
+            )
 
-            if source_dof_ids is not None:
-                for source_dof_id, dof_id in zip(source_dof_ids, dof_ids, strict=True):
-                    builder.joint_target_mode[dof_id] = builder.joint_target_mode[source_dof_id]
+        # The first articulation's modes, from its DOF names.
+        source = dof_owner == 0
+        source_dof_ids = dof_ids[source].tolist()
+        joint_names = [builder.joint_label[joint].rsplit("/", maxsplit=1)[-1] for joint in joints[dof_joint[source]]]
+        source_counts = dof_count[dof_joint[source]].tolist()
+        dof_names = [
+            name if count == 1 else f"{name}:{axis}"
+            for name, count, axis in zip(joint_names, source_counts, dof_axis[source].tolist(), strict=True)
+        ]
+        for actuator_cfg in self.cfg.actuators.values():
+            matched_indices, matched_names = resolve_matching_names(
+                actuator_cfg.joint_names_expr, dof_names, raise_when_no_match=False
+            )
+            if not matched_indices:
                 continue
-
-            for actuator_cfg in self.cfg.actuators.values():
-                matched_indices, matched_names = resolve_matching_names(
-                    actuator_cfg.joint_names_expr, dof_names, raise_when_no_match=False
+            selected_dof_ids = [source_dof_ids[index] for index in matched_indices]
+            stiffness_values = _resolve_actuator_gain_values(
+                actuator_cfg.stiffness,
+                matched_names,
+                [builder.joint_target_ke[dof_id] for dof_id in selected_dof_ids],
+            )
+            damping_values = _resolve_actuator_gain_values(
+                actuator_cfg.damping,
+                matched_names,
+                [builder.joint_target_kd[dof_id] for dof_id in selected_dof_ids],
+            )
+            for dof_id, stiffness, damping in zip(selected_dof_ids, stiffness_values, damping_values, strict=True):
+                mode[dof_id] = int(
+                    _target_mode_from_gains(stiffness, damping)
+                    if _is_implicit_actuator_cfg(actuator_cfg)
+                    else JointTargetMode.EFFORT
                 )
-                if not matched_indices:
-                    continue
-                selected_dof_ids = [dof_ids[index] for index in matched_indices]
-                stiffness_values = _resolve_actuator_gain_values(
-                    actuator_cfg.stiffness,
-                    matched_names,
-                    [builder.joint_target_ke[dof_id] for dof_id in selected_dof_ids],
-                )
-                damping_values = _resolve_actuator_gain_values(
-                    actuator_cfg.damping,
-                    matched_names,
-                    [builder.joint_target_kd[dof_id] for dof_id in selected_dof_ids],
-                )
-                for dof_id, stiffness, damping in zip(selected_dof_ids, stiffness_values, damping_values, strict=True):
-                    builder.joint_target_mode[dof_id] = int(
-                        _target_mode_from_gains(stiffness, damping)
-                        if _is_implicit_actuator_cfg(actuator_cfg)
-                        else JointTargetMode.EFFORT
-                    )
-            source_dof_ids = dof_ids
+        # Every replica takes the first articulation's modes, position by position.
+        mode[dof_ids.reshape(len(articulations), -1)] = mode[dof_ids[source]]
+        builder.joint_target_mode = mode.tolist()
 
     """
     Properties
