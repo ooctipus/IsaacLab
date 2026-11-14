@@ -46,7 +46,7 @@ dependencies = [
     "pyglet>=2.1.6,<3",
     "transformers==5.10.4",
     "einops",
-    "warp-lang==1.20.0.dev20261113",
+    "warp-lang==1.20.0.dev20261114",
     "matplotlib>=3.10.3",
     # pillow: floor, not exact — an exact pin below Isaac Sim's prebundled version forces a
     # downgrade that deletes the prebundled copy other extensions symlink into (nvbugs 6410989).
@@ -236,7 +236,7 @@ ovphysx = "0.7.0.74035321"
 ovrtx = "0.6.0.1791947691"
 ovstage = "0.3.0.1791986420"
 newton = "1.9.0.dev0"
-warp = "1.20.0.dev20261113"
+warp = "1.20.0.dev20261114"
 
 [tool.ruff]
 line-length = 120
