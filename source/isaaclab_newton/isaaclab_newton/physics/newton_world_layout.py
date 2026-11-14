@@ -479,6 +479,64 @@ _PLACED = (
 """Attributes :func:`_place` moves to each world's transform."""
 
 
+def _expand_rows(
+    model: Model,
+    name: str,
+    spec: Model.AttributeSpec,
+    value: Any,
+    domains: dict[Any, _Domain],
+    layout: NewtonWorldLayout,
+) -> np.ndarray | list | None:
+    """Return one row attribute expanded to every world: rows gathered from their seed world, references offset.
+
+    Returns ``None`` for an attribute without rows to expand (empty storage may keep a sentinel row).
+    """
+    seed_world = layout.seed_world
+    rows = domains[spec.frequency]
+    if spec.compaction_policy == "world_start":
+        starts = np.concatenate((rows.start, [rows.total]))
+        return np.minimum(starts, rows.total) if name == "shape_world_start" else starts
+    if rows.seed_total == 0:
+        return None
+    references = Model._normalize_attribute_reference(spec.references)
+    if isinstance(value, list) and references is None:
+        if len(value) != rows.seed_total:
+            raise ValueError(f"List attribute {name!r} does not have one value per row.")
+        if value and all(isinstance(v, str) for v in value):
+            is_label = name.endswith("_label") or name in model.custom_frequency_label_attributes.values()
+            return _labels(value, rows, layout, seed_world) if is_label else _format_slots(value, rows, layout)
+        objects = np.empty(len(value), dtype=object)
+        objects[:] = value
+        return objects[rows.gather].tolist()
+    data = _host(value)
+    sentinel = spec.compaction_policy == "start" and len(data) == rows.seed_total + 1
+    body = data[: rows.seed_total] if sentinel else data
+    if body.shape[0] not in (rows.seed_total, rows.seed_total * spec.row_width):
+        raise ValueError(f"Attribute {name!r} has {body.shape[0]} rows for {rows.seed_total} {spec.frequency!r} rows.")
+    flat = body.shape[0] != rows.seed_total
+    full = (body.reshape(rows.seed_total, spec.row_width, *body.shape[1:]) if flat else body)[rows.gather]
+    if references == _FREQUENCY.WORLD:
+        world = rows.row_world.reshape(-1, *[1] * (full.ndim - 1))
+        full = np.where(full >= 0, np.broadcast_to(world, full.shape), full).astype(full.dtype)
+    elif name in _KIND_REFERENCES:
+        kind_name, kinds = _KIND_REFERENCES[name]
+        kind = _host(_get(model, kind_name))[rows.gather]
+        for code, target in kinds.items():
+            hit = kind == code
+            if target in domains and np.any(hit):
+                full[hit] = _offset(full[hit], rows.row_world[hit], domains[target], seed_world, False)
+    elif references is not None:
+        if references not in domains:
+            raise ValueError(f"Attribute {name!r} references {references!r}, which has no row count.")
+        by_row = spec.compaction_policy in _ROW_POLICIES
+        full = _offset(full, rows.row_world, domains[references], seed_world, by_row).astype(full.dtype)
+    if flat:
+        full = full.reshape(-1, *body.shape[1:])
+    if sentinel:
+        full = np.concatenate((full, np.asarray([domains[references].total], dtype=full.dtype)))
+    return full
+
+
 def _expand(model: Model, layout: NewtonWorldLayout, builder: ModelBuilder) -> None:
     """Expand a finalized seed model in place to every cloned world of ``layout``."""
     device = model.device
@@ -510,62 +568,15 @@ def _expand(model: Model, layout: NewtonWorldLayout, builder: ModelBuilder) -> N
         value = _get(model, name)
         if value is None:
             continue
-        rows = domains[frequency]
-        if spec.compaction_policy == "world_start":
-            starts = np.concatenate((rows.start, [rows.total]))
-            if name == "shape_world_start":
-                starts = np.minimum(starts, rows.total)
-            _set(model, name, _like(value, starts, device))
+        full = _expand_rows(model, name, spec, value, domains, layout)
+        if full is None:
             continue
-        if rows.seed_total == 0:
-            continue  # nothing to expand; empty storage may keep a sentinel row
-        references = Model._normalize_attribute_reference(spec.references)
-        if isinstance(value, list) and references is None:
-            if len(value) != rows.seed_total:
-                raise ValueError(f"List attribute {name!r} does not have one value per row.")
-            if value and all(isinstance(v, str) for v in value):
-                is_label = name.endswith("_label") or name in model.custom_frequency_label_attributes.values()
-                expanded = _labels(value, rows, layout, seed_world) if is_label else _format_slots(value, rows, layout)
-            else:
-                objects = np.empty(len(value), dtype=object)
-                objects[:] = value
-                expanded = objects[rows.gather].tolist()
-            _set(model, name, expanded)
-            continue
-        data = _host(value)
-        sentinel = spec.compaction_policy == "start" and len(data) == rows.seed_total + 1
-        body = data[: rows.seed_total] if sentinel else data
-        width = spec.row_width
-        if body.shape[0] not in (rows.seed_total, rows.seed_total * width):
-            raise ValueError(f"Attribute {name!r} has {body.shape[0]} rows for {rows.seed_total} {frequency!r} rows.")
-        flat = body.shape[0] != rows.seed_total
-        shaped = body.reshape(rows.seed_total, width, *body.shape[1:]) if flat else body
-        full = shaped[rows.gather]
-        if references == _FREQUENCY.WORLD:
-            world = rows.row_world.reshape(-1, *[1] * (full.ndim - 1))
-            full = np.where(full >= 0, np.broadcast_to(world, full.shape), full).astype(full.dtype)
-        elif name in _KIND_REFERENCES:
-            kind_name, kinds = _KIND_REFERENCES[name]
-            kind = _host(_get(model, kind_name))[rows.gather]
-            for code, target in kinds.items():
-                if target in domains and np.any(kind == code):
-                    hit = kind == code
-                    full[hit] = _offset(full[hit], rows.row_world[hit], domains[target], seed_world, False)
-        elif references is not None:
-            if references not in domains:
-                raise ValueError(f"Attribute {name!r} references {references!r}, which has no row count.")
-            by_row = spec.compaction_policy in _ROW_POLICIES
-            full = _offset(full, rows.row_world, domains[references], seed_world, by_row).astype(full.dtype)
-        if flat:
-            full = full.reshape(-1, *body.shape[1:])
-        if sentinel:
-            full = np.concatenate((full, np.asarray([domains[references].total], dtype=full.dtype)))
         if name in _PLACED:
             arrays[name] = np.array(full, dtype=np.float32)
-            arrays["_seed_" + name] = np.asarray(body, dtype=np.float32)
+            arrays["_seed_" + name] = np.asarray(_host(value)[: domains[frequency].seed_total], dtype=np.float32)
             containers[name] = value
         else:
-            _set(model, name, _like(value, full, device))
+            _set(model, name, full if isinstance(full, list) else _like(value, full, device))
     _place(arrays, domains, model, layout)
     for name, value in containers.items():
         _set(model, name, _like(value, arrays[name], device))
