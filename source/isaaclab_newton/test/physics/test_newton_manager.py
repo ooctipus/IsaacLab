@@ -217,9 +217,10 @@ def test_reset_builds_the_configured_solver_and_steps(solver_cfg_factory, solver
 
 
 def test_a_backend_freezes_its_scene_until_it_closes():
-    """The collection after each graph capture walks only objects allocated after the scene: the collector pauses
-    while the scene is built, a hard reset freezes the scene it built and unfreezes the previous backend's, which is
-    then collected; closing unfreezes the last one, which is then collected too."""
+    """The collection after each graph capture walks only objects allocated after the scene: what exists before the
+    scene is frozen and the collector pauses while the scene is built, a hard reset freezes the scene it built and
+    unfreezes the previous backend's, which is then collected; closing unfreezes the last one, which is then collected
+    too."""
     sim_cfg = SimulationCfg(
         dt=1.0 / 120.0,
         device="cuda:0",
@@ -233,6 +234,7 @@ def test_a_backend_freezes_its_scene_until_it_closes():
         builder.add_shape_box(body=body, hx=0.1, hy=0.1, hz=0.1)
         builder.add_ground_plane()
         assert not gc.isenabled()
+        assert gc.get_freeze_count() > 0
         sim.reset()
         assert gc.isenabled()
         assert gc.get_freeze_count() > 0

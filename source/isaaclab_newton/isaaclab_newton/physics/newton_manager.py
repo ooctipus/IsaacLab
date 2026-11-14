@@ -137,7 +137,10 @@ class NewtonManager(PhysicsManager):
         self.builder = sim_context.get_or_create_backend(NewtonBuilderCfg(physics_cfg=self._cfg))
         # The scene is built into this builder until the first hard reset finalizes it. The cyclic collector's
         # automatic full walks of the growing scene are paused meanwhile; the reset collects once, then freezes.
+        # What exists now (modules, configuration, the solver's kernels) lives as long as the process and holds next
+        # to no garbage (10 objects for g1): it is frozen here, so that collection walks only the scene's objects.
         self._gc_paused = gc.isenabled()
+        gc.freeze()
         gc.disable()
 
         # This context imports NewtonManager, so it can only be imported after this module initializes.
