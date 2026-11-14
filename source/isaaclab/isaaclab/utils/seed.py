@@ -5,6 +5,7 @@
 
 import os
 import random
+import sys
 
 import numpy as np
 import torch
@@ -42,6 +43,9 @@ def configure_seed(seed: int | None, torch_deterministic: bool = False) -> int:
     else:
         torch.backends.cudnn.benchmark = True
         torch.backends.cudnn.deterministic = False
-        torch.use_deterministic_algorithms(False)
+        # Turning the mode off imports Inductor's configuration (about 3 s); only a mode that is on needs it.
+        inductor = sys.modules.get("torch._inductor.config")
+        if torch.are_deterministic_algorithms_enabled() or getattr(inductor, "deterministic", False):
+            torch.use_deterministic_algorithms(False)
 
     return seed
