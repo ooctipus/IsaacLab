@@ -229,6 +229,8 @@ class NewtonManager(PhysicsManager):
         super().close()
         self.clear()
         self.builder = None
+        # What initialize froze is collectable again, also when no backend was built to unfreeze it.
+        gc.unfreeze()
         self._resume_gc()
 
     def get_scene_data_backend(self) -> SceneDataBackend | None:
