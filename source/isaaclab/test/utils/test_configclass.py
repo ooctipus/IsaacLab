@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import copy
 import os
 import subprocess
 import sys
@@ -775,13 +776,28 @@ def test_borrowed_field_preserves_identity_without_changing_ordinary_copying():
     handle = object()
     cfg = NativeCfg(handle=handle)
     assert cfg.handle is handle
-    for copied in (cfg.copy(), clone(cfg), cfg.replace(eye=[1.0, 2.0, 3.0]), replace(cfg, eye=[1.0, 2.0, 3.0])):
+    for copied in (
+        cfg.copy(),
+        clone(cfg),
+        cfg.replace(eye=[1.0, 2.0, 3.0]),
+        replace(cfg, eye=[1.0, 2.0, 3.0]),
+        copy.deepcopy(cfg),
+    ):
         assert type(copied) is NativeCfg
         assert copied.handle is handle
         assert copied.eye is not cfg.eye
         assert copied.lookat is not cfg.lookat
     assert replace(cfg, cfg=1).cfg == 1
     assert cfg.cfg == 0
+
+    # An enclosing configuration copies its members on construction; the borrowed value stays shared.
+    @configclass
+    class OuterCfg:
+        native: NativeCfg = MISSING
+
+    outer = OuterCfg(native=cfg)
+    assert outer.native is not cfg
+    assert outer.native.handle is handle
 
 
 @pytest.mark.parametrize(

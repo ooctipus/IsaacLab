@@ -120,6 +120,9 @@ def configclass(cls, **kwargs):
     setattr(cls, "validate", _validate)
     # wrap around dataclass
     cls = dataclass(cls, **kwargs)
+    # a deep copy keeps borrowed values by reference too, e.g. when an enclosing configuration copies this one
+    if any(field.metadata.get("copy") is False for field in cls.__dataclass_fields__.values()):
+        setattr(cls, "__deepcopy__", _deepcopy_keeping_borrowed)
     # return wrapped class
     return cls
 
@@ -503,6 +506,16 @@ def _custom_post_init(obj):
         if not callable(value) and not isinstance(ann, property):
             copied_value = deepcopy(value)
             setattr(obj, key, _wrap_resolvable_strings(copied_value, module_dir=_field_module_dir(obj, key)))
+
+
+def _deepcopy_keeping_borrowed(obj: Any, memo: dict) -> Any:
+    """Deep-copy a configuration except its borrowed fields (``metadata={"copy": False}``), which it shares."""
+    borrowed = {name for name, field in obj.__dataclass_fields__.items() if field.metadata.get("copy") is False}
+    copied = type(obj).__new__(type(obj))
+    memo[id(obj)] = copied
+    for key, value in obj.__dict__.items():
+        copied.__dict__[key] = value if key in borrowed else deepcopy(value, memo)
+    return copied
 
 
 def _combined_function(f1: Callable, f2: Callable) -> Callable:

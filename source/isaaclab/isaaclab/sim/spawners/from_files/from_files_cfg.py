@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import MISSING
+from dataclasses import MISSING, field
 from typing import TYPE_CHECKING
 
 from isaaclab.utils import configclass
@@ -446,8 +446,8 @@ class MeshFileCfg(RigidObjectSpawnerCfg):
         Its vertex colors, if any, are authored as display colors.
         """
 
-        mesh: trimesh.Trimesh = MISSING
-        """The triangle mesh."""
+        mesh: trimesh.Trimesh = field(default=MISSING, metadata={"copy": False})
+        """The triangle mesh, held by reference: copying the configuration does not copy it."""
 
     func: Callable | str = "{DIR}.from_files:spawn_from_mesh"
 
