@@ -249,40 +249,51 @@ def farthest_point_sampling(
     covers the input instead of clustering where the input is dense. Any feature space works, not
     just 3D points, as long as :paramref:`distance_fn` measures it.
 
+    A batch of equally sized sets is sampled in one greedy pass: each set draws its start and
+    measures its distances on its own, as it would alone, and every round advances all sets.
+
     Args:
-        points: Samples to pick from, shape [num_points, feature_dim].
-        n_samples: Number of samples to pick. Values at or above ``len(points)`` return all of them.
+        points: Samples to pick from, shape [num_points, feature_dim], or a batch of sets,
+            shape [num_sets, num_points, feature_dim].
+        n_samples: Number of samples to pick per set. Values at or above ``num_points`` return all of them.
         distance_fn: Pairwise distance, called as ``(a, b) -> [len(a), len(b)]``. Defaults to the
             Euclidean :func:`torch.cdist`.
-        memory_threshold: Byte budget [B] for the full pairwise distance matrix. Above it, distances
-            to the picked sample are recomputed each round instead of cached.
+        memory_threshold: Byte budget [B] for one set's full pairwise distance matrix. Above it,
+            distances to the picked sample are recomputed each round instead of cached.
 
     Returns:
-        Indices of the picked samples, shape [n_samples].
+        Indices of the picked samples, shape [n_samples], or [num_sets, n_samples] for a batch.
     """
-    num_points = len(points)
+    sets = points if points.dim() == 3 else points.unsqueeze(0)
+    num_sets, num_points = sets.shape[0], sets.shape[1]
+    device = points.device
     if n_samples >= num_points:
-        return torch.arange(num_points, device=points.device)
+        picked = torch.arange(num_points, device=device).expand(num_sets, num_points)
+        return picked if points.dim() == 3 else picked[0]
 
     # caching the whole matrix costs one distance_fn call instead of one per round
     matrix_bytes = num_points * num_points * points.element_size()
     cached = matrix_bytes <= memory_threshold
     if cached:
-        distances = distance_fn(points, points)
+        distances = torch.stack([distance_fn(samples, samples) for samples in sets])
     else:
         logging.warning(f"FPS fallback to iterative (needed {matrix_bytes} > {memory_threshold})")
 
-    sampled_idx = torch.zeros(n_samples, dtype=torch.long, device=points.device)
+    rows = torch.arange(num_sets, device=device)
+    sampled_idx = torch.zeros((num_sets, n_samples), dtype=torch.long, device=device)
     # distance from every sample to the picked set; picked samples sit at 0 and are never re-picked
-    min_dists = torch.full((num_points,), float("inf"), device=points.device)
-    # kept one-dimensional so ``points[farthest]`` stays a batch of one for distance_fn
-    farthest = torch.randint(0, num_points, (1,), device=points.device)
+    min_dists = torch.full((num_sets, num_points), float("inf"), device=device)
+    farthest = torch.cat([torch.randint(0, num_points, (1,), device=device) for _ in range(num_sets)])
     for j in range(n_samples):
-        sampled_idx[j] = farthest
-        to_farthest = distances[farthest] if cached else distance_fn(points[farthest], points)
-        min_dists = torch.minimum(min_dists, to_farthest.view(-1))
-        farthest = torch.argmax(min_dists, dim=0, keepdim=True)
-    return sampled_idx
+        sampled_idx[:, j] = farthest
+        if cached:
+            to_farthest = distances[rows, farthest]
+        else:
+            # one row per set, each a batch of one for distance_fn
+            to_farthest = torch.cat([distance_fn(s[f : f + 1], s) for s, f in zip(sets, farthest.tolist())])
+        min_dists = torch.minimum(min_dists, to_farthest)
+        farthest = torch.argmax(min_dists, dim=1)
+    return sampled_idx if points.dim() == 3 else sampled_idx[0]
 
 
 def collect_collision_meshes(root_prim, owner_frame_fn: Callable) -> dict[int, trimesh.Trimesh]:

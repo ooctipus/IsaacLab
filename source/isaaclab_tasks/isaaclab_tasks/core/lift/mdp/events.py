@@ -458,20 +458,16 @@ class conditional_reset(ManagerTermBase):
         """Thin each group's harvest down to the ``keep_size`` states most spread over the descriptor.
 
         Rewrites the buffer with a ``keep_size`` stride so the draw at the end of :meth:`__call__`
-        addresses it unchanged, and frees the descriptors, which are prefill-only.
+        addresses it unchanged, and frees the descriptors, which are prefill-only. The groups are
+        sampled in one batched pass, each as it would be alone.
         """
-        kept = torch.empty(
-            num_groups * keep_size, self._buffer.shape[-1], device=self._buffer.device, dtype=self._buffer.dtype
-        )
-        for group in range(num_groups):
-            start = group * harvest_size
-            feature = self._descriptor[start : start + harvest_size]
-            # rescale to unit span per axis, otherwise the axis with the widest numbers decides the
-            # spread on its own and the others are covered only incidentally
-            feature = feature / (feature.amax(dim=0) - feature.amin(dim=0)).clamp(min=1e-6)
-            picked = start + farthest_point_sampling(feature, keep_size)
-            kept[group * keep_size : (group + 1) * keep_size] = self._buffer[picked]
-        self._buffer = kept
+        features = self._descriptor.view(num_groups, harvest_size, -1)
+        # rescale to unit span per axis, otherwise the axis with the widest numbers decides the
+        # spread on its own and the others are covered only incidentally
+        span = features.amax(dim=1, keepdim=True) - features.amin(dim=1, keepdim=True)
+        picked = farthest_point_sampling(features / span.clamp(min=1e-6), keep_size)
+        starts = torch.arange(num_groups, device=picked.device).unsqueeze(1) * harvest_size
+        self._buffer = self._buffer[(starts + picked).view(-1)]
         self._fill.fill_(keep_size)
         self._descriptor = torch.empty(0, 0, device=self._descriptor.device)
 
