@@ -332,8 +332,10 @@ def _labels(values: list, rows: _Domain, layout: NewtonWorldLayout, seed_world: 
 
 def _format_slots(values: list, rows: _Domain, layout: NewtonWorldLayout) -> list:
     """Substitute each row's environment id for the ``{}`` world slot of string values."""
-    full = np.asarray(values, dtype=object)[rows.gather]
-    is_text = np.fromiter((isinstance(v, str) and "{}" in v for v in full), dtype=bool, count=len(full))
+    seed = np.asarray(values, dtype=object)
+    full = seed[rows.gather]
+    has_slot = np.fromiter((isinstance(v, str) and "{}" in v for v in seed), dtype=bool, count=len(seed))
+    is_text = has_slot[rows.gather]
     if np.any(is_text):
         env = layout.env_ids[rows.row_world[is_text]].astype(str)
         text = np.asarray(full[is_text], dtype=np.dtypes.StringDType())
