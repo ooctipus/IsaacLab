@@ -34,6 +34,10 @@ def _prototype(kind: int) -> newton.ModelBuilder:
 
 
 def _shared(builder: newton.ModelBuilder) -> None:
+    frequency = newton.Model.AttributeFrequency.WORLD
+    builder.add_custom_attribute(
+        newton.ModelBuilder.CustomAttribute("wind", float, frequency, default=0.5, namespace="t")
+    )
     builder.add_ground_plane()
     builder.add_shape_box(body=-1, hx=1.0, hy=1.0, hz=0.1, label="/World/Table")
 
@@ -97,6 +101,7 @@ def test_seed_expands_to_the_replicated_model(layout_ids):
         model._shape_collision_filter_pairs._packed, expected._shape_collision_filter_pairs._packed
     )
     np.testing.assert_array_equal(model._shape_contact_pair_data.counts, expected._shape_contact_pair_data.counts)
+    np.testing.assert_array_equal(model.t.wind.numpy(), expected.t.wind.numpy())
     actual, wanted = _arrays(model), _arrays(expected)
     assert actual.keys() == wanted.keys()
     for name, value in wanted.items():

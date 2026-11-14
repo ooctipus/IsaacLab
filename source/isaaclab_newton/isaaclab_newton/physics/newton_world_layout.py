@@ -502,6 +502,9 @@ def _expand(model: Model, layout: NewtonWorldLayout, builder: ModelBuilder) -> N
     containers: dict[str, Any] = {}
     for name, spec in specs.items():
         frequency = spec.frequency
+        if frequency == _FREQUENCY.WORLD:
+            _expand_world_values(model, name, seed_world, device)
+            continue
         if frequency not in domains or spec.compaction_policy in ("passthrough", "color_groups"):
             continue
         value = _get(model, name)
@@ -573,8 +576,7 @@ def _expand(model: Model, layout: NewtonWorldLayout, builder: ModelBuilder) -> N
             setattr(model, name, domains[frequency].total)
     model.custom_frequency_counts = {key: domains[key].total for key in model.custom_frequency_counts}
     model.world_count = num_worlds
-    gravity = _host(model.gravity)
-    model.gravity = _like(model.gravity, np.concatenate((gravity[seed_world], gravity[-1:])), device)
+    _expand_world_values(model, "gravity", seed_world, device)
     equality = getattr(model, "mujoco", None)
     if equality is not None and hasattr(equality, "equality_constraint_count"):
         frequency = "mujoco:equality_constraint"
@@ -602,6 +604,19 @@ def _expand(model: Model, layout: NewtonWorldLayout, builder: ModelBuilder) -> N
         shape_flags=builder.default_bvh_cfg.shape_flags,
     )
     model.bvh_build_particles(model)
+
+
+def _expand_world_values(model: Model, name: str, seed_world: np.ndarray, device: Any) -> None:
+    """Give every world its seed world's value; a trailing value of the global world ``-1`` stays last."""
+    value = _get(model, name)
+    if value is None:
+        return
+    data = _host(value) if not isinstance(value, list) else np.asarray(value, dtype=object)
+    seeds = int(seed_world.max(initial=-1)) + 1
+    if len(data) not in (seeds, seeds + 1):
+        raise ValueError(f"World attribute {name!r} has {len(data)} values for {seeds} seed worlds.")
+    full = np.concatenate((data[seed_world], data[seeds:]))
+    _set(model, name, full.tolist() if isinstance(value, list) else _like(value, full, device))
 
 
 def _per_world(seed_rows: np.ndarray, seed_world: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
