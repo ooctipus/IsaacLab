@@ -13,8 +13,8 @@ import newton
 import numpy as np
 import pytest
 import warp as wp
-from isaaclab_newton.cloner import copy_newton_clone_source, newton_builder_world_hook
-from isaaclab_newton.physics import NewtonCfg, VBDSolverCfg
+from isaaclab_newton.cloner import copy_newton_clone_source, newton_world_prototype_hook
+from isaaclab_newton.physics import NewtonCfg, NewtonWorldLayoutCfg, VBDSolverCfg
 
 from pxr import Sdf, Usd, UsdGeom, UsdLux, UsdPhysics, UsdShade
 
@@ -25,7 +25,7 @@ from isaaclab.sim import SimulationCfg, SimulationContext, SpawnerCfg, build_sim
 replicate_module = importlib.import_module("isaaclab_newton.cloner.replicate")
 
 
-def test_newton_builder_world_hook_owns_one_registration(monkeypatch):
+def test_newton_world_prototype_hook_owns_one_registration(monkeypatch):
     """The scope rejects duplicates and preserves unrelated hooks during cleanup."""
 
     def existing(*_args):
@@ -38,13 +38,13 @@ def test_newton_builder_world_hook_owns_one_registration(monkeypatch):
         pass
 
     hooks = [existing]
-    monkeypatch.setattr(replicate_module, "_PER_WORLD_BUILDER_HOOKS", hooks)
+    monkeypatch.setattr(replicate_module, "_WORLD_PROTOTYPE_HOOKS", hooks)
 
     with pytest.raises(ValueError, match="stop"):
-        with newton_builder_world_hook(temporary):
+        with newton_world_prototype_hook(temporary):
             assert hooks == [existing, temporary]
             with pytest.raises(RuntimeError, match="already registered"):
-                with newton_builder_world_hook(temporary):
+                with newton_world_prototype_hook(temporary):
                     pass
             assert hooks == [existing, temporary]
             hooks.append(added_later)
@@ -53,7 +53,7 @@ def test_newton_builder_world_hook_owns_one_registration(monkeypatch):
     assert hooks == [existing, added_later]
 
     with pytest.raises(RuntimeError, match="already registered"):
-        with newton_builder_world_hook(existing):
+        with newton_world_prototype_hook(existing):
             pass
     assert hooks == [existing, added_later]
 
@@ -128,7 +128,7 @@ def test_explicit_global_import_uses_global_world(
     )
     sim.get_or_create_backend = lambda cfg: SimulationContext.get_or_create_backend(sim, cfg)
     monkeypatch.setattr(SimulationContext, "instance", lambda: sim)
-    monkeypatch.setattr(replicate_module, "_PER_WORLD_BUILDER_HOOKS", ())
+    monkeypatch.setattr(replicate_module, "_WORLD_PROTOTYPE_HOOKS", ())
 
     env_ids, mapping = np.arange(2, dtype=np.int64), np.empty((0, 2), dtype=np.bool_)
     builder, _ = replicate_module.newton_physics_replicate(stage, (), (), env_ids, mapping, global_paths=global_paths)
@@ -136,7 +136,7 @@ def test_explicit_global_import_uses_global_world(
     assert [kwargs["root_path"] for kwargs in imports] == ["/physicsScene", *global_paths]
     assert all(kwargs["load_visual_shapes"] is expected for kwargs in imports[1:])
     terrain_import.assert_called_once_with(stage, builder, root_paths=("/physicsScene", *global_paths), device="cpu")
-    model = builder.finalize("cpu")
+    model = sim.get_or_create_backend(NewtonWorldLayoutCfg(physics_cfg=sim.cfg.physics)).build_model(builder, "cpu")
     ground_index = model.shape_label.index("/World/Ground")
     assert model.shape_world.numpy()[ground_index] == -1
     assert model.world_count == 2
@@ -215,9 +215,10 @@ def test_imported_deformables_follow_plan_and_publish_geometry(heterogeneous):
         stage.RemovePrim("/World")
         stage.RemovePrim("/Shared")
 
+        model = native.model
         expected_counts = [3, 7, 3] if heterogeneous else [7, 7, 7]
-        assert builder.particle_count == sum(expected_counts) + 3
-        np.testing.assert_array_equal(np.bincount(np.asarray(builder.particle_world) + 1), [3, *expected_counts])
+        assert model.particle_count == sum(expected_counts) + 3
+        np.testing.assert_array_equal(np.bincount(model.particle_world.numpy() + 1), [3, *expected_counts])
         assert native.deformable_ranges["/Shared/Cloth"] == (0, 3, "surface")
         points = sim.get_scene_data_provider().get_geometry_points()
         expected_paths = {"/Shared/Cloth/sim"}
@@ -240,9 +241,10 @@ def test_imported_deformables_follow_plan_and_publish_geometry(heterogeneous):
                 else:
                     np.testing.assert_allclose(points[visual_path].numpy(), (expected[1:] + expected[0]) / 2, atol=1e-6)
         assert set(points) == expected_paths
-        np.testing.assert_allclose(np.asarray(builder.tri_materials)[builder._surface_tri_start, 0], 123.0)
-        np.testing.assert_allclose(np.asarray(builder.tet_materials)[:, 0], 456.0)
-        for tet, pose in zip(builder.tet_indices, builder.tet_poses, strict=True):
-            vertices = np.asarray(builder.particle_q)[tet]
+        np.testing.assert_allclose(model.tri_materials.numpy()[model.surface_tri_start.numpy(), 0], 123.0)
+        np.testing.assert_allclose(model.tet_materials.numpy()[:, 0], 456.0)
+        particle_q = model.particle_q.numpy()
+        for tet, pose in zip(model.tet_indices.numpy(), model.tet_poses.numpy(), strict=True):
+            vertices = particle_q[tet]
             np.testing.assert_allclose((vertices[1:] - vertices[0]).T @ pose, np.eye(3), atol=1e-6)
-        np.testing.assert_allclose(builder.particle_radius, 0.008)
+        np.testing.assert_allclose(model.particle_radius.numpy(), 0.008)
