@@ -228,15 +228,18 @@ def _serve(monkeypatch, entries: dict[str, dict | None], payloads: dict[str, byt
     monkeypatch.setattr(assets_utils, "_remote_read", fake_read)
 
 
-def _cache_asset(cache_dir, url: str, payload: bytes, fingerprint: dict | None) -> Path:
-    """Write a locally cached copy of ``url``, with its recorded remote revision."""
+def _cache_asset(
+    cache_dir, url: str, payload: bytes, fingerprint: dict | None, confirmed_ago: float = 2 * 86400
+) -> Path:
+    """Write a locally cached copy of ``url``, with its recorded remote revision last confirmed ``confirmed_ago`` [s]."""
     mirrored = Path(assets_utils._mirror_path(url, str(cache_dir)))
     mirrored.parent.mkdir(parents=True, exist_ok=True)
     mirrored.write_bytes(payload)
     if fingerprint is not None:
-        (mirrored.parent / (mirrored.name + assets_utils._MIRROR_FINGERPRINT_SUFFIX)).write_text(
-            json.dumps(fingerprint), encoding="utf-8"
-        )
+        stamp = mirrored.parent / (mirrored.name + assets_utils._MIRROR_FINGERPRINT_SUFFIX)
+        stamp.write_text(json.dumps(fingerprint), encoding="utf-8")
+        confirmed = time.time() - confirmed_ago
+        os.utime(stamp, (confirmed, confirmed))
     return mirrored
 
 
@@ -439,6 +442,24 @@ def test_read_file_uses_the_local_copy_when_it_matches_the_server(asset_cache, m
     assert assets_utils.read_file(_REMOTE_URL).read() == b"cached bytes"
 
 
+def test_recently_confirmed_copy_is_used_without_asking_the_server(asset_cache, monkeypatch):
+    """Test a copy confirmed within a day is served without a query, and a confirmation renews the stamp."""
+    revision = {"hash": "abc123", "version": "", "size": 12, "modified_time": "2026-07-01 10:00:00"}
+    _cache_asset(asset_cache, _REMOTE_URL, b"cached bytes", revision, confirmed_ago=3600)
+    # a changed revision on the server goes unnoticed until the stamp is a day old
+    _serve(monkeypatch, {_REMOTE_URL: {**revision, "hash": "def456"}})
+    assert assets_utils._usable_mirror(_REMOTE_URL)
+
+    mirrored = _cache_asset(asset_cache, _REMOTE_URL, b"cached bytes", revision)
+    _serve(monkeypatch, {_REMOTE_URL: revision})
+    assert assets_utils._usable_mirror(_REMOTE_URL)
+    stamp = Path(str(mirrored) + assets_utils._MIRROR_FINGERPRINT_SUFFIX)
+    assert time.time() - stamp.stat().st_mtime < 60
+    _serve(monkeypatch, {})
+    assets_utils._REMOTE_FINGERPRINTS.clear()
+    assert assets_utils._usable_mirror(_REMOTE_URL)
+
+
 def test_read_file_refetches_when_the_server_copy_changed(asset_cache, monkeypatch):
     """Test a changed remote asset is downloaded again rather than served stale."""
     stale = {"hash": "abc123", "version": "", "size": 12, "modified_time": "2026-07-01 10:00:00"}
@@ -512,6 +533,8 @@ def test_size_and_modification_time_identify_a_revision(asset_cache, monkeypatch
     _serve(monkeypatch, {_REMOTE_URL: revision})
     assert assets_utils._usable_mirror(_REMOTE_URL)
 
+    # a day later, the server holds a newer revision
+    _cache_asset(asset_cache, _REMOTE_URL, b"cached bytes", revision)
     assets_utils._REMOTE_FINGERPRINTS.clear()
     _serve(monkeypatch, {_REMOTE_URL: {**revision, "modified_time": "2026-07-29 10:00:00"}})
     assert not assets_utils._usable_mirror(_REMOTE_URL)

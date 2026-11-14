@@ -26,6 +26,7 @@ import re
 import shutil
 import tempfile
 import threading
+import time
 import uuid
 import warnings
 from collections.abc import Coroutine, Iterator
@@ -280,6 +281,13 @@ NEWTON_ASSET_DIR: str = os.environ.get(
 _MIRROR_FINGERPRINT_SUFFIX = ".isaaclab-cache.json"
 """Suffix of the sidecar file recording the remote revision a locally cached asset came from."""
 
+_MIRROR_VERIFIED_FOR = 24 * 3600
+"""Seconds a cached copy is served without asking the server again after its revision was last confirmed [s].
+
+The modification time of a copy's fingerprint sidecar records when that was: it is written with the copy and touched
+whenever the server confirms the revision again.
+"""
+
 _REMOTE_FINGERPRINTS: dict[str, dict] = {}
 """Successful remote metadata queries, refreshed by forced retrieval."""
 
@@ -374,11 +382,19 @@ def _write_mirror_fingerprint(url: str, mirrored: str) -> None:
 def _mirror_is_current(url: str, mirrored: str) -> bool:
     """Whether the locally cached copy of ``url`` still matches what the server holds.
 
+    A copy whose revision was confirmed within :data:`_MIRROR_VERIFIED_FOR` is current without a
+    server query; asking costs a round trip per asset and file of its dependency tree on every
+    start-up. Otherwise the server is asked and a confirmed copy is stamped again.
+
     A copy with no recorded fingerprint counts as outdated, so copies left by earlier Isaac Lab
     versions are re-fetched once and annotated. When the answer cannot be obtained at all --
     an unreachable server, or a provider that reports no metadata -- the copy is used anyway
     and the missing guarantee is logged, so offline runs keep working.
     """
+    stamp = mirrored + _MIRROR_FINGERPRINT_SUFFIX
+    with contextlib.suppress(OSError):
+        if 0.0 <= time.time() - os.path.getmtime(stamp) < _MIRROR_VERIFIED_FOR:
+            return True
     remote = _remote_fingerprint(url)
     if remote is None:
         logger.warning(
@@ -396,10 +412,14 @@ def _mirror_is_current(url: str, mirrored: str) -> bool:
         )
         return True
     try:
-        with open(mirrored + _MIRROR_FINGERPRINT_SUFFIX, encoding="utf-8") as f:
-            return json.load(f) == remote
+        with open(stamp, encoding="utf-8") as f:
+            current = json.load(f) == remote
     except (OSError, ValueError):
         return False
+    if current:
+        with contextlib.suppress(OSError):
+            os.utime(stamp)
+    return current
 
 
 def _announce_local_asset(url: str, mirrored: str, download_dir: str) -> None:
@@ -408,7 +428,7 @@ def _announce_local_asset(url: str, mirrored: str, download_dir: str) -> None:
         _ANNOUNCED_MIRROR_DIRS.add(download_dir)
         logger.warning(
             "Serving remote assets from the local cache under '%s'. Each copy is checked against the server"
-            " before use; delete the directory to force a full re-download.",
+            " at most once a day; delete the directory to force a full re-download.",
             download_dir,
         )
     if url not in _ANNOUNCED_MIRRORS:
