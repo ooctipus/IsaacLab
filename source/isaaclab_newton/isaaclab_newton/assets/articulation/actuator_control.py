@@ -28,7 +28,6 @@ from isaaclab.sim.schemas.schemas_actuators import validate_newton_native_actuat
 
 from isaaclab_newton.actuators.bam import DriveBam
 from isaaclab_newton.assets.articulation.joint_coordinates import scatter_joint_coordinates
-from isaaclab_newton.physics.mjwarp_actuator_bridge import MjWarpActuatorBridge
 
 if TYPE_CHECKING:
     from .articulation import Articulation
@@ -327,6 +326,9 @@ class NewtonActuatorControl(ArticulationActuatorControl):
         Raises:
             ValueError: If the active solver is not MJWarp or runs CPU MuJoCo (``use_mujoco_cpu=True``).
         """
+        # The bridge imports MuJoCo (about 0.8 s, with its GL renderer), which only BAM actuators need.
+        from isaaclab_newton.physics.mjwarp_actuator_bridge import MjWarpActuatorBridge  # noqa: PLC0415
+
         solver = self._articulation._backend_manager.backend.solver
         if not MjWarpActuatorBridge.is_available(solver):
             raise ValueError(
