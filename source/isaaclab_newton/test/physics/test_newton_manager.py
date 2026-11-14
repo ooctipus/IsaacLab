@@ -217,8 +217,9 @@ def test_reset_builds_the_configured_solver_and_steps(solver_cfg_factory, solver
 
 
 def test_a_backend_freezes_its_scene_until_it_closes():
-    """The collection after each graph capture walks only objects allocated after the scene: a hard reset freezes the
-    scene it built and unfreezes the previous backend's, which is then collected; closing unfreezes everything."""
+    """The collection after each graph capture walks only objects allocated after the scene: the collector pauses
+    while the scene is built, a hard reset freezes the scene it built and unfreezes the previous backend's, which is
+    then collected; closing unfreezes the last one, which is then collected too."""
     sim_cfg = SimulationCfg(
         dt=1.0 / 120.0,
         device="cuda:0",
@@ -231,7 +232,9 @@ def test_a_backend_freezes_its_scene_until_it_closes():
         builder.add_joint_free(child=body)
         builder.add_shape_box(body=body, hx=0.1, hy=0.1, hz=0.1)
         builder.add_ground_plane()
+        assert not gc.isenabled()
         sim.reset()
+        assert gc.isenabled()
         assert gc.get_freeze_count() > 0
         old_backend = weakref.ref(sim.backend_manager.backend)
         sim.step(render=False)
@@ -240,7 +243,10 @@ def test_a_backend_freezes_its_scene_until_it_closes():
         gc.collect()
         assert old_backend() is None
         assert gc.get_freeze_count() > 0
-    assert gc.get_freeze_count() == 0
+        last_backend = weakref.ref(sim.backend_manager.backend)
+    gc.collect()
+    assert last_backend() is None
+    assert gc.isenabled()
 
 
 def test_step_after_a_hard_reset_never_reads_the_old_model():

@@ -83,6 +83,8 @@ class NewtonManager(PhysicsManager):
         """Shared construction builder, acquired at :meth:`initialize` and kept across hard resets."""
         self.backend: NewtonBackend | None = None
         """Data bound to the finalized model; replaced on every hard reset."""
+        self._gc_paused = False
+        """Whether :meth:`initialize` paused the cyclic collector until the scene is built."""
         self.clear()
         self._scene_data_backend = NewtonSceneDataBackend(self)
 
@@ -133,6 +135,10 @@ class NewtonManager(PhysicsManager):
         """
         super().initialize(sim_context)
         self.builder = sim_context.get_or_create_backend(NewtonBuilderCfg(physics_cfg=self._cfg))
+        # The scene is built into this builder until the first hard reset finalizes it. The cyclic collector's
+        # automatic full walks of the growing scene are paused meanwhile; the reset collects once, then freezes.
+        self._gc_paused = gc.isenabled()
+        gc.disable()
 
         # This context imports NewtonManager, so it can only be imported after this module initializes.
         from isaaclab_newton.cloner import NewtonReplicateContext  # noqa: PLC0415
@@ -158,6 +164,13 @@ class NewtonManager(PhysicsManager):
             # instead of a walk over the whole replicated scene. Garbage is collected first so none is frozen.
             gc.collect()
             gc.freeze()
+            self._resume_gc()
+
+    def _resume_gc(self) -> None:
+        """Re-enable the cyclic collector paused while the scene was built (:meth:`initialize`)."""
+        if self._gc_paused:
+            self._gc_paused = False
+            gc.enable()
 
     def _close_backend(self, *, dispatch_stop: bool = True) -> None:
         """Stop consumers, drop their views, and close the backend."""
@@ -213,6 +226,7 @@ class NewtonManager(PhysicsManager):
         super().close()
         self.clear()
         self.builder = None
+        self._resume_gc()
 
     def get_scene_data_backend(self) -> SceneDataBackend | None:
         """Return the SceneDataBackend for the SceneDataProvider."""

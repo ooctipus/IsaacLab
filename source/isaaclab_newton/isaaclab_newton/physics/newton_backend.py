@@ -807,7 +807,8 @@ def _compile_label_pattern(expr: str | list[str] | None) -> re.Pattern[str] | No
 
 @contextlib.contextmanager
 def _paused_gc():
-    """Keep collection-driven frees out of graph capture."""
+    """Keep collection-driven frees out of graph capture, and collect right after it, also while the collector is
+    paused around scene construction (:meth:`NewtonManager.initialize`)."""
     was_enabled = gc.isenabled()
     gc.disable()
     try:
@@ -815,4 +816,4 @@ def _paused_gc():
     finally:
         if was_enabled:
             gc.enable()
-            gc.collect()
+        gc.collect()
