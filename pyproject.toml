@@ -98,9 +98,9 @@ dependencies = [
     "pycollada>=0.9",
     "resolve-robotics-uri-py>=0.4.0",
     "open3d>=0.19.0 ; python_version < '3.13' and (sys_platform != 'linux' or platform_machine != 'aarch64')",
-    # Authored MPM particle import requires the 0.5 schema revision. The managed
+    # FeatherPGS's Newton requires the 0.6 schema revision. The managed
     # Isaac Sim workflow overrides its older exact transitive pin below.
-    "newton-usd-schemas>=0.5.0",
+    "newton-usd-schemas>=0.6.0",
     "PyOpenGL-accelerate>=3.1.0",
     # ----- newton interactive viewer GUI (in base, no extra required) -----
     "imgui-bundle>=1.92.5",
@@ -398,7 +398,33 @@ explicit = true
 
 # unsafe-best-match resolves NVIDIA deps with versions mismatched across
 # pypi.nvidia.com and PyPI; prerelease=allow covers prerelease-only packages.
+# The FeatherPGS development environment that a plain `uv sync` builds: Newton's test and gate tools (its `dev` and
+# `examples` extras, listed here because the override below replaces every Newton requirement with `newton[sim]`),
+# Isaac Lab's test tools and RSL-RL for training runs.
+[dependency-groups]
+fpgs = [
+    "coverage[toml]>=7.8.0",
+    "viser>=1.1.1",
+    "open3d>=0.20.0",
+    "warp-nn[onnx]~=0.4.0",
+    "cbor2>=5.7.0",
+    "networkx>=2.6",
+    "asv>=0.6.4",
+    "pytest",
+    "pytest-mock",
+    "pytest-xdist",
+    "junitparser",
+    "flaky",
+    "rsl-rl-lib==5.5.1",
+    # FeatherPGS's contact pool grows in virtual memory with it (a private repository).
+    "gpu-components @ git+https://github.com/ooctipus/gpu-components.git@17a877a2dc60df6fe89177f57223ee635d6fef4d",
+    # ptxas and cuobjdump that read the PTX of the CUDA 13.4 Warp builds, for the offline-compile tests and SASS tools.
+    "nvidia-cuda-nvcc~=13.4.0",
+    "nvidia-cuda-cuobjdump~=13.4.0",
+]
+
 [tool.uv]
+default-groups = ["fpgs"]
 index-strategy = "unsafe-best-match"
 prerelease = "allow"
 # Platforms Isaac Lab supports (docs/source/isaaclab/installation.rst and the
@@ -420,7 +446,7 @@ override-dependencies = [
     "mujoco-warp~=3.17.0",
     "newton[sim] @ git+https://github.com/ooctipus/newton.git@da6574dfeeb753e97870672489c8707f8492759d",
     # Force the Newton-matched schemas over isaacsim's ==0.2.0 pin.
-    "newton-usd-schemas>=0.5.0",
+    "newton-usd-schemas>=0.6.0",
     # isaacsim-asset-isolated and isaacsim-robot-schema 6.2 pin usd-exchange ==2.3.0.
     "usd-exchange==3.0.1",
     # usd-optimize must share usd-exchange's OpenUSD build (26.08); bump the two together.
