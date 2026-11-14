@@ -13,7 +13,7 @@ import newton
 import numpy as np
 import torch
 import warp as wp
-from isaaclab_newton.cloner import newton_builder_world_hook
+from isaaclab_newton.cloner import newton_world_prototype_hook
 from isaaclab_newton.physics.mpm_solver import implicit_mpm_solvers, reset_mpm_solver_state
 
 from isaaclab.envs import ManagerBasedEnv
@@ -78,7 +78,7 @@ class CoffeeDemoEnv(ManagerBasedEnv):
         self._attachment = None
         self._margin = cfg.voxel_size * 0.3
         self._spoon_margin = cfg.voxel_size * cfg.spoon_margin_voxels
-        with newton_builder_world_hook(self._configure_colliders):
+        with newton_world_prototype_hook(self._configure_colliders):
             super().__init__(cfg)
 
     def load_managers(self) -> None:
@@ -124,13 +124,13 @@ class CoffeeDemoEnv(ManagerBasedEnv):
             raise RuntimeError(f"No particle ranges match {asset_name}.")
         return wp.array(np.concatenate(ranges), dtype=int, device=self.sim.backend_manager.backend.model.device)
 
-    def _configure_colliders(self, builder, env_id: int, _position, _quaternion) -> None:
+    def _configure_colliders(self, builder, world: int, _env_id: int) -> None:
         """Expand the thin spoon shell separately from the container colliders."""
         # Keep advection inside the native collider query band at coarse timesteps.
         material_dt = self.cfg.sim.dt / self.cfg.sim.physics.solver_cfg.entries[1].substeps
         builder.particle_max_velocity = min(4.0, 0.5 * self.cfg.voxel_size / material_dt)
         for index, label in enumerate(builder.shape_label):
-            if builder.shape_world[index] != env_id:
+            if builder.shape_world[index] != world:
                 continue
             if "/Robot/" in str(label):
                 builder.shape_flags[index] &= ~int(newton.ShapeFlags.COLLIDE_PARTICLES)

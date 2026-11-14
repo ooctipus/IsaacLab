@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from isaaclab_newton.cloner import newton_builder_world_hook
+from isaaclab_newton.cloner import newton_world_prototype_hook
 
 from isaaclab.envs import ManagerBasedEnv
 
@@ -17,7 +17,6 @@ from .assets import configured_rizon_sharpa_usd
 
 if TYPE_CHECKING:
     import newton
-    import numpy as np
 
     from .env_cfg import GB300SharpaInsertionEnvCfg
 
@@ -35,14 +34,10 @@ class GB300SharpaInsertionEnv(ManagerBasedEnv):
     def _init_sim(self) -> None:
         from .cable import add_connectors
 
-        def build_connectors(
-            builder: newton.ModelBuilder, world_idx: int, env_position: np.ndarray, env_rotation: np.ndarray
-        ) -> None:
+        def build_connectors(builder: newton.ModelBuilder, world_idx: int, env_id: int) -> None:
             add_connectors(
                 builder,
                 world_idx,
-                env_position,
-                env_rotation,
                 grasp_body_patterns=self.cfg.grasp_body_patterns,
                 rigid_connector_contact_stiffness=self.cfg.rigid_connector_contact_stiffness,
             )
@@ -54,7 +49,7 @@ class GB300SharpaInsertionEnv(ManagerBasedEnv):
                 pad_pressure_gradient=self.cfg.hydroelastic_pad_pressure_gradient,
             )
 
-        with newton_builder_world_hook(build_connectors):
+        with newton_world_prototype_hook(build_connectors):
             super()._init_sim()
 
     def load_managers(self) -> None:

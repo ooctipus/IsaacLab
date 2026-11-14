@@ -38,10 +38,11 @@ from isaaclab_newton.cloner.newton_clone_utils import (
 )
 from isaaclab_newton.physics import NewtonBuilderCfg, NewtonCfg, NewtonCloneRecord
 from isaaclab_newton.physics.newton_builder import create_builder, inject_terrain_heightfields, usd_schema_resolvers
+from isaaclab_newton.physics.newton_world_layout import NewtonWorldLayoutCfg
 from isaaclab_newton.sim.spawners.mpm.mpm import _SIMULATION_POINTS_SUFFIX
 
-_PER_WORLD_BUILDER_HOOKS: list[Callable[[ModelBuilder, int, np.ndarray, np.ndarray], None]] = []
-"""Callbacks applied to every world built by Newton replication; registered before the simulation exists."""
+_WORLD_PROTOTYPE_HOOKS: list[Callable[[ModelBuilder, int, int], None]] = []
+"""Callbacks extending each world prototype's seed world; registered before the simulation exists."""
 
 
 def copy_newton_clone_source(source_path: str, xform: wp.transform | None = None) -> ModelBuilder:
@@ -69,17 +70,21 @@ def copy_newton_clone_source(source_path: str, xform: wp.transform | None = None
 
 
 @contextlib.contextmanager
-def newton_builder_world_hook(
-    hook: Callable[[ModelBuilder, int, np.ndarray, np.ndarray], None],
-) -> Iterator[None]:
-    """Temporarily extend every world built by Newton replication.
+def newton_world_prototype_hook(hook: Callable[[ModelBuilder, int, int], None]) -> Iterator[None]:
+    """Temporarily extend every world prototype built by Newton replication.
 
-    The callback must not already be registered. On exit, the context removes
-    only its callback and preserves hooks owned by other callers.
+    Newton replication composes one seed world per world prototype and copies it to every world that uses the
+    prototype. The callback runs once per seed world, inside its world context, after the prototype's assets are
+    added and before the model is finalized. The seed world is in its prototype frame (the world transform is
+    applied afterwards) and its labels carry the environment path of the prototype's first world; whatever the
+    callback adds or changes is copied, with each world's labels and transform, to every world of that prototype.
+
+    The callback must not already be registered. On exit, the context removes only its callback and preserves hooks
+    owned by other callers.
 
     Args:
-        hook: Callback receiving the builder, world index, world position [m] as a NumPy array,
-            and world orientation quaternion in xyzw order as a NumPy array during replication.
+        hook: Callback receiving the builder, the seed world's index in it and the environment id whose path
+            labels the seed world.
 
     Yields:
         Control while the callback is registered.
@@ -87,9 +92,9 @@ def newton_builder_world_hook(
     Raises:
         RuntimeError: If the callback is already registered.
     """
-    hooks = _PER_WORLD_BUILDER_HOOKS
+    hooks = _WORLD_PROTOTYPE_HOOKS
     if hook in hooks:
-        raise RuntimeError("Newton world-builder hook is already registered.")
+        raise RuntimeError("Newton world-prototype hook is already registered.")
     hooks.append(hook)
     try:
         yield
@@ -248,9 +253,9 @@ def _replicate_newton(
             if path in particle_visual_paths:
                 visual_ranges[cloner_path.rebase(particle_visual_paths[path], source, destination)] = native_range
 
-    options = dict(env_ids=env_ids, source_site_indices=source_sites, env_root_sites=root_sites)
-    world_hooks = _PER_WORLD_BUILDER_HOOKS if simulation else ()
-    options["per_world_builder_hooks"] = world_hooks
+    layout = sim.get_or_create_backend(NewtonWorldLayoutCfg(physics_cfg=cfg))
+    options = dict(env_ids=env_ids, source_site_indices=source_sites, env_root_sites=root_sites, layout=layout)
+    options["world_prototype_hooks"] = _WORLD_PROTOTYPE_HOOKS if simulation else ()
     has_geometry = any(source_cables.values()) or any(result["path_particle_map"] for result in import_results.values())
     options["source_builder_added"] = record_geometry if has_geometry else None
     local_site_map, world_xforms = replicate_builder_mapping(
@@ -260,8 +265,7 @@ def _replicate_newton(
     site_index_map.update((label, (None, per_world)) for label, per_world in local_site_map.items())
     if simulation:
         geometry = expand_deformable_entries(entries, plan, env_ids, positions, imported_sources=source_builders)
-        ranges = dict(zip(builder.surface_label, builder._surface_particle_start, strict=True))
-        ranges.update(zip(builder.volume_label, builder._volume_particle_start, strict=True))
+        ranges = layout.deformable_starts(builder)
         offsets = [ranges[entry.root_path] for entry in geometry]
         batches = deformable_geometry_batches(geometry, offsets, device=sim.device)
         if visual_ranges:

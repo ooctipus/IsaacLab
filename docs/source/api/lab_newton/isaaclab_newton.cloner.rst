@@ -7,7 +7,7 @@
 
   .. autosummary::
 
-    newton_builder_world_hook
+    newton_world_prototype_hook
 
 .. currentmodule:: isaaclab_newton.cloner
 

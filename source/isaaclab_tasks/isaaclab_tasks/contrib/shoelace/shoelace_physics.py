@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import warp as wp
-from isaaclab_newton.cloner.replicate import newton_builder_world_hook
+from isaaclab_newton.cloner.replicate import newton_world_prototype_hook
 from newton import GeoType, ModelBuilder
 from newton.geometry import compute_inertia_shape
 
@@ -44,17 +44,15 @@ def create_shoelace_env(cfg: ShoelaceEnvCfg, **kwargs: object) -> ManagerBasedRL
     if not math.isfinite(regularization) or regularization < 0.0:
         raise ValueError("Cable inertia regularization must be finite and nonnegative")
 
-    def configure_world(builder: ModelBuilder, world: int, position: np.ndarray, rotation: np.ndarray) -> None:
+    def configure_world(builder: ModelBuilder, world: int, env_id: int) -> None:
         stage = SimulationContext.instance().stage
-        configure_shoelace_builder(builder, stage, world, rotation, cfg)
+        configure_shoelace_builder(builder, stage, world, cfg)
 
-    with newton_builder_world_hook(configure_world):
+    with newton_world_prototype_hook(configure_world):
         return ManagerBasedRLEnv(cfg=cfg, **kwargs)
 
 
-def configure_shoelace_builder(
-    builder: ModelBuilder, stage: Usd.Stage, world: int, rotation: np.ndarray, cfg: ShoelaceEnvCfg
-) -> None:
+def configure_shoelace_builder(builder: ModelBuilder, stage: Usd.Stage, world: int, cfg: ShoelaceEnvCfg) -> None:
     """Configure the just-appended world's cable bodies, joints, and contact shapes.
 
     Applies four task-specific physics features before model finalization:
@@ -68,7 +66,6 @@ def configure_shoelace_builder(
         builder: Mutable Newton builder before model allocation.
         stage: Stage containing the retained source environment.
         world: Appended world's index.
-        rotation: Unused world placement quaternion; imported body orientations are preserved.
         cfg: Task settings; inertia regularization is in [kg*m^2].
     """
     # Hooks run immediately after appending a world, so only visit its new bodies/joints.

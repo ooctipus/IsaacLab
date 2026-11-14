@@ -33,6 +33,7 @@ from isaaclab_newton.renderers.visual_material import VisualMaterialWriter
 
 from .newton_builder_cfg import NewtonBuilderCfg
 from .newton_manager_cfg import NewtonCfg
+from .newton_world_layout import NewtonWorldLayout, NewtonWorldLayoutCfg
 
 if TYPE_CHECKING:
     from isaaclab.actuators.newton import NewtonActuatorAdapter
@@ -116,18 +117,30 @@ class NewtonBackend:
     A render-only backend (non-Newton physics) holds only the model and :attr:`state_0`.
     """
 
-    def __init__(self, cfg: NewtonBackendCfg, builder: ModelBuilder | None = None, *, dt: float | None = None):
-        """Finalize a builder and allocate the buffers bound to its model.
+    def __init__(
+        self,
+        cfg: NewtonBackendCfg,
+        builder: ModelBuilder | None = None,
+        *,
+        dt: float | None = None,
+        layout: NewtonWorldLayout | None = None,
+    ):
+        """Build the model of a builder and allocate the buffers bound to it.
 
         Args:
             cfg: Physics settings and device. :class:`NewtonCfg` physics makes this a simulation backend; any other
                 physics makes it render-only.
-            builder: Builder to finalize. Defaults to the simulation's shared builder for ``cfg.physics_cfg``.
+            builder: Builder to finalize. Defaults to the simulation's shared builder for ``cfg.physics_cfg``, with
+                its world layout.
             dt: Duration of one physics step [s]. Required for a simulation backend.
+            layout: World layout expanding the builder's seed worlds to every cloned world; ``None`` finalizes the
+                builder as it is.
         """
         if builder is None:
-            builder = SimulationContext.instance().get_or_create_backend(NewtonBuilderCfg(physics_cfg=cfg.physics_cfg))
-        self.model = builder.finalize(device=cfg.device)
+            sim = SimulationContext.instance()
+            builder = sim.get_or_create_backend(NewtonBuilderCfg(physics_cfg=cfg.physics_cfg))
+            layout = sim.get_or_create_backend(NewtonWorldLayoutCfg(physics_cfg=cfg.physics_cfg))
+        self.model = builder.finalize(device=cfg.device) if layout is None else layout.build_model(builder, cfg.device)
         """Finalized Newton model; :attr:`model.num_envs` is its world count."""
         self.model.num_envs = self.model.world_count
         self.device: wp.Device = self.model.device
@@ -135,13 +148,14 @@ class NewtonBackend:
         """Advanced whenever the step or FK changes the state; asset data recomputes derived values cached before it."""
         self.particle_ranges: dict[str, tuple[int, int]] = {}
         """``(start, count)`` particle range per replicated deformable prim path."""
+        model = self.model
         self.deformable_ranges = {
             label: (start, end - start, kind)
             for kind, labels, starts, ends in (
-                ("surface", builder.surface_label, builder._surface_particle_start, builder._surface_particle_end),
-                ("volume", builder.volume_label, builder._volume_particle_start, builder._volume_particle_end),
+                ("surface", model.surface_label, model.surface_particle_start, model.surface_particle_end),
+                ("volume", model.volume_label, model.volume_particle_start, model.volume_particle_end),
             )
-            for label, start, end in zip(labels, starts, ends, strict=True)
+            for label, start, end in zip(labels, starts.numpy().tolist(), ends.numpy().tolist(), strict=True)
         }
         """``(start, count, kind)`` particle range per deformable label; ``kind`` is ``"surface"`` or ``"volume"``."""
         physics_cfg = cfg.physics_cfg

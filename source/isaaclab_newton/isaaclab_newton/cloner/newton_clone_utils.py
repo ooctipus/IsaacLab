@@ -20,6 +20,7 @@ from isaaclab.scene_data.deformable_discovery import DeformableStageEntry
 from isaaclab.sim.utils.newton_model_utils import replace_newton_builder_shape_colors
 from isaaclab.utils.string import to_camel_case
 
+from isaaclab_newton.physics.newton_world_layout import NewtonWorldLayout
 from isaaclab_newton.renderers.visual_material import import_builder_visual_material_paths
 from isaaclab_newton.sim.spawners.materials import (
     NewtonDeformableBodyMaterialCfg,
@@ -285,25 +286,53 @@ def replicate_builder_mapping(
     *,
     source_inverse: dict[str, np.ndarray],
     env_ids: np.ndarray,
+    layout: NewtonWorldLayout,
     source_site_indices: dict[int, dict[str, list[int]]] | None = None,
     env_root_sites: dict[str, wp.transform] | None = None,
-    per_world_builder_hooks: Sequence[Callable[[ModelBuilder, int, np.ndarray, np.ndarray], None]] = (),
+    world_prototype_hooks: Sequence[Callable[[ModelBuilder, int, int], None]] = (),
     source_builder_added: Callable[[str, str, int, int], None] | None = None,
 ) -> tuple[dict[str, list[list[int]]], list[wp.transform]]:
-    """Compose sources using their authored inverse frames, then place each world from the plan."""
+    """Compose the seed builder and the layout that expands it to every planned world.
+
+    The builder receives the shared assets and one unplaced world per world prototype the plan uses, in order of
+    first use. ``layout`` records which seed world each planned world copies and where it is placed;
+    :meth:`~isaaclab_newton.physics.NewtonWorldLayout.build_model` expands the finalized seed by it.
+
+    Args:
+        builder: Builder receiving the shared assets and the seed worlds.
+        plan: Clone plan.
+        positions: World positions [m], shape [num_worlds, 3].
+        quaternions: World orientations (xyzw), shape [num_worlds, 4].
+        source_builders: Imported source builders by source path.
+        source_inverse: Inverse authored frame of each source, applied while composing prototypes.
+        env_ids: Environment id of each world.
+        layout: Layout to fill.
+        source_site_indices: Builder-local site shape indices by ``id(builder)`` and label.
+        env_root_sites: World-root site transforms by label.
+        world_prototype_hooks: Callbacks extending each seed world; see
+            :func:`~isaaclab_newton.cloner.newton_world_prototype_hook`.
+        source_builder_added: Callback receiving each composed source, its destination and its shape and particle
+            offsets in the expanded model.
+
+    Returns:
+        Site shape indices per label and world, and the transform of each world.
+    """
     topology, env_template = plan.topology, plan.env_template
-    layout = topology.world_prototype_layout
+    world_layout = np.asarray(topology.world_prototype_layout)
     source_site_indices = source_site_indices or {}
     env_root_sites = env_root_sites or {}
-    num_worlds = len(layout)
+    num_worlds = len(world_layout)
     xforms_np = np.concatenate((positions, quaternions), axis=1).astype(np.float32, copy=False)
     world_xforms = [wp.transform(*xform) for xform in xforms_np]
     initial_sites = source_site_indices.get(id(builder), {})
     local_site_map = {label: [indices.copy() for _ in range(num_worlds)] for label, indices in initial_sites.items()}
     sources = clone_path.get_asset_prototype_paths(plan)
     templates, starts = clone_path.get_world_prototype_asset_templates(plan)
+    used, first = np.unique(world_layout, return_index=True)
+    used = used[np.argsort(first)]
+    first_world = np.sort(first)
     world_builders = {}
-    for prototype_id in (-1, *np.unique(layout)):
+    for prototype_id in (-1, *used.tolist()):
         start, end = starts[prototype_id + 1 : prototype_id + 3]
         reference_paths = [(sources[topology.world_prototypes[index]], templates[index]) for index in range(start, end)]
         available = [(source, template) for source, template in reference_paths if source in source_builders]
@@ -331,64 +360,49 @@ def replicate_builder_mapping(
             sites.setdefault(label, []).append(prototype.add_site(body=-1, xform=xform, label=label))
         world_builders[prototype_id] = prototype, sites, components, asset_offsets
 
-    # Preserve destination order, batching each contiguous run of an identical world prototype.
-    boundaries = np.r_[0, np.flatnonzero(np.diff(layout)) + 1, num_worlds]
-    for start, stop in zip(boundaries[:-1], boundaries[1:], strict=True):
-        if start == stop:
-            continue
-        prototype, sites, components, asset_offsets = world_builders[layout[start]]
-        base_shape, base_particle, base_tet = builder.shape_count, builder.particle_count, builder.tet_count
-        shape_offsets = base_shape + np.arange(stop - start) * prototype.shape_count
-        particle_bases = base_particle + np.arange(stop - start) * prototype.particle_count
-        if per_world_builder_hooks:
-            for world in range(start, stop):
-                shape_offsets[world - start] = builder.shape_count
-                particle_bases[world - start] = builder.particle_count
-                tet_start = builder.tet_count
-                builder.begin_world()
-                builder.add_builder(prototype, xform=xforms_np[world], label_prefix=env_template.format(env_ids[world]))
-                offset = particle_bases[world - start]
-                _rotate_builder_particles(builder, prototype, offset, tet_start, xforms_np[world])
-                labels = _label_groups(builder)
-                label_starts = {name: len(values) for name, values in labels.items()}
-                for hook in per_world_builder_hooks:
-                    hook(builder, world, positions[world].copy(), quaternions[world].copy())
-                for name, values in labels.items():
-                    for index in range(label_starts[name], len(values)):
-                        for source, destination in components:
-                            values[index] = clone_path.rebase(values[index], source, destination.format(env_ids[world]))
-                builder.end_world()
-        else:
-            prefixes = [env_template.format(env_ids[world]) for world in range(start, stop)]
-            builder.replicate(prototype, int(stop - start), xforms=xforms_np[start:stop], label_prefixes=prefixes)
-            if prototype.particle_count:
-                for world in np.flatnonzero(np.any(xforms_np[start:stop, 3:] != (0.0, 0.0, 0.0, 1.0), axis=1)):
-                    tet_start = base_tet + world * prototype.tet_count
-                    _rotate_builder_particles(
-                        builder, prototype, particle_bases[world], tet_start, xforms_np[start + world]
-                    )
+    # One unplaced seed world per prototype, labeled as its first world; hooks extend it before it is finalized.
+    shared_shapes, shared_particles = builder.shape_count, builder.particle_count
+    seed_prefixes, seed_shapes, seed_particles = [], [], []
+    for seed, (prototype_id, world) in enumerate(zip(used.tolist(), first_world.tolist(), strict=True)):
+        prototype, _, components, _ = world_builders[prototype_id]
+        prefix = env_template.format(env_ids[world])
+        shapes, particles = builder.shape_count, builder.particle_count
+        builder.begin_world()
+        builder.add_builder(prototype, label_prefix=prefix)
+        if world_prototype_hooks:
+            labels = _label_groups(builder)
+            label_starts = {name: len(values) for name, values in labels.items()}
+            for hook in world_prototype_hooks:
+                hook(builder, seed, int(env_ids[world]))
+            # Hooks may label what they add by source paths; those name this world's destinations.
+            for name, values in labels.items():
+                for index in range(label_starts[name], len(values)):
+                    for source, destination in components:
+                        values[index] = clone_path.rebase(values[index], source, destination.format(env_ids[world]))
+        builder.end_world()
+        seed_prefixes.append(prefix)
+        seed_shapes.append(builder.shape_count - shapes)
+        seed_particles.append(builder.particle_count - particles)
+    seed_of_prototype = np.zeros(int(world_layout.max(initial=-1)) + 1, dtype=np.int32)
+    seed_of_prototype[used] = np.arange(len(used), dtype=np.int32)
+    seed_world = seed_of_prototype[world_layout]
+    prefixes = [env_template.format(env_id) for env_id in env_ids.tolist()]
+    layout.assign(seed_world, xforms_np, prefixes, tuple(seed_prefixes), env_ids)
+
+    # Expanded shape and particle offsets of every world.
+    shape_offsets = shared_shapes + np.concatenate(([0], np.cumsum(np.asarray(seed_shapes)[seed_world])))[:-1]
+    particle_bases = shared_particles + np.concatenate(([0], np.cumsum(np.asarray(seed_particles)[seed_world])))[:-1]
+    for prototype_id in used.tolist():
+        _, sites, components, asset_offsets = world_builders[prototype_id]
+        worlds = np.flatnonzero(world_layout == prototype_id)
         for label, indices in sites.items():
             per_world = local_site_map.setdefault(label, [[] for _ in range(num_worlds)])
-            per_world[start:stop] = (shape_offsets[:, None] + np.asarray(indices)).tolist()
+            for world, row in zip(worlds.tolist(), (shape_offsets[worlds, None] + np.asarray(indices)).tolist()):
+                per_world[world] = row
         if source_builder_added is not None:
             for (source, destination), (shape, particle) in zip(components, asset_offsets, strict=True):
-                for index, world in enumerate(range(start, stop)):
+                for world in worlds.tolist():
                     target = destination.format(env_ids[world])
-                    offsets = int(shape_offsets[index]) + shape, int(particle_bases[index]) + particle
+                    offsets = int(shape_offsets[world]) + shape, int(particle_bases[world]) + particle
                     source_builder_added(source, target, *offsets)
-    # Resolve remaining world-slot placeholders using each native element's owning world.
-    worlds_by_frequency = {
-        attr.frequency: attr.values for attr in builder.custom_attributes.values() if attr.references == "world"
-    }
-    for attr in builder.custom_attributes.values():
-        worlds = (
-            builder.shape_world
-            if attr.namespace == "isaaclab" and attr.name == "visual_material_path"
-            else worlds_by_frequency.get(attr.frequency)
-        )
-        if attr.dtype is str and worlds is not None:
-            for index in attr.values if isinstance(attr.values, dict) else range(len(attr.values)):
-                value = attr.values[index]
-                if isinstance(value, str) and "{}" in value and worlds[index] is not None:
-                    attr.values[index] = value.format(env_ids[worlds[index]])
     return local_site_map, world_xforms

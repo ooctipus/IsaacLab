@@ -346,8 +346,6 @@ def _filter_embedded_rods(builder: newton.ModelBuilder, head: int, latch: int, s
 def add_connectors(
     builder: newton.ModelBuilder,
     world_idx: int,
-    env_position: wp.vec3,
-    env_rotation: wp.quat,
     *,
     grasp_body_patterns: tuple[str, ...] = (),
     rigid_connector_contact_stiffness: float = 1.0e5,
@@ -385,7 +383,7 @@ def add_connectors(
     joint = builder.add_joint_fixed(parent=-1, child=fixtures, label=f"{env_root}/Fixtures/fixed")
     builder.add_articulation([joint], label=f"{env_root}/Fixtures/articulation")
     _assign_fixed_fixtures(builder, world_idx, env_root, fixtures)
-    add_rack_colliders(builder, fixtures, env_position, env_rotation)
+    add_rack_colliders(builder, fixtures)
     start, end = int(builder._curve_body_start[group]), int(builder._curve_body_end[group])
     matches = [
         body

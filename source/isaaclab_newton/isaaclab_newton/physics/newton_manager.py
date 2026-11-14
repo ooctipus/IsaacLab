@@ -40,6 +40,7 @@ from isaaclab_newton.renderers.visual_material import (
 from .newton_backend import NewtonBackend, NewtonCloneRecord, SiteEntry
 from .newton_builder import create_builder
 from .newton_scene_data import NewtonSceneDataBackend
+from .newton_world_layout import NewtonWorldLayoutCfg
 
 if TYPE_CHECKING:
     from isaaclab.assets import BaseArticulation
@@ -500,7 +501,8 @@ class NewtonManager(PhysicsManager):
             device=device,
         ):
             cfg = NewtonBackendCfg(physics_cfg=self._cfg, device=sim.device)
-            self.backend = sim.get_or_create_backend(cfg, builder=builder, dt=self.get_physics_dt())
+            layout = sim.get_or_create_backend(NewtonWorldLayoutCfg(physics_cfg=self._cfg))
+            self.backend = sim.get_or_create_backend(cfg, builder=builder, layout=layout, dt=self.get_physics_dt())
             self.backend.model.set_gravity(sim.cfg.gravity)
 
         self.backend.decimation = self._decimation

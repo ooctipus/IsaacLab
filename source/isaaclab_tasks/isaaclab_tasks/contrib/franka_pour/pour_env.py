@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 import newton
 import torch
 import warp as wp
-from isaaclab_newton.cloner import newton_builder_world_hook
+from isaaclab_newton.cloner import newton_world_prototype_hook
 from isaaclab_newton.physics import reset_mpm_solver_state
 
 from isaaclab.envs import ManagerBasedRLEnv
@@ -112,7 +112,7 @@ class FrankaPourEnv(ManagerBasedRLEnv):
     def __init__(self, cfg: FrankaPourResetDatasetEnvCfg, render_mode: str | None = None, **kwargs):
         configure_mpm_capacities(cfg)
         self._prepare_newton_extras(cfg)
-        with newton_builder_world_hook(self._add_pour_world_to_builder):
+        with newton_world_prototype_hook(self._add_pour_world_to_builder):
             super().__init__(cfg, render_mode, **kwargs)
 
     def load_managers(self) -> None:
@@ -140,12 +140,12 @@ class FrankaPourEnv(ManagerBasedRLEnv):
         self._particle_max_velocity = float(cfg.particle_max_velocity)
         self._spill_floor_height = float(cfg.scene.plane.init_state.pos[2])
 
-    def _add_pour_world_to_builder(self, builder, env_id: int, position, quaternion) -> None:
-        """Add only solver-specific collision representations to one imported scene world."""
+    def _add_pour_world_to_builder(self, builder, world: int, env_id: int) -> None:
+        """Add only solver-specific collision representations to one world prototype, in its frame."""
         builder.particle_max_velocity = self._particle_max_velocity
         env_root = self.cfg.scene.clone_cfg.clone_template.format(env_id)
-        body_ids = self._current_world_range(builder, "body", env_id)
-        shape_ids = self._current_world_range(builder, "shape", env_id)
+        body_ids = self._current_world_range(builder, "body", world)
+        shape_ids = self._current_world_range(builder, "shape", world)
         self._disable_robot_particle_collision(builder, body_ids, shape_ids)
         self._configure_finger_contact_material(builder, body_ids, shape_ids)
 
@@ -233,7 +233,7 @@ class FrankaPourEnv(ManagerBasedRLEnv):
         self._configure_mjwarp_force_space_shape(builder, table_collider)
 
         world_xform = wp.transform(
-            wp.vec3(float(position[0]), float(position[1]), self._spill_floor_height),
+            wp.vec3(0.0, 0.0, self._spill_floor_height),
             wp.quat_identity(),
         )
         spill_floor = builder.add_body(
