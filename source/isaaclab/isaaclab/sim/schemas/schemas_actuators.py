@@ -20,7 +20,9 @@ side effect of asset construction.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import re
 import tempfile
 from typing import Any
@@ -443,8 +445,11 @@ def resave_checkpoint_with_metadata(original_path: str, metadata: dict[str, Any]
     Resolves the configured path through the shared asset cache, loads the
     original TorchScript checkpoint, merges *metadata* into any existing
     metadata (Lab config values take precedence), and exports Newton's ``.pt2``
-    format with a dynamic batch dimension. The temporary file persists for the
-    lifetime of the process.
+    format with a dynamic batch dimension.
+
+    The export is a pure function of the checkpoint's bytes, the metadata and the PyTorch version, and costs about 4 s
+    (importing ``torch._dynamo`` and converting), so it is kept beside the asset cache (``isaaclab/actuator_networks``
+    in :func:`tempfile.gettempdir`) under a hash of those inputs and reused by later start-ups.
 
     Args:
         original_path: Path or URL of a TorchScript actuator checkpoint.
@@ -452,12 +457,19 @@ def resave_checkpoint_with_metadata(original_path: str, metadata: dict[str, Any]
             ``model_type`` (``"mlp"`` or ``"lstm"``) and, for MLP models, ``input_idx``.
 
     Returns:
-        Path to the temporary ``.pt2`` checkpoint.
+        Path to the ``.pt2`` checkpoint.
     """
+    local_path = retrieve_file_path(original_path)
+    with open(local_path, "rb") as file:
+        digest = hashlib.sha256(file.read())
+    digest.update(json.dumps({"metadata": metadata, "torch": torch.__version__, "format": 1}, sort_keys=True).encode())
+    cache_dir = os.path.join(tempfile.gettempdir(), "isaaclab", "actuator_networks")
+    cached_path = os.path.join(cache_dir, f"{digest.hexdigest()}.pt2")
+    if os.path.isfile(cached_path):
+        return cached_path
+
     # Deferred: importing the converter loads torch._dynamo, which adds seconds to every articulation spawn.
     from torch._export.converter import TS2EPConverter  # noqa: PLC0415
-
-    local_path = retrieve_file_path(original_path)
 
     extra_files: dict[str, str] = {"metadata.json": ""}
     try:
@@ -493,9 +505,11 @@ def resave_checkpoint_with_metadata(original_path: str, metadata: dict[str, Any]
     # The converter specializes LSTM batches; export the graph with an explicit batch contract.
     program = torch.export.export(graph, inputs, dynamic_shapes=dynamic_shapes)
 
-    with tempfile.NamedTemporaryFile(suffix=".pt2", delete=False) as tmp:
+    os.makedirs(cache_dir, exist_ok=True)
+    # Written aside and renamed into place, so a concurrent start-up reads a whole checkpoint or none.
+    with tempfile.NamedTemporaryFile(suffix=".pt2", dir=cache_dir, delete=False) as tmp:
         tmp_path = tmp.name
     extra_out = {"metadata.json": json.dumps(merged)}
     torch.export.save(program, tmp_path, extra_files=extra_out)
-
-    return tmp_path
+    os.replace(tmp_path, cached_path)
+    return cached_path
