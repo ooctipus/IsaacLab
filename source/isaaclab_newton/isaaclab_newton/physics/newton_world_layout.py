@@ -285,35 +285,29 @@ def _offset(
 ) -> np.ndarray:
     """Map seed indices into ``target`` to expanded indices for expanded rows of cloned worlds ``row_world``.
 
-    ``values`` has one row per expanded row (gathered). A world row's index into its seed world block moves to its own
-    world's block; shared tail indices move past the expanded worlds; shared prefix indices and negative sentinels stay.
-    ``by_row`` places range boundaries (start/end policies) by the row's world instead of by the value.
+    ``values`` has one row per expanded row (gathered). A world row's index into its seed world's block moves to its
+    own world's block; shared tail indices move past the expanded worlds; shared prefix indices and negative sentinels
+    stay. ``by_row`` treats every non-negative index of a world row as its own block's (range boundaries of start and
+    end policies may sit on the block's end).
     """
     values = values.astype(np.int64)
     if values.size == 0:
         return values
     shaped = values.reshape(len(row_world), -1)
-    out = shaped.copy()
-    world = row_world[:, None]
-    tail_start = target.seed_start[-1]
+    local = (row_world >= 0)[:, None]
+    world = np.maximum(row_world, 0)
+    seed = seed_world[world]
+    low, high = target.seed_start[seed][:, None], target.seed_start[seed + 1][:, None]
+    shift = (target.start[world] - target.seed_start[seed])[:, None]
+    tail = shaped >= target.seed_start[-1]
     if by_row:
-        in_world = (world >= 0) & (shaped >= 0)
-        in_tail = (world < 0) & (shaped >= tail_start)
+        inside = local & (shaped >= 0)
+        tail &= ~local
     else:
-        in_tail = shaped >= tail_start
-        in_world = (shaped >= target.prefix) & ~in_tail
-    out[in_tail] += target.tail_shift
-    if np.any(in_world):
-        cloned = np.broadcast_to(world, shaped.shape)[in_world]
-        if np.any(cloned < 0):
-            raise ValueError("A shared row references a seed world's row, which has no single expanded counterpart.")
-        seeds = seed_world[cloned]
-        if not by_row:
-            owner = np.searchsorted(target.seed_start, shaped[in_world], side="right") - 1
-            if np.any(owner != seeds):
-                raise ValueError("A world row references another world's row.")
-        out[in_world] += target.start[cloned] - target.seed_start[seeds]
-    return out.reshape(values.shape)
+        inside = local & (shaped >= low) & (shaped < high)
+        if np.any(~inside & ~tail & (shaped >= target.prefix)):
+            raise ValueError("A row references a seed world's row that is not its own world's.")
+    return (shaped + np.where(inside, shift, np.where(tail, target.tail_shift, 0))).reshape(values.shape)
 
 
 def _labels(values: list, rows: _Domain, layout: NewtonWorldLayout, seed_world: np.ndarray) -> list:
@@ -642,20 +636,7 @@ def _expand_shape_structures(model: Model, domains: dict[Any, _Domain], seed_wor
 
     packed = model._shape_collision_filter_pairs._packed
     if len(packed):
-        pairs = np.stack(((packed >> 32), (packed & 0xFFFFFFFF)), axis=1).astype(np.int64)
-        owner = np.maximum(shapes.world[pairs[:, 0]], shapes.world[pairs[:, 1]])
-        shared = np.flatnonzero(owner < 0)
-        local = np.flatnonzero(owner >= 0)
-        rows, row_world = _per_world(owner[local], seed_world)
-        expanded = np.concatenate(
-            (
-                _offset(pairs[shared], np.full(len(shared), -1), shapes, seed_world, by_row=False),
-                _offset(pairs[local][rows], row_world, shapes, seed_world, by_row=False),
-            )
-        )
-        codes = (expanded[:, 0] << 32) | expanded[:, 1]
-        codes.sort(kind="stable")
-        model._set_shape_collision_filter_packed(codes)
+        model._set_shape_collision_filter_packed(_expand_pair_codes(packed, shapes, seed_world))
     seed_counts = model._shape_contact_pair_data.counts
     pair_data = _ShapeContactPairs(
         shape_body,
@@ -810,3 +791,51 @@ def _expand_coloring(model: Model, domains: dict[Any, _Domain], seed_world: np.n
             colors[group] = color
         setattr(model, f"{kind}_color_groups", [wp.array(group, dtype=int, device=device) for group in merged])
         setattr(model, f"{kind}_colors", wp.array(colors, dtype=int, device=device))
+
+
+def _expand_pair_codes(codes: np.ndarray, shapes: _Domain, seed_world: np.ndarray) -> np.ndarray:
+    """Expand sorted packed shape-pair codes ``(first << 32) | second`` (first < second) to every world, sorted.
+
+    A pair touching a seed world repeats in each world of its prototype. Pairs whose first shape is in a world come in
+    world order, which keeps them sorted, and are written per prototype as one broadcast add; pairs whose first shape
+    is shared are sorted once; shared tail pairs move past the worlds.
+    """
+    first, second = codes >> 32, codes & 0xFFFFFFFF
+    tail_start, tail_shift = shapes.seed_start[-1], shapes.tail_shift
+    first_world, second_world = shapes.world[first], shapes.world[second]
+    shifts = shapes.start[:-1] - shapes.seed_start[seed_world]
+    # Shared first shape: unchanged, or paired with a world shape (once per world of that prototype).
+    shared = np.flatnonzero((first < shapes.prefix) & (second_world < 0))
+    leading = [codes[shared] + np.where(second[shared] >= tail_start, tail_shift, 0)]
+    for seed in np.flatnonzero(np.bincount(second_world[first < shapes.prefix] + 1)[1:]).tolist():
+        pairs = codes[(first < shapes.prefix) & (second_world == seed)]
+        worlds = np.flatnonzero(seed_world == seed)
+        leading.append((pairs[None, :] + shifts[worlds, None]).ravel())
+    leading = np.sort(np.concatenate(leading))
+    trailing = codes[first >= tail_start] + (tail_shift << 32) + tail_shift
+    # World first shape: the second is in the same world or in the shared tail.
+    seeds = int(seed_world.max(initial=-1)) + 1
+    blocks = [codes[first_world == seed] for seed in range(seeds)]
+    to_tail = [(block & 0xFFFFFFFF) >= tail_start for block in blocks]
+    sizes = np.asarray([len(block) for block in blocks], dtype=np.int64)[seed_world]
+    offsets = len(leading) + np.concatenate(([0], np.cumsum(sizes)))
+    out = np.empty(int(offsets[-1]) + len(trailing), dtype=np.int64)
+    out[: len(leading)] = leading
+    out[offsets[-1] :] = trailing
+    both = np.int64((1 << 32) + 1)
+    for seed, (block, tail) in enumerate(zip(blocks, to_tail, strict=True)):
+        worlds = np.flatnonzero(seed_world == seed)
+        if not len(block) or not len(worlds):
+            continue
+        world_shifts = shifts[worlds, None]
+        if len(worlds) == len(seed_world):
+            values = out[offsets[0] : offsets[-1]].reshape(len(worlds), len(block))
+            np.add(block[None, :], world_shifts * both, out=values)
+            if np.any(tail):
+                values[:, tail] += tail_shift - world_shifts
+        else:
+            values = block[None, :] + world_shifts * both
+            if np.any(tail):
+                values[:, tail] += tail_shift - world_shifts
+            out[offsets[worlds, None] + np.arange(len(block))] = values
+    return out
