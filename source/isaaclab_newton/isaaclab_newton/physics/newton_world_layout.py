@@ -23,6 +23,7 @@ import numpy as np
 import warp as wp
 from newton import JointType, Model, ModelBuilder
 from newton._src.core.host_transform import transform_inverse_rows, transform_multiply_rows
+from newton._src.sim.graph_coloring import combine_independent_coloring_plan
 from newton._src.sim.shape_contact_pairs import _ShapeContactPairs
 
 from isaaclab.physics import PhysicsCfg
@@ -496,8 +497,6 @@ def _expand(model: Model, layout: NewtonWorldLayout, builder: ModelBuilder) -> N
     transformed = [key for key, attr in builder.custom_attributes.items() if attr.reference_value_transformer]
     if any(len(_host(_get(model, key))) for key in transformed if _get(model, key) is not None):
         raise NotImplementedError(f"Custom attributes {transformed} remap their values with builder callbacks.")
-    if model.particle_color_groups or model.body_color_groups:
-        raise NotImplementedError("Expanding particle or body coloring is not supported.")
     specs = _specs(model)
     counts = {frequency: count for frequency in _BUILTIN_COUNTS if (count := _count(model, frequency)) is not None}
     counts.update(model.custom_frequency_counts)
@@ -521,6 +520,8 @@ def _expand(model: Model, layout: NewtonWorldLayout, builder: ModelBuilder) -> N
                 starts = np.minimum(starts, rows.total)
             _set(model, name, _like(value, starts, device))
             continue
+        if rows.seed_total == 0:
+            continue  # nothing to expand; empty storage may keep a sentinel row
         references = Model._normalize_attribute_reference(spec.references)
         if isinstance(value, list) and references is None:
             if len(value) != rows.seed_total:
@@ -595,6 +596,7 @@ def _expand(model: Model, layout: NewtonWorldLayout, builder: ModelBuilder) -> N
     _expand_shape_structures(model, domains, seed_world, device)
     _expand_articulation_schedule(model, domains, seed_world, device)
     _expand_actuators(model, domains, seed_world, device)
+    _expand_coloring(model, domains, seed_world, device)
 
     # Derived from the expanded rows as finalize derives them.
     if model.particle_count > 1 and model.particle_max_radius > 0.0 and model.particle_grid is None:
@@ -773,3 +775,38 @@ def _expand_actuators(model: Model, domains: dict[Any, _Domain], seed_world: np.
                     setattr(part, name, gather(value, None))
                 elif type(value) is int and value == count and name.endswith("num_actuators"):
                     setattr(part, name, rows.total)
+
+
+def _expand_coloring(model: Model, domains: dict[Any, _Domain], seed_world: np.ndarray, device: Any) -> None:
+    """Combine every world's coloring into the particle and body color groups.
+
+    Each world keeps its prototype's coloring (the seed coloring restricted to its seed world); the worlds' groups are
+    paired with :meth:`newton.ModelBuilder.replicate`'s balancing. The result is a valid coloring, but not the one a
+    coloring pass over all worlds at once (as solvers that color the builder run before finalize) would choose.
+    """
+    for kind, frequency in (("particle", _FREQUENCY.PARTICLE), ("body", _FREQUENCY.BODY)):
+        groups = getattr(model, f"{kind}_color_groups")
+        if not groups:
+            continue
+        rows = domains[frequency]
+        host = [group.numpy().astype(np.int64) for group in groups]
+        shared = [group[rows.world[group] < 0] for group in host]
+        shared = [np.where(group >= rows.seed_start[-1], group + rows.tail_shift, group) for group in shared]
+        plan = [(len(group), [(group, None)]) for group in shared if len(group)]
+        local = [
+            [group[rows.world[group] == seed] - rows.seed_start[seed] for group in host]
+            for seed in range(len(rows.seed_start) - 1)
+        ]
+        local = [[group for group in seed_groups if len(group)] for seed_groups in local]
+        for world, seed in enumerate(seed_world.tolist()):
+            start = int(rows.start[world])
+            plan = combine_independent_coloring_plan(plan, [(len(group), [(group, start)]) for group in local[seed]])
+        merged = [
+            np.concatenate([group if offset is None else group + offset for group, offset in chunks])
+            for _, chunks in plan
+        ]
+        colors = np.empty(rows.total, dtype=np.int64)
+        for color, group in enumerate(merged):
+            colors[group] = color
+        setattr(model, f"{kind}_color_groups", [wp.array(group, dtype=int, device=device) for group in merged])
+        setattr(model, f"{kind}_colors", wp.array(colors, dtype=int, device=device))
