@@ -597,8 +597,10 @@ def _expand(model: Model, layout: NewtonWorldLayout, builder: ModelBuilder) -> N
             starts = np.concatenate((rows.start, [rows.total]))
             equality.equality_constraint_world_start = _like(equality.equality_constraint_world_start, starts, device)
     for key in list(model.custom_frequency_articulation):
-        label = builder.custom_frequencies[key].articulation_owner_attribute
-        model.custom_frequency_articulation[key] = _get(model, label)
+        # Owners of an empty frequency stay the empty array finalize made; others are the expanded attribute.
+        owners = _get(model, builder.custom_frequencies[key].articulation_owner_attribute)
+        if owners is not None:
+            model.custom_frequency_articulation[key] = owners
 
     _expand_shape_structures(model, domains, seed_world, device)
     _expand_articulation_schedule(model, domains, seed_world, device)
@@ -782,6 +784,13 @@ def _expand_actuators(model: Model, domains: dict[Any, _Domain], seed_world: np.
                     setattr(part, name, gather(value, None))
                 elif type(value) is int and value == count and name.endswith("num_actuators"):
                     setattr(part, name, rows.total)
+        # Components allocate their working buffers for the actuator count, as the actuator's construction does.
+        requires_grad = actuator.requires_grad
+        actuator.drive.finalize(device, rows.total)
+        for clamp in actuator.clamping or ():
+            clamp.finalize(device, rows.total)
+        if actuator.motor is not None:
+            actuator.motor.finalize(device, rows.total, requires_grad=requires_grad)
 
 
 def _expand_coloring(model: Model, domains: dict[Any, _Domain], seed_world: np.ndarray, device: Any) -> None:
