@@ -18,6 +18,8 @@ from newton.solvers import SolverBase
 from isaaclab.utils import to_dict
 
 if TYPE_CHECKING:
+    from newton.usd import SchemaResolver
+
     from .newton_manager_cfg import NewtonSolverCfg
 
 
@@ -69,6 +71,11 @@ class NewtonSolver:
     def solver_classes(cls, cfg: NewtonSolverCfg) -> tuple[type[SolverBase], ...]:
         """Newton solvers whose custom builder attributes, and USD schemas, the builder needs before import."""
         return () if cls.solver_class is None else (cls.solver_class,)
+
+    @classmethod
+    def schema_resolvers(cls, cfg: NewtonSolverCfg) -> tuple[type[SchemaResolver], ...]:
+        """USD schema resolvers, besides Newton's and PhysX's, whose authored attributes the solver reads."""
+        return ()
 
     @classmethod
     def prepare_builder(cls, cfg: NewtonSolverCfg, builder: ModelBuilder) -> None:

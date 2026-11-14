@@ -14,6 +14,7 @@ import numpy as np
 import warp as wp
 from newton import Contacts, Model, State
 from newton.solvers import SolverMuJoCo
+from newton.usd import SchemaResolverMjc
 
 from .newton_solver import NewtonSolver, solver_kwargs
 
@@ -34,6 +35,11 @@ class MJWarpSolver(NewtonSolver):
     solver_class = SolverMuJoCo
     single_state = True
     deterministic = True
+
+    @classmethod
+    def schema_resolvers(cls, cfg: MJWarpSolverCfg) -> tuple[type[SchemaResolverMjc], ...]:
+        """MuJoCo's schema, which fills the custom attributes :class:`~newton.solvers.SolverMuJoCo` registers."""
+        return (SchemaResolverMjc,)
 
     @classmethod
     def applied_deterministic_mode(cls, cfg: MJWarpSolverCfg, mode: wp.DeterministicMode) -> wp.DeterministicMode:

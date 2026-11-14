@@ -15,6 +15,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, replace
 from functools import partial
+from typing import TYPE_CHECKING
 
 import warp as wp
 from newton import CollisionPipeline, Model, ModelBuilder, ShapeFlags, State
@@ -36,6 +37,9 @@ from .coupler_cfg import (
     CouplerProxyCfg,
     CouplerProxyMappingCfg,
 )
+
+if TYPE_CHECKING:
+    from newton.usd import SchemaResolver
 
 
 @dataclass
@@ -280,6 +284,16 @@ class CouplerSolver(NewtonSolver):
             solver_cls
             for entry in cfg.entries
             for solver_cls in entry.solver_cfg.class_type.solver_classes(entry.solver_cfg)
+        )
+
+    @classmethod
+    def schema_resolvers(cls, cfg: CouplerCfg) -> tuple[type[SchemaResolver], ...]:
+        return tuple(
+            dict.fromkeys(
+                resolver
+                for entry in cfg.entries
+                for resolver in entry.solver_cfg.class_type.schema_resolvers(entry.solver_cfg)
+            )
         )
 
     @classmethod

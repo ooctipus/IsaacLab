@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import warp as wp
-from matplotlib import colormaps
 
 from ..utils import validate
 from ..utils.buffers import TimestampedBuffer
@@ -106,6 +105,8 @@ class ImageView:
                 shape = _image_grid_shape(len(cfg.envs), len(sources), height, width, self.aspect)
                 colors = np.empty((0, 3), dtype=np.uint8)
                 if "depth" in cfg.channels:
+                    from matplotlib import colormaps  # only depth channels need it; headless runs never import it
+
                     colors = (colormaps["turbo"](np.arange(256) / 255.0)[..., :3] * 255).astype(np.uint8)
                 self._env_ids = wp.array(cfg.envs, dtype=wp.int32, device=device)
                 self._depth_colors = wp.array(colors, dtype=wp.uint8, device=device)

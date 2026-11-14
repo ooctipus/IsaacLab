@@ -13,8 +13,7 @@ from collections.abc import Sequence
 import numpy as np
 import warp as wp
 from newton import Heightfield, ModelBuilder, ShapeFlags
-from newton.solvers import SolverMuJoCo
-from newton.usd import SchemaResolver, SchemaResolverMjc, SchemaResolverNewton, SchemaResolverPhysx
+from newton.usd import SchemaResolver, SchemaResolverNewton, SchemaResolverPhysx
 
 from pxr import Usd, UsdGeom
 
@@ -88,15 +87,12 @@ def register_builder_attributes(builder: ModelBuilder, cfg: NewtonSolverCfg | No
 def usd_schema_resolvers(cfg: NewtonSolverCfg | None) -> list[SchemaResolver]:
     """Return ordered schema resolvers for physics-model USD imports.
 
-    MJC is enabled when the configured solver registers ``SolverMuJoCo`` attributes. Visualization and
-    articulation-ordering builders keep their fixed pair because solver attributes do not affect their outputs.
+    Newton's and PhysX's schemas come first, then those the configured solver reads (MJC for MuJoCo, see
+    :meth:`~isaaclab_newton.physics.NewtonSolver.schema_resolvers`). Visualization and articulation-ordering builders
+    keep their fixed pair because solver attributes do not affect their outputs.
     """
-    resolvers: list[SchemaResolver] = [SchemaResolverNewton(), SchemaResolverPhysx()]
-    if cfg is not None and any(
-        issubclass(solver_cls, SolverMuJoCo) for solver_cls in cfg.class_type.solver_classes(cfg)
-    ):
-        resolvers.append(SchemaResolverMjc())
-    return resolvers
+    solver_resolvers = cfg.class_type.schema_resolvers(cfg) if cfg is not None else ()
+    return [SchemaResolverNewton(), SchemaResolverPhysx(), *(resolver() for resolver in solver_resolvers)]
 
 
 def create_builder(physics_cfg: NewtonCfg | None = None, up_axis: str | None = None, **kwargs) -> ModelBuilder:
