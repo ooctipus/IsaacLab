@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import gc
 import logging
+import weakref
 from functools import partial as P
 from types import SimpleNamespace
 
@@ -213,6 +214,33 @@ def test_reset_builds_the_configured_solver_and_steps(solver_cfg_factory, solver
         assert isinstance(sim.backend_manager, NewtonManager)
         assert isinstance(backend.solver, solver_cls)
         assert (backend.collision_pipeline is not None) is collision_pipeline
+
+
+def test_a_backend_freezes_its_scene_until_it_closes():
+    """The collection after each graph capture walks only objects allocated after the scene: a hard reset freezes the
+    scene it built and unfreezes the previous backend's, which is then collected; closing unfreezes everything."""
+    sim_cfg = SimulationCfg(
+        dt=1.0 / 120.0,
+        device="cuda:0",
+        physics=NewtonCfg(solver_cfg=MJWarpSolverCfg(use_mujoco_contacts=False), num_substeps=2),
+    )
+
+    with build_simulation_context(sim_cfg=sim_cfg) as sim:
+        builder = sim.get_or_create_backend(NewtonBuilderCfg(physics_cfg=sim.cfg.physics))
+        body = builder.add_body(mass=1.0)
+        builder.add_joint_free(child=body)
+        builder.add_shape_box(body=body, hx=0.1, hy=0.1, hz=0.1)
+        builder.add_ground_plane()
+        sim.reset()
+        assert gc.get_freeze_count() > 0
+        old_backend = weakref.ref(sim.backend_manager.backend)
+        sim.step(render=False)
+
+        sim.reset()
+        gc.collect()
+        assert old_backend() is None
+        assert gc.get_freeze_count() > 0
+    assert gc.get_freeze_count() == 0
 
 
 def test_step_after_a_hard_reset_never_reads_the_old_model():

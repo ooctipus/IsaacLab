@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import gc
 import logging
 import re
 from collections.abc import Callable
@@ -152,12 +153,19 @@ class NewtonManager(PhysicsManager):
             self._close_backend()
             self.start_simulation()
             self.initialize_solver()
+            # The scene, builder and model now exist and live as long as the backend. Freezing them keeps the full
+            # collection after every graph capture (newton_backend._paused_gc) to the objects allocated since,
+            # instead of a walk over the whole replicated scene. Garbage is collected first so none is frozen.
+            gc.collect()
+            gc.freeze()
 
     def _close_backend(self, *, dispatch_stop: bool = True) -> None:
         """Stop consumers, drop their views, and close the backend."""
         backend = self.backend
         if backend is None:
             return
+        # Objects frozen with this backend (see reset) are collectable again once it closes.
+        gc.unfreeze()
         if dispatch_stop:
             self.dispatch_event(PhysicsEvent.STOP)
         self.views.clear()
