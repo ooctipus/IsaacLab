@@ -9,7 +9,14 @@ import unittest
 from types import SimpleNamespace
 
 import numpy as np
-from check_suite import PRESETS, GraphTimer, collision_work_snapshot, comparison, physics_launches_per_step
+from check_suite import (
+    PRESETS,
+    GraphTimer,
+    collision_work_snapshot,
+    comparison,
+    physics_launches_per_step,
+    scene_actions,
+)
 
 
 class TestCollisionWorkSnapshot(unittest.TestCase):
@@ -55,6 +62,25 @@ class TestSuiteScale(unittest.TestCase):
         for name, protocol in PRESETS.items():
             with self.subTest(mode=name):
                 self.assertEqual(protocol["worlds"], 16384)
+
+
+class TestSceneActions(unittest.TestCase):
+    def setUp(self):
+        self.sampled = []
+
+    def sample(self, env):
+        self.sampled.append(env)
+        return "random"
+
+    def test_a_scene_without_a_policy_steps_the_random_actions(self):
+        self.assertEqual(scene_actions(self.sample, None, "env", {"policy": 1}), "random")
+        self.assertEqual(self.sampled, ["env"])
+
+    def test_a_policy_takes_the_observation_groups_in_declared_order(self):
+        actions = scene_actions(self.sample, lambda *groups: groups, "env", {"policy": 1, "slots": 2})
+        self.assertEqual(actions, (1, 2))
+        # The tools around the worker count environment steps by the sampler's calls.
+        self.assertEqual(self.sampled, ["env"])
 
 
 class TestQuickGraphTiming(unittest.TestCase):

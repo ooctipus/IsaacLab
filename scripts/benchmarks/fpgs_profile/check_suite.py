@@ -8,8 +8,10 @@
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
 import importlib.metadata
+import importlib.util
 import json
 import math
 import os
@@ -134,8 +136,34 @@ def collision_work_snapshot(narrow):
     }
 
 
+@functools.cache
+def scene_module(path):
+    """Import a file of the Isaac Lab tree that is not in a package, such as a demo."""
+    spec = importlib.util.spec_from_file_location(f"suite_scene_{Path(path).stem}", LAB / path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module  # configclass resolves a module's annotations through sys.modules
+    spec.loader.exec_module(module)
+    return module
+
+
+def scene_actions(sample, policy, env, observations):
+    """One environment step's actions: the scene's policy on the observation groups in declared order, else random.
+
+    The random actions are sampled either way: the timing token and the profiler probes count environment steps
+    by that call.
+    """
+    actions = sample(env)
+    return actions if policy is None else policy(*observations.values())
+
+
 def worker(job_path):
-    """Run one isolated scene, retaining the task's physics settings and checking a reset."""
+    """Run one isolated scene, retaining the task's physics settings and checking a reset.
+
+    A scene is a registered task (``task``) or an environment configuration class of a file in the Isaac Lab tree
+    (``env_cfg``: ``path.py:Class``, built at the scene's world count, its physics preset resolved by name).
+    ``worlds`` declares a world count other than the protocol's; ``policy`` names a TorchScript actor that replaces
+    the random actions.
+    """
     started = time.perf_counter()
     job = json.loads(job_path.read_text())
     result = {"complete": False, "scene": job["scene"]["id"], "phases_seconds": {}}
@@ -151,7 +179,13 @@ def worker(job_path):
         import numpy as np
         import torch
         import warp as wp
+        from isaaclab_newton.physics.feather_pgs_solver_cfg import FeatherPGSSolverCfg
         from isaaclab_newton.physics.newton_collision_cfg import NewtonCollisionPipelineCfg
+
+        from isaaclab.envs import ManagerBasedRLEnv
+        from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR, retrieve_file_path
+
+        from isaaclab_tasks.utils import resolve_presets
 
         if not Path(newton.__file__).resolve().is_relative_to(Path(job["newton"])):
             raise RuntimeError("Wrong Newton checkout imported")
@@ -162,6 +196,7 @@ def worker(job_path):
         scene, protocol = job["scene"], job["protocol"]
         if protocol["worlds"] != 16384:
             raise ValueError("The 21-scene check requires 16,384 worlds")
+        worlds = scene.get("worlds", protocol["worlds"])
         torch.manual_seed(0)
         # "feather_pgs" applies the scene's FeatherPGS recipe; another preset (e.g. "newton_mjwarp", the reference)
         # runs the task's own preset as upstream declares it, without the recipe.
@@ -169,10 +204,37 @@ def worker(job_path):
         feather_pgs = physics == "feather_pgs"
         if not feather_pgs and (scene["solver_attrs"] or scene["storage_at_16384_worlds"] or scene["environment"]):
             raise ValueError(f"The {physics} reference takes no FeatherPGS recipe")
-        cfg = harness.parse_env_cfg(
-            scene["task"], device="cuda:0", num_envs=protocol["worlds"], overrides=[f"physics={physics}"]
-        )
+        if "env_cfg" in scene:
+            path, name = scene["env_cfg"].rsplit(":", 1)
+            cfg_class = getattr(scene_module(path), name)
+            # A configuration may size its storage from the world count as it is built. Its physics preset
+            # resolves as a task's does: the named one where it is declared, else the default.
+            cfg = cfg_class(scene=type(cfg_class().scene)(num_envs=worlds))
+            cfg.sim.physics = resolve_presets(cfg.sim.physics, (physics,))
+            cfg.sim.device = "cuda:0"
+            if feather_pgs and not isinstance(cfg.sim.physics.solver_cfg, FeatherPGSSolverCfg):
+                raise ValueError(f"{scene['env_cfg']} declares no FeatherPGS physics")
+
+            def make_env():
+                return ManagerBasedRLEnv(cfg)
+
+        else:
+            cfg = harness.parse_env_cfg(
+                scene["task"], device="cuda:0", num_envs=worlds, overrides=[f"physics={physics}"]
+            )
+
+            def make_env():
+                return harness.gym.make(scene["task"], cfg=cfg)
+
         cfg.seed = 0
+        policy = None
+        if "policy" in scene:
+            checkpoint = retrieve_file_path(scene["policy"].format(ISAACLAB_NUCLEUS_DIR=ISAACLAB_NUCLEUS_DIR))
+            policy = torch.jit.load(checkpoint, map_location="cuda:0").eval()
+
+        def act(env, observations):
+            return scene_actions(harness.sample_random_actions, policy, env, observations)
+
         for key, value in scene["solver_attrs"].items():
             with contextlib.suppress(ValueError, SyntaxError):
                 value = ast.literal_eval(value)
@@ -240,20 +302,20 @@ def worker(job_path):
             }
 
         with harness.launch_simulation(cfg, launch_args):
-            with contextlib.closing(harness.gym.make(scene["task"], cfg=cfg)) as env, torch.inference_mode():
-                env.reset()
+            with contextlib.closing(make_env()) as env, torch.inference_mode():
+                observations = env.reset()[0]
                 model = env.unwrapped.sim.backend_manager.backend.model
                 result["model"] = {
                     name: int(getattr(model, name))
                     for name in ("world_count", "body_count", "joint_count", "joint_dof_count", "shape_count")
                 }
-                if model.world_count != protocol["worlds"]:
+                if model.world_count != worlds:
                     raise RuntimeError("Scene did not honor the requested world count")
                 result["phases_seconds"]["setup"] = time.perf_counter() - setup
                 result["checks"] = [check("reset", env)]
                 phase = time.perf_counter()
                 for _ in range(protocol["warmup"]):
-                    env.step(harness.sample_random_actions(env))
+                    observations = env.step(act(env, observations))[0]
                 wp.synchronize_device("cuda:0")
                 result["phases_seconds"]["warmup"] = time.perf_counter() - phase
                 result["checks"].append(check("warm", env))
@@ -270,9 +332,9 @@ def worker(job_path):
                     for step in range(steps):
                         if timer:
                             timer.step = step
-                        actions = harness.sample_random_actions(env)
+                        actions = act(env, observations)
                         # Copying each action to CPU would synchronize every environment step.
-                        env.step(actions)
+                        observations = env.step(actions)[0]
                     action_hash.update(actions.cpu().numpy().tobytes())
                 wp.synchronize_device("cuda:0")
                 result["phases_seconds"]["run"] = time.perf_counter() - phase
@@ -291,9 +353,9 @@ def worker(job_path):
                     }
                 result["checks"].append(check("after_run", env))
                 phase = time.perf_counter()
-                env.reset()
+                observations = env.reset()[0]
                 for _ in range(8):
-                    env.step(harness.sample_random_actions(env))
+                    observations = env.step(act(env, observations))[0]
                 result["checks"].append(check("after_reset", env))
                 result["phases_seconds"]["reset_check"] = time.perf_counter() - phase
         result["complete"] = True

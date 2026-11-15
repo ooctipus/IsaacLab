@@ -46,6 +46,14 @@ seconds by default. Different GPUs have separate performance references.
 The `suite21.json` file contains the existing point-friction research recipes;
 this is not a survey of task defaults or long-rollout physical equivalence.
 
+A scene is a registered task (`task`) or an environment configuration class of
+a file in this tree that is not a registered task, such as a demo (`env_cfg`,
+written `path/to/file.py:Class`). The class is built at the scene's world count
+and its physics preset is selected by name as a task's is. A scene may declare its own world count
+(`worlds`) when 16,384 does not fit, and a TorchScript actor (`policy`) that
+takes the observation groups in their declared order and replaces the random
+actions.
+
 ```bash
 # 1. FPS plus host-phase breakdown and model/solver metadata (no profiler)
 uv run python scripts/benchmarks/fpgs_profile/run_profiled.py --task Isaac-Lift-Franka --physics feather_pgs \
