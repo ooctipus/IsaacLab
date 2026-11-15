@@ -24,10 +24,9 @@ import numpy as np
 import torch
 import warp as wp
 from newton import JointType, Model, ModelBuilder
-from newton._src.core.host_transform import transform_inverse_rows, transform_multiply_rows
-from newton._src.sim.graph_coloring import combine_independent_coloring_plan
 from newton._src.sim.shape_contact_pairs import _ShapeContactPairs
 from newton.solvers import SolverMuJoCo
+from newton.utils import combine_independent_coloring_plan, transform_inverse_rows, transform_multiply_rows
 
 from isaaclab.physics import PhysicsCfg
 from isaaclab.utils import configclass
@@ -220,11 +219,12 @@ def _gather_on_device(value: wp.array, rows: _Domain, width: int) -> wp.array | 
         return None
     seed = wp.to_torch(value, requires_grad=False)
     shape = seed.shape
-    if shape[0] == rows.seed_total * width and width > 1:
-        seed = seed.reshape(rows.seed_total, width, *shape[1:])
-    elif shape[0] != rows.seed_total:
-        return None
-    total = rows.total * shape[0] // rows.seed_total
+    if shape[0] != rows.seed_total * width:
+        raise ValueError(
+            f"An attribute declares {width} values per row but stores {shape[0]} for {rows.seed_total} rows."
+        )
+    seed = seed.reshape(rows.seed_total, width, *shape[1:]) if width > 1 else seed
+    total = rows.total * width
     out = wp.empty((total, *value.shape[1:]), dtype=value.dtype, device=value.device, requires_grad=value.requires_grad)
     target = wp.to_torch(out, requires_grad=False).reshape(rows.total, *seed.shape[1:])
     torch.index_select(seed, 0, rows.gather_on(seed.device), out=target)
@@ -267,10 +267,11 @@ def _seed_worlds(model: Model, specs: dict[str, Model.AttributeSpec], counts: di
             seeds = len(starts) - 2
             world[starts[0] : starts[seeds]] = np.repeat(np.arange(seeds), np.diff(starts[: seeds + 1]))
             worlds[frequency] = world
-        elif Model._normalize_attribute_reference(spec.references) == _FREQUENCY.WORLD and spec.row_width == 1:
+        elif Model._normalize_attribute_reference(spec.references) == _FREQUENCY.WORLD:
             data = _host(value)
-            if data.ndim == 1 and len(data) == counts[frequency]:
-                worlds[frequency] = data.astype(np.int64)
+            if data.shape != (counts[frequency],):
+                raise ValueError(f"World attribute {name!r} has shape {data.shape} for {counts[frequency]} rows.")
+            worlds[frequency] = data.astype(np.int64)
     # Rows without their own world inherit it from the rows that own them (start arrays) or that they reference.
     changed = True
     while changed:
@@ -572,9 +573,11 @@ def _expand_rows(
     if spec.compaction_policy == "world_start":
         starts = np.concatenate((rows.start, [rows.total]))
         return np.minimum(starts, rows.total) if name == "shape_world_start" else starts
-    if rows.seed_total == 0:
-        return None
     references = Model._normalize_attribute_reference(spec.references)
+    if rows.seed_total == 0:
+        if spec.compaction_policy == "start":
+            return np.asarray([domains[references].total], dtype=_host(value).dtype)
+        return None
     if references is None and isinstance(value, wp.array) and name not in _PLACED and name not in _KIND_REFERENCES:
         gathered = _gather_on_device(value, rows, spec.row_width)
         if gathered is not None:
@@ -590,11 +593,13 @@ def _expand_rows(
             )
         return _gather_list(value, rows)
     data = _host(value)
-    sentinel = spec.compaction_policy == "start" and len(data) == rows.seed_total + 1
-    body = data[: rows.seed_total] if sentinel else data
-    if body.shape[0] not in (rows.seed_total, rows.seed_total * spec.row_width):
-        raise ValueError(f"Attribute {name!r} has {body.shape[0]} rows for {rows.seed_total} {spec.frequency!r} rows.")
-    flat = body.shape[0] != rows.seed_total
+    # A start attribute ends with the referenced domain's count; a row of a wider attribute stores its values flat.
+    sentinel = spec.compaction_policy == "start"
+    stored = rows.seed_total * spec.row_width + sentinel
+    if data.shape[0] != stored:
+        raise ValueError(f"Attribute {name!r} stores {data.shape[0]} values; its metadata declares {stored}.")
+    body = data[: rows.seed_total * spec.row_width]
+    flat = spec.row_width > 1
     full = (body.reshape(rows.seed_total, spec.row_width, *body.shape[1:]) if flat else body)[rows.gather]
     if references == _FREQUENCY.WORLD:
         world = rows.row_world.reshape(-1, *[1] * (full.ndim - 1))
@@ -692,7 +697,6 @@ def _expand(model: Model, layout: NewtonWorldLayout, builder: ModelBuilder) -> N
             setattr(model, name, domains[frequency].total)
     model.custom_frequency_counts = {key: domains[key].total for key in model.custom_frequency_counts}
     model.world_count = num_worlds
-    _expand_world_values(model, "gravity", seed_world, device)
     equality = getattr(model, "mujoco", None)
     if equality is not None and hasattr(equality, "equality_constraint_count"):
         frequency = "mujoco:equality_constraint"
@@ -731,8 +735,10 @@ def _expand_world_values(model: Model, name: str, seed_world: np.ndarray, device
         return
     data = _host(value) if not isinstance(value, list) else np.asarray(value, dtype=object)
     seeds = int(seed_world.max(initial=-1)) + 1
-    if len(data) not in (seeds, seeds + 1):
-        raise ValueError(f"World attribute {name!r} has {len(data)} values for {seeds} seed worlds.")
+    if len(data) != seeds + 1:
+        raise ValueError(
+            f"World attribute {name!r} has {len(data)} values for {seeds} seed worlds and the global world."
+        )
     full = np.concatenate((data[seed_world], data[seeds:]))
     _set(model, name, full.tolist() if isinstance(value, list) else _like(value, full, device))
 
