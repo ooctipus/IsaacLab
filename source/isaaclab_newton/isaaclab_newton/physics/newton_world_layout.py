@@ -24,7 +24,6 @@ import numpy as np
 import torch
 import warp as wp
 from newton import Model, ModelBuilder
-from newton._src.sim.shape_contact_pairs import _ShapeContactPairs
 from newton.geometry import DeformableVisualMesh
 from newton.utils import combine_independent_coloring_plan, place_copies
 
@@ -552,34 +551,13 @@ def _expand_world_values(model: Model, name: str, seed_world: np.ndarray, device
 
 def _expand_shape_structures(model: Model, domains: dict[Any, _Domain], seed_world: np.ndarray, device: Any) -> None:
     """Expand the shape structures finalize derives once per model: body shape lists, filter and contact pairs."""
-    shapes, bodies = domains[_FREQUENCY.SHAPE], domains[_FREQUENCY.BODY]
-    shape_body = _host(model.shape_body)
-    order = np.argsort(shape_body, kind="stable")
-    keys = np.arange(-1, bodies.total)
-    bounds = np.searchsorted(shape_body[order], np.r_[keys, bodies.total]).tolist()
-    members = order.tolist()
-    model.body_shapes = dict(zip(keys.tolist(), map(members.__getitem__, map(slice, bounds[:-1], bounds[1:]))))
-
-    packed = model._shape_collision_filter_pairs._packed
-    if len(packed):
-        model._set_shape_collision_filter_packed(_expand_pair_codes(packed, shapes, seed_world))
-    seed_counts = model._shape_contact_pair_data.counts
-    pair_data = _ShapeContactPairs(
-        shape_body,
-        _host(model.shape_world),
-        _host(model.shape_collision_group),
-        _host(model.shape_flags),
-        model._shape_collision_filter_pairs._packed,
-        model.world_count,
-    )
-    # Pair counts are per world slot (shared pairs first); each world counts as its prototype's seed world.
-    counts = np.concatenate((seed_counts[:1], seed_counts[1:][seed_world]))
-    counts.setflags(write=False)
-    pair_data.__dict__["counts"] = counts
-    model._shape_contact_pair_data = pair_data
-    model._shape_contact_pair_counts.clear()
-    model._shape_contact_pair_counts[None] = counts
-    model._shape_contact_pair_count = int(counts.sum())
+    shapes = domains[_FREQUENCY.SHAPE]
+    model.build_body_shapes()
+    pairs = model.shape_collision_filter_pairs_array()
+    if len(pairs):
+        codes = _expand_pair_codes((pairs[:, 0].astype(np.int64) << 32) | pairs[:, 1], shapes, seed_world)
+        model.set_shape_collision_filter_pairs(np.stack((codes >> 32, codes & 0xFFFFFFFF), axis=1))
+    model.build_shape_contact_pairs()
 
     # Per-shape fields of the geometry structures; their tables of distinct geometry stay shared.
     for structure, names in (
