@@ -378,6 +378,32 @@ def _labels(values: list, rows: _Domain, layout: NewtonWorldLayout, seed_world: 
     return [*values[: rows.prefix], *worlds, *values[rows.seed_start[-1] :]]
 
 
+def _is_label(model: Model, name: str) -> bool:
+    """Whether replication names a string attribute per world: built-in labels and custom frequencies' labels."""
+    if ":" not in name:
+        return name.endswith("_label")
+    return name in model.custom_frequency_label_attributes.values() or name == "mujoco:equality_constraint_label"
+
+
+def _has_world_slots(model: Model, name: str, spec: Model.AttributeSpec) -> bool:
+    """Whether the cloner fills ``{}`` world slots of a string attribute: a custom attribute gives its rows a world."""
+    if name == "isaaclab:visual_material_path":
+        return True
+    return any(
+        other.frequency == spec.frequency
+        and ":" in key
+        and Model._normalize_attribute_reference(other.references) == _FREQUENCY.WORLD
+        for key, other in model.attribute_specs.items()
+    )
+
+
+def _gather_list(values: list, rows: _Domain) -> list:
+    """Copy each row's value from its seed row."""
+    objects = np.empty(len(values), dtype=object)
+    objects[:] = values
+    return objects[rows.gather].tolist()
+
+
 def _format_slots(values: list, rows: _Domain, layout: NewtonWorldLayout) -> list:
     """Substitute each row's environment id for the ``{}`` world slot of string values."""
     seed = np.asarray(values, dtype=object)
@@ -557,11 +583,12 @@ def _expand_rows(
         if len(value) != rows.seed_total:
             raise ValueError(f"List attribute {name!r} does not have one value per row.")
         if value and all(isinstance(v, str) for v in value):
-            is_label = name.endswith("_label") or name in model.custom_frequency_label_attributes.values()
-            return _labels(value, rows, layout, seed_world) if is_label else _format_slots(value, rows, layout)
-        objects = np.empty(len(value), dtype=object)
-        objects[:] = value
-        return objects[rows.gather].tolist()
+            if _is_label(model, name):
+                return _labels(value, rows, layout, seed_world)
+            return (
+                _format_slots(value, rows, layout) if _has_world_slots(model, name, spec) else _gather_list(value, rows)
+            )
+        return _gather_list(value, rows)
     data = _host(value)
     sentinel = spec.compaction_policy == "start" and len(data) == rows.seed_total + 1
     body = data[: rows.seed_total] if sentinel else data
@@ -875,13 +902,12 @@ def _expand_actuators(model: Model, domains: dict[Any, _Domain], seed_world: np.
                     setattr(part, name, gather(value, None))
                 elif type(value) is int and value == count and name.endswith("num_actuators"):
                     setattr(part, name, rows.total)
-        # Components allocate their working buffers for the actuator count, as the actuator's construction does.
+        # Drives, input processors and motors allocate their working buffers and row indices for the actuator count,
+        # as the actuator's construction does. Clampings keep their shared tables: their finalize only loads them.
         requires_grad = actuator.requires_grad
         actuator.drive.finalize(device, rows.total)
         for processor in actuator.input_processors:
             processor.finalize(device, rows.total, requires_grad=requires_grad)
-        for clamp in actuator.clamping or ():
-            clamp.finalize(device, rows.total)
         if actuator.motor is not None:
             actuator.motor.finalize(device, rows.total, requires_grad=requires_grad)
 
