@@ -825,8 +825,6 @@ def _expand_actuators(model: Model, domains: dict[Any, _Domain], seed_world: np.
     per-row array of the actuator and its drive, clamping, motor and input processors is gathered.
     """
     for actuator in model.actuators:
-        if any(vars(processor) for processor in actuator.input_processors):
-            raise NotImplementedError("Expanding actuator input processors is not supported.")
         count = actuator.num_actuators
         velocity = domains[model.get_attribute_frequency(actuator.state_vel_attr)]
         rows = _domain(velocity.world[actuator.indices.numpy()], seed_world, "actuator rows")
@@ -851,8 +849,23 @@ def _expand_actuators(model: Model, domains: dict[Any, _Domain], seed_world: np.
             setattr(actuator, name, gather(value, domains[model.get_attribute_frequency(attr)]))
         if actuator.actuator_indices is not None:
             actuator.actuator_indices = gather(actuator.actuator_indices, domains[_FREQUENCY.ACTUATOR])
+        # A processor's joint parameters index joint_qd-shaped (``*_indices``) and joint_q-shaped (``*_pos_indices``)
+        # arrays.
+        for processor in actuator.input_processors:
+            for parameter in processor.JOINT_PARAMS:
+                for suffix, frequency in (("_indices", _FREQUENCY.JOINT_DOF), ("_pos_indices", _FREQUENCY.JOINT_COORD)):
+                    value = getattr(processor, parameter + suffix, None)
+                    if isinstance(value, wp.array):
+                        setattr(processor, parameter + suffix, gather(value, domains[frequency]))
         seen: set[int] = set()
-        parts = [actuator, actuator.drive, actuator.motor, *(actuator.clamping or ()), actuator._effort_mode]
+        parts = [
+            actuator,
+            actuator.drive,
+            actuator.motor,
+            *(actuator.clamping or ()),
+            *actuator.input_processors,
+            actuator._effort_mode,
+        ]
         for part in parts:
             if part is None or id(part) in seen:
                 continue
@@ -865,6 +878,8 @@ def _expand_actuators(model: Model, domains: dict[Any, _Domain], seed_world: np.
         # Components allocate their working buffers for the actuator count, as the actuator's construction does.
         requires_grad = actuator.requires_grad
         actuator.drive.finalize(device, rows.total)
+        for processor in actuator.input_processors:
+            processor.finalize(device, rows.total, requires_grad=requires_grad)
         for clamp in actuator.clamping or ():
             clamp.finalize(device, rows.total)
         if actuator.motor is not None:

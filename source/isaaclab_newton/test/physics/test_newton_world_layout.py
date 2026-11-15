@@ -11,6 +11,7 @@ import pytest
 import warp as wp
 from isaaclab_newton.physics import NewtonWorldLayout
 from newton._src.solvers.mujoco import ActuatorTarget, add_actuator_general
+from newton.actuators import DrivePD, InputProcessorDelay
 from newton.solvers import SolverMuJoCo
 
 
@@ -34,6 +35,14 @@ def _prototype(kind: int) -> newton.ModelBuilder:
     hinge = builder.add_joint_revolute(parent=base, child=tip, axis=(0.0, 1.0, 0.0), label="Robot/hinge")
     builder.add_articulation([root, hinge], label="Robot")
     add_actuator_general(builder, ActuatorTarget.joint(hinge), gear=(2.0,))
+    dof = builder.joint_qd_start[hinge]
+    builder.add_actuator(
+        DrivePD,
+        index=dof,
+        pos_index=builder.joint_q_start[hinge],
+        kp=10.0 + kind,
+        input_processors=[(InputProcessorDelay, {"delay_steps": 1 + kind})],
+    )
     return builder
 
 
@@ -110,6 +119,17 @@ def test_seed_expands_to_the_replicated_model(layout_ids):
     for name, value in vars(expected.mujoco).items():
         if isinstance(value, wp.array):
             assert getattr(model.mujoco, name).numpy().tobytes() == value.numpy().tobytes(), name
+    assert len(model.actuators) == len(expected.actuators)
+    for actuator, reference in zip(model.actuators, expected.actuators, strict=True):
+        for name in ("indices", "pos_indices", "actuator_indices"):
+            assert getattr(actuator, name).numpy().tolist() == getattr(reference, name).numpy().tolist(), name
+        for part, wanted_part in (
+            (actuator.drive, reference.drive),
+            *zip(actuator.input_processors, reference.input_processors),
+        ):
+            for name, value in vars(wanted_part).items():
+                if isinstance(value, wp.array):
+                    assert getattr(part, name).numpy().tobytes() == value.numpy().tobytes(), name
     actual, wanted = _arrays(model), _arrays(expected)
     assert actual.keys() == wanted.keys()
     for name, value in wanted.items():
