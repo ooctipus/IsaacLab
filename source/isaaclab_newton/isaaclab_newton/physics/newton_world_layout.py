@@ -558,10 +558,9 @@ def _expand_shape_structures(model: Model, domains: dict[Any, _Domain], seed_wor
     the shape rows of the mesh structures."""
     shapes = domains[_FREQUENCY.SHAPE]
     model.build_body_shapes()
-    if model.shape_collision_filter_pairs:
-        pairs = model.shape_collision_filter_pairs_array()
-        codes = _expand_pair_codes((pairs[:, 0].astype(np.int64) << 32) | pairs[:, 1], shapes, seed_world)
-        model.set_shape_collision_filter_pairs(np.stack((codes >> 32, codes & 0xFFFFFFFF), axis=1))
+    codes = model.shape_collision_filter_pair_codes
+    if len(codes):
+        model.set_shape_collision_filter_pair_codes(_expand_pair_codes(codes, shapes, seed_world))
     model.build_shape_contact_pairs()
     model.take_shape_rows(shapes.gather)
 
