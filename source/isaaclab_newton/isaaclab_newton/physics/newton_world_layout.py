@@ -515,7 +515,7 @@ def _expand(model: Model, layout: NewtonWorldLayout, builder: ModelBuilder) -> N
         if owners is not None:
             model.custom_frequency_articulation[key] = owners
 
-    _expand_shape_structures(model, domains, seed_world, device)
+    _expand_shape_structures(model, domains, seed_world)
     _expand_actuators(model, domains, seed_world, device)
     _expand_batteries(model, domains, layout)
     _expand_visual_meshes(model, domains, layout)
@@ -549,8 +549,9 @@ def _expand_world_values(model: Model, name: str, seed_world: np.ndarray, device
     _set(model, name, full.tolist() if isinstance(value, list) else _like(value, full, device))
 
 
-def _expand_shape_structures(model: Model, domains: dict[Any, _Domain], seed_world: np.ndarray, device: Any) -> None:
-    """Expand the shape structures finalize derives once per model: body shape lists, filter and contact pairs."""
+def _expand_shape_structures(model: Model, domains: dict[Any, _Domain], seed_world: np.ndarray) -> None:
+    """Expand the shape structures finalize derives once per model: body shape lists, filter and contact pairs, and
+    the shape rows of the mesh structures."""
     shapes = domains[_FREQUENCY.SHAPE]
     model.build_body_shapes()
     if model.shape_collision_filter_pairs:
@@ -558,16 +559,7 @@ def _expand_shape_structures(model: Model, domains: dict[Any, _Domain], seed_wor
         codes = _expand_pair_codes((pairs[:, 0].astype(np.int64) << 32) | pairs[:, 1], shapes, seed_world)
         model.set_shape_collision_filter_pairs(np.stack((codes >> 32, codes & 0xFFFFFFFF), axis=1))
     model.build_shape_contact_pairs()
-
-    # Per-shape fields of the geometry structures; their tables of distinct geometry stay shared.
-    for structure, names in (
-        (getattr(model, "_mesh_cells", None), ("shape_grid",)),
-        (getattr(getattr(model, "_mesh_topology", None), "data", None), ("shape_base", "shape_radius")),
-    ):
-        for name in names if structure is not None else ():
-            value = getattr(structure, name)
-            if isinstance(value, wp.array) and len(value) == shapes.seed_total:
-                setattr(structure, name, _like(value, value.numpy()[shapes.gather], device))
+    model.take_shape_rows(shapes.gather)
 
 
 def _expand_actuators(model: Model, domains: dict[Any, _Domain], seed_world: np.ndarray, device: Any) -> None:
