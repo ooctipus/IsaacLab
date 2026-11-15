@@ -737,26 +737,6 @@ def _expand_world_values(model: Model, name: str, seed_world: np.ndarray, device
     _set(model, name, full.tolist() if isinstance(value, list) else _like(value, full, device))
 
 
-def _per_world(seed_rows: np.ndarray, seed_world: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Gather rows owned by seed worlds into every cloned world, in world order.
-
-    Args:
-        seed_rows: Owning seed world of each row (``0..T-1``).
-        seed_world: Seed world of each cloned world.
-
-    Returns:
-        The row each expanded row copies and the cloned world that owns it.
-    """
-    seeds = int(seed_world.max(initial=-1)) + 1
-    order = np.argsort(seed_rows, kind="stable")
-    sizes = np.bincount(seed_rows, minlength=seeds)
-    seed_offsets = np.concatenate(([0], np.cumsum(sizes)))
-    world_sizes = sizes[seed_world]
-    world_offsets = np.concatenate(([0], np.cumsum(world_sizes)))
-    index = np.arange(world_offsets[-1]) - np.repeat(world_offsets[:-1] - seed_offsets[seed_world], world_sizes)
-    return order[index], np.repeat(np.arange(len(seed_world)), world_sizes)
-
-
 def _expand_shape_structures(model: Model, domains: dict[Any, _Domain], seed_world: np.ndarray, device: Any) -> None:
     """Expand the shape structures finalize derives once per model: body shape lists, filter and contact pairs."""
     shapes, bodies = domains[_FREQUENCY.SHAPE], domains[_FREQUENCY.BODY]
