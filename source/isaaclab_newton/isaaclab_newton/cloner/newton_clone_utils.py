@@ -187,33 +187,6 @@ def _name_root_joints_after_their_body(builder: ModelBuilder) -> None:
             builder.joint_label[index] = f"{body_label}_free_joint"
 
 
-def _quat_rotate(q: np.ndarray, v: np.ndarray) -> np.ndarray:
-    """Rotate vectors ``v`` by xyzw quaternions ``q``, broadcast over the leading axes."""
-    axis, angle_w = q[..., :3], q[..., 3:4]
-    t = 2.0 * np.cross(axis, v)
-    return (v + angle_w * t + np.cross(axis, t)).astype(np.float32)
-
-
-def _rotate_builder_particles(
-    builder: ModelBuilder, source: ModelBuilder, particle_start: int, tet_start: int, xform: np.ndarray
-) -> None:
-    """Apply particle and rest-frame rotations omitted by Newton's builder composition."""
-    # Remove when the pinned Newton fixes newton-physics/newton#4115, including tet rest frames.
-    if source.particle_count == 0 or np.array_equal(xform[3:], (0.0, 0.0, 0.0, 1.0)):
-        return
-    particle_slice = slice(particle_start, particle_start + source.particle_count)
-    builder.particle_q[particle_slice] = (
-        _quat_rotate(xform[3:], np.asarray(source.particle_q, dtype=np.float32)) + xform[:3]
-    ).tolist()
-    builder.particle_qd[particle_slice] = _quat_rotate(
-        xform[3:], np.asarray(source.particle_qd, dtype=np.float32)
-    ).tolist()
-    if source.tet_count:
-        # Dm^-1 rotates on the right: (R Dm)^-1 = Dm^-1 R^T.
-        poses = np.asarray(source.tet_poses, dtype=np.float32).reshape(-1, 3, 3)
-        builder.tet_poses[tet_start : tet_start + source.tet_count] = _quat_rotate(xform[3:], poses).tolist()
-
-
 def _label_groups(builder: ModelBuilder) -> dict[str, list]:
     """Return every entity-label container owned by a Newton builder."""
     groups = {
@@ -236,7 +209,7 @@ def _add_asset_builder(
     xform: np.ndarray,
 ) -> None:
     """Copy one asset into a world prototype without mutating the imported source paths."""
-    offsets, tet_start = ModelBuilder._builder_merge_counts(builder), builder.tet_count
+    offsets = ModelBuilder._builder_merge_counts(builder)
     builder.add_builder(asset, xform=xform)
     # Name only the appended copy. The imported asset keeps its labels and references;
     # native replication later adds world prefixes to this composed builder.
@@ -274,7 +247,6 @@ def _add_asset_builder(
                     if (suffix := clone_path.relative_to(value, root)) is not None:
                         copied[offset + index] = destinations[root].rstrip("/") + suffix or "/"
                         break
-    _rotate_builder_particles(builder, asset, offsets["particle"], tet_start, xform)
 
 
 def replicate_builder_mapping(

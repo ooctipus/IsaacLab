@@ -23,10 +23,9 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import torch
 import warp as wp
-from newton import JointType, Model, ModelBuilder
+from newton import Model, ModelBuilder
 from newton._src.sim.shape_contact_pairs import _ShapeContactPairs
-from newton.solvers import SolverMuJoCo
-from newton.utils import combine_independent_coloring_plan, transform_inverse_rows, transform_multiply_rows
+from newton.utils import combine_independent_coloring_plan, place_copies
 
 from isaaclab.physics import PhysicsCfg
 from isaaclab.utils import configclass
@@ -35,31 +34,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 _FREQUENCY = Model.AttributeFrequency
-_IDENTITY = np.asarray((0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0), dtype=np.float32)
 
 _UNCOUNTED = (_FREQUENCY.ONCE, _FREQUENCY.WORLD, _FREQUENCY.CONTACT, _FREQUENCY.CONTACT_RIGID, _FREQUENCY.CONTACT_SOFT)
 """Frequencies without entity rows: a single value, the worlds themselves, and the contact capacities."""
-
-_TRN = SolverMuJoCo.TrnType
-_KIND_REFERENCES = {
-    "mujoco:equality_constraint_target": (
-        "mujoco:equality_constraint_target_kind",
-        {1: (_FREQUENCY.JOINT,), 2: (_FREQUENCY.CONSTRAINT_MIMIC,)},
-    ),
-    "mujoco:actuator_trnid": (
-        "mujoco:actuator_trntype",
-        {
-            _TRN.JOINT: (_FREQUENCY.JOINT_DOF, None),
-            _TRN.JOINT_IN_PARENT: (_FREQUENCY.JOINT_DOF, None),
-            _TRN.TENDON: ("mujoco:tendon", None),
-            _TRN.SITE: (_FREQUENCY.SHAPE, _FREQUENCY.SHAPE),
-            _TRN.BODY: (_FREQUENCY.BODY, None),
-            _TRN.SLIDERCRANK: (_FREQUENCY.SHAPE, _FREQUENCY.SHAPE),
-        },
-    ),
-}
-"""Attributes whose columns reference the domains a per-row kind attribute names; Newton's builder remaps them by name
-too (``None`` keeps a column)."""
 
 _ROW_POLICIES = ("start", "end", "range_start")
 """Compaction policies whose values index the referenced domain relative to the row's own world."""
@@ -248,60 +225,6 @@ def _specs(model: Model) -> dict[str, Model.AttributeSpec]:
     return {name: spec for name, spec in model.attribute_specs.items() if not spec.deprecated and spec.alias_of is None}
 
 
-def _seed_worlds(model: Model, specs: dict[str, Model.AttributeSpec], counts: dict[Any, int]) -> dict[Any, np.ndarray]:
-    """Find the seed world of every row of every domain from the model's metadata."""
-    worlds: dict[Any, np.ndarray] = {}
-    for name, spec in specs.items():
-        frequency = spec.frequency
-        if frequency not in counts or frequency in worlds:
-            continue
-        value = _get(model, name)
-        if value is None:
-            continue
-        if spec.compaction_policy == "world_start":
-            starts = _host(value).astype(np.int64)
-            world = np.full(counts[frequency], -1, dtype=np.int64)
-            seeds = len(starts) - 2
-            world[starts[0] : starts[seeds]] = np.repeat(np.arange(seeds), np.diff(starts[: seeds + 1]))
-            worlds[frequency] = world
-        elif Model._normalize_attribute_reference(spec.references) == _FREQUENCY.WORLD:
-            data = _host(value)
-            if data.shape != (counts[frequency],):
-                raise ValueError(f"World attribute {name!r} has shape {data.shape} for {counts[frequency]} rows.")
-            worlds[frequency] = data.astype(np.int64)
-    # Rows without their own world inherit it from the rows that own them (start arrays) or that they reference.
-    changed = True
-    while changed:
-        changed = False
-        for name, spec in specs.items():
-            references = Model._normalize_attribute_reference(spec.references)
-            frequency = spec.frequency
-            if references is None or frequency not in counts:
-                continue
-            value = _get(model, name)
-            if value is None:
-                continue
-            if spec.compaction_policy == "start" and frequency in worlds and references not in worlds:
-                if references not in counts:
-                    continue
-                starts = _host(value).astype(np.int64)[: counts[frequency]]
-                ends = np.append(starts[1:], counts[references])
-                worlds[references] = np.repeat(worlds[frequency], ends - starts)
-                changed = True
-            elif spec.compaction_policy == "generic" and frequency not in worlds and references in worlds:
-                data = _host(value).astype(np.int64).reshape(counts[frequency], -1)
-                if counts[frequency]:
-                    worlds[frequency] = worlds[references][data[:, 0]]
-                    changed = True
-    if counts.get(_FREQUENCY.ACTUATOR) and _FREQUENCY.ACTUATOR not in worlds:
-        worlds[_FREQUENCY.ACTUATOR] = _actuator_worlds(model, worlds, counts[_FREQUENCY.ACTUATOR])
-    for frequency, count in counts.items():
-        if count and frequency not in worlds:
-            raise ValueError(f"Newton metadata does not place the rows of {frequency!r} in worlds.")
-        worlds.setdefault(frequency, np.empty(0, dtype=np.int64))
-    return worlds
-
-
 def _domain(world: np.ndarray, seed_world: np.ndarray, frequency: Any) -> _Domain:
     """Lay out one domain's expanded rows: shared prefix, each cloned world's seed block, shared tail."""
     seed_count = int(seed_world.max(initial=-1)) + 1
@@ -376,21 +299,12 @@ def _labels(values: list, rows: _Domain, layout: NewtonWorldLayout, seed_world: 
     return [*values[: rows.prefix], *worlds, *values[rows.seed_start[-1] :]]
 
 
-def _is_label(model: Model, name: str) -> bool:
-    """Whether replication names a string attribute per world: built-in labels and custom frequencies' labels."""
-    if ":" not in name:
-        return name.endswith("_label")
-    return name in model.custom_frequency_label_attributes.values() or name == "mujoco:equality_constraint_label"
-
-
 def _has_world_slots(model: Model, name: str, spec: Model.AttributeSpec) -> bool:
     """Whether the cloner fills ``{}`` world slots of a string attribute: a custom attribute gives its rows a world."""
     if name == "isaaclab:visual_material_path":
         return True
     return any(
-        other.frequency == spec.frequency
-        and ":" in key
-        and Model._normalize_attribute_reference(other.references) == _FREQUENCY.WORLD
+        other.frequency == spec.frequency and ":" in key and other.reference_domain == _FREQUENCY.WORLD
         for key, other in model.attribute_specs.items()
     )
 
@@ -421,136 +335,32 @@ def _runs(seed_world: np.ndarray) -> list[tuple[int, int]]:
     return list(zip(bounds[:-1].tolist(), bounds[1:].tolist(), strict=True))
 
 
-def _rotate_vectors(rotation: np.ndarray, vectors: np.ndarray) -> None:
-    """Rotate ``vectors`` in place with the cross-product form :meth:`ModelBuilder.replicate` uses for velocities."""
-    q = np.asarray(rotation, dtype=np.float32)
-    xyz = q[..., :3]
-    w = q[..., 3:]
-    t = 2.0 * np.cross(xyz, vectors)
-    vectors += np.cross(xyz, t) + w * t
+def _place(
+    arrays: dict[str, np.ndarray],
+    seeds: dict[str, np.ndarray],
+    specs: dict[str, Model.AttributeSpec],
+    domains: dict[Any, _Domain],
+    layout: NewtonWorldLayout,
+) -> None:
+    """Place each run of worlds of one prototype with Newton's placement of copied worlds.
 
-
-def _quat_rotate(q: np.ndarray, v: np.ndarray) -> np.ndarray:
-    """Rotate vectors ``v`` by xyzw quaternions ``q``, as the cloner rotates particles."""
-    axis, angle_w = q[..., :3], q[..., 3:4]
-    t = 2.0 * np.cross(axis, v)
-    return (v + angle_w * t + np.cross(axis, t)).astype(np.float32)
-
-
-def _place(arrays: dict[str, np.ndarray], domains: dict[Any, _Domain], seed: Model, layout: NewtonWorldLayout) -> None:
-    """Place every world's rows by its transform, run by run, with :meth:`ModelBuilder.replicate`'s arithmetic."""
-    xforms, seed_world = layout.xforms, layout.seed_world
-    moved_world = ~np.all(xforms == _IDENTITY, axis=1)
-    rotated_world = moved_world & ~np.all(xforms[:, 3:] == _IDENTITY[3:], axis=1)
-    bodies, shapes, joints = domains[_FREQUENCY.BODY], domains[_FREQUENCY.SHAPE], domains[_FREQUENCY.JOINT]
-    coords, dofs, particles = (
-        domains[_FREQUENCY.JOINT_COORD],
-        domains[_FREQUENCY.JOINT_DOF],
-        domains[_FREQUENCY.PARTICLE],
-    )
-    tets = domains[_FREQUENCY.TETRAHEDRON]
-    seed_body = _host(seed.shape_body)
-    seed_type, seed_parent = _host(seed.joint_type), _host(seed.joint_parent)
-    seed_q_start, seed_qd_start = _host(seed.joint_q_start), _host(seed.joint_qd_start)
-
-    def block(domain: _Domain, seed: int) -> np.ndarray:
-        """Seed rows of one seed world, relative to its block start."""
-        return np.arange(domain.seed_start[seed + 1] - domain.seed_start[seed])
-
-    for start, stop in _runs(seed_world):
-        seed = int(seed_world[start])
-        worlds = np.arange(start, stop)
-        moved = worlds[moved_world[start:stop]]
-        moved_xforms = xforms[moved]
-        rotated = rotated_world[moved]
-        translations_only = not np.any(rotated)
-        offsets = np.where(moved_world[start:stop, None], xforms[start:stop, :3], np.float32(0.0))
-
-        local = block(particles, seed)
-        if "particle_q" in arrays and len(local):
-            arrays["particle_q"][particles.start[worlds, None] + local[None]] += offsets[:, None]
-            # The cloner rotates particles and tet rest frames, which the builder's composition omits.
-            rotating = worlds[rotated_world[start:stop]]
-            seed_rows = particles.seed_start[seed] + local
-            for world in rotating.tolist():
-                q, target = xforms[world], particles.start[world] + local
-                arrays["particle_q"][target] = _quat_rotate(q[3:], arrays["_seed_particle_q"][seed_rows]) + q[:3]
-                arrays["particle_qd"][target] = _quat_rotate(q[3:], arrays["_seed_particle_qd"][seed_rows])
-                tet = block(tets, seed)
-                if len(tet):
-                    poses = arrays["_seed_tet_poses"][tets.seed_start[seed] + tet]
-                    arrays["tet_poses"][tets.start[world] + tet] = _quat_rotate(q[3:], poses)
-
-        if len(moved) and len(block(shapes, seed)):
-            local = block(shapes, seed)
-            static = local[seed_body[shapes.seed_start[seed] + local] == -1]
-            if len(static):
-                source = arrays["_seed_shape_transform"][shapes.seed_start[seed] + static]
-                transformed = transform_multiply_rows(moved_xforms[:, None], source[None])
-                arrays["shape_transform"][shapes.start[moved, None] + static[None]] = transformed
-
-        local = block(joints, seed)
-        if len(moved) and len(local):
-            rows = joints.seed_start[seed] + local
-            parents, types = seed_parent[rows], seed_type[rows]
-            nonfree = local[(parents == -1) & (types != int(JointType.FREE))]
-            if len(nonfree):
-                source = arrays["_seed_joint_X_p"][joints.seed_start[seed] + nonfree]
-                transformed = transform_multiply_rows(moved_xforms[:, None], source[None])
-                arrays["joint_X_p"][joints.start[moved, None] + nonfree[None]] = transformed
-            free = local[(parents == -1) & (types == int(JointType.FREE))]
-            if len(free):
-                seed_rows = joints.seed_start[seed] + free
-                q_local = seed_q_start[seed_rows] - coords.seed_start[seed]
-                qd_local = seed_qd_start[seed_rows] - dofs.seed_start[seed]
-                q_index = q_local[:, None] + np.arange(7)
-                qd_index = qd_local[:, None] + np.arange(6)
-                seed_q = arrays["_seed_joint_q"][coords.seed_start[seed] :]
-                xform_prev = seed_q[q_index]
-                X_pj = arrays["_seed_joint_X_p"][seed_rows]
-                X_pj_inv = transform_inverse_rows(X_pj)
-                xform_local = transform_multiply_rows(
-                    transform_multiply_rows(X_pj_inv[None], moved_xforms[:, None]), X_pj[None]
-                )
-                targets = coords.start[moved, None, None] + q_index[None]
-                arrays["joint_q"][targets] = transform_multiply_rows(xform_local, xform_prev[None])
-                if np.any(rotated):
-                    qd_targets = dofs.start[moved[rotated], None, None] + qd_index[None]
-                    twist = arrays["joint_qd"][qd_targets].reshape((*qd_targets.shape[:2], 2, 3))
-                    _rotate_vectors(xform_local[rotated, :, None, 3:], twist)
-                    arrays["joint_qd"][qd_targets] = twist.reshape(qd_targets.shape)
-
-        local = block(bodies, seed)
-        if len(local):
-            rows = bodies.start[worlds, None] + local[None]
-            if translations_only:
-                if np.any(offsets):
-                    arrays["body_q"][rows, :3] += offsets[:, None]
-            elif len(moved):
-                source = arrays["_seed_body_q"][bodies.seed_start[seed] + local]
-                arrays["body_q"][bodies.start[moved, None] + local[None]] = transform_multiply_rows(
-                    moved_xforms[:, None], source[None]
-                )
-            if np.any(rotated):
-                twists = arrays["body_qd"][bodies.start[moved[rotated], None] + local[None]].reshape(
-                    (int(np.count_nonzero(rotated)), len(local), 2, 3)
-                )
-                _rotate_vectors(moved_xforms[rotated, None, None, 3:], twists)
-                arrays["body_qd"][bodies.start[moved[rotated], None] + local[None]] = twists.reshape(-1, len(local), 6)
-
-
-_PLACED = (
-    "particle_q",
-    "particle_qd",
-    "tet_poses",
-    "shape_transform",
-    "joint_X_p",
-    "joint_q",
-    "joint_qd",
-    "body_q",
-    "body_qd",
-)
-"""Attributes :func:`_place` moves to each world's transform."""
+    A run's worlds lie one after another in every domain, as the copies :meth:`ModelBuilder.replicate` lays out; each
+    placement reads the run's seed block, with start attributes relative to the block.
+    """
+    placed = {name: specs[name] for name in arrays}
+    inputs = dict.fromkeys(name for key in placed for name in (key, *specs[key].placement.inputs))
+    for start, stop in _runs(layout.seed_world):
+        seed = int(layout.seed_world[start])
+        source = {}
+        for name in inputs:
+            spec = specs[name]
+            rows = domains[spec.frequency]
+            block = seeds[name][rows.seed_start[seed] : rows.seed_start[seed + 1]]
+            if spec.compaction_policy == "start":
+                block = block - domains[spec.reference_domain].seed_start[seed]
+            source[name] = block
+        for name, (targets, values) in place_copies(placed, source, layout.xforms[start:stop]).items():
+            arrays[name][domains[specs[name].frequency].start[start] + targets] = values
 
 
 def _expand_rows(
@@ -570,12 +380,12 @@ def _expand_rows(
     if spec.compaction_policy == "world_start":
         starts = np.concatenate((rows.start, [rows.total]))
         return np.minimum(starts, rows.total) if name == "shape_world_start" else starts
-    references = Model._normalize_attribute_reference(spec.references)
+    references = spec.reference_domain
     if rows.seed_total == 0:
         if spec.compaction_policy == "start":
             return np.asarray([domains[references].total], dtype=_host(value).dtype)
         return None
-    if references is None and isinstance(value, wp.array) and name not in _PLACED and name not in _KIND_REFERENCES:
+    if references is None and isinstance(value, wp.array) and spec.placement is None and spec.kind_references is None:
         gathered = _gather_on_device(value, rows, spec.row_width)
         if gathered is not None:
             return gathered
@@ -583,7 +393,7 @@ def _expand_rows(
         if len(value) != rows.seed_total:
             raise ValueError(f"List attribute {name!r} does not have one value per row.")
         if value and all(isinstance(v, str) for v in value):
-            if _is_label(model, name):
+            if spec.label:
                 return _labels(value, rows, layout, seed_world)
             return (
                 _format_slots(value, rows, layout) if _has_world_slots(model, name, spec) else _gather_list(value, rows)
@@ -601,12 +411,11 @@ def _expand_rows(
     if references == _FREQUENCY.WORLD:
         world = rows.row_world.reshape(-1, *[1] * (full.ndim - 1))
         full = np.where(full >= 0, np.broadcast_to(world, full.shape), full).astype(full.dtype)
-    elif name in _KIND_REFERENCES:
-        kind_name, kinds = _KIND_REFERENCES[name]
-        kind = _host(_get(model, kind_name))[rows.gather]
+    elif spec.kind_references is not None:
+        kinds = _host(_get(model, spec.kind_references.kind))[rows.gather]
         columns = full.reshape(len(full), -1)
-        for code, targets in kinds.items():
-            hit = kind == int(code)
+        for code, targets in spec.kind_references.targets:
+            hit = kinds == code
             for column, target in enumerate(targets):
                 if target is not None and np.any(hit):
                     columns[hit, column] = _offset(
@@ -631,9 +440,16 @@ def _expand_all_rows(
     layout: NewtonWorldLayout,
     arrays: dict[str, np.ndarray],
     containers: dict[str, Any],
+    seeds: dict[str, np.ndarray],
 ) -> None:
-    """Expand every row and world attribute in place; collect the attributes :func:`_place` moves in ``arrays``."""
+    """Expand every row and world attribute in place.
+
+    The attributes :func:`_place` moves are collected in ``arrays`` and the seed values placements read in ``seeds``.
+    """
     device = model.device
+    placement_inputs = {
+        name for key, spec in specs.items() if spec.placement is not None for name in (key, *spec.placement.inputs)
+    }
     for name, spec in specs.items():
         frequency = spec.frequency
         if frequency == _FREQUENCY.WORLD:
@@ -644,12 +460,13 @@ def _expand_all_rows(
         value = _get(model, name)
         if value is None:
             continue
+        if name in placement_inputs:
+            seeds[name] = _host(value)
         full = _expand_rows(model, name, spec, value, domains, layout)
         if full is None:
             continue
-        if name in _PLACED:
+        if spec.placement is not None:
             arrays[name] = np.array(full, dtype=np.float32)
-            arrays["_seed_" + name] = np.asarray(_host(value)[: domains[frequency].seed_total], dtype=np.float32)
             containers[name] = value
         else:
             _set(model, name, full if isinstance(full, (list, wp.array)) else _like(value, full, device))
@@ -662,28 +479,23 @@ def _expand(model: Model, layout: NewtonWorldLayout, builder: ModelBuilder) -> N
     num_worlds = len(seed_world)
     if model.world_count != int(seed_world.max(initial=-1)) + 1:
         raise ValueError(f"The seed holds {model.world_count} worlds; the layout uses {seed_world.max() + 1}.")
-    if model.tendon_count or model.muscle_count or model._deformable_visual_meshes or model.batteries:
-        raise NotImplementedError("Expanding tendons, muscles, batteries or deformable visual meshes is not supported.")
-    transformed = [
-        key
-        for key, attr in builder.custom_attributes.items()
-        if attr.reference_value_transformer and key not in _KIND_REFERENCES
-    ]
-    if any(len(_host(_get(model, key))) for key in transformed if _get(model, key) is not None):
-        raise NotImplementedError(f"Custom attributes {transformed} remap their values with builder callbacks.")
+    if model._deformable_visual_meshes:
+        raise NotImplementedError("Expanding deformable visual meshes is not supported.")
     specs = _specs(model)
     counts = _counts(model, specs)
-    worlds = _seed_worlds(model, specs, counts)
-    domains = {frequency: _domain(worlds[frequency], seed_world, frequency) for frequency in counts}
+    domains = {
+        frequency: _domain(model.attribute_frequency_world(frequency), seed_world, frequency) for frequency in counts
+    }
 
     # Rows: gather each attribute from its seed world and offset the entity indices it holds. Device gathers run on
     # Warp's stream, ordered after finalize and before the kernels that read the expanded model.
     arrays: dict[str, np.ndarray] = {}
     containers: dict[str, Any] = {}
+    seeds: dict[str, np.ndarray] = {}
     stream = torch.cuda.stream(wp.stream_to_torch(device)) if device.is_cuda else contextlib.nullcontext()
     with stream:
-        _expand_all_rows(model, specs, domains, layout, arrays, containers)
-    _place(arrays, domains, model, layout)
+        _expand_all_rows(model, specs, domains, layout, arrays, containers, seeds)
+    _place(arrays, seeds, specs, domains, layout)
     for name, value in containers.items():
         _set(model, name, _like(value, arrays[name], device))
 
@@ -707,6 +519,7 @@ def _expand(model: Model, layout: NewtonWorldLayout, builder: ModelBuilder) -> N
 
     _expand_shape_structures(model, domains, seed_world, device)
     _expand_actuators(model, domains, seed_world, device)
+    _expand_batteries(model, domains, layout)
     _expand_coloring(model, domains, seed_world, device)
 
     # Derived from the expanded rows as finalize derives them.
@@ -779,16 +592,6 @@ def _expand_shape_structures(model: Model, domains: dict[Any, _Domain], seed_wor
                 setattr(structure, name, _like(value, value.numpy()[shapes.gather], device))
 
 
-def _actuator_worlds(model: Model, worlds: dict[Any, np.ndarray], count: int) -> np.ndarray:
-    """Seed world of each actuator row: the world of the degree of freedom it drives."""
-    world = np.full(count, -1, dtype=np.int64)
-    for actuator in model.actuators:
-        if actuator.actuator_indices is not None:
-            dofs = worlds[model.get_attribute_frequency(actuator.state_vel_attr)]
-            world[actuator.actuator_indices.numpy()] = dofs[actuator.indices.numpy()]
-    return world
-
-
 def _expand_actuators(model: Model, domains: dict[Any, _Domain], seed_world: np.ndarray, device: Any) -> None:
     """Expand each actuator's rows (one per driven degree of freedom) to every world.
 
@@ -855,6 +658,25 @@ def _expand_actuators(model: Model, domains: dict[Any, _Domain], seed_world: np.
             processor.finalize(device, rows.total, requires_grad=requires_grad)
         if actuator.motor is not None:
             actuator.motor.finalize(device, rows.total, requires_grad=requires_grad)
+
+
+def _expand_batteries(model: Model, domains: dict[Any, _Domain], layout: NewtonWorldLayout) -> None:
+    """Build every battery object again from its arrays expanded by its declared metadata.
+
+    A battery belongs to its world and powers actuators of that world; its arrays are its constructor's arguments.
+    """
+    for index, battery in enumerate(model.batteries):
+        specs = battery.attribute_specs()
+        values = {name: getattr(battery, name) for name in specs}
+        rows = _domain(values["world"].numpy().astype(np.int64), layout.seed_world, "battery")
+        owned = np.repeat(rows.world, np.diff(values["actuator_start"].numpy()))
+        local = {**domains, "battery": rows, "battery_actuator": _domain(owned, layout.seed_world, "battery actuator")}
+        arrays = {
+            name: _like(value, _host(_expand_rows(model, name, specs[name], value, local, layout)), model.device)
+            for name, value in values.items()
+        }
+        model.batteries[index] = type(battery)(**arrays, world_count=model.world_count)
+        model.batteries[index].reset(model)
 
 
 def _expand_coloring(model: Model, domains: dict[Any, _Domain], seed_world: np.ndarray, device: Any) -> None:

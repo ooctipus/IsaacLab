@@ -5,13 +5,15 @@
 
 """The world layout expands a finalized seed to the model of every replicated world."""
 
+import warnings
+
 import newton
 import numpy as np
 import pytest
 import warp as wp
 from isaaclab_newton.physics import NewtonWorldLayout
 from newton._src.solvers.mujoco import ActuatorTarget, add_actuator_general
-from newton.actuators import DrivePD, InputProcessorDelay
+from newton.actuators import BatteryConstantResistance, DriveOutputSpace, DrivePD, InputProcessorDelay, MotorDC
 from newton.solvers import SolverMuJoCo
 
 
@@ -45,14 +47,31 @@ def _prototype(kind: int) -> newton.ModelBuilder:
         )
     hinge = builder.add_joint_revolute(parent=base, child=tip, axis=(0.0, 1.0, 0.0), label="Robot/hinge")
     builder.add_articulation([root, hinge], label="Robot")
+    # A tendon from a world anchor over both links, and a legacy muscle between them.
+    builder.add_tendon(
+        [
+            newton.TendonGuide(body=-1, offset=(0.2, 0.1, 0.0), axis=(1.0, 0.0, 0.0)),
+            newton.TendonGuide(body=base, offset=(0.0, 0.1, 0.0)),
+            newton.TendonGuide(body=tip, offset=(0.0, 0.0, 0.05 * (1 + kind))),
+        ][kind:],
+        label="Robot/tendon",
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", newton.NewtonDeprecationWarning)
+        builder.add_muscle([base, tip], [wp.vec3(), wp.vec3(0.0, 0.0, 0.1)], 1.0, 1.0, 1.0, 1.0, 0.0)
     add_actuator_general(builder, ActuatorTarget.joint(hinge), gear=(2.0,))
     dof = builder.joint_qd_start[hinge]
-    builder.add_actuator(
+    actuator = builder.add_actuator(
         DrivePD,
+        output_space=DriveOutputSpace.DUTY,
         index=dof,
         pos_index=builder.joint_q_start[hinge],
         kp=10.0 + kind,
         input_processors=[(InputProcessorDelay, {"delay_steps": 1 + kind})],
+        motor=(MotorDC, {"kt": 1.0, "resistance": 1.0, "vin": 12.0, "supply_from_battery": True}),
+    )
+    builder.add_battery(
+        BatteryConstantResistance, [actuator], nominal_voltage=12.0 - kind, resistance=0.5, min_voltage=9.0
     )
     return builder
 
@@ -82,7 +101,7 @@ def _build(layout_ids: np.ndarray, prototypes: list[newton.ModelBuilder]) -> tup
     xforms = np.zeros((worlds, 7), dtype=np.float32)
     xforms[:, :3] = rng.uniform(-5.0, 5.0, (worlds, 3))
     xforms[:, 6] = 1.0
-    xforms[1, 3:] = np.asarray(wp.quat_rpy(0.0, 0.0, 0.7), dtype=np.float32)
+    xforms[:2, 3:] = np.asarray(wp.quat_rpy(0.0, 0.0, 0.7), dtype=np.float32)
     xforms[-1] = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
     prefixes = [f"/World/envs/env_{world}" for world in range(worlds)]
 
@@ -122,8 +141,8 @@ def test_seed_expands_to_the_replicated_model(layout_ids):
     model, expected = _build(np.asarray(layout_ids), [_prototype(0), _prototype(1)])
 
     assert model.world_count == expected.world_count
-    for name in ("body_label", "joint_label", "shape_label", "articulation_label"):
-        assert getattr(model, name) == getattr(expected, name)
+    for name in [name for name, value in vars(expected).items() if name.endswith("_label") and isinstance(value, list)]:
+        assert getattr(model, name) == getattr(expected, name), name
     assert model.body_shapes == expected.body_shapes
     np.testing.assert_array_equal(
         model._shape_collision_filter_pairs._packed, expected._shape_collision_filter_pairs._packed
@@ -133,12 +152,19 @@ def test_seed_expands_to_the_replicated_model(layout_ids):
     for name, value in vars(expected.mujoco).items():
         if isinstance(value, wp.array):
             assert getattr(model.mujoco, name).numpy().tobytes() == value.numpy().tobytes(), name
+    assert len(model.batteries) == len(expected.batteries)
+    for battery, reference in zip(model.batteries, expected.batteries, strict=True):
+        assert type(battery) is type(reference) and battery.world_count == reference.world_count
+        for name, value in vars(reference).items():
+            if isinstance(value, wp.array):
+                assert getattr(battery, name).numpy().tobytes() == value.numpy().tobytes(), name
     assert len(model.actuators) == len(expected.actuators)
     for actuator, reference in zip(model.actuators, expected.actuators, strict=True):
         for name in ("indices", "pos_indices", "actuator_indices"):
             assert getattr(actuator, name).numpy().tolist() == getattr(reference, name).numpy().tolist(), name
         for part, wanted_part in (
             (actuator.drive, reference.drive),
+            (actuator.motor, reference.motor),
             *zip(actuator.input_processors, reference.input_processors),
         ):
             for name, value in vars(wanted_part).items():
