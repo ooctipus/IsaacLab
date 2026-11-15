@@ -59,10 +59,16 @@ class FeatherPGSSolver(NewtonSolver):
 
         FeatherPGS follows its contact rows as they grow, so its pipeline's buffers grow from demand
         (``growable_contacts``) instead of holding the resolved ``rigid_contact_max`` rows.
+
+        FeatherPGS gives a contact rows only where an endpoint responds to its impulses, so a contact between two
+        shapes that are each static or on a kinematic body changes no velocity and carries no force. The pipeline
+        makes no such pair (``include_static_kinematic_pairs=False``): its broad phase reads the bodies' kinematic
+        flags on the device at every pass, so a body made dynamic collides again on the next one.
         """
         kwargs["convex_collision"] = self.cfg.convex_collision
         kwargs["contact_export"] = self.cfg.contact_export
         kwargs["growable_contacts"] = True
+        kwargs["include_static_kinematic_pairs"] = False
         self.collision_pipeline = super().create_collision_pipeline(**kwargs)
         return self.collision_pipeline
 

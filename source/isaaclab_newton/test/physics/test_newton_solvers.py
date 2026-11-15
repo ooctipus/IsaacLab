@@ -543,7 +543,8 @@ def test_feather_pgs_resets_only_model_worlds():
 
 
 def test_feather_pgs_collision_choices_reach_the_pipeline(monkeypatch):
-    """The configured collision choices and the growable-contacts opt-in reach the pipeline, which the solver keeps."""
+    """The configured collision choices, the growable-contacts opt-in and the drop of pairs of two immovable shapes
+    reach the pipeline, which the solver keeps."""
     received = {}
     pipeline = SimpleNamespace(get_collision_selection=lambda: {"method": "ordinary"})
 
@@ -565,6 +566,7 @@ def test_feather_pgs_collision_choices_reach_the_pipeline(monkeypatch):
         "convex_collision": "ordinary",
         "contact_export": "tiled",
         "growable_contacts": True,
+        "include_static_kinematic_pairs": False,
     }
     assert solver.path_selection() == {"solver": {"factor": "tree"}, "collision": {"method": "ordinary"}}
 
