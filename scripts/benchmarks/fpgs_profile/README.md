@@ -18,7 +18,10 @@ uv run --no-project /path/to/existing/isaaclab/.venv/bin/python3 \
 
 The runner preserves each scene's timestep, substeps, solver iterations, row
 budgets, collision storage and friction law. It checks finite state, sticky
-solver/collision capacity flags, and reset replay. Every scene gets its own
+solver/collision capacity flags, and reset replay. FeatherPGS's contact rows
+grow from demand: a collision pass that drops contacts while they settle is
+counted in every check (``contact_drops`` in the result) and printed, and one
+inside the timed window fails the scene. Every scene gets its own
 process and log; failures and timeouts remain visible. Warp caches are keyed by
 Newton source content. The first use can take longer because of compilation.
 

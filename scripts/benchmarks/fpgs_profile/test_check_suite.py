@@ -14,6 +14,7 @@ from check_suite import (
     GraphTimer,
     collision_work_snapshot,
     comparison,
+    contact_drop_account,
     physics_launches_per_step,
     scene_actions,
 )
@@ -55,6 +56,34 @@ class TestCollisionWorkSnapshot(unittest.TestCase):
         for raw, active in ((6, 2), (3, 3), (-1, 2)):
             with self.subTest(raw=raw, active=active), self.assertRaises(ValueError):
                 collision_work_snapshot(self.fixture(raw=raw, active=active))
+
+
+class TestContactDropAccount(unittest.TestCase):
+    CLEAN = {"contacts": False, "triangle": False}
+    DROPPED = {"contacts": True, "triangle": False}
+
+    def test_drops_while_the_rows_settle_are_counted(self):
+        account = contact_drop_account("warm", (2, 19176, 18), (0, 0, 0), self.DROPPED)
+        self.assertEqual(
+            account, {"passes": 2, "contacts": 19176, "last_pass": 18, "new_passes": 2, "new_contacts": 19176}
+        )
+        # The record is cumulative: a later check with no new pass adds nothing and stands.
+        later = contact_drop_account("after_run", (2, 19176, 18), (2, 19176, 18), self.CLEAN)
+        self.assertEqual((later["new_passes"], later["new_contacts"], later["passes"]), (0, 0, 2))
+
+    def test_a_drop_inside_the_timed_window_fails(self):
+        with self.assertRaisesRegex(RuntimeError, "1 collision pass.*37 contact.*inside the timed window"):
+            contact_drop_account("after_run", (3, 19213, 131), (2, 19176, 18), self.DROPPED)
+        # After the window (the reset check) it is counted again, not failed.
+        account = contact_drop_account("after_reset", (3, 19213, 131), (2, 19176, 18), self.DROPPED)
+        self.assertEqual((account["new_passes"], account["new_contacts"]), (1, 37))
+
+    def test_other_overflows_and_unrecorded_losses_fail(self):
+        with self.assertRaisesRegex(RuntimeError, "verification failed at warm: triangle"):
+            contact_drop_account("warm", (1, 5, 3), (0, 0, 0), {"contacts": True, "triangle": True})
+        # Rows that do not grow record no dropping pass: the flag alone is a loss.
+        with self.assertRaisesRegex(RuntimeError, "no collision pass recorded"):
+            contact_drop_account("warm", (0, 0, 0), (0, 0, 0), self.DROPPED)
 
 
 class TestSuiteScale(unittest.TestCase):

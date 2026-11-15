@@ -139,6 +139,49 @@ def collision_work_snapshot(narrow):
     }
 
 
+def contact_drop_account(label, drops, seen, collision_flags):
+    """Count the collision passes that dropped contacts since the last check and decide whether the run stands.
+
+    FeatherPGS's contact rows grow from demand. A pass whose contacts outrun the rows it holds drops the excess,
+    records it and flags it, and the rows grow before the next step. Such passes are counted at every check and
+    reported: a scene whose contacts arrive within its first steps drops some while the rows settle. A pass that
+    drops contacts inside the timed window fails the run: the rows had not grown to hold the demand by then, and
+    the window timed steps that lost contacts.
+
+    Args:
+        label: The check: ``reset``, ``warm``, ``after_run`` (the end of the timed window) or ``after_reset``.
+        drops: ``(passes, contacts, last_pass)`` of the collision pipeline's drop record now.
+        seen: ``(passes, contacts, last_pass)`` of the record at the previous check, zeros before the first.
+        collision_flags: The narrow phase's capacity flags raised since the previous check, by name.
+
+    Returns:
+        The record's totals and what this check adds to them (``new_passes``, ``new_contacts``).
+
+    Raises:
+        RuntimeError: If another buffer overflowed, if contacts were lost that no recorded pass accounts for (rows
+            that do not grow), or if a pass dropped contacts inside the timed window.
+    """
+    passes, contacts, last_pass = drops
+    new_passes, new_contacts = passes - seen[0], contacts - seen[1]
+    others = sorted(name for name, flagged in collision_flags.items() if flagged and name != "contacts")
+    if others:
+        raise RuntimeError(f"Narrow-phase buffer verification failed at {label}: {', '.join(others)}")
+    if collision_flags.get("contacts") and new_passes <= 0:
+        raise RuntimeError(f"Contacts were lost at {label} and no collision pass recorded dropping them")
+    if new_passes > 0 and label == "after_run":
+        raise RuntimeError(
+            f"{new_passes} collision pass(es) dropped {new_contacts} contact(s) inside the timed window: the contact"
+            " rows had not grown to hold the demand"
+        )
+    return {
+        "passes": passes,
+        "contacts": contacts,
+        "last_pass": last_pass,
+        "new_passes": new_passes,
+        "new_contacts": new_contacts,
+    }
+
+
 @functools.cache
 def scene_module(path):
     """Import a file of the Isaac Lab tree that is not in a package, such as a demo."""
@@ -249,6 +292,7 @@ def worker(job_path):
                 setattr(cfg.sim.physics.collision_cfg, key, value)
         cfg.validate()
         launch_args = {"device": "cuda:0", "headless": True, "visualizer": None, "visualizer_explicit": True}
+        dropped = [(0, 0, 0)]  # the collision pipeline's drop record at the last check
 
         def check(label, env):
             backend = env.unwrapped.sim.backend_manager.backend
@@ -293,12 +337,27 @@ def worker(job_path):
             if not narrow.verify_buffers:
                 raise RuntimeError("Collision buffer checking is disabled")
             solver.check_constraint_capacity()
-            narrow.check_buffer_capacity()
-            flags = {"solver": solver.constraint_capacity_status(), "collision": narrow.buffer_capacity_status()}
-            if any(any(group.values()) for group in flags.values()):
+            # Each check reads the flags raised since the last one and acknowledges them.
+            flags = {
+                "solver": solver.constraint_capacity_status(),
+                "collision": narrow.buffer_capacity_status(clear=True),
+            }
+            if any(flags["solver"].values()):
                 raise RuntimeError(f"Capacity overflow at {label}: {flags}")
+            record = backend.collision_pipeline.contact_drops()
+            drops = (int(record.passes), int(record.contacts), int(record.last_pass))
+            account = contact_drop_account(label, drops, dropped[0], flags["collision"])
+            dropped[0] = drops
+            if account["new_passes"]:
+                print(
+                    f"[check_suite] {label}: {account['new_passes']} collision pass(es) dropped"
+                    f" {account['new_contacts']} contact(s) for want of rows before the rows grew"
+                    f" ({account['passes']} pass(es), {account['contacts']} contact(s) so far)",
+                    flush=True,
+                )
             return common | {
                 "capacity_flags": flags,
+                "contact_drops": account,
                 "collision_work": collision_work_snapshot(narrow),
                 "selection": backend.solver_ops.path_selection(),
                 "pgs_iterations": int(solver.options.pgs_iterations),
