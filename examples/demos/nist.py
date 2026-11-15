@@ -17,6 +17,7 @@ and the robot at home. There is no reset bank or grasp-state initialization.
 The default RTX view uses a physical ground plane without a backdrop.
 Use --num_envs to run independent boards in parallel, each resetting on completion or timeout.
 Physics remains at 100 Hz and control at 25 Hz.
+The policy was trained on MJWarp, the default; --physics feather_pgs runs the same scene on FeatherPGS.
 Use --visualizer none --max_steps 1 for a headless smoke test.
 """
 
@@ -27,7 +28,7 @@ import random
 from typing import NamedTuple
 
 import torch
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg, NewtonCollisionPipelineCfg
+from isaaclab_newton.physics import FeatherPGSSolverCfg, MJWarpSolverCfg, NewtonCfg, NewtonCollisionPipelineCfg
 from isaaclab_newton.sim.schemas import (
     MujocoRigidBodyCfg,
     NewtonArticulationCfg,
@@ -55,6 +56,8 @@ from isaaclab.sim.spawners.materials import UsdPhysicsRigidBodyMaterialCfg
 from isaaclab.utils import math as math_utils
 from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR, retrieve_file_path
 from isaaclab.utils.configclass import configclass
+
+from isaaclab_tasks.utils import PresetCfg, resolve_presets
 
 
 class Assembly(NamedTuple):
@@ -450,32 +453,50 @@ class NistSceneCfg(InteractiveSceneCfg):
 
 
 @configclass
+class NistPhysicsCfg(PresetCfg):
+    """Newton solvers of the demo: MJWarp, which the policy was trained on, and FeatherPGS."""
+
+    default = NewtonCfg(
+        num_substeps=8,
+        use_cuda_graph=True,
+        solver_cfg=MJWarpSolverCfg(
+            solver="newton",
+            integrator="implicitfast",
+            njmax=3200,
+            nconmax=2400,
+            impratio=1.0,
+            cone="pyramidal",
+            update_data_interval=2,
+            ls_parallel=False,
+            use_mujoco_contacts=False,
+        ),
+        collision_cfg=NewtonCollisionPipelineCfg(
+            broad_phase="sap", max_triangle_pairs=1_000_000, rigid_contact_max=2400
+        ),
+    )
+    # FeatherPGS grows its contact rows from demand; its triangle pairs are sized with the scene below. Its contacts
+    # are rigid: the spin damping stands in for the rolling loss of MJWarp's soft ground, without which round parts
+    # roll out of the workspace.
+    feather_pgs = NewtonCfg(
+        num_substeps=8,
+        use_cuda_graph=True,
+        solver_cfg=FeatherPGSSolverCfg(
+            angular_damping=1.0,
+            enable_joint_limits=True,
+            joint_limit_activation_gap=0.1,
+            dense_max_constraints=384,
+            mf_max_constraints=4096,
+        ),
+        collision_cfg=NewtonCollisionPipelineCfg(broad_phase="sap"),
+    )
+
+
+@configclass
 class NistEnvCfg(ManagerBasedRLEnvCfg):
     """Manager-based configuration for the ten-part NIST demo."""
 
     scene: NistSceneCfg = NistSceneCfg()
-    sim: sim_utils.SimulationCfg = sim_utils.SimulationCfg(
-        dt=0.01,
-        render_interval=2,
-        physics=NewtonCfg(
-            num_substeps=8,
-            use_cuda_graph=True,
-            solver_cfg=MJWarpSolverCfg(
-                solver="newton",
-                integrator="implicitfast",
-                njmax=3200,
-                nconmax=2400,
-                impratio=1.0,
-                cone="pyramidal",
-                update_data_interval=2,
-                ls_parallel=False,
-                use_mujoco_contacts=False,
-            ),
-            collision_cfg=NewtonCollisionPipelineCfg(
-                broad_phase="sap", max_triangle_pairs=1_000_000, rigid_contact_max=2400
-            ),
-        ),
-    )
+    sim: sim_utils.SimulationCfg = sim_utils.SimulationCfg(dt=0.01, render_interval=2, physics=NistPhysicsCfg())
     actions: Actions = Actions()
     observations = {"policy": RobotObservations(), "slots": SlotObservations()}
     events = {
@@ -510,8 +531,12 @@ class NistEnvCfg(ManagerBasedRLEnvCfg):
         self.assemblies = assemblies
         self.observations["slots"].geometry.params["assemblies"] = assemblies
         self.events["reset_parts"].params["assemblies"] = assemblies
-        self.sim.physics.collision_cfg.max_triangle_pairs = max(1_000_000, scene.num_envs * 50_000)
-        self.sim.physics.collision_cfg.rigid_contact_max = scene.num_envs * 2400
+        mjwarp_collision = self.sim.physics.default.collision_cfg
+        mjwarp_collision.max_triangle_pairs = max(1_000_000, scene.num_envs * 50_000)
+        mjwarp_collision.rigid_contact_max = scene.num_envs * 2400
+        # Measured under FeatherPGS: up to 9,900 triangle pairs and 10,900 reduction candidates a world, which the
+        # pipeline's own estimate (9,600 a world) does not hold.
+        self.sim.physics.feather_pgs.collision_cfg.max_triangle_pairs = max(1_000_000, scene.num_envs * 16_384)
         board = scene.nistboard.init_state
         board_pos, board_quat = torch.tensor(board.pos), torch.tensor(board.rot)
         for socket, part in {part.socket: part for part in assemblies}.items():
@@ -570,6 +595,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--num_envs", type=int, default=1, help="Independent boards simulated in parallel.")
     parser.add_argument("--max_steps", type=int, default=-1, help="Stop after this many steps; negative runs forever.")
+    parser.add_argument(
+        "--physics", default="newton_mjwarp", choices=["newton_mjwarp", "feather_pgs"], help="Newton solver."
+    )
     add_launcher_args(parser)
     parser.set_defaults(visualizer=["newton_rtx"])
     args = parser.parse_args()
@@ -582,9 +610,11 @@ def main() -> None:
         map_location=args.device,
     ).eval()
     cfg = NistEnvCfg(scene=NistSceneCfg(num_envs=args.num_envs))
+    cfg.sim.physics = resolve_presets(cfg.sim.physics, (args.physics,))
     cfg.sim.device = args.device
     print("Assets:", ", ".join(part.name for part in cfg.assemblies), flush=True)
-    with launch_simulation(cfg=cfg, launcher_args=args) as physics:
+    # The solver is selected above; forwarding --physics would replace it with a backend's defaults.
+    with launch_simulation(cfg=cfg, launcher_args=vars(args) | {"physics": None}) as physics:
         cfg.sim.physics = physics
         env = ManagerBasedRLEnv(cfg)
         try:
