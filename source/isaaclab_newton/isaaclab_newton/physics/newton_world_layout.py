@@ -29,7 +29,7 @@ import torch
 import warp as wp
 from newton import Model, ModelBuilder
 from newton.geometry import DeformableVisualMesh
-from newton.utils import combine_independent_coloring_plan, place_copies
+from newton.utils import combine_world_colorings, place_copies
 
 from isaaclab.physics import PhysicsCfg
 from isaaclab.utils import configclass
@@ -698,8 +698,9 @@ def _expand_coloring(model: Model, domains: dict[Any, _Domain], seed_world: np.n
     """Combine every world's coloring into the particle and body color groups.
 
     Each world keeps its prototype's coloring (the seed coloring restricted to its seed world); the worlds' groups are
-    paired with :meth:`newton.ModelBuilder.replicate`'s balancing. The result is a valid coloring, but not the one a
-    coloring pass over all worlds at once (as solvers that color the builder run before finalize) would choose.
+    combined by :func:`newton.utils.combine_world_colorings`, as :meth:`newton.ModelBuilder.replicate` combines them.
+    The result is a valid coloring, but not the one a coloring pass over all worlds at once (as solvers that color the
+    builder run before finalize) would choose.
     """
     for kind, frequency in (("particle", _FREQUENCY.PARTICLE), ("body", _FREQUENCY.BODY)):
         groups = getattr(model, f"{kind}_color_groups")
@@ -709,19 +710,13 @@ def _expand_coloring(model: Model, domains: dict[Any, _Domain], seed_world: np.n
         host = [group.numpy().astype(np.int64) for group in groups]
         shared = [group[rows.world[group] < 0] for group in host]
         shared = [np.where(group >= rows.seed_start[-1], group + rows.tail_shift, group) for group in shared]
-        plan = [(len(group), [(group, None)]) for group in shared if len(group)]
         local = [
             [group[rows.world[group] == seed] - rows.seed_start[seed] for group in host]
             for seed in range(len(rows.seed_start) - 1)
         ]
         local = [[group for group in seed_groups if len(group)] for seed_groups in local]
-        for world, seed in enumerate(seed_world.tolist()):
-            start = int(rows.start[world])
-            plan = combine_independent_coloring_plan(plan, [(len(group), [(group, start)]) for group in local[seed]])
-        merged = [
-            np.concatenate([group if offset is None else group + offset for group, offset in chunks])
-            for _, chunks in plan
-        ]
+        copies = ((local[seed], int(rows.start[world])) for world, seed in enumerate(seed_world.tolist()))
+        merged = combine_world_colorings([group for group in shared if len(group)], copies)
         colors = np.empty(rows.total, dtype=np.int64)
         for color, group in enumerate(merged):
             colors[group] = color
