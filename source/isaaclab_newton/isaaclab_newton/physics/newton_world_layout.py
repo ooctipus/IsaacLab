@@ -717,6 +717,7 @@ def _expand(model: Model, layout: NewtonWorldLayout, builder: ModelBuilder) -> N
     _expand_coloring(model, domains, seed_world, device)
 
     # Derived from the expanded rows as finalize derives them.
+    model.build_soft_mesh_adjacency()
     if model.particle_count > 1 and model.particle_max_radius > 0.0 and model.particle_grid is None:
         with wp.ScopedDevice(device):
             model.particle_grid = wp.HashGrid(128, 128, 128)
