@@ -16,10 +16,12 @@ world is placed by its transform with the arithmetic :meth:`newton.ModelBuilder.
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+import torch
 import warp as wp
 from newton import JointType, Model, ModelBuilder
 from newton._src.core.host_transform import transform_inverse_rows, transform_multiply_rows
@@ -159,9 +161,17 @@ class _Domain:
     row_world: np.ndarray
     """Cloned world of each expanded row (``-1`` for shared rows)."""
 
+    gather_device: dict[Any, torch.Tensor] = field(default_factory=dict)
+    """:attr:`gather` on each device it was needed on."""
+
     @property
     def tail_shift(self) -> int:
         return self.total - self.seed_total
+
+    def gather_on(self, device: torch.device) -> torch.Tensor:
+        if device not in self.gather_device:
+            self.gather_device[device] = torch.as_tensor(self.gather, device=device)
+        return self.gather_device[device]
 
 
 def _get(model: Model, name: str) -> Any:
@@ -181,6 +191,30 @@ def _set(model: Model, name: str, value: Any) -> None:
 
 def _host(value: Any) -> np.ndarray:
     return value.numpy() if isinstance(value, wp.array) else np.asarray(value)
+
+
+_DEVICE_GATHER_TYPES = {
+    np.dtype(t) for t in (np.float16, np.float32, np.float64, np.int8, np.int16, np.int32, np.int64, np.uint8, np.bool_)
+}
+"""Element types gathered on the array's device; others (unsigned wide integers, structs) are gathered on the host."""
+
+
+def _gather_on_device(value: wp.array, rows: _Domain, width: int) -> wp.array | None:
+    """Gather a Warp array's rows on its device into a new array, or ``None`` when its type is gathered on the host."""
+    scalar = getattr(value.dtype, "_wp_scalar_type_", value.dtype)
+    if wp.types.type_is_struct(value.dtype) or np.dtype(wp.dtype_to_numpy(scalar)) not in _DEVICE_GATHER_TYPES:
+        return None
+    seed = wp.to_torch(value, requires_grad=False)
+    shape = seed.shape
+    if shape[0] == rows.seed_total * width and width > 1:
+        seed = seed.reshape(rows.seed_total, width, *shape[1:])
+    elif shape[0] != rows.seed_total:
+        return None
+    total = rows.total * shape[0] // rows.seed_total
+    out = wp.empty((total, *value.shape[1:]), dtype=value.dtype, device=value.device, requires_grad=value.requires_grad)
+    target = wp.to_torch(out, requires_grad=False).reshape(rows.total, *seed.shape[1:])
+    torch.index_select(seed, 0, rows.gather_on(seed.device), out=target)
+    return out
 
 
 def _like(value: Any, data: np.ndarray, device: Any) -> Any:
@@ -501,6 +535,10 @@ def _expand_rows(
     if rows.seed_total == 0:
         return None
     references = Model._normalize_attribute_reference(spec.references)
+    if references is None and isinstance(value, wp.array) and name not in _PLACED and name not in _KIND_REFERENCES:
+        gathered = _gather_on_device(value, rows, spec.row_width)
+        if gathered is not None:
+            return gathered
     if isinstance(value, list) and references is None:
         if len(value) != rows.seed_total:
             raise ValueError(f"List attribute {name!r} does not have one value per row.")
@@ -539,6 +577,37 @@ def _expand_rows(
     return full
 
 
+def _expand_all_rows(
+    model: Model,
+    specs: dict[str, Model.AttributeSpec],
+    domains: dict[Any, _Domain],
+    layout: NewtonWorldLayout,
+    arrays: dict[str, np.ndarray],
+    containers: dict[str, Any],
+) -> None:
+    """Expand every row and world attribute in place; collect the attributes :func:`_place` moves in ``arrays``."""
+    device = model.device
+    for name, spec in specs.items():
+        frequency = spec.frequency
+        if frequency == _FREQUENCY.WORLD:
+            _expand_world_values(model, name, layout.seed_world, device)
+            continue
+        if frequency not in domains or spec.compaction_policy in ("passthrough", "color_groups"):
+            continue
+        value = _get(model, name)
+        if value is None:
+            continue
+        full = _expand_rows(model, name, spec, value, domains, layout)
+        if full is None:
+            continue
+        if name in _PLACED:
+            arrays[name] = np.array(full, dtype=np.float32)
+            arrays["_seed_" + name] = np.asarray(_host(value)[: domains[frequency].seed_total], dtype=np.float32)
+            containers[name] = value
+        else:
+            _set(model, name, full if isinstance(full, (list, wp.array)) else _like(value, full, device))
+
+
 def _expand(model: Model, layout: NewtonWorldLayout, builder: ModelBuilder) -> None:
     """Expand a finalized seed model in place to every cloned world of ``layout``."""
     device = model.device
@@ -557,28 +626,13 @@ def _expand(model: Model, layout: NewtonWorldLayout, builder: ModelBuilder) -> N
     worlds = _seed_worlds(model, specs, counts)
     domains = {frequency: _domain(worlds[frequency], seed_world, frequency) for frequency in counts}
 
-    # Rows: gather each attribute from its seed world and offset the entity indices it holds.
+    # Rows: gather each attribute from its seed world and offset the entity indices it holds. Device gathers run on
+    # Warp's stream, ordered after finalize and before the kernels that read the expanded model.
     arrays: dict[str, np.ndarray] = {}
     containers: dict[str, Any] = {}
-    for name, spec in specs.items():
-        frequency = spec.frequency
-        if frequency == _FREQUENCY.WORLD:
-            _expand_world_values(model, name, seed_world, device)
-            continue
-        if frequency not in domains or spec.compaction_policy in ("passthrough", "color_groups"):
-            continue
-        value = _get(model, name)
-        if value is None:
-            continue
-        full = _expand_rows(model, name, spec, value, domains, layout)
-        if full is None:
-            continue
-        if name in _PLACED:
-            arrays[name] = np.array(full, dtype=np.float32)
-            arrays["_seed_" + name] = np.asarray(_host(value)[: domains[frequency].seed_total], dtype=np.float32)
-            containers[name] = value
-        else:
-            _set(model, name, full if isinstance(full, list) else _like(value, full, device))
+    stream = torch.cuda.stream(wp.stream_to_torch(device)) if device.is_cuda else contextlib.nullcontext()
+    with stream:
+        _expand_all_rows(model, specs, domains, layout, arrays, containers)
     _place(arrays, domains, model, layout)
     for name, value in containers.items():
         _set(model, name, _like(value, arrays[name], device))
