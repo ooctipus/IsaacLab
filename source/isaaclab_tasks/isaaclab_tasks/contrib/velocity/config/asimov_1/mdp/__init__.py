@@ -3,10 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Opt-in example of a custom Newton coupled solver.
-
-Import :mod:`isaaclab_contrib.custom_coupling.tasks` to register the example task.
-"""
+"""Asimov-1-specific MDP terms."""
 
 from isaaclab.utils.module import lazy_export
 
