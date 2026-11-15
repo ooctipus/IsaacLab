@@ -384,6 +384,29 @@ def test_retrieve_file_path_retries_incomplete_tree(asset_cache, monkeypatch, fa
     assert json.loads(Path(str(mirrored) + assets_utils._MIRROR_FINGERPRINT_SUFFIX).read_text()) == entries[_REMOTE_URL]
 
 
+def test_retrieve_file_path_reuses_copies_of_an_unchanged_tree(asset_cache, monkeypatch):
+    """Retrieving an unchanged tree again reuses its copies; a changed dependency gets new ones."""
+    from pxr import Usd
+
+    # a local layer referencing a remote one is copied, so the reference can name the downloaded file
+    scene = asset_cache / "scene.usda"
+    scene.write_text(f"#usda 1.0\n(subLayers = [@{_REMOTE_URL}@])\n")
+    revision = {"hash": "abc123", "version": "", "size": 32, "modified_time": "2026-07-01 10:00:00"}
+    payloads = {_REMOTE_URL: '#usda 1.0\ndef Xform "old" {}\n'}
+    _serve(monkeypatch, {_REMOTE_URL: revision})
+    monkeypatch.setattr(assets_utils, "_remote_copy", lambda url, target: Path(target).write_text(payloads[url]))
+
+    first = assets_utils.retrieve_file_path(str(scene))
+    assert assets_utils.retrieve_file_path(str(scene)) == first
+    assert len(list(asset_cache.glob("isaaclab_usd_*/"))) == 1
+
+    payloads[_REMOTE_URL] = '#usda 1.0\ndef Xform "new" {}\n'
+    changed = assets_utils.retrieve_file_path(str(scene), force_download=True)
+    assert changed != first
+    assert Usd.Stage.Open(changed).GetPrimAtPath("/new").IsValid()
+    assert len(list(asset_cache.glob("isaaclab_usd_*/"))) == 2
+
+
 class _QuietHandler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, format, *args):
         pass

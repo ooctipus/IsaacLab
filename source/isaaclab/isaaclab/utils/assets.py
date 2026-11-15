@@ -16,6 +16,7 @@ For more information, please check information on `Omniverse Nucleus`_.
 import asyncio
 import contextlib
 import functools
+import hashlib
 import io
 import json
 import logging
@@ -300,6 +301,12 @@ _ANNOUNCED_MIRRORS: set[str] = set()
 _ASSET_SOURCES: dict[str, tuple[str, str]] = {}
 """Original source and download directory of each managed copy."""
 
+_COPIES_COMPLETE = ".isaaclab-complete"
+"""Marker inside a directory of resolved USD copies, written once every layer of the tree is exported.
+
+A complete directory is never written again: other processes may hold its layers memory-mapped.
+"""
+
 
 def _mirror_path(url: str, download_dir: str) -> str:
     """Local path a remote ``url`` mirrors to under ``download_dir``, or ``""`` if not a URL.
@@ -495,6 +502,8 @@ def retrieve_file_path(path: str, download_dir: str | None = None, force_downloa
 
     USD layers are localized in the bound resolver context without modifying authored files or
     raw downloads. Each retrieval resolves dependencies afresh while reusing downloaded files.
+    The resolved copies are stored under a directory named by what determines them -- each layer's
+    source, contents and resolved references -- so retrieving an unchanged tree again reuses them.
     Unresolved references retain their anchors; USD decides which the selected composition requires.
     MDL modules, UDIM textures, and USDZ contents keep their native loader's dependency handling.
     Localization does not validate composition or rendering readiness.
@@ -528,7 +537,11 @@ def retrieve_file_path(path: str, download_dir: str | None = None, force_downloa
     if force_download:
         _REMOTE_FINGERPRINTS.pop(root, None)
     localized = {}
-    copy_dir = os.path.join(download_dir, f"isaaclab_usd_{uuid.uuid4().hex}")
+    # Copies reference each other inside a placeholder directory until the whole tree is known; the directory they are
+    # exported to is named by everything that determines them, so an unchanged tree finds the copies already there.
+    pending = os.path.join(download_dir, "isaaclab_usd_pending")
+    tree = hashlib.blake2b(digest_size=16)
+    exports = []
 
     def localize(source: str) -> str:
         if source in localized:
@@ -539,14 +552,18 @@ def retrieve_file_path(path: str, download_dir: str | None = None, force_downloa
             suffix = os.path.splitext(local_path)[1].lower()
             if suffix in _USD_EXTENSIONS:
                 layer = Sdf.Layer.OpenAsAnonymous(local_path)
+                with open(local_path, "rb") as f:
+                    contents = hashlib.file_digest(f, "blake2b").digest()
 
         localized[source] = local_path
         if suffix not in _USD_EXTENSIONS:
             return local_path
 
         # Reserve before descending so shared children and cycles have one destination.
-        output = os.path.join(copy_dir, str(len(localized)), os.path.basename(local_path))
+        output = os.path.join(pending, str(len(localized)), os.path.basename(local_path))
         localized[source] = output
+        tree.update(f"{source}\0{local_path}\0".encode())
+        tree.update(contents)
         anchor = Ar.ResolvedPath(local_path)
         changed = False
 
@@ -575,14 +592,12 @@ def retrieve_file_path(path: str, download_dir: str | None = None, force_downloa
                 else:
                     resolved = dependency
             changed |= resolved != (_resolve_reference_url(local_path, ref) if remote else dependency)
+            tree.update(f"{ref}\0{resolved}\0".encode())
             return resolved
 
         UsdUtils.ModifyAssetPaths(layer, rewrite)
         if changed:
-            os.makedirs(os.path.dirname(output))
-            if not layer.Export(output):
-                raise RuntimeError(f"Unable to save resolved USD layer: {output}")
-            _ASSET_SOURCES[output] = (source, download_dir)
+            exports.append((source, output, layer))
         else:
             localized[source] = local_path
         return localized[source]
@@ -591,7 +606,25 @@ def retrieve_file_path(path: str, download_dir: str | None = None, force_downloa
 
     report_activity("Loading assets")
     try:
-        return localize(root)
+        result = localize(root)
+        copy_dir = os.path.join(download_dir, f"isaaclab_usd_{tree.hexdigest()}")
+
+        def place(path: str) -> str:
+            return copy_dir + path[len(pending) :] if path.startswith(pending + os.sep) else path
+
+        if exports:
+            with FileLock(copy_dir + ".lock"):
+                complete = os.path.join(copy_dir, _COPIES_COMPLETE)
+                if not os.path.isfile(complete):
+                    for _, output, layer in exports:
+                        UsdUtils.ModifyAssetPaths(layer, place)
+                        os.makedirs(os.path.dirname(place(output)), exist_ok=True)
+                        if not layer.Export(place(output)):
+                            raise RuntimeError(f"Unable to save resolved USD layer: {place(output)}")
+                    open(complete, "w").close()
+            for source, output, _ in exports:
+                _ASSET_SOURCES[place(output)] = (source, download_dir)
+        return place(result)
     finally:
         report_activity(None)
 
