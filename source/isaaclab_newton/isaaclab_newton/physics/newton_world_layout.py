@@ -37,12 +37,8 @@ if TYPE_CHECKING:
 _FREQUENCY = Model.AttributeFrequency
 _IDENTITY = np.asarray((0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0), dtype=np.float32)
 
-_BUILTIN_COUNTS = {
-    frequency: name
-    for frequency, name in Model._ATTRIBUTE_FREQUENCY_COUNT_ATTRS.items()
-    if frequency not in (_FREQUENCY.WORLD, _FREQUENCY.CONTACT, _FREQUENCY.CONTACT_RIGID, _FREQUENCY.CONTACT_SOFT)
-}
-"""Built-in row domains and the model attribute holding each one's count."""
+_UNCOUNTED = (_FREQUENCY.ONCE, _FREQUENCY.WORLD, _FREQUENCY.CONTACT, _FREQUENCY.CONTACT_RIGID, _FREQUENCY.CONTACT_SOFT)
+"""Frequencies without entity rows: a single value, the worlds themselves, and the contact capacities."""
 
 _TRN = SolverMuJoCo.TrnType
 _KIND_REFERENCES = {
@@ -240,11 +236,12 @@ def _like(value: Any, data: np.ndarray, device: Any) -> Any:
     return data.tolist()
 
 
-def _count(model: Model, frequency: Any) -> int | None:
-    if isinstance(frequency, _FREQUENCY):
-        name = _BUILTIN_COUNTS.get(frequency)
-        return None if name is None else int(getattr(model, name))
-    return model.custom_frequency_counts.get(frequency)
+def _counts(model: Model, specs: dict[str, Model.AttributeSpec]) -> dict[Any, int]:
+    """Row count of every built-in, custom and derived frequency the model declares."""
+    frequencies = [frequency for frequency in _FREQUENCY if frequency not in _UNCOUNTED]
+    frequencies += [spec.frequency for spec in specs.values() if isinstance(spec.frequency, str)]
+    frequencies += list(model.custom_frequency_counts)
+    return {frequency: model.attribute_frequency_count(frequency) for frequency in dict.fromkeys(frequencies)}
 
 
 def _specs(model: Model) -> dict[str, Model.AttributeSpec]:
@@ -642,7 +639,7 @@ def _expand_all_rows(
         if frequency == _FREQUENCY.WORLD:
             _expand_world_values(model, name, layout.seed_world, device)
             continue
-        if frequency not in domains or spec.compaction_policy in ("passthrough", "color_groups"):
+        if frequency not in domains or spec.compaction_policy == "color_groups":
             continue
         value = _get(model, name)
         if value is None:
@@ -675,8 +672,7 @@ def _expand(model: Model, layout: NewtonWorldLayout, builder: ModelBuilder) -> N
     if any(len(_host(_get(model, key))) for key in transformed if _get(model, key) is not None):
         raise NotImplementedError(f"Custom attributes {transformed} remap their values with builder callbacks.")
     specs = _specs(model)
-    counts = {frequency: count for frequency in _BUILTIN_COUNTS if (count := _count(model, frequency)) is not None}
-    counts.update(model.custom_frequency_counts)
+    counts = _counts(model, specs)
     worlds = _seed_worlds(model, specs, counts)
     domains = {frequency: _domain(worlds[frequency], seed_world, frequency) for frequency in counts}
 
@@ -692,10 +688,8 @@ def _expand(model: Model, layout: NewtonWorldLayout, builder: ModelBuilder) -> N
         _set(model, name, _like(value, arrays[name], device))
 
     # Counts and per-world values.
-    for frequency, name in _BUILTIN_COUNTS.items():
-        if frequency in domains:
-            setattr(model, name, domains[frequency].total)
-    model.custom_frequency_counts = {key: domains[key].total for key in model.custom_frequency_counts}
+    for frequency, rows in domains.items():
+        model.set_attribute_frequency_count(frequency, rows.total)
     model.world_count = num_worlds
     equality = getattr(model, "mujoco", None)
     if equality is not None and hasattr(equality, "equality_constraint_count"):
@@ -712,7 +706,6 @@ def _expand(model: Model, layout: NewtonWorldLayout, builder: ModelBuilder) -> N
             model.custom_frequency_articulation[key] = owners
 
     _expand_shape_structures(model, domains, seed_world, device)
-    _expand_articulation_schedule(model, domains, seed_world, device)
     _expand_actuators(model, domains, seed_world, device)
     _expand_coloring(model, domains, seed_world, device)
 
@@ -804,41 +797,6 @@ def _expand_shape_structures(model: Model, domains: dict[Any, _Domain], seed_wor
             value = getattr(structure, name)
             if isinstance(value, wp.array) and len(value) == shapes.seed_total:
                 setattr(structure, name, _like(value, value.numpy()[shapes.gather], device))
-
-
-def _expand_articulation_schedule(
-    model: Model, domains: dict[Any, _Domain], seed_world: np.ndarray, device: Any
-) -> None:
-    """Expand the forward-kinematics schedules finalize derives per articulation."""
-    joints = domains[_FREQUENCY.JOINT]
-    order = getattr(model, "_fk_joint_order", None)
-    if order is not None:
-        full = order.numpy()[joints.gather]
-        model._fk_joint_order = _like(order, _offset(full, joints.row_world, joints, seed_world, by_row=False), device)
-    level_start = getattr(model, "_fk_articulation_level_start", None)
-    if level_start is None:
-        return
-    articulations = domains[_FREQUENCY.ARTICULATION]
-
-    def gather_ranges(starts: np.ndarray, owners: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """Rows of the ranges ``starts[owners]..starts[owners + 1]``, and each range's size."""
-        sizes = np.diff(starts)[owners]
-        firsts = np.concatenate(([0], np.cumsum(sizes)))[:-1]
-        return np.repeat(starts[:-1][owners], sizes) + np.arange(sizes.sum()) - np.repeat(firsts, sizes), sizes
-
-    level_rows, levels = gather_ranges(level_start.numpy().astype(np.int64), articulations.gather)
-    level_world = np.repeat(articulations.row_world, levels)
-    slot_rows, slots = gather_ranges(model._fk_level_joint_start.numpy().astype(np.int64), level_rows)
-    slot_world = np.repeat(level_world, slots)
-    level_joints = model._fk_level_joints.numpy()[slot_rows]
-    model._fk_articulation_level_start = _like(level_start, np.concatenate(([0], np.cumsum(levels))), device)
-    model._fk_level_joint_start = _like(model._fk_level_joint_start, np.concatenate(([0], np.cumsum(slots))), device)
-    model._fk_level_joints = _like(
-        model._fk_level_joints, _offset(level_joints, slot_world, joints, seed_world, by_row=False), device
-    )
-    model._fk_level_parent_pos = _like(
-        model._fk_level_parent_pos, model._fk_level_parent_pos.numpy()[slot_rows], device
-    )
 
 
 def _actuator_worlds(model: Model, worlds: dict[Any, np.ndarray], count: int) -> np.ndarray:
