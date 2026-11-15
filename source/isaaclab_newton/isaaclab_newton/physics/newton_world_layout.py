@@ -382,8 +382,7 @@ def _expand_rows(
     seed_world = layout.seed_world
     rows = domains[spec.frequency]
     if spec.compaction_policy == "world_start":
-        starts = np.concatenate((rows.start, [rows.total]))
-        return np.minimum(starts, rows.total) if name == "shape_world_start" else starts
+        return np.concatenate((rows.start, [rows.total]))
     references = spec.reference_domain
     if rows.seed_total == 0:
         if spec.compaction_policy == "start":
@@ -505,14 +504,6 @@ def _expand(model: Model, layout: NewtonWorldLayout, builder: ModelBuilder) -> N
     for frequency, rows in domains.items():
         model.set_attribute_frequency_count(frequency, rows.total)
     model.world_count = num_worlds
-    equality = getattr(model, "mujoco", None)
-    if equality is not None and hasattr(equality, "equality_constraint_count"):
-        frequency = "mujoco:equality_constraint"
-        if frequency in domains:
-            rows = domains[frequency]
-            equality.equality_constraint_count = rows.total
-            starts = np.concatenate((rows.start, [rows.total]))
-            equality.equality_constraint_world_start = _like(equality.equality_constraint_world_start, starts, device)
 
     _expand_shape_structures(model, domains, seed_world)
     _expand_actuators(model, domains, seed_world, device)
