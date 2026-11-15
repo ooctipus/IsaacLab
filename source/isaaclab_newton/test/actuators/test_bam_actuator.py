@@ -78,8 +78,29 @@ def make_stage(servo_usd: str, cfg: BamActuatorCfg | None = None) -> Usd.Stage:
     return stage
 
 
-def make_actuator(servo_usd: str, num_envs: int, device: str, **drive_overrides: float | int) -> SimpleNamespace:
-    """Build the fixture's BAM actuator with flat joint-state buffers the test writes into."""
+def expand_slots(actuator, copies: int) -> None:
+    """Copy every declared slot array of *actuator* and its components *copies* times and finalize it.
+
+    This is how a cloned scene's actuators grow from one environment: index arrays move to each copy's joints.
+    """
+    for part in (actuator, *actuator.components):
+        for name, spec in part.attribute_specs().items():
+            value = getattr(part, name)
+            if value is None:
+                continue
+            seed = value.numpy()
+            rows = [seed + copy * len(seed) if spec.references is not None else seed for copy in range(copies)]
+            setattr(part, name, wp.array(np.concatenate(rows), dtype=value.dtype, device=value.device))
+    actuator.finalize()
+
+
+def make_actuator(
+    servo_usd: str, num_envs: int, device: str, expanded: bool = False, **drive_overrides: float | int
+) -> SimpleNamespace:
+    """Build the fixture's BAM actuator with flat joint-state buffers the test writes into.
+
+    With *expanded*, the actuator is built for one environment and expanded to *num_envs* by its declared slot arrays.
+    """
     stage = make_stage(servo_usd)
     for joint_name in JOINT_NAMES:
         prim = stage.GetPrimAtPath(f"/Robot/servo_{joint_name}_actuator")
@@ -88,12 +109,14 @@ def make_actuator(servo_usd: str, num_envs: int, device: str, **drive_overrides:
     adapter = NewtonActuatorAdapter.from_usd(
         stage=stage,
         joint_names=JOINT_NAMES,
-        num_envs=num_envs,
+        num_envs=1 if expanded else num_envs,
         num_joints=len(JOINT_NAMES),
         device=device,
         articulation_prim_path="/Robot",
     )
     (actuator,) = adapter.actuators
+    if expanded:
+        expand_slots(actuator, num_envs)
     # The adapter creates drive states, so rebuild it once the stride is set, as the articulation path does.
     actuator.drive.env_dof_stride = len(JOINT_NAMES)
     adapter = NewtonActuatorAdapter(
@@ -260,10 +283,14 @@ Drive behavior.
 """
 
 
+@pytest.mark.parametrize("expanded", [False, True])
 @pytest.mark.parametrize("device", test_devices(DeviceScope.CUDA))
-def test_drive_matches_upstream_motor_and_friction_goldens(goldens, servo_usd, device):
-    """The USD-to-Warp path preserves upstream firmware, motor and m6 friction outputs."""
-    bam = make_actuator(servo_usd, num_envs=len(goldens["q"]) // 2, device=device)
+def test_drive_matches_upstream_motor_and_friction_goldens(goldens, servo_usd, device, expanded):
+    """The USD-to-Warp path preserves upstream firmware, motor and m6 friction outputs.
+
+    An actuator expanded from one environment by its declared slot arrays gives the same outputs.
+    """
+    bam = make_actuator(servo_usd, num_envs=len(goldens["q"]) // 2, device=device, expanded=expanded)
     # The previous applied torque is an independent golden input, not recomputed by the port.
     state_in, state_out = bam.actuator.state(), bam.actuator.state()
     state_in.drive_state.prev_applied_torque.assign(goldens["prev_tau"].astype(np.float32))
