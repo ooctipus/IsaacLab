@@ -10,11 +10,14 @@ import numpy as np
 import pytest
 import warp as wp
 from isaaclab_newton.physics import NewtonWorldLayout
+from newton._src.solvers.mujoco import ActuatorTarget, add_actuator_general
+from newton.solvers import SolverMuJoCo
 
 
 def _prototype(kind: int) -> newton.ModelBuilder:
     """A floating robot with a static post, or a fixed-base arm with particles."""
     builder = newton.ModelBuilder()
+    SolverMuJoCo.register_custom_attributes(builder)
     base = builder.add_link(xform=wp.transform((0.1, 0.0, 0.5), wp.quat_rpy(0.1, 0.0, 0.2)), label="Robot/base")
     builder.add_shape_box(body=base, hx=0.1, hy=0.2, hz=0.3, label="Robot/base/box")
     tip = builder.add_link(xform=wp.transform((0.1, 0.0, 1.0), wp.quat_identity()), label="Robot/tip")
@@ -30,10 +33,12 @@ def _prototype(kind: int) -> newton.ModelBuilder:
         builder.add_particle((0.6, 0.0, 0.2), (0.0, 0.0, 0.0), mass=1.0)
     hinge = builder.add_joint_revolute(parent=base, child=tip, axis=(0.0, 1.0, 0.0), label="Robot/hinge")
     builder.add_articulation([root, hinge], label="Robot")
+    add_actuator_general(builder, ActuatorTarget.joint(hinge), gear=(2.0,))
     return builder
 
 
 def _shared(builder: newton.ModelBuilder) -> None:
+    SolverMuJoCo.register_custom_attributes(builder)
     frequency = newton.Model.AttributeFrequency.WORLD
     builder.add_custom_attribute(
         newton.ModelBuilder.CustomAttribute("wind", float, frequency, default=0.5, namespace="t")
@@ -102,6 +107,9 @@ def test_seed_expands_to_the_replicated_model(layout_ids):
     )
     np.testing.assert_array_equal(model._shape_contact_pair_data.counts, expected._shape_contact_pair_data.counts)
     np.testing.assert_array_equal(model.t.wind.numpy(), expected.t.wind.numpy())
+    for name, value in vars(expected.mujoco).items():
+        if isinstance(value, wp.array):
+            assert getattr(model.mujoco, name).numpy().tobytes() == value.numpy().tobytes(), name
     actual, wanted = _arrays(model), _arrays(expected)
     assert actual.keys() == wanted.keys()
     for name, value in wanted.items():

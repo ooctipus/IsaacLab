@@ -27,6 +27,7 @@ from newton import JointType, Model, ModelBuilder
 from newton._src.core.host_transform import transform_inverse_rows, transform_multiply_rows
 from newton._src.sim.graph_coloring import combine_independent_coloring_plan
 from newton._src.sim.shape_contact_pairs import _ShapeContactPairs
+from newton.solvers import SolverMuJoCo
 
 from isaaclab.physics import PhysicsCfg
 from isaaclab.utils import configclass
@@ -44,13 +45,26 @@ _BUILTIN_COUNTS = {
 }
 """Built-in row domains and the model attribute holding each one's count."""
 
+_TRN = SolverMuJoCo.TrnType
 _KIND_REFERENCES = {
     "mujoco:equality_constraint_target": (
         "mujoco:equality_constraint_target_kind",
-        {1: _FREQUENCY.JOINT, 2: _FREQUENCY.CONSTRAINT_MIMIC},
+        {1: (_FREQUENCY.JOINT,), 2: (_FREQUENCY.CONSTRAINT_MIMIC,)},
+    ),
+    "mujoco:actuator_trnid": (
+        "mujoco:actuator_trntype",
+        {
+            _TRN.JOINT: (_FREQUENCY.JOINT_DOF, None),
+            _TRN.JOINT_IN_PARENT: (_FREQUENCY.JOINT_DOF, None),
+            _TRN.TENDON: ("mujoco:tendon", None),
+            _TRN.SITE: (_FREQUENCY.SHAPE, _FREQUENCY.SHAPE),
+            _TRN.BODY: (_FREQUENCY.BODY, None),
+            _TRN.SLIDERCRANK: (_FREQUENCY.SHAPE, _FREQUENCY.SHAPE),
+        },
     ),
 }
-"""Attributes whose rows reference the domain named by a kind attribute; Newton's builder remaps them by name too."""
+"""Attributes whose columns reference the domains a per-row kind attribute names; Newton's builder remaps them by name
+too (``None`` keeps a column)."""
 
 _ROW_POLICIES = ("start", "end", "range_start")
 """Compaction policies whose values index the referenced domain relative to the row's own world."""
@@ -561,10 +575,14 @@ def _expand_rows(
     elif name in _KIND_REFERENCES:
         kind_name, kinds = _KIND_REFERENCES[name]
         kind = _host(_get(model, kind_name))[rows.gather]
-        for code, target in kinds.items():
-            hit = kind == code
-            if target in domains and np.any(hit):
-                full[hit] = _offset(full[hit], rows.row_world[hit], domains[target], seed_world, False)
+        columns = full.reshape(len(full), -1)
+        for code, targets in kinds.items():
+            hit = kind == int(code)
+            for column, target in enumerate(targets):
+                if target is not None and np.any(hit):
+                    columns[hit, column] = _offset(
+                        columns[hit, column], rows.row_world[hit], domains[target], seed_world, False
+                    )
     elif references is not None:
         if references not in domains:
             raise ValueError(f"Attribute {name!r} references {references!r}, which has no row count.")
@@ -617,7 +635,11 @@ def _expand(model: Model, layout: NewtonWorldLayout, builder: ModelBuilder) -> N
         raise ValueError(f"The seed holds {model.world_count} worlds; the layout uses {seed_world.max() + 1}.")
     if model.tendon_count or model.muscle_count or model._deformable_visual_meshes or model.batteries:
         raise NotImplementedError("Expanding tendons, muscles, batteries or deformable visual meshes is not supported.")
-    transformed = [key for key, attr in builder.custom_attributes.items() if attr.reference_value_transformer]
+    transformed = [
+        key
+        for key, attr in builder.custom_attributes.items()
+        if attr.reference_value_transformer and key not in _KIND_REFERENCES
+    ]
     if any(len(_host(_get(model, key))) for key in transformed if _get(model, key) is not None):
         raise NotImplementedError(f"Custom attributes {transformed} remap their values with builder callbacks.")
     specs = _specs(model)
