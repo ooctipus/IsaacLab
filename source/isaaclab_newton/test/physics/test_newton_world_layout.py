@@ -18,7 +18,8 @@ from newton.solvers import SolverMuJoCo
 
 
 def _prototype(kind: int) -> newton.ModelBuilder:
-    """A floating robot with a static post, or a fixed-base arm with particles and a cloth."""
+    """A floating robot with a static post and a skin partly fixed to the world, or a fixed-base arm with particles and
+    a skinned cloth; both with a tendon, a legacy muscle, a MuJoCo actuator and a DC-motor actuator on a battery."""
     builder = newton.ModelBuilder()
     SolverMuJoCo.register_custom_attributes(builder)
     base = builder.add_link(xform=wp.transform((0.1, 0.0, 0.5), wp.quat_rpy(0.1, 0.0, 0.2)), label="Robot/base")
