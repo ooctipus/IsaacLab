@@ -553,8 +553,8 @@ def _expand_shape_structures(model: Model, domains: dict[Any, _Domain], seed_wor
     """Expand the shape structures finalize derives once per model: body shape lists, filter and contact pairs."""
     shapes = domains[_FREQUENCY.SHAPE]
     model.build_body_shapes()
-    pairs = model.shape_collision_filter_pairs_array()
-    if len(pairs):
+    if model.shape_collision_filter_pairs:
+        pairs = model.shape_collision_filter_pairs_array()
         codes = _expand_pair_codes((pairs[:, 0].astype(np.int64) << 32) | pairs[:, 1], shapes, seed_world)
         model.set_shape_collision_filter_pairs(np.stack((codes >> 32, codes & 0xFFFFFFFF), axis=1))
     model.build_shape_contact_pairs()
