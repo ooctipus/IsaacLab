@@ -40,6 +40,7 @@ change with fresh paired measurements. Nsight is only needed to explain a result
 Small changes below the threshold remain unqualified.
 
 `--task ID` can select scenes for follow-up, but omitting it always runs all 21.
+The NIST assembly demo (`--task nist`) declares its own world count and runs only when named.
 `--mode smoke` skips timing and shortens the observation window while retaining
 16,384 worlds. `--gpu` selects one idle GPU; `--timeout` limits each scene to 900
 seconds by default. Different GPUs have separate performance references.

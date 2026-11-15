@@ -443,6 +443,15 @@
         "NEWTON_NARROW_PHASE_CONVEX_CELLS": "0",
         "NEWTON_NARROW_PHASE_COHERENT_STATS": "0"
       }
+    },
+    {
+      "id": "nist",
+      "env_cfg": "examples/demos/nist.py:NistEnvCfg",
+      "policy": "{ISAACLAB_NUCLEUS_DIR}/PretrainedCheckpoints/rsl_rl/demo-alphaNIST.pt",
+      "worlds": 1024,
+      "solver_attrs": {},
+      "storage_at_16384_worlds": {},
+      "environment": {}
     }
   ]
 }

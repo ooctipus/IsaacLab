@@ -3,7 +3,10 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Check all 21 scenes at 16,384 worlds without a profiler or repeated setup."""
+"""Check all 21 scenes at 16,384 worlds without a profiler or repeated setup.
+
+A scene that declares its own world count, such as the NIST assembly demo, runs when it is named.
+"""
 
 from __future__ import annotations
 
@@ -407,7 +410,9 @@ def main():
     parser.add_argument(
         "--mode", choices=PRESETS, default="perf", help="Both modes retain 16,384 worlds; default: perf"
     )
-    parser.add_argument("--task", action="append", help="Scene ID; omit to check all 21")
+    parser.add_argument(
+        "--task", action="append", help="Scene ID; omit to check the 21 scenes that run at 16,384 worlds"
+    )
     parser.add_argument("--gpu", default="0", help="GPU index or UUID")
     parser.add_argument("--baseline", type=Path, help="Prior perf summary.json with the identical protocol")
     parser.add_argument("--timeout", type=int, default=900, help="Per-scene timeout in seconds (default: 900)")
@@ -425,6 +430,8 @@ def main():
         if set(args.task) - {s["id"] for s in scenes}:
             parser.error("Unknown scene ID")
         scenes = [s for s in scenes if s["id"] in args.task]
+    else:
+        scenes = [s for s in scenes if "worlds" not in s]
     gpu = subprocess.check_output(
         ["nvidia-smi", "-i", args.gpu, "--query-gpu=uuid,name,driver_version", "--format=csv,noheader"], text=True
     ).strip()
