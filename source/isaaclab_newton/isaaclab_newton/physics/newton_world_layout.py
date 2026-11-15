@@ -9,9 +9,13 @@ The clone plan already knows which prototype every world copies. The cloner ther
 shared world ``-1`` and one unplaced world per world prototype. Newton finalizes only that seed, so every per-entity
 derivation (collision data, SDF, meshes, inertia, custom attributes) runs once per prototype. :func:`build_model` then
 expands each seed array to the full scene by the plan's layout, driven by Newton's attribute metadata
-(:attr:`newton.Model.attribute_specs`): rows are gathered from their prototype's seed world, entity references are
-offset by the referencing world's start in the referenced domain, world ids and world starts are recomputed, and each
-world is placed by its transform with the arithmetic :meth:`newton.ModelBuilder.replicate` uses.
+(:attr:`newton.Model.attribute_specs` and the specs of the objects the model owns): each domain's rows take their
+world from :meth:`newton.Model.attribute_frequency_world`, rows are gathered from their prototype's seed world, entity
+references (also those whose domain depends on a row's kind) are offset by the referencing world's start in the
+referenced domain, labels take each world's prefix, world ids and world starts are recomputed, and each world is
+placed by its transform with :func:`newton.utils.place_copies`, the placement :meth:`newton.ModelBuilder.replicate`
+uses. Structures finalize derives once per model (body shape lists, contact pairs, coloring, adjacency, BVHs) are
+derived again for the expanded model.
 """
 
 from __future__ import annotations
