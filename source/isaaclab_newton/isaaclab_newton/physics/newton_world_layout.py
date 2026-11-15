@@ -513,11 +513,6 @@ def _expand(model: Model, layout: NewtonWorldLayout, builder: ModelBuilder) -> N
             equality.equality_constraint_count = rows.total
             starts = np.concatenate((rows.start, [rows.total]))
             equality.equality_constraint_world_start = _like(equality.equality_constraint_world_start, starts, device)
-    for key in list(model.custom_frequency_articulation):
-        # Owners of an empty frequency stay the empty array finalize made; others are the expanded attribute.
-        owners = _get(model, builder.custom_frequencies[key].articulation_owner_attribute)
-        if owners is not None:
-            model.custom_frequency_articulation[key] = owners
 
     _expand_shape_structures(model, domains, seed_world)
     _expand_actuators(model, domains, seed_world, device)
