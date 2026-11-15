@@ -34,6 +34,7 @@ def _prototype(kind: int) -> newton.ModelBuilder:
         )
         builder.add_particle((0.5, 0.0, 0.2), (0.0, 0.1, 0.0), mass=1.0)
         builder.add_particle((0.6, 0.0, 0.2), (0.0, 0.0, 0.0), mass=1.0)
+        first_tri = builder.tri_count
         builder.add_cloth_grid(
             pos=wp.vec3(0.0, 0.5, 0.4),
             rot=wp.quat_rpy(0.2, 0.0, 0.0),
@@ -44,6 +45,13 @@ def _prototype(kind: int) -> newton.ModelBuilder:
             cell_y=0.1,
             mass=0.1,
             add_springs=True,
+        )
+        builder.add_deformable_visual_mesh(
+            [(0.05, 0.5, 0.4), (0.15, 0.5, 0.4), (0.1, 0.55, 0.4)],
+            [0, 1, 2],
+            kind="triangle",
+            tri_range=(first_tri, builder.tri_count),
+            label="Cloth/skin",
         )
     hinge = builder.add_joint_revolute(parent=base, child=tip, axis=(0.0, 1.0, 0.0), label="Robot/hinge")
     builder.add_articulation([root, hinge], label="Robot")
@@ -59,6 +67,18 @@ def _prototype(kind: int) -> newton.ModelBuilder:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", newton.NewtonDeprecationWarning)
         builder.add_muscle([base, tip], [wp.vec3(), wp.vec3(0.0, 0.0, 0.1)], 1.0, 1.0, 1.0, 1.0, 0.0)
+    if kind == 0:
+        # A visual mesh on the base and on a plate fixed to the world, which collapsing makes world-fixed.
+        plate = builder.add_link(xform=wp.transform((1.0, 0.2, 0.0), wp.quat_identity()), label="Plate")
+        builder.add_articulation([builder.add_joint_fixed(parent=-1, child=plate, parent_xform=builder.body_q[plate])])
+        builder.add_deformable_visual_mesh(
+            [(0.1, 0.0, 0.5), (1.0, 0.2, 0.0), (1.1, 0.2, 0.0)],
+            [0, 1, 2],
+            kind="body",
+            parent=[base, plate, plate],
+            label="Robot/skin",
+        )
+        builder.collapse_fixed_joints()
     add_actuator_general(builder, ActuatorTarget.joint(hinge), gear=(2.0,))
     dof = builder.joint_qd_start[hinge]
     actuator = builder.add_actuator(
@@ -152,6 +172,25 @@ def test_seed_expands_to_the_replicated_model(layout_ids):
     for name, value in vars(expected.mujoco).items():
         if isinstance(value, wp.array):
             assert getattr(model.mujoco, name).numpy().tobytes() == value.numpy().tobytes(), name
+    assert len(model.deformable_visual_meshes) == len(expected.deformable_visual_meshes)
+    for mesh, reference in zip(model.deformable_visual_meshes, expected.deformable_visual_meshes, strict=True):
+        assert (mesh.kind, mesh.world, mesh.label, mesh.index) == (
+            reference.kind,
+            reference.world,
+            reference.label,
+            reference.index,
+        )
+        for name in ("parent", "weights", "local_offsets", "rest_vertices", "indices"):
+            value = getattr(reference, name)
+            assert (getattr(mesh, name) is None) == (value is None), name
+            if value is not None:
+                assert getattr(mesh, name).numpy().tobytes() == value.numpy().tobytes(), name
+    points = []
+    for built in (model, expected):
+        visuals = newton.geometry.DeformableVisuals(built)
+        visuals.update(built.state())
+        points.append(visuals.points.numpy())
+    assert points[0].tobytes() == points[1].tobytes()
     assert len(model.batteries) == len(expected.batteries)
     for battery, reference in zip(model.batteries, expected.batteries, strict=True):
         assert type(battery) is type(reference) and battery.world_count == reference.world_count

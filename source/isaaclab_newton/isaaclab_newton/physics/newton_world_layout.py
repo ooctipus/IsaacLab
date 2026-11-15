@@ -25,6 +25,7 @@ import torch
 import warp as wp
 from newton import Model, ModelBuilder
 from newton._src.sim.shape_contact_pairs import _ShapeContactPairs
+from newton.geometry import DeformableVisualMesh
 from newton.utils import combine_independent_coloring_plan, place_copies
 
 from isaaclab.physics import PhysicsCfg
@@ -479,8 +480,6 @@ def _expand(model: Model, layout: NewtonWorldLayout, builder: ModelBuilder) -> N
     num_worlds = len(seed_world)
     if model.world_count != int(seed_world.max(initial=-1)) + 1:
         raise ValueError(f"The seed holds {model.world_count} worlds; the layout uses {seed_world.max() + 1}.")
-    if model._deformable_visual_meshes:
-        raise NotImplementedError("Expanding deformable visual meshes is not supported.")
     specs = _specs(model)
     counts = _counts(model, specs)
     domains = {
@@ -520,6 +519,7 @@ def _expand(model: Model, layout: NewtonWorldLayout, builder: ModelBuilder) -> N
     _expand_shape_structures(model, domains, seed_world, device)
     _expand_actuators(model, domains, seed_world, device)
     _expand_batteries(model, domains, layout)
+    _expand_visual_meshes(model, domains, layout)
     _expand_coloring(model, domains, seed_world, device)
 
     # Derived from the expanded rows as finalize derives them.
@@ -677,6 +677,53 @@ def _expand_batteries(model: Model, domains: dict[Any, _Domain], layout: NewtonW
         }
         model.batteries[index] = type(battery)(**arrays, world_count=model.world_count)
         model.batteries[index].reset(model)
+
+
+def _expand_visual_meshes(model: Model, domains: dict[Any, _Domain], layout: NewtonWorldLayout) -> None:
+    """Copy every world's deformable visual meshes to the worlds of its prototype by their declared metadata.
+
+    A copy keeps its mesh's shared geometry; its vertices' parents move to the copy's world in the domain the mesh's
+    kind names, the body-local offsets of world-fixed vertices are placed by the world's transform, and its label
+    takes the world's prefix.
+    """
+    meshes = model.deformable_visual_meshes
+    if not meshes:
+        return
+    specs = DeformableVisualMesh.attribute_specs()
+    placement = {"local_offsets": specs["local_offsets"]}
+    targets = dict(specs["parent"].kind_references.targets)
+    rows = _domain(np.asarray([mesh.world for mesh in meshes], dtype=np.int64), layout.seed_world, "visual mesh")
+    labels = _labels([mesh.label for mesh in meshes], rows, layout, layout.seed_world)
+    copies = []
+    for index, (seed, world) in enumerate(zip(rows.gather.tolist(), rows.row_world.tolist(), strict=True)):
+        mesh = meshes[seed]
+        parent = mesh.parent.numpy()
+        (domain,) = targets[int(mesh.kind)]
+        moved = _offset(parent, np.full(len(parent), world), domains[domain], layout.seed_world, False)
+        local_offsets = mesh.local_offsets
+        if local_offsets is not None and world >= 0:
+            local = local_offsets.numpy().copy()
+            placed = place_copies(placement, {"local_offsets": local, "parent": parent}, layout.xforms[world])
+            if placed:
+                (row_targets, values) = placed["local_offsets"]
+                local[row_targets.reshape(-1)] = values.reshape(-1, 3)
+                local_offsets = _like(local_offsets, local, model.device)
+        copies.append(
+            DeformableVisualMesh(
+                mesh.kind,
+                mesh.rest_vertices,
+                mesh.indices,
+                _like(mesh.parent, moved.astype(np.int32), model.device),
+                weights=mesh.weights,
+                local_offsets=local_offsets,
+                uvs=mesh.uvs,
+                texture=mesh.texture,
+                world=world,
+                label=labels[index],
+                index=index,
+            )
+        )
+    model.deformable_visual_meshes = copies
 
 
 def _expand_coloring(model: Model, domains: dict[Any, _Domain], seed_world: np.ndarray, device: Any) -> None:
