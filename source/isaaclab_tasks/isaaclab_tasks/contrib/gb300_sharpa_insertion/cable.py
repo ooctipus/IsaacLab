@@ -384,7 +384,7 @@ def add_connectors(
     builder.add_articulation([joint], label=f"{env_root}/Fixtures/articulation")
     _assign_fixed_fixtures(builder, world_idx, env_root, fixtures)
     add_rack_colliders(builder, fixtures)
-    start, end = int(builder._curve_body_start[group]), int(builder._curve_body_end[group])
+    start, end = int(builder.curve_body_start[group]), int(builder.curve_body_end[group])
     matches = [
         body
         for body, (label, world) in enumerate(zip(builder.body_label, builder.body_world, strict=True))
@@ -468,7 +468,7 @@ def add_connectors(
                 label=f"{root}/{name}/{part.name}_visual",
             )
     _filter_embedded_rods(builder, head_body, latch_body, start)
-    for joint in range(int(builder._curve_joint_start[group]), int(builder._curve_joint_end[group])):
+    for joint in range(int(builder.curve_joint_start[group]), int(builder.curve_joint_end[group])):
         if builder.joint_type[joint] != newton.JointType.ROD:
             continue
         dof = int(builder.joint_qd_start[joint])

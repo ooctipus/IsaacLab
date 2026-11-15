@@ -102,7 +102,7 @@ class NewtonWorldLayout:
             builder: Seed builder.
         """
         labels = [*builder.surface_label, *builder.volume_label]
-        starts = [*builder._surface_particle_start, *builder._volume_particle_start]
+        starts = [*builder.surface_particle_start, *builder.volume_particle_start]
         if self.seed_world is None or not labels:
             return dict(zip(labels, starts, strict=True))
         world = np.asarray(builder.particle_world, dtype=np.int64)
