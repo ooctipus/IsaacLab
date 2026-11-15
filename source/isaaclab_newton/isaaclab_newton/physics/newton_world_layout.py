@@ -14,8 +14,9 @@ world from :meth:`newton.Model.attribute_frequency_world`, rows are gathered fro
 references (also those whose domain depends on a row's kind) are offset by the referencing world's start in the
 referenced domain, labels take each world's prefix, world ids and world starts are recomputed, and each world is
 placed by its transform with :func:`newton.utils.place_copies`, the placement :meth:`newton.ModelBuilder.replicate`
-uses. Structures finalize derives once per model (body shape lists, contact pairs, coloring, adjacency, BVHs) are
-derived again for the expanded model.
+uses. The objects the model owns (actuators and their components, batteries, deformable visual meshes) expand their
+declared arrays the same way. Structures finalize derives once per model (body shape lists, contact pairs, coloring,
+adjacency, BVHs) are derived again for the expanded model.
 """
 
 from __future__ import annotations
@@ -506,8 +507,9 @@ def _expand(model: Model, layout: NewtonWorldLayout, builder: ModelBuilder) -> N
     model.world_count = num_worlds
 
     _expand_shape_structures(model, domains, seed_world)
-    _expand_actuators(model, domains, seed_world, device)
-    _expand_batteries(model, domains, layout)
+    with stream:
+        _expand_actuators(model, domains, layout)
+        _expand_batteries(model, domains, layout)
     _expand_visual_meshes(model, domains, layout)
     _expand_coloring(model, domains, seed_world, device)
 
@@ -551,72 +553,82 @@ def _expand_shape_structures(model: Model, domains: dict[Any, _Domain], seed_wor
     model.take_shape_rows(shapes.gather)
 
 
-def _expand_actuators(model: Model, domains: dict[Any, _Domain], seed_world: np.ndarray, device: Any) -> None:
-    """Expand each actuator's rows (one per driven degree of freedom) to every world.
+def _object_frequency_world(
+    frequency: str, specs: dict[str, Model.AttributeSpec], values: dict[str, Any], domains: dict[Any, _Domain]
+) -> np.ndarray | None:
+    """Seed world of each row of an object's ``frequency``, or ``None`` while a domain it depends on is not laid out.
 
-    An actuator's rows are owned by the world of the degree of freedom they drive. Its index arrays index the model
-    arrays it reads and writes (named by its ``*_attr`` fields) and are offset like entity references; every other
-    per-row array of the actuator and its drive, clamping, motor and input processors is gathered.
+    Rows take their world from the frequency's world attribute, from an owner's start attribute, or from the rows the
+    frequency's first reference attribute indexes, as :meth:`newton.Model.attribute_frequency_world` resolves a model's.
+    """
+    own = [(name, spec) for name, spec in specs.items() if spec.frequency == frequency and values[name] is not None]
+    for name, spec in own:
+        if spec.reference_domain == _FREQUENCY.WORLD:
+            return _host(values[name]).astype(np.int64)
+    for name, spec in specs.items():
+        if spec.compaction_policy == "start" and spec.reference_domain == frequency:
+            owner = domains.get(spec.frequency)
+            return None if owner is None else np.repeat(owner.world, np.diff(_host(values[name])))
+    for name, spec in own:
+        if spec.reference_domain is not None:
+            target = domains.get(spec.reference_domain)
+            if target is None:
+                return None
+            rows = _host(values[name]).astype(np.int64)
+            return np.where(rows >= 0, target.world[np.maximum(rows, 0)], -1)
+    raise ValueError(f"No attribute declares the world of the rows of {frequency!r}.")
+
+
+def _expand_object(
+    model: Model,
+    specs: dict[str, Model.AttributeSpec],
+    values: dict[str, Any],
+    domains: dict[Any, _Domain],
+    layout: NewtonWorldLayout,
+    expanded: dict[tuple[int, Any], tuple[Any, Any]],
+) -> dict[str, Any]:
+    """Expand the declared arrays of an object the model owns to every world.
+
+    ``domains`` gains the object's own row domains. An array shared by several attributes with the same reference
+    domain stays shared: ``expanded`` maps each expanded seed array, by identity and reference domain, to the seed
+    array (kept alive so its identity stays unique) and its copy.
+    """
+    pending = list(dict.fromkeys(spec.frequency for spec in specs.values() if spec.frequency not in domains))
+    while pending:
+        worlds = {frequency: _object_frequency_world(frequency, specs, values, domains) for frequency in pending}
+        ready = [frequency for frequency, world in worlds.items() if world is not None]
+        if not ready:
+            raise ValueError(f"The worlds of the rows of {pending} depend on each other.")
+        for frequency in ready:
+            domains[frequency] = _domain(worlds[frequency], layout.seed_world, frequency)
+            pending.remove(frequency)
+    arrays = {}
+    for name, spec in specs.items():
+        value = values[name]
+        key = (id(value), spec.reference_domain)
+        if value is not None and key not in expanded:
+            full = _expand_rows(model, name, spec, value, domains, layout)
+            copy = value if full is None else full if isinstance(full, wp.array) else _like(value, full, model.device)
+            expanded[key] = (value, copy)
+        arrays[name] = None if value is None else expanded[key][1]
+    return arrays
+
+
+def _expand_actuators(model: Model, domains: dict[Any, _Domain], layout: NewtonWorldLayout) -> None:
+    """Expand every actuator's slots to every world by the declared metadata of the actuator and its components.
+
+    Each per-slot array of the actuator and its components is replaced by its expanded copy, and the actuator is
+    finalized again for its new slot count.
     """
     for actuator in model.actuators:
-        count = actuator.num_actuators
-        velocity = domains[model.get_attribute_frequency(actuator.state_vel_attr)]
-        rows = _domain(velocity.world[actuator.indices.numpy()], seed_world, "actuator rows")
-        index_domains = {
-            "indices": actuator.state_vel_attr,
-            "pos_indices": actuator.state_pos_attr,
-            "target_pos_indices": actuator.control_target_pos_attr,
-            "effort_indices": actuator.control_output_attr,
-        }
-        expanded: dict[int, wp.array] = {}
-
-        def gather(value: wp.array, target: _Domain | None) -> wp.array:
-            if id(value) not in expanded:
-                full = value.numpy()[rows.gather]
-                if target is not None:
-                    full = _offset(full, rows.row_world, target, seed_world, False).astype(full.dtype)
-                expanded[id(value)] = _like(value, full, device)
-            return expanded[id(value)]
-
-        for name, attr in index_domains.items():
-            value = getattr(actuator, name)
-            setattr(actuator, name, gather(value, domains[model.get_attribute_frequency(attr)]))
-        if actuator.actuator_indices is not None:
-            actuator.actuator_indices = gather(actuator.actuator_indices, domains[_FREQUENCY.ACTUATOR])
-        # A processor's joint parameters index joint_qd-shaped (``*_indices``) and joint_q-shaped (``*_pos_indices``)
-        # arrays.
-        for processor in actuator.input_processors:
-            for parameter in processor.JOINT_PARAMS:
-                for suffix, frequency in (("_indices", _FREQUENCY.JOINT_DOF), ("_pos_indices", _FREQUENCY.JOINT_COORD)):
-                    value = getattr(processor, parameter + suffix, None)
-                    if isinstance(value, wp.array):
-                        setattr(processor, parameter + suffix, gather(value, domains[frequency]))
-        seen: set[int] = set()
-        parts = [
-            actuator,
-            actuator.drive,
-            actuator.motor,
-            *(actuator.clamping or ()),
-            *actuator.input_processors,
-            actuator._effort_mode,
-        ]
-        for part in parts:
-            if part is None or id(part) in seen:
-                continue
-            seen.add(id(part))
-            for name, value in list(vars(part).items()):
-                if isinstance(value, wp.array) and value.ndim >= 1 and value.shape[0] == count:
-                    setattr(part, name, gather(value, None))
-                elif type(value) is int and value == count and name.endswith("num_actuators"):
-                    setattr(part, name, rows.total)
-        # Drives, input processors and motors allocate their working buffers and row indices for the actuator count,
-        # as the actuator's construction does. Clampings keep their shared tables: their finalize only loads them.
-        requires_grad = actuator.requires_grad
-        actuator.drive.finalize(device, rows.total)
-        for processor in actuator.input_processors:
-            processor.finalize(device, rows.total, requires_grad=requires_grad)
-        if actuator.motor is not None:
-            actuator.motor.finalize(device, rows.total, requires_grad=requires_grad)
+        local = dict(domains)
+        expanded: dict[tuple[int, Any], tuple[Any, Any]] = {}
+        for part in (actuator, *actuator.components):
+            specs = part.attribute_specs()
+            values = {name: getattr(part, name) for name in specs}
+            for name, value in _expand_object(model, specs, values, local, layout, expanded).items():
+                setattr(part, name, value)
+        actuator.finalize()
 
 
 def _expand_batteries(model: Model, domains: dict[Any, _Domain], layout: NewtonWorldLayout) -> None:
@@ -627,13 +639,7 @@ def _expand_batteries(model: Model, domains: dict[Any, _Domain], layout: NewtonW
     for index, battery in enumerate(model.batteries):
         specs = battery.attribute_specs()
         values = {name: getattr(battery, name) for name in specs}
-        rows = _domain(values["world"].numpy().astype(np.int64), layout.seed_world, "battery")
-        owned = np.repeat(rows.world, np.diff(values["actuator_start"].numpy()))
-        local = {**domains, "battery": rows, "battery_actuator": _domain(owned, layout.seed_world, "battery actuator")}
-        arrays = {
-            name: _like(value, _host(_expand_rows(model, name, specs[name], value, local, layout)), model.device)
-            for name, value in values.items()
-        }
+        arrays = _expand_object(model, specs, values, dict(domains), layout, {})
         model.batteries[index] = type(battery)(**arrays, world_count=model.world_count)
         model.batteries[index].reset(model)
 

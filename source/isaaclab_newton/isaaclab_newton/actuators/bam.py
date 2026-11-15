@@ -46,7 +46,7 @@ class DriveBam(DriveBase):
         "delay_seed",
     }
 
-    PER_DOF_PARAMS: ClassVar[tuple[str, ...]] = (
+    PARAMETERS: ClassVar[tuple[str, ...]] = (
         "kp_fw",
         "kp_scale",
         "kd_scale",
@@ -183,7 +183,7 @@ class DriveBam(DriveBase):
         Raises:
             ValueError: If names are unknown, coefficients are missing, or delays are invalid.
         """
-        unknown = set(args) - cls.SHARED_PARAMS - set(cls.PER_DOF_PARAMS)
+        unknown = set(args) - cls.SHARED_PARAMS - set(cls.PARAMETERS)
         if unknown:
             raise ValueError(f"Unknown BAM parameter(s): {', '.join(sorted(unknown))}")
         required = {"kt", "resistance", "error_gain", "max_pwm", "kp_fw", "vin", "friction_base"}
@@ -224,7 +224,7 @@ class DriveBam(DriveBase):
             "delay_seed": int(args.get("delay_seed", 0)),
         }
         # Zero disables optional friction terms and the firmware current limiter.
-        defaults = dict.fromkeys(cls.PER_DOF_PARAMS, 0.0)
+        defaults = dict.fromkeys(cls.PARAMETERS, 0.0)
         defaults.update(
             kp_scale=1.0,
             kd_scale=1.0,
@@ -233,7 +233,7 @@ class DriveBam(DriveBase):
             alpha=1.0,
             max_effort=float(args["vin"]) * float(args["kt"]) / float(args["resistance"]),
         )
-        for name in cls.PER_DOF_PARAMS:
+        for name in cls.PARAMETERS:
             resolved[name] = float(args.get(name, defaults[name]))
         return resolved
 
@@ -266,7 +266,7 @@ class DriveBam(DriveBase):
             delay_hold_prob: Probability of keeping the current lag instead of resampling it.
             delay_update_period: Physics steps between lag resamples. ``0`` resamples every step.
             delay_seed: Base seed of the lag and phase draws.
-            per_dof: One ``(N,)`` array per entry of :attr:`PER_DOF_PARAMS`.
+            per_dof: One ``(N,)`` array per entry of :attr:`PARAMETERS`.
         """
         self.has_backlash = bool(has_backlash)
         self.backlash_pos_indices = None
@@ -280,7 +280,7 @@ class DriveBam(DriveBase):
         self.delay_update_period = delay_update_period
         self.delay_seed = delay_seed
         # Newton's selection API reads and writes per-DOF parameters by attribute name.
-        for name in self.PER_DOF_PARAMS:
+        for name in self.PARAMETERS:
             setattr(self, name, per_dof[name])
 
         self.external_torque = None

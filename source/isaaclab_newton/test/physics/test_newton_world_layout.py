@@ -12,14 +12,27 @@ import numpy as np
 import pytest
 import warp as wp
 from isaaclab_newton.physics import NewtonWorldLayout
-from newton._src.solvers.mujoco import ActuatorTarget, add_actuator_general
-from newton.actuators import BatteryConstantResistance, DriveOutputSpace, DrivePD, InputProcessorDelay, MotorDC
+from newton._src.solvers.mujoco import ActuatorTarget, add_actuator_general, add_equality_connect
+from newton.actuators import (
+    BatteryConstantResistance,
+    ClampingCurrentDuty,
+    ClampingDCMotor,
+    ClampingMaxEffort,
+    ClampingPositionBased,
+    DriveOutputSpace,
+    DrivePD,
+    DrivePID,
+    InputProcessorDelay,
+    InputProcessorEncoder,
+    MotorDC,
+)
 from newton.solvers import SolverMuJoCo
 
 
 def _prototype(kind: int) -> newton.ModelBuilder:
     """A floating robot with a static post and a skin partly fixed to the world, or a fixed-base arm with particles and
-    a skinned cloth; both with a tendon, a legacy muscle, a MuJoCo actuator and a DC-motor actuator on a battery."""
+    a skinned cloth; both with a tendon, a legacy muscle, a MuJoCo equality constraint, a MuJoCo actuator, a DC-motor
+    actuator on a battery, and actuators with every other drive, clamp, input processor and motor kind."""
     builder = newton.ModelBuilder()
     SolverMuJoCo.register_custom_attributes(builder)
     base = builder.add_link(xform=wp.transform((0.1, 0.0, 0.5), wp.quat_rpy(0.1, 0.0, 0.2)), label="Robot/base")
@@ -94,6 +107,31 @@ def _prototype(kind: int) -> newton.ModelBuilder:
     builder.add_battery(
         BatteryConstantResistance, [actuator], nominal_voltage=12.0 - kind, resistance=0.5, min_voltage=9.0
     )
+    builder.add_actuator(
+        DrivePID,
+        index=dof,
+        pos_index=builder.joint_q_start[hinge],
+        kp=5.0 + kind,
+        ki=0.5,
+        kd=0.1,
+        integral_max=2.0,
+        input_processors=[(InputProcessorEncoder, {"output_joint": hinge})],
+        clamping=[
+            (ClampingMaxEffort, {"max_effort": 20.0 + kind}),
+            (ClampingDCMotor, {"saturation_effort": 30.0, "velocity_limit": 5.0 + kind, "max_motor_effort": 25.0}),
+            (ClampingPositionBased, {"lookup_positions": (-1.0, 0.0, 1.0), "lookup_efforts": (5.0, 10.0, 5.0)}),
+        ],
+    )
+    builder.add_actuator(
+        DrivePD,
+        output_space=DriveOutputSpace.DUTY,
+        index=dof,
+        pos_index=builder.joint_q_start[hinge],
+        kp=1.0 + kind,
+        clamping=[(ClampingCurrentDuty, {"max_current": 3.0 + kind, "max_duty": 0.9})],
+        motor=(MotorDC, {"kt": 0.5, "resistance": 2.0, "vin": 24.0}),
+    )
+    add_equality_connect(builder, base, tip, anchor=(0.0, 0.0, 0.1 * (1 + kind)), label="Robot/connect")
     return builder
 
 
@@ -200,13 +238,9 @@ def test_seed_expands_to_the_replicated_model(layout_ids):
                 assert getattr(battery, name).numpy().tobytes() == value.numpy().tobytes(), name
     assert len(model.actuators) == len(expected.actuators)
     for actuator, reference in zip(model.actuators, expected.actuators, strict=True):
-        for name in ("indices", "pos_indices", "actuator_indices"):
-            assert getattr(actuator, name).numpy().tolist() == getattr(reference, name).numpy().tolist(), name
-        for part, wanted_part in (
-            (actuator.drive, reference.drive),
-            (actuator.motor, reference.motor),
-            *zip(actuator.input_processors, reference.input_processors),
-        ):
+        assert actuator.num_actuators == reference.num_actuators
+        assert [type(part) for part in actuator.components] == [type(part) for part in reference.components]
+        for part, wanted_part in zip((actuator, *actuator.components), (reference, *reference.components), strict=True):
             for name, value in vars(wanted_part).items():
                 if isinstance(value, wp.array):
                     assert getattr(part, name).numpy().tobytes() == value.numpy().tobytes(), name
