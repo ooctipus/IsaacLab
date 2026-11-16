@@ -487,7 +487,14 @@ class NistPhysicsCfg(PresetCfg):
             dense_max_constraints=384,
             mf_max_constraints=4096,
         ),
-        collision_cfg=NewtonCollisionPipelineCfg(broad_phase="sap"),
+        # Every finite collider through Newton's SDF narrow phase, at the parts' and sockets' own SDF settings: a
+        # part against the board is then one SDF pair, not one GJK/MPR query a triangle.
+        collision_cfg=NewtonCollisionPipelineCfg(
+            broad_phase="sap",
+            sdf_all_shapes=NewtonCollisionPipelineCfg.SDFAllShapesCfg(
+                sdf_max_resolution=256, sdf_narrow_band_inner=-0.005, sdf_narrow_band_outer=0.005
+            ),
+        ),
     )
 
 
