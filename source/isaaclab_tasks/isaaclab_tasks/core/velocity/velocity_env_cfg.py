@@ -80,7 +80,7 @@ class RoughPhysicsCfg(PresetCfg):
         ),
         collision_cfg=NewtonCollisionPipelineCfg(max_triangle_pairs=12_000_000),
         num_substeps=2,
-        default_shape_cfg=NewtonShapeCfg(margin=0.01, ke=160000.0, kd=1100.0),
+        default_shape_cfg=NewtonShapeCfg(margin=0.01),
     )
     newton_steel = NewtonCfg(
         solver_cfg=SteelSolverCfg(

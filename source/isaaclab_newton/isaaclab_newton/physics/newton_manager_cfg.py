@@ -89,18 +89,20 @@ class NewtonShapeCfg:
     """Default per-shape contact gap [m]. Newton's upstream default is ``None``."""
 
     # Defaults mirror Newton's ShapeConfig defaults so an unspecified field is a no-op.
-    ke: float = 2.5e3
-    """Default per-shape normal contact stiffness [N/m].
+    ke: float | None = None
+    """Default per-shape normal contact stiffness [N/m], or ``None`` to author none.
 
     Applied to shapes that lack an explicit material; per-asset materials
-    override it. Mirrors Newton's ``ShapeConfig.ke`` default.
+    override it. A value marks every such shape as authoring its contact
+    material (``ShapeFlags.CONTACT_MATERIAL``), which FeatherPGS honours as a
+    compliant contact. Mirrors Newton's ``ShapeConfig.ke`` default.
     """
 
-    kd: float = 100.0
-    """Default per-shape normal contact damping [N*s/m].
+    kd: float | None = None
+    """Default per-shape normal contact damping [N*s/m], or ``None`` to author none.
 
     Applied to shapes that lack an explicit material; per-asset materials
-    override it. Mirrors Newton's ``ShapeConfig.kd`` default.
+    override it. See :attr:`ke`. Mirrors Newton's ``ShapeConfig.kd`` default.
     """
 
     mu: float = 1.0
