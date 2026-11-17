@@ -26,7 +26,6 @@ overrides = [
     { name = "newton-usd-schemas", specifier = ">=0.5.0" },
     { name = "numpy", specifier = ">=2" },
     { name = "packaging", specifier = ">=20,<27" },
-    { name = "rsl-rl-lib", git = "https://github.com/ooctipus/rsl_rl.git?rev=b5eccc684bd85727b2f8889e8ecb9f7b1966b6d6" },
     { name = "torch", specifier = "==2.11.0", index = "https://download.pytorch.org/whl/cu130" },
     { name = "torchvision", specifier = "==0.26.0", index = "https://download.pytorch.org/whl/cu130" },
     { name = "urdf-usd-converter", specifier = "==0.3.4" },

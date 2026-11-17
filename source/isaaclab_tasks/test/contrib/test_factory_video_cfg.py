@@ -5,8 +5,12 @@
 
 """Tests for Factory video playback configurations."""
 
+from types import SimpleNamespace
+from unittest.mock import Mock
+
 import gymnasium as gym
 import pytest
+import torch
 
 import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.contrib.nist.factory_video_env_cfg import FactoryVariantVideoEnvCfg, FactoryVideoEnvCfg
@@ -48,6 +52,16 @@ def test_factory_video_cfg_records_wide_studio_view(cfg, presets, backend) -> No
     else:
         assert visualizer.cameras[0].focal_length == 42.0
         assert cfg.events.video_camera.mode == "startup"
+        visualizer.cameras[0].eye = (1.0, 2.0, 3.0)
+        visualizer.cameras[0].lookat = (4.0, 5.0, 6.0)
+        runtime = SimpleNamespace(cfg=visualizer, set_camera_view=Mock())
+        position = SimpleNamespace(torch=torch.tensor([[10.0, 20.0, 30.0]]))
+        env = SimpleNamespace(
+            scene={"robot": SimpleNamespace(data=SimpleNamespace(root_pos_w=position))},
+            sim=SimpleNamespace(visualizers=[runtime]),
+        )
+        cfg.events.video_camera.func(env, None, **cfg.events.video_camera.params)
+        runtime.set_camera_view.assert_called_once_with((11.0, 22.0, 33.0), (14.0, 25.0, 36.0))
     assert visualizer.window.size == (1280, 720)
     assert visualizer.visible_env_indices == [0]
     assert cfg.sim.render_interval == 1

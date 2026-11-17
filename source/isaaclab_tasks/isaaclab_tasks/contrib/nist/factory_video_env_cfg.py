@@ -22,11 +22,13 @@ from .factory_variant_env_cfg import FactoryVariantEnvCfg
 
 
 def set_factory_video_view(env, env_ids, asset_cfg: SceneEntityCfg) -> None:
-    """Resolve the recorded robot once after scene placement and initialize the native camera."""
+    """Resolve the robot once; camera offsets are owned by the visualizer declaration."""
     origin = env.scene[asset_cfg.name].data.root_pos_w.torch[0]
-    eye = tuple((origin + origin.new_tensor((3.0, 0.0, 0.4))).tolist())
-    target = tuple((origin + origin.new_tensor((0.0, 0.0, 0.3))).tolist())
-    env.sim.visualizers[0].set_camera_view(eye, target)
+    visualizer = env.sim.visualizers[0]
+    camera = visualizer.cfg.cameras[0]
+    eye = tuple((origin + origin.new_tensor(camera.eye)).tolist())
+    target = tuple((origin + origin.new_tensor(camera.lookat)).tolist())
+    visualizer.set_camera_view(eye, target)
 
 
 def configure_factory_video(
