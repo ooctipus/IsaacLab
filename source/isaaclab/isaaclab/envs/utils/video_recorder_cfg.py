@@ -128,6 +128,9 @@ class VideoRecorderCfg:
     Must be non-negative.
     """
 
+    capture_on_render: bool = False
+    """Capture each scheduled physics render instead of one frame per environment step."""
+
     frame_stride: int = 1
     """Capture one frame every ``frame_stride`` env steps within a clip.  Defaults to 1
     (capture every step).  Increase to sub-sample the recording — e.g. ``frame_stride=2``

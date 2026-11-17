@@ -12,10 +12,12 @@ from isaaclab.test.utils import launch_test_simulation
 
 launch_test_simulation(SimulationCfg(physics=NewtonCfg()))
 
+import numpy as np
 import pytest
 import torch
 import warp as wp
-from isaaclab_newton.physics import MJWarpSolverCfg, XPBDSolverCfg
+from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCollisionPipelineCfg, XPBDSolverCfg
+from newton import ShapeFlags
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import RigidObjectCfg
@@ -88,6 +90,9 @@ def test_native_selection_preserves_initial_worlds_and_unused_variant(device: st
         gravity=(0.0, 0.0, 0.0),
         physics=NewtonCfg(
             solver_cfg=MJWarpSolverCfg(use_mujoco_contacts=False),
+            collision_cfg=NewtonCollisionPipelineCfg(
+                sdf_all_shapes=NewtonCollisionPipelineCfg.SDFAllShapesCfg(sdf_max_resolution=32)
+            ),
             use_cuda_graph=False,
         ),
     )
@@ -109,6 +114,8 @@ def test_native_selection_preserves_initial_worlds_and_unused_variant(device: st
         )
         torch.testing.assert_close(asset.data.body_mass.torch[:, 0].cpu(), torch.tensor([8.0, 1.0]))
         assert model.shape_count == shape_count
+        active = (model.shape_flags.numpy() & int(ShapeFlags.COLLIDE_SHAPES)) != 0
+        assert np.all(model._shape_sdf_index.numpy()[active] >= 0)
         forces = torch.zeros((2, 1, 3), device=device)
         forces[:, 0, 0] = 8.0
         asset.permanent_wrench_composer.set_forces_and_torques_index(forces=forces)

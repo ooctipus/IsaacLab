@@ -84,7 +84,7 @@ dependencies = [
     "gitpython>=3.1.60",  # used by RL training and experiment logging
     # ----- newton (default physics engine) -----
     # Pin the current Newton development revision until it is included in a release.
-    "newton[sim] @ git+https://github.com/newton-physics/newton.git@3f428bf1a7183d3d9a10cc17241e8a9eac3841eb",
+    "newton[sim]>=1.9.0.dev0",
     # Import and mesh-processing packages used by Newton, including the ones that honoring
     # USD-authored ``physics:approximation`` requires. Keep these explicit instead of selecting
     # newton[importers], whose standalone USD dependency would overlap with usd-exchange.
@@ -415,10 +415,13 @@ environments = [
 # ``importers`` extras pin older versions of these packages, so the overrides prevent downgrades.
 # Direct torch-stack pins also apply to published wheels; overrides reconcile Isaac Sim's older pins.
 override-dependencies = [
+    # Keep the Factory checkpoint's training library fixed during the three-repository migration.
+    "rsl-rl-lib==5.4.1",
     "numpy>=2",
-    "mujoco~=3.17.0",
-    "mujoco-warp~=3.17.0",
-    "newton[sim] @ git+https://github.com/newton-physics/newton.git@3f428bf1a7183d3d9a10cc17241e8a9eac3841eb",
+    "mujoco>=4.0.0,<4.1",
+    "mujoco-core>=4.0.0,<4.1",
+    "mujoco-warp>=4.0.0,<4.1",
+    "newton[sim]>=1.9.0.dev0",
     # Force the Newton-matched schemas over isaacsim's ==0.2.0 pin.
     "newton-usd-schemas>=0.5.0",
     # isaacsim-asset-isolated and isaacsim-robot-schema 6.2 pin usd-exchange ==2.3.0.
@@ -444,7 +447,16 @@ package = false
 [tool.uv.extra-build-variables]
 egl-probe = { CMAKE_POLICY_VERSION_MINIMUM = "3.5" }
 
+[[tool.uv.index]]
+name = "mujoco"
+url = "https://py.mujoco.org/"
+
 [tool.uv.sources]
+rsl-rl-lib = {git = "https://github.com/ooctipus/rsl_rl.git", rev = "b5eccc684bd85727b2f8889e8ecb9f7b1966b6d6"}
+newton = { git = "https://github.com/ooctipus/newton.git", rev = "eadb3978d7d944598a8a7ebaaa439220bcb0ef1d" }
+mujoco-warp = { git = "https://github.com/google-deepmind/mujoco_warp.git", rev = "9ed5b8b9c290ad19fcd571255bd97b684e5426e7" }
+mujoco-core = { index = "mujoco" }
+mujoco = { index = "mujoco" }
 ovstorage = { index = "pypi-public" }
 ovphysx = { index = "pypi-public" }
 ovrtx = { index = "pypi-public" }

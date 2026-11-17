@@ -30,3 +30,5 @@ from .events import (
     randomize_rigid_body_material,
     randomize_visual_shape,
 )
+
+from .events import randomize_rigid_body_mesh

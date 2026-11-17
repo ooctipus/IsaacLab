@@ -37,7 +37,12 @@ from isaaclab_newton.cloner.newton_clone_utils import (
     replicate_builder_mapping,
 )
 from isaaclab_newton.physics import NewtonBuilderCfg, NewtonCfg, NewtonCloneRecord
-from isaaclab_newton.physics.newton_builder import create_builder, inject_terrain_heightfields, usd_schema_resolvers
+from isaaclab_newton.physics.newton_builder import (
+    _configure_sdf_all_shapes,
+    create_builder,
+    inject_terrain_heightfields,
+    usd_schema_resolvers,
+)
 from isaaclab_newton.sim.spawners.mpm.mpm import _SIMULATION_POINTS_SUFFIX
 
 _PER_WORLD_BUILDER_HOOKS: list[Callable[[ModelBuilder, int, np.ndarray, np.ndarray], None]] = []
@@ -217,6 +222,9 @@ def _replicate_newton(  # noqa: C901 -- Resolve source ownership and native geom
             row = plan.topology.world_prototypes[member]
             target = cloner_path.rebase(variants[0].body_label[0], sources[rows[0]], templates[member].format(world))
             initial_selections.append((target, rows.index(row)))
+        if newton_physics and cfg.collision_cfg is not None and cfg.collision_cfg.sdf_all_shapes is not None:
+            for source in variants:
+                _configure_sdf_all_shapes(source, cfg.collision_cfg.sdf_all_shapes)
         inertia_offset = plan.asset_cfgs[rows[0]].mesh_variant_inertia_diagonal_offset
         if inertia_offset:
             for source in variants:

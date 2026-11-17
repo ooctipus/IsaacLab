@@ -213,7 +213,10 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
 
         # check if we need to do rendering within the physics loop
         # note: evaluated once per step rather than once per physics substep
-        is_rendering = self.sim.is_rendering
+        for recorder in self.video_recorders:
+            if recorder.cfg.capture_on_render:
+                recorder.begin_step()
+        is_rendering = self.sim.is_rendering or any(recorder.requires_render for recorder in self.video_recorders)
 
         # physics-owned decimation covers all substeps in one call
         steps_per_call = self.cfg.decimation if self._physics_handles_decimation else 1
@@ -227,6 +230,8 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
             # render_enabled=False skips Kit (camera/GUI); standalone visualizers still update
             if self._sim_step_counter % self.cfg.sim.render_interval == 0 and is_rendering:
                 self.sim.render(skip_app_pumping=not self.render_enabled)
+                for recorder in self.video_recorders:
+                    recorder.capture_render()
             self.scene.update(dt=self.physics_dt * steps_per_call)
 
         # post-step:

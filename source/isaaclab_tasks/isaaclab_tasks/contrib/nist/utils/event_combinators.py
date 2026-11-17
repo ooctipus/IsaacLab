@@ -312,6 +312,7 @@ class ChainedResetTerms(ManagerTermBase):
     def __init__(self, cfg: EventTermCfg, env: ManagerBasedRLEnv):
         super().__init__(cfg, env)
         self.terms: dict[str, EventTermCfg] = cfg.params["terms"]  # type: ignore
+        self.is_valid = torch.ones(env.num_envs, dtype=torch.bool, device=env.device)
 
     def __call__(
         self,
@@ -325,5 +326,9 @@ class ChainedResetTerms(ManagerTermBase):
             env_ids = env_ids[torch.rand(env_ids.shape[0], device=env.device) < probability]
             if env_ids.shape[0] == 0:
                 return
-        for _, term in terms.items():
-            term.func(env, env_ids, **term.params)  # type: ignore
+        self.is_valid[env_ids] = True
+        for term in terms.values():
+            term.func(env, env_ids, **term.params)
+            reported = getattr(term.func, "is_valid", None)
+            if reported is not None:
+                self.is_valid[env_ids] &= reported[env_ids]

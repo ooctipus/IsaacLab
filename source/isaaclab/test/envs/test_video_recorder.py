@@ -307,3 +307,24 @@ def test_clip_files_resume_and_prune_only_matching_indices(tmp_path, existing, e
         recorder.step()
 
     assert sorted(path.name for path in tmp_path.iterdir()) == expected
+
+
+@pytest.mark.parametrize("stride", [1, 2])
+def test_render_cadence_preserves_clip_length_and_playback_speed(stride):
+    """Two four-render environment steps produce eight render frames at the physics cadence."""
+    env = _make_env([_FakeViz("newton_gl")])
+    env.physics_dt = 0.01
+    env.cfg = SimpleNamespace(sim=SimpleNamespace(render_interval=1))
+    recorder = VideoRecorder(_cfg(capture_on_render=True, video_length=2, frame_stride=stride, fps=None), env)
+    with patch.object(recorder, "_clip_class") as encoder:
+        assert not recorder.requires_render
+        for _ in range(2):
+            recorder.begin_step()
+            assert recorder.requires_render
+            for _ in range(4):
+                recorder.capture_render()
+            recorder.step()
+        frames = encoder.call_args.args[0]
+        assert len(frames) == 8 // stride
+        assert encoder.call_args.kwargs["fps"] == 100 // stride
+        assert not recorder.requires_render

@@ -78,9 +78,16 @@ class VideoRecorder:
         self._step_count = 0
         self._clip_index = max(self._existing_clip_indices(), default=-1) + 1
         self._recording = False
+        self._clip_step = 0
+        self._capture_count = 0
 
-    def step(self) -> None:
-        """Advance the recorder by one env step."""
+    @property
+    def requires_render(self) -> bool:
+        """Whether an active clip requests scheduled renders during physics decimation."""
+        return self.cfg.capture_on_render and self._recording
+
+    def begin_step(self) -> None:
+        """Advance the clip schedule before the environment simulates a step."""
         self._step_count += 1
 
         # Skip steps before the configured offset.
@@ -95,14 +102,30 @@ class VideoRecorder:
             if self._recording:
                 self._close_clip()
             self._recording = True
+            self._capture_count = 0
+        self._clip_step = clip_step
 
-        if self._recording:
-            if clip_step % self.cfg.frame_stride == 0:
-                frame = self._capture()
-                if frame is not None:
-                    self._frames.append(frame)
-            if clip_step >= self.cfg.video_length:
-                self._close_clip()
+    def step(self) -> None:
+        """Finish an environment step, capturing once unless renders own capture."""
+        if not self.cfg.capture_on_render:
+            self.begin_step()
+            self._capture_frame()
+        if self._recording and self._clip_step >= self.cfg.video_length:
+            self._close_clip()
+
+    def capture_render(self) -> None:
+        """Capture one scheduled physics render within the current clip."""
+        if self.cfg.capture_on_render:
+            self._capture_frame()
+
+    def _capture_frame(self) -> None:
+        if not self._recording:
+            return
+        self._capture_count += 1
+        if self._capture_count % self.cfg.frame_stride == 0:
+            frame = self._capture()
+            if frame is not None:
+                self._frames.append(frame)
 
     def close(self) -> None:
         """Flush any buffered frames and close the current clip."""
@@ -137,7 +160,13 @@ class VideoRecorder:
             path = self._clip_path(self._clip_index)
             fps = self.cfg.fps
             if fps is None:
-                base_fps = self._env.metadata.get("render_fps") if isinstance(self._env, gym.Env) else None
+                base_fps = (
+                    1.0 / (self._env.physics_dt * self._env.cfg.sim.render_interval)
+                    if self.cfg.capture_on_render
+                    else self._env.metadata.get("render_fps")
+                    if isinstance(self._env, gym.Env)
+                    else None
+                )
                 if base_fps is None:
                     base_fps = 1.0 / self._env.step_dt
                 # frame_stride subsamples: one frame every N steps, so playback fps scales down.

@@ -19,12 +19,11 @@ from typing import TYPE_CHECKING
 import torch
 
 import isaaclab.utils.math as math_utils
-from isaaclab.utils import instantiate
 
-from isaaclab_tasks.contrib.nist.assembly_keypoints import Offset
+from .assembly_keypoints import Offset
 
 if TYPE_CHECKING:
-    from isaaclab_tasks.contrib.nist.assembly_profile_cfg import (
+    from .assembly_profile_cfg import (
         AssemblyProfileCfg,
         DiscreteYawCfg,
         EndPointsSegmentCfg,
@@ -120,7 +119,7 @@ class EndPointsSegment:
         self._euler_total: torch.Tensor | None = None
 
     def _ensure_tensors(self, device: str | torch.device):
-        if self._pos_start is not None and self._pos_start.device == torch.device(device):
+        if self._pos_start is not None:
             return
         self._pos_start = torch.tensor([self.cfg.start_pose.pos], device=device)
         self._pos_end = torch.tensor([self.cfg.end_pose.pos], device=device)
@@ -144,7 +143,7 @@ class IncrementalSegment:
         self._euler_total: torch.Tensor | None = None
 
     def _ensure_tensors(self, device: str | torch.device):
-        if self._pos_start is not None and self._pos_start.device == torch.device(device):
+        if self._pos_start is not None:
             return
         self._pos_start = torch.tensor([self.cfg.start_pose.pos], device=device)
         dist = torch.tensor([self.cfg.distance], device=device)
@@ -168,9 +167,12 @@ class AssemblyProfile:
     def __init__(self, cfg: AssemblyProfileCfg):
         self.cfg = cfg
         assert cfg.segments is not None, "AssemblyProfileCfg.segments must be set"
-        self.segments: list[EndPointsSegment | IncrementalSegment] = [instantiate(seg_cfg) for seg_cfg in cfg.segments]
+        self.segments: list[EndPointsSegment | IncrementalSegment] = [
+            seg_cfg.class_type(seg_cfg)
+            for seg_cfg in cfg.segments  # type: ignore[misc]
+        ]
         self._samplers: list[StartSampler | None] = [
-            instantiate(seg_cfg.start_sampler) if seg_cfg.start_sampler is not None else None
+            seg_cfg.start_sampler.class_type(seg_cfg.start_sampler) if seg_cfg.start_sampler is not None else None
             for seg_cfg in cfg.segments
         ]
         self._boundaries: torch.Tensor | None = None
@@ -188,7 +190,7 @@ class AssemblyProfile:
         return self.segments[0].cfg.start_pose
 
     def _ensure_profile_tensors(self, device: str | torch.device):
-        if self._boundaries is not None and self._boundaries.device == torch.device(device):
+        if self._boundaries is not None:
             return
         for seg in self.segments:
             seg._ensure_tensors(device)

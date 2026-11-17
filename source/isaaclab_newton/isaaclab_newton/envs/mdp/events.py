@@ -310,3 +310,29 @@ class randomize_visual_shape(ManagerTermBase):
         if self._writer.model is not model:
             self._writer.rebind(model)
         self._writer(self._sample((len(selected), self._writer.body_count)), selected)
+
+
+def randomize_rigid_body_mesh(
+    env: ManagerBasedEnv,
+    env_ids: torch.Tensor | None,
+    asset_cfg: SceneEntityCfg,
+) -> None:
+    """Select a uniformly random precompiled mesh variant at reset.
+
+    The variant order matches the asset's multi-asset spawner. This changes Newton
+    MJWarp collision geometry and inertia; USD/Fabric visuals remain unchanged.
+
+    Args:
+        env: The environment.
+        env_ids: Environment indices. If ``None``, randomize every environment.
+        asset_cfg: Rigid object to randomize.
+    """
+    asset: RigidObject = env.scene[asset_cfg.name]
+    if asset.num_mesh_variants == 0:
+        raise ValueError(f"Rigid object {asset_cfg.name!r} does not enable mesh variants.")
+    if env_ids is None or isinstance(env_ids, slice):
+        env_ids = torch.arange(asset.num_instances, device=asset.device)[
+            env_ids if env_ids is not None else slice(None)
+        ]
+    variant_ids = torch.randint(asset.num_mesh_variants, (env_ids.shape[0],), device=asset.device, dtype=torch.int32)
+    asset.write_mesh_variant_to_sim(variant_ids, env_ids)

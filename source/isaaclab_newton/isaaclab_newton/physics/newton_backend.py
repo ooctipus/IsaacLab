@@ -30,6 +30,7 @@ from isaaclab.utils.version import has_kit
 
 from isaaclab_newton.renderers.visual_material import VisualMaterialWriter
 
+from .newton_builder import _configure_sdf_all_shapes, _validate_sdf_all_shapes
 from .newton_builder_cfg import NewtonBuilderCfg
 from .newton_manager_cfg import NewtonCfg
 
@@ -134,7 +135,14 @@ class NewtonBackend:
         """
         if builder is None:
             builder = SimulationContext.instance().get_or_create_backend(NewtonBuilderCfg(physics_cfg=cfg.physics_cfg))
+        sdf_cfg = (
+            cfg.physics_cfg.collision_cfg.sdf_all_shapes
+            if isinstance(cfg.physics_cfg, NewtonCfg) and cfg.physics_cfg.collision_cfg is not None
+            else None
+        )
+        sdf_shapes = _configure_sdf_all_shapes(builder, sdf_cfg) if sdf_cfg is not None else ()
         self.model = builder.finalize(device=cfg.device)
+        _validate_sdf_all_shapes(self.model, sdf_shapes)
         """Finalized Newton model; :attr:`model.num_envs` is its world count."""
         self.geometry_change_version = 0
         """Incremented when native body selection changes shape type or source after initialization."""
@@ -650,7 +658,7 @@ class NewtonBackend:
         """Prepare the solver, collide, and run the pre-actuator callbacks of one physics step."""
         self.solver_ops.pre_step(self.state_0)
         if self.collision_pipeline is not None:
-            self.collision_pipeline.collide(self.state_0, self.contacts)
+            self.collision_pipeline.collide(self.state_0, self.contacts, dt=self.solver_dt)
         for callback in self.pre_actuator_callbacks:
             callback()
         if self.handles_actions:
@@ -704,7 +712,7 @@ class NewtonBackend:
             # Derived data read by the next substep's state-force callbacks must see this substep's state.
             self.state_version += 1
             if collide_mid_loop and (i + 1) % collide_every == 0 and i + 1 < num_substeps:
-                self.collision_pipeline.collide(self.state_0, contacts)
+                self.collision_pipeline.collide(self.state_0, contacts, dt=dt)
         ops.post_step(self.state_0)
 
     def _update_sensors(self) -> None:

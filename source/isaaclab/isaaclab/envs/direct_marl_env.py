@@ -175,8 +175,13 @@ class DirectMARLEnv(gym.Env):
 
         # let the physics backend know about the env decimation so it can
         # fold the full loop into a single step() when possible
-        self.sim.backend_manager.set_decimation(self.cfg.decimation)
-        self._physics_handles_decimation = self.sim.backend_manager.handles_decimation()
+        render_within_step = (
+            self.sim.is_rendering
+            or self.sim.get_setting("/isaaclab/render/rtx_sensors")
+            or any(cfg.capture_on_render for cfg in self.cfg.video_recorders)
+        ) and (self.cfg.sim.render_interval % self.cfg.decimation != 0)
+        self.sim.backend_manager.set_decimation(1 if render_within_step else self.cfg.decimation)
+        self._physics_handles_decimation = not render_within_step and self.sim.backend_manager.handles_decimation()
 
         # check if debug visualization is has been implemented by the environment
         source_code = inspect.getsource(self._set_debug_vis_impl)
@@ -408,7 +413,10 @@ class DirectMARLEnv(gym.Env):
 
         # check if we need to do rendering within the physics loop
         # note: uses cached property to avoid settings lookup every step
-        is_rendering = self.sim.is_rendering
+        for recorder in self.video_recorders:
+            if recorder.cfg.capture_on_render:
+                recorder.begin_step()
+        is_rendering = self.sim.is_rendering or any(recorder.requires_render for recorder in self.video_recorders)
 
         # physics-owned decimation covers all substeps in one call
         steps_per_call = self.cfg.decimation if self._physics_handles_decimation else 1
@@ -420,6 +428,8 @@ class DirectMARLEnv(gym.Env):
             # render_enabled=False skips Kit (camera/GUI); standalone visualizers still update
             if self._sim_step_counter % self.cfg.sim.render_interval == 0 and is_rendering:
                 self.sim.render(skip_app_pumping=not self.render_enabled)
+                for recorder in self.video_recorders:
+                    recorder.capture_render()
             self.scene.update(dt=self.physics_dt * steps_per_call)
 
         # post-step:

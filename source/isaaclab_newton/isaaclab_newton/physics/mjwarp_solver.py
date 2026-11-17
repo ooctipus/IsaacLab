@@ -26,6 +26,56 @@ logger = logging.getLogger(__name__)
 _SENSORS_BY_STATE_ATTRIBUTE = {"body_qdd": "the IMU or PVA sensor", "body_parent_f": "the joint-wrench sensor"}
 
 
+@wp.kernel(enable_backward=False)
+def _detect_solver_reset_required(
+    qpos: wp.array2d(dtype=wp.float32),
+    qvel: wp.array2d(dtype=wp.float32),
+    qacc: wp.array2d(dtype=wp.float32),
+    qfrc_actuator: wp.array2d(dtype=wp.float32),
+    qacc_warmstart: wp.array2d(dtype=wp.float32),
+    qfrc_applied: wp.array2d(dtype=wp.float32),
+    ctrl: wp.array2d(dtype=wp.float32),
+    act: wp.array2d(dtype=wp.float32),
+    xfrc_applied: wp.array2d(dtype=wp.spatial_vector),
+    reset_required: wp.array(dtype=wp.bool),
+):
+    """Reduce policy-facing and persistent MuJoCo state validity per world."""
+    world_id = wp.tid()
+    invalid = wp.bool(False)
+
+    for i in range(qpos.shape[1]):
+        if not wp.isfinite(qpos[world_id, i]):
+            invalid = True
+    for i in range(qvel.shape[1]):
+        if not wp.isfinite(qvel[world_id, i]):
+            invalid = True
+    for i in range(qacc.shape[1]):
+        if not wp.isfinite(qacc[world_id, i]):
+            invalid = True
+    for i in range(qfrc_actuator.shape[1]):
+        if not wp.isfinite(qfrc_actuator[world_id, i]):
+            invalid = True
+    for i in range(qacc_warmstart.shape[1]):
+        if not wp.isfinite(qacc_warmstart[world_id, i]):
+            invalid = True
+    for i in range(qfrc_applied.shape[1]):
+        if not wp.isfinite(qfrc_applied[world_id, i]):
+            invalid = True
+    for i in range(ctrl.shape[1]):
+        if not wp.isfinite(ctrl[world_id, i]):
+            invalid = True
+    for i in range(act.shape[1]):
+        if not wp.isfinite(act[world_id, i]):
+            invalid = True
+    for body_id in range(xfrc_applied.shape[1]):
+        force = xfrc_applied[world_id, body_id]
+        for component_id in range(6):
+            if not wp.isfinite(force[component_id]):
+                invalid = True
+
+    reset_required[world_id] = invalid
+
+
 class MJWarpSolver(NewtonSolver):
     """Newton's MuJoCo Warp solver, which steps in place on one state."""
 
@@ -76,6 +126,10 @@ class MJWarpSolver(NewtonSolver):
             kwargs["separate_worlds"] = True
         return self.solver_class(model, **kwargs)
 
+    def __init__(self, cfg, model, mode, env_template=None):
+        super().__init__(cfg, model, mode, env_template)
+        self.reset_required = wp.zeros(model.world_count, dtype=wp.bool, device=model.device)
+
     def supports_capture(self) -> bool:
         return not self.cfg.use_mujoco_cpu
 
@@ -111,6 +165,32 @@ class MJWarpSolver(NewtonSolver):
             # reset(flags=0) skips it, so reuse the pinned solver's conversion.
             data = solver.mj_data if solver.use_mujoco_cpu else solver.mjw_data
             solver._update_mjc_data(data, solver.model, state, world_mask=world_mask)
+
+    def post_step(self, state: State) -> None:
+        """Reduce persistent solver state validity once after the physics substeps."""
+        solver = self.native
+        data = solver.mj_data if solver.use_mujoco_cpu else solver.mjw_data
+        arrays = (
+            data.qpos,
+            data.qvel,
+            data.qacc,
+            data.qfrc_actuator,
+            data.qacc_warmstart,
+            data.qfrc_applied,
+            data.ctrl,
+            data.act,
+            data.xfrc_applied,
+        )
+        if solver.use_mujoco_cpu:
+            self.reset_required.fill_(any(not np.isfinite(array).all() for array in arrays))
+        else:
+            wp.launch(
+                _detect_solver_reset_required,
+                dim=self.reset_required.shape[0],
+                inputs=[*arrays],
+                outputs=[self.reset_required],
+                device=state.body_q.device,
+            )
 
     def check_step(self, captured: bool, debug: bool) -> None:
         """Log MuJoCo solver convergence statistics in debug mode."""

@@ -4,33 +4,53 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 import hashlib
+from collections.abc import Sequence
 
 import numpy as np
 import torch
+import warp as wp
 
-from pxr import Gf, Usd, UsdGeom, UsdPhysics
+from pxr import Gf, Usd, UsdGeom, UsdPhysics  # noqa: F401
 
 from isaaclab import cloner
 from isaaclab.sim import SimulationContext
 from isaaclab.sim.utils import get_current_stage
 from isaaclab.sim.utils.queries import get_all_matching_child_prims, resolve_matching_prims_from_source
-from isaaclab.utils.string import resolve_matching_names
+
+HASH_STORE = {"warp_mesh_store": {}}
 
 
 class RigidObjectHasher:
-    """Read collider hashes and root-relative transforms from the current USD stage."""
+    """Compute per-root and per-collider hashes and full 3x3 transforms."""
 
-    def __init__(self, num_envs: int, prim_path_pattern: str):
-        self.num_root = 0
-        self.collider_prims: list[Usd.Prim] = []
-        self.collider_prim_hashes = torch.empty(0, dtype=torch.int64)
-        self.collider_prim_env_ids = torch.empty(0, dtype=torch.int64)
-        self.collider_rel_pos = torch.empty(0, 3)
-        self.collider_rel_mat = torch.empty(0, 3, 3)
-        self.collider_rel_mat_inv = torch.empty(0, 3, 3)
-        self.root_prim_hashes = torch.empty(0, dtype=torch.int64)
-        self.root_prim_scales = torch.empty(0, 3)
+    def __init__(
+        self,
+        num_envs,
+        prim_path_pattern,
+        device="cpu",
+        rigid_body_root=False,
+        compact_sources=False,
+        source_paths: Sequence[str] | None = None,
+    ):
+        self.prim_path_pattern = prim_path_pattern
+        self.device = device
+        source_paths = tuple(source_paths) if source_paths is not None else None
+        self._cache_key = (prim_path_pattern, rigid_body_root, compact_sources, source_paths)
+        if self._cache_key in HASH_STORE:
+            return
 
+        HASH_STORE[self._cache_key] = {
+            "num_roots": 0,
+            "collider_prims": [],
+            "collider_prim_hashes": [],
+            "collider_prim_env_ids": [],
+            "collider_rel_pos": [],
+            "collider_rel_mat": [],
+            "collider_rel_mat_inv": [],
+            "root_prim_hashes": [],
+            "root_prim_scales": [],
+        }
+        stor = HASH_STORE[self._cache_key]
         xform_cache = UsdGeom.XformCache()
         stage = get_current_stage()
 
@@ -39,56 +59,63 @@ class RigidObjectHasher:
                 UsdPhysics.CollisionAPI
             )
 
-        # Read each authored variant once, including descendants such as articulation links.
-        plan = SimulationContext.instance().get_clone_plan()
-        matches = []
-        if plan is not None:
-            source_paths = cloner.path.get_asset_prototype_paths(plan)
-            templates, starts, worlds, world_starts = cloner.path.get_world_prototype_asset_templates(
-                plan, include_world_indices=True
-            )
-            for group in np.flatnonzero(np.diff(world_starts[1:])) + 1:
-                for index in range(*starts[group : group + 2]):
-                    if (matched := cloner.path.match(prim_path_pattern, templates[index])) is not None:
-                        matches.append((group, index, matched))
-        if matches:
-            suffix = min((matched.suffix for _, _, matched in matches), key=len)
-            sources = []
-            for group, index, matched in matches:
-                if matched.suffix != suffix:
-                    continue
-                env_ids = worlds[world_starts[group] : world_starts[group + 1]]
-                selected, _ = resolve_matching_names(matched.instance, env_ids.astype(str), raise_when_no_match=False)
-                if selected:
-                    sources.append((source_paths[plan.topology.world_prototypes[index]] + suffix, env_ids[selected]))
+        # Read each clone source once. The clone mask supplies its populated environments.
+        source_rows: list[tuple[str, tuple[int, ...]]] = []
+        if source_paths is not None:
+            if not compact_sources:
+                raise ValueError("Explicit source paths require compact_sources=True.")
+            source_rows = [(path, ()) for path in source_paths]
         else:
-            # No clone plan (or pattern not owned by it): resolve a single source instance and
-            # treat every env as a clone of it.
+            plan = SimulationContext.instance().get_clone_plan()
+            if plan is not None:
+                requested = cloner.path.match(prim_path_pattern, plan.env_template)
+                sources = cloner.path.get_asset_prototype_paths(plan)
+                owners = []
+                for asset, cfg in enumerate(plan.asset_cfgs):
+                    declared = cloner.path.match(cfg.prim_path, plan.env_template)
+                    if sources[asset] is None or requested is None or declared is None:
+                        continue
+                    suffix = cloner.path.relative_to(requested.suffix, declared.suffix)
+                    if suffix is not None:
+                        owners.append((asset, declared.suffix, suffix))
+                nearest = max((len(root) for _, root, _ in owners), default=0)
+                for asset, root, suffix in owners:
+                    if len(root) != nearest:
+                        continue
+                    worlds, _ = cloner.query.get_asset_prototype_unique_world_index(plan.topology, asset)
+                    source_rows.append((sources[asset].rstrip("/") + suffix, tuple(int(i) for i in worlds)))
+        if not source_rows:
             fallback = resolve_matching_prims_from_source(prim_path_pattern, raise_if_no_matches=False)
             if not fallback:
                 return
-            sources = [(fallback[0][0].GetPath().pathString, range(num_envs))]
+            source_rows = [(fallback[0][0].GetPath().pathString, tuple(range(num_envs)))]
 
-        num_roots = num_envs
+        num_roots = len(source_rows) if compact_sources else num_envs
         collider_prims: list[Usd.Prim] = []
         collider_prim_env_ids: list[int] = []
         collider_prim_hashes: list[int] = []
         collider_rel_pos_list: list[torch.Tensor] = []
         collider_rel_mat_list: list[torch.Tensor] = []
         collider_rel_mat_inv_list: list[torch.Tensor] = []
-        # Indexed by environment so reads stay aligned across heterogeneous variants.
         root_prim_hashes: list[int] = [0] * num_roots
         root_prim_scales: list = [None] * num_roots
 
-        for source_path, env_ids in sources:
+        for variant_id, (source_path, env_ids) in enumerate(source_rows):
             asset_prim = stage.GetPrimAtPath(source_path)
-            # ``traverse_instance_prims=True`` so colliders authored inside instanceable asset
-            # references are still discovered (the hasher needs the actual mesh geometry).
+            if rigid_body_root:
+                rigid_bodies = get_all_matching_child_prims(
+                    source_path,
+                    predicate=lambda prim: prim.HasAPI(UsdPhysics.RigidBodyAPI),
+                    traverse_instance_prims=True,
+                )
+                if len(rigid_bodies) != 1:
+                    raise ValueError(f"Expected one rigid body below '{source_path}', found {len(rigid_bodies)}.")
+                asset_prim = rigid_bodies[0]
+                source_path = asset_prim.GetPath().pathString
             coll_prims = get_all_matching_child_prims(source_path, predicate=is_collider, traverse_instance_prims=True)
             if len(coll_prims) == 0:
                 return
 
-            # Hash this source variant's colliders once and capture root-relative transforms.
             root_xf = xform_cache.GetLocalToWorldTransform(asset_prim)
             root_scale = torch.tensor(Gf.Transform(root_xf).GetScale())
             root_hash = hashlib.sha256()
@@ -138,8 +165,8 @@ class RigidObjectHasher:
 
             root_hash_int = int.from_bytes(root_hash.digest()[:8], "little", signed=True)
 
-            # Apply this variant to the environments containing it.
-            for e in env_ids:
+            root_ids = (variant_id,) if compact_sources else env_ids
+            for e in root_ids:
                 collider_prims.extend(coll_prims)
                 collider_prim_env_ids.extend([e] * len(coll_prims))
                 collider_prim_hashes.extend(src_collider_hashes)
@@ -149,14 +176,68 @@ class RigidObjectHasher:
                 root_prim_hashes[e] = root_hash_int
                 root_prim_scales[e] = root_scale
 
-        self.num_root = num_roots
-        self.collider_prims = collider_prims
-        self.collider_prim_hashes = torch.tensor(collider_prim_hashes, dtype=torch.int64)
-        self.collider_prim_env_ids = torch.tensor(collider_prim_env_ids, dtype=torch.int64)
-        self.collider_rel_pos = torch.stack(collider_rel_pos_list) if collider_rel_pos_list else torch.empty(0, 3)
-        self.collider_rel_mat = torch.stack(collider_rel_mat_list) if collider_rel_mat_list else torch.empty(0, 3, 3)
-        self.collider_rel_mat_inv = (
-            torch.stack(collider_rel_mat_inv_list) if collider_rel_mat_inv_list else torch.empty(0, 3, 3)
+        stor["num_roots"] = num_roots
+        stor["collider_prims"] = collider_prims
+        stor["collider_prim_hashes"] = torch.tensor(collider_prim_hashes, dtype=torch.int64, device="cpu")
+        stor["collider_prim_env_ids"] = torch.tensor(collider_prim_env_ids, dtype=torch.int64, device="cpu")
+        stor["collider_rel_pos"] = (
+            torch.stack(collider_rel_pos_list).to("cpu") if collider_rel_pos_list else torch.empty(0, 3)
         )
-        self.root_prim_hashes = torch.tensor(root_prim_hashes, dtype=torch.int64)
-        self.root_prim_scales = torch.stack(root_prim_scales)
+        stor["collider_rel_mat"] = (
+            torch.stack(collider_rel_mat_list).to("cpu") if collider_rel_mat_list else torch.empty(0, 3, 3)
+        )
+        stor["collider_rel_mat_inv"] = (
+            torch.stack(collider_rel_mat_inv_list).to("cpu") if collider_rel_mat_inv_list else torch.empty(0, 3, 3)
+        )
+        stor["root_prim_hashes"] = torch.tensor(root_prim_hashes, dtype=torch.int64, device="cpu")
+        stor["root_prim_scales"] = torch.stack(root_prim_scales).to("cpu")
+
+    @property
+    def num_root(self) -> int:
+        return self.get_val("num_roots")
+
+    @property
+    def root_prim_hashes(self) -> torch.Tensor:
+        return self.get_val("root_prim_hashes").to(self.device)
+
+    @property
+    def root_prim_scales(self) -> torch.Tensor:
+        return self.get_val("root_prim_scales").to(self.device)
+
+    @property
+    def collider_prim_hashes(self) -> torch.Tensor:
+        return self.get_val("collider_prim_hashes").to(self.device)
+
+    @property
+    def collider_prims(self) -> list[any]:
+        return self.get_val("collider_prims")
+
+    @property
+    def collider_prim_env_ids(self) -> torch.Tensor:
+        return self.get_val("collider_prim_env_ids").to(self.device)
+
+    @property
+    def collider_rel_pos(self) -> torch.Tensor:
+        return self.get_val("collider_rel_pos").to(self.device)
+
+    @property
+    def collider_rel_mat(self) -> torch.Tensor:
+        return self.get_val("collider_rel_mat").to(self.device)
+
+    @property
+    def collider_rel_mat_inv(self) -> torch.Tensor:
+        return self.get_val("collider_rel_mat_inv").to(self.device)
+
+    def get_val(self, key: str):
+        return HASH_STORE.get(self._cache_key, {}).get(key, None)
+
+    def set_val(self, key: str, val: any):
+        if isinstance(val, torch.Tensor):
+            val = val.to("cpu")
+        HASH_STORE[self._cache_key][key] = val
+
+    def get_warp_mesh_store(self) -> dict[int, wp.Mesh]:
+        return HASH_STORE["warp_mesh_store"]
+
+    def get_hash_store(self) -> dict[int, any]:
+        return HASH_STORE

@@ -234,7 +234,6 @@ class ManagerBasedEnv:
         report_activity("Setting up managers")
         self.load_managers()
         report_activity(None)
-        self.sim.backend_manager.set_decimation(self.cfg.decimation)
 
         # Wire live plots into all active visualizers (Newton, Rerun, Viser) and create
         # Kit omni.ui ManagerLiveVisualizer widgets when a GUI window is present.
@@ -550,7 +549,13 @@ class ManagerBasedEnv:
         self._physics_handles_actions = _physics_can_handle_actions(self) and self.sim.backend_manager.handle_actions(
             self.action_manager, self.scene
         )
-        self._physics_handles_decimation = self.sim.backend_manager.handles_decimation()
+        render_within_step = (
+            self.sim.is_rendering
+            or self.has_rtx_sensors
+            or any(cfg.capture_on_render for cfg in self.cfg.video_recorders)
+        ) and (self.cfg.sim.render_interval % self.cfg.decimation != 0)
+        self.sim.backend_manager.set_decimation(1 if render_within_step else self.cfg.decimation)
+        self._physics_handles_decimation = not render_within_step and self.sim.backend_manager.handles_decimation()
 
     def step(self, action: torch.Tensor) -> tuple[VecEnvObs, dict]:
         """Execute one time-step of the environment's dynamics.
@@ -586,7 +591,10 @@ class ManagerBasedEnv:
 
         # check if we need to do rendering within the physics loop
         # note: evaluated once per step rather than once per physics substep
-        is_rendering = self.sim.is_rendering
+        for recorder in self.video_recorders:
+            if recorder.cfg.capture_on_render:
+                recorder.begin_step()
+        is_rendering = self.sim.is_rendering or any(recorder.requires_render for recorder in self.video_recorders)
 
         # physics-owned decimation covers all substeps in one call
         steps_per_call = self.cfg.decimation if self._physics_handles_decimation else 1
@@ -599,6 +607,8 @@ class ManagerBasedEnv:
             # render_enabled=False skips Kit (camera/GUI); standalone visualizers still update
             if self._sim_step_counter % self.cfg.sim.render_interval == 0 and is_rendering:
                 self.sim.render(skip_app_pumping=not self.render_enabled)
+                for recorder in self.video_recorders:
+                    recorder.capture_render()
             self.scene.update(dt=self.physics_dt * steps_per_call)
 
         # post-step: step interval event

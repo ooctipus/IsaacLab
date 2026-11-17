@@ -3,7 +3,13 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Factory reward terms."""
+"""Domain-agnostic reward terms shared across terrain and factory tasks.
+
+- :func:`action_l2_clamped` / :func:`action_rate_l2_clamped` — generic L2
+  action penalties with a saturation clamp.
+- :func:`success_reward` — reads the assembly state tracked by the
+  ``progress_context`` termination term.
+"""
 
 from __future__ import annotations
 
@@ -33,3 +39,11 @@ def success_reward(env: ManagerBasedRLEnv, context: str = "progress_context") ->
     position_centered: torch.Tensor = getattr(context_term, "position_centered")
     z_distance_reached: torch.Tensor = getattr(context_term, "z_distance_reached")
     return torch.where(orientation_aligned & position_centered & z_distance_reached, 1.0, 0.0)
+
+
+def zero_reward_on_solver_reset(env: ManagerBasedRLEnv) -> torch.Tensor:
+    """Replace invalid-world rewards after the additive reward terms."""
+    from .terminations import solver_reset_required
+
+    env.reward_manager._reward_buf[solver_reset_required(env)] = 0.0
+    return torch.zeros_like(env.reward_manager._reward_buf)
