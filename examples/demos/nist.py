@@ -38,7 +38,7 @@ from isaaclab_newton.sim.schemas import (
 )
 from isaaclab_newton.sim.spawners.materials import NewtonMaterialCfg
 from isaaclab_physx.sim.schemas import PhysxCollisionCfg
-from newton import ShapeFlags
+from newton import GeoType, ShapeFlags
 
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
@@ -213,6 +213,8 @@ def reset_parts(env: ManagerBasedEnv, env_ids: torch.Tensor | slice, assemblies:
     )
     board_pose[:, :3] += env.scene.env_origins[env_ids]
     board.write_root_link_pose_to_sim_index(root_pose=board_pose, env_ids=env_ids)
+    origins = env.scene.env_origins[env_ids]
+    fixture_poses = [torch.cat((board_pose[:, :3] - origins, board_pose[:, 3:]), dim=1)]
     # Compose from raw xyzw poses, preserving the quaternion convention seen during training.
     for socket, part in {part.socket: part for part in assemblies}.items():
         offset = board_pose.new_tensor(part.board_pose)
@@ -222,10 +224,12 @@ def reset_parts(env: ManagerBasedEnv, env_ids: torch.Tensor | slice, assemblies:
         env.scene[f"fixed_{socket}"].write_root_link_pose_to_sim_index(
             root_pose=torch.cat((position, rotation), dim=1), env_ids=env_ids
         )
+        fixture_poses.append(torch.cat((position - origins, rotation), dim=1))
 
     bounds = board_pose.new_tensor(DROP_POSITION_RANGE)
     positions, rotations = draw_part_poses(count, bounds)
-    separate_overlapping_parts(positions, rotations, bounds, part_meshes(env), spawn_generator(env))
+    fixtures = Fixtures(torch.stack(fixture_poses, dim=1), fixture_meshes(env, assemblies))
+    separate_overlapping_parts(positions, rotations, bounds, part_meshes(env), spawn_generator(env), fixtures)
     for slot in range(10):
         asset = env.scene[f"held_{slot:02d}"]
         pose = asset.data.default_root_pose.torch[env_ids].clone()
@@ -261,33 +265,74 @@ def part_mesh(vertices: torch.Tensor, triangles: torch.Tensor) -> PartMesh:
     return PartMesh((lower + upper) * 0.5, (upper - lower) * 0.5, vertices, triangles, edges)
 
 
+def body_mesh(model, body: int, device: str) -> PartMesh:
+    """A body's colliding shapes as one closed triangle mesh in its frame: mesh shapes as they are, boxes by their
+    corners."""
+    shape_body = model.shape_body.numpy()
+    flags = model.shape_flags.numpy()
+    types = model.shape_type.numpy()
+    scale = model.shape_scale.numpy()
+    transform = model.shape_transform.numpy()
+    vertices, triangles, start = [], [], 0
+    for shape in np.flatnonzero(shape_body == body):
+        if not flags[shape] & ShapeFlags.COLLIDE_SHAPES:
+            continue
+        source = model.shape_source[int(shape)]
+        if types[shape] == GeoType.BOX:
+            local, faces = _box(scale[shape][:3])
+        elif source is not None:
+            local, faces = np.asarray(source.vertices) * scale[shape][:3], np.asarray(source.indices).reshape(-1, 3)
+        else:
+            continue
+        rotation = math_utils.matrix_from_quat(torch.tensor(transform[shape, 3:], device=device))
+        local = torch.tensor(local, dtype=torch.float32, device=device)
+        vertices.append(local @ rotation.T + torch.tensor(transform[shape, :3], device=device))
+        triangles.append(torch.tensor(faces, device=device) + start)
+        start += len(local)
+    return part_mesh(torch.cat(vertices), torch.cat(triangles))
+
+
+def _box(half: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """A box's corners and outward triangles, half extents ``half``."""
+    corners = np.array([[x, y, z] for x in (-1.0, 1.0) for y in (-1.0, 1.0) for z in (-1.0, 1.0)]) * half
+    quads = [(0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1), (2, 3, 7, 6), (0, 2, 6, 4), (1, 5, 7, 3)]
+    return corners, np.array([t for a, b, c, d in quads for t in ((a, b, c), (a, c, d))])
+
+
+def _env0_body(model, name: str) -> int:
+    """The index of the first world's body under the prim ``name`` of the environment (the first path component)."""
+    return next(
+        i for i, label in enumerate(model.body_label) if str(label).partition("/env_0/")[2].split("/")[0] == name
+    )
+
+
 def part_meshes(env: ManagerBasedEnv) -> tuple[PartMesh, ...]:
     """The ten loose parts' collision meshes, read once from the Newton model's first world."""
     meshes = getattr(env, "_nist_part_meshes", None)
-    if meshes is not None:
-        return meshes
-    model = env.sim.backend_manager.backend.model
-    labels = list(model.body_label)
-    shape_body = model.shape_body.numpy()
-    flags = model.shape_flags.numpy()
-    scale = model.shape_scale.numpy()
-    transform = model.shape_transform.numpy()
-    meshes = []
-    for slot in range(10):
-        body = next(i for i, label in enumerate(labels) if f"/env_0/held_{slot:02d}/" in str(label))
-        vertices, triangles, start = [], [], 0
-        for shape in np.flatnonzero(shape_body == body):
-            source = model.shape_source[int(shape)]
-            if not flags[shape] & ShapeFlags.COLLIDE_SHAPES or source is None:
-                continue
-            rotation = math_utils.matrix_from_quat(torch.tensor(transform[shape, 3:], device=env.device))
-            local = torch.tensor(np.asarray(source.vertices) * scale[shape], dtype=torch.float32, device=env.device)
-            vertices.append(local @ rotation.T + torch.tensor(transform[shape, :3], device=env.device))
-            triangles.append(torch.tensor(np.asarray(source.indices).reshape(-1, 3), device=env.device) + start)
-            start += len(local)
-        meshes.append(part_mesh(torch.cat(vertices), torch.cat(triangles)))
-    env._nist_part_meshes = meshes = tuple(meshes)
+    if meshes is None:
+        model = env.sim.backend_manager.backend.model
+        meshes = tuple(body_mesh(model, _env0_body(model, f"held_{slot:02d}"), env.device) for slot in range(10))
+        env._nist_part_meshes = meshes
     return meshes
+
+
+def fixture_meshes(env: ManagerBasedEnv, assemblies: tuple[Assembly, ...]) -> tuple[PartMesh, ...]:
+    """The board's and the sockets' collision meshes in :func:`reset_parts`' order, read once from the first world."""
+    meshes = getattr(env, "_nist_fixture_meshes", None)
+    if meshes is None:
+        model = env.sim.backend_manager.backend.model
+        names = ["NistBoard"] + [f"fixed_{socket}" for socket in {part.socket: part for part in assemblies}]
+        meshes = tuple(body_mesh(model, _env0_body(model, name), env.device) for name in names)
+        env._nist_fixture_meshes = meshes
+    return meshes
+
+
+class Fixtures(NamedTuple):
+    """The fixed geometry a loose part must spawn clear of: each world's poses [m, xyzw] in its frame, shaped
+    (worlds, fixtures, 7), and each fixture's collision mesh."""
+
+    poses: torch.Tensor
+    meshes: tuple[PartMesh, ...]
 
 
 def spawn_generator(env: ManagerBasedEnv) -> torch.Generator:
@@ -332,10 +377,11 @@ def separate_overlapping_parts(
     bounds: torch.Tensor,
     meshes: tuple[PartMesh, ...],
     generator: torch.Generator,
+    fixtures: Fixtures,
 ) -> None:
-    """Redraw, in place, the later part of each pair whose collision meshes overlap, from ``generator``, until no
-    pair does; worlds without an overlapping pair keep their poses."""
-    later = overlapping_part(positions, rotations, meshes)
+    """Redraw, in place, the later part of each pair whose collision meshes overlap, and a part whose mesh overlaps a
+    fixture's, from ``generator``, until none does; worlds without an overlap keep their poses."""
+    later = overlapping_part(positions, rotations, meshes, fixtures)
     for _ in range(256):
         worlds = torch.nonzero(later >= 0).flatten()
         if len(worlds) == 0:
@@ -351,23 +397,33 @@ def separate_overlapping_parts(
         clear = (gaps >= PART_SPACING**2).all(dim=1)
         positions[worlds[clear], slot[clear]] = candidate[clear]
         rotations[worlds[clear], slot[clear]] = rotation[clear]
-        later[worlds] = overlapping_part(positions[worlds], rotations[worlds], meshes)
+        later[worlds] = overlapping_part(
+            positions[worlds], rotations[worlds], meshes, Fixtures(fixtures.poses[worlds], fixtures.meshes)
+        )
     raise RuntimeError("Could not separate the loose parts' collision geometry inside the drop region.")
 
 
-def overlapping_part(positions: torch.Tensor, rotations: torch.Tensor, meshes: tuple[PartMesh, ...]) -> torch.Tensor:
-    """Each world's later part of its first pair of parts whose collision meshes overlap, -1 where none does.
+def overlapping_part(
+    positions: torch.Tensor, rotations: torch.Tensor, meshes: tuple[PartMesh, ...], fixtures: Fixtures
+) -> torch.Tensor:
+    """Each world's part to redraw, -1 where none overlaps: the later part of its first pair of parts whose collision
+    meshes overlap, else its first part whose mesh overlaps a fixture's.
 
     Every pair's bounding boxes are tested at once (separating axes); those that overlap are decided exactly by their
-    meshes (:func:`meshes_overlap`), in pair order: by the later part, then the earlier.
+    meshes (:func:`meshes_overlap`), in pair order: by the later part, then the earlier; then the parts against the
+    fixtures, by part, then fixture.
     """
-    pairs = [(a, b) for b in range(1, len(meshes)) for a in range(b)]
+    parts = len(meshes)
+    pairs = [(a, b) for b in range(1, parts) for a in range(b)]
+    pairs += [(parts + f, a) for a in range(parts) for f in range(len(fixtures.meshes))]
+    every = meshes + fixtures.meshes
     first = torch.tensor([a for a, _ in pairs], device=positions.device)
     second = torch.tensor([b for _, b in pairs], device=positions.device)
-    frames = math_utils.matrix_from_quat(rotations)
-    centres = torch.stack([mesh.centre for mesh in meshes])
-    halves = torch.stack([mesh.half for mesh in meshes])
-    world_centres = positions + (frames @ centres[None, :, :, None])[..., 0]
+    origins = torch.cat((positions, fixtures.poses[..., :3]), dim=1)
+    frames = math_utils.matrix_from_quat(torch.cat((rotations, fixtures.poses[..., 3:]), dim=1))
+    centres = torch.stack([mesh.centre for mesh in every])
+    halves = torch.stack([mesh.half for mesh in every])
+    world_centres = origins + (frames @ centres[None, :, :, None])[..., 0]
     boxes = boxes_overlap(
         world_centres[:, first],
         frames[:, first],
@@ -382,8 +438,8 @@ def overlapping_part(positions: torch.Tensor, rotations: torch.Tensor, meshes: t
         if later[world] >= 0:
             continue
         rotation = frames[world, a].T @ frames[world, b]
-        translation = frames[world, a].T @ (positions[world, b] - positions[world, a])
-        if meshes_overlap(meshes[a], meshes[b], rotation, translation):
+        translation = frames[world, a].T @ (origins[world, b] - origins[world, a])
+        if meshes_overlap(every[a], every[b], rotation, translation):
             later[world] = b
     return torch.tensor(later, dtype=torch.long, device=positions.device)
 
