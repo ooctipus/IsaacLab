@@ -27,6 +27,7 @@ import argparse
 import random
 from typing import NamedTuple
 
+import numpy as np
 import torch
 from isaaclab_newton.physics import FeatherPGSSolverCfg, MJWarpSolverCfg, NewtonCfg, NewtonCollisionPipelineCfg
 from isaaclab_newton.sim.schemas import (
@@ -37,6 +38,7 @@ from isaaclab_newton.sim.schemas import (
 )
 from isaaclab_newton.sim.spawners.materials import NewtonMaterialCfg
 from isaaclab_physx.sim.schemas import PhysxCollisionCfg
+from newton import ShapeFlags
 
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
@@ -218,26 +220,244 @@ def reset_parts(env: ManagerBasedEnv, env_ids: torch.Tensor | slice, assemblies:
             root_pose=torch.cat((position, rotation), dim=1), env_ids=env_ids
         )
 
-    positions = board_pose.new_empty((count, 10, 3))
     bounds = board_pose.new_tensor(DROP_POSITION_RANGE)
+    positions, rotations = draw_part_poses(count, bounds)
+    separate_overlapping_parts(positions, rotations, bounds, part_meshes(env), spawn_generator(env))
     for slot in range(10):
-        pending = torch.arange(count, device=env.device)
+        asset = env.scene[f"held_{slot:02d}"]
+        pose = asset.data.default_root_pose.torch[env_ids].clone()
+        pose[:, :3] = positions[:, slot] + env.scene.env_origins[env_ids]
+        pose[:, 3:7] = rotations[:, slot]
+        asset.write_root_link_pose_to_sim_index(root_pose=pose, env_ids=env_ids)
+        asset.write_root_com_velocity_to_sim_index(root_velocity=pose.new_zeros((len(env_ids), 6)), env_ids=env_ids)
+
+
+# Loose parts' origins are drawn at least this far apart [m]; their collision geometry reaches up to 93 mm from them.
+PART_SPACING = 0.1
+# Each part's roll, pitch and yaw are drawn within these magnitudes [rad].
+PART_TILT = (1.57, 1.57, 3.14)
+
+
+class PartMesh(NamedTuple):
+    """A loose part's collision geometry in its root frame [m]: its bounding box's centre and half extents, its
+    vertices, and its triangles and edges as vertex indices."""
+
+    centre: torch.Tensor
+    half: torch.Tensor
+    vertices: torch.Tensor
+    triangles: torch.Tensor
+    edges: torch.Tensor
+
+
+def part_mesh(vertices: torch.Tensor, triangles: torch.Tensor) -> PartMesh:
+    """A closed triangle mesh as a :class:`PartMesh`."""
+    edges = (
+        torch.cat((triangles[:, [0, 1]], triangles[:, [1, 2]], triangles[:, [2, 0]])).sort(dim=1).values.unique(dim=0)
+    )
+    lower, upper = vertices.min(dim=0).values, vertices.max(dim=0).values
+    return PartMesh((lower + upper) * 0.5, (upper - lower) * 0.5, vertices, triangles, edges)
+
+
+def part_meshes(env: ManagerBasedEnv) -> tuple[PartMesh, ...]:
+    """The ten loose parts' collision meshes, read once from the Newton model's first world."""
+    meshes = getattr(env, "_nist_part_meshes", None)
+    if meshes is not None:
+        return meshes
+    model = env.sim.backend_manager.backend.model
+    labels = list(model.body_label)
+    shape_body = model.shape_body.numpy()
+    flags = model.shape_flags.numpy()
+    scale = model.shape_scale.numpy()
+    transform = model.shape_transform.numpy()
+    meshes = []
+    for slot in range(10):
+        body = next(i for i, label in enumerate(labels) if f"/env_0/held_{slot:02d}/" in str(label))
+        vertices, triangles, start = [], [], 0
+        for shape in np.flatnonzero(shape_body == body):
+            source = model.shape_source[int(shape)]
+            if not flags[shape] & ShapeFlags.COLLIDE_SHAPES or source is None:
+                continue
+            rotation = math_utils.matrix_from_quat(torch.tensor(transform[shape, 3:], device=env.device))
+            local = torch.tensor(np.asarray(source.vertices) * scale[shape], dtype=torch.float32, device=env.device)
+            vertices.append(local @ rotation.T + torch.tensor(transform[shape, :3], device=env.device))
+            triangles.append(torch.tensor(np.asarray(source.indices).reshape(-1, 3), device=env.device) + start)
+            start += len(local)
+        meshes.append(part_mesh(torch.cat(vertices), torch.cat(triangles)))
+    env._nist_part_meshes = meshes = tuple(meshes)
+    return meshes
+
+
+def spawn_generator(env: ManagerBasedEnv) -> torch.Generator:
+    """The generator that redraws overlapping parts, seeded once from the environment's seed: its draws leave the
+    shared stream, and with it every other world's spawn, as they would be without them."""
+    generator = getattr(env, "_nist_spawn_generator", None)
+    if generator is None:
+        generator = torch.Generator(device=env.device)
+        generator.manual_seed(env.cfg.seed)
+        env._nist_spawn_generator = generator
+    return generator
+
+
+def draw_part_poses(count: int, bounds: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """Draw ``count`` worlds' ten loose parts' positions [m] and xyzw orientations from the shared stream: origins
+    ``PART_SPACING`` apart in the plane inside ``bounds``, orientations within ``PART_TILT``."""
+    positions = bounds.new_empty((count, 10, 3))
+    rotations = bounds.new_empty((count, 10, 4))
+    for slot in range(10):
+        pending = torch.arange(count, device=bounds.device)
         for _ in range(512):
             if len(pending) == 0:
                 break
-            candidate = bounds[:, 0] + torch.rand((len(pending), 3), device=env.device) * (bounds[:, 1] - bounds[:, 0])
-            clear = ((candidate[:, None, :2] - positions[pending, :slot, :2]).square().sum(dim=-1) >= 0.1**2).all(dim=1)
+            candidate = bounds[:, 0] + torch.rand((len(pending), 3), device=bounds.device) * (
+                bounds[:, 1] - bounds[:, 0]
+            )
+            clear = (
+                (candidate[:, None, :2] - positions[pending, :slot, :2]).square().sum(dim=-1) >= PART_SPACING**2
+            ).all(dim=1)
             positions[pending[clear], slot] = candidate[clear]
             pending = pending[~clear]
         if len(pending):
             raise RuntimeError("Could not sample separated loose parts inside the drop region.")
-        asset = env.scene[f"held_{slot:02d}"]
-        pose = asset.data.default_root_pose.torch[env_ids].clone()
-        pose[:, :3] = positions[:, slot] + env.scene.env_origins[env_ids]
-        angles = (torch.rand((count, 3), device=env.device) * 2.0 - 1.0) * pose.new_tensor((1.57, 1.57, 3.14))
-        pose[:, 3:7] = math_utils.quat_from_euler_xyz(*angles.unbind(-1))
-        asset.write_root_link_pose_to_sim_index(root_pose=pose, env_ids=env_ids)
-        asset.write_root_com_velocity_to_sim_index(root_velocity=pose.new_zeros((len(env_ids), 6)), env_ids=env_ids)
+        angles = (torch.rand((count, 3), device=bounds.device) * 2.0 - 1.0) * bounds.new_tensor(PART_TILT)
+        rotations[:, slot] = math_utils.quat_from_euler_xyz(*angles.unbind(-1))
+    return positions, rotations
+
+
+def separate_overlapping_parts(
+    positions: torch.Tensor,
+    rotations: torch.Tensor,
+    bounds: torch.Tensor,
+    meshes: tuple[PartMesh, ...],
+    generator: torch.Generator,
+) -> None:
+    """Redraw, in place, the later part of each pair whose collision meshes overlap, from ``generator``, until no
+    pair does; worlds without an overlapping pair keep their poses."""
+    later = overlapping_part(positions, rotations, meshes)
+    for _ in range(256):
+        worlds = torch.nonzero(later >= 0).flatten()
+        if len(worlds) == 0:
+            return
+        slot = later[worlds]
+        draws = torch.rand((len(worlds), 6), device=positions.device, generator=generator)
+        candidate = bounds[:, 0] + draws[:, :3] * (bounds[:, 1] - bounds[:, 0])
+        rotation = math_utils.quat_from_euler_xyz(
+            *((draws[:, 3:] * 2.0 - 1.0) * bounds.new_tensor(PART_TILT)).unbind(-1)
+        )
+        gaps = (positions[worlds, :, :2] - candidate[:, None, :2]).square().sum(dim=-1)
+        gaps[torch.arange(len(worlds), device=positions.device), slot] = PART_SPACING**2
+        clear = (gaps >= PART_SPACING**2).all(dim=1)
+        positions[worlds[clear], slot[clear]] = candidate[clear]
+        rotations[worlds[clear], slot[clear]] = rotation[clear]
+        later[worlds] = overlapping_part(positions[worlds], rotations[worlds], meshes)
+    raise RuntimeError("Could not separate the loose parts' collision geometry inside the drop region.")
+
+
+def overlapping_part(positions: torch.Tensor, rotations: torch.Tensor, meshes: tuple[PartMesh, ...]) -> torch.Tensor:
+    """Each world's later part of its first pair of parts whose collision meshes overlap, -1 where none does.
+
+    Pairs whose bounding boxes overlap (separating axes) are decided exactly by their meshes (:func:`meshes_overlap`).
+    """
+    frames = math_utils.matrix_from_quat(rotations)
+    later = torch.full((positions.shape[0],), -1, dtype=torch.long, device=positions.device)
+    for b in range(1, len(meshes)):
+        for a in range(b):
+            centre_a = positions[:, a] + (frames[:, a] @ meshes[a].centre[:, None])[..., 0]
+            centre_b = positions[:, b] + (frames[:, b] @ meshes[b].centre[:, None])[..., 0]
+            boxes = boxes_overlap(centre_a, frames[:, a], meshes[a].half, centre_b, frames[:, b], meshes[b].half)
+            for world in torch.nonzero(boxes & (later < 0)).flatten().tolist():
+                rotation = frames[world, a].T @ frames[world, b]
+                translation = frames[world, a].T @ (positions[world, b] - positions[world, a])
+                if meshes_overlap(meshes[a], meshes[b], rotation, translation):
+                    later[world] = b
+    return later
+
+
+def boxes_overlap(
+    centre_a: torch.Tensor,
+    axes_a: torch.Tensor,
+    half_a: torch.Tensor,
+    centre_b: torch.Tensor,
+    axes_b: torch.Tensor,
+    half_b: torch.Tensor,
+) -> torch.Tensor:
+    """Whether oriented boxes overlap, by the fifteen separating axes: centres [N, 3], axes [N, 3, 3] (columns), half
+    extents [3]."""
+    r = axes_a.transpose(-1, -2) @ axes_b
+    reach = r.abs() + 1.0e-6
+    t = ((centre_b - centre_a)[:, None, :] @ axes_a)[:, 0]
+    separated = torch.zeros(centre_a.shape[0], dtype=torch.bool, device=centre_a.device)
+    for i in range(3):
+        separated |= t[:, i].abs() > half_a[i] + (half_b * reach[:, i, :]).sum(-1)
+        separated |= (t * r[:, :, i]).sum(-1).abs() > (half_a * reach[:, :, i]).sum(-1) + half_b[i]
+        i1, i2 = (i + 1) % 3, (i + 2) % 3
+        for j in range(3):
+            j1, j2 = (j + 1) % 3, (j + 2) % 3
+            ra = half_a[i1] * reach[:, i2, j] + half_a[i2] * reach[:, i1, j]
+            rb = half_b[j1] * reach[:, i, j2] + half_b[j2] * reach[:, i, j1]
+            separated |= (t[:, i2] * r[:, i1, j] - t[:, i1] * r[:, i2, j]).abs() > ra + rb
+    return ~separated
+
+
+def meshes_overlap(a: PartMesh, b: PartMesh, rotation: torch.Tensor, translation: torch.Tensor) -> bool:
+    """Whether two closed meshes' solids intersect, ``b`` posed in ``a``'s frame: an edge of either crosses a triangle
+    of the other, or, failing that, one holds the other whole (a vertex inside, by winding number).
+
+    Every crossing lies in both meshes' bounding boxes, so only the edges and triangles that reach the boxes' common
+    part are tested.
+    """
+    vertices_b = b.vertices @ rotation.T + translation
+    lower = torch.maximum(a.centre - a.half, vertices_b.min(dim=0).values)
+    upper = torch.minimum(a.centre + a.half, vertices_b.max(dim=0).values)
+    if bool((lower > upper).any()):
+        return False
+
+    def near(vertices, items):
+        corners = vertices[items]
+        return items[((corners.min(dim=1).values <= upper) & (corners.max(dim=1).values >= lower)).all(dim=1)]
+
+    edges_a, triangles_a = near(a.vertices, a.edges), near(a.vertices, a.triangles)
+    edges_b, triangles_b = near(vertices_b, b.edges), near(vertices_b, b.triangles)
+    return (
+        _edges_cross(a.vertices, edges_a, vertices_b, triangles_b)
+        or _edges_cross(vertices_b, edges_b, a.vertices, triangles_a)
+        or _holds(a.vertices, a.triangles, vertices_b[:1])
+        or _holds(vertices_b, b.triangles, a.vertices[:1])
+    )
+
+
+def _edges_cross(vertices: torch.Tensor, edges: torch.Tensor, others: torch.Tensor, triangles: torch.Tensor) -> bool:
+    """Whether a segment ``edges`` of ``vertices`` crosses a triangle of ``others`` (Moller-Trumbore)."""
+    if len(edges) == 0 or len(triangles) == 0:
+        return False
+    corner = others[triangles[:, 0]]
+    e1 = others[triangles[:, 1]] - corner
+    e2 = others[triangles[:, 2]] - corner
+    chunk = max(1, (1 << 22) // len(triangles))
+    for k in range(0, len(edges), chunk):
+        start = vertices[edges[k : k + chunk, 0]][:, None]
+        direction = vertices[edges[k : k + chunk, 1]][:, None] - start
+        h = torch.cross(direction.expand(-1, len(triangles), -1), e2[None].expand(direction.shape[0], -1, -1), dim=-1)
+        det = (e1[None] * h).sum(-1)
+        inverse = 1.0 / torch.where(det != 0.0, det, torch.ones_like(det))
+        s = start - corner[None]
+        u = (s * h).sum(-1) * inverse
+        q = torch.cross(s, e1[None].expand_as(s), dim=-1)
+        v = (direction * q).sum(-1) * inverse
+        t = (e2[None] * q).sum(-1) * inverse
+        if bool(((det != 0.0) & (u >= 0) & (v >= 0) & (u + v <= 1) & (t >= 0) & (t <= 1)).any()):
+            return True
+    return False
+
+
+def _holds(vertices: torch.Tensor, triangles: torch.Tensor, points: torch.Tensor) -> bool:
+    """Whether the closed mesh holds any of ``points`` (generalized winding number above one half)."""
+    a, b, c = (vertices[triangles[:, k]][None] - points[:, None] for k in range(3))
+    la, lb, lc = a.norm(dim=-1), b.norm(dim=-1), c.norm(dim=-1)
+    solid = 2.0 * torch.atan2(
+        (a * torch.cross(b, c, dim=-1)).sum(-1),
+        la * lb * lc + (a * b).sum(-1) * lc + (b * c).sum(-1) * la + (c * a).sum(-1) * lb,
+    )
+    return bool((solid.sum(-1).abs() > 2.0 * torch.pi).any())
 
 
 class SlotGeometry(ManagerTermBase):
