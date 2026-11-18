@@ -151,10 +151,13 @@ CONTACT_MATERIALS = [
     UsdPhysicsRigidBodyMaterialCfg(static_friction=0.75, dynamic_friction=0.75),
     NewtonMaterialCfg(contact_stiffness=1.6e5, contact_damping=800.0),
 ]
+# The SDF band covers the reach a pass predicts contacts over (the speculative ceiling below): past the band an SDF has
+# no distance or normal to give a predicted contact.
+SDF_BAND = 0.015
 SOCKET_MESH_COLLISION_PROPS = NewtonSDFCollisionCfg(
     sdf_max_resolution=256,
-    sdf_narrow_band_inner=-0.005,
-    sdf_narrow_band_outer=0.005,
+    sdf_narrow_band_inner=-SDF_BAND,
+    sdf_narrow_band_outer=SDF_BAND,
 )
 
 
@@ -723,14 +726,17 @@ class NistPhysicsCfg(PresetCfg):
         # Every finite collider through Newton's SDF narrow phase, at the parts' and sockets' own SDF settings: a
         # part against the board is then one SDF pair, not one GJK/MPR query a triangle.
         # A pass predicts its contacts over the window FeatherPGS holds them (the backend's collision horizon), each
-        # pair as far as its closing speed carries it, up to 5 mm: the smallest ceiling that keeps the parts landing
-        # in the fixtures from closing on points the held set lacks (2 mm binds; 5 and 10 mm hold the same lanes).
+        # pair as far as its closing speed carries it, up to the SDF band: a part dropped from 12-14 cm lands at about
+        # 1.6 m/s, 16 mm a 10 ms window. Under a lower ceiling a surface past it makes no contact at the pass before
+        # landing, and the part lands millimetres deep in its fixture (5 mm: 46,556 contacts born deeper than 1 mm in
+        # the drops at 8,192 worlds; 15 mm: 6,350; 25 mm: 6,300); a ceiling past the band predicts contacts the SDF
+        # cannot place (a 15 mm ceiling on a 5 mm band: fixed-geometry contacts to 13.6 mm deep in a 128-world run).
         collision_cfg=NewtonCollisionPipelineCfg(
             broad_phase="sap",
             sdf_all_shapes=NewtonCollisionPipelineCfg.SDFAllShapesCfg(
-                sdf_max_resolution=256, sdf_narrow_band_inner=-0.005, sdf_narrow_band_outer=0.005
+                sdf_max_resolution=256, sdf_narrow_band_inner=-SDF_BAND, sdf_narrow_band_outer=SDF_BAND
             ),
-            speculative_contact_gap_max=0.005,
+            speculative_contact_gap_max=SDF_BAND,
         ),
     )
 
