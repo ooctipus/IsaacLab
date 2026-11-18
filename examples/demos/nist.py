@@ -355,21 +355,34 @@ def separate_overlapping_parts(
 def overlapping_part(positions: torch.Tensor, rotations: torch.Tensor, meshes: tuple[PartMesh, ...]) -> torch.Tensor:
     """Each world's later part of its first pair of parts whose collision meshes overlap, -1 where none does.
 
-    Pairs whose bounding boxes overlap (separating axes) are decided exactly by their meshes (:func:`meshes_overlap`).
+    Every pair's bounding boxes are tested at once (separating axes); those that overlap are decided exactly by their
+    meshes (:func:`meshes_overlap`), in pair order: by the later part, then the earlier.
     """
+    pairs = [(a, b) for b in range(1, len(meshes)) for a in range(b)]
+    first = torch.tensor([a for a, _ in pairs], device=positions.device)
+    second = torch.tensor([b for _, b in pairs], device=positions.device)
     frames = math_utils.matrix_from_quat(rotations)
-    later = torch.full((positions.shape[0],), -1, dtype=torch.long, device=positions.device)
-    for b in range(1, len(meshes)):
-        for a in range(b):
-            centre_a = positions[:, a] + (frames[:, a] @ meshes[a].centre[:, None])[..., 0]
-            centre_b = positions[:, b] + (frames[:, b] @ meshes[b].centre[:, None])[..., 0]
-            boxes = boxes_overlap(centre_a, frames[:, a], meshes[a].half, centre_b, frames[:, b], meshes[b].half)
-            for world in torch.nonzero(boxes & (later < 0)).flatten().tolist():
-                rotation = frames[world, a].T @ frames[world, b]
-                translation = frames[world, a].T @ (positions[world, b] - positions[world, a])
-                if meshes_overlap(meshes[a], meshes[b], rotation, translation):
-                    later[world] = b
-    return later
+    centres = torch.stack([mesh.centre for mesh in meshes])
+    halves = torch.stack([mesh.half for mesh in meshes])
+    world_centres = positions + (frames @ centres[None, :, :, None])[..., 0]
+    boxes = boxes_overlap(
+        world_centres[:, first],
+        frames[:, first],
+        halves[first],
+        world_centres[:, second],
+        frames[:, second],
+        halves[second],
+    )
+    later = [-1] * positions.shape[0]
+    for world, pair in torch.nonzero(boxes).tolist():
+        a, b = pairs[pair]
+        if later[world] >= 0:
+            continue
+        rotation = frames[world, a].T @ frames[world, b]
+        translation = frames[world, a].T @ (positions[world, b] - positions[world, a])
+        if meshes_overlap(meshes[a], meshes[b], rotation, translation):
+            later[world] = b
+    return torch.tensor(later, dtype=torch.long, device=positions.device)
 
 
 def boxes_overlap(
@@ -380,21 +393,21 @@ def boxes_overlap(
     axes_b: torch.Tensor,
     half_b: torch.Tensor,
 ) -> torch.Tensor:
-    """Whether oriented boxes overlap, by the fifteen separating axes: centres [N, 3], axes [N, 3, 3] (columns), half
-    extents [3]."""
+    """Whether oriented boxes overlap, by the fifteen separating axes: centres [..., 3], axes [..., 3, 3] (columns),
+    half extents [..., 3]."""
     r = axes_a.transpose(-1, -2) @ axes_b
     reach = r.abs() + 1.0e-6
-    t = ((centre_b - centre_a)[:, None, :] @ axes_a)[:, 0]
-    separated = torch.zeros(centre_a.shape[0], dtype=torch.bool, device=centre_a.device)
+    t = ((centre_b - centre_a)[..., None, :] @ axes_a)[..., 0, :]
+    separated = torch.zeros(t.shape[:-1], dtype=torch.bool, device=t.device)
     for i in range(3):
-        separated |= t[:, i].abs() > half_a[i] + (half_b * reach[:, i, :]).sum(-1)
-        separated |= (t * r[:, :, i]).sum(-1).abs() > (half_a * reach[:, :, i]).sum(-1) + half_b[i]
+        separated |= t[..., i].abs() > half_a[..., i] + (half_b * reach[..., i, :]).sum(-1)
+        separated |= (t * r[..., :, i]).sum(-1).abs() > (half_a * reach[..., :, i]).sum(-1) + half_b[..., i]
         i1, i2 = (i + 1) % 3, (i + 2) % 3
         for j in range(3):
             j1, j2 = (j + 1) % 3, (j + 2) % 3
-            ra = half_a[i1] * reach[:, i2, j] + half_a[i2] * reach[:, i1, j]
-            rb = half_b[j1] * reach[:, i, j2] + half_b[j2] * reach[:, i, j1]
-            separated |= (t[:, i2] * r[:, i1, j] - t[:, i1] * r[:, i2, j]).abs() > ra + rb
+            ra = half_a[..., i1] * reach[..., i2, j] + half_a[..., i2] * reach[..., i1, j]
+            rb = half_b[..., j1] * reach[..., i, j2] + half_b[..., j2] * reach[..., i, j1]
+            separated |= (t[..., i2] * r[..., i1, j] - t[..., i1] * r[..., i2, j]).abs() > ra + rb
     return ~separated
 
 
