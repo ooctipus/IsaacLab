@@ -489,11 +489,15 @@ class NistPhysicsCfg(PresetCfg):
         ),
         # Every finite collider through Newton's SDF narrow phase, at the parts' and sockets' own SDF settings: a
         # part against the board is then one SDF pair, not one GJK/MPR query a triangle.
+        # A pass predicts its contacts over the window FeatherPGS holds them (the backend's collision horizon), each
+        # pair as far as its closing speed carries it, up to 5 mm: the smallest ceiling that keeps the parts landing
+        # in the fixtures from closing on points the held set lacks (2 mm binds; 5 and 10 mm hold the same lanes).
         collision_cfg=NewtonCollisionPipelineCfg(
             broad_phase="sap",
             sdf_all_shapes=NewtonCollisionPipelineCfg.SDFAllShapesCfg(
                 sdf_max_resolution=256, sdf_narrow_band_inner=-0.005, sdf_narrow_band_outer=0.005
             ),
+            speculative_contact_gap_max=0.005,
         ),
     )
 
