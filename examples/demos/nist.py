@@ -688,9 +688,16 @@ class NistSceneCfg(InteractiveSceneCfg):
             articulation_props=NewtonArticulationCfg(self_collision_enabled=False),
             collision_props=PhysxCollisionCfg(contact_offset=0.005, rest_offset=0.0),
             mesh_collision_props=sim_utils.UsdPhysicsMeshCollisionCfg(mesh_approximation_name="convexHull"),
+            # The hand and fingers are rigid: 1e8 N/m. An authored contact's law is MuJoCo's soft contact, the mean of
+            # its two shapes' (time constant 2 / kd, damping ratio kd / (2 sqrt(ke))), the time constant at least two
+            # substeps: against a part (2.5 ms, 1.0) the pair's time constant stays at that bound and the arm's
+            # stiffness enters through its damping ratio, 0.1 here (1.0 at 1e6), which makes the pair's spring 3.3
+            # times stiffer (at most 4 times as the arm's ratio goes to zero). Its force per depth is that spring times
+            # the contact's effective mass, so a light part pressed by the hand sinks deepest: at 1e6 the parts sat
+            # 3.2 / 3.9 mm (fingers / hand, p99) inside the gripper; at 1e8 0.8 / 1.2 mm.
             physics_material=[
                 UsdPhysicsRigidBodyMaterialCfg(static_friction=1.0, dynamic_friction=1.0),
-                NewtonMaterialCfg(contact_stiffness=1.0e6, contact_damping=2000.0),
+                NewtonMaterialCfg(contact_stiffness=1.0e8, contact_damping=2000.0),
             ],
             joint_drive_props=sim_utils.UsdPhysicsDriveCfg(),
             ensure_drives_exist=True,
