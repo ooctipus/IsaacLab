@@ -1,7 +1,7 @@
 numpy>=2
 mujoco~=3.17.0
 mujoco-warp~=3.17.0
-newton[sim] @ git+https://github.com/ooctipus/newton.git@c0878bddcdd0e8562d1667e03c12c286a38c198a
+newton[sim] @ git+https://github.com/ooctipus/newton.git@09323f3935b0d1b4bbebd207a75c6693ce01cfac
 newton-usd-schemas>=0.5.0
 usd-exchange==3.0.1
 usd-optimize~=1.3.1
