@@ -386,6 +386,12 @@ class NewtonBackend:
         """Solver substeps per physics step."""
         self.solver_dt = dt / self.num_substeps
         """Duration of one solver substep [s]."""
+        held = physics_cfg.collision_decimation
+        if held <= 0 or held >= self.num_substeps:
+            held = self.num_substeps
+        self.collision_horizon = self.solver_dt * held
+        """Duration a collision pass's contacts are held for [s]: the substeps until the next pass. A pass predicts its
+        contacts over it, and the contact capacity is forecast over it."""
         self.deterministic_mode = _resolve_deterministic_mode(physics_cfg)
         """Warp determinism mode of the solver and collision pipeline."""
         self.state_1: State = self.model.state()
@@ -744,7 +750,7 @@ class NewtonBackend:
         service_capacity = getattr(self.collision_pipeline, "service_capacity", None)
         if service_capacity is None or not self.graphs or self.graphs_measured or self.device.is_capturing:
             return
-        service_capacity(self.state_0, dt=self.solver_dt * (self.cfg.collision_decimation or self.num_substeps))
+        service_capacity(self.state_0, dt=self.collision_horizon)
         self.graphs_measured = True
 
     def _service_contact_capacity(self) -> None:
@@ -873,7 +879,7 @@ class NewtonBackend:
         """Prepare the solver, collide, and run the pre-actuator callbacks of one physics step."""
         self.solver_ops.pre_step(self.state_0)
         if self.collision_pipeline is not None:
-            self.collision_pipeline.collide(self.state_0, self.contacts, dt=self.solver_dt)
+            self.collision_pipeline.collide(self.state_0, self.contacts, dt=self.collision_horizon)
         for callback in self.pre_actuator_callbacks:
             callback()
         if self.handles_actions:
@@ -927,7 +933,7 @@ class NewtonBackend:
             # Derived data read by the next substep's state-force callbacks must see this substep's state.
             self.state_version += 1
             if collide_mid_loop and (i + 1) % collide_every == 0 and i + 1 < num_substeps:
-                self.collision_pipeline.collide(self.state_0, contacts, dt=dt)
+                self.collision_pipeline.collide(self.state_0, contacts, dt=self.collision_horizon)
         ops.post_step(self.state_0)
 
     def _update_sensors(self) -> None:

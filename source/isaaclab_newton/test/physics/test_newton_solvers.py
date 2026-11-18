@@ -603,8 +603,7 @@ def test_backend_measures_new_graphs_once_and_recaptures_after_growth():
     backend = object.__new__(NewtonBackend)
     backend.collision_pipeline = SimpleNamespace(service_capacity=service_capacity)
     backend.device = SimpleNamespace(is_capturing=False)
-    backend.state_0, backend.solver_dt, backend.num_substeps = object(), 0.005, 2
-    backend.cfg = SimpleNamespace(collision_decimation=0)
+    backend.state_0, backend.collision_horizon = object(), 0.01
     backend.graphs, backend.graphs_measured = {}, False
 
     backend._measure_contact_demand()

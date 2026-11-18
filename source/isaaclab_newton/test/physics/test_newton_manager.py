@@ -382,6 +382,7 @@ def _recording_backend(
         dt=0.002,
         num_substeps=num_substeps,
         solver_dt=0.002 / num_substeps,
+        collision_horizon=0.002,
         actuators=None,
         actuators_active=False,
         handles_actions=False,
