@@ -441,7 +441,7 @@ def test_deterministic_request_resolves_to_the_mode_the_solver_applies(
 
 
 @pytest.mark.parametrize("collision_cfg", [None, NewtonCollisionPipelineCfg()], ids=["default", "configured"])
-def test_deterministic_collision_pipeline_grows_with_the_solver_contact_capacity(collision_cfg):
+def test_collision_pipeline_grows_with_the_solver_contact_capacity(collision_cfg):
     """Contact allocation can rebuild the pipeline but must leave solver output allocation to its caller."""
     pipelines, prepared, observable_requests = [], [], []
 
@@ -482,7 +482,7 @@ def test_deterministic_collision_pipeline_grows_with_the_solver_contact_capacity
     backend._allocate_contacts()
 
     assert pipelines[1] == {**pipelines[0], "rigid_contact_max": 2}
-    assert pipelines[0]["deterministic"] is True
+    assert "deterministic" not in pipelines[0]
     assert backend.contacts.rigid_contact_max == 2
     assert prepared == [backend.contacts]
     assert observable_requests == []

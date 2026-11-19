@@ -820,7 +820,6 @@ class NewtonBackend:
                 )
         else:
             args = collision_cfg.to_pipeline_args() if collision_cfg is not None else {"broad_phase": "explicit"}
-            args["deterministic"] = self.deterministic_mode != wp.DeterministicMode.NOT_GUARANTEED
             # Experiments registered in Newton's environment flags (owner: Isaac Lab): box-box pairs through the
             # analytic SAT collider, and contact identity across steps for a solver's warm start.
             if os.environ.get("NEWTON_COLLISION_BOX_SAT") == "1":
@@ -831,20 +830,12 @@ class NewtonBackend:
             if self.collision_pipeline is None:
                 self.collision_pipeline = _scale_narrow_phase_threads(ops.create_collision_pipeline(**args))
             self.contacts = self.collision_pipeline.contacts()
-            # MuJoCo Warp can require more contacts than the pipeline estimates.
+            # MuJoCo Warp can require more contacts than the pipeline estimates: the pipeline is rebuilt at the
+            # solver's capacity, so its contacts stay the rows of its own pool.
             if required > self.contacts.rigid_contact_max:
-                if args["deterministic"]:
-                    # The deterministic sort buffer is sized at construction, so rebuild the pipeline to match.
-                    args["rigid_contact_max"] = required
-                    self.collision_pipeline = _scale_narrow_phase_threads(ops.create_collision_pipeline(**args))
-                    self.contacts = self.collision_pipeline.contacts()
-                else:
-                    self.contacts = Contacts(
-                        rigid_contact_max=required,
-                        soft_contact_max=0,
-                        device=self.device,
-                        requested_attributes=model.get_requested_contact_attributes(),
-                    )
+                args["rigid_contact_max"] = required
+                self.collision_pipeline = _scale_narrow_phase_threads(ops.create_collision_pipeline(**args))
+                self.contacts = self.collision_pipeline.contacts()
         if self.contacts is not None:
             ops.prepare_contacts(self.contacts, self.collision_pipeline)
 
