@@ -686,10 +686,15 @@ class SlotGeometry(ManagerTermBase):
         pitch = torch.asin((2.0 * (w * y - z * x)).clamp(-1.0, 1.0))
         aligned = roll.abs() + pitch.abs() < 0.025
         self.assembled = aligned & (error_pos[..., :2].norm(dim=-1) < 0.0025) & (error_pos[..., 2] < 0.001)
-        position = held[..., :3] - env.scene.env_origins[:, None]
+        # The workspace bounds a part's centre of mass: a part's root frame may sit far from its body (a gear's ~50 mm
+        # off its centre, where a gear rolling on its rim swings it below the ground). The assembled check keeps the
+        # root frames, in which the seated poses are defined.
+        com = torch.stack([asset.data.root_com_pos_w.torch for asset in self.held], dim=1)
+        position = com - env.scene.env_origins[:, None]
         lower, upper = position.new_tensor(WORKSPACE_LOWER), position.new_tensor(WORKSPACE_UPPER)
         self.invalid = (
             (~torch.isfinite(held)).any(dim=(1, 2))
+            | (~torch.isfinite(com)).any(dim=(1, 2))
             | ~torch.isfinite(hand).all(dim=1)
             | ((position < lower) | (position > upper)).any(dim=(1, 2))
         )
