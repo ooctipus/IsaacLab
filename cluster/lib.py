@@ -245,6 +245,8 @@ def _positive_cluster_int(p: ParsedArgs, key: str) -> int:
 
 def validate_image_script(script: str) -> str:
     """Validate a Python script path owned by the submitted container image."""
+    if script == "isaaclab":
+        return script
     path = PurePosixPath(script)
     if path.is_absolute() or ".." in path.parts or re.fullmatch(r"[A-Za-z0-9_./-]+\.py", script) is None:
         print(f"Error: invalid image script path '{script}'.", file=sys.stderr)

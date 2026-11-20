@@ -140,6 +140,9 @@ COPY --parents source/*/pyproject.toml ${ISAACLAB_PATH}/
 # ``isaacsim`` wheel; ``teleop`` itself is left exactly as tuned.
 ARG IMAGE_EXTRAS="--extra sb3 --extra skrl --extra rl-games --extra rsl-rl --extra wandb --extra viser --extra rerun --extra mimic --extra teleop --extra test --extra tetrahedralization --extra ov"
 
+ENV ISAACLAB_UV_SYNC_ARGS="${IMAGE_EXTRAS} --no-install-package imageio-ffmpeg"
+ARG DEPS_CACHE_BUST=0
+
 RUN --mount=type=cache,target=/root/.cache/uv \
     cd ${ISAACLAB_PATH} && \
     uv sync --frozen --inexact ${IMAGE_EXTRAS} \
@@ -225,8 +228,6 @@ RUN chmod 755 \
 USER root
 
 RUN find ${ISAACSIM_ROOT_PATH}/extscache -path "*/pip_prebundle/typing_extensions.py" -delete
-
-USER isaaclab
 
 # copy the rest of the files
 COPY --chown=isaaclab:isaaclab . ${ISAACLAB_PATH}/
