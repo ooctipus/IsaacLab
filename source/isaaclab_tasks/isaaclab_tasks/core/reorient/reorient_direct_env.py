@@ -24,6 +24,7 @@ from isaaclab.utils.math import (
     unscale_transform,
 )
 
+from .clearance import ObjectClearance
 from .utils import EpisodeErrorRecorder, randomize_rotation, sample_joint_positions_within_limits
 
 if TYPE_CHECKING:
@@ -111,6 +112,7 @@ class ReorientDirectEnv(DirectRLEnv):
         self._write_obj_root_vel = self.object.write_root_velocity_to_sim_index
         self._write_hand_joint_pos = self.hand.write_joint_position_to_sim_index
         self._write_hand_joint_vel = self.hand.write_joint_velocity_to_sim_index
+        self._clearance = ObjectClearance(self.hand, self.object, self.cfg.sim.gravity)
 
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
         self.actions = actions
@@ -246,6 +248,21 @@ class ReorientDirectEnv(DirectRLEnv):
         # reset goals
         self._reset_target_pose(env_ids)
 
+        # reset hand
+        default_dof_pos = self.hand.data.default_joint_pos.torch[env_ids]
+        dof_limits = self.hand.data.joint_limits.torch[env_ids]
+        dof_pos = sample_joint_positions_within_limits(default_dof_pos, dof_limits, self.cfg.reset_dof_pos_noise)
+
+        dof_vel_noise = sample_uniform(-1.0, 1.0, (len(env_ids), self.num_hand_dofs), device=self.device)
+        dof_vel = self.hand.data.default_joint_vel.torch[env_ids] + self.cfg.reset_dof_vel_noise * dof_vel_noise
+
+        self.prev_targets[env_ids] = dof_pos
+        self.cur_targets[env_ids] = dof_pos
+
+        self._set_joint_pos_target(value=dof_pos, env_ids=env_ids)
+        self._write_hand_joint_pos(position=dof_pos, env_ids=env_ids)
+        self._write_hand_joint_vel(velocity=dof_vel, env_ids=env_ids)
+
         # reset object
         object_default_pose = self.object.data.default_root_pose.torch[env_ids]
         object_default_vel = self.object.data.default_root_vel.torch[env_ids]
@@ -261,23 +278,10 @@ class ReorientDirectEnv(DirectRLEnv):
         )
 
         object_default_vel[:] = 0.0
+        # lifted clear of the hand at the joint positions just written
+        self._clearance.raise_clear(object_default_pose, env_ids, self.sim)
         self._write_obj_root_pose(root_pose=object_default_pose, env_ids=env_ids)
         self._write_obj_root_vel(root_velocity=object_default_vel, env_ids=env_ids)
-
-        # reset hand
-        default_dof_pos = self.hand.data.default_joint_pos.torch[env_ids]
-        dof_limits = self.hand.data.joint_limits.torch[env_ids]
-        dof_pos = sample_joint_positions_within_limits(default_dof_pos, dof_limits, self.cfg.reset_dof_pos_noise)
-
-        dof_vel_noise = sample_uniform(-1.0, 1.0, (len(env_ids), self.num_hand_dofs), device=self.device)
-        dof_vel = self.hand.data.default_joint_vel.torch[env_ids] + self.cfg.reset_dof_vel_noise * dof_vel_noise
-
-        self.prev_targets[env_ids] = dof_pos
-        self.cur_targets[env_ids] = dof_pos
-
-        self._set_joint_pos_target(value=dof_pos, env_ids=env_ids)
-        self._write_hand_joint_pos(position=dof_pos, env_ids=env_ids)
-        self._write_hand_joint_vel(velocity=dof_vel, env_ids=env_ids)
 
         index_fill_(self.successes, env_ids, 0)
         self._compute_intermediate_values()

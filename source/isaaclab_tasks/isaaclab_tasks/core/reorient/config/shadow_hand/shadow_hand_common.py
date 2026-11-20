@@ -121,22 +121,20 @@ class ShadowHandRandomizationEventCfg:
 class ShadowHandManagerResetEventCfg:
     """Only the per-episode state reset, with no domain randomization."""
 
-    reset_object = EventTerm(
-        func=mdp.reset_root_state_with_random_orientation,
-        mode="reset",
-        params={
-            # the Direct task jitters the drop position and samples a random orientation
-            "pose_range": {"x": (-0.01, 0.01), "y": (-0.01, 0.01), "z": (-0.01, 0.01)},  # [m]
-            "velocity_range": {},
-            "asset_cfg": SceneEntityCfg("object"),
-        },
-    )
     reset_hand = EventTerm(
         func=mdp.reset_reorient_hand,
         mode="reset",
         params={
             "joint_position_noise": 0.2,  # fraction from default toward a uniform sample within the joint limits
             "joint_velocity_noise": 0.0,  # [rad/s]
+        },
+    )
+    reset_object = EventTerm(
+        func=mdp.reset_object_clear_of_hand,
+        mode="reset",
+        params={
+            # the Direct task jitters the drop position and samples a random orientation, lifted clear of the hand
+            "pose_range": {"x": (-0.01, 0.01), "y": (-0.01, 0.01), "z": (-0.01, 0.01)},  # [m]
         },
     )
 

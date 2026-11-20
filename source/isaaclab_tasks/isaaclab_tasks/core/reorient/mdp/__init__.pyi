@@ -6,6 +6,7 @@
 __all__ = [
     "ReorientCommand",
     "ReorientCommandCfg",
+    "reset_object_clear_of_hand",
     "reset_reorient_hand",
     "fingertip_pos",
     "fingertip_vel",
@@ -21,7 +22,7 @@ __all__ = [
 
 from .commands import ReorientCommand
 from .commands_cfg import ReorientCommandCfg
-from .events import reset_reorient_hand
+from .events import reset_object_clear_of_hand, reset_reorient_hand
 from .observations import (
     fingertip_pos,
     fingertip_vel,
