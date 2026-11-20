@@ -198,12 +198,13 @@ def pair_friction(a: str, b: str) -> float:
     raise KeyError(f"No friction for {a} on {b}")
 
 
-def shape_friction(assemblies: tuple[Assembly, ...], combine: str) -> dict[str, float]:
-    """Each shape's friction coefficient so that its pairs, under the solver's rule for combining two shapes'
-    coefficients (``"mean"``: FeatherPGS; ``"max"``: MuJoCo), land on the handbook pair values, as close as one value
-    a shape allows: a weighted least squares over the pairs that carry the task (a part in its socket and in the pads
-    weigh 4, on the board and the ground 1, against the arm 0.5, against each other and the other sockets, and the pads
-    on the fixtures 0.25).
+def shape_friction(assemblies: tuple[Assembly, ...]) -> dict[str, float]:
+    """Each shape's friction coefficient so that its pairs, under FeatherPGS's rule for combining two shapes'
+    coefficients (their mean), land on the handbook pair values, as close as one value a shape allows: a weighted least
+    squares over the pairs that carry the task (a part in its socket and in the pads weigh 4, on the board and the
+    ground 1, against the arm 0.5, against each other and the other sockets, and the pads on the fixtures 0.25). One
+    value a shape cannot hold every pair (the gear on the aluminum board lands 0.45 under its 1.20): friction is a pair
+    property, which per-shape coefficients only approximate.
 
     Returns values keyed ``part_<slot>``, ``socket_<name>``, ``board``, ``ground``, ``pad`` and ``arm``.
     """
@@ -230,42 +231,23 @@ def shape_friction(assemblies: tuple[Assembly, ...], combine: str) -> dict[str, 
     index = {name: i for i, name in enumerate(names)}
     target = np.array([pair_friction(surface[a], surface[b]) for a, b, _ in pairs])
     weight = np.sqrt([w for _, _, w in pairs])
-    if combine == "mean":
-        lhs = np.zeros((len(pairs), len(names)))
-        for row, (a, b, _) in enumerate(pairs):
-            lhs[row, index[a]] += 0.5
-            lhs[row, index[b]] += 0.5
-        values = np.clip(np.linalg.lstsq(lhs * weight[:, None], target * weight, rcond=None)[0], 0.0, None)
-    else:
-        # max: coordinate descent over 0.01 steps, from each shape's lowest target
-        values = np.array([min(t for (a, b, _), t in zip(pairs, target) if name in (a, b)) for name in names])
-        rows = np.array([[index[a], index[b]] for a, b, _ in pairs])
-        grid = np.round(np.arange(0.0, 1.5001, 0.01), 2)
-
-        def cost(v: np.ndarray) -> float:
-            return float(np.sum((weight * (np.maximum(v[rows[:, 0]], v[rows[:, 1]]) - target)) ** 2))
-
-        for _ in range(20):
-            before = values.copy()
-            for i in range(len(names)):
-                trials = np.repeat(values[None], len(grid), axis=0)
-                trials[:, i] = grid
-                values[i] = grid[int(np.argmin([cost(t) for t in trials]))]
-            if np.array_equal(before, values):
-                break
+    lhs = np.zeros((len(pairs), len(names)))
+    for row, (a, b, _) in enumerate(pairs):
+        lhs[row, index[a]] += 0.5
+        lhs[row, index[b]] += 0.5
+    values = np.clip(np.linalg.lstsq(lhs * weight[:, None], target * weight, rcond=None)[0], 0.0, None)
     return {name: float(values[index[name]]) for name in names}
 
 
-COMBINE_FRICTION = {"SolverFeatherPGS": "mean", "SolverMuJoCo": "max"}
-"""How each solver combines a contact's two shape coefficients into the pair's."""
-
-
 def author_friction(env: ManagerBasedEnv, env_ids: torch.Tensor | None) -> None:
-    """Write every shape's friction coefficient for the running solver (:func:`shape_friction` under the solver's
-    :data:`COMBINE_FRICTION` rule): parts, sockets, the board, the ground, the finger pads and the rest of the arm."""
+    """Under FeatherPGS, write every shape's friction coefficient (:func:`shape_friction`): parts, sockets, the board,
+    the ground, the finger pads and the rest of the arm. Each solver keeps its own numbers under its law: MJWarp keeps
+    the authored materials, whose ground mu 1.0 stands in for the rolling resistance its condim-3 contact lacks."""
+    if not isinstance(env.cfg.sim.physics.solver_cfg, FeatherPGSSolverCfg):
+        return
     manager = env.sim.backend_manager
     model = manager.backend.model
-    values = shape_friction(env.cfg.assemblies, COMBINE_FRICTION[type(manager.backend.solver).__name__])
+    values = shape_friction(env.cfg.assemblies)
     owners = {f"/held_{slot:02d}/": f"part_{slot}" for slot in range(len(env.cfg.assemblies))}
     owners |= {f"/fixed_{part.socket}/": f"socket_{part.socket}" for part in env.cfg.assemblies}
     owners |= {"finger_pad": "pad", "/Robot/": "arm", "/NistBoard/": "board"}
@@ -942,6 +924,17 @@ class NistEnvCfg(ManagerBasedRLEnvCfg):
     observations = {"policy": RobotObservations(), "slots": SlotObservations()}
     events = {
         "reset_parts": EventTermCfg(func=reset_parts, mode="reset", params={}),
+        "robot_material": EventTermCfg(
+            func=mdp.randomize_rigid_body_material,
+            mode="startup",
+            params={
+                "asset_cfg": SceneEntityCfg("robot"),
+                "static_friction_range": (0.75, 0.75),
+                "dynamic_friction_range": (0.75, 0.75),
+                "restitution_range": (0.0, 0.0),
+                "num_buckets": 64,
+            },
+        ),
         "friction": EventTermCfg(func=author_friction, mode="startup"),
     }
 
