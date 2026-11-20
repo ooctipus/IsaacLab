@@ -202,7 +202,8 @@ def shape_friction(assemblies: tuple[Assembly, ...], combine: str) -> dict[str, 
     """Each shape's friction coefficient so that its pairs, under the solver's rule for combining two shapes'
     coefficients (``"mean"``: FeatherPGS; ``"max"``: MuJoCo), land on the handbook pair values, as close as one value
     a shape allows: a weighted least squares over the pairs that carry the task (a part in its socket and in the pads
-    weigh 4, on the board and the ground 1, against the arm 0.5, the pads on the fixtures 0.25).
+    weigh 4, on the board and the ground 1, against the arm 0.5, against each other and the other sockets, and the pads
+    on the fixtures 0.25).
 
     Returns values keyed ``part_<slot>``, ``socket_<name>``, ``board``, ``ground``, ``pad`` and ``arm``.
     """
@@ -219,7 +220,12 @@ def shape_friction(assemblies: tuple[Assembly, ...], combine: str) -> dict[str, 
             (key, "ground", 1.0),
             (key, "arm", 0.5),
         ]
-    pairs += [("pad", other, 0.25) for other in surface if other.startswith("socket_") or other in ("board", "ground")]
+    sockets = [name for name in surface if name.startswith("socket_")]
+    parts = [name for name in surface if name.startswith("part_")]
+    for slot, part in enumerate(assemblies):
+        pairs += [(f"part_{slot}", other, 0.25) for other in sockets if other != f"socket_{part.socket}"]
+    pairs += [(a, b, 0.25) for i, a in enumerate(parts) for b in parts[i + 1 :]]
+    pairs += [("pad", other, 0.25) for other in [*sockets, "board", "ground"]]
     names = list(surface)
     index = {name: i for i, name in enumerate(names)}
     target = np.array([pair_friction(surface[a], surface[b]) for a, b, _ in pairs])
