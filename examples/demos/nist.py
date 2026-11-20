@@ -903,6 +903,21 @@ class NistEnvCfg(ManagerBasedRLEnvCfg):
             )
 
 
+# The hand and fingers' authored contact, each solver's numbers under its own law. FeatherPGS takes 1e8 N/m (the
+# robot cfg's default above). Under MJWarp's soft contact the same numbers give the arm's geoms a damping ratio of 0.1
+# (kd / (2 sqrt(ke))): the pad-part contact is underdamped and light parts explode on pad contact (128 worlds, 30 s:
+# 40 of 128 episodes invalid, 8 explosions). MJWarp keeps its stable 1e6 N/m (ratio 1.0): 1 invalid, 0 explosions.
+ARM_CONTACT = {"feather_pgs": (1.0e8, 2000.0), "newton_mjwarp": (1.0e6, 2000.0)}
+
+
+def set_arm_contact(cfg: NistEnvCfg, physics: str) -> None:
+    """Author the hand and fingers' contact stiffness [N/m] and damping [N s/m] for the chosen solver."""
+    stiffness, damping = ARM_CONTACT[physics]
+    for material in cfg.scene.robot.spawn.physics_material:
+        if isinstance(material, NewtonMaterialCfg):
+            material.contact_stiffness, material.contact_damping = stiffness, damping
+
+
 def main() -> None:
     """Load the pretrained TorchScript actor and run complete ten-part assembly episodes."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -924,6 +939,7 @@ def main() -> None:
     ).eval()
     cfg = NistEnvCfg(scene=NistSceneCfg(num_envs=args.num_envs))
     cfg.sim.physics = resolve_presets(cfg.sim.physics, (args.physics,))
+    set_arm_contact(cfg, args.physics)
     cfg.sim.device = args.device
     print("Assets:", ", ".join(part.name for part in cfg.assemblies), flush=True)
     # The solver is selected above; forwarding --physics would replace it with a backend's defaults.
