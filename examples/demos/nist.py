@@ -38,7 +38,7 @@ from isaaclab_newton.sim.schemas import (
 )
 from isaaclab_newton.sim.spawners.materials import NewtonMaterialCfg
 from isaaclab_physx.sim.schemas import PhysxCollisionCfg
-from newton import GeoType, ShapeFlags
+from newton import GeoType, ModelFlags, ShapeFlags
 
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
@@ -151,6 +151,128 @@ CONTACT_MATERIALS = [
     UsdPhysicsRigidBodyMaterialCfg(static_friction=0.75, dynamic_friction=0.75),
     NewtonMaterialCfg(contact_stiffness=1.6e5, contact_damping=800.0),
 ]
+# Each surface a contact meets, and the handbook dry static friction of each pair of surfaces (Engineering ToolBox,
+# "Friction and Friction Coefficients for some Common Materials and Materials Combinations", clean and dry; the middle
+# of a range). Polycarbonate has no table entry: polystyrene, the same amorphous thermoplastic, stands in for it. The
+# finger pads are an elastomer fingertip, rubber on a dry surface 0.6-0.85 (rubber on dry concrete); the ground a
+# wooden table, wood on clean metal 0.2-0.6, taken for its plastics too.
+PART_SURFACE = {
+    "nut_m8": "steel", "nut_m12": "steel", "nut_m16": "steel",
+    "gear_small": "aluminum", "gear_medium": "aluminum", "gear_large": "aluminum",
+    "round_peg_4mm": "steel", "round_peg_8mm": "steel", "round_peg_12mm": "steel", "round_peg_16mm": "steel",
+    "rectangular_peg_4mm": "steel", "rectangular_peg_8mm": "steel", "rectangular_peg_12mm": "steel",
+    "rectangular_peg_16mm": "steel",
+    "usb_a_plug": "steel", "waterproof_plug": "nylon", "bnc_plug": "nickel", "dsub_plug": "steel", "rj45_plug": "pc",
+}  # fmt: skip
+"""The surface each part meets its partners with: nuts and pins steel, the gears aluminum, the USB-A and D-sub plugs
+their steel shells, the BNC plug nickel-plated brass, the RJ45 plug its polycarbonate body, the waterproof plug its
+nylon housing."""
+SOCKET_SURFACE = {
+    "bolt_m8": "steel", "bolt_m12": "steel", "bolt_m16": "steel", "gear_base": "steel",
+    "round_hole_4mm": "aluminum", "round_hole_8mm": "aluminum", "round_hole_12mm": "aluminum",
+    "round_hole_16mm": "aluminum", "rectangular_hole_4mm": "aluminum", "rectangular_hole_8mm": "aluminum",
+    "rectangular_hole_12mm": "aluminum", "rectangular_hole_16mm": "aluminum",
+    "usb_a_socket": "steel", "waterproof_socket": "nylon", "bnc_socket": "nickel", "dsub_socket": "steel",
+    "rj45_socket": "pc",
+}  # fmt: skip
+"""The surface each socket meets its part with: bolts and the gear base's shafts steel, the peg holes machined
+aluminum, the USB-A and D-sub sockets steel shells, the BNC socket nickel-plated brass, the RJ45 jack polycarbonate,
+the waterproof socket nylon."""
+BOARD_SURFACE, GROUND_SURFACE, PAD_SURFACE, ARM_SURFACE = "aluminum", "wood", "rubber", "aluminum"
+PAIR_FRICTION = {
+    ("steel", "steel"): 0.65, ("aluminum", "steel"): 0.61, ("aluminum", "aluminum"): 1.20,
+    ("nickel", "nickel"): 0.90, ("nickel", "steel"): 0.64, ("aluminum", "nickel"): 0.64,
+    ("nylon", "nylon"): 0.20, ("nylon", "steel"): 0.40, ("aluminum", "nylon"): 0.40, ("nickel", "nylon"): 0.40,
+    ("pc", "pc"): 0.50, ("pc", "steel"): 0.33, ("aluminum", "pc"): 0.33, ("nickel", "pc"): 0.33, ("nylon", "pc"): 0.35,
+    ("rubber", "*"): 0.80, ("wood", "*"): 0.40,
+}  # fmt: skip
+"""Dry static friction [-] of a pair of surfaces; ``"*"`` is any other surface. Aluminum/aluminum 1.05-1.35,
+nickel/nickel 0.7-1.1, nylon/nylon 0.15-0.25, steel/steel 0.5-0.8, polystyrene/steel 0.3-0.35."""
+
+
+def pair_friction(a: str, b: str) -> float:
+    """The handbook friction of surfaces ``a`` and ``b`` (:data:`PAIR_FRICTION`)."""
+    for key in ((a, b), (b, a), (a, "*"), (b, "*")):
+        if key in PAIR_FRICTION:
+            return PAIR_FRICTION[key]
+    raise KeyError(f"No friction for {a} on {b}")
+
+
+def shape_friction(assemblies: tuple[Assembly, ...], combine: str) -> dict[str, float]:
+    """Each shape's friction coefficient so that its pairs, under the solver's rule for combining two shapes'
+    coefficients (``"mean"``: FeatherPGS; ``"max"``: MuJoCo), land on the handbook pair values, as close as one value
+    a shape allows: a weighted least squares over the pairs that carry the task (a part in its socket and in the pads
+    weigh 4, on the board and the ground 1, against the arm 0.5, the pads on the fixtures 0.25).
+
+    Returns values keyed ``part_<slot>``, ``socket_<name>``, ``board``, ``ground``, ``pad`` and ``arm``.
+    """
+    surface = {"board": BOARD_SURFACE, "ground": GROUND_SURFACE, "pad": PAD_SURFACE, "arm": ARM_SURFACE}
+    pairs = []
+    for slot, part in enumerate(assemblies):
+        key = f"part_{slot}"
+        surface[key] = PART_SURFACE[part.plug]
+        surface[f"socket_{part.socket}"] = SOCKET_SURFACE[part.socket]
+        pairs += [
+            (key, f"socket_{part.socket}", 4.0),
+            (key, "pad", 4.0),
+            (key, "board", 1.0),
+            (key, "ground", 1.0),
+            (key, "arm", 0.5),
+        ]
+    pairs += [("pad", other, 0.25) for other in surface if other.startswith("socket_") or other in ("board", "ground")]
+    names = list(surface)
+    index = {name: i for i, name in enumerate(names)}
+    target = np.array([pair_friction(surface[a], surface[b]) for a, b, _ in pairs])
+    weight = np.sqrt([w for _, _, w in pairs])
+    if combine == "mean":
+        lhs = np.zeros((len(pairs), len(names)))
+        for row, (a, b, _) in enumerate(pairs):
+            lhs[row, index[a]] += 0.5
+            lhs[row, index[b]] += 0.5
+        values = np.clip(np.linalg.lstsq(lhs * weight[:, None], target * weight, rcond=None)[0], 0.0, None)
+    else:
+        # max: coordinate descent over 0.01 steps, from each shape's lowest target
+        values = np.array([min(t for (a, b, _), t in zip(pairs, target) if name in (a, b)) for name in names])
+        rows = np.array([[index[a], index[b]] for a, b, _ in pairs])
+        grid = np.round(np.arange(0.0, 1.5001, 0.01), 2)
+
+        def cost(v: np.ndarray) -> float:
+            return float(np.sum((weight * (np.maximum(v[rows[:, 0]], v[rows[:, 1]]) - target)) ** 2))
+
+        for _ in range(20):
+            before = values.copy()
+            for i in range(len(names)):
+                trials = np.repeat(values[None], len(grid), axis=0)
+                trials[:, i] = grid
+                values[i] = grid[int(np.argmin([cost(t) for t in trials]))]
+            if np.array_equal(before, values):
+                break
+    return {name: float(values[index[name]]) for name in names}
+
+
+COMBINE_FRICTION = {"SolverFeatherPGS": "mean", "SolverMuJoCo": "max"}
+"""How each solver combines a contact's two shape coefficients into the pair's."""
+
+
+def author_friction(env: ManagerBasedEnv, env_ids: torch.Tensor | None) -> None:
+    """Write every shape's friction coefficient for the running solver (:func:`shape_friction` under the solver's
+    :data:`COMBINE_FRICTION` rule): parts, sockets, the board, the ground, the finger pads and the rest of the arm."""
+    manager = env.sim.backend_manager
+    model = manager.backend.model
+    values = shape_friction(env.cfg.assemblies, COMBINE_FRICTION[type(manager.backend.solver).__name__])
+    owners = {f"/held_{slot:02d}/": f"part_{slot}" for slot in range(len(env.cfg.assemblies))}
+    owners |= {f"/fixed_{part.socket}/": f"socket_{part.socket}" for part in env.cfg.assemblies}
+    owners |= {"finger_pad": "pad", "/Robot/": "arm", "/NistBoard/": "board"}
+    friction = model.shape_material_mu.numpy()
+    body = model.shape_body.numpy()
+    for shape, label in enumerate(model.shape_label):
+        key = "ground" if body[shape] < 0 else next((v for k, v in owners.items() if k in str(label)), None)
+        if key is not None:
+            friction[shape] = values[key]
+    model.shape_material_mu.assign(friction)
+    manager.add_model_change(ModelFlags.SHAPE_PROPERTIES)
+
+
 # The SDF band covers the reach a pass predicts contacts over (the speculative ceiling below): past the band an SDF has
 # no distance or normal to give a predicted contact.
 SDF_BAND = 0.015
@@ -814,17 +936,7 @@ class NistEnvCfg(ManagerBasedRLEnvCfg):
     observations = {"policy": RobotObservations(), "slots": SlotObservations()}
     events = {
         "reset_parts": EventTermCfg(func=reset_parts, mode="reset", params={}),
-        "robot_material": EventTermCfg(
-            func=mdp.randomize_rigid_body_material,
-            mode="startup",
-            params={
-                "asset_cfg": SceneEntityCfg("robot"),
-                "static_friction_range": (0.75, 0.75),
-                "dynamic_friction_range": (0.75, 0.75),
-                "restitution_range": (0.0, 0.0),
-                "num_buckets": 64,
-            },
-        ),
+        "friction": EventTermCfg(func=author_friction, mode="startup"),
     }
 
     rewards = {}
