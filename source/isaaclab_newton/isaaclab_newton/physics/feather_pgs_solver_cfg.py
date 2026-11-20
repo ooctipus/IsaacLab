@@ -78,8 +78,9 @@ class FeatherPGSSolverCfg(NewtonSolverCfg):
     Contact selection and reduction policy are unchanged.
     """
 
-    angular_damping: float = 0.05
-    """Angular velocity damping rate [s^-1]."""
+    angular_damping: float = 0.0
+    """Angular velocity damping rate [s^-1] of free root bodies: a numerical damper, not a contact law (it slows a
+    body's spin every substep, in flight and in contact alike), so none by default."""
 
     update_mass_matrix_interval: int = 1
     """How often to update the mass matrix, in simulation steps."""

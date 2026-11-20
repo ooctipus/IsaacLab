@@ -890,7 +890,6 @@ class NistPhysicsCfg(PresetCfg):
         num_substeps=8,
         use_cuda_graph=True,
         solver_cfg=FeatherPGSSolverCfg(
-            angular_damping=1.0,
             enable_joint_limits=True,
             joint_limit_activation_gap=0.1,
             dense_max_constraints=384,
