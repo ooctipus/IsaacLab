@@ -101,20 +101,6 @@ class FeatherPGSSolverCfg(NewtonSolverCfg):
     Setting this to ``math.inf`` allocates lower and upper rows for every finite limit on every step.
     """
 
-    enable_joint_velocity_limits: bool = False
-    """Whether to enforce per-DOF joint velocity limits as PGS constraints.
-
-    This option requires a CUDA device.
-    """
-
-    velocity_limit_activation_fraction: float = 0.7
-    """Dimensionless fraction of each joint velocity limit at which velocity-limit rows activate.
-
-    The default allocates rows once a finite limit reaches 70%, leaving headroom for the
-    one-step activation delay. Set this to ``0.0`` to allocate rows for every limited degree
-    of freedom on every step.
-    """
-
     pgs_iterations: int = 8
     """Number of Gauss-Seidel iterations per simulation step."""
 

@@ -72,7 +72,6 @@ class ReachPhysicsCfg(PresetCfg):
         solver_cfg=FeatherPGSSolverCfg(
             update_mass_matrix_interval=2,
             enable_joint_limits=True,
-            enable_joint_velocity_limits=True,
             joint_limit_activation_gap=0.1,
             dense_max_constraints=64,
             mf_max_constraints=32,

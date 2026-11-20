@@ -103,7 +103,6 @@ class PhysicsCfg(PresetCfg):
         solver_cfg=FeatherPGSSolverCfg(
             update_mass_matrix_interval=2,
             enable_joint_limits=True,
-            enable_joint_velocity_limits=True,
             pgs_iterations=12,
             dense_max_constraints=192,
             mf_max_constraints=64,

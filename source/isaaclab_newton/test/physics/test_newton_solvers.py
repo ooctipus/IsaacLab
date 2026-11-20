@@ -83,7 +83,7 @@ def test_solver_kwargs_include_configured_options_and_newton_deterministic_mode(
         (SteelSolverCfg(), "steel:min_torsional_patch_radius", ("mujoco:condim", "kamino:max_solver_iterations")),
         (
             FeatherPGSSolverCfg(),
-            "rigid_body_max_linear_velocity",
+            "rigid_body_max_depenetration_velocity",
             ("mujoco:condim", "kamino:max_solver_iterations", "mpm:young_modulus"),
         ),
     ],

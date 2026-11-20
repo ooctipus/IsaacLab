@@ -14,9 +14,6 @@ Changed
 * Changed the default FeatherPGS position-correction factor from ``0.2`` to
   ``0.05`` for stable shared task presets. Set ``pgs_beta=0.2`` explicitly to
   retain the previous correction strength.
-* Changed the default FeatherPGS velocity-limit activation fraction from
-  ``0.0`` to ``0.7`` so inactive limit rows do not consume solver work. Set
-  ``velocity_limit_activation_fraction=0.0`` to retain always-allocated rows.
 
 Fixed
 ^^^^^
