@@ -664,7 +664,9 @@ class TestWorkflowSpecArchitecture:
 
     def test_workflow_executes_the_selected_script(self):
         spec = self._spec()
-        assert spec.count("/workspace/isaaclab/{{ script }}") == 3
+        assert "TRAIN_TARGET=(/workspace/isaaclab/{{ script }})" in spec
+        assert "TRAIN_TARGET=(-m isaaclab train)" in spec
+        assert spec.count('"${TRAIN_TARGET[@]}"') == 3
         assert "isaaclab.sh train" not in spec
 
     def test_workflow_exports_id_without_changing_script_arguments(self):
@@ -674,7 +676,7 @@ class TestWorkflowSpecArchitecture:
 
     def test_workflow_uses_the_managed_python_runtime(self):
         spec = self._spec()
-        assert spec.count("/workspace/isaaclab/isaaclab.sh -p") == 1
+        assert spec.count("uv run --no-sync isaaclab -p") == 1
         assert spec.count('"${ISAACLAB_PYTHON[@]}"') == 3
         assert "/workspace/isaaclab/_isaac_sim/python.sh" not in spec
 
@@ -686,7 +688,7 @@ class TestWorkflowSpecArchitecture:
         text = self._spec().replace("{{host:master}}", "127.0.0.1")
         rendered = Template(text).render(kitless=1, num_node=1, num_gpu=8, platform="dgx-h100")
         assert "ISAACLAB_PYTHON=(uv run --no-sync python)" in rendered
-        assert "isaaclab.sh -p" not in rendered
+        assert "isaaclab -p" not in rendered
 
     def test_workflow_syncs_the_lock_before_launching_ranks(self):
         spec = self._spec()
