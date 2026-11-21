@@ -131,7 +131,9 @@ KUKA_ALLEGRO_CFG = ArticulationCfg(
                 "iiwa7_joint_5": 1.392,
                 "iiwa7_joint_6": 1.402,
                 "iiwa7_joint_7": 1.392,
-                "(index|middle|ring|thumb)_joint_(0|1|2|3)": 0.136,
+                # The Allegro motor reflected through its 1:369 gearbox with a rotor of 1 g cm^2 = 1e-7 kg m^2
+                # (Drake's estimate, whose 1e-6 kg m^2 is a unit slip): 369^2 x 1e-7 (see the Allegro hand's config).
+                "(index|middle|ring|thumb)_joint_(0|1|2|3)": 0.0136,
             },
         ),
     },

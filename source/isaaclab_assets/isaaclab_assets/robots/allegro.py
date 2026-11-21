@@ -67,6 +67,12 @@ ALLEGRO_HAND_CFG = ArticulationCfg(
             stiffness=3.0,
             damping=0.1,
             friction=0.01,
+            # Each joint's motor reflected through its gearbox, N^2 I_rotor: the datasheet's gear ratio N = 369
+            # (Allegro Hand V4, Wonik Robotics) and a rotor of about 1 g cm^2 = 1e-7 kg m^2, the brushed DC motors of
+            # 14-16 mm and about 2.5 W that give its 0.7 N m at 0.11 s/60 deg (Drake's Allegro example derives the
+            # same rotor; its 1e-6 kg m^2 is a unit slip). Known to about a factor of 3; it is a hundred times the
+            # finger links' own inertia, so the fingers move as their motors do.
+            armature=0.0136,
         ),
     },
     soft_joint_pos_limit_factor=1.0,
