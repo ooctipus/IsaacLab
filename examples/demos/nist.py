@@ -895,6 +895,10 @@ class NistPhysicsCfg(PresetCfg):
         num_substeps=8,
         use_cuda_graph=True,
         solver_cfg=FeatherPGSSolverCfg(
+            # The arm with the part it holds or threads is a stiffly coupled group that Gauss-Seidel contracts slowly
+            # (about 0.73 a sweep): at 8 sweeps fingers sink into held parts (p99 1.1-1.2 mm). 16 sweeps halves that
+            # until those groups are solved exactly.
+            pgs_iterations=16,
             enable_joint_limits=True,
             joint_limit_activation_gap=0.1,
             dense_max_constraints=384,
