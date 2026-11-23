@@ -41,7 +41,6 @@ Select FeatherPGS by assigning its solver configuration to
         pgs_iterations=8,
         dense_max_constraints=64,
         mf_max_constraints=512,
-        pgs_beta=0.05,
         pgs_cfm=1.0e-6,
     )
     newton_cfg = NewtonCfg(
@@ -62,9 +61,9 @@ The important accuracy and runtime controls are:
   :attr:`~isaaclab_newton.physics.FeatherPGSSolverCfg.mf_max_constraints`:
   preallocate per-world constraint capacity. Undersizing either capacity can
   omit constraints; oversizing it consumes memory and can reduce throughput.
-* :attr:`~isaaclab_newton.physics.FeatherPGSSolverCfg.pgs_beta` and
-  :attr:`~isaaclab_newton.physics.FeatherPGSSolverCfg.pgs_cfm`: control
-  position correction and solver regularization.
+* :attr:`~isaaclab_newton.physics.FeatherPGSSolverCfg.pgs_cfm`: controls
+  solver regularization. The position correction of contact, limit and mimic
+  rows is the solver's own law, not a task setting.
 
 Solve Formulation
 -----------------

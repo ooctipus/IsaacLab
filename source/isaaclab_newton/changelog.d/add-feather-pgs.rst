@@ -11,9 +11,6 @@ Changed
 * Changed the default FeatherPGS position solve from twelve to eight iterations
   so task families share the measured large-batch baseline. Set
   ``pgs_iterations=12`` explicitly to retain the previous behavior.
-* Changed the default FeatherPGS position-correction factor from ``0.2`` to
-  ``0.05`` for stable shared task presets. Set ``pgs_beta=0.2`` explicitly to
-  retain the previous correction strength.
 
 Fixed
 ^^^^^

@@ -104,9 +104,6 @@ class FeatherPGSSolverCfg(NewtonSolverCfg):
     pgs_iterations: int = 8
     """Number of Gauss-Seidel iterations per simulation step."""
 
-    pgs_beta: float = 0.05
-    """Dimensionless ERP-style position correction factor."""
-
     pgs_cfm: float = 1.0e-6
     """Regularization added to Newton's impulse-space Delassus diagonal.
 
