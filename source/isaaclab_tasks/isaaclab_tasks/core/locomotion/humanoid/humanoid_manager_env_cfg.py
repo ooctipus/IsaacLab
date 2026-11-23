@@ -19,6 +19,8 @@ from isaaclab.sensors import JointWrenchSensorCfg
 from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils import configclass, replace
 
+from isaaclab_tasks.core.lift.mdp.events_cfg import SelfClearanceCfg
+
 from isaaclab_assets.robots.humanoid import HUMANOID_CFG
 
 from .. import mdp
@@ -113,18 +115,33 @@ class ObservationsCfg:
 class EventCfg:
     """Configuration for events."""
 
-    reset_base = EventTerm(
-        func=mdp.reset_root_state_uniform,
-        mode="reset",
-        params={"pose_range": {}, "velocity_range": {}},
-    )
-
-    reset_robot_joints = EventTerm(
-        func=mdp.reset_joints_by_offset,
+    # The joint draw moves the hips and knees too, so a draw can start the legs inside each other: the reset keeps a
+    # bank of draws whose legs clear each other and restores from it.
+    reset_robot = EventTerm(
+        func="isaaclab_tasks.core.lift.mdp.events:conditional_reset",
         mode="reset",
         params={
-            "position_range": (-0.2, 0.2),
-            "velocity_range": (-0.1, 0.1),
+            "terms": {
+                "reset_base": EventTerm(
+                    func=mdp.reset_root_state_uniform,
+                    mode="reset",
+                    params={"pose_range": {}, "velocity_range": {}},
+                ),
+                "reset_robot_joints": EventTerm(
+                    func=mdp.reset_joints_by_offset,
+                    mode="reset",
+                    params={
+                        "position_range": (-0.2, 0.2),
+                        "velocity_range": (-0.1, 0.1),
+                    },
+                ),
+            },
+            "buffer_size_per_group": 4096,
+            "valid_criteria": {
+                "legs_self_clearance": SelfClearanceCfg(
+                    asset_name="robot", body_names="(left|right)_(thigh|shin|foot)"
+                ),
+            },
         },
     )
 
