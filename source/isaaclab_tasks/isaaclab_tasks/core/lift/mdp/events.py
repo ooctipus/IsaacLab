@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from isaaclab.assets import Articulation, CableObject, DeformableObject, RigidObject
     from isaaclab.envs import ManagerBasedEnv, ManagerBasedRLEnv
 
-    from .events_cfg import GraspTravelDistanceCfg, MeshClearanceCfg, SlabClearanceCfg
+    from .events_cfg import GraspTravelDistanceCfg, MeshClearanceCfg, SelfClearanceCfg, SlabClearanceCfg
 
 
 def reset_joints_shared_offset(
@@ -826,6 +826,135 @@ class mesh_clearance(ManagerTermBase):
                 self._object_mesh_ids,
                 self._object_mesh_center,
                 self._object_mesh_radius,
+                self.cfg.min_clearance,
+                self._max_dist,
+                out_min,
+            ],
+            device=env.device,
+        )
+        return wp.to_torch(out_min) >= self.cfg.min_clearance
+
+
+@wp.kernel
+def _robot_vertices_self_mesh_min(
+    env_ids: wp.array(dtype=wp.int32),
+    vertices: wp.array(dtype=wp.vec3),
+    vertex_body: wp.array(dtype=wp.int32),
+    body_pose: wp.array2d(dtype=wp.transformf),
+    mesh_ids: wp.array(dtype=wp.uint64),
+    mesh_body: wp.array(dtype=wp.int32),
+    mesh_center: wp.array(dtype=wp.vec3),
+    mesh_radius: wp.array(dtype=wp.float32),
+    checked: wp.array2d(dtype=wp.int32),
+    min_clearance: float,
+    max_dist: float,
+    out_min: wp.array(dtype=wp.float32),
+):
+    i, k, m = wp.tid()
+    if checked[vertex_body[k], m] == 0:
+        return
+    env = env_ids[i]
+    point_world = wp.transform_point(body_pose[env, vertex_body[k]], vertices[k])
+    point_local = wp.transform_point(wp.transform_inverse(body_pose[env, mesh_body[m]]), point_world)
+    lower_bound = wp.length(point_local - mesh_center[m]) - mesh_radius[m]
+    if lower_bound > min_clearance and lower_bound > 0.0:
+        return
+    query = wp.mesh_query_point_sign_winding_number(mesh_ids[m], point_local, max_dist)
+    if query.result:
+        dist = wp.length(point_local - wp.mesh_eval_position(mesh_ids[m], query.face, query.u, query.v))
+        if query.sign < 0.0:
+            dist = -dist
+        wp.atomic_min(out_min, i, dist)
+
+
+class self_clearance(ManagerTermBase):
+    """Valid when the robot's selected links clear each other.
+
+    Reset draws that move every joint can start a hand with its fingers inside each other; the solver
+    then pushes them apart at episode birth, or they lock. Checks each selected link's collision
+    vertices against every other selected link's collision mesh with Warp signed-distance queries (the
+    winding-number sign catches a vertex inside), skipping pairs a joint connects: their meshes meet at
+    the joint by design. The pairs are read from the asset's joints, so the check is the same whatever
+    the solver.
+
+    Configured with :class:`SelfClearanceCfg`; called as ``(env, env_ids) -> BoolTensor``, ``True``
+    where the state is valid.
+    """
+
+    cfg: SelfClearanceCfg
+
+    def __init__(self, cfg: SelfClearanceCfg, env: ManagerBasedEnv):
+        super().__init__(cfg, env)
+        from pxr import Usd, UsdPhysics
+
+        device = env.device
+        self._robot: Articulation = env.scene[cfg.asset_name]
+        body_meshes, _ = collect_body_collision_meshes(self._robot, cfg.body_names)
+        body_ids = sorted(body_meshes)
+        self._meshes = []
+        mesh_center, mesh_radius, vertices, vertex_body = [], [], [], []
+        for body_id in body_ids:
+            mesh = body_meshes[body_id]
+            self._meshes.append(
+                wp.Mesh(
+                    points=wp.array(mesh.vertices, dtype=wp.vec3, device=device),
+                    indices=wp.array(mesh.faces.reshape(-1), dtype=wp.int32, device=device),
+                    support_winding_number=True,
+                )
+            )
+            center = mesh.vertices.mean(axis=0)
+            mesh_center.append(center)
+            mesh_radius.append(float(np.linalg.norm(mesh.vertices - center, axis=1).max()))
+            vertices.append(mesh.vertices)
+            vertex_body.extend([body_id] * len(mesh.vertices))
+        # the pairs a joint connects, from the asset's joints (body names are the link prims' names)
+        name_of = dict(enumerate(self._robot.body_names))
+        id_of = {name: index for index, name in name_of.items()}
+        joined = set()
+        robot_prim = sim_utils.find_matching_prims(self._robot.cfg.prim_path)[0]
+        for prim in Usd.PrimRange(robot_prim):
+            if not prim.IsA(UsdPhysics.Joint):
+                continue
+            joint = UsdPhysics.Joint(prim)
+            ends = [
+                targets[0].name if targets else None
+                for targets in (joint.GetBody0Rel().GetTargets(), joint.GetBody1Rel().GetTargets())
+            ]
+            if all(end in id_of for end in ends):
+                joined.add(frozenset(id_of[end] for end in ends))
+        checked = np.zeros((len(name_of), len(body_ids)), dtype=np.int32)
+        for m, body_b in enumerate(body_ids):
+            for body_a in body_ids:
+                if body_a != body_b and frozenset((body_a, body_b)) not in joined:
+                    checked[body_a, m] = 1
+        self._mesh_ids = wp.array([mesh.id for mesh in self._meshes], dtype=wp.uint64, device=device)
+        self._mesh_body = wp.array(body_ids, dtype=wp.int32, device=device)
+        self._mesh_center = wp.array(np.stack(mesh_center), dtype=wp.vec3, device=device)
+        self._mesh_radius = wp.array(mesh_radius, dtype=wp.float32, device=device)
+        self._vertices = wp.array(np.concatenate(vertices), dtype=wp.vec3, device=device)
+        self._vertex_body = wp.array(vertex_body, dtype=wp.int32, device=device)
+        self._checked = wp.array(checked, dtype=wp.int32, device=device)
+        # query horizon: must exceed the clearance and plausible penetration depths so contained
+        # vertices still resolve a (negative) signed distance
+        self._max_dist = max(4.0 * cfg.min_clearance, 0.15)
+
+    def __call__(self, env: ManagerBasedEnv, env_ids: torch.Tensor) -> torch.Tensor:
+        env_ids = env.scene._ALL_INDICES[env_ids]
+        num = len(env_ids)
+        out_min = wp.full(num, 1.0e6, dtype=wp.float32, device=env.device)
+        wp.launch(
+            _robot_vertices_self_mesh_min,
+            dim=(num, self._vertices.shape[0], self._mesh_ids.shape[0]),
+            inputs=[
+                wp.from_torch(env_ids.to(torch.int32).contiguous()),
+                self._vertices,
+                self._vertex_body,
+                self._robot.data.body_link_pose_w.warp,
+                self._mesh_ids,
+                self._mesh_body,
+                self._mesh_center,
+                self._mesh_radius,
+                self._checked,
                 self.cfg.min_clearance,
                 self._max_dist,
                 out_min,

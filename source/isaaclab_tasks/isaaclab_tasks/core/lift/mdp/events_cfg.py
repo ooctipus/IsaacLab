@@ -47,6 +47,29 @@ class MeshClearanceCfg(ManagerTermBaseCfg):
 
 
 @configclass
+class SelfClearanceCfg(ManagerTermBaseCfg):
+    """Validity criterion for :class:`conditional_reset`: the robot's selected links clear each other.
+
+    Configuration for :class:`self_clearance`, which checks each selected link's collision vertices
+    against the collision meshes of the other selected links with Warp signed-distance queries, skipping
+    pairs a joint connects (their meshes meet at the joint by design). Joint draws that move every joint
+    can otherwise start a hand with its fingers inside each other. The implementation is referenced by
+    name and resolved at play, so importing this config pulls no implementation dependencies.
+    """
+
+    func: Callable | str = "{DIR}.events:self_clearance"
+
+    asset_name: str = MISSING
+    """Robot whose collision meshes are queried."""
+
+    body_names: str | list[str] = MISSING
+    """Robot bodies that must clear each other, as a regex or list of regexes."""
+
+    min_clearance: float = 0.0
+    """Required clearance [m]; states with any signed distance below this are invalid."""
+
+
+@configclass
 class GraspTravelDistanceCfg(ManagerTermBaseCfg):
     """Spread descriptor for :class:`conditional_reset`: how far the hand and the object each have to go.
 

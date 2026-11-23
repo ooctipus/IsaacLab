@@ -133,6 +133,10 @@ class KukaAllegroMixinCfg:
         self.events.conditional_reset.params["valid_criteria"][
             "robot_table_clearance"
         ].body_names = "(?!iiwa7_link_0$).*"
+        # the joint draw moves the fingers too: reject draws whose fingers start inside each other
+        self.events.conditional_reset.params["valid_criteria"]["hand_self_clearance"] = mdp.SelfClearanceCfg(
+            asset_name="robot", body_names=["palm_link", "(index|middle|ring|thumb)_(link_[0-3]|biotac_tip)"]
+        )
         # spread the reset bank over the grasp geometry, same bodies as fingers_to_object
         diversity_feature = self.events.conditional_reset.params.get("diversity_feature")
         if diversity_feature is not None:

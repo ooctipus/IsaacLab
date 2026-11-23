@@ -12,6 +12,7 @@ __all__ = [
     "GraspTravelDistanceCfg",
     "MeshClearanceCfg",
     "ObjectUniformPoseCommandCfg",
+    "SelfClearanceCfg",
     "SlabClearanceCfg",
     "SuccessMonitor",
     "SuccessMonitorCfg",
@@ -54,6 +55,7 @@ __all__ = [
     "reset_joints_shared_offset",
     "reset_to_grasp",
     "reset_to_target",
+    "self_clearance",
     "set_reset_state",
     "slab_clearance",
     "success_reward",
@@ -73,9 +75,10 @@ from .events import (
     reset_joints_shared_offset,
     reset_to_grasp,
     reset_to_target,
+    self_clearance,
     slab_clearance,
 )
-from .events_cfg import GraspTravelDistanceCfg, MeshClearanceCfg, SlabClearanceCfg
+from .events_cfg import GraspTravelDistanceCfg, MeshClearanceCfg, SelfClearanceCfg, SlabClearanceCfg
 from .observations import (
     DeformableSampledPointsInRobotRootFrame,
     body_state_b,
