@@ -84,7 +84,7 @@ dependencies = [
     "gitpython>=3.1.60",  # used by RL training and experiment logging
     # ----- newton (default physics engine) -----
     # Pin the current Newton development revision until it is included in a release.
-    "newton[sim] @ git+https://github.com/ooctipus/newton.git@77411363bd864bfe9245b6b07451b91dd4e58655",
+    "newton[sim] @ git+https://github.com/ooctipus/newton.git@7b227d74d8ee2c4bec827a9f7199d09f82d4a771",
     # Import and mesh-processing packages used by Newton, including the ones that honoring
     # USD-authored ``physics:approximation`` requires. Keep these explicit instead of selecting
     # newton[importers], whose standalone USD dependency would overlap with usd-exchange.
@@ -444,7 +444,7 @@ override-dependencies = [
     "numpy>=2",
     "mujoco~=3.17.0",
     "mujoco-warp~=3.17.0",
-    "newton[sim] @ git+https://github.com/ooctipus/newton.git@77411363bd864bfe9245b6b07451b91dd4e58655",
+    "newton[sim] @ git+https://github.com/ooctipus/newton.git@7b227d74d8ee2c4bec827a9f7199d09f82d4a771",
     # Force the Newton-matched schemas over isaacsim's ==0.2.0 pin.
     "newton-usd-schemas>=0.6.0",
     # isaacsim-asset-isolated and isaacsim-robot-schema 6.2 pin usd-exchange ==2.3.0.
