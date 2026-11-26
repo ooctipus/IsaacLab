@@ -21,7 +21,7 @@ overrides = [
     { name = "mujoco", specifier = "~=3.17.0" },
     { name = "mujoco-usd-converter", specifier = "==0.7.0" },
     { name = "mujoco-warp", specifier = "~=3.17.0" },
-    { name = "newton", extras = ["sim"], git = "https://github.com/ooctipus/newton.git?rev=1f3937baaa39ff1f3a4c4259e5052b3e8d6b5da5" },
+    { name = "newton", extras = ["sim"], git = "https://github.com/ooctipus/newton.git?rev=47399793ae360250590949f751388eea31033af0" },
     { name = "newton-usd-schemas", specifier = ">=0.6.0" },
     { name = "numpy", specifier = ">=2" },
     { name = "packaging", specifier = ">=20,<27" },
@@ -2137,7 +2137,7 @@ requires-dist = [
     { name = "meshio", specifier = ">=5.3.5" },
     { name = "moviepy", marker = "extra == 'video'", specifier = ">=1.0.3,<2.0.0.dev0" },
     { name = "myst-parser", marker = "extra == 'dev'" },
-    { name = "newton", extras = ["sim"], git = "https://github.com/ooctipus/newton.git?rev=1f3937baaa39ff1f3a4c4259e5052b3e8d6b5da5" },
+    { name = "newton", extras = ["sim"], git = "https://github.com/ooctipus/newton.git?rev=47399793ae360250590949f751388eea31033af0" },
     { name = "newton-usd-schemas", specifier = ">=0.6.0" },
     { name = "numba", specifier = ">=0.63.1" },
     { name = "numpy", specifier = ">=2" },
@@ -3561,7 +3561,7 @@ wheels = [
 [[package]]
 name = "newton"
 version = "1.9.0.dev0"
-source = { git = "https://github.com/ooctipus/newton.git?rev=1f3937baaa39ff1f3a4c4259e5052b3e8d6b5da5#1f3937baaa39ff1f3a4c4259e5052b3e8d6b5da5" }
+source = { git = "https://github.com/ooctipus/newton.git?rev=47399793ae360250590949f751388eea31033af0#47399793ae360250590949f751388eea31033af0" }
 dependencies = [
     { name = "warp-lang" },
 ]
