@@ -6,7 +6,7 @@
 import numpy as np
 import torch
 import warp as wp
-from experiments.neio import SolverNeIO
+from experiments.neio import SolverNeIO, kernels
 from experiments.neio.deformable import NeIODeformable
 from experiments.neio.network import NeIONetwork, group_sum, history_features
 from experiments.neio.optimizer import NeIOOptimizer
@@ -23,14 +23,8 @@ def rotation_quaternion(rotation):
     return torch.cat((0.5 * torch.sinc(angle / (2 * torch.pi)) * rotation, torch.cos(0.5 * angle)), -1)
 
 
-def quaternion_energy_gradient(q, world_torque_gradient):
-    """Tangent quaternion cotangent whose pullback is the world rotation derivative."""
-    vector = q[..., 3:] * world_torque_gradient + torch.linalg.cross(world_torque_gradient, q[..., :3])
-    return 2 * torch.cat((vector, -(q[..., :3] * world_torque_gradient).sum(-1, keepdim=True)), -1)
-
-
 def new_network(device, width=96):
-    return NeIONetwork(9, width, 3, 1, initial_scale=1e-4).to(device)
+    return NeIONetwork(12, width, 3, 1, initial_scale=1e-4).to(device)
 
 
 class SharedOptimizer(NeIODeformable):
@@ -82,18 +76,35 @@ class SharedOptimizer(NeIODeformable):
             super().initialize(data)
 
     def _network(self, features):
-        graph = self.graph
-        direction, scale = self.network(
-            features,
-            graph.source,
-            graph.target,
-            graph.inv_degree,
-            graph.group,
-            graph.inv_group_size,
-            self.log_scale.clone(),
+        graph, model, network = self.graph, self.solver.model, self.network
+        dt, unit = self.solver._data.dt, self.solver.length_unit_m
+        if self.kind == "particle":
+            gradient = wp.to_torch(self.solver.particle_forces)
+            mass = wp.to_torch(model.particle_mass)
+        else:
+            gradient = torch.stack(
+                (wp.to_torch(self.solver.body_forces), wp.to_torch(self.solver.body_torques) / self.length[:, None]), 1
+            ).flatten(0, 1)
+            mass = wp.to_torch(model.body_mass).repeat_interleave(2)
+        gradient = gradient.masked_fill(~graph.free[:, None], 0)
+        # Normalized direction alone erases the force and inertial scales needed
+        # to distinguish stiff cables from cloth. Context uses physical units;
+        # no scene identity, target solution, or separate task network is supplied.
+        rms = self._gradient_rms(gradient).detach() * unit
+        context = torch.cat(
+            (
+                torch.log10(rms.clamp_min(1e-20)) / 10,
+                torch.log10((mass / dt**2).clamp_min(1e-20))[:, None] / 10,
+                self.log_scale[graph.group] / 10,
+            ),
+            -1,
         )
-        # Bound the recurrent scale during training and inference alike. Longer
-        # sweep budgets must not exponentiate an unbounded controller state.
+        hidden = network.trunk(torch.cat((features, context), -1), graph.source, graph.target, graph.inv_degree)
+        direction = torch.tanh(network.direction_head(hidden))
+        pooled = group_sum(hidden, graph.group, graph.group_count) * graph.inv_group_size
+        # Allow a large scale correction in the first sweep, with the same final
+        # physical bound at every training and inference sweep budget.
+        scale = self.log_scale.clone() + network.scale_head(pooled)
         return direction, scale.clamp(np.log(1e-10), np.log(1e-2))
 
     def iterate(self, data, clear_history):
@@ -163,6 +174,8 @@ class StudySolver(SolverNeIO):
     def __init__(self, model, network, *, learn=False, history="clear", length_unit_m=1.0, **kwargs):
         if kwargs.get("rigid_soft_enable_dat"):
             raise ValueError("The training bridge does not support rigid-soft DAT")
+        if learn:
+            wp.set_module_options({"enable_backward": True}, module=kernels)
         self.learn = learn
         self.length_unit_m = length_unit_m
         self.failed_updates = 0
@@ -193,80 +206,76 @@ class StudySolver(SolverNeIO):
         super()._solve_particle_iteration(state_in, state_out, contacts, dt)
         if not self.learn:
             return
-        self._evaluate_forces(*self.step_arguments)
-        optimizers = [o for o in (self.particle_optimizer, self.rigid_optimizer) if o is not None]
-        final_gradients = self._vector_gradients()
-        if not all(bool(torch.isfinite(g).all()) for g in final_gradients):
-            self.failed_updates += 1
-            return
-        # L = mean_world log(1 + ||g_after||² / ||g_before||²). The reference
-        # norm is fixed for this local update; the target is zero physics residual.
-        vectors, losses = [], []
-        for optimizer, gradient in zip(optimizers, final_gradients):
-            graph = optimizer.graph
-            initial = optimizer._gradient.detach().square().sum(-1)
-            before = group_sum(initial, graph.group, graph.group_count).clamp_min(1e-12)
-            after = group_sum(gradient.square().sum(-1), graph.group, graph.group_count)
-            losses.append(torch.log1p(after / before).mean())
-            vectors.append(2 * gradient / (before + after)[graph.group, None] / graph.group_count / len(optimizers))
-        self.losses.append(float(torch.stack(losses).mean()))
-        self.residuals.append(float(torch.stack([g.square().mean() for g in final_gradients]).sum().sqrt()))
-
-        # For the energy-gradient oracle, dL/dx = H dL/dg. Central differences
-        # supply that Hessian-vector product without differentiating collisions.
-        # All poses, forces and contacts return to the actual post-update state.
-        peak = max(float(v.abs().max()) for v in vectors)
-        epsilon = 1e-5 / self.length_unit_m / max(peak, 1e-20)
+        # Differentiate the actual frozen-contact force map. Its Jacobian can be
+        # nonsymmetric (normal-load-dependent friction), so an H v approximation
+        # cannot replace the required J^T v residual derivative.
         particle, body = self.particle_optimizer, self.rigid_optimizer
-        particle_q = wp.to_torch(state_in.particle_q).clone() if particle is not None else None
-        body_q = wp.to_torch(state_in.body_q).clone() if body is not None else None
-        if body is not None:
-            com = body_q[:, :3] + quat_rotate(body_q[:, 3:], wp.to_torch(self.model.body_com))
-            direction = vectors[-1].reshape(-1, 2, 3)
-        probes = []
-        for sign in (1, -1):
-            if particle is not None:
-                wp.to_torch(state_in.particle_q).copy_(particle_q + sign * epsilon * vectors[0])
-            if body is not None:
-                rotation = quaternion_product(
-                    rotation_quaternion(sign * epsilon * direction[:, 1] / body.length[:, None]), body_q[:, 3:]
-                )
-                position = (
-                    com + sign * epsilon * direction[:, 0] - quat_rotate(rotation, wp.to_torch(self.model.body_com))
-                )
-                wp.to_torch(state_in.body_q).copy_(torch.cat((position, rotation), -1))
-            self._evaluate_forces(*self.step_arguments)
-            probes.append(self._vector_gradients())
+        arrays = []
         if particle is not None:
-            wp.to_torch(state_in.particle_q).copy_(particle_q)
-            wp.to_torch(self.particle_forces).copy_(-final_gradients[0])
+            arrays.extend((state_in.particle_q, self.particle_forces))
         if body is not None:
-            wp.to_torch(state_in.body_q).copy_(body_q)
-            g = final_gradients[-1].reshape(-1, 2, 3)
-            wp.to_torch(self.body_forces).copy_(-g[:, 0])
-            wp.to_torch(self.body_torques).copy_(-g[:, 1] * body.length[:, None])
-        derivatives = [(plus - minus) / (2 * epsilon) for plus, minus in zip(*probes)]
-        outputs, gradients = [], []
-        with torch.enable_grad():
-            if particle is not None:
-                candidate = (particle.before_displacement + particle.proposal) * wp.to_torch(self.truncation_ts)[
-                    :, None
-                ]
-                if self.particle_enable_self_contact:
-                    bound = self._self_contact_query_radius * self.dat_conservative_bound_relaxation * 0.5
-                    candidate = candidate * (bound / candidate.norm(dim=-1, keepdim=True).clamp_min(1e-30)).clamp(max=1)
-                outputs.append(candidate)
-                gradients.append(derivatives[0])
-            if body is not None:
-                q = quaternion_product(rotation_quaternion(body.proposal[:, 3:]), body.rotation)
-                derivative = derivatives[-1].reshape(-1, 2, 3)
-                outputs.extend((body.proposal[:, :3], q))
-                gradients.extend(
-                    (derivative[:, 0], quaternion_energy_gradient(q.detach(), derivative[:, 1] * body.length[:, None]))
-                )
-            valid = all(bool(torch.isfinite(g).all()) for g in gradients)
-            valid &= all(bool(torch.isfinite(x).all()) for x in outputs)
-            if valid:
-                torch.autograd.backward(outputs, [g.detach() / self.iterations for g in gradients])
-            else:
+            arrays.extend((state_in.body_q, self.body_forces, self.body_torques))
+        for array in arrays:
+            array.requires_grad = True
+            array.grad.zero_()
+        try:
+            with wp.Tape() as tape:
+                self._evaluate_forces(*self.step_arguments)
+            optimizers = [o for o in (particle, body) if o is not None]
+            final_gradients = self._vector_gradients()
+            if not all(bool(torch.isfinite(g).all()) for g in final_gradients):
                 self.failed_updates += 1
+                return
+            # The pre-update norm is a fixed local reference; the target is zero
+            # residual. Worlds and particle/body objectives receive equal weight.
+            vectors, losses = [], []
+            for optimizer, gradient in zip(optimizers, final_gradients):
+                graph = optimizer.graph
+                initial = optimizer._gradient.detach().square().sum(-1)
+                before = group_sum(initial, graph.group, graph.group_count).clamp_min(1e-12)
+                after = group_sum(gradient.square().sum(-1), graph.group, graph.group_count)
+                losses.append(torch.log1p(after / before).mean())
+                vectors.append(2 * gradient / (before + after)[graph.group, None] / graph.group_count / len(optimizers))
+            self.losses.append(float(torch.stack(losses).mean()))
+            self.residuals.append(float(torch.stack([g.square().mean() for g in final_gradients]).sum().sqrt()))
+            seeds = {}
+            if particle is not None:
+                seeds[self.particle_forces] = wp.from_torch(-vectors[0].contiguous(), dtype=wp.vec3)
+            if body is not None:
+                vector = vectors[-1].reshape(-1, 2, 3)
+                seeds[self.body_forces] = wp.from_torch(-vector[:, 0].contiguous(), dtype=wp.vec3)
+                seeds[self.body_torques] = wp.from_torch(
+                    (-vector[:, 1] / body.length[:, None]).contiguous(), dtype=wp.vec3
+                )
+            tape.backward(grads=seeds)
+            outputs, gradients = [], []
+            with torch.enable_grad():
+                if particle is not None:
+                    candidate = (particle.before_displacement + particle.proposal) * wp.to_torch(self.truncation_ts)[
+                        :, None
+                    ]
+                    if self.particle_enable_self_contact:
+                        bound = self._self_contact_query_radius * self.dat_conservative_bound_relaxation * 0.5
+                        candidate = candidate * (bound / candidate.norm(dim=-1, keepdim=True).clamp_min(1e-30)).clamp(
+                            max=1
+                        )
+                    outputs.append(candidate)
+                    gradients.append(wp.to_torch(state_in.particle_q.grad).clone().detach())
+                if body is not None:
+                    q = quaternion_product(rotation_quaternion(body.proposal[:, 3:]), body.rotation)
+                    # Warp differentiates body-origin poses; the learned translation
+                    # moves the COM. Pull back through that offset and the rotation.
+                    position = body.proposal[:, :3] - quat_rotate(q, wp.to_torch(self.model.body_com))
+                    outputs.append(torch.cat((position, q), -1))
+                    gradients.append(wp.to_torch(state_in.body_q.grad).clone().detach())
+                valid = all(bool(torch.isfinite(g).all()) for g in gradients)
+                valid &= all(bool(torch.isfinite(x).all()) for x in outputs)
+                if valid:
+                    torch.autograd.backward(outputs, [g / self.iterations for g in gradients])
+                else:
+                    self.failed_updates += 1
+        finally:
+            # The following sweep/timestep must not backpropagate through mutable
+            # simulator buffers or earlier history. Only this proposal is learned.
+            for array in arrays:
+                array.requires_grad = False

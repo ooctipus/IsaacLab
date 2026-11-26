@@ -20,8 +20,7 @@ sys.path[:0] = [str(ROOT / "_source"), str(ROOT)]
 
 import newton
 from benchmark import make_solver, metrics
-from experiments.neio.rigid import quat_rotate
-from optimizer import StudySolver, new_network, quaternion_energy_gradient, quaternion_product, rotation_quaternion
+from optimizer import StudySolver, new_network
 from scenes import make_scene
 
 DEVICE = os.environ.get("NEIO_TEST_DEVICE", "cuda:0")
@@ -44,6 +43,10 @@ def test_architecture_and_splits():
         | set(seeds["train"]) & set(seeds["validation"])
         | set(seeds["validation"]) & set(seeds["test"])
     )
+    assert {c["family"] for c in study["validation"]} == set(study["arms"]["mixed"])
+    assert {c["name"].removesuffix("_validation") for c in study["validation"]} == {
+        c["name"].removesuffix("_train") for c in study["train"]
+    }
     assert study["arms"]["cloth"] == ["cloth"]
     assert set(study["arms"]["cloth"]) < set(study["arms"]["deformables"]) < set(study["arms"]["mixed"])
     loads = {c["load_n"] for c in study["test"] if c["family"] == "m12" and "threading" not in c["name"]}
@@ -76,7 +79,10 @@ def test_training_records_metrics_and_checkpoint_tracking_identity(tmp_path):
     study = json.loads((ROOT / "study.json").read_text())
     # Small fixture for the logging contract; it cannot pass the production CLI gate.
     study["train"] = [{"name": "numerical_fixture", "family": "cloth"}]
-    study["validation"] = [{"name": "numerical_fixture", "family": "cloth"}]
+    study["validation"] = [
+        {"name": "numerical_fixture", "family": "cloth"},
+        {"name": "rigid_fixture", "family": "rigid", "count": 1},
+    ]
     args = SimpleNamespace(
         arm="cloth",
         seed=101,
@@ -109,9 +115,12 @@ def test_training_records_metrics_and_checkpoint_tracking_identity(tmp_path):
     assert rows[-1]["rank_metrics"][0]["particle_residual_ratio"] >= 0
     validation = json.loads((tmp_path / "validation.json").read_text())
     assert [json.loads(line)["step"] for line in (tmp_path / "validation.jsonl").read_text().splitlines()] == [0, 32]
-    assert len(validation["cases"]) == 5
-    assert all(row["particle_residual_ratio"] is not None for row in validation["cases"])
-    assert rows[-1]["rank_metrics"][0]["oracle_calls"] == 132
+    assert len(validation["cases"]) == 10
+    assert any(row.get("particle_residual_ratio") is not None for row in validation["cases"])
+    assert any(row.get("body_residual_ratio") is not None for row in validation["cases"])
+    assert validation["score"] == pytest.approx(np.mean([row["score"] for row in validation["cases"]]))
+    assert rows[-1]["rank_metrics"][0]["oracle_calls"] == 68
+    assert rows[-1]["rank_metrics"][0]["oracle_backward_calls"] == 32
     assert all(np.isfinite(row["loss"]) for row in rows)
     baseline = json.loads((tmp_path / "validation.jsonl").read_text().splitlines()[0])
     assert checkpoint["best"] <= baseline["score"]
@@ -190,21 +199,7 @@ def test_bank_requires_physical_interactions_and_supports_learning(tmp_path, nam
             )
 
 
-def test_world_rotation_gradient_matches_independent_energy_derivative():
-    torch.manual_seed(7)
-    q0 = torch.nn.functional.normalize(torch.randn(5, 4, dtype=torch.float64), dim=-1)
-    rotation = (0.6 * torch.randn(5, 3, dtype=torch.float64)).requires_grad_()
-    point, target = torch.randn(5, 3, dtype=torch.float64), torch.randn(5, 3, dtype=torch.float64)
-    q = quaternion_product(rotation_quaternion(rotation), q0)
-    rotated = quat_rotate(q, point)
-    energy = 0.5 * (rotated - target).square().sum()
-    expected = torch.autograd.grad(energy, rotation, retain_graph=True)[0]
-    torque_gradient = torch.linalg.cross(rotated.detach(), rotated.detach() - target)
-    actual = torch.autograd.grad(q, rotation, quaternion_energy_gradient(q.detach(), torque_gradient))[0]
-    torch.testing.assert_close(actual, expected, atol=1e-11, rtol=1e-10)
-
-
-@pytest.mark.parametrize("family", ["particle", "rigid"])
+@pytest.mark.parametrize("family", ["particle", "rigid", "friction"])
 def test_residual_loss_gradient_matches_weight_finite_difference(family):
     wp.init()
     with wp.ScopedDevice(DEVICE):
@@ -212,6 +207,10 @@ def test_residual_loss_gradient_matches_weight_finite_difference(family):
         builder.begin_world()
         if family == "particle":
             builder.add_particle(pos=wp.vec3(0), vel=wp.vec3(0), mass=1)
+        elif family == "friction":
+            body = builder.add_body(xform=wp.transform(wp.vec3(0, 0, 0.09), wp.quat_identity()))
+            builder.add_shape_sphere(body, radius=0.1)
+            builder.add_ground_plane()
         else:
             body = builder.add_body()
             builder.add_shape_box(body, hx=0.1, hy=0.1, hz=0.1)
@@ -221,7 +220,8 @@ def test_residual_loss_gradient_matches_weight_finite_difference(family):
         torch.manual_seed(12)
         net = new_network(DEVICE)
         parameter = net.direction_head[-1].bias
-        original = float(parameter[0].detach())
+        axis = 2 if family == "friction" else 0
+        original = float(parameter[axis].detach())
         dt = 0.01
         a, b = model.state(), model.state()
         solver = StudySolver(model, net, iterations=4)
@@ -232,12 +232,19 @@ def test_residual_loss_gradient_matches_weight_finite_difference(family):
 
         def solve(value, learn):
             with torch.no_grad():
-                parameter[0] = value
+                parameter[axis] = value
             net.zero_grad()
             a, b, control = model.state(), model.state(), model.control()
             solver = StudySolver(model, net, iterations=1, learn=learn, initialization="inertia-velocity-only")
             solver.record_convergence = True
-            solver.step(a, b, control, None, dt)
+            contacts = None
+            if family == "friction":
+                wp.to_torch(a.body_qd)[:, 0] = 2.0
+                pipeline = newton.CollisionPipeline(model)
+                contacts = pipeline.contacts()
+                pipeline.collide(a, contacts)
+                assert contacts.rigid_contact_count.numpy()[0] > 0
+            solver.step(a, b, control, contacts, dt)
             if family == "particle":
                 squared_residual = wp.to_torch(solver.particle_forces).square().sum()
             else:
@@ -248,11 +255,12 @@ def test_residual_loss_gradient_matches_weight_finite_difference(family):
                     wp.to_torch(solver.body_forces).square().sum()
                     + (wp.to_torch(solver.body_torques).square().sum(-1) / length_squared).sum()
                 )
-            initial = solver.convergence_buffer[0, 0 if family == "particle" else 2].square().clamp_min(1e-12)
+            adapter = solver.particle_optimizer if family == "particle" else solver.rigid_optimizer
+            initial = adapter._gradient.detach().square().sum().clamp_min(1e-12)
             return float(torch.log1p(squared_residual / initial))
 
         solve(original, True)
-        analytical = float(parameter.grad[0])
+        analytical = float(parameter.grad[axis])
         eps = 0.002
         high = solve(original + eps, False)
         low = solve(original - eps, False)

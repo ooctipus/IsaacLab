@@ -111,18 +111,30 @@ vectors use the body's radius of gyration to convert angles to lengths.
 
 The experimental trainer minimizes ``log(1 + ||g_after||² / ||g_before||²)`` per
 sweep and world, with a 1e-12 floor on the denominator. Rigid torques are divided
-by each body's radius of gyration before computing the residual. Two additional
-physics-force evaluations approximate the Hessian-vector product needed to
-differentiate this loss. Collision topology, planar truncation coefficients,
-history and preceding timesteps remain detached. This is an explicit residual
-objective, not the author's unavailable training recipe or a scalar energy loss.
-Training accounts for all four force evaluations per sweep; inference retains
-one force evaluation per sweep, plus separately recorded diagnostics.
+by each body's radius of gyration before computing the residual. Warp reverse-mode
+AD differentiates the actual post-update force map and applies its transposed
+Jacobian to the loss derivative. A symmetric Hessian approximation is insufficient
+when friction changes with normal load. The earlier central-difference bridge
+also suffered from finite probe size on stiff cables. The reverse pass includes
+particle/body coupling and pulls body-origin pose derivatives through the learned
+COM displacement and quaternion update. Collision topology, planar truncation
+coefficients, history and preceding timesteps remain detached. This is an explicit
+residual objective, not the author's unavailable training recipe or a scalar
+energy loss. Training records two forward force evaluations and one reverse pass
+per sweep separately; inference retains one force evaluation per sweep, plus
+separately recorded diagnostics. No finite-difference physics probes run in training.
 
 Cloth-only, deformables (cloth/cable/volume), and mixed (also rigid/articulated/
 rigid-soft/threaded) arms share architecture, initialization per seed, update budget
 and optimizer. Independent GPU processes sample complete scenes and average model
 gradients. ``--worlds=1`` is required; the former tiny replicated worlds are gone.
+Each scene gradient is clipped to norm one before averaging across GPUs; this
+prevents a stiff scene from dominating its peer without amplifying tiny gradients.
+The shared model adds three physical context inputs to the nine normalized
+vector/history inputs: log force RMS in physical units, log mass/dt², and the
+current log step scale. Its controller can change the scale by more than three
+log units in one sweep; the final 1e-10 to 1e-2 m bound still applies. These are
+experimental extensions and do not modify the supplied NeIO baseline.
 Family rotation balances training; within each family it rotates workloads. Seeds
 101/202/303 control initialization, material variation and sampled times. Validation
 and test have separate seeds and declared material/motion ranges. Report any fixed
@@ -184,7 +196,12 @@ Tracking and launching
 Online W&B is required by default; initialization failure stops all ranks. The
 project defaults to ``neio-transfer`` and the authenticated entity. The primary
 curves measure before/after objective-gradient norm ratios on five fixed validation
-states, starting at update zero, plus worst geometric errors and failure fraction.
+states per workload, starting at update zero, plus worst geometric errors and
+failure fraction. Every arm uses the same 12-workload validation suite; checkpoint
+selection averages residual scores within each workload, then within each family,
+then across families. Cloth alone cannot select a mixed checkpoint. Full-duration
+validation banks are generated once and cached; only the five fixed-state probes
+repeat during training. Each workload has its own residual and failure curves.
 A ratio below one means the solver reduced the residual; it does not prove minimum
 energy. ``train/loss`` is the explicit normalized residual objective above; about
 0.693 means no residual improvement on a sweep. Training residual ratios are separated by

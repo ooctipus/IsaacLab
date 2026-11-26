@@ -101,7 +101,14 @@ def log_training(tracking, row):
             f"train/{values['workload']}/rank_{index}/{key}": value
             for index, values in enumerate(row.get("rank_metrics", []))
             for key, value in values.items()
-            if key in ("particle_residual_ratio", "body_residual_ratio", "residual_loss", "rejected_updates")
+            if key
+            in (
+                "particle_residual_ratio",
+                "body_residual_ratio",
+                "residual_loss",
+                "rejected_updates",
+                "gradient_norm_before_clipping",
+            )
         }
     )
 
@@ -169,7 +176,7 @@ def source_provenance():
 
 
 def validate(network, study, device, sweeps, banks=None):
-    scores, rows = [], []
+    scores, rows = {}, []
     banks = {} if banks is None else banks
     for case in study["validation"]:
         limits = dict(study["acceptance"][case["family"]])
@@ -180,20 +187,37 @@ def validate(network, study, device, sweeps, banks=None):
         case = {**case, "acceptance": limits}
         if case["name"] not in banks:
             scene = make_scene(case, study["seeds"]["validation"][0], device)
-            banks[case["name"]] = scene, reference_states(scene, 16, 16)
+            count = int(np.ceil(case.get("duration", 16 * scene.dt) / scene.dt))
+            banks[case["name"]] = scene, reference_states(scene, count, max(1, count // 96))
         scene, states = banks[case["name"]]
         solver = make_solver(scene, "shared", sweeps, network, history=study["training"]["history_at_step_start"])
+        case_scores = []
         for index in np.linspace(0, len(states) - 1, 5, dtype=int):
             t, saved = states[index]
             result, _ = probe(scene, solver, saved, t, repeats=1)
             ratios = [
                 result[k] for k in ("particle_residual_ratio", "body_residual_ratio") if result.get(k) is not None
             ]
-            score = np.mean(np.log1p(np.minimum(ratios, 1e6))) if ratios and result["bounded"] else 1e6
-            if case["family"] == "cloth":
-                scores.append(float(score))
-            rows.append({"case": case["name"], "sample_time_seconds": t, "score": float(score), **result})
-    return float(np.mean(scores)), rows
+            final = result["neio_objective_gradient"]
+            solved = all(
+                final[key] is not None and abs(final[key]) <= 1e-7
+                for key in ("particle_final_n", "body_final_mixed_units")
+            )
+            score = np.mean(np.log1p(np.minimum(ratios, 1e6))) if ratios else (0.0 if solved else 1e6)
+            if not result["bounded"] or result.get("contact_overflow", False):
+                score = 1e6
+            case_scores.append(float(score))
+            rows.append(
+                {
+                    "case": case["name"],
+                    "family": case["family"],
+                    "sample_time_seconds": t,
+                    "score": float(score),
+                    **result,
+                }
+            )
+        scores.setdefault(case["family"], []).append(float(np.mean(case_scores)))
+    return float(np.mean([np.mean(values) for values in scores.values()])), rows
 
 
 def log_validation(tracking, output, step, score, rows):
@@ -202,7 +226,26 @@ def log_validation(tracking, output, step, score, rows):
     write_json(output / "validation.json", record)
     with (output / "validation.jsonl").open("a") as log:
         log.write(json.dumps(record, allow_nan=False) + "\n")
-    values = {"step": step, "cloth_selection_score": score}
+    values = {"step": step, "selection_score": score}
+    for case in sorted({row["case"] for row in rows}):
+        measured = [row for row in rows if row["case"] == case]
+        values[f"{case}/residual_score"] = float(np.mean([row["score"] for row in measured]))
+        for kind in ("particle", "body"):
+            ratios = [
+                row[f"{kind}_residual_ratio"] for row in measured if row.get(f"{kind}_residual_ratio") is not None
+            ]
+            if ratios:
+                values[f"{case}/{kind}_residual_ratio"] = float(np.mean(ratios))
+        values[f"{case}/failure_fraction"] = float(
+            np.mean(
+                [
+                    not row["bounded"]
+                    or row.get("contact_overflow", False)
+                    or bool(row.get("physical_threshold_failures"))
+                    for row in measured
+                ]
+            )
+        )
     for key in (
         "particle_residual_ratio",
         "body_residual_ratio",
@@ -222,7 +265,13 @@ def log_validation(tracking, output, step, score, rows):
             ]
         )
     )
-    values["residual_reduction_fraction"] = float(np.mean([row.get("particle_residual_ratio", 1) < 1 for row in rows]))
+    ratios = [
+        row[key]
+        for row in rows
+        for key in ("particle_residual_ratio", "body_residual_ratio")
+        if row.get(key) is not None
+    ]
+    values["residual_reduction_fraction"] = float(np.mean(np.asarray(ratios) < 1)) if ratios else 0.0
     tracking.log({f"validation/{key}": value for key, value in values.items()})
 
 
@@ -241,7 +290,7 @@ def train(args, study, network, device, rank, ranks, output, metadata, tracking,
     families = study["arms"][args.arm]
     episode_steps = config["episode_steps"]
     begin = time.perf_counter()
-    nodes, oracle_calls, rejected = 0, 0, 0
+    nodes, oracle_calls, backward_calls, rejected = 0, 0, 0, 0
     banks, validation_banks = {}, {}
     if start_step == 0 and rank == 0:
         score, validation = validate(network, study, device, args.sweeps, validation_banks)
@@ -308,18 +357,21 @@ def train(args, study, network, device, rank, ranks, output, metadata, tracking,
         if ranks > 1:
             dist.all_reduce(bad, op=dist.ReduceOp.MAX)
         if not bool(bad):
+            # Limit each scene before averaging so a stiff cable cannot erase
+            # the update supplied by its cloth/robot peer. Small signals stay small.
+            grad_norm = float(torch.nn.utils.clip_grad_norm_(network.parameters(), 1.0))
             if ranks > 1:
                 for parameter in network.parameters():
                     dist.all_reduce(parameter.grad)
                     parameter.grad.div_(ranks)
-            grad_norm = float(torch.nn.utils.clip_grad_norm_(network.parameters(), 1.0))
             optimizer.step()
         else:
             rejected += 1
             grad_norm = None
         a, b = b, a
         nodes += model.particle_count + 2 * model.body_count
-        oracle_calls += 4 * args.sweeps + int(solver.record_convergence)
+        oracle_calls += 2 * args.sweeps + int(solver.record_convergence)
+        backward_calls += args.sweeps
         if (step + 1) % 8 == 0 or step + 1 == args.steps:
             convergence = solver.convergence_buffer[0].tolist()
             local_metrics = {
@@ -338,6 +390,8 @@ def train(args, study, network, device, rank, ranks, output, metadata, tracking,
                 "rejected_updates": rejected,
                 "processed_nodes": nodes,
                 "oracle_calls": oracle_calls,
+                "oracle_backward_calls": backward_calls,
+                "gradient_norm_before_clipping": grad_norm,
             }
             for kind, initial, final in (("particle", *convergence[:2]), ("body", *convergence[2:])):
                 if initial > 1e-12 and np.isfinite(initial) and np.isfinite(final):
