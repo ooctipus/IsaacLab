@@ -51,6 +51,7 @@ workflow:
       - path: /tmp/run.sh
         contents: |
           set -euo pipefail
+          export OVSTORAGE_AUTH_DIR="$(mktemp -d /tmp/ovstorage-auth.XXXXXX)"
 
           {% if target_node %}
           # Inventory exclusions may age while queued; verify hardware before training.
