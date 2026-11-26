@@ -14,9 +14,8 @@ ARG RUN_PIP_INSTALL=0
 # args select which extras to install; do NOT add ``--extra isaacsim`` (Isaac Sim
 # is the binary base image, not a pip package). This overlay runs on top of either
 # the base or the kit-less dependency image, which carry different extras, so
-# ``buildnpush.py`` always passes the matching set; the default below only covers
-# a direct ``docker build`` of this file.
-ARG ISAACLAB_UV_SYNC_ARGS="--extra sb3 --extra skrl --extra rl-games --extra rsl-rl --extra wandb --extra viser --extra rerun --extra mimic --extra teleop --extra test --extra tetrahedralization --extra ov --no-install-package imageio-ffmpeg"
+# ``buildnpush.py`` always passes the matching set; direct builds must pass the same selection explicitly.
+ARG ISAACLAB_UV_SYNC_ARGS
 
 ENV ISAACLAB_PATH=${ISAACLAB_PATH_ARG}
 
@@ -49,8 +48,12 @@ RUN --mount=type=bind,source=source,target=/tmp/isaaclab_overlay/source,readonly
       "${ISAACLAB_PATH}/uv.lock" && \
     find "${ISAACLAB_PATH}/source" -type f -name "*.sh" -exec sed -i 's/\r$//' {} + && \
     (find ${ISAACSIM_ROOT_PATH_ARG}/extscache -path "*/pip_prebundle/typing_extensions.py" -delete 2>/dev/null || true) && \
-    sed -i 's/^include-system-site-packages *= *true/include-system-site-packages = false/' "${ISAACLAB_PATH}/.venv/pyvenv.cfg" && \
+    sed -i 's/^include-system-site-packages *= *true/include-system-site-packages = false/' "${VIRTUAL_ENV:?}/pyvenv.cfg" && \
     if [ "${RUN_PIP_INSTALL}" = "1" ]; then \
       cd "${ISAACLAB_PATH}" && uv sync ${ISAACLAB_UV_SYNC_ARGS}; \
+    fi && \
+    if [ -f "${ISAACLAB_PATH}/scripts/neio/uv.lock" ]; then \
+      UV_PROJECT_ENVIRONMENT=/opt/isaaclab-projects/scripts/neio uv sync --locked --project "${ISAACLAB_PATH}/scripts/neio" && \
+      chown -R isaaclab:isaaclab /opt/isaaclab-projects/scripts/neio; \
     fi
 USER isaaclab

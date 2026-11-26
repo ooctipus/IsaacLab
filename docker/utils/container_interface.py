@@ -178,23 +178,6 @@ class ContainerInterface:
             return ["--no-cache"]
         return []
 
-    def _run_build(self, cmd: list[str], service_name: str):
-        """Run a build command and fail loudly when Docker reports an error.
-
-        Args:
-            cmd: The docker compose build command to run.
-            service_name: The service being built, used in the error message.
-
-        Raises:
-            RuntimeError: If the build command exits with a non-zero status.
-        """
-        result = subprocess.run(cmd, check=False, cwd=self.context_dir, env=self.environ)
-        if result.returncode != 0:
-            raise RuntimeError(
-                f"[ERROR] Failed to build the docker image for service '{service_name}'"
-                f" (exit code {result.returncode}). See the Docker build output above."
-            )
-
     def build(self, pull: bool = False):
         """Build the Docker image, optionally refreshing its parent images.
 
@@ -274,7 +257,7 @@ class ContainerInterface:
             )
             if not build:
                 print(f"[INFO] Docker image '{self.image_name}' does not exist. Building it once before start.\n")
-            self._run_build(cmd, self.service_name)
+            self._run_docker_command(cmd, f"build the docker image for the profile '{self.profile}'")
 
         # start the container without forcing a rebuild
         cmd = (

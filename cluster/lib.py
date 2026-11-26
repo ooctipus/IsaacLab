@@ -70,7 +70,7 @@ WORKFLOW_PRIORITIES = frozenset({"HIGH", "NORMAL", "LOW"})
 
 # Set kitless=1 for Newton-only jobs to avoid bootstrapping the binary Isaac Sim runtime.
 CLUSTER_DEFAULTS = {
-    "image": "factory",
+    "image": "lab",
     "num_gpu": "1",
     "num_cpu": "2",
     "num_node": "1",
@@ -80,6 +80,7 @@ CLUSTER_DEFAULTS = {
     "dataset": "isaac-lab-ppo-model",
     "master_port": "29400",
     "kitless": "0",
+    "python_project": "",
 }
 
 CLUSTER_KEY_ORDER = [
@@ -93,6 +94,7 @@ CLUSTER_KEY_ORDER = [
     "storage",
     "master_port",
     "kitless",
+    "python_project",
     "target_node",
     "expected_gpu_uuids",
     "nodes_excluded",
@@ -571,6 +573,15 @@ def parse_args(raw_args: list[str]) -> ParsedArgs:
 
         print(f"Invalid argument: {arg}", file=sys.stderr)
         sys.exit(1)
+
+    project = p.cluster["python_project"]
+    if project and (
+        PurePosixPath(project).is_absolute()
+        or ".." in PurePosixPath(project).parts
+        or re.fullmatch(r"[A-Za-z0-9_/-]+", project) is None
+    ):
+        print("Error: python_project must be a relative project directory.", file=sys.stderr)
+        sys.exit(2)
 
     # Resolve pool -> platform
     if p.pool:

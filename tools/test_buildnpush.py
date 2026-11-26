@@ -374,11 +374,11 @@ class BuildnpushTest(unittest.TestCase):
         self.assertEqual(extras + " --no-install-package imageio-ffmpeg", bp.BASE_UV_SYNC_EXTRAS)
         self.assertIn('ENV ISAACLAB_UV_SYNC_ARGS="${IMAGE_EXTRAS} --no-install-package imageio-ffmpeg"', base)
         overlay = (bp.REPO_ROOT / "docker/Dockerfile.source-only").read_text()
-        self.assertIn(f'ARG ISAACLAB_UV_SYNC_ARGS="{bp.BASE_UV_SYNC_EXTRAS}"', overlay)
+        self.assertIn("ARG ISAACLAB_UV_SYNC_ARGS\n", overlay)
         self.assertNotIn("${ISAACLAB_PATH}/.venv", overlay)
         self.assertNotIn("isaaclab.sh", overlay)
         kitless = (bp.REPO_ROOT / "docker/Dockerfile.kitless").read_text()
-        self.assertIn(f'ENV ISAACLAB_UV_SYNC_ARGS="{bp.KITLESS_UV_SYNC_EXTRAS}"', kitless)
+        self.assertIn('ENV ISAACLAB_UV_SYNC_ARGS="${IMAGE_EXTRAS}"', kitless)
 
     def test_kitless_overlay_receives_kitless_sync_extras(self) -> None:
         ctx = _ctx(bp.BuildArgs(tag="factory", kitless=True))

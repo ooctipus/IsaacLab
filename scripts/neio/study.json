@@ -1,0 +1,272 @@
+{
+  "schema": 1,
+  "seeds": {
+    "train": [
+      101,
+      202,
+      303
+    ],
+    "validation": [
+      10001,
+      10002
+    ],
+    "test": [
+      20001,
+      20002,
+      20003
+    ]
+  },
+  "arms": {
+    "cloth": [
+      "cloth"
+    ],
+    "deformables": [
+      "cloth",
+      "cable",
+      "soft"
+    ],
+    "mixed": [
+      "cloth",
+      "cable",
+      "soft",
+      "rigid",
+      "articulation",
+      "coupled"
+    ]
+  },
+  "training": {
+    "steps": 9984,
+    "sweeps": 4,
+    "worlds": 8,
+    "episode_steps": 32,
+    "learning_rate": 0.0001
+  },
+  "sweeps": {
+    "shared": [
+      1,
+      2,
+      4,
+      8,
+      16,
+      32
+    ],
+    "supplied": [
+      1,
+      2,
+      4,
+      8,
+      16,
+      32
+    ],
+    "vbd": [
+      1,
+      2,
+      4,
+      8,
+      16,
+      32,
+      100
+    ],
+    "mjwarp": [
+      1,
+      2,
+      4,
+      8,
+      16,
+      32,
+      100
+    ],
+    "pgs": [
+      8
+    ]
+  },
+  "validation": [
+    {
+      "name": "cloth_validation",
+      "family": "cloth",
+      "amplitude": 0.5,
+      "frequency": 3,
+      "obstacle": true
+    },
+    {
+      "name": "rigid_validation",
+      "family": "rigid",
+      "count": 4
+    },
+    {
+      "name": "cable_validation",
+      "family": "cable",
+      "amplitude": 0.5,
+      "frequency": 4
+    }
+  ],
+  "test": [
+    {
+      "name": "cloth_drape",
+      "family": "cloth",
+      "resolution": 16,
+      "obstacle": true,
+      "self_contact": true
+    },
+    {
+      "name": "cloth_twist",
+      "family": "cloth",
+      "resolution": 16,
+      "twist": true,
+      "amplitude": 3.14,
+      "frequency": 24,
+      "self_contact": true
+    },
+    {
+      "name": "cloth_stiff",
+      "family": "cloth",
+      "resolution": 16,
+      "stiffness_scale": 100,
+      "amplitude": 1,
+      "frequency": 12
+    },
+    {
+      "name": "cable_whip",
+      "family": "cable",
+      "resolution": 24,
+      "amplitude": 2.5,
+      "frequency": 32
+    },
+    {
+      "name": "cable_stiff",
+      "family": "cable",
+      "resolution": 24,
+      "amplitude": 1.5,
+      "frequency": 20,
+      "stiffness_scale": 100
+    },
+    {
+      "name": "soft_impact",
+      "family": "soft",
+      "stiffness_scale": 20
+    },
+    {
+      "name": "cloth_rigid_contact",
+      "family": "coupled",
+      "resolution": 16,
+      "amplitude": 1,
+      "frequency": 16,
+      "self_contact": true
+    },
+    {
+      "name": "stack",
+      "family": "rigid",
+      "count": 8
+    },
+    {
+      "name": "stack_mass_ratio",
+      "family": "rigid",
+      "count": 8,
+      "mass_ratio": 100
+    },
+    {
+      "name": "friction_push",
+      "family": "rigid",
+      "friction": 1.5,
+      "load_n": 10,
+      "load_direction": [
+        1,
+        0,
+        0
+      ]
+    },
+    {
+      "name": "articulated_chain",
+      "family": "articulation",
+      "count": 12
+    },
+    {
+      "name": "m12_axial_200n",
+      "family": "m12",
+      "load_n": 200,
+      "ramp_seconds": 0.05,
+      "dt": 0.0005
+    },
+    {
+      "name": "m12_axial_400n",
+      "family": "m12",
+      "load_n": 400,
+      "ramp_seconds": 0.05,
+      "dt": 0.0005
+    },
+    {
+      "name": "m12_lateral_200n",
+      "family": "m12",
+      "load_n": 200,
+      "load_direction": [
+        1,
+        0,
+        0
+      ],
+      "ramp_seconds": 0.05,
+      "dt": 0.0005
+    },
+    {
+      "name": "m12_lateral_400n",
+      "family": "m12",
+      "load_n": 400,
+      "load_direction": [
+        1,
+        0,
+        0
+      ],
+      "ramp_seconds": 0.05,
+      "dt": 0.0005
+    },
+    {
+      "name": "cloth_rest",
+      "family": "cloth",
+      "rest": true,
+      "gravity": 0
+    },
+    {
+      "name": "rigid_rest",
+      "family": "rigid",
+      "rest": true,
+      "gravity": 0,
+      "count": 1
+    },
+    {
+      "name": "driven_chain",
+      "family": "articulation",
+      "count": 8,
+      "drive": true
+    }
+  ],
+  "acceptance": {
+    "cloth": {
+      "max_edge_strain": 1.0,
+      "soft_penetration_m": 0.01
+    },
+    "cable": {
+      "joint_anchor_gap_m": 0.01,
+      "rigid_penetration_m": 0.005
+    },
+    "soft": {
+      "max_edge_strain": 1.5,
+      "soft_penetration_m": 0.01
+    },
+    "coupled": {
+      "max_edge_strain": 1.0,
+      "soft_penetration_m": 0.01,
+      "rigid_penetration_m": 0.005
+    },
+    "rigid": {
+      "rigid_penetration_m": 0.005
+    },
+    "articulation": {
+      "joint_anchor_gap_m": 0.01,
+      "rigid_penetration_m": 0.005
+    },
+    "m12": {
+      "rigid_penetration_m": 0.0002,
+      "m12_axial_displacement_m": 0.005,
+      "m12_lateral_displacement_m": 0.002
+    }
+  }
+}

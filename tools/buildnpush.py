@@ -33,7 +33,7 @@ from pathlib import Path
 import tomllib
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_KITLESS_BASE_IMAGE = "nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04"
+DEFAULT_KITLESS_BASE_IMAGE = "ubuntu:24.04"
 FINAL_IMAGE_REPO = "nvcr.io/nvidian/octi-isaac-lab"
 BASE_IMAGE = "isaac-lab-base"
 MAX_LAYERS_FOR_DEPS_CACHE = 118
@@ -44,14 +44,16 @@ NGC = Path("/home/zhengyuz/ngc-cli/ngc")
 ASSETS_DATA_DIR = Path("source/isaaclab_assets/data")
 EXTRA_SYMLINKS = [Path("dep"), Path("dep/rsl_rl")]
 
-# Extras the images are synced with. These mirror the ``ISAACLAB_UV_SYNC_ARGS`` defaults in
-# the Dockerfiles and are only used to re-run ``uv sync --check`` against a built image;
-# ``test_uv_sync_extras_match_the_dockerfiles`` fails if the two drift apart.
-BASE_UV_SYNC_EXTRAS = (
-    "--extra sb3 --extra skrl --extra rl-games --extra rsl-rl --extra wandb --extra viser --extra rerun --extra mimic"
-    " --extra teleop --extra test --extra tetrahedralization --extra ov --no-install-package imageio-ffmpeg"
-)
-KITLESS_UV_SYNC_EXTRAS = "--extra all --extra importers --extra test --extra wandb"
+
+def image_sync_args(dockerfile: str) -> str:
+    """Read the dependency selection from its owning image definition."""
+    source = (REPO_ROOT / dockerfile).read_text()
+    extras = re.search(r'^ARG IMAGE_EXTRAS="([^"]*)"', source, re.MULTILINE).group(1)
+    return extras + (" --no-install-package imageio-ffmpeg" if dockerfile.endswith(".base") else "")
+
+
+BASE_UV_SYNC_EXTRAS = image_sync_args("docker/Dockerfile.base")
+KITLESS_UV_SYNC_EXTRAS = image_sync_args("docker/Dockerfile.kitless")
 # Emitted by ``uv sync --check`` when it did run and found the environment stale. Its absence on a
 # failure means the check itself broke (missing uv, unreadable lock) rather than the image drifting.
 UV_OUTDATED_MARKER = "The environment is outdated"
@@ -464,7 +466,7 @@ def build_full_deps(ctx: BuildContext, plan: BuildPlan, docker_env: dict[str, st
             "-f",
             "docker/Dockerfile.kitless",
             "--build-arg",
-            f"KITLESS_BASE_IMAGE_ARG={ctx.args.kitless_base_image}",
+            f"BASE_IMAGE_ARG={ctx.args.kitless_base_image}",
             "--build-arg",
             f"ISAACLAB_PATH_ARG={docker_env['DOCKER_ISAACLAB_PATH']}",
             "--build-arg",

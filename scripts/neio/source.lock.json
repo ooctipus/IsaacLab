@@ -1,0 +1,16 @@
+{
+  "repository": "https://gitlab-master.nvidia.com/ankac/newton-neio",
+  "revision": "47eac799fc45153190394637801d4004746dfaab",
+  "path": "_source",
+  "patches": [],
+  "assets": {
+    "nut": {
+      "url": "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/6.2/Isaac/IsaacLab/Factory/NIST/nut_m12.usd",
+      "preparation": "USD Stage.Flatten exported to assets/nut_m12.usda"
+    },
+    "bolt": {
+      "url": "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/6.2/Isaac/IsaacLab/Factory/NIST/bolt_m12.usd",
+      "preparation": "USD Stage.Flatten exported to assets/bolt_m12.usda"
+    }
+  }
+}
