@@ -83,7 +83,7 @@ def test_collision_cfg_leaves_max_triangle_pairs_to_newton():
 
 @pytest.mark.parametrize("device", test_devices(DeviceScope.CUDA))
 def test_all_shapes_sdf_provisions_analytic_colliders(device):
-    """A configured Newton model has SDF resources for finite box and curved colliders."""
+    """Box, curved and mesh colliders have SDFs without overriding authored settings."""
     collision = NewtonCollisionPipelineCfg(
         speculative_contact_gap_max=0.01,
         sdf_all_shapes=NewtonCollisionPipelineCfg.SDFAllShapesCfg(sdf_max_resolution=32),
@@ -100,12 +100,27 @@ def test_all_shapes_sdf_provisions_analytic_colliders(device):
     body = builder.add_body(mass=1.0)
     builder.add_shape_box(body=body, hx=0.1, hy=0.1, hz=0.1)
     builder.add_shape_sphere(body=body, radius=0.05)
+    mesh = newton.Mesh.create_box(0.05, 0.05, 0.05, compute_inertia=False)
+    authored_sdf = builder.add_shape_mesh(body=body, mesh=mesh)
+    builder.shape_sdf_max_resolution[authored_sdf] = 16
+    builder.shape_sdf_narrow_band_range[authored_sdf] = (-0.02, 0.03)
+    builder.shape_sdf_texture_format[authored_sdf] = "float32"
+    builder.shape_sdf_padding[authored_sdf] = 0.02
+    force_only = builder.add_shape_mesh(body=body, mesh=mesh)
+    builder.shape_force_sdf[force_only] = True
+    builder.shape_sdf_narrow_band_range[force_only] = (-0.03, 0.04)
     builder.end_world()
 
     backend = NewtonBackend(NewtonBackendCfg(physics_cfg=cfg, device=device), builder, dt=0.01)
 
     assert collision.to_pipeline_args()["speculative_contact_gap_max"] == 0.01
-    assert backend.model.shape_count == 2
+    assert builder.shape_sdf_max_resolution[authored_sdf] == 16
+    assert builder.shape_sdf_narrow_band_range[authored_sdf] == (-0.02, 0.03)
+    assert builder.shape_sdf_texture_format[authored_sdf] == "float32"
+    assert builder.shape_sdf_padding[authored_sdf] == 0.02
+    assert builder.shape_sdf_max_resolution[force_only] == 32
+    assert builder.shape_sdf_narrow_band_range[force_only] == (-0.03, 0.04)
+    assert backend.model.shape_count == 4
     assert (backend.model._shape_sdf_index.numpy() >= 0).all()
     assert (backend.model.shape_edge_range.numpy()[:, 1] > 0).all()
     backend.init_solver()

@@ -131,7 +131,8 @@ class NewtonBackend:
         because Newton can provision their texture SDF and collision edges
         directly; finite planes and other analytic primitives are tessellated in
         place. Existing body mass and inertia data are intentionally left
-        unchanged.
+        unchanged. A shape with an authored SDF (a grid size, a voxel size or a
+        built SDF on its mesh) keeps it; the others take this configuration's.
 
         Args:
             builder: Fully assembled Newton model builder.
@@ -156,6 +157,11 @@ class NewtonBackend:
             shape_type = GeoType(shape_type_value)
             shape_label = builder.shape_label[shape_index] or f"shape {shape_index}"
             shape_scale = tuple(float(value) for value in builder.shape_scale[shape_index])
+            has_sdf = (
+                builder.shape_sdf_max_resolution[shape_index] is not None
+                or builder.shape_sdf_target_voxel_size[shape_index] is not None
+                or getattr(builder.shape_source[shape_index], "sdf", None) is not None
+            )
 
             if shape_type in (GeoType.MESH, GeoType.CONVEX_MESH):
                 if not isinstance(builder.shape_source[shape_index], Mesh):
@@ -252,15 +258,18 @@ class NewtonBackend:
                 builder.shape_type[shape_index] = GeoType.MESH
                 builder.shape_scale[shape_index] = wp.vec3(1.0)
 
-            builder.shape_sdf_narrow_band_range[shape_index] = (
-                cfg.sdf_narrow_band_inner,
-                cfg.sdf_narrow_band_outer,
-            )
-            builder.shape_sdf_target_voxel_size[shape_index] = target_voxel_size
-            builder.shape_sdf_max_resolution[shape_index] = max_resolution
-            builder.shape_force_sdf[shape_index] = False
-            builder.shape_sdf_texture_format[shape_index] = cfg.sdf_texture_format
-            builder.shape_sdf_padding[shape_index] = cfg.sdf_padding
+            if not has_sdf:
+                # A force-only mesh has no rigid SDF. Supply its grid size while
+                # keeping its authored force flag and any other SDF settings.
+                if not builder.shape_force_sdf[shape_index]:
+                    builder.shape_sdf_narrow_band_range[shape_index] = (
+                        cfg.sdf_narrow_band_inner,
+                        cfg.sdf_narrow_band_outer,
+                    )
+                    builder.shape_sdf_texture_format[shape_index] = cfg.sdf_texture_format
+                    builder.shape_sdf_padding[shape_index] = cfg.sdf_padding
+                builder.shape_sdf_target_voxel_size[shape_index] = target_voxel_size
+                builder.shape_sdf_max_resolution[shape_index] = max_resolution
             sdf_shapes.append(shape_index)
 
         return tuple(sdf_shapes)
