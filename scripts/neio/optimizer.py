@@ -147,8 +147,8 @@ class SharedOptimizer(NeIODeformable):
                 self._proposed_vectors = local.flatten(0, 1)
             # A solved force balance is a fixed point, including isolated rigid
             # bodies before contact. Network biases must not move a zero residual.
-            active = self._gradient_rms(self._gradient) > 1e-7
-            result = result * (active if self.kind == "particle" else active[::2])
+            self.active = self._gradient_rms(self._gradient) > 1e-7
+            result = result * (self.active if self.kind == "particle" else self.active[::2])
             self.proposal = result
             return result
 
@@ -260,14 +260,20 @@ class StudySolver(SolverNeIO):
                             max=1
                         )
                     outputs.append(candidate)
-                    gradients.append(wp.to_torch(state_in.particle_q.grad).clone().detach())
+                    derivative = wp.to_torch(state_in.particle_q.grad).clone().detach()
+                    gradients.append(derivative.masked_fill(~particle.active | ~particle.graph.free[:, None], 0))
                 if body is not None:
                     q = quaternion_product(rotation_quaternion(body.proposal[:, 3:]), body.rotation)
                     # Warp differentiates body-origin poses; the learned translation
                     # moves the COM. Pull back through that offset and the rotation.
                     position = body.proposal[:, :3] - quat_rotate(q, wp.to_torch(self.model.body_com))
                     outputs.append(torch.cat((position, q), -1))
-                    gradients.append(wp.to_torch(state_in.body_q.grad).clone().detach())
+                    derivative = wp.to_torch(state_in.body_q.grad).clone().detach()
+                    # These rows have a constant zero proposal. Their exact
+                    # weight derivative is zero, even if an axis-angle adjoint
+                    # overflows at an effectively zero inertial rotation.
+                    inactive = ~body.active[::2] | ~body.graph.free[::2, None]
+                    gradients.append(derivative.masked_fill(inactive, 0))
                 valid = all(bool(torch.isfinite(g).all()) for g in gradients)
                 valid &= all(bool(torch.isfinite(x).all()) for x in outputs)
                 if valid:

@@ -134,6 +134,7 @@ def test_training_records_metrics_and_checkpoint_tracking_identity(tmp_path):
         "franka_payload_train",
         "anymal_disturbance_train",
         "m12_threading_train",
+        "loaded_cloth_bag_train",
     ],
 )
 def test_bank_requires_physical_interactions_and_supports_learning(tmp_path, name):
@@ -170,7 +171,7 @@ def test_bank_requires_physical_interactions_and_supports_learning(tmp_path, nam
             assert scene.evidence["total_turns"] >= 1
             assert scene.evidence["thread_lead_error_m"] < 0.002
             assert scene.evidence["peak_applied_force_n"] == case["load_n"]
-        else:
+        elif family == "articulation":
             assert scene.evidence["revolute_joints"] >= 7
             assert scene.evidence["moving_joints"] >= 6
             # Prismatic gripper joints must not break geometric diagnostics.
@@ -178,17 +179,21 @@ def test_bank_requires_physical_interactions_and_supports_learning(tmp_path, nam
             assert values["finite"] and values["joint_anchor_gap_m"] >= 0
         assert states[-1][0] >= duration - 1e-6
         # A late, folded state must still furnish finite nonzero learning gradients.
-        a, b, control = scene.model.state(), scene.model.state(), scene.model.control()
-        restore(a, states[-2][1], control)
-        restore(b, states[-2][1], control)
-        network = new_network(DEVICE)
-        solver = StudySolver(scene.model, network, learn=True, iterations=2, **scene.options)
-        pipeline = newton.CollisionPipeline(scene.model)
-        contacts = pipeline.contacts()
-        pipeline.collide(a, contacts)
-        solver.step(a, b, control, contacts, scene.dt)
-        assert all(p.grad is not None and torch.isfinite(p.grad).all() for p in network.parameters())
-        assert sum(float(p.grad.abs().sum()) for p in network.parameters()) > 0
+        # In the bag's early free fall, rigid residuals are effectively zero.
+        # Its inactive rigid rows must not poison the cloth learning derivative.
+        for index in [1, -2] if family == "coupled" else [-2]:
+            a, b, control = scene.model.state(), scene.model.state(), scene.model.control()
+            restore(a, states[index][1], control)
+            restore(b, states[index][1], control)
+            network = new_network(DEVICE)
+            solver = StudySolver(scene.model, network, learn=True, iterations=2, **scene.options)
+            pipeline = newton.CollisionPipeline(scene.model)
+            contacts = pipeline.contacts()
+            pipeline.collide(a, contacts)
+            solver.step(a, b, control, contacts, scene.dt)
+            assert solver.failed_updates == 0
+            assert all(p.grad is not None and torch.isfinite(p.grad).all() for p in network.parameters())
+            assert sum(float(p.grad.abs().sum()) for p in network.parameters()) > 0
         if family == "cloth":
             # Cold probes must retain the sampled moving-pin poses in both buffers.
             solver = make_solver(scene, "vbd", 4)

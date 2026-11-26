@@ -1,5 +1,5 @@
 {
-  "schema": 5,
+  "schema": 6,
   "status": "validated",
   "seeds": {
     "train": [
@@ -46,7 +46,7 @@
     "trajectory_steps": 8,
     "history_at_step_start": "clear",
     "objective": "log_normalized_gradient_residual_v1",
-    "derivative": "warp_reverse_frozen_contacts_v1",
+    "derivative": "warp_reverse_frozen_contacts_v2",
     "network": "shared_vector_physical_context_v2",
     "gradient_aggregation": "clip_each_scene_then_mean"
   },

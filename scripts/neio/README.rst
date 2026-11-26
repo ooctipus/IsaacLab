@@ -117,7 +117,12 @@ Jacobian to the loss derivative. A symmetric Hessian approximation is insufficie
 when friction changes with normal load. The earlier central-difference bridge
 also suffered from finite probe size on stiff cables. The reverse pass includes
 particle/body coupling and pulls body-origin pose derivatives through the learned
-COM displacement and quaternion update. Collision topology, planar truncation
+COM displacement and quaternion update. Kinematic rows and worlds whose proposal
+is forced to zero also have an exactly zero weight derivative. Mask their pose
+adjoints before the neural pullback: the underlying axis-angle adjoint can overflow
+at a tiny rotation even with a zero cotangent, which must not reject an unrelated
+cloth update. Active-coordinate nonfinite derivatives still reject the update.
+Collision topology, planar truncation
 coefficients, history and preceding timesteps remain detached. This is an explicit
 residual objective, not the author's unavailable training recipe or a scalar
 energy loss. Training records two forward force evaluations and one reverse pass
