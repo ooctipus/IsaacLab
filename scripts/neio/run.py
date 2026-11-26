@@ -71,7 +71,8 @@ def validate(network, study, device, sweeps):
         result, _ = probe(scene, make_solver(scene, "shared", sweeps, network), saved[1], saved[0], repeats=1)
         ratios = [result[k] for k in ("particle_residual_ratio", "body_residual_ratio") if result.get(k) is not None]
         score = np.mean(np.log1p(np.minimum(ratios, 1e6))) if ratios and result["bounded"] else 1e6
-        scores.append(float(score))
+        if case["family"] == "cloth":
+            scores.append(float(score))
         rows.append({"case": case["name"], "score": float(score), **result})
     return float(np.mean(scores)), rows
 
@@ -244,7 +245,7 @@ def evaluate(args, study, network, device, output):
                         references.pop(reference_name, None)
                         reference_failures[reference_name] = str(error)
             for name in args.solvers.split(","):
-                sweep_values = [args.sweeps] if args.quick else study["sweeps"][name]
+                sweep_values = [args.sweeps] if args.quick and name != "pgs" else study["sweeps"][name]
                 for sweeps in sweep_values:
                     row = {
                         "case": case["name"],
@@ -369,7 +370,7 @@ def main():
     if args.mode == "train":
         train(args, study, network, device, rank, ranks, output, metadata)
         if args.eval_after and rank == 0:
-            args.checkpoint = str(output / "best.pt")
+            args.checkpoint = str(output / "latest.pt")
             evaluate(args, study, network, device, output)
     elif rank == 0:
         evaluate(args, study, network, device, output)

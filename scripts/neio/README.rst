@@ -30,7 +30,8 @@ do not imply equal compute when the scene types have different costs.
 3. Mixed: the above plus rigid contacts, articulated chains, and two-way coupling.
 
 Use independent train, validation, and test seeds and parameter ranges. Validation
-selects checkpoints; the test suite never selects weights or hyperparameters.
+monitors progress; the primary comparison uses the final checkpoint after the
+same update budget. The test suite never selects weights or hyperparameters.
 Severe 200/400 N M12 loads and the most violent cable/cloth motions are held out.
 Run a short pilot before allocating longer runs. Use three training seeds for
 final comparisons. Report every run, including numerical failures.
@@ -58,8 +59,8 @@ construct a second training policy or silently change physics parameters.
 ``study.json`` owns the ablation and evaluation matrix. ``source.lock.json``
 identifies the supplied source revision. ``test_study.py`` protects gradient
 sign/frame transformations, parameter sharing, dataset separation, and reporting
-of failures. No factories, registries, compatibility aliases, or secondary
-launchers are introduced for this study.
+of failures. The benchmark selects its solver instances directly; no registry, compatibility
+aliases, or secondary launchers are introduced for this study.
 
 The supplied Newton/NeIO code is a pinned, read-only dependency snapshot under
 ``_source/``, excluded from Git and included in the container build. It is not a
@@ -151,7 +152,10 @@ uses a detached 1e-3 N floor for objective-gradient normalization, and clips the
 parameter-gradient norm to one. Carrying an untrained step-scale history across
 timesteps collapsed the step size in a pilot. Carried history is still evaluated
 separately. A checkpoint is written every 32 steps, at an episode boundary;
-validation runs every 256 steps and at the end. ``latest.pt`` includes optimizer,
+validation runs every 256 steps and at the end. Only cloth validation contributes
+to selection of the auxiliary best checkpoint, so rigid/cable validation cannot
+select the cloth-only model. Automatic post-training evaluation uses the final
+``latest.pt`` checkpoint to preserve equal update budgets. ``latest.pt`` includes optimizer,
 per-rank random state and the best weights so a restart is self-contained.
 ``best.pt`` is for evaluation. Restart may repeat at most 31 uncheckpointed steps.
 The default 9984 updates give 52 complete six-family rounds on one rank.
