@@ -173,7 +173,11 @@ across formulations are labeled explicitly.
 Full probes report both eager and captured CUDA timing, excluding warmup and
 capture construction. Captured and eager final states must agree. The diagnostic
 force pass is outside timing. Quick probes omit capture and high-budget reference
-checks. Particle residuals have force units; the port's body residual combines
+checks. Full long rollouts run at NeIO 1/4 sweeps and VBD/MJWarp 8/100;
+all configured sweep budgets still receive fixed-state probes. Quick mode runs
+its single configured budget through both probes and rollouts. Each row records
+``rollout_steps`` (zero means no rollout was tested), so a probe pass must not be
+interpreted as long-term stability. Particle residuals have force units; the port's body residual combines
 force and torque numerically and is labeled ``mixed_units``. It is only a
 within-state relative diagnostic, not an energy or a cross-object physical norm.
 

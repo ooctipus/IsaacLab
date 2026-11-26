@@ -268,5 +268,26 @@
       "m12_axial_displacement_m": 0.005,
       "m12_lateral_displacement_m": 0.002
     }
+  },
+  "rollout_sweeps": {
+    "shared": [
+      1,
+      4
+    ],
+    "supplied": [
+      1,
+      4
+    ],
+    "vbd": [
+      8,
+      100
+    ],
+    "mjwarp": [
+      8,
+      100
+    ],
+    "pgs": [
+      8
+    ]
   }
 }

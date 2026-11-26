@@ -45,6 +45,10 @@ def test_architecture_and_splits():
     assert set(study["arms"]["cloth"]) < set(study["arms"]["deformables"]) < set(study["arms"]["mixed"])
     loads = {c["load_n"] for c in study["test"] if c["family"] == "m12"}
     assert loads == {200, 400}
+    assert study["rollout_sweeps"].keys() == study["sweeps"].keys()
+    for name, budgets in study["rollout_sweeps"].items():
+        assert 1 <= len(budgets) <= 2, "Long rollouts must stay a bounded subset of the full probe matrix"
+        assert set(budgets) <= set(study["sweeps"][name])
 
 
 def test_world_rotation_gradient_matches_independent_energy_derivative():

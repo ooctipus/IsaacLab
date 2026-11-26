@@ -247,6 +247,7 @@ def evaluate(args, study, network, device, output):
             for name in args.solvers.split(","):
                 sweep_values = [args.sweeps] if args.quick and name != "pgs" else study["sweeps"][name]
                 for sweeps in sweep_values:
+                    do_rollout = args.rollout_steps and (args.quick or sweeps in study["rollout_sweeps"][name])
                     row = {
                         "case": case["name"],
                         "seed": seed,
@@ -260,6 +261,7 @@ def evaluate(args, study, network, device, output):
                         "scene": scene.case,
                         "dt": scene.dt,
                         "history": "cold",
+                        "rollout_steps": max(args.rollout_steps, count) if do_rollout else 0,
                         "status": "complete",
                         "reference_failures": reference_failures,
                     }
@@ -286,7 +288,7 @@ def evaluate(args, study, network, device, output):
                             r["bounded"] and not r.get("contact_overflow") and not r.get("physical_threshold_failures")
                             for r in row["probes"]
                         )
-                        if args.rollout_steps:
+                        if do_rollout:
                             solver = make_solver(scene, name, sweeps, network, history="carry")
                             row["carried_history_rollout"] = rollout(scene, solver, max(args.rollout_steps, count))
                             row["physical_threshold_pass"] &= not bool(
