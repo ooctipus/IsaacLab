@@ -9,17 +9,20 @@ branch. You do not need to rebase or train from this `cluster` branch. The older
 
 These steps assume a Linux host with Bash, Git, OpenSSH, curl, and Python 3.11 or newer. The host does not need
 a GPU, Docker, or the training environment. Install [uv](https://docs.astral.sh/uv/getting-started/installation/)
-and the [GitHub CLI](https://cli.github.com/), then sign into the GitHub account that can read both private
-cluster tooling and your training repositories:
+and the [GitHub CLI](https://cli.github.com/). Cloning the private launcher itself needs a local GitHub login
+once on this new host. Reuse an existing login; the following opens local sign-in only when needed:
 
 ```bash
-gh auth login --hostname github.com --git-protocol https --web
+if ! gh api user --hostname github.com >/dev/null 2>&1; then
+    gh auth login --hostname github.com --git-protocol https --web
+fi
 gh auth setup-git
-gh auth status
 ```
 
-An agent can run the setup and pause at a browser/device login for the human to complete. Each new host needs
-its own GitHub and cluster-service login; tokens are not committed or copied from this branch.
+After this bootstrap, run `./cluster allocate` or `./cluster submit` directly. The launcher validates and reuses
+local GitHub and service credentials, starting a local login only when missing/expired, before requesting GPUs.
+No interactive GitHub login runs inside GPU nodes. An agent can run setup and let the human approve the local
+browser/device flow once. Login state stays on the submitting machine; tokens are not committed to this branch.
 
 For RTX6K, follow the internal
 [SkyPilot runbook](https://docs.google.com/document/d/15f0BkE3YBvSxETqQA1izcV2Oh5-Bsi2GBLVghAAigEI/edit).
@@ -29,26 +32,22 @@ Its enterprise client installer is:
 curl -fsSL https://skypilot-cli.s3.us-west-2.amazonaws.com/install.sh | bash
 export PATH="$HOME/.local/bin:$PATH"
 sky --version
-unset SKYPILOT_API_SERVER_ENDPOINT
-sky api login -e https://skypilot.gear.nvidia.com
-sky api info
-sky workspace info
 ```
 
-Use the enterprise client, including support for `sky jobs launch --secret`, and confirm the shared API is
-healthy with your expected account. Access to the `gear-skypilot-access` group/enterprise application and
+Use the enterprise client, including support for `sky jobs launch --secret`. The launcher connects explicitly
+to `https://skypilot.gear.nvidia.com`, checks cached SSO, and opens local login if necessary; you do not need to run
+`sky api login` separately. `sky api info` and `sky workspace info` are available for diagnosing access. Access to the `gear-skypilot-access` group/enterprise application and
 membership in `akamai-rtx6k-isaac-lab` are separate requirements. Ask the service/project administrator if either
-is missing. For a terminal without a local browser, add `--no-browser` to the login command. If TLS verification
+is missing. For a terminal without a local browser, the CLI prints login guidance; you can also use
+`sky api login -e https://skypilot.gear.nvidia.com --no-browser` ahead of the launch. If TLS verification
 fails, follow the runbook's NVIDIA CA bundle instructions and persist `REQUESTS_CA_BUNDLE` and `SSL_CERT_FILE`.
 The [allocation document](https://docs.google.com/document/d/183l6dOqoPLWt_0nlsGVjZlojXGBASS1DH6aErs_ncf4/edit)
 explains team workspace access. The launcher passes the Isaac Lab workspace and Akamai context explicitly.
 
-For OSMO, install its CLI and complete its normal browser login:
+For OSMO, install its CLI. The launcher checks cached local credentials and starts local login if necessary:
 
 ```bash
 curl -fsSL https://us-west-2-aws.osmo.nvidia.com/cli/install.sh | bash
-osmo login https://us-west-2-aws.osmo.nvidia.com
-osmo pool list
 ```
 
 Create an SSH key if the new host does not already have one. OSMO allocations default to `~/.ssh/id_ed25519`;
@@ -89,7 +88,8 @@ merge it into the existing file instead of replacing other instructions:
 Use ./cluster here for GPU batch jobs and development allocations.
 Read ../isaaclab-cluster/README.md for setup and commands, and its AGENTS.md before editing tooling.
 Keep orchestration in that separate repository; do not copy it into training worktrees or build images.
-Use --repo URL --ref BRANCH to select pushed source; GitHub login, clone, and uv sync run automatically.
+Use --repo URL --ref BRANCH to select pushed source; login checks, clone, and uv sync run automatically.
+Interactive login stays on the submitting host; reuse its cache and transfer GitHub access noninteractively to nodes.
 Require --duration or --until for development allocations. Reconnect with ./cluster ssh NAME.
 Never put tokens in arguments/manifests or cancel existing sessions without authorization.
 Follow each training worktree's own AGENTS.md for changes to its source.
@@ -118,6 +118,10 @@ RTX6K requires eight GPUs per node. OSMO accepts an accessible pool name and dis
 The printed allocation name is what replaces `NAME`. To keep an allocation through a month's final day, use
 midnight at the start of the following month, e.g. `--until '2026-12-01T00:00:00'` through November 30 in the
 default `America/Los_Angeles` timezone. Deadlines include queue/setup time; service teardown can have a grace period.
+
+After the first local login, every new allocation reuses it. Only a missing or expired login needs another
+local approval; a GPU restart does not require one. Use `--no-login` for unattended submissions that must fail
+early rather than open a login flow. Network errors or missing service permissions do not trigger repeated logins.
 
 The default uses the service/public base, installs GitHub CLI, uv, SSH, Nsight Systems, W&B, Claude Code, and
 other dev tools, reuses the host's GitHub login, clones, and runs `uv sync --locked`. No custom image build or

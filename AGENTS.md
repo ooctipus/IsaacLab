@@ -6,7 +6,8 @@ For GPU allocation, SSH, batch submission, or configuring a new machine, read
 [CLUSTER_SETUP.md](CLUSTER_SETUP.md) first. Use the independent private
 [ooctipus/isaaclab-cluster](https://github.com/ooctipus/isaaclab-cluster) tooling
 with a workspace launcher; do not revive this branch's older cluster scripts or build images.
-The setup guide explains host login, workspace AGENTS.md, and selecting any pushed training branch.
+The setup guide explains cached host login, workspace AGENTS.md, and selecting any pushed training branch.
+Keep interactive login on the submitting host; GPU nodes receive GitHub access without a browser/device prompt.
 
 ## Contribution guide
 
