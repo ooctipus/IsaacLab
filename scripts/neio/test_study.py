@@ -45,7 +45,7 @@ def test_architecture_and_splits():
     )
     assert study["arms"]["cloth"] == ["cloth"]
     assert set(study["arms"]["cloth"]) < set(study["arms"]["deformables"]) < set(study["arms"]["mixed"])
-    loads = {c["load_n"] for c in study["test"] if c["family"] == "m12"}
+    loads = {c["load_n"] for c in study["test"] if c["family"] == "m12" and "threading" not in c["name"]}
     assert loads == {200, 400}
     assert study["rollout_sweeps"].keys() == study["sweeps"].keys()
     for name, budgets in study["rollout_sweeps"].items():
@@ -53,22 +53,29 @@ def test_architecture_and_splits():
         assert set(budgets) <= set(study["sweeps"][name])
 
 
-def test_rejected_suite_cannot_launch_training():
+def test_rejected_suite_cannot_launch_training(tmp_path):
+    study = json.loads((ROOT / "study.json").read_text())
+    study["status"] = "superseded-pilot"
+    path = tmp_path / "rejected.json"
+    path.write_text(json.dumps(study))
     result = subprocess.run(
-        [sys.executable, str(ROOT / "run.py"), "--mode=train"],
+        [sys.executable, str(ROOT / "run.py"), "--mode=train", f"--study={path}"],
         env={**os.environ, "CUDA_VISIBLE_DEVICES": ""},
         capture_output=True,
         text=True,
         timeout=30,
     )
     assert result.returncode == 2
-    assert "The pilot scene suite was rejected" in result.stderr
+    assert "needs verified replacement workloads" in result.stderr
 
 
 def test_training_records_metrics_and_checkpoint_tracking_identity(tmp_path):
     from run import start_tracking, train
 
     study = json.loads((ROOT / "study.json").read_text())
+    # Small fixture for the logging contract; it cannot pass the production CLI gate.
+    study["train"] = [{"name": "numerical_fixture", "family": "cloth"}]
+    study["validation"] = [{"name": "numerical_fixture", "family": "cloth"}]
     args = SimpleNamespace(
         arm="cloth",
         seed=101,
@@ -99,6 +106,60 @@ def test_training_records_metrics_and_checkpoint_tracking_identity(tmp_path):
     assert len(rows[-1]["rank_metrics"]) == 1
     assert rows[-1]["rank_metrics"][0]["processed_nodes"] > 0
     assert rows[-1]["rank_metrics"][0]["oracle_calls"] == 64
+
+
+@pytest.mark.parametrize(
+    "family,example,duration",
+    [
+        ("cloth", "cloth.example_cloth_twist", 12),
+        ("rigid", "vbd.example_vbd_rigid_rigid_contact", 6),
+    ],
+)
+def test_native_bank_preserves_difficult_states_and_supports_learning(tmp_path, family, example, duration):
+    from benchmark import probe, reference_states, restore
+
+    wp.init()
+    with wp.ScopedDevice(DEVICE):
+        scene = make_scene(
+            {
+                "name": "native_bank",
+                "family": family,
+                "example": example,
+                "duration": duration,
+                "bank_samples": 24,
+                "material_range": [1.1, 1.1],
+            },
+            101,
+            DEVICE,
+        )
+        states = reference_states(scene, 0, 1, tmp_path)
+        if family == "cloth":
+            assert scene.evidence["self_contact_observed"]
+        else:
+            positions = states[-1][1]["body_q"].numpy()[:, :3]
+            assert abs(positions - scene.model.body_q.numpy()[:, :3]).max() > 0.1
+        assert scene.evidence["native_test_pass"]
+        assert states[-1][0] >= duration - 1e-6
+        # A late, folded state must still furnish finite nonzero learning gradients.
+        a, b, control = scene.model.state(), scene.model.state(), scene.model.control()
+        restore(a, states[-2][1], control)
+        restore(b, states[-2][1], control)
+        network = new_network(DEVICE)
+        solver = StudySolver(scene.model, network, learn=True, iterations=2, **scene.options)
+        pipeline = newton.CollisionPipeline(scene.model)
+        contacts = pipeline.contacts()
+        pipeline.collide(a, contacts)
+        solver.step(a, b, control, contacts, scene.dt)
+        assert all(p.grad is not None and torch.isfinite(p.grad).all() for p in network.parameters())
+        assert sum(float(p.grad.abs().sum()) for p in network.parameters()) > 0
+        if family == "cloth":
+            # Cold probes must retain the sampled moving-pin poses in both buffers.
+            solver = make_solver(scene, "vbd", 4)
+            _, result = probe(scene, solver, states[-2][1], states[-2][0], repeats=1)
+            fixed = (wp.to_torch(scene.model.particle_flags).long() & 1) == 0
+            torch.testing.assert_close(
+                wp.to_torch(result["particle_q"])[fixed], wp.to_torch(states[-2][1]["particle_q"])[fixed]
+            )
 
 
 def test_world_rotation_gradient_matches_independent_energy_derivative():

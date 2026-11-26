@@ -23,8 +23,8 @@ import torch
 import torch.distributed as dist
 import wandb
 import warp as wp
-from benchmark import make_solver, probe, reference_states, rollout, state_distance
-from optimizer import StudySolver, new_network
+from benchmark import make_solver, probe, reference_states, restore, rollout, state_distance
+from optimizer import new_network
 from scenes import make_scene
 
 
@@ -141,12 +141,16 @@ def source_provenance():
     }
 
 
-def validate(network, study, device, sweeps):
+def validate(network, study, device, sweeps, banks=None):
     scores, rows = [], []
+    banks = {} if banks is None else banks
     for case in study["validation"]:
         case = {**case, "acceptance": study["acceptance"][case["family"]]}
-        scene = make_scene(case, study["seeds"]["validation"][0], device)
-        saved = reference_states(scene, 16, 16)[-1]
+        if case["name"] not in banks:
+            scene = make_scene(case, study["seeds"]["validation"][0], device)
+            banks[case["name"]] = scene, reference_states(scene, 16, 16)
+        scene, states = banks[case["name"]]
+        saved = states[len(states) * 3 // 4]
         result, _ = probe(scene, make_solver(scene, "shared", sweeps, network), saved[1], saved[0], repeats=1)
         ratios = [result[k] for k in ("particle_residual_ratio", "body_residual_ratio") if result.get(k) is not None]
         score = np.mean(np.log1p(np.minimum(ratios, 1e6))) if ratios and result["bounded"] else 1e6
@@ -173,29 +177,41 @@ def train(args, study, network, device, rank, ranks, output, metadata, tracking,
         raise ValueError("Resume requires an episode-boundary checkpoint")
     begin = time.perf_counter()
     nodes, oracle_calls, rejected = 0, 0, 0
+    banks, validation_banks = {}, {}
     for step in range(start_step, args.steps):
         within = step % episode_steps
         if within == 0:
             episode = step // episode_steps
             family = families[(episode * ranks + rank) % len(families)]
-            scene_seed = args.seed + 100000 * rank + 1009 * episode
-            rng = np.random.default_rng(scene_seed)
-            case = {
-                "family": family,
-                "drive": family == "articulation",
-                "amplitude": float(rng.uniform(0.1, 1)),
-                "frequency": float(rng.uniform(1, 6)),
-                "obstacle": bool(episode % 2),
-                "twist": bool(episode % 3 == 0),
-                "dt": float(rng.choice([1 / 240, 1 / 300, 1 / 600])),
-            }
-            scene = make_scene(case, scene_seed, device, args.worlds)
+            cases = [case for case in study["train"] if case["family"] == family]
+            case = cases[(episode // len(families)) % len(cases)]
+            scene_seed = args.seed + 100000 * rank
+            if case["name"] not in banks:
+                scene = make_scene(case, scene_seed, device, args.worlds)
+                directory = output / "banks" / f"rank-{rank}" / case["name"]
+                count = int(np.ceil(case.get("duration", 96 * scene.dt) / scene.dt))
+                states = reference_states(scene, count, max(1, count // 96), directory)
+                solver = make_solver(scene, "shared", args.sweeps, network, history="clear", learn=True)
+                banks[case["name"]] = scene, states, solver
+                if rank == 0 and scene.evidence:
+                    tracking.log(
+                        {
+                            f"data/{case['name']}/states": len(states),
+                            f"data/{case['name']}/duration_seconds": scene.evidence["duration_seconds"],
+                        }
+                    )
+                print(json.dumps({"bank_ready": case["name"], "rank": rank, "samples": len(states)}), flush=True)
+            scene, states, solver = banks[case["name"]]
             model = scene.model
             a, b, control = model.state(), model.state(), model.control()
-            solver = StudySolver(model, network, learn=True, history="clear", iterations=args.sweeps, **scene.options)
             pipeline = newton.CollisionPipeline(model)
             contacts = pipeline.contacts()
-        scene.prepare(a, within * scene.dt, control)
+        rng = np.random.default_rng(args.seed + 1009 * step + 100000 * rank)
+        sample_time, saved = states[int(rng.integers(len(states)))]
+        restore(a, saved, control)
+        restore(b, saved, control)
+        solver.reset(a, flags=0)
+        scene.prepare(a, sample_time, control)
         pipeline.collide(a, contacts)
         optimizer.zero_grad(set_to_none=True)
         solver.residuals.clear()
@@ -224,6 +240,9 @@ def train(args, study, network, device, rank, ranks, output, metadata, tracking,
         if (step + 1) % 8 == 0 or step + 1 == args.steps:
             local_metrics = {
                 "family": family,
+                "workload": case["name"],
+                "sample_time_seconds": sample_time,
+                "bank_states": len(states),
                 "scene_seed": scene_seed,
                 "post_update_gradient_proxy": solver.residuals[-1] if np.isfinite(solver.residuals[-1]) else None,
                 "rejected_updates": rejected,
@@ -263,7 +282,7 @@ def train(args, study, network, device, rank, ranks, output, metadata, tracking,
             if rank == 0:
                 improved = False
                 if (step + 1) % 256 == 0 or step + 1 == args.steps:
-                    score, validation = validate(network, study, device, args.sweeps)
+                    score, validation = validate(network, study, device, args.sweeps, validation_banks)
                     improved = score < best
                     best = min(best, score)
                     if improved:
@@ -297,6 +316,11 @@ def train(args, study, network, device, rank, ranks, output, metadata, tracking,
         if rejected > max(8, (step - start_step + 1) // 4):
             raise RuntimeError("More than 25% of training updates are nonfinite; inspect the recorded failures")
 
+    if rank == 0 and (output / "banks").exists():
+        artifact = wandb.Artifact(f"training-states-{tracking.id}", type="dataset")
+        artifact.add_dir(str(output / "banks"))
+        tracking.log_artifact(artifact)
+
 
 def evaluate(args, study, network, device, output):
     if args.checkpoint:
@@ -316,12 +340,9 @@ def evaluate(args, study, network, device, output):
         for seed in study["seeds"][args.split][: args.eval_seeds]:
             try:
                 scene = make_scene(case, seed, device)
-                count = (
-                    max(args.probe_steps, int(np.ceil(0.12 / scene.dt)))
-                    if case["family"] == "m12"
-                    else args.probe_steps
-                )
-                states = reference_states(scene, count, max(1, count // 2))
+                count = max(args.probe_steps, int(np.ceil(case.get("duration", 0) / scene.dt)))
+                states = reference_states(scene, count, max(1, count // 4), output / "banks" / f"{case['name']}-{seed}")
+                states = [states[i] for i in np.linspace(0, len(states) - 1, 5, dtype=int)]
             except Exception as error:
                 rows.append({"case": case["name"], "seed": seed, "status": "setup_failed", "error": str(error)})
                 write_json(output / "evaluation.json", rows)
@@ -385,8 +406,11 @@ def evaluate(args, study, network, device, output):
                             for r in row["probes"]
                         )
                         if do_rollout:
-                            solver = make_solver(scene, name, sweeps, network, history="carry")
-                            row["carried_history_rollout"] = rollout(scene, solver, max(args.rollout_steps, count))
+                            rollout_scene = make_scene(case, seed, device)
+                            solver = make_solver(rollout_scene, name, sweeps, network, history="carry")
+                            row["carried_history_rollout"] = rollout(
+                                rollout_scene, solver, max(args.rollout_steps, count)
+                            )
                             row["physical_threshold_pass"] &= not bool(
                                 row["carried_history_rollout"]["physical_threshold_failures"]
                             )
@@ -404,10 +428,46 @@ def evaluate(args, study, network, device, output):
         raise RuntimeError("Evaluation produced no completed comparisons; inspect evaluation.json")
 
 
+def verify_workloads(args, study, device, output, tracking):
+    reports = []
+    cases = {case["name"]: case for split in ("train", "validation", "test") for case in study[split]}
+    selected = set(args.cases.split(",")) if args.cases else set(cases)
+    if selected - set(cases):
+        raise ValueError(f"Unknown verification cases: {selected - set(cases)}")
+    for name in sorted(selected):
+        case = cases[name]
+        scene = make_scene(case, args.seed, device)
+        count = int(np.ceil(case.get("duration", 1) / scene.dt))
+        states = reference_states(scene, count, max(1, count // 96), output / "banks" / name)
+        reports.append({"name": name, "samples": len(states), "evidence": scene.evidence})
+        write_json(output / "verification.json", reports)
+        tracking.log({"data/case": name, "data/samples": len(states)})
+        print(json.dumps({"verified": name, "samples": len(states)}), flush=True)
+    artifact = wandb.Artifact(f"workloads-{tracking.id}", type="dataset")
+    artifact.add_dir(str(output / "banks"))
+    artifact.add_file(str(output / "verification.json"))
+    tracking.log_artifact(artifact).wait()
+
+
+def load_training_checkpoint(args, study, device, ranks, metadata):
+    checkpoint = torch.load(args.resume, map_location=device, weights_only=False) if args.resume else None
+    if checkpoint:
+        for key in ("arm", "seed", "worlds", "sweeps", "ranks"):
+            current = ranks if key == "ranks" else getattr(args, key)
+            if checkpoint["configuration"][key] != current:
+                raise ValueError(f"Resume changes {key}; start a new run instead")
+        if checkpoint["study"] != study or checkpoint["provenance"]["source"] != metadata["source"]:
+            raise ValueError("Resume changes the study or source revision")
+        if checkpoint["step"] % study["training"]["episode_steps"]:
+            raise ValueError("Resume requires an episode-boundary checkpoint")
+    return checkpoint
+
+
 def main():
     study = json.loads((ROOT / "study.json").read_text())
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mode", choices=("preflight", "train", "eval", "upload"), default="preflight")
+    parser.add_argument("--mode", choices=("preflight", "verify", "train", "eval", "upload"), default="preflight")
+    parser.add_argument("--study", default=str(ROOT / "study.json"))
     parser.add_argument("--arm", choices=tuple(study["arms"]), default="cloth")
     parser.add_argument("--seed", type=int, default=101)
     parser.add_argument("--steps", type=int, default=study["training"]["steps"])
@@ -434,14 +494,21 @@ def main():
     parser.add_argument("--wandb-group")
     parser.add_argument("--wandb-mode", choices=("online", "offline"), default="online")
     args = parser.parse_args()
+    study = json.loads(Path(args.study).read_text())
     if args.mode in ("train", "eval") and study["status"] != "validated":
-        parser.error(
-            "The pilot scene suite was rejected. Verify replacement workloads before launching training or evaluation."
-        )
+        parser.error("The scene suite needs verified replacement workloads before launching training or evaluation.")
+    if args.mode in ("train", "eval", "verify") and any(
+        ("example" not in case and case["family"] != "m12") or case.get("duration", 0) < 0.5
+        for split in ("train", "validation", "test")
+        for case in study[split]
+    ):
+        parser.error("Production workloads must use native examples or threaded M12 geometry and a full duration")
     args.solvers = args.solvers.strip("[]")
     args.cases = args.cases.strip("[]") if args.cases else None
     if set(args.solvers.split(",")) - set(study["sweeps"]):
         parser.error("Unknown solver in --solvers")
+    if args.mode == "train" and args.worlds != 1:
+        parser.error("Use one complete native scene per GPU process (--worlds=1)")
     if min(args.steps, args.worlds, args.sweeps, args.eval_seeds, args.probe_steps) <= 0 or args.rollout_steps < 0:
         parser.error("Counts must be positive and rollout steps must be nonnegative")
     if args.mode == "train" and args.steps % study["training"]["episode_steps"]:
@@ -476,16 +543,7 @@ def main():
         )
         raise SystemExit(result.returncode)
     network = new_network(device)
-    checkpoint = torch.load(args.resume, map_location=device, weights_only=False) if args.resume else None
-    if checkpoint:
-        for key in ("arm", "seed", "worlds", "sweeps", "ranks"):
-            current = ranks if key == "ranks" else getattr(args, key)
-            if checkpoint["configuration"][key] != current:
-                raise ValueError(f"Resume changes {key}; start a new run instead")
-        if checkpoint["study"] != study or checkpoint["provenance"]["source"] != metadata["source"]:
-            raise ValueError("Resume changes the study or source revision")
-        if checkpoint["step"] % study["training"]["episode_steps"]:
-            raise ValueError("Resume requires an episode-boundary checkpoint")
+    checkpoint = load_training_checkpoint(args, study, device, ranks, metadata)
     tracking, started = None, [None]
     if rank == 0:
         try:
@@ -506,7 +564,9 @@ def main():
         write_json(output / "provenance.json", {**metadata, "arguments": vars(args), "study": study})
     exit_code = 1
     try:
-        if args.mode == "train":
+        if args.mode == "verify":
+            verify_workloads(args, study, device, output, tracking)
+        elif args.mode == "train":
             train(args, study, network, device, rank, ranks, output, metadata, tracking, checkpoint)
             if args.eval_after and rank == 0:
                 args.checkpoint = str(output / "latest.pt")

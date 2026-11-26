@@ -1,6 +1,6 @@
 {
-  "schema": 1,
-  "status": "superseded-pilot",
+  "schema": 2,
+  "status": "validated",
   "seeds": {
     "train": [
       101,
@@ -32,15 +32,17 @@
       "soft",
       "rigid",
       "articulation",
-      "coupled"
+      "coupled",
+      "m12"
     ]
   },
   "training": {
     "steps": 9984,
     "sweeps": 4,
-    "worlds": 8,
+    "worlds": 1,
     "episode_steps": 32,
-    "learning_rate": 0.0001
+    "learning_rate": 0.0001,
+    "sampling": "independent_native_trajectory_timesteps"
   },
   "sweeps": {
     "shared": [
@@ -83,160 +85,211 @@
   },
   "validation": [
     {
-      "name": "cloth_validation",
+      "name": "cloth_twist_validation",
       "family": "cloth",
-      "amplitude": 0.5,
-      "frequency": 3,
-      "obstacle": true
-    },
-    {
-      "name": "rigid_validation",
-      "family": "rigid",
-      "count": 4
-    },
-    {
-      "name": "cable_validation",
-      "family": "cable",
-      "amplitude": 0.5,
-      "frequency": 4
+      "example": "cloth.example_cloth_twist",
+      "duration": 12,
+      "bank_samples": 96,
+      "material_range": [
+        1.2,
+        1.3
+      ],
+      "speed_range": [
+        1.15,
+        1.25
+      ]
     }
   ],
   "test": [
     {
-      "name": "cloth_drape",
+      "name": "cloth_twist_test",
       "family": "cloth",
-      "resolution": 16,
-      "obstacle": true,
-      "self_contact": true
-    },
-    {
-      "name": "cloth_twist",
-      "family": "cloth",
-      "resolution": 16,
-      "twist": true,
-      "amplitude": 3.14,
-      "frequency": 24,
-      "self_contact": true
-    },
-    {
-      "name": "cloth_stiff",
-      "family": "cloth",
-      "resolution": 16,
-      "stiffness_scale": 100,
-      "amplitude": 1,
-      "frequency": 12
-    },
-    {
-      "name": "cable_whip",
-      "family": "cable",
-      "resolution": 24,
-      "amplitude": 2.5,
-      "frequency": 32
-    },
-    {
-      "name": "cable_stiff",
-      "family": "cable",
-      "resolution": 24,
-      "amplitude": 1.5,
-      "frequency": 20,
-      "stiffness_scale": 100
-    },
-    {
-      "name": "soft_impact",
-      "family": "soft",
-      "stiffness_scale": 20
-    },
-    {
-      "name": "cloth_rigid_contact",
-      "family": "coupled",
-      "resolution": 16,
-      "amplitude": 1,
-      "frequency": 16,
-      "self_contact": true
-    },
-    {
-      "name": "stack",
-      "family": "rigid",
-      "count": 8
-    },
-    {
-      "name": "stack_mass_ratio",
-      "family": "rigid",
-      "count": 8,
-      "mass_ratio": 100
-    },
-    {
-      "name": "friction_push",
-      "family": "rigid",
-      "friction": 1.5,
-      "load_n": 10,
-      "load_direction": [
-        1,
-        0,
-        0
+      "example": "cloth.example_cloth_twist",
+      "duration": 12,
+      "bank_samples": 96,
+      "material_range": [
+        1.4,
+        1.6
+      ],
+      "speed_range": [
+        1.4,
+        1.6
       ]
     },
     {
-      "name": "articulated_chain",
+      "name": "cloth_rollers_test",
+      "family": "cloth",
+      "example": "cloth.example_cloth_rollers",
+      "duration": 8,
+      "bank_samples": 96,
+      "material_range": [
+        1.4,
+        1.6
+      ],
+      "length_unit_m": 0.01
+    },
+    {
+      "name": "cable_plectoneme_test",
+      "family": "cable",
+      "example": "cable.example_cable_plectoneme",
+      "duration": 13,
+      "bank_samples": 96,
+      "material_range": [
+        1.4,
+        1.6
+      ]
+    },
+    {
+      "name": "cable_pile_test",
+      "family": "cable",
+      "example": "cable.example_cable_pile",
+      "duration": 6,
+      "bank_samples": 96,
+      "material_range": [
+        1.4,
+        1.6
+      ]
+    },
+    {
+      "name": "soft_hanging_test",
+      "family": "soft",
+      "example": "softbody.example_softbody_hanging",
+      "duration": 6,
+      "bank_samples": 96,
+      "material_range": [
+        1.4,
+        1.6
+      ]
+    },
+    {
+      "name": "soft_cloth_impact_test",
+      "family": "soft",
+      "example": "multiphysics.example_softbody_dropping_to_cloth",
+      "duration": 6,
+      "bank_samples": 96,
+      "material_range": [
+        1.4,
+        1.6
+      ]
+    },
+    {
+      "name": "rigid_shape_bin_test",
+      "family": "rigid",
+      "example": "vbd.example_vbd_rigid_rigid_contact",
+      "duration": 6,
+      "bank_samples": 96,
+      "material_range": [
+        1.4,
+        1.6
+      ]
+    },
+    {
+      "name": "cable_cross_slide_test",
       "family": "articulation",
-      "count": 12
+      "example": "cable.example_cable_cross_slide_table",
+      "duration": 25,
+      "bank_samples": 96,
+      "material_range": [
+        1,
+        1
+      ]
+    },
+    {
+      "name": "loaded_cloth_bag_test",
+      "family": "coupled",
+      "example": "vbd.example_vbd_soft_rigid_mix_contact",
+      "duration": 7,
+      "bank_samples": 96,
+      "material_range": [
+        1.4,
+        1.6
+      ]
+    },
+    {
+      "name": "m12_threading_test",
+      "family": "m12",
+      "stiffness_scale": 1,
+      "friction": 0.15,
+      "load_n": 10,
+      "thread_speed_rad_s": -6.28,
+      "torque_limit_nm": 0.1,
+      "dt": 0.0005,
+      "duration": 2
     },
     {
       "name": "m12_axial_200n",
       "family": "m12",
       "load_n": 200,
-      "ramp_seconds": 0.05,
-      "dt": 0.0005
+      "stiffness_scale": 1,
+      "friction": 0.15,
+      "load_direction": [
+        0,
+        0,
+        -1
+      ],
+      "ramp_seconds": 0.1,
+      "dt": 0.0005,
+      "duration": 0.5
     },
     {
       "name": "m12_axial_400n",
       "family": "m12",
       "load_n": 400,
-      "ramp_seconds": 0.05,
-      "dt": 0.0005
+      "stiffness_scale": 1,
+      "friction": 0.15,
+      "load_direction": [
+        0,
+        0,
+        -1
+      ],
+      "ramp_seconds": 0.1,
+      "dt": 0.0005,
+      "duration": 0.5
     },
     {
       "name": "m12_lateral_200n",
       "family": "m12",
       "load_n": 200,
+      "stiffness_scale": 1,
+      "friction": 0.15,
       "load_direction": [
         1,
         0,
         0
       ],
-      "ramp_seconds": 0.05,
-      "dt": 0.0005
+      "ramp_seconds": 0.1,
+      "dt": 0.0005,
+      "duration": 0.5
     },
     {
       "name": "m12_lateral_400n",
       "family": "m12",
       "load_n": 400,
+      "stiffness_scale": 1,
+      "friction": 0.15,
       "load_direction": [
         1,
         0,
         0
       ],
-      "ramp_seconds": 0.05,
-      "dt": 0.0005
+      "ramp_seconds": 0.1,
+      "dt": 0.0005,
+      "duration": 0.5
     },
     {
-      "name": "cloth_rest",
+      "name": "cloth_twist_reverse",
       "family": "cloth",
-      "rest": true,
-      "gravity": 0
-    },
-    {
-      "name": "rigid_rest",
-      "family": "rigid",
-      "rest": true,
-      "gravity": 0,
-      "count": 1
-    },
-    {
-      "name": "driven_chain",
-      "family": "articulation",
-      "count": 8,
-      "drive": true
+      "example": "cloth.example_cloth_twist",
+      "duration": 12,
+      "bank_samples": 96,
+      "material_range": [
+        1.4,
+        1.6
+      ],
+      "speed_range": [
+        -1.5,
+        -1.3
+      ]
     }
   ],
   "acceptance": {
@@ -261,7 +314,7 @@
       "rigid_penetration_m": 0.005
     },
     "articulation": {
-      "joint_anchor_gap_m": 0.01,
+      "joint_anchor_gap_m": 0.005,
       "rigid_penetration_m": 0.005
     },
     "m12": {
@@ -290,5 +343,122 @@
     "pgs": [
       8
     ]
-  }
+  },
+  "train": [
+    {
+      "name": "cloth_twist_train",
+      "family": "cloth",
+      "example": "cloth.example_cloth_twist",
+      "duration": 12,
+      "bank_samples": 96,
+      "material_range": [
+        0.85,
+        1.15
+      ],
+      "speed_range": [
+        0.8,
+        1.1
+      ]
+    },
+    {
+      "name": "cloth_rollers_train",
+      "family": "cloth",
+      "example": "cloth.example_cloth_rollers",
+      "duration": 8,
+      "bank_samples": 96,
+      "material_range": [
+        0.85,
+        1.15
+      ],
+      "length_unit_m": 0.01
+    },
+    {
+      "name": "cable_plectoneme_train",
+      "family": "cable",
+      "example": "cable.example_cable_plectoneme",
+      "duration": 13,
+      "bank_samples": 96,
+      "material_range": [
+        0.85,
+        1.15
+      ]
+    },
+    {
+      "name": "cable_pile_train",
+      "family": "cable",
+      "example": "cable.example_cable_pile",
+      "duration": 6,
+      "bank_samples": 96,
+      "material_range": [
+        0.85,
+        1.15
+      ]
+    },
+    {
+      "name": "soft_hanging_train",
+      "family": "soft",
+      "example": "softbody.example_softbody_hanging",
+      "duration": 6,
+      "bank_samples": 96,
+      "material_range": [
+        0.85,
+        1.15
+      ]
+    },
+    {
+      "name": "soft_cloth_impact_train",
+      "family": "soft",
+      "example": "multiphysics.example_softbody_dropping_to_cloth",
+      "duration": 6,
+      "bank_samples": 96,
+      "material_range": [
+        0.85,
+        1.15
+      ]
+    },
+    {
+      "name": "rigid_shape_bin_train",
+      "family": "rigid",
+      "example": "vbd.example_vbd_rigid_rigid_contact",
+      "duration": 6,
+      "bank_samples": 96,
+      "material_range": [
+        0.85,
+        1.15
+      ]
+    },
+    {
+      "name": "cable_cross_slide_train",
+      "family": "articulation",
+      "example": "cable.example_cable_cross_slide_table",
+      "duration": 17,
+      "bank_samples": 96,
+      "material_range": [
+        1,
+        1
+      ]
+    },
+    {
+      "name": "loaded_cloth_bag_train",
+      "family": "coupled",
+      "example": "vbd.example_vbd_soft_rigid_mix_contact",
+      "duration": 7,
+      "bank_samples": 96,
+      "material_range": [
+        0.85,
+        1.15
+      ]
+    },
+    {
+      "name": "m12_threading_train",
+      "family": "m12",
+      "stiffness_scale": 1,
+      "friction": 0.15,
+      "load_n": 5,
+      "thread_speed_rad_s": -3.14,
+      "torque_limit_nm": 0.05,
+      "dt": 0.0005,
+      "duration": 1.5
+    }
+  ]
 }

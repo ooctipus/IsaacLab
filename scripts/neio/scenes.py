@@ -1,13 +1,16 @@
 # Copyright (c) 2022-2026, The Isaac Lab Project Developers.
 # SPDX-License-Identifier: BSD-3-Clause
-"""Small randomized scenes; physical state and prescribed forcing have one owner."""
+"""Native Newton workloads, threaded assets, and small numerical test fixtures."""
 
-from dataclasses import dataclass
+import importlib
+from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 
 import newton
 import numpy as np
 import warp as wp
+from newton.viewer import ViewerNull
 
 from pxr import Gf, Usd, UsdGeom
 
@@ -60,6 +63,21 @@ def load_bodies(force: wp.array(dtype=wp.spatial_vector), inv_mass: wp.array(dty
 
 
 @wp.kernel
+def turn_nut(
+    force: wp.array(dtype=wp.spatial_vector),
+    velocity: wp.array(dtype=wp.spatial_vector),
+    inv_mass: wp.array(dtype=float),
+    speed: float,
+    gain: float,
+    limit: float,
+):
+    i = wp.tid()
+    if inv_mass[i] > 0.0:
+        torque = wp.clamp(gain * (speed - velocity[i][5]), -limit, limit)
+        force[i] = wp.spatial_vector(wp.spatial_top(force[i]), wp.vec3(0.0, 0.0, torque))
+
+
+@wp.kernel
 def drive_joints(target: wp.array(dtype=float), velocity: wp.array(dtype=float), time: float):
     i = wp.tid()
     phase = 8.0 * time + float(i) * 0.5
@@ -75,8 +93,15 @@ class Scene:
     options: dict
     rest_particles: wp.array | None
     rest_bodies: wp.array | None
+    native: object | None = None
+    evidence: dict | None = None
+    retained_graphs: list = field(default_factory=list)
 
     def prepare(self, state, time, control):
+        if self.native is not None:
+            # A bank sample includes its native pose, velocity, external forces,
+            # and control. Hold that command during the single-timestep probe.
+            return
         state.clear_forces()
         if self.case.get("drive", False):
             wp.launch(
@@ -106,10 +131,94 @@ class Scene:
                 self.model.body_count,
                 [state.body_f, self.model.body_inv_mass, wp.vec3(*(direction * magnitude))],
             )
+        if self.case.get("thread_speed_rad_s"):
+            ramp = min(max(time - 0.2, 0) / 0.2, 1)
+            wp.launch(
+                turn_nut,
+                self.model.body_count,
+                [
+                    state.body_f,
+                    state.body_qd,
+                    self.model.body_inv_mass,
+                    self.case["thread_speed_rad_s"] * ramp,
+                    0.002,
+                    self.case.get("torque_limit_nm", 0.05),
+                ],
+            )
 
 
 def make_scene(case, seed, device="cuda:0", worlds=1):
     """Build once per sampled episode. World IDs isolate contacts and normalization."""
+    if "example" in case:
+        if worlds != 1:
+            raise ValueError("Native workloads use one complete scene per process; batch independent state samples")
+        module = importlib.import_module(f"newton.examples.{case['example']}")
+        args = SimpleNamespace(
+            device=device, seed=seed, solver="vbd", iterations=None, substeps=None, vbd_iterations=10
+        )
+        with wp.ScopedDevice(device):
+            native = module.Example(ViewerNull(), args)
+            # Some native collision buffers are allocated during first capture.
+            # Their allocator graph must outlive later captures that reuse them.
+            original_graph = getattr(native, "graph", None)
+            if original_graph is not None:
+                # Execute allocation nodes before a second graph can reference
+                # their pointers. This is one real recorded simulation frame.
+                native.step()
+            rng = np.random.default_rng(seed)
+            material = float(rng.uniform(*case.get("material_range", [1, 1])))
+            # The arrays remain owned by the native model. Captured kernels read
+            # these same arrays; no copied builder or replacement controller.
+            for name in ("tri_materials", "tet_materials"):
+                values = getattr(native.model, name)
+                if values is not None and values.size:
+                    coefficients = values.numpy()
+                    coefficients[:, :2] *= material
+                    values.assign(coefficients)
+            for name in ("shape_material_ke", "joint_target_ke"):
+                values = getattr(native.model, name)
+                if values is not None and values.size:
+                    values.assign(values.numpy() * material)
+            if material != 1:
+                native.solver.notify_model_changed(newton.ModelFlags.JOINT_DOF_PROPERTIES)
+            speed = float(rng.uniform(*case.get("speed_range", [1, 1])))
+            if case["example"] == "cloth.example_cloth_twist":
+                native.rot_angular_velocity *= speed
+            if (material != 1 or speed != 1) and hasattr(native, "capture"):
+                native.capture()
+        options = {
+            key: getattr(native.solver, key)
+            for key in (
+                "particle_enable_self_contact",
+                "friction_epsilon",
+                "rigid_soft_enable_dat",
+                "rigid_joint_linear_ke",
+                "rigid_joint_angular_ke",
+            )
+        }
+        if native.model.particle_count:
+            options.update(
+                particle_self_contact_margin=native.solver.particle_self_contact_margin,
+                particle_self_contact_gap=native.solver.particle_self_contact_gap,
+            )
+        # Headroom for tightly folded cloth; overflow invalidates a bank.
+        options.update(particle_vertex_contact_buffer_size=256, particle_edge_contact_buffer_size=512)
+        return Scene(
+            native.model,
+            {
+                **case,
+                "seed": seed,
+                "material_scale": material,
+                "speed_scale": speed,
+                "native_warmup_frames": int(original_graph is not None),
+            },
+            native.sim_dt,
+            options,
+            None,
+            None,
+            native,
+            retained_graphs=[original_graph] if original_graph is not None else [],
+        )
     rng = np.random.default_rng(seed)
     family = case["family"]
     b = newton.ModelBuilder(gravity=wp.vec3(0, 0, case.get("gravity", -9.81)))
@@ -240,7 +349,12 @@ def make_scene(case, seed, device="cuda:0", worlds=1):
                     triangles.extend((face[0], face[j], face[j + 1]) for j in range(1, count - 1))
                     cursor += count
                 mesh = newton.Mesh(vertices, np.array(triangles, dtype=np.int32).ravel())
-                mesh.build_sdf(target_voxel_size=1e-4, narrow_band_range=(-0.001, 0.001), margin=0.0001)
+                mesh.build_sdf(
+                    target_voxel_size=1e-4,
+                    narrow_band_range=(-0.001, 0.001),
+                    margin=0.0001,
+                    cache_dir=str(Path.home() / ".cache/neio-sdf"),
+                )
                 metal = newton.ModelBuilder.ShapeConfig(
                     ke=1e7 * scale, kd=0, mu=0.15, margin=0, gap=0.0002, density=7850
                 )

@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 """Identical-state probes and physical diagnostics, with explicit unsupported rows."""
 
+import json
 import time
 from pathlib import Path
 
@@ -15,11 +16,11 @@ from experiments.neio.rigid import quat_rotate
 from optimizer import StudySolver
 
 
-def make_solver(scene, name, sweeps, network=None, history="clear"):
+def make_solver(scene, name, sweeps, network=None, history="clear", learn=False):
     model = scene.model
     if name == "shared":
-        return StudySolver(model, network, iterations=sweeps, history=history, **scene.options)
-    if name == "supplied":
+        solver = StudySolver(model, network, iterations=sweeps, history=history, learn=learn, **scene.options)
+    elif name == "supplied":
         root = Path(__file__).parent / "_source/experiments/neio-reference/checkpoints"
         options = {"history_at_step_start": history, "group_by": "world", "inference": "torch"}
         rigid = dict(options, checkpoint=str(root / "rigid_e/weights_270000.pt")) if model.body_count else None
@@ -28,44 +29,70 @@ def make_solver(scene, name, sweeps, network=None, history="clear"):
             if model.particle_count
             else None
         )
-        return SolverNeIO(
+        solver = SolverNeIO(
             model,
             iterations=sweeps,
             **scene.options,
             rigid_optimizer_options=rigid,
             particle_optimizer_options=particle,
         )
-    if name == "vbd":
+    elif name == "vbd":
+        native = scene.native.solver if scene.native is not None else None
         return newton.solvers.SolverVBD(
             model,
             iterations=sweeps,
             rigid_compliant_alm=True,
             rigid_body_contact_buffer_size=1024,
             rigid_body_particle_contact_buffer_size=2048,
+            rigid_contact_history=native.rigid_contact_history if native else False,
+            particle_topological_contact_filter_threshold=native.particle_topological_contact_filter_threshold
+            if native and model.particle_count
+            else 3,
             **scene.options,
         )
-    if name == "pgs":
+    elif name == "pgs":
         raise NotImplementedError("The pinned Newton MJWarp adapter accepts Newton/CG only; PGS is unsupported")
-    if name == "mjwarp":
-        if model.particle_count or scene.case["family"] == "cable":
+    elif name == "mjwarp":
+        if model.particle_count or scene.case["family"] == "cable" or "cross_slide" in scene.case.get("example", ""):
             raise NotImplementedError("MJWarp does not implement this particle/rod objective")
         return newton.solvers.SolverMuJoCo(
             model, solver="newton", iterations=sweeps, use_mujoco_contacts=False, njmax=4096, nconmax=2048
         )
-    raise ValueError(name)
+    else:
+        raise ValueError(name)
+    # The port omits the inherited VBD allocation options. Configure the owned
+    # arrays before any capture so unused adjacency construction cannot overflow
+    # or flood timing runs with device printf. NeIO forces use global contacts.
+    if model.body_count:
+        solver.body_body_contact_buffer_pre_alloc = 1024
+        solver.body_body_contact_indices = wp.zeros(model.body_count * 1024, dtype=wp.int32, device=model.device)
+        solver.body_particle_contact_buffer_pre_alloc = 4096 if model.particle_count else 0
+        solver.body_particle_contact_indices = wp.zeros(
+            model.body_count * solver.body_particle_contact_buffer_pre_alloc, dtype=wp.int32, device=model.device
+        )
+    return solver
 
 
-def snapshot(state):
-    return {
+def snapshot(state, control=None):
+    saved = {
         name: wp.clone(value)
-        for name in ("particle_q", "particle_qd", "body_q", "body_qd", "joint_q", "joint_qd")
+        for name in ("particle_q", "particle_qd", "particle_f", "body_q", "body_qd", "body_f", "joint_q", "joint_qd")
         if (value := getattr(state, name)) is not None
     }
+    if control is not None:
+        saved.update(
+            {f"control.{name}": wp.clone(value) for name, value in vars(control).items() if isinstance(value, wp.array)}
+        )
+    return saved
 
 
-def restore(state, saved):
+def restore(state, saved, control=None):
     for name, value in saved.items():
-        getattr(state, name).assign(value)
+        if name.startswith("control."):
+            if control is not None:
+                getattr(control, name.removeprefix("control.")).assign(value)
+        else:
+            getattr(state, name).assign(value)
 
 
 def state_distance(first, second):
@@ -163,10 +190,20 @@ def metrics(scene, state, pipeline, contacts):
         xp, xc = wp.to_torch(model.joint_X_p), wp.to_torch(model.joint_X_c)
         pp, pc = poses[parent], poses[child]
         separation = pp[:, :3] + quat_rotate(pp[:, 3:], xp[:, :3]) - pc[:, :3] - quat_rotate(pc[:, 3:], xc[:, :3])
+        prismatic = wp.to_torch(model.joint_type) == int(newton.JointType.PRISMATIC)
+        if bool(prismatic.any()):
+            starts = wp.to_torch(model.joint_qd_start).long()[prismatic]
+            local_axes = quat_rotate(xp[prismatic, 3:], wp.to_torch(model.joint_axis)[starts])
+            axes = quat_rotate(pp[prismatic, 3:], local_axes)
+            delta = separation[prismatic]
+            separation[prismatic] = delta - (delta * axes).sum(-1, keepdim=True) * axes
         # Free joints have unconstrained anchors and do not contribute.
         valid = wp.to_torch(model.joint_type) != int(newton.JointType.FREE)
         result["joint_anchor_gap_m"] = float(separation[valid].norm(dim=-1).max()) if bool(valid.any()) else None
     limits = scene.case.get("acceptance", {})
+    for key in tuple(result):
+        if key.endswith("_m") and result[key] is not None:
+            result[key] *= scene.case.get("length_unit_m", 1.0)
     result["physical_threshold_failures"] = [
         key for key, limit in limits.items() if result.get(key) is not None and result[key] > limit
     ]
@@ -181,7 +218,8 @@ def probe(scene, solver, saved, time_seconds, repeats=3, capture=False):
     contacts = pipeline.contacts()
     timings = []
     for i in range(repeats + 1):
-        restore(a, saved)
+        restore(a, saved, control)
+        restore(b, saved, control)
         solver.reset(a, flags=0)
         scene.prepare(a, time_seconds, control)
         wp.synchronize_device(model.device)
@@ -199,7 +237,8 @@ def probe(scene, solver, saved, time_seconds, repeats=3, capture=False):
     }
     if capture:
         eager_state = snapshot(b)
-        restore(a, saved)
+        restore(a, saved, control)
+        restore(b, saved, control)
         solver.reset(a, flags=0)
         scene.prepare(a, time_seconds, control)
         wp.synchronize_device(model.device)
@@ -210,7 +249,8 @@ def probe(scene, solver, saved, time_seconds, repeats=3, capture=False):
         result["capture_seconds"] = time.perf_counter() - capture_start
         captured_ms = []
         for _ in range(repeats):
-            restore(a, saved)
+            restore(a, saved, control)
+            restore(b, saved, control)
             solver.reset(a, flags=0)
             scene.prepare(a, time_seconds, control)
             wp.synchronize_device(model.device)
@@ -227,7 +267,8 @@ def probe(scene, solver, saved, time_seconds, repeats=3, capture=False):
         ):
             raise RuntimeError(f"Captured step differs from eager step: {result['capture_parity']}")
     if isinstance(solver, SolverNeIO):
-        restore(a, saved)
+        restore(a, saved, control)
+        restore(b, saved, control)
         solver.reset(a, flags=0)
         scene.prepare(a, time_seconds, control)
         pipeline.collide(a, contacts)
@@ -251,19 +292,140 @@ def probe(scene, solver, saved, time_seconds, repeats=3, capture=False):
     return result, snapshot(b)
 
 
-def reference_states(scene, steps, stride):
+def native_states(scene, output=None):
+    """Sample complete native trajectories, preserving controls and external forces.
+
+    These are cold-start timestep problems, not VBD target solutions. Native
+    history produces the trajectory but is deliberately absent from each probe.
+    """
+    native, case = scene.native, scene.case
+    frames = int(np.ceil((case["duration"] - native.sim_time) / native.frame_dt))
+    stride = max(1, frames // case.get("bank_samples", 96))
+    saved, diagnostics = [], []
+    start = time.perf_counter()
+    for frame in range(frames):
+        native.step()
+        if frame % stride and frame + 1 != frames:
+            continue
+        state = native.state_0
+        row = {
+            "time": float(native.sim_time),
+            "rigid_contacts": int(native.contacts.rigid_contact_count.numpy()[0]) if native.contacts else 0,
+            "soft_contacts": int(native.contacts.soft_contact_count.numpy()[0]) if native.contacts else 0,
+        }
+        for name in ("particle_q", "particle_qd", "body_q", "body_qd"):
+            value = getattr(state, name)
+            if value is not None and value.size:
+                data = value.numpy()
+                if not np.isfinite(data).all() or np.max(np.abs(data)) > 1e5:
+                    raise RuntimeError(f"Native {case['name']} diverged at {native.sim_time:.3f}s ({name})")
+        if native.contacts and (
+            row["rigid_contacts"] > native.contacts.rigid_contact_max
+            or row["soft_contacts"] > native.contacts.soft_contact_max
+        ):
+            raise RuntimeError(f"Native {case['name']} exceeded contact capacity")
+        if native.solver.particle_enable_self_contact:
+            info = native.solver.trimesh_collision_detector.collision_info
+            for kind in ("vertex_colliding_triangles", "edge_colliding_edges"):
+                counts = getattr(info, f"{kind}_count").numpy()
+                capacities = getattr(info, f"{kind}_buffer_sizes").numpy()
+                if np.any(counts > capacities):
+                    raise RuntimeError(f"Native {case['name']} dropped {kind} pairs at {native.sim_time:.3f}s")
+                distance = getattr(info, f"{kind}_min_dist").numpy()
+                row[f"{kind}_near"] = int(np.count_nonzero(distance < native.solver.particle_self_contact_margin))
+                row[f"{kind}_peak"] = int(counts.max(initial=0))
+        if case["family"] == "rigid" and not native.model.particle_count:
+            projected = native.model.state()
+            restore(projected, snapshot(state))
+            newton.eval_ik(native.model, projected, projected.joint_q, projected.joint_qd)
+            newton.eval_fk(native.model, projected.joint_q, projected.joint_qd, projected)
+            state = projected
+            case["probe_state_projection"] = "Newton IK/FK; common state for all solvers"
+        saved.append((float(native.sim_time), snapshot(state, native.control)))
+        diagnostics.append(row)
+    evidence = {
+        "case": case,
+        "duration_seconds": float(native.sim_time),
+        "states": len(saved),
+        "generation_seconds": time.perf_counter() - start,
+        "particles": native.model.particle_count,
+        "bodies": native.model.body_count,
+        "native_iterations": native.solver.iterations,
+        "substeps_per_frame": native.sim_substeps,
+        "dt": native.sim_dt,
+        "diagnostics": diagnostics,
+    }
+    try:
+        if hasattr(native, "test_final"):
+            native.test_final()
+        evidence["native_test_pass"] = True
+    except (AssertionError, ValueError) as error:
+        evidence.update(native_test_pass=False, native_test_error=str(error))
+    if "plectoneme" in case["example"]:
+        evidence["out_of_plane_span_m"] = max(float(np.ptp(s["body_q"].numpy()[:, 1])) for _, s in saved)
+        if (
+            evidence["out_of_plane_span_m"] < 4 * native.cable_radius
+            or max(r["rigid_contacts"] for r in diagnostics) == 0
+        ):
+            raise RuntimeError("Plectoneme bank did not reach buckling and self-contact")
+    if "cross_slide" in case["example"]:
+        evidence["tracking_max_error_m"] = float(native.table_tracking_max_error)
+        evidence["tracking_rms_error_m"] = float(
+            np.sqrt(native.table_tracking_error_sq_sum / native.table_tracking_sample_count)
+        )
+        if not evidence["native_test_pass"]:
+            raise RuntimeError(f"Cable-driven table failed its tracking check: {evidence['native_test_error']}")
+    if "cloth_twist" in case["example"] or "cloth_rollers" in case["example"]:
+        evidence["self_contact_observed"] = any(
+            r.get("vertex_colliding_triangles_near", 0) + r.get("edge_colliding_edges_near", 0) > 0 for r in diagnostics
+        )
+        if not evidence["self_contact_observed"]:
+            raise RuntimeError("Cloth bank did not reach self-contact")
+    scene.evidence = evidence
+    if output is not None:
+        output.mkdir(parents=True, exist_ok=True)
+        (output / "coverage.json").write_text(json.dumps(evidence, indent=2) + "\n")
+        arrays = {name: np.stack([state[name].numpy() for _, state in saved]) for name in saved[0][1]}
+        arrays["time"] = np.asarray([t for t, _ in saved])
+        for name in ("tri_indices", "shape_body", "shape_transform", "shape_scale", "shape_type"):
+            if (value := getattr(native.model, name)) is not None:
+                arrays[name] = value.numpy()
+        np.savez_compressed(output / "states.npz", **arrays)
+    return saved
+
+
+def reference_states(scene, steps, stride, output=None):
     """VBD-100 is only the probe-state generator, never labeled ground truth."""
+    if scene.native is not None:
+        return native_states(scene, output)
     model = scene.model
     a, b, control = model.state(), model.state(), model.control()
     solver = make_solver(scene, "vbd", 100)
     pipeline = newton.CollisionPipeline(model)
     contacts = pipeline.contacts()
     saved = [(0.0, snapshot(a))]
-    for step in range(steps):
-        scene.prepare(a, step * scene.dt, control)
+    graph = None
+    if scene.case["family"] == "m12":
+        # Capture the expensive solve, leaving time-dependent loading outside.
+        scene.prepare(a, 0, control)
         pipeline.collide(a, contacts)
         solver.step(a, b, control, contacts, scene.dt)
-        a, b = b, a
+        restore(a, saved[0][1])
+        restore(b, saved[0][1])
+        solver.reset(a, flags=0)
+        with wp.ScopedCapture(device=model.device) as capture:
+            pipeline.collide(a, contacts)
+            solver.step(a, b, control, contacts, scene.dt)
+            a.assign(b)
+        graph = capture.graph
+    for step in range(steps):
+        scene.prepare(a, step * scene.dt, control)
+        if graph is not None:
+            wp.capture_launch(graph)
+        else:
+            pipeline.collide(a, contacts)
+            solver.step(a, b, control, contacts, scene.dt)
+            a, b = b, a
         if (step + 1) % stride == 0 or step + 1 == steps:
             check = metrics(scene, a, pipeline, contacts)
             if not check["bounded"] or check.get("contact_overflow", False):
@@ -280,25 +442,100 @@ def reference_states(scene, steps, stride):
                 scene.case["probe_state_projection"] = "Newton IK/FK; common state for all solvers"
             else:
                 saved.append(((step + 1) * scene.dt, snapshot(a)))
+    if output is not None:
+        output.mkdir(parents=True, exist_ok=True)
+        scene.evidence = {"case": scene.case, "duration_seconds": steps * scene.dt, "states": len(saved)}
+        arrays = {name: np.stack([state[name].numpy() for _, state in saved]) for name in saved[0][1]}
+        arrays["time"] = np.asarray([t for t, _ in saved])
+        if scene.case["family"] == "m12":
+            angles = np.unwrap(2 * np.arctan2(arrays["body_q"][:, 0, 5], arrays["body_q"][:, 0, 6]))
+            turns = (angles[-1] - angles[0]) / (2 * np.pi)
+            travel = arrays["body_q"][-1, 0, 2] - arrays["body_q"][0, 0, 2]
+            scene.evidence.update(
+                nut_turns=float(turns),
+                axial_travel_m=float(travel),
+                travel_per_turn_m=float(travel / turns) if abs(turns) > 0.01 else None,
+            )
+        (output / "coverage.json").write_text(json.dumps(scene.evidence, indent=2) + "\n")
+        np.savez_compressed(output / "states.npz", **arrays)
     return saved
 
 
 def rollout(scene, solver, steps):
+    if scene.native is not None:
+        native = scene.native
+        native.solver = solver
+        if hasattr(native, "capture"):
+            scene.retained_graphs.append(native.graph)
+            native.capture()
+        frames = int(np.ceil((scene.case["duration"] - native.sim_time) / native.frame_dt))
+        pipeline = newton.CollisionPipeline(scene.model)
+        contacts = pipeline.contacts()
+        failures, peak, threshold_failures = None, {}, set()
+        for frame in range(frames):
+            native.step()
+            if frame % 12 and frame + 1 != frames:
+                continue
+            values = metrics(scene, native.state_0, pipeline, contacts)
+            if not values["bounded"] or values.get("contact_overflow"):
+                failures = frame * native.sim_substeps
+                break
+            threshold_failures.update(values.get("physical_threshold_failures", []))
+            for key in ("rigid_penetration_m", "soft_penetration_m", "max_edge_strain", "joint_anchor_gap_m"):
+                if values.get(key) is not None:
+                    peak[key] = max(peak.get(key, 0), values[key])
+        native_check = None
+        if failures is None and hasattr(native, "test_final"):
+            try:
+                native.test_final()
+                native_check = True
+            except (AssertionError, ValueError) as error:
+                native_check = False
+                threshold_failures.add(str(error))
+        return {
+            "failed_at_step": failures,
+            "completed_steps": (frame + 1) * native.sim_substeps,
+            "requested_steps": frames * native.sim_substeps,
+            "duration_seconds": native.sim_time,
+            "native_test_pass": native_check,
+            "sampled_peaks": peak,
+            "physical_threshold_failures": sorted(threshold_failures),
+        }
     model = scene.model
     a, b, control = model.state(), model.state(), model.control()
     pipeline = newton.CollisionPipeline(model)
     contacts = pipeline.contacts()
     failures, peak, threshold_failures = None, {}, set()
-    for step in range(steps):
-        scene.prepare(a, step * scene.dt, control)
+    poses = [a.body_q.numpy()[0].copy()] if scene.case["family"] == "m12" else []
+    graph = None
+    if scene.case["family"] == "m12":
+        initial = snapshot(a)
+        scene.prepare(a, 0, control)
         pipeline.collide(a, contacts)
         solver.step(a, b, control, contacts, scene.dt)
-        a, b = b, a
+        restore(a, initial)
+        restore(b, initial)
+        solver.reset(a, flags=0)
+        with wp.ScopedCapture(device=model.device) as capture:
+            pipeline.collide(a, contacts)
+            solver.step(a, b, control, contacts, scene.dt)
+            a.assign(b)
+        graph = capture.graph
+    for step in range(steps):
+        scene.prepare(a, step * scene.dt, control)
+        if graph is not None:
+            wp.capture_launch(graph)
+        else:
+            pipeline.collide(a, contacts)
+            solver.step(a, b, control, contacts, scene.dt)
+            a, b = b, a
         if step % 16 == 0 or step + 1 == steps:
             values = metrics(scene, a, pipeline, contacts)
             if not values["bounded"] or values.get("contact_overflow"):
                 failures = step
                 break
+            if poses:
+                poses.append(a.body_q.numpy()[0].copy())
             threshold_failures.update(values.get("physical_threshold_failures", []))
             for key in (
                 "rigid_penetration_m",
@@ -311,6 +548,20 @@ def rollout(scene, solver, steps):
             ):
                 if values.get(key) is not None:
                     peak[key] = max(peak.get(key, 0), values[key])
+    threading = {}
+    if len(poses) > 1:
+        poses = np.asarray(poses)
+        angle = np.unwrap(2 * np.arctan2(poses[:, 5], poses[:, 6]))
+        turns = (angle[-1] - angle[0]) / (2 * np.pi)
+        travel = poses[-1, 2] - poses[0, 2]
+        threading = {
+            "nut_turns": float(turns),
+            "axial_travel_m": float(travel),
+            "travel_per_turn_m": float(travel / turns) if abs(turns) > 0.01 else None,
+            "thread_lead_error_m": float(
+                np.max(np.abs(poses[:, 2] - poses[0, 2] - 0.00175 * (angle - angle[0]) / (2 * np.pi)))
+            ),
+        }
     return {
         "failed_at_step": failures,
         "completed_steps": step + 1,
@@ -318,4 +569,5 @@ def rollout(scene, solver, steps):
         "sample_interval_steps": 16,
         "sampled_peaks": peak,
         "physical_threshold_failures": sorted(threshold_failures),
+        "threading": threading,
     }
