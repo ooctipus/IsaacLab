@@ -54,6 +54,6 @@ RUN --mount=type=bind,source=source,target=/tmp/isaaclab_overlay/source,readonly
     fi && \
     if [ -f "${ISAACLAB_PATH}/scripts/neio/uv.lock" ]; then \
       UV_PROJECT_ENVIRONMENT=/opt/isaaclab-projects/scripts/neio uv sync --locked --project "${ISAACLAB_PATH}/scripts/neio" && \
-      chown -R isaaclab:isaaclab /opt/isaaclab-projects/scripts/neio; \
+      chown -R --from=root:root isaaclab:isaaclab /opt/isaaclab-projects/scripts/neio; \
     fi
 USER isaaclab
