@@ -4,6 +4,10 @@
 
 # Isaac Lab 3.1.0
 
+**Cluster access / new machine:** Start with [CLUSTER_SETUP.md](CLUSTER_SETUP.md).
+GPU submission and development tooling live in the separate private
+[isaaclab-cluster repository](https://github.com/ooctipus/isaaclab-cluster).
+
 [![IsaacSim](https://img.shields.io/badge/IsaacSim-6.2.0-silver.svg)](https://docs.isaacsim.omniverse.nvidia.com/latest/index.html)
 [![Python](https://img.shields.io/badge/python-3.12-blue.svg)](https://docs.python.org/3/whatsnew/3.12.html)
 [![Linux platform](https://img.shields.io/badge/platform-linux--64-orange.svg)](https://releases.ubuntu.com/22.04/)

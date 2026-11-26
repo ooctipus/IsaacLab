@@ -1,5 +1,13 @@
 # IsaacLab Development Guidelines
 
+## Cluster access and new-machine setup
+
+For GPU allocation, SSH, batch submission, or configuring a new machine, read
+[CLUSTER_SETUP.md](CLUSTER_SETUP.md) first. Use the independent private
+[ooctipus/isaaclab-cluster](https://github.com/ooctipus/isaaclab-cluster) tooling
+with a workspace launcher; do not revive this branch's older cluster scripts or build images.
+The setup guide explains host login, workspace AGENTS.md, and selecting any pushed training branch.
+
 ## Contribution guide
 
 Read the relevant sections of [the contribution guide](docs/source/refs/contributing.rst) before starting:
