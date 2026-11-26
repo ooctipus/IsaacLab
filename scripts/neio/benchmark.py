@@ -95,7 +95,7 @@ def restore(state, saved, control=None):
             getattr(state, name).assign(value)
 
 
-def state_distance(first, second):
+def state_distance(first, second, length_unit_m=1):
     result = {}
     for name in ("particle_q", "body_q"):
         if name not in first or not first[name].size:
@@ -103,7 +103,7 @@ def state_distance(first, second):
         a, b = first[name].numpy(), second[name].numpy()
         if not np.isfinite(a).all() or not np.isfinite(b).all():
             return {"finite": False}
-        distance = np.linalg.norm(a[:, :3] - b[:, :3], axis=-1)
+        distance = np.linalg.norm(a[:, :3] - b[:, :3], axis=-1) * length_unit_m
         result[f"{name}_max_m"] = float(distance.max())
         result[f"{name}_rms_m"] = float(np.sqrt(np.mean(distance**2)))
         if name == "body_q":

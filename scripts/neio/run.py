@@ -60,6 +60,9 @@ def start_tracking(args, study, metadata, output, previous=None):
     tracking.define_metric("train/*", step_metric="train/step")
     tracking.define_metric("validation/step")
     tracking.define_metric("validation/*", step_metric="validation/step")
+    tracking.define_metric("eval/sweeps")
+    tracking.define_metric("eval/*", step_metric="eval/sweeps")
+    tracking.summary["objective"] = "Physics energy gradient; scalar energy is not implemented by the supplied port"
     identity = {"id": tracking.id, "project": tracking.project, "entity": tracking.entity, "url": tracking.url}
     write_json(output / "wandb.json", identity)
     return tracking, identity
@@ -70,7 +73,15 @@ def log_checkpoint(tracking, output, step):
     artifact = wandb.Artifact(
         f"neio-{tracking.id}", type="model", metadata={"step": step, "primary_weights": "latest.pt"}
     )
-    for name in ("latest.pt", "best.pt", "training.jsonl", "validation.json", "provenance.json", "wandb.json"):
+    for name in (
+        "latest.pt",
+        "best.pt",
+        "training.jsonl",
+        "validation.json",
+        "validation.jsonl",
+        "provenance.json",
+        "wandb.json",
+    ):
         path = output / name
         if path.exists():
             artifact.add_file(str(path), name=name)
@@ -150,14 +161,48 @@ def validate(network, study, device, sweeps, banks=None):
             scene = make_scene(case, study["seeds"]["validation"][0], device)
             banks[case["name"]] = scene, reference_states(scene, 16, 16)
         scene, states = banks[case["name"]]
-        saved = states[len(states) * 3 // 4]
-        result, _ = probe(scene, make_solver(scene, "shared", sweeps, network), saved[1], saved[0], repeats=1)
-        ratios = [result[k] for k in ("particle_residual_ratio", "body_residual_ratio") if result.get(k) is not None]
-        score = np.mean(np.log1p(np.minimum(ratios, 1e6))) if ratios and result["bounded"] else 1e6
-        if case["family"] == "cloth":
-            scores.append(float(score))
-        rows.append({"case": case["name"], "score": float(score), **result})
+        solver = make_solver(scene, "shared", sweeps, network)
+        for index in np.linspace(0, len(states) - 1, 5, dtype=int):
+            t, saved = states[index]
+            result, _ = probe(scene, solver, saved, t, repeats=1)
+            ratios = [
+                result[k] for k in ("particle_residual_ratio", "body_residual_ratio") if result.get(k) is not None
+            ]
+            score = np.mean(np.log1p(np.minimum(ratios, 1e6))) if ratios and result["bounded"] else 1e6
+            if case["family"] == "cloth":
+                scores.append(float(score))
+            rows.append({"case": case["name"], "sample_time_seconds": t, "score": float(score), **result})
     return float(np.mean(scores)), rows
+
+
+def log_validation(tracking, output, step, score, rows):
+    """Log comparable fixed-state measurements, including the untrained baseline."""
+    record = {"step": step, "score": score, "cases": rows}
+    write_json(output / "validation.json", record)
+    with (output / "validation.jsonl").open("a") as log:
+        log.write(json.dumps(record, allow_nan=False) + "\n")
+    values = {"step": step, "cloth_selection_score": score}
+    for key in (
+        "particle_residual_ratio",
+        "body_residual_ratio",
+        "max_edge_strain",
+        "rigid_penetration_m",
+        "soft_penetration_m",
+        "eager_substep_ms",
+    ):
+        measured = [row[key] for row in rows if row.get(key) is not None]
+        if measured:
+            values[key] = float(np.mean(measured) if key.endswith(("_ratio", "_ms")) else max(measured))
+    values["failure_fraction"] = float(
+        np.mean(
+            [
+                not row["bounded"] or row.get("contact_overflow", False) or bool(row.get("physical_threshold_failures"))
+                for row in rows
+            ]
+        )
+    )
+    values["residual_reduction_fraction"] = float(np.mean([row.get("particle_residual_ratio", 1) < 1 for row in rows]))
+    tracking.log({f"validation/{key}": value for key, value in values.items()})
 
 
 def train(args, study, network, device, rank, ranks, output, metadata, tracking, checkpoint=None):
@@ -178,6 +223,9 @@ def train(args, study, network, device, rank, ranks, output, metadata, tracking,
     begin = time.perf_counter()
     nodes, oracle_calls, rejected = 0, 0, 0
     banks, validation_banks = {}, {}
+    if start_step == 0 and rank == 0:
+        score, validation = validate(network, study, device, args.sweeps, validation_banks)
+        log_validation(tracking, output, 0, score, validation)
     for step in range(start_step, args.steps):
         within = step % episode_steps
         if within == 0:
@@ -215,6 +263,8 @@ def train(args, study, network, device, rank, ranks, output, metadata, tracking,
         pipeline.collide(a, contacts)
         optimizer.zero_grad(set_to_none=True)
         solver.residuals.clear()
+        solver.record_convergence = (step + 1) % 8 == 0 or step + 1 == args.steps
+        solver.convergence_slot = 0
         before = solver.failed_updates
         solver.step(a, b, control, contacts, scene.dt)
         bad = torch.tensor(int(solver.failed_updates > before), device=device)
@@ -236,8 +286,9 @@ def train(args, study, network, device, rank, ranks, output, metadata, tracking,
             grad_norm = None
         a, b = b, a
         nodes += model.particle_count + 2 * model.body_count
-        oracle_calls += 2 * args.sweeps
+        oracle_calls += 2 * args.sweeps + int(solver.record_convergence)
         if (step + 1) % 8 == 0 or step + 1 == args.steps:
+            convergence = solver.convergence_buffer[0].tolist()
             local_metrics = {
                 "family": family,
                 "workload": case["name"],
@@ -249,6 +300,9 @@ def train(args, study, network, device, rank, ranks, output, metadata, tracking,
                 "processed_nodes": nodes,
                 "oracle_calls": oracle_calls,
             }
+            for kind, initial, final in (("particle", *convergence[:2]), ("body", *convergence[2:])):
+                if initial > 1e-12 and np.isfinite(initial) and np.isfinite(final):
+                    local_metrics[f"{kind}_residual_ratio"] = final / initial
             rank_metrics = [None] * ranks
             if ranks > 1:
                 dist.all_gather_object(rank_metrics, local_metrics)
@@ -267,9 +321,10 @@ def train(args, study, network, device, rank, ranks, output, metadata, tracking,
             tracking.log(
                 {f"train/{key}": value for key, value in row.items() if key != "rank_metrics"}
                 | {
-                    f"train/rank_{index}/{key}": value
+                    f"train/{values['workload']}/rank_{index}/{key}": value
                     for index, values in enumerate(rank_metrics)
                     for key, value in values.items()
+                    if key in ("particle_residual_ratio", "body_residual_ratio", "rejected_updates")
                 }
             )
         if (step + 1) % episode_steps == 0 or step + 1 == args.steps:
@@ -287,11 +342,7 @@ def train(args, study, network, device, rank, ranks, output, metadata, tracking,
                     best = min(best, score)
                     if improved:
                         best_network = {k: v.detach().cpu().clone() for k, v in network.state_dict().items()}
-                    write_json(output / "validation.json", {"step": step + 1, "score": score, "cases": validation})
-                    tracking.log(
-                        {"validation/step": step + 1, "validation/cloth_selection_score": score}
-                        | {f"validation/{row['case']}/score": row["score"] for row in validation}
-                    )
+                    log_validation(tracking, output, step + 1, score, validation)
                 checkpoint = {
                     "network": network.state_dict(),
                     "optimizer": optimizer.state_dict(),
@@ -322,7 +373,7 @@ def train(args, study, network, device, rank, ranks, output, metadata, tracking,
         tracking.log_artifact(artifact)
 
 
-def evaluate(args, study, network, device, output):
+def evaluate(args, study, network, device, output, tracking):
     if args.checkpoint:
         checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=False)
         network.load_state_dict(checkpoint["network"])
@@ -357,7 +408,9 @@ def evaluate(args, study, network, device, output):
                         for t, saved in states:
                             _, state200 = probe(scene, lower, saved, t, 1)
                             _, state400 = probe(scene, upper, saved, t, 1)
-                            references[reference_name].append((state400, state_distance(state200, state400)))
+                            references[reference_name].append(
+                                (state400, state_distance(state200, state400, scene.case.get("length_unit_m", 1)))
+                            )
                     except (NotImplementedError, RuntimeError, ValueError) as error:
                         references.pop(reference_name, None)
                         reference_failures[reference_name] = str(error)
@@ -392,7 +445,9 @@ def evaluate(args, study, network, device, output):
                             measurement["time"] = t
                             measurement["reference_distances"] = {
                                 key: {
-                                    "distance_to_400": state_distance(final_state, values[index][0]),
+                                    "distance_to_400": state_distance(
+                                        final_state, values[index][0], scene.case.get("length_unit_m", 1)
+                                    ),
                                     "change_200_to_400": values[index][1],
                                     "same_formulation": key == name,
                                 }
@@ -423,9 +478,61 @@ def evaluate(args, study, network, device, output):
                         row.update(status="failed", error=str(error))
                     rows.append(row)
                     write_json(output / "evaluation.json", rows)
+                    log_evaluation(tracking, row)
                     print(json.dumps({k: row[k] for k in ("case", "solver", "sweeps", "status")}), flush=True)
     if not any(row["status"] == "complete" for row in rows):
         raise RuntimeError("Evaluation produced no completed comparisons; inspect evaluation.json")
+
+
+def log_evaluation(tracking, row):
+    """Expose solver accuracy and cost as sweep curves, retaining failed comparisons."""
+    if row["status"] == "unsupported":
+        return
+    values = {
+        "failure": float(row["status"] != "complete"),
+        "physical_pass": float(row.get("physical_threshold_pass", False)),
+    }
+    probes = row.get("probes", [])
+    for key in (
+        "particle_residual_ratio",
+        "body_residual_ratio",
+        "eager_substep_ms",
+        "captured_substep_ms",
+        "rigid_penetration_m",
+        "soft_penetration_m",
+        "joint_anchor_gap_m",
+        "max_edge_strain",
+    ):
+        measured = [p[key] for p in probes if p.get(key) is not None and np.isfinite(p[key])]
+        if measured:
+            values[key] = float(np.mean(measured) if key.endswith(("_ms", "_ratio")) else max(measured))
+    for reference in ("vbd", "mjwarp"):
+        for key in ("particle_q_rms_m", "body_q_rms_m", "body_angle_max_rad"):
+            measured = [
+                p["reference_distances"][reference]["distance_to_400"][key]
+                for p in probes
+                if key in p.get("reference_distances", {}).get(reference, {}).get("distance_to_400", {})
+            ]
+            if measured and all(np.isfinite(measured)):
+                values[f"distance_to_{reference}_400/{key}"] = float(max(measured))
+    trajectory = row.get("carried_history_rollout", {})
+    values.update(
+        {
+            f"rollout/{key}": value
+            for key, value in trajectory.get("threading", {}).items()
+            if value is not None and np.isfinite(value)
+        }
+    )
+    if trajectory:
+        values["rollout/failure"] = float(
+            trajectory["failed_at_step"] is not None
+            or bool(trajectory["physical_threshold_failures"])
+            or trajectory.get("native_test_pass") is False
+        )
+    tracking.log(
+        {"eval/sweeps": row["sweeps"]}
+        | {f"eval/{row['case']}/{row['solver']}/{key}": value for key, value in values.items()}
+    )
 
 
 def verify_workloads(args, study, device, output, tracking):
@@ -570,9 +677,9 @@ def main():
             train(args, study, network, device, rank, ranks, output, metadata, tracking, checkpoint)
             if args.eval_after and rank == 0:
                 args.checkpoint = str(output / "latest.pt")
-                evaluate(args, study, network, device, output)
+                evaluate(args, study, network, device, output, tracking)
         elif rank == 0:
-            evaluate(args, study, network, device, output)
+            evaluate(args, study, network, device, output, tracking)
         exit_code = 0
     finally:
         if tracking:

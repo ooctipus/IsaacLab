@@ -105,7 +105,12 @@ def test_training_records_metrics_and_checkpoint_tracking_identity(tmp_path):
     assert [row["step"] for row in rows] == [8, 16, 24, 32]
     assert len(rows[-1]["rank_metrics"]) == 1
     assert rows[-1]["rank_metrics"][0]["processed_nodes"] > 0
-    assert rows[-1]["rank_metrics"][0]["oracle_calls"] == 64
+    assert rows[-1]["rank_metrics"][0]["particle_residual_ratio"] >= 0
+    validation = json.loads((tmp_path / "validation.json").read_text())
+    assert [json.loads(line)["step"] for line in (tmp_path / "validation.jsonl").read_text().splitlines()] == [0, 32]
+    assert len(validation["cases"]) == 5
+    assert all(row["particle_residual_ratio"] is not None for row in validation["cases"])
+    assert rows[-1]["rank_metrics"][0]["oracle_calls"] == 68
 
 
 @pytest.mark.parametrize(

@@ -124,9 +124,17 @@ Tracking and launching
 -----------------------
 
 Online W&B is required by default; initialization failure stops all ranks. The
-project defaults to ``neio-transfer`` and the authenticated entity. Every eight
-updates log each GPU's workload, sample time, gradient proxy, rejected updates,
-node/force-evaluation counts and elapsed time. Every 32 updates save an atomic
+project defaults to ``neio-transfer`` and the authenticated entity. The primary
+curves measure before/after objective-gradient norm ratios on five fixed validation
+states, starting at update zero, plus worst geometric errors and failure fraction.
+A ratio below one means the solver reduced the residual; it does not prove minimum
+energy. The port supplies energy gradients but no scalar energy evaluator, so no
+gradient diagnostic is labeled loss. Training residual ratios are separated by
+workload and GPU, because raw magnitudes from different physics cannot be compared.
+Evaluation publishes physical error, reference distance, failure and timing curves
+against sweep count directly to W&B, alongside the detailed JSON artifact.
+
+Workload names, sample times and accounting remain in the raw logs. Every 32 updates save an atomic
 checkpoint; at validation (256 updates) and completion upload latest/best model
 artifacts with provenance and logs. Checkpoints preserve W&B identity for resume.
 Full training banks and evaluation reports are also artifacts. Offline mode is
