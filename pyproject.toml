@@ -440,7 +440,7 @@ override-dependencies = [
     "numpy>=2",
     "mujoco~=3.17.0",
     "mujoco-warp~=3.17.0",
-    "newton[sim] @ git+https://github.com/skild-ai/newton.git@43fef19d1ab8dba7c7453328552cf2e02f4a69be ; extra != 'optix'",
+    "newton[sim] @ git+https://github.com/skild-ai/newton.git@43fef19d1ab8dba7c7453328552cf2e02f4a69be",
     "newton[sim,optix] @ git+https://github.com/skild-ai/newton.git@43fef19d1ab8dba7c7453328552cf2e02f4a69be ; extra == 'optix'",
     # Force the Newton-matched schemas over isaacsim's ==0.2.0 pin.
     "newton-usd-schemas>=0.5.0",
