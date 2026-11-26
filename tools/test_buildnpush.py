@@ -375,6 +375,7 @@ class BuildnpushTest(unittest.TestCase):
         self.assertIn('ENV ISAACLAB_UV_SYNC_ARGS="${IMAGE_EXTRAS} --no-install-package imageio-ffmpeg"', base)
         overlay = (bp.REPO_ROOT / "docker/Dockerfile.source-only").read_text()
         self.assertIn(f'ARG ISAACLAB_UV_SYNC_ARGS="{bp.BASE_UV_SYNC_EXTRAS}"', overlay)
+        self.assertIn('ENV ISAACLAB_UV_SYNC_ARGS="${ISAACLAB_UV_SYNC_ARGS}"', overlay)
         self.assertNotIn("${ISAACLAB_PATH}/.venv", overlay)
         kitless = (bp.REPO_ROOT / "docker/Dockerfile.kitless").read_text()
         self.assertIn(f'ENV ISAACLAB_UV_SYNC_ARGS="{bp.KITLESS_UV_SYNC_EXTRAS}"', kitless)

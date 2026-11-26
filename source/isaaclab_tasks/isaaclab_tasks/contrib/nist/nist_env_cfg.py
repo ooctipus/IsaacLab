@@ -5,7 +5,7 @@
 
 """NIST composition with reset-selectable assembly variants."""
 
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg, NewtonCollisionPipelineCfg
+from isaaclab_newton.physics import NewtonCfg, NewtonCollisionPipelineCfg, SteelSolverCfg
 
 from isaaclab.envs import ManagerBasedRLEnvCfg, ViewerCfg
 from isaaclab.envs.reset import ResetStateSamplerCfg
@@ -223,16 +223,13 @@ class NISTEnvCfg(ManagerBasedRLEnvCfg):
         # Keep enough constraint and contact capacity for all 20 variants (including gear meshes)
         # while avoiding over-allocation and static/kinematic-vs-kinematic SDF contact overhead.
         self.sim.physics = NewtonCfg(
-            solver_cfg=MJWarpSolverCfg(
-                solver="newton",
-                integrator="implicitfast",
-                njmax=1024,
-                nconmax=256,
-                impratio=1.0,
-                cone="pyramidal",
-                update_data_interval=2,
-                ls_parallel=False,
-                use_mujoco_contacts=False,
+            solver_cfg=SteelSolverCfg(
+                contact_gap_gate=0.0,
+                free_body_constraint_max=1280,
+                enable_joint_limits=True,
+                iterations=12,
+                baumgarte=0.2,
+                free_rigid_rolling_friction=0.001,
             ),
             collision_cfg=NewtonCollisionPipelineCfg(
                 broad_phase="sap",

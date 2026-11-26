@@ -49,7 +49,7 @@ EXTRA_SYMLINKS = [Path("dep"), Path("dep/rsl_rl")]
 # ``test_uv_sync_extras_match_the_dockerfiles`` fails if the two drift apart.
 BASE_UV_SYNC_EXTRAS = (
     "--extra sb3 --extra skrl --extra rl-games --extra rsl-rl --extra viser --extra rerun --extra mimic"
-    " --extra teleop --extra test --extra tetrahedralization --extra ov"
+    " --extra teleop --extra test --extra tetrahedralization --extra ov --extra fovi --extra newton-neural"
     " --extra wandb --no-install-package imageio-ffmpeg"
 )
 KITLESS_UV_SYNC_EXTRAS = "--extra all --extra importers --extra test --extra wandb"

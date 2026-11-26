@@ -238,8 +238,8 @@ class NewtonCollisionPipelineCfg:
     Defaults to ``None`` (auto-compute, same as Newton's default).
     """
 
-    soft_contact_margin: float = 0.01
-    """Margin [m] for soft contact generation.
+    soft_contact_gap: float = 0.01
+    """Gap [m] for soft contact generation.
 
     Defaults to ``0.01`` (same as Newton's default).
     """
