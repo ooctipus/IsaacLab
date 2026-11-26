@@ -140,6 +140,16 @@ def test_bank_requires_physical_interactions_and_supports_learning(tmp_path, nam
     wp.init()
     with wp.ScopedDevice(DEVICE):
         scene = make_scene(case, 101, DEVICE)
+        if name == "franka_payload_train":
+            # With drives at their rest targets and gravity disabled, the arm
+            # must not try to correct a fictitious rest-pose joint error.
+            gravity = wp.clone(scene.model.gravity)
+            scene.model.gravity.fill_(wp.vec3(0))
+            rest_in, rest_out = scene.model.state(), scene.model.state()
+            rest_solver = make_solver(scene, "shared", 1, new_network(DEVICE))
+            rest_solver.step(rest_in, rest_out, scene.model.control(), None, scene.dt)
+            assert float(rest_solver.rigid_optimizer._gradient.norm()) < 1
+            wp.copy(scene.model.gravity, gravity)
         states = reference_states(scene, round(duration / scene.dt), max(1, round(1 / (30 * scene.dt))), tmp_path)
         if family == "cloth":
             assert scene.evidence["self_contact_observed"]
@@ -249,6 +259,23 @@ def test_residual_loss_gradient_matches_weight_finite_difference(family):
         numerical = (high - low) / (2 * eps)
         assert analytical == pytest.approx(numerical, rel=0.03, abs=1e-3)
         assert abs(numerical) > 1e-9
+        if family == "particle":
+            # The same physical motion expressed in meters or centimeters must
+            # produce the same updates AND training gradients through history.
+            positions, gradients = [], []
+            for unit in (1.0, 0.01):
+                model.gravity.fill_(wp.vec3(1 / unit, 2 / unit, -9.81 / unit))
+                net.zero_grad(set_to_none=True)
+                a, b = model.state(), model.state()
+                solver = StudySolver(
+                    model, net, iterations=4, learn=True, length_unit_m=unit, initialization="inertia-velocity-only"
+                )
+                solver.step(a, b, model.control(), None, dt)
+                positions.append(wp.to_torch(b.particle_q).clone() * unit)
+                gradients.append(torch.cat([p.grad.flatten() for p in net.parameters()]))
+            torch.testing.assert_close(positions[0], positions[1], rtol=1e-3, atol=1e-7)
+            torch.testing.assert_close(gradients[0], gradients[1], rtol=0.03, atol=1e-4)
+            model.gravity.fill_(wp.vec3(1, 2, -9.81))
         # A saturated scale controller at a larger evaluation sweep budget must
         # not turn a bounded displacement into an exponentially growing one.
         with torch.no_grad():

@@ -98,8 +98,11 @@ class SharedOptimizer(NeIODeformable):
 
     def iterate(self, data, clear_history):
         with torch.set_grad_enabled(self.learn):
+            unit = self.solver.length_unit_m
             if self.kind == "particle":
-                result = super().iterate(data, clear_history)
+                # The learned scale and stored updates are in meters, including
+                # native examples whose simulation coordinates are centimeters.
+                result = super().iterate(data, clear_history) / unit
                 self.before_displacement = wp.to_torch(self.solver.particle_displacements).clone().detach()
             else:
                 if clear_history:
@@ -124,8 +127,8 @@ class SharedOptimizer(NeIODeformable):
                 local = local.reshape(-1, 2, 3)
                 result = torch.cat(
                     (
-                        quat_rotate(self.rotation, local[:, 0]),
-                        quat_rotate(self.rotation, local[:, 1] / self.length[:, None]),
+                        quat_rotate(self.rotation, local[:, 0] / unit),
+                        quat_rotate(self.rotation, local[:, 1] / (self.length[:, None] * unit)),
                     ),
                     -1,
                 )
@@ -140,13 +143,14 @@ class SharedOptimizer(NeIODeformable):
 
     def commit(self, applied):
         with torch.no_grad():
+            unit = self.solver.length_unit_m
             if self.kind == "particle":
-                super().commit(applied)
+                super().commit(applied * unit)
             else:
                 local = torch.stack(
                     (
-                        quat_rotate_inv(self.rotation, applied[:, :3]),
-                        quat_rotate_inv(self.rotation, applied[:, 3:]) * self.length[:, None],
+                        quat_rotate_inv(self.rotation, applied[:, :3]) * unit,
+                        quat_rotate_inv(self.rotation, applied[:, 3:]) * self.length[:, None] * unit,
                     ),
                     1,
                 )
@@ -156,10 +160,11 @@ class SharedOptimizer(NeIODeformable):
 class StudySolver(SolverNeIO):
     """Retain Newton's step lifecycle; train only the update graph at each iteration."""
 
-    def __init__(self, model, network, *, learn=False, history="clear", **kwargs):
+    def __init__(self, model, network, *, learn=False, history="clear", length_unit_m=1.0, **kwargs):
         if kwargs.get("rigid_soft_enable_dat"):
             raise ValueError("The training bridge does not support rigid-soft DAT")
         self.learn = learn
+        self.length_unit_m = length_unit_m
         self.failed_updates = 0
         self.residuals = []
         self.losses = []
@@ -211,7 +216,7 @@ class StudySolver(SolverNeIO):
         # supply that Hessian-vector product without differentiating collisions.
         # All poses, forces and contacts return to the actual post-update state.
         peak = max(float(v.abs().max()) for v in vectors)
-        epsilon = 1e-5 / max(peak, 1e-20)
+        epsilon = 1e-5 / self.length_unit_m / max(peak, 1e-20)
         particle, body = self.particle_optimizer, self.rigid_optimizer
         particle_q = wp.to_torch(state_in.particle_q).clone() if particle is not None else None
         body_q = wp.to_torch(state_in.body_q).clone() if body is not None else None

@@ -35,7 +35,8 @@ the scene uses its buffers; discarding it invalidates subsequent GPU execution.
   and reversed twisting.
 * Cloth rollers: the original rolled cloth and two rotating rollers, 8 seconds.
   Preserve its centimetre simulation units; ``length_unit_m=0.01`` records the
-  conversion for presentation and geometric thresholds.
+  conversion for presentation, geometric thresholds, and learned updates. The
+  shared network's step scale and displacement history are always in meters.
 * Cable plectoneme: 80 segments, 2-second settling, 8-second counter-twist and
   3-second hold. Require out-of-plane buckling and non-neighbour self-contact.
 * Cable pile: 100 cables with 40 segments each, 6 seconds of falling, entangling
@@ -60,6 +61,10 @@ the scene uses its buffers; discarding it invalidates subsequent GPU execution.
   run for eight seconds and must exercise at least six revolute joints by 0.1 rad;
   the quadruped must also spend at least half its samples in ground contact.
   MJWarp generates both robot banks; require joint-anchor separation below 5 mm.
+  Apply forward kinematics to the model's rest body poses before constructing
+  any solver: VBD/NeIO's rest-relative joint rotation and absolute rest-angle
+  offset must refer to the same configuration. Updating only a runtime state
+  leaves spurious drive/limit torques in the objective.
   NeIO and VBD still solve the same held-out states during evaluation. The initial
   VBD robot generator was rejected because its loaded arm separated joint anchors
   by about 10 cm; valid joint geometry cannot be inferred from finite coordinates.
@@ -101,7 +106,8 @@ sampled external command held fixed. Intermediate positions and velocities come
 from the model, so training includes its own accumulated errors. Optimizer memory
 resets at each timestep in both training and evaluation; it persists across the
 sweeps within that timestep. The recurrent step scale is bounded between 1e-10
-and 1e-2 in the shared vector coordinates in both modes.
+and 1e-2 meters in the shared vector coordinates in both modes; rotational
+vectors use the body's radius of gyration to convert angles to lengths.
 
 The experimental trainer minimizes ``log(1 + ||g_after||² / ||g_before||²)`` per
 sweep and world, with a 1e-12 floor on the denominator. Rigid torques are divided

@@ -574,6 +574,10 @@ def make_scene(case, seed, device="cuda:0", worlds=1):
         b.end_world()
     b.color()
     model = b.finalize(device=device)
+    if joint_amplitude is not None:
+        # VBD/NeIO measure joint rotations relative to model.body_q and add the
+        # rest angles in model.joint_q. Both must describe the authored pose.
+        newton.eval_fk(model, model.joint_q, model.joint_qd, model)
     model.soft_contact_ke, model.soft_contact_kd, model.soft_contact_mu = 1e3 * scale, 0, cfg.mu
     options = dict(particle_enable_self_contact=bool(case.get("self_contact", False)))
     if options["particle_enable_self_contact"]:

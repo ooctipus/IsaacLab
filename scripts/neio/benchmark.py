@@ -19,7 +19,15 @@ from optimizer import StudySolver
 def make_solver(scene, name, sweeps, network=None, history="clear", learn=False):
     model = scene.model
     if name == "shared":
-        solver = StudySolver(model, network, iterations=sweeps, history=history, learn=learn, **scene.options)
+        solver = StudySolver(
+            model,
+            network,
+            iterations=sweeps,
+            history=history,
+            learn=learn,
+            length_unit_m=scene.case.get("length_unit_m", 1.0),
+            **scene.options,
+        )
     elif name == "supplied":
         root = Path(__file__).parent / "_source/experiments/neio-reference/checkpoints"
         options = {"history_at_step_start": history, "group_by": "world", "inference": "torch"}
