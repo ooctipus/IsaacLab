@@ -235,13 +235,14 @@ def probe(scene, solver, saved, time_seconds, repeats=3, capture=False):
     """Cold-start, identical input, eager execution. Diagnostic force passes are untimed."""
     model = scene.model
     a, b, control = model.state(), model.state(), model.control()
-    pipeline = newton.CollisionPipeline(model)
+    pipeline = newton.CollisionPipeline(model, contact_matching="latest")
     contacts = pipeline.contacts()
     timings = []
     for i in range(repeats + 1):
         restore(a, saved, control)
         restore(b, saved, control)
         solver.reset(a, flags=0)
+        pipeline.reset_contact_matching()
         scene.prepare(a, time_seconds, control, sampled=True)
         wp.synchronize_device(model.device)
         start = time.perf_counter()
@@ -250,6 +251,7 @@ def probe(scene, solver, saved, time_seconds, repeats=3, capture=False):
         wp.synchronize_device(model.device)
         if i:
             timings.append(1000 * (time.perf_counter() - start))
+    eager_state = snapshot(b)
     result = {
         "eager_substep_ms": float(np.median(timings)),
         "timing_repeats": repeats,
@@ -257,10 +259,10 @@ def probe(scene, solver, saved, time_seconds, repeats=3, capture=False):
         **metrics(scene, b, pipeline, contacts),
     }
     if capture:
-        eager_state = snapshot(b)
         restore(a, saved, control)
         restore(b, saved, control)
         solver.reset(a, flags=0)
+        pipeline.reset_contact_matching()
         scene.prepare(a, time_seconds, control, sampled=True)
         wp.synchronize_device(model.device)
         capture_start = time.perf_counter()
@@ -273,24 +275,27 @@ def probe(scene, solver, saved, time_seconds, repeats=3, capture=False):
             restore(a, saved, control)
             restore(b, saved, control)
             solver.reset(a, flags=0)
+            pipeline.reset_contact_matching()
             scene.prepare(a, time_seconds, control, sampled=True)
             wp.synchronize_device(model.device)
             start = time.perf_counter()
             wp.capture_launch(graph.graph)
             wp.synchronize_device(model.device)
             captured_ms.append(1000 * (time.perf_counter() - start))
-        result["captured_substep_ms"] = float(np.median(captured_ms))
         result["capture_parity"] = state_distance(eager_state, snapshot(b))
-        if not result["capture_parity"]["finite"] or any(
+        result["capture_parity_pass"] = result["capture_parity"]["finite"] and not any(
             value > (1e-3 if key.endswith("rad") else 1e-5)
             for key, value in result["capture_parity"].items()
             if key != "finite"
-        ):
-            raise RuntimeError(f"Captured step differs from eager step: {result['capture_parity']}")
+        )
+        # Preserve the independently measured eager solve. A capture mismatch
+        # invalidates accelerated timing and selects eager rollout execution.
+        result["captured_substep_ms"] = float(np.median(captured_ms)) if result["capture_parity_pass"] else None
     if isinstance(solver, SolverNeIO):
         restore(a, saved, control)
         restore(b, saved, control)
         solver.reset(a, flags=0)
+        pipeline.reset_contact_matching()
         scene.prepare(a, time_seconds, control, sampled=True)
         pipeline.collide(a, contacts)
         solver.record_convergence, solver.convergence_slot = True, 0
@@ -310,7 +315,7 @@ def probe(scene, solver, saved, time_seconds, repeats=3, capture=False):
         )
     elif isinstance(solver, newton.solvers.SolverMuJoCo):
         result["mjwarp_actual_iterations"] = solver.mjw_data.solver_niter.numpy().tolist()
-    return result, snapshot(b)
+    return result, eager_state
 
 
 def native_states(scene, output=None):
@@ -432,8 +437,10 @@ def reference_states(scene, steps, stride, output=None):
         b.assign(a)
     generator = scene.case.get("generator", "vbd")
     solver = make_solver(scene, generator, 100)
-    pipeline = newton.CollisionPipeline(model)
+    pipeline = newton.CollisionPipeline(model, contact_matching="latest")
     contacts = pipeline.contacts()
+    diagnostic_pipeline = newton.CollisionPipeline(model)
+    diagnostic_contacts = diagnostic_pipeline.contacts()
     saved = [(0.0, snapshot(a, control))]
     diagnostics, recorded_poses = [], [a.body_q.numpy()] if model.body_count else []
     graph = None
@@ -463,7 +470,7 @@ def reference_states(scene, steps, stride, output=None):
         if record:
             if applied_force is not None:
                 a.body_f.assign(applied_force)
-            check = metrics(scene, a, pipeline, contacts, contact_geometry=output is not None)
+            check = metrics(scene, a, diagnostic_pipeline, diagnostic_contacts, contact_geometry=output is not None)
             if not check["bounded"] or check.get("contact_overflow", False):
                 raise RuntimeError(f"Probe state generator failed at step {step + 1}: {check}")
             diagnostics.append({"time": (step + 1) * scene.dt, **check})
@@ -563,13 +570,16 @@ def reference_states(scene, steps, stride, output=None):
     return saved
 
 
-def rollout(scene, solver, steps):
+def rollout(scene, solver, steps, capture=True):
     if scene.native is not None:
         native = scene.native
         native.solver = solver
         if hasattr(native, "capture"):
             scene.retained_graphs.append(native.graph)
-            native.capture()
+            if capture:
+                native.capture()
+            else:
+                native.graph = None
         frames = int(np.ceil((scene.case["duration"] - native.sim_time) / native.frame_dt))
         pipeline = newton.CollisionPipeline(scene.model)
         contacts = pipeline.contacts()
@@ -608,12 +618,14 @@ def rollout(scene, solver, steps):
     if model.joint_count:
         newton.eval_fk(model, model.joint_q, model.joint_qd, a)
         b.assign(a)
-    pipeline = newton.CollisionPipeline(model)
+    pipeline = newton.CollisionPipeline(model, contact_matching="latest")
     contacts = pipeline.contacts()
+    diagnostic_pipeline = newton.CollisionPipeline(model)
+    diagnostic_contacts = diagnostic_pipeline.contacts()
     failures, peak, threshold_failures = None, {}, set()
     poses = [a.body_q.numpy()[0].copy()] if scene.case["family"] == "m12" else []
     graph = None
-    if scene.case["family"] == "m12" or scene.case.get("workload"):
+    if capture and (scene.case["family"] == "m12" or scene.case.get("workload")):
         initial = snapshot(a)
         scene.prepare(a, 0, control)
         pipeline.collide(a, contacts)
@@ -635,7 +647,7 @@ def rollout(scene, solver, steps):
             solver.step(a, b, control, contacts, scene.dt)
             a, b = b, a
         if step % 16 == 0 or step + 1 == steps:
-            values = metrics(scene, a, pipeline, contacts)
+            values = metrics(scene, a, diagnostic_pipeline, diagnostic_contacts)
             if not values["bounded"] or values.get("contact_overflow"):
                 failures = step
                 break

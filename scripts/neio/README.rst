@@ -95,11 +95,23 @@ kinematic particle rollers are also reconstructed as rigid transforms.
 
 Samples cover early motion and late difficult interactions. Save positions, velocities,
 external forces and controller arrays together. The native solver generates the
-state distribution; it supplies no target solution or supervised label. Reset
-optimizer history, hold the sampled command for one timestep, predict displacements,
-and reevaluate physics forces to differentiate the update. The training gradient
-is a declared first-order surrogate with detached collision topology/history, not
-full differentiation through a rollout. The recorded residual proxy is not energy.
+state distribution; it supplies no target solution or supervised label. Each sampled
+state starts eight consecutive timesteps driven by the learned solver, with the
+sampled external command held fixed. Intermediate positions and velocities come
+from the model, so training includes its own accumulated errors. Optimizer memory
+resets at each timestep in both training and evaluation; it persists across the
+sweeps within that timestep. The recurrent step scale is bounded between 1e-10
+and 1e-2 in the shared vector coordinates in both modes.
+
+The experimental trainer minimizes ``log(1 + ||g_after||² / ||g_before||²)`` per
+sweep and world, with a 1e-12 floor on the denominator. Rigid torques are divided
+by each body's radius of gyration before computing the residual. Two additional
+physics-force evaluations approximate the Hessian-vector product needed to
+differentiate this loss. Collision topology, planar truncation coefficients,
+history and preceding timesteps remain detached. This is an explicit residual
+objective, not the author's unavailable training recipe or a scalar energy loss.
+Training accounts for all four force evaluations per sweep; inference retains
+one force evaluation per sweep, plus separately recorded diagnostics.
 
 Cloth-only, deformables (cloth/cable/volume), and mixed (also rigid/articulated/
 rigid-soft/threaded) arms share architecture, initialization per seed, update budget
@@ -142,7 +154,11 @@ never silently omitted from comparisons.
 Fast evaluation uses five common states spanning each complete trajectory. Sweep
 NeIO at 1/2/4/8/16/32, VBD and MJWarp at 1/2/4/8/16/32/100. Record actual MJWarp
 iterations, cold-start residual reduction, geometric error, and both eager and
-captured substep time including collisions. Separately check references at 200/400
+captured substep time including collisions. A capture that disagrees with ordinary
+execution has no valid captured timing; its eager measurements remain available
+and its rollout uses eager execution. Contact matching is enabled for VBD history,
+and diagnostic collision passes use separate storage during rollouts and state-bank
+generation. Separately check references at 200/400
 iterations. VBD-100 is a comparison, not ground truth. Long evaluation replaces
 the native scene's solver instance and reuses its original controller over the
 full configured duration, at a bounded subset of sweep budgets.
@@ -164,15 +180,17 @@ project defaults to ``neio-transfer`` and the authenticated entity. The primary
 curves measure before/after objective-gradient norm ratios on five fixed validation
 states, starting at update zero, plus worst geometric errors and failure fraction.
 A ratio below one means the solver reduced the residual; it does not prove minimum
-energy. The port supplies energy gradients but no scalar energy evaluator, so no
-gradient diagnostic is labeled loss. Training residual ratios are separated by
+energy. ``train/loss`` is the explicit normalized residual objective above; about
+0.693 means no residual improvement on a sweep. Training residual ratios are separated by
 workload and GPU, because raw magnitudes from different physics cannot be compared.
 Evaluation publishes physical error, reference distance, failure and timing curves
 against sweep count directly to W&B, alongside the detailed JSON artifact.
 
 Workload names, sample times and accounting remain in the raw logs. Every 32 updates save an atomic
 checkpoint; at validation (256 updates) and completion upload latest/best model
-artifacts with provenance and logs. Checkpoints preserve W&B identity for resume.
+artifacts with provenance and logs. The untrained baseline participates in best
+checkpoint selection, and evaluation loads the best checkpoint and records its
+training step. Checkpoints preserve W&B identity for resume.
 Full training banks and evaluation reports are also artifacts. Offline mode is
 explicit and intended for local tests.
 

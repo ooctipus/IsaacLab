@@ -63,7 +63,7 @@ def start_tracking(args, study, metadata, output, previous=None):
     tracking.define_metric("validation/*", step_metric="validation/step")
     tracking.define_metric("eval/sweeps")
     tracking.define_metric("eval/*", step_metric="eval/sweeps")
-    tracking.summary["objective"] = "Physics energy gradient; scalar energy is not implemented by the supplied port"
+    tracking.summary["objective"] = study["training"].get("objective", "legacy_energy_gradient_surrogate")
     identity = {"id": tracking.id, "project": tracking.project, "entity": tracking.entity, "url": tracking.url}
     write_json(output / "wandb.json", identity)
     return tracking, identity
@@ -72,7 +72,9 @@ def start_tracking(args, study, metadata, output, previous=None):
 def log_checkpoint(tracking, output, step):
     """Snapshot checkpoint and its evidence together; W&B versions the immutable bundle."""
     artifact = wandb.Artifact(
-        f"neio-{tracking.id}", type="model", metadata={"step": step, "primary_weights": "latest.pt"}
+        f"neio-{tracking.id}",
+        type="model",
+        metadata={"step": step, "primary_weights": "best.pt" if (output / "best.pt").exists() else "latest.pt"},
     )
     for name in (
         "latest.pt",
@@ -91,6 +93,19 @@ def log_checkpoint(tracking, output, step):
     return tracking.log_artifact(artifact, aliases=["latest", f"step-{step}"])
 
 
+def log_training(tracking, row):
+    """Publish scalar learning curves; retain detailed sampling records in JSONL."""
+    tracking.log(
+        {f"train/{key}": value for key, value in row.items() if key != "rank_metrics"}
+        | {
+            f"train/{values['workload']}/rank_{index}/{key}": value
+            for index, values in enumerate(row.get("rank_metrics", []))
+            for key, value in values.items()
+            if key in ("particle_residual_ratio", "body_residual_ratio", "residual_loss", "rejected_updates")
+        }
+    )
+
+
 def upload_existing(args, output):
     """Retain the rejected pilots as explicitly labeled historical records, without rerunning physics."""
     metadata = json.loads((output / "provenance.json").read_text())
@@ -107,7 +122,7 @@ def upload_existing(args, output):
         for line in (output / "training.jsonl").read_text().splitlines():
             row = json.loads(line)
             if row["step"] > imported:
-                tracking.log({f"train/{key}": value for key, value in row.items()})
+                log_training(tracking, row)
                 tracking.summary["imported_through_step"] = row["step"]
         validation_path = output / "validation.json"
         if validation_path.exists():
@@ -167,7 +182,7 @@ def validate(network, study, device, sweeps, banks=None):
             scene = make_scene(case, study["seeds"]["validation"][0], device)
             banks[case["name"]] = scene, reference_states(scene, 16, 16)
         scene, states = banks[case["name"]]
-        solver = make_solver(scene, "shared", sweeps, network)
+        solver = make_solver(scene, "shared", sweeps, network, history=study["training"]["history_at_step_start"])
         for index in np.linspace(0, len(states) - 1, 5, dtype=int):
             t, saved = states[index]
             result, _ = probe(scene, solver, saved, t, repeats=1)
@@ -214,23 +229,24 @@ def log_validation(tracking, output, step, score, rows):
 def train(args, study, network, device, rank, ranks, output, metadata, tracking, checkpoint=None):
     config = study["training"]
     optimizer = torch.optim.AdamW(network.parameters(), lr=config["learning_rate"])
-    start_step, best, best_network = 0, float("inf"), None
+    start_step, best_step, best, best_network = 0, 0, float("inf"), None
     if checkpoint:
         network.load_state_dict(checkpoint["network"])
         optimizer.load_state_dict(checkpoint["optimizer"])
         start_step, best = checkpoint["step"], checkpoint["best"]
+        best_step = checkpoint["best_step"]
         best_network = checkpoint["best_network"]
         torch.set_rng_state(checkpoint["rng"][rank]["cpu"].cpu())
         torch.cuda.set_rng_state(checkpoint["rng"][rank]["cuda"].cpu(), device)
     families = study["arms"][args.arm]
     episode_steps = config["episode_steps"]
-    if start_step % episode_steps:
-        raise ValueError("Resume requires an episode-boundary checkpoint")
     begin = time.perf_counter()
     nodes, oracle_calls, rejected = 0, 0, 0
     banks, validation_banks = {}, {}
     if start_step == 0 and rank == 0:
         score, validation = validate(network, study, device, args.sweeps, validation_banks)
+        best = score
+        best_network = {k: v.detach().cpu().clone() for k, v in network.state_dict().items()}
         log_validation(tracking, output, 0, score, validation)
     for step in range(start_step, args.steps):
         within = step % episode_steps
@@ -245,7 +261,9 @@ def train(args, study, network, device, rank, ranks, output, metadata, tracking,
                 directory = output / "banks" / f"rank-{rank}" / case["name"]
                 count = int(np.ceil(case.get("duration", 96 * scene.dt) / scene.dt))
                 states = reference_states(scene, count, max(1, count // 96), directory)
-                solver = make_solver(scene, "shared", args.sweeps, network, history="clear", learn=True)
+                solver = make_solver(
+                    scene, "shared", args.sweeps, network, history=config["history_at_step_start"], learn=True
+                )
                 banks[case["name"]] = scene, states, solver
                 if rank == 0 and scene.evidence:
                     tracking.log(
@@ -258,17 +276,25 @@ def train(args, study, network, device, rank, ranks, output, metadata, tracking,
             scene, states, solver = banks[case["name"]]
             model = scene.model
             a, b, control = model.state(), model.state(), model.control()
-            pipeline = newton.CollisionPipeline(model)
+            pipeline = newton.CollisionPipeline(model, contact_matching="latest")
             contacts = pipeline.contacts()
-        rng = np.random.default_rng(args.seed + 1009 * step + 100000 * rank)
-        sample_time, saved = states[int(rng.integers(len(states)))]
-        restore(a, saved, control)
-        restore(b, saved, control)
-        solver.reset(a, flags=0)
-        scene.prepare(a, sample_time, control, sampled=True)
+        trajectory_step = within % config["trajectory_steps"]
+        if trajectory_step == 0:
+            rng = np.random.default_rng(args.seed + 1009 * step + 100000 * rank)
+            sample_time, saved = states[int(rng.integers(len(states)))]
+            restore(a, saved, control)
+            restore(b, saved, control)
+            solver.reset(a, flags=0)
+            pipeline.reset_contact_matching()
+        # Keep the sampled external command fixed over this short trajectory;
+        # positions and velocities after its first step are the model's own.
+        for name in saved.keys() & {"body_f", "particle_f"}:
+            getattr(a, name).assign(saved[name])
+        scene.prepare(a, sample_time + trajectory_step * scene.dt, control, sampled=True)
         pipeline.collide(a, contacts)
         optimizer.zero_grad(set_to_none=True)
         solver.residuals.clear()
+        solver.losses.clear()
         solver.record_convergence = (step + 1) % 8 == 0 or step + 1 == args.steps
         solver.convergence_slot = 0
         before = solver.failed_updates
@@ -276,8 +302,9 @@ def train(args, study, network, device, rank, ranks, output, metadata, tracking,
         bad = torch.tensor(int(solver.failed_updates > before), device=device)
         for parameter in network.parameters():
             if parameter.grad is None:
-                raise RuntimeError("A shared network parameter received no learning signal")
-            bad = torch.maximum(bad, (~torch.isfinite(parameter.grad).all()).int())
+                bad.fill_(1)
+            else:
+                bad = torch.maximum(bad, (~torch.isfinite(parameter.grad).all()).int())
         if ranks > 1:
             dist.all_reduce(bad, op=dist.ReduceOp.MAX)
         if not bool(bad):
@@ -292,7 +319,7 @@ def train(args, study, network, device, rank, ranks, output, metadata, tracking,
             grad_norm = None
         a, b = b, a
         nodes += model.particle_count + 2 * model.body_count
-        oracle_calls += 2 * args.sweeps + int(solver.record_convergence)
+        oracle_calls += 4 * args.sweeps + int(solver.record_convergence)
         if (step + 1) % 8 == 0 or step + 1 == args.steps:
             convergence = solver.convergence_buffer[0].tolist()
             local_metrics = {
@@ -301,7 +328,13 @@ def train(args, study, network, device, rank, ranks, output, metadata, tracking,
                 "sample_time_seconds": sample_time,
                 "bank_states": len(states),
                 "scene_seed": scene_seed,
-                "post_update_gradient_proxy": solver.residuals[-1] if np.isfinite(solver.residuals[-1]) else None,
+                "trajectory_step": trajectory_step,
+                "post_update_gradient_proxy": solver.residuals[-1]
+                if solver.residuals and np.isfinite(solver.residuals[-1])
+                else None,
+                "residual_loss": float(np.mean(solver.losses))
+                if solver.losses and np.isfinite(solver.losses).all()
+                else None,
                 "rejected_updates": rejected,
                 "processed_nodes": nodes,
                 "oracle_calls": oracle_calls,
@@ -317,6 +350,9 @@ def train(args, study, network, device, rank, ranks, output, metadata, tracking,
         if rank == 0 and ((step + 1) % 8 == 0 or step + 1 == args.steps):
             row = {
                 "step": step + 1,
+                "loss": float(np.mean([m["residual_loss"] for m in rank_metrics]))
+                if all(m["residual_loss"] is not None for m in rank_metrics)
+                else None,
                 "gradient_norm_before_clipping": grad_norm,
                 "elapsed_seconds": time.perf_counter() - begin,
                 "rank_metrics": rank_metrics,
@@ -324,15 +360,7 @@ def train(args, study, network, device, rank, ranks, output, metadata, tracking,
             with (output / "training.jsonl").open("a") as log:
                 log.write(json.dumps(row, allow_nan=False) + "\n")
             print(json.dumps(row), flush=True)
-            tracking.log(
-                {f"train/{key}": value for key, value in row.items() if key != "rank_metrics"}
-                | {
-                    f"train/{values['workload']}/rank_{index}/{key}": value
-                    for index, values in enumerate(rank_metrics)
-                    for key, value in values.items()
-                    if key in ("particle_residual_ratio", "body_residual_ratio", "rejected_updates")
-                }
-            )
+            log_training(tracking, row)
         if (step + 1) % episode_steps == 0 or step + 1 == args.steps:
             rng = {"cpu": torch.get_rng_state(), "cuda": torch.cuda.get_rng_state(device)}
             all_rng = [None] * ranks
@@ -347,6 +375,7 @@ def train(args, study, network, device, rank, ranks, output, metadata, tracking,
                     improved = score < best
                     best = min(best, score)
                     if improved:
+                        best_step = step + 1
                         best_network = {k: v.detach().cpu().clone() for k, v in network.state_dict().items()}
                     log_validation(tracking, output, step + 1, score, validation)
                 checkpoint = {
@@ -354,6 +383,7 @@ def train(args, study, network, device, rank, ranks, output, metadata, tracking,
                     "optimizer": optimizer.state_dict(),
                     "step": step + 1,
                     "best": best,
+                    "best_step": best_step,
                     "best_network": best_network,
                     "rng": all_rng,
                     "study": study,
@@ -364,14 +394,17 @@ def train(args, study, network, device, rank, ranks, output, metadata, tracking,
                 torch.save(checkpoint, output / "latest.pt.tmp")
                 (output / "latest.pt.tmp").replace(output / "latest.pt")
                 if best_network is not None:
-                    torch.save({"network": best_network, "score": best, "provenance": metadata}, output / "best.pt.tmp")
+                    torch.save(
+                        {"network": best_network, "score": best, "step": best_step, "provenance": metadata},
+                        output / "best.pt.tmp",
+                    )
                     (output / "best.pt.tmp").replace(output / "best.pt")
                 if (step + 1) % 256 == 0 or step + 1 == args.steps:
                     log_checkpoint(tracking, output, step + 1)
             if ranks > 1:
                 dist.barrier()
         if rejected > max(8, (step - start_step + 1) // 4):
-            raise RuntimeError("More than 25% of training updates are nonfinite; inspect the recorded failures")
+            raise RuntimeError("More than 25% of training updates have missing or nonfinite gradients")
 
     if rank == 0 and (output / "banks").exists():
         artifact = wandb.Artifact(f"training-states-{tracking.id}", type="dataset")
@@ -383,6 +416,7 @@ def evaluate(args, study, network, device, output, tracking):
     if args.checkpoint:
         checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=False)
         network.load_state_dict(checkpoint["network"])
+        tracking.summary["evaluation/checkpoint_step"] = checkpoint["step"]
     elif "shared" in args.solvers.split(","):
         raise ValueError("Shared model evaluation requires --checkpoint; random weights are not trained NeIO")
     rows = []
@@ -471,14 +505,16 @@ def evaluate(args, study, network, device, output, tracking):
                         )
                         if do_rollout:
                             rollout_scene = make_scene(case, seed, device)
-                            solver = make_solver(rollout_scene, name, sweeps, network, history="carry")
-                            row["carried_history_rollout"] = rollout(
-                                rollout_scene, solver, max(args.rollout_steps, count)
+                            history = study["training"]["history_at_step_start"] if name == "shared" else "carry"
+                            solver = make_solver(rollout_scene, name, sweeps, network, history=history)
+                            capture = not args.quick and all(p.get("capture_parity_pass", False) for p in row["probes"])
+                            row["rollout"] = rollout(
+                                rollout_scene, solver, max(args.rollout_steps, count), capture=capture
                             )
-                            row["physical_threshold_pass"] &= not bool(
-                                row["carried_history_rollout"]["physical_threshold_failures"]
-                            )
-                            if row["carried_history_rollout"]["failed_at_step"] is not None:
+                            row["rollout"]["history_at_step_start"] = history
+                            row["rollout"]["execution"] = "captured" if capture else "eager"
+                            row["physical_threshold_pass"] &= not bool(row["rollout"]["physical_threshold_failures"])
+                            if row["rollout"]["failed_at_step"] is not None:
                                 row["physical_threshold_pass"] = False
                                 row["status"] = "numerical_failure"
                     except NotImplementedError as error:
@@ -502,6 +538,8 @@ def log_evaluation(tracking, row):
         "physical_pass": float(row.get("physical_threshold_pass", False)),
     }
     probes = row.get("probes", [])
+    if probes:
+        values["capture_parity_pass"] = float(all(p.get("capture_parity_pass", False) for p in probes))
     for key in (
         "particle_residual_ratio",
         "body_residual_ratio",
@@ -524,7 +562,7 @@ def log_evaluation(tracking, row):
             ]
             if measured and all(np.isfinite(measured)):
                 values[f"distance_to_{reference}_400/{key}"] = float(max(measured))
-    trajectory = row.get("carried_history_rollout", {})
+    trajectory = row.get("rollout", {})
     values.update(
         {
             f"rollout/{key}": value
@@ -692,7 +730,7 @@ def main():
         elif args.mode == "train":
             train(args, study, network, device, rank, ranks, output, metadata, tracking, checkpoint)
             if args.eval_after and rank == 0:
-                args.checkpoint = str(output / "latest.pt")
+                args.checkpoint = str(output / "best.pt")
                 evaluate(args, study, network, device, output, tracking)
         elif rank == 0:
             evaluate(args, study, network, device, output, tracking)

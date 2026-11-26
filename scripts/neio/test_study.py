@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 import torch
 import warp as wp
@@ -110,7 +111,10 @@ def test_training_records_metrics_and_checkpoint_tracking_identity(tmp_path):
     assert [json.loads(line)["step"] for line in (tmp_path / "validation.jsonl").read_text().splitlines()] == [0, 32]
     assert len(validation["cases"]) == 5
     assert all(row["particle_residual_ratio"] is not None for row in validation["cases"])
-    assert rows[-1]["rank_metrics"][0]["oracle_calls"] == 68
+    assert rows[-1]["rank_metrics"][0]["oracle_calls"] == 132
+    assert all(np.isfinite(row["loss"]) for row in rows)
+    baseline = json.loads((tmp_path / "validation.jsonl").read_text().splitlines()[0])
+    assert checkpoint["best"] <= baseline["score"]
 
 
 @pytest.mark.parametrize(
@@ -190,12 +194,17 @@ def test_world_rotation_gradient_matches_independent_energy_derivative():
     torch.testing.assert_close(actual, expected, atol=1e-11, rtol=1e-10)
 
 
-def test_particle_force_to_weight_gradient_matches_energy_finite_difference():
+@pytest.mark.parametrize("family", ["particle", "rigid"])
+def test_residual_loss_gradient_matches_weight_finite_difference(family):
     wp.init()
     with wp.ScopedDevice(DEVICE):
         builder = newton.ModelBuilder(gravity=wp.vec3(0))
         builder.begin_world()
-        builder.add_particle(pos=wp.vec3(0), vel=wp.vec3(0), mass=1)
+        if family == "particle":
+            builder.add_particle(pos=wp.vec3(0), vel=wp.vec3(0), mass=1)
+        else:
+            body = builder.add_body()
+            builder.add_shape_box(body, hx=0.1, hy=0.1, hz=0.1)
         builder.end_world()
         builder.color()
         model = builder.finalize()
@@ -204,27 +213,51 @@ def test_particle_force_to_weight_gradient_matches_energy_finite_difference():
         parameter = net.direction_head[-1].bias
         original = float(parameter[0].detach())
         dt = 0.01
+        a, b = model.state(), model.state()
+        solver = StudySolver(model, net, iterations=4)
+        solver.step(a, b, model.control(), None, dt)
+        key = "particle_q" if family == "particle" else "body_q"
+        torch.testing.assert_close(wp.to_torch(getattr(b, key)), wp.to_torch(getattr(model, key)), atol=1e-8, rtol=0)
+        model.gravity.fill_(wp.vec3(1, 2, -9.81))
 
         def solve(value, learn):
             with torch.no_grad():
                 parameter[0] = value
             net.zero_grad()
             a, b, control = model.state(), model.state(), model.control()
-            solver = StudySolver(model, net, iterations=1, learn=learn)
+            solver = StudySolver(model, net, iterations=1, learn=learn, initialization="inertia-velocity-only")
+            solver.record_convergence = True
             solver.step(a, b, control, None, dt)
-            q = wp.to_torch(b.particle_q)
-            energy = float(0.5 * q.square().sum() / dt**2)
-            scale = float(solver.particle_optimizer.energy_scale[0, 0])
-            return energy, scale
+            if family == "particle":
+                squared_residual = wp.to_torch(solver.particle_forces).square().sum()
+            else:
+                length_squared = wp.to_torch(model.body_inertia).diagonal(dim1=-2, dim2=-1).sum(-1) / wp.to_torch(
+                    model.body_mass
+                )
+                squared_residual = (
+                    wp.to_torch(solver.body_forces).square().sum()
+                    + (wp.to_torch(solver.body_torques).square().sum(-1) / length_squared).sum()
+                )
+            initial = solver.convergence_buffer[0, 0 if family == "particle" else 2].square().clamp_min(1e-12)
+            return float(torch.log1p(squared_residual / initial))
 
-        _, scale = solve(original, True)
-        analytical = float(parameter.grad[0]) * scale
+        solve(original, True)
+        analytical = float(parameter.grad[0])
         eps = 0.002
-        high, _ = solve(original + eps, False)
-        low, _ = solve(original - eps, False)
+        high = solve(original + eps, False)
+        low = solve(original - eps, False)
         numerical = (high - low) / (2 * eps)
-        assert analytical == pytest.approx(numerical, rel=0.02, abs=1e-10)
+        assert analytical == pytest.approx(numerical, rel=0.03, abs=1e-3)
         assert abs(numerical) > 1e-9
+        # A saturated scale controller at a larger evaluation sweep budget must
+        # not turn a bounded displacement into an exponentially growing one.
+        with torch.no_grad():
+            net.scale_head[-1].bias.fill_(100)
+        a, b = model.state(), model.state()
+        solver = StudySolver(model, net, iterations=64, initialization="inertia-velocity-only")
+        solver.step(a, b, model.control(), None, dt)
+        positions = wp.to_torch(getattr(b, key))[..., :3]
+        assert torch.isfinite(positions).all() and positions.abs().max() < 1
 
 
 @pytest.mark.parametrize("family", ["cloth", "rigid", "articulation", "cable", "soft", "coupled"])

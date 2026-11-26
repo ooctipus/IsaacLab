@@ -41,8 +41,11 @@
     "sweeps": 4,
     "worlds": 1,
     "episode_steps": 32,
-    "learning_rate": 0.0001,
-    "sampling": "independent_native_trajectory_timesteps"
+    "learning_rate": 1e-05,
+    "sampling": "reference_starts_then_eight_model_timesteps",
+    "trajectory_steps": 8,
+    "history_at_step_start": "clear",
+    "objective": "log_normalized_gradient_residual_v1"
   },
   "sweeps": {
     "shared": [
