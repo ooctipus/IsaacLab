@@ -5,8 +5,10 @@
 import ast
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -49,6 +51,54 @@ def test_architecture_and_splits():
     for name, budgets in study["rollout_sweeps"].items():
         assert 1 <= len(budgets) <= 2, "Long rollouts must stay a bounded subset of the full probe matrix"
         assert set(budgets) <= set(study["sweeps"][name])
+
+
+def test_rejected_suite_cannot_launch_training():
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "run.py"), "--mode=train"],
+        env={**os.environ, "CUDA_VISIBLE_DEVICES": ""},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 2
+    assert "The pilot scene suite was rejected" in result.stderr
+
+
+def test_training_records_metrics_and_checkpoint_tracking_identity(tmp_path):
+    from run import start_tracking, train
+
+    study = json.loads((ROOT / "study.json").read_text())
+    args = SimpleNamespace(
+        arm="cloth",
+        seed=101,
+        worlds=1,
+        sweeps=1,
+        steps=32,
+        mode="train",
+        run_name="logging-verification",
+        wandb_project="neio-verification",
+        wandb_entity=None,
+        wandb_group=None,
+        wandb_mode="offline",
+    )
+    wp.init()
+    with wp.ScopedDevice(DEVICE):
+        torch.manual_seed(101)
+        network = new_network(DEVICE)
+        tracking, identity = start_tracking(args, study, {}, tmp_path)
+        try:
+            train(args, study, network, DEVICE, 0, 1, tmp_path, {"wandb": identity}, tracking)
+        finally:
+            tracking.finish()
+    checkpoint = torch.load(tmp_path / "latest.pt", map_location="cpu", weights_only=False)
+    assert checkpoint["step"] == 32
+    assert checkpoint["wandb"] == json.loads((tmp_path / "wandb.json").read_text())
+    rows = [json.loads(line) for line in (tmp_path / "training.jsonl").read_text().splitlines()]
+    assert [row["step"] for row in rows] == [8, 16, 24, 32]
+    assert len(rows[-1]["rank_metrics"]) == 1
+    assert rows[-1]["rank_metrics"][0]["processed_nodes"] > 0
+    assert rows[-1]["rank_metrics"][0]["oracle_calls"] == 64
 
 
 def test_world_rotation_gradient_matches_independent_energy_derivative():

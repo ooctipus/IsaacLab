@@ -21,6 +21,7 @@ import newton
 import numpy as np
 import torch
 import torch.distributed as dist
+import wandb
 import warp as wp
 from benchmark import make_solver, probe, reference_states, rollout, state_distance
 from optimizer import StudySolver, new_network
@@ -31,6 +32,84 @@ def write_json(path, data):
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(data, indent=2, allow_nan=False) + "\n")
     temporary.replace(path)
+
+
+def start_tracking(args, study, metadata, output, previous=None):
+    """Keep experiment identity with the checkpoint, including across cluster restarts."""
+    if previous and (
+        previous["project"] != args.wandb_project or (args.wandb_entity and previous["entity"] != args.wandb_entity)
+    ):
+        raise ValueError("Resume must use the checkpoint's W&B project and entity")
+    tracking = wandb.init(
+        project=args.wandb_project,
+        entity=previous["entity"] if previous else args.wandb_entity,
+        id=previous["id"] if previous else None,
+        resume="must" if previous else "never",
+        name=args.run_name,
+        group=args.wandb_group or f"neio-{args.arm}",
+        job_type=args.mode,
+        tags=["superseded-pilot", "backfill"] if args.mode == "upload" else ["learned-solver", args.arm],
+        config=None
+        if previous
+        else {"arguments": metadata.get("arguments", vars(args)), "study": study, "source": metadata},
+        mode=args.wandb_mode,
+        dir=str(output),
+        settings=wandb.Settings(init_timeout=60),
+    )
+    tracking.define_metric("train/step")
+    tracking.define_metric("train/*", step_metric="train/step")
+    tracking.define_metric("validation/step")
+    tracking.define_metric("validation/*", step_metric="validation/step")
+    identity = {"id": tracking.id, "project": tracking.project, "entity": tracking.entity, "url": tracking.url}
+    write_json(output / "wandb.json", identity)
+    return tracking, identity
+
+
+def log_checkpoint(tracking, output, step):
+    """Snapshot checkpoint and its evidence together; W&B versions the immutable bundle."""
+    artifact = wandb.Artifact(
+        f"neio-{tracking.id}", type="model", metadata={"step": step, "primary_weights": "latest.pt"}
+    )
+    for name in ("latest.pt", "best.pt", "training.jsonl", "validation.json", "provenance.json", "wandb.json"):
+        path = output / name
+        if path.exists():
+            artifact.add_file(str(path), name=name)
+    if "latest.pt" not in artifact.manifest.entries:
+        raise ValueError("Cannot log a model artifact without latest.pt")
+    return tracking.log_artifact(artifact, aliases=["latest", f"step-{step}"])
+
+
+def upload_existing(args, output):
+    """Retain the rejected pilots as explicitly labeled historical records, without rerunning physics."""
+    metadata = json.loads((output / "provenance.json").read_text())
+    checkpoint = torch.load(output / "latest.pt", map_location="cpu", weights_only=False)
+    args.arm, args.seed = metadata["arguments"]["arm"], metadata["arguments"]["seed"]
+    identity_path = output / "wandb.json"
+    previous = json.loads(identity_path.read_text()) if identity_path.exists() else None
+    tracking, _ = start_tracking(args, metadata["study"], metadata, output, previous)
+    try:
+        tracking.summary["scientific_status"] = "Superseded pilot; insufficient physical scene coverage"
+        tracking.summary["original_workflow_status"] = "FAILED_CANCELED"
+        tracking.summary["checkpoint_step"] = checkpoint["step"]
+        imported = tracking.summary.get("imported_through_step", 0)
+        for line in (output / "training.jsonl").read_text().splitlines():
+            row = json.loads(line)
+            if row["step"] > imported:
+                tracking.log({f"train/{key}": value for key, value in row.items()})
+                tracking.summary["imported_through_step"] = row["step"]
+        validation_path = output / "validation.json"
+        if validation_path.exists():
+            validation = json.loads(validation_path.read_text())
+            tracking.log(
+                {"validation/step": validation["step"], "validation/cloth_selection_score": validation["score"]}
+            )
+        artifact = log_checkpoint(tracking, output, checkpoint["step"])
+        artifact.wait()
+        tracking.summary["checkpoint_artifact"] = artifact.qualified_name
+    except BaseException:
+        tracking.finish(exit_code=1)
+        raise
+    tracking.finish()
 
 
 def source_provenance():
@@ -77,18 +156,11 @@ def validate(network, study, device, sweeps):
     return float(np.mean(scores)), rows
 
 
-def train(args, study, network, device, rank, ranks, output, metadata):
+def train(args, study, network, device, rank, ranks, output, metadata, tracking, checkpoint=None):
     config = study["training"]
     optimizer = torch.optim.AdamW(network.parameters(), lr=config["learning_rate"])
     start_step, best, best_network = 0, float("inf"), None
-    if args.resume:
-        checkpoint = torch.load(args.resume, map_location=device, weights_only=False)
-        for key in ("arm", "seed", "worlds", "sweeps", "ranks"):
-            current = ranks if key == "ranks" else getattr(args, key)
-            if checkpoint["configuration"][key] != current:
-                raise ValueError(f"Resume changes {key}; start a new run instead")
-        if checkpoint["study"] != study or checkpoint["provenance"]["source"] != metadata["source"]:
-            raise ValueError("Resume changes the study or source revision")
+    if checkpoint:
         network.load_state_dict(checkpoint["network"])
         optimizer.load_state_dict(checkpoint["optimizer"])
         start_step, best = checkpoint["step"], checkpoint["best"]
@@ -149,21 +221,38 @@ def train(args, study, network, device, rank, ranks, output, metadata):
         a, b = b, a
         nodes += model.particle_count + 2 * model.body_count
         oracle_calls += 2 * args.sweeps
+        if (step + 1) % 8 == 0 or step + 1 == args.steps:
+            local_metrics = {
+                "family": family,
+                "scene_seed": scene_seed,
+                "post_update_gradient_proxy": solver.residuals[-1] if np.isfinite(solver.residuals[-1]) else None,
+                "rejected_updates": rejected,
+                "processed_nodes": nodes,
+                "oracle_calls": oracle_calls,
+            }
+            rank_metrics = [None] * ranks
+            if ranks > 1:
+                dist.all_gather_object(rank_metrics, local_metrics)
+            else:
+                rank_metrics = [local_metrics]
         if rank == 0 and ((step + 1) % 8 == 0 or step + 1 == args.steps):
             row = {
                 "step": step + 1,
-                "family": family,
-                "scene_seed": scene_seed,
                 "gradient_norm_before_clipping": grad_norm,
-                "post_update_gradient_proxy": solver.residuals[-1] if np.isfinite(solver.residuals[-1]) else None,
-                "rejected_updates_rank0": rejected,
-                "processed_nodes_rank0": nodes,
-                "oracle_calls_rank0": oracle_calls,
                 "elapsed_seconds": time.perf_counter() - begin,
+                "rank_metrics": rank_metrics,
             }
             with (output / "training.jsonl").open("a") as log:
                 log.write(json.dumps(row, allow_nan=False) + "\n")
             print(json.dumps(row), flush=True)
+            tracking.log(
+                {f"train/{key}": value for key, value in row.items() if key != "rank_metrics"}
+                | {
+                    f"train/rank_{index}/{key}": value
+                    for index, values in enumerate(rank_metrics)
+                    for key, value in values.items()
+                }
+            )
         if (step + 1) % episode_steps == 0 or step + 1 == args.steps:
             rng = {"cpu": torch.get_rng_state(), "cuda": torch.cuda.get_rng_state(device)}
             all_rng = [None] * ranks
@@ -180,6 +269,10 @@ def train(args, study, network, device, rank, ranks, output, metadata):
                     if improved:
                         best_network = {k: v.detach().cpu().clone() for k, v in network.state_dict().items()}
                     write_json(output / "validation.json", {"step": step + 1, "score": score, "cases": validation})
+                    tracking.log(
+                        {"validation/step": step + 1, "validation/cloth_selection_score": score}
+                        | {f"validation/{row['case']}/score": row["score"] for row in validation}
+                    )
                 checkpoint = {
                     "network": network.state_dict(),
                     "optimizer": optimizer.state_dict(),
@@ -190,12 +283,15 @@ def train(args, study, network, device, rank, ranks, output, metadata):
                     "study": study,
                     "configuration": {**vars(args), "ranks": ranks},
                     "provenance": metadata,
+                    "wandb": metadata["wandb"],
                 }
                 torch.save(checkpoint, output / "latest.pt.tmp")
                 (output / "latest.pt.tmp").replace(output / "latest.pt")
                 if best_network is not None:
                     torch.save({"network": best_network, "score": best, "provenance": metadata}, output / "best.pt.tmp")
                     (output / "best.pt.tmp").replace(output / "best.pt")
+                if (step + 1) % 256 == 0 or step + 1 == args.steps:
+                    log_checkpoint(tracking, output, step + 1)
             if ranks > 1:
                 dist.barrier()
         if rejected > max(8, (step - start_step + 1) // 4):
@@ -311,7 +407,7 @@ def evaluate(args, study, network, device, output):
 def main():
     study = json.loads((ROOT / "study.json").read_text())
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mode", choices=("preflight", "train", "eval"), default="preflight")
+    parser.add_argument("--mode", choices=("preflight", "train", "eval", "upload"), default="preflight")
     parser.add_argument("--arm", choices=tuple(study["arms"]), default="cloth")
     parser.add_argument("--seed", type=int, default=101)
     parser.add_argument("--steps", type=int, default=study["training"]["steps"])
@@ -333,7 +429,15 @@ def main():
     parser.add_argument("--rollout-steps", type=int, default=0)
     parser.add_argument("--quick", action="store_true")
     parser.add_argument("--eval-after", action="store_true")
+    parser.add_argument("--wandb-project", default=os.environ.get("WANDB_PROJECT", "neio-transfer"))
+    parser.add_argument("--wandb-entity", default=os.environ.get("WANDB_ENTITY"))
+    parser.add_argument("--wandb-group")
+    parser.add_argument("--wandb-mode", choices=("online", "offline"), default="online")
     args = parser.parse_args()
+    if args.mode in ("train", "eval") and study["status"] != "validated":
+        parser.error(
+            "The pilot scene suite was rejected. Verify replacement workloads before launching training or evaluation."
+        )
     args.solvers = args.solvers.strip("[]")
     args.cases = args.cases.strip("[]") if args.cases else None
     if set(args.solvers.split(",")) - set(study["sweeps"]):
@@ -345,6 +449,12 @@ def main():
     if args.mode == "train" and args.seed not in study["seeds"]["train"]:
         parser.error("Training must use a registered training seed")
     rank, ranks = int(os.environ.get("RANK", 0)), int(os.environ.get("WORLD_SIZE", 1))
+    output = Path(args.output) / args.run_name
+    if args.mode == "upload":
+        if ranks != 1:
+            parser.error("Upload existing logs once, without a distributed launcher")
+        upload_existing(args, output)
+        return
     device = f"cuda:{os.environ['LOCAL_RANK']}" if ranks > 1 else args.device
     torch.cuda.set_device(device)
     torch.set_num_threads(max(1, int(os.environ.get("OMP_NUM_THREADS", "2"))))
@@ -353,14 +463,11 @@ def main():
     torch.manual_seed(args.seed)
     if ranks > 1:
         dist.init_process_group("nccl", device_id=torch.device(device))
-    output = Path(args.output) / args.run_name
     if args.mode == "train" and (output / "latest.pt").exists() and not args.resume:
         raise ValueError("The run already has a checkpoint; choose a new run name or resume it")
     output.mkdir(parents=True, exist_ok=True)
     metadata = source_provenance()
     metadata.update(image_digest=args.image_digest, git_revision=args.git_revision)
-    if rank == 0:
-        write_json(output / "provenance.json", {**metadata, "arguments": vars(args), "study": study})
     if args.mode == "preflight":
         result = subprocess.run(
             [sys.executable, "-m", "pytest", "--noconftest", str(ROOT / "test_study.py"), "-q"],
@@ -369,15 +476,53 @@ def main():
         )
         raise SystemExit(result.returncode)
     network = new_network(device)
-    if args.mode == "train":
-        train(args, study, network, device, rank, ranks, output, metadata)
-        if args.eval_after and rank == 0:
-            args.checkpoint = str(output / "latest.pt")
-            evaluate(args, study, network, device, output)
-    elif rank == 0:
-        evaluate(args, study, network, device, output)
+    checkpoint = torch.load(args.resume, map_location=device, weights_only=False) if args.resume else None
+    if checkpoint:
+        for key in ("arm", "seed", "worlds", "sweeps", "ranks"):
+            current = ranks if key == "ranks" else getattr(args, key)
+            if checkpoint["configuration"][key] != current:
+                raise ValueError(f"Resume changes {key}; start a new run instead")
+        if checkpoint["study"] != study or checkpoint["provenance"]["source"] != metadata["source"]:
+            raise ValueError("Resume changes the study or source revision")
+        if checkpoint["step"] % study["training"]["episode_steps"]:
+            raise ValueError("Resume requires an episode-boundary checkpoint")
+    tracking, started = None, [None]
+    if rank == 0:
+        try:
+            tracking, identity = start_tracking(
+                args, study, metadata, output, checkpoint.get("wandb") if checkpoint else None
+            )
+            started[0] = {"identity": identity}
+        except Exception as error:
+            started[0] = {"error": f"W&B initialization failed: {error}"}
     if ranks > 1:
-        dist.destroy_process_group()
+        dist.broadcast_object_list(started)
+    if "error" in started[0]:
+        if ranks > 1:
+            dist.destroy_process_group()
+        raise RuntimeError(started[0]["error"])
+    metadata["wandb"] = started[0]["identity"]
+    if rank == 0:
+        write_json(output / "provenance.json", {**metadata, "arguments": vars(args), "study": study})
+    exit_code = 1
+    try:
+        if args.mode == "train":
+            train(args, study, network, device, rank, ranks, output, metadata, tracking, checkpoint)
+            if args.eval_after and rank == 0:
+                args.checkpoint = str(output / "latest.pt")
+                evaluate(args, study, network, device, output)
+        elif rank == 0:
+            evaluate(args, study, network, device, output)
+        exit_code = 0
+    finally:
+        if tracking:
+            if (output / "evaluation.json").exists():
+                artifact = wandb.Artifact(f"evaluation-{tracking.id}", type="evaluation")
+                artifact.add_file(str(output / "evaluation.json"), name="evaluation.json")
+                tracking.log_artifact(artifact)
+            tracking.finish(exit_code=exit_code)
+        if ranks > 1:
+            dist.destroy_process_group()
 
 
 if __name__ == "__main__":

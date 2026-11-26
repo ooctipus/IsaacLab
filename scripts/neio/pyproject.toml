@@ -13,6 +13,7 @@ dependencies = [
     "usd-core==26.8",
     "trimesh==5.2.2",
     "pytest==9.2.0",
+    "wandb==0.26.1",
 ]
 
 [tool.uv]

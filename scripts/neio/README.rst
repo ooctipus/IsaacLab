@@ -4,6 +4,13 @@ NeIO transfer and convergence study
 Status and hypotheses
 ---------------------
 
+The current scene matrix is a **superseded diagnostic pilot**, rejected because
+its small scenes and 32-step episodes do not establish demanding physical
+interactions. Training and evaluation launches are disabled until the replacement
+workloads are verified. The nine cluster pilots were cancelled after recovering
+their checkpoints and logs. Their results must not support transfer or convergence
+claims. Keep the small fixtures only for implementation checks.
+
 The paper and original trainer are not available. The cloth-only transfer and
 one/few-sweep performance claims were communicated verbally to the user. This
 study tests those hypotheses; it is not an exact reproduction of the unpublished
@@ -91,6 +98,38 @@ collision truncation. Verify the force-to-weight gradient numerically before
 launching training. Do not label a gradient dot-product surrogate as a measured
 energy. Report gradient residuals and physical errors when a matching scalar
 energy evaluator is unavailable.
+
+Experiment tracking
+-------------------
+
+W&B logging is owned by ``run.py``. Online logging is the default; a failed W&B
+initialization stops all ranks before training. Configure ``--wandb-project``
+(default ``neio-transfer``), ``--wandb-entity`` (the authenticated account's default),
+and optionally ``--wandb-group``. Explicit ``--wandb-mode=offline`` is available
+for local verification; it does not upload results.
+
+Every eight parameter updates, log the training step, parameter-gradient norm,
+elapsed time, and each rank's scene family, seed, post-update gradient proxy,
+processed nodes, force evaluations and rejected updates. The proxy is not a scalar
+energy loss and is not directly comparable across different physical objectives.
+Validation scores have their own step axis. A single rank owns the W&B run.
+
+At every validation point (256 updates) and at the final update, upload a versioned
+model artifact containing ``latest.pt``, ``best.pt`` when available, metrics,
+validation results and provenance. ``latest`` and ``step-N`` aliases identify the
+bundle; ``latest.pt`` remains the primary model for equal-budget comparisons.
+Checkpoints carry the W&B run identity so an explicit resume continues the same
+run rather than silently creating another. Evaluation JSON is also uploaded.
+
+Recovered pilot logs can be uploaded without a GPU or further simulation::
+
+    uv run --project scripts/neio scripts/neio/run.py --mode=upload \
+      --output=logs/neio/cluster/correction-15167/output \
+      --run_name=neio-ablation,101,cloth --wandb-group=superseded-toy-pilots
+
+This backfill marks the run as a cancelled, superseded pilot and preserves the
+original step numbers, checkpoint and source provenance. It is an archival import,
+not a new training run.
 
 Evaluation
 ----------
