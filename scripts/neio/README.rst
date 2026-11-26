@@ -185,6 +185,8 @@ energy. ``train/loss`` is the explicit normalized residual objective above; abou
 workload and GPU, because raw magnitudes from different physics cannot be compared.
 Evaluation publishes physical error, reference distance, failure and timing curves
 against sweep count directly to W&B, alongside the detailed JSON artifact.
+Single-timestep physical passes and full-rollout failures have separate curves.
+Captured timing is omitted for an entire comparison if any probe fails capture parity.
 
 Workload names, sample times and accounting remain in the raw logs. Every 32 updates save an atomic
 checkpoint; at validation (256 updates) and completion upload latest/best model

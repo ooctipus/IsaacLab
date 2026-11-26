@@ -503,6 +503,7 @@ def evaluate(args, study, network, device, output, tracking):
                             r["bounded"] and not r.get("contact_overflow") and not r.get("physical_threshold_failures")
                             for r in row["probes"]
                         )
+                        row["probe_physical_threshold_pass"] = row["physical_threshold_pass"]
                         if do_rollout:
                             rollout_scene = make_scene(case, seed, device)
                             history = study["training"]["history_at_step_start"] if name == "shared" else "carry"
@@ -535,7 +536,7 @@ def log_evaluation(tracking, row):
         return
     values = {
         "failure": float(row["status"] != "complete"),
-        "physical_pass": float(row.get("physical_threshold_pass", False)),
+        "probe_physical_pass": float(row.get("probe_physical_threshold_pass", False)),
     }
     probes = row.get("probes", [])
     if probes:
@@ -550,6 +551,8 @@ def log_evaluation(tracking, row):
         "joint_anchor_gap_m",
         "max_edge_strain",
     ):
+        if key == "captured_substep_ms" and not all(p.get("capture_parity_pass", False) for p in probes):
+            continue
         measured = [p[key] for p in probes if p.get(key) is not None and np.isfinite(p[key])]
         if measured:
             values[key] = float(np.mean(measured) if key.endswith(("_ms", "_ratio")) else max(measured))
