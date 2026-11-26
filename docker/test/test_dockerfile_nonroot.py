@@ -81,7 +81,10 @@ def test_kitless_dockerfile_installs_newton_rl_ov_and_visualizers_without_isaac_
     with (REPO_ROOT / "pyproject.toml").open("rb") as file:
         extras = tomllib.load(file)["project"]["optional-dependencies"]
 
-    assert "uv sync --frozen --inexact --extra all --extra importers" in dockerfile_text
+    image_extras = re.search(r'^ARG IMAGE_EXTRAS="([^\"]+)"$', dockerfile_text, re.MULTILINE)
+    assert image_extras is not None
+    assert {"all", "importers", "test", "wandb"} <= set(image_extras.group(1).split())
+    assert "uv sync --frozen --inexact ${IMAGE_EXTRAS}" in dockerfile_text
     assert "importers" in extras
     # ``all`` must not drag in the Isaac Sim runtime, or the kit-less image means nothing.
     assert "isaacsim" not in "".join(extras["all"])

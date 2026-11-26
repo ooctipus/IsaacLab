@@ -4,7 +4,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 import argparse
-import sys
 from types import SimpleNamespace
 
 import pytest
@@ -27,33 +26,34 @@ def test_wandb_run_name_is_a_checkpoint_source():
     assert args.wandb_run_id is None
 
 
-def test_wandb_run_name_and_id_are_mutually_exclusive():
+@pytest.mark.parametrize("other", ["--wandb_run_id", "--checkpoint"])
+def test_wandb_run_name_and_other_sources_are_mutually_exclusive(other):
     with pytest.raises(SystemExit):
-        _parser().parse_args(["--wandb_run_name", "display", "--wandb_run_id", "internal"])
+        _parser().parse_args(["--wandb_run_name", "display", other, "internal"])
 
 
-def test_wandb_run_name_uses_resolved_id_for_resume(monkeypatch):
-    checkpoint = "/tmp/models_tmp/factory_manager3/internal42/model_4700.pt"
+def test_wandb_run_name_uses_shared_checkpoint_policy_without_changing_output(monkeypatch, tmp_path):
+    checkpoint = tmp_path / "model_4700.pt"
+    checkpoint.touch()
+    checkpoint = str(checkpoint)
     calls = []
 
     def _get_model_checkpoint(**kwargs):
         calls.append(kwargs)
         return checkpoint
 
-    monkeypatch.setitem(
-        sys.modules, "isaaclab.utils.wandb", SimpleNamespace(get_model_checkpoint=_get_model_checkpoint)
-    )
+    monkeypatch.setattr(cli_args_rsl_rl, "get_model_checkpoint", _get_model_checkpoint)
     args = _parser().parse_args(
         [
             "--logger",
             "wandb",
             "--log_project_name",
             "factory_manager3",
-            "--resume",
             "--wandb_run_name",
             "screwing-rb1-c08-s2-0805a",
         ]
     )
+    args.device = "cpu"
     cfg = SimpleNamespace(
         resume=False,
         load_run=".*",
@@ -77,7 +77,11 @@ def test_wandb_run_name_uses_resolved_id_for_resume(monkeypatch):
             "wandb_username": None,
         }
     ]
-    assert cfg.experiment_name == "/tmp/models_tmp/factory_manager3"
-    assert cfg.load_run == "internal42"
-    assert cfg.load_checkpoint == "model_4700.pt"
-    assert cfg.run_id == "internal42"
+    assert args.checkpoint == checkpoint
+    assert cli_args_rsl_rl.resolve_rsl_rl_training_checkpoint(args, cfg, str(tmp_path)) == checkpoint
+    assert cfg.experiment_name == "old"
+    assert cfg.run_name == ""
+    assert cfg.load_run == ".*"
+    assert cfg.load_checkpoint == "model_.*.pt"
+    assert cfg.run_id is None
+    assert cfg.resume is False

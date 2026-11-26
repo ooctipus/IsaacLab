@@ -85,7 +85,7 @@ def test_build_uses_profile_dependency_chain(
         assert interface.dot_vars["DOCKER_USER_HOME"] == "/home/isaaclab"
 
 
-def test_kitless_start_does_not_build_base(
+def test_kitless_start_reuses_existing_image(
     make_interface: Callable[[str], ContainerInterface], monkeypatch: pytest.MonkeyPatch
 ):
     """Starting kit-less invokes only its standalone Compose profile."""
@@ -96,6 +96,7 @@ def test_kitless_start_does_not_build_base(
     make_interface("kitless").start()
 
     assert [call.args[0] for call in run.call_args_list] == [
+        ["docker", "image", "inspect", "isaac-lab-kitless:latest"],
         [
             "docker",
             "compose",
@@ -107,9 +108,9 @@ def test_kitless_start_does_not_build_base(
             ".env.kitless",
             "up",
             "--detach",
-            "--build",
+            "--no-build",
             "--remove-orphans",
-        ]
+        ],
     ]
 
 
@@ -124,8 +125,11 @@ def test_kitless_enter_and_stop_target_profile_container(
     monkeypatch.setattr("docker.utils.container_interface.subprocess.run", run)
     monkeypatch.setattr(interface, "is_container_running", MagicMock(return_value=True))
 
+    ownership = MagicMock()
+    monkeypatch.setattr(interface, "fix_output_ownership", ownership)
     interface.enter()
     interface.stop()
+    assert ownership.call_count == 2
 
     stop_command = [
         "docker",
@@ -190,6 +194,7 @@ def test_cli_merges_x11_overlay_before_start(monkeypatch: pytest.MonkeyPatch):
     )
     args = Namespace(
         command="start",
+        build=False,
         profile="base",
         files=None,
         env_files=None,
@@ -201,7 +206,7 @@ def test_cli_merges_x11_overlay_before_start(monkeypatch: pytest.MonkeyPatch):
 
     assert interface.add_yamls == ["--file", "docker-compose.yaml", "--file", "x11.yaml"]
     assert interface.environ["DISPLAY"] == ":0"
-    interface.start.assert_called_once_with()
+    interface.start.assert_called_once_with(build=False)
 
 
 def test_kitless_compose_service_has_no_isaac_sim_mounts():
