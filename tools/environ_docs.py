@@ -47,7 +47,9 @@ _BACKEND_MIRROR_NAMES = frozenset(
         "isaacsim_rtx",
         "newton_kamino",
         "newton_mjwarp",
+        "newton_mjwarp_nerd",
         "newton_mjwarp_vbd_proxy",
+        "newton_nerd",
         "newton_steel",
         "ovphysx",
         "ovrtx",
@@ -60,7 +62,14 @@ _BACKEND_MIRROR_NAMES = frozenset(
 
 # RL libraries listed in a stable order across generated docs.
 _RL_LIBRARY_ORDER = ("rl_games", "rsl_rl", "skrl", "sb3", "rlinf", "torchrl")
-_ALGORITHM_LABELS = {"": "PPO", "ppo": "PPO", "amp": "AMP", "ippo": "IPPO", "mappo": "MAPPO"}
+_ALGORITHM_LABELS = {
+    "": "PPO",
+    "ppo": "PPO",
+    "amp": "AMP",
+    "ippo": "IPPO",
+    "mappo": "MAPPO",
+    "supermimic": "SuperMimic",
+}
 
 # Gym IDs excluded from the training list. The ``-Eval`` suffix marks dedicated
 # evaluation variants (e.g. ``IsaacContrib-Assemble-Trocar-G129-Dex3-Eval``, an alias
@@ -106,7 +115,7 @@ _SELECTOR_LABELS = {
 # commands until the corresponding task supports them end to end.
 _NEWTON_MJWARP_EXCLUSIONS = frozenset(
     {
-        "IsaacContrib-Factory-Franka",
+        "IsaacContrib-NIST-Franka",
         "IsaacContrib-Place-Mug-Agibot-Left-Arm-RmpFlow",
         "IsaacContrib-Place-Toy2Box-Agibot-Right-Arm-RmpFlow",
         "IsaacContrib-Stack-Cube-Bin-Franka-IK-Rel-Mimic",
@@ -160,11 +169,12 @@ def _supports_warp_frontend(
     domain_preset: str | None = None,
 ) -> bool:
     """Return whether a task configuration can run through ``--frontend warp``."""
-    if presets is None or "newton_mjwarp" not in presets.get(PresetTarget.PHYSICS, []):
+    # MDP2 environments compile their own Warp step; the frontend builds manager-based and direct environments.
+    if workflow == "MDP2" or presets is None or "newton_mjwarp" not in presets.get(PresetTarget.PHYSICS, []):
         return False
 
     try:
-        from isaaclab_experimental.envs.frontend import FrontendIncompatibleError, WarpFrontend
+        from isaaclab_experimental.deprecated.envs.frontend import FrontendIncompatibleError, WarpFrontend
 
         from isaaclab_tasks.utils import resolve_task_config
 
@@ -276,7 +286,7 @@ def _infer_implicit_physics_names(task_name: str) -> set[str]:
     alias. The preset CLI excludes ``default`` from help listings, but users
     still select PhysX via ``physics=physx`` (or by falling back to default).
     """
-    from isaaclab_physx.physics import PhysxCfg
+    from isaaclab_isaacsim.physics import PhysxCfg
 
     from isaaclab.physics import PhysicsCfg
 
@@ -608,10 +618,14 @@ def get_workflow(entry_point: str | Callable[..., object]) -> str:
             env_creator = gym.envs.registration.load_env_creator(entry_point)
 
     if isinstance(env_creator, type):
+        from isaaclab_experimental.envs import MDP2Env
+
         from isaaclab.envs import ManagerBasedRLEnv
 
         if issubclass(env_creator, ManagerBasedRLEnv):
             return "Manager Based"
+        if issubclass(env_creator, MDP2Env):
+            return "MDP2"
     return "Direct"
 
 

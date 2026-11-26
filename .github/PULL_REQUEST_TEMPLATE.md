@@ -26,6 +26,10 @@ is demanded by more than one party. -->
 - Breaking change (existing functionality will not work without user modification)
 - Documentation update
 
+## Release backport
+
+- [ ] <!-- backport-active-release --> Backport this pull request to the active release branch after it merges into `main`
+
 ## Screenshots
 
 Please attach before and after screenshots of the change if applicable.
@@ -43,7 +47,8 @@ To upload images to a PR -- simply drag and drop an image while in edit mode and
 ## Checklist
 
 Docker and GPU tests run on demand. Push the commits you want tested, then
-comment `run-ci` on the pull request.
+comment `run-ci` on the pull request, or `run-ci ovstage` to include kitless OVStage rendering tests for that run.
+Subsequent pushes and plain `run-ci` comments do not run OVStage tests unless you comment `run-ci ovstage` again.
 
 - [ ] I have read and understood the [contribution guidelines](https://isaac-sim.github.io/IsaacLab/main/source/refs/contributing.html)
 - [ ] I have run the [`pre-commit` checks](https://pre-commit.com/) with `uv run isaaclab --format`

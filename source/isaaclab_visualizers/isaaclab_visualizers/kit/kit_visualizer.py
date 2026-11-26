@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+import warnings
 from typing import TYPE_CHECKING, ClassVar
 
 import numpy as np
@@ -26,6 +27,7 @@ from isaaclab.visualizers.base_visualizer import BaseVisualizer
 from isaaclab.visualizers.visualizer_cfg import PerspectiveCameraCfg
 
 from isaaclab_visualizers.desktop_entry import write_desktop_entry
+from isaaclab_visualizers.lidar_points import frame_visualizer_closeup
 
 from .kit_key_event_source import KitKeyEventSource
 
@@ -45,7 +47,13 @@ _BACKEND_DISPLAY_NAMES = {
 
 
 class KitVisualizer(BaseVisualizer):
-    """Kit visualizer using Isaac Sim viewport."""
+    """Kit visualizer using Isaac Sim viewport.
+
+    .. deprecated:: 3.1
+        The Kit visualizer is deprecated and will be removed in 3.2. Use the Newton GL visualizer
+        (``--viz newton_gl``) for the interactive window, tracking cameras and RTX rendering, and the
+        OVRTX renderer for Kit-free RTX rendering of sensor cameras.
+    """
 
     _timeline_auto_update: ClassVar[bool | None] = None
     _timeline_control_owner_count: ClassVar[int] = 0
@@ -57,11 +65,20 @@ class KitVisualizer(BaseVisualizer):
             cfg: Kit visualizer configuration.
         """
         super().__init__(cfg)
+        settings = get_settings_manager()
+        # Livestreaming and XR need Kit and have no replacement yet, so they do not warn.
+        if not (settings.get("/isaaclab/livestream") or settings.get("/isaaclab/xr/enabled")):
+            warnings.warn(
+                "The Kit visualizer (KitBackendCfg, '--viz kit') is deprecated and will be removed in 3.2. Use the"
+                " Newton GL visualizer (NewtonGLBackendCfg, '--viz newton_gl') for the interactive window,"
+                " tracking cameras and RTX rendering.",
+                FutureWarning,
+                stacklevel=2,
+            )
 
         self._simulation_app = None
         self._viewport_window = None
         self._viewport_api = None
-        self._step_counter = 0
         self._hidden_env_visibilities: dict[str, str] = {}
         # PointInstancer prim path -> (had authored invisibleIds, previous value) for partial viz restore.
         self._point_instancer_invisible_ids_backup: dict[str, tuple[bool, object]] = {}
@@ -91,7 +108,7 @@ class KitVisualizer(BaseVisualizer):
     @property
     def visual_material_writer(self):
         """Write material channels directly through Fabric."""
-        from isaaclab_physx.renderers.visual_material import FabricVisualMaterialWriter
+        from isaaclab_isaacsim.renderers.visual_material import FabricVisualMaterialWriter
 
         return FabricVisualMaterialWriter
 
@@ -107,6 +124,8 @@ class KitVisualizer(BaseVisualizer):
             return
 
         super().initialize(sim, cameras=cameras)
+        if self.cfg.backend.origin_type == "world":
+            frame_visualizer_closeup(self, cameras)
         scene_data_provider = self._sim.get_scene_data_provider()
         num_envs = scene_data_provider.num_envs
 
@@ -149,7 +168,7 @@ class KitVisualizer(BaseVisualizer):
                 omni.ui.ImageWithProvider(self._camera_image_provider)
             asyncio.ensure_future(self._dock_window_async(title))
 
-        from isaaclab_physx.renderers.fabric import FabricBackendCfg  # noqa: PLC0415 - requires Kit
+        from isaaclab_isaacsim.renderers.fabric import FabricBackendCfg  # noqa: PLC0415 - requires Kit
 
         self._fabric = sim.get_or_create_backend(FabricBackendCfg(stage=sim.stage, device=sim.device))
         self._fabric.bind_transforms(scene_data_provider)
@@ -177,7 +196,7 @@ class KitVisualizer(BaseVisualizer):
             return
         self._app_pumped_this_step = False
         self._sim_time += dt
-        self._step_counter += 1
+
         # Headless mode: skip the app update and camera panel refresh; rendering is
         # triggered on demand by render_rgb_array() / render_tiled_rgb_array().
         if self._runtime_headless:
@@ -997,9 +1016,9 @@ class KitVisualizer(BaseVisualizer):
         eye = np.array(self.cfg.eye, dtype=float) + origin
         target = np.array(self.cfg.lookat, dtype=float) + origin
         self.set_camera_view(tuple(float(v) for v in eye), tuple(float(v) for v in target))
-        # Keep the Isaac RTX renderer camera in sync (no-op if isaaclab_physx is not installed).
+        # Keep the Isaac RTX renderer camera in sync (no-op if isaaclab_isaacsim is not installed).
         try:
-            from isaaclab_physx.renderers.kit_viewport_utils import set_kit_renderer_camera_view  # noqa: PLC0415
+            from isaaclab_isaacsim.renderers.kit_viewport_utils import set_kit_renderer_camera_view  # noqa: PLC0415
 
             set_kit_renderer_camera_view(eye=eye, target=target, camera_prim_path="/OmniverseKit_Persp")
         except (ImportError, ModuleNotFoundError):
