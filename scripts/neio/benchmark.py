@@ -115,7 +115,7 @@ def state_distance(first, second, length_unit_m=1):
     return {"finite": True, **result}
 
 
-def metrics(scene, state, pipeline, contacts):
+def metrics(scene, state, pipeline, contacts, contact_geometry=False):
     """Geometric diagnostics recompute collision candidates at the measured state."""
     model = scene.model
     arrays = [
@@ -159,6 +159,17 @@ def metrics(scene, state, pipeline, contacts):
         gap = ((p1 - p0) * wp.to_torch(contacts.rigid_contact_normal)[:n]).sum(-1)
         gap -= wp.to_torch(contacts.rigid_contact_margin0)[:n] + wp.to_torch(contacts.rigid_contact_margin1)[:n]
         result["rigid_penetration_m"] = float((-gap).clamp_min(0).max())
+        body0 = shape_body[wp.to_torch(contacts.rigid_contact_shape0)[:n].long()]
+        body1 = shape_body[wp.to_torch(contacts.rigid_contact_shape1)[:n].long()]
+        active = gap < 0
+        inverse_mass = torch.cat((wp.to_torch(model.body_inv_mass), torch.zeros(1, device=device)))
+        dynamic = active & (body0 != body1) & (inverse_mass[body0] > 0) & (inverse_mass[body1] > 0)
+        pairs = torch.stack((body0[dynamic], body1[dynamic]), -1).sort(-1).values.unique(dim=0)
+        result["active_rigid_contacts"] = int(active.sum())
+        result["dynamic_contact_pairs"] = pairs.cpu().tolist()
+        result["dynamic_contact_pair_count"] = len(pairs)
+        if contact_geometry:
+            result["contact_points"] = ((p0[active] + p1[active]) * 0.5).cpu().tolist()
     if counts["soft"]:
         n = counts["soft"]
         particle = wp.to_torch(contacts.soft_contact_particle)[:n].long()
@@ -192,11 +203,21 @@ def metrics(scene, state, pipeline, contacts):
         separation = pp[:, :3] + quat_rotate(pp[:, 3:], xp[:, :3]) - pc[:, :3] - quat_rotate(pc[:, 3:], xc[:, :3])
         prismatic = wp.to_torch(model.joint_type) == int(newton.JointType.PRISMATIC)
         if bool(prismatic.any()):
-            starts = wp.to_torch(model.joint_qd_start).long()[prismatic]
+            starts = wp.to_torch(model.joint_qd_start).long()[: model.joint_count][prismatic]
             local_axes = quat_rotate(xp[prismatic, 3:], wp.to_torch(model.joint_axis)[starts])
             axes = quat_rotate(pp[prismatic, 3:], local_axes)
             delta = separation[prismatic]
             separation[prismatic] = delta - (delta * axes).sum(-1, keepdim=True) * axes
+        d6 = wp.to_torch(model.joint_type) == int(newton.JointType.D6)
+        if bool(d6.any()):
+            dimensions = model.joint_dof_dim.numpy()
+            starts = model.joint_qd_start.numpy()
+            for joint in torch.nonzero(d6).flatten().tolist():
+                for axis in range(dimensions[joint, 0]):
+                    direction = wp.to_torch(model.joint_axis)[starts[joint] + axis].unsqueeze(0)
+                    local = quat_rotate(xp[joint : joint + 1, 3:], direction)
+                    world = quat_rotate(pp[joint : joint + 1, 3:], local)[0]
+                    separation[joint] -= (separation[joint] * world).sum() * world
         # Free joints have unconstrained anchors and do not contribute.
         valid = wp.to_torch(model.joint_type) != int(newton.JointType.FREE)
         result["joint_anchor_gap_m"] = float(separation[valid].norm(dim=-1).max()) if bool(valid.any()) else None
@@ -221,7 +242,7 @@ def probe(scene, solver, saved, time_seconds, repeats=3, capture=False):
         restore(a, saved, control)
         restore(b, saved, control)
         solver.reset(a, flags=0)
-        scene.prepare(a, time_seconds, control)
+        scene.prepare(a, time_seconds, control, sampled=True)
         wp.synchronize_device(model.device)
         start = time.perf_counter()
         pipeline.collide(a, contacts)
@@ -240,7 +261,7 @@ def probe(scene, solver, saved, time_seconds, repeats=3, capture=False):
         restore(a, saved, control)
         restore(b, saved, control)
         solver.reset(a, flags=0)
-        scene.prepare(a, time_seconds, control)
+        scene.prepare(a, time_seconds, control, sampled=True)
         wp.synchronize_device(model.device)
         capture_start = time.perf_counter()
         with wp.ScopedCapture(device=model.device) as graph:
@@ -252,7 +273,7 @@ def probe(scene, solver, saved, time_seconds, repeats=3, capture=False):
             restore(a, saved, control)
             restore(b, saved, control)
             solver.reset(a, flags=0)
-            scene.prepare(a, time_seconds, control)
+            scene.prepare(a, time_seconds, control, sampled=True)
             wp.synchronize_device(model.device)
             start = time.perf_counter()
             wp.capture_launch(graph.graph)
@@ -270,7 +291,7 @@ def probe(scene, solver, saved, time_seconds, repeats=3, capture=False):
         restore(a, saved, control)
         restore(b, saved, control)
         solver.reset(a, flags=0)
-        scene.prepare(a, time_seconds, control)
+        scene.prepare(a, time_seconds, control, sampled=True)
         pipeline.collide(a, contacts)
         solver.record_convergence, solver.convergence_slot = True, 0
         solver.step(a, b, control, contacts, scene.dt)
@@ -390,22 +411,33 @@ def native_states(scene, output=None):
         for name in ("tri_indices", "shape_body", "shape_transform", "shape_scale", "shape_type"):
             if (value := getattr(native.model, name)) is not None:
                 arrays[name] = value.numpy()
+        for i, mesh in enumerate(scene.model.shape_source):
+            if isinstance(mesh, newton.Mesh):
+                arrays[f"mesh_vertices_{i}"] = np.asarray(mesh.vertices)
+                arrays[f"mesh_indices_{i}"] = np.asarray(mesh.indices)
         np.savez_compressed(output / "states.npz", **arrays)
     return saved
 
 
 def reference_states(scene, steps, stride, output=None):
-    """VBD-100 is only the probe-state generator, never labeled ground truth."""
+    """Generate timestep inputs with the declared physics solver, never target solutions."""
     if scene.native is not None:
         return native_states(scene, output)
+    if scene.case.get("workload") or scene.case["family"] == "m12":
+        stride = min(stride, max(1, int(1 / (30 * scene.dt))))
     model = scene.model
     a, b, control = model.state(), model.state(), model.control()
-    solver = make_solver(scene, "vbd", 100)
+    if model.joint_count:
+        newton.eval_fk(model, model.joint_q, model.joint_qd, a)
+        b.assign(a)
+    generator = scene.case.get("generator", "vbd")
+    solver = make_solver(scene, generator, 100)
     pipeline = newton.CollisionPipeline(model)
     contacts = pipeline.contacts()
-    saved = [(0.0, snapshot(a))]
+    saved = [(0.0, snapshot(a, control))]
+    diagnostics, recorded_poses = [], [a.body_q.numpy()] if model.body_count else []
     graph = None
-    if scene.case["family"] == "m12":
+    if scene.case["family"] == "m12" or scene.case.get("workload"):
         # Capture the expensive solve, leaving time-dependent loading outside.
         scene.prepare(a, 0, control)
         pipeline.collide(a, contacts)
@@ -420,16 +452,23 @@ def reference_states(scene, steps, stride, output=None):
         graph = capture.graph
     for step in range(steps):
         scene.prepare(a, step * scene.dt, control)
+        record = (step + 1) % stride == 0 or step + 1 == steps
+        applied_force = wp.clone(a.body_f) if record and model.body_count else None
         if graph is not None:
             wp.capture_launch(graph)
         else:
             pipeline.collide(a, contacts)
             solver.step(a, b, control, contacts, scene.dt)
             a, b = b, a
-        if (step + 1) % stride == 0 or step + 1 == steps:
-            check = metrics(scene, a, pipeline, contacts)
+        if record:
+            if applied_force is not None:
+                a.body_f.assign(applied_force)
+            check = metrics(scene, a, pipeline, contacts, contact_geometry=output is not None)
             if not check["bounded"] or check.get("contact_overflow", False):
                 raise RuntimeError(f"Probe state generator failed at step {step + 1}: {check}")
+            diagnostics.append({"time": (step + 1) * scene.dt, **check})
+            if model.body_count:
+                recorded_poses.append(a.body_q.numpy())
             if not model.particle_count and scene.case["family"] != "cable":
                 # VBD evolves maximal coordinates, while MJWarp reads joint
                 # coordinates. Project each saved probe once, then give exactly
@@ -438,25 +477,88 @@ def reference_states(scene, steps, stride, output=None):
                 restore(projected, snapshot(a))
                 newton.eval_ik(model, projected, projected.joint_q, projected.joint_qd)
                 newton.eval_fk(model, projected.joint_q, projected.joint_qd, projected)
-                saved.append(((step + 1) * scene.dt, snapshot(projected)))
+                saved.append(((step + 1) * scene.dt, snapshot(projected, control)))
                 scene.case["probe_state_projection"] = "Newton IK/FK; common state for all solvers"
             else:
-                saved.append(((step + 1) * scene.dt, snapshot(a)))
+                saved.append(((step + 1) * scene.dt, snapshot(a, control)))
+    scene.evidence = {
+        "case": scene.case,
+        "generator": generator,
+        "duration_seconds": steps * scene.dt,
+        "states": len(saved),
+        "diagnostics": diagnostics,
+    }
+    arrays = {name: np.stack([state[name].numpy() for _, state in saved]) for name in saved[0][1]}
+    arrays["time"] = np.asarray([t for t, _ in saved])
+    for name in ("tri_indices", "shape_body", "shape_transform", "shape_scale", "shape_type", "shape_flags"):
+        if (value := getattr(model, name)) is not None:
+            arrays[name] = value.numpy()
+    if recorded_poses:
+        arrays["body_q_recorded"] = np.stack(recorded_poses)
+    pairs = {tuple(pair) for row in diagnostics for pair in row.get("dynamic_contact_pairs", [])}
+    contact_fraction = np.mean([row.get("active_rigid_contacts", 0) > 0 for row in diagnostics])
+    scene.evidence.update(distinct_dynamic_pairs=len(pairs), active_contact_fraction=float(contact_fraction))
+    if scene.case.get("workload") == "rigid_pile":
+        fraction = np.mean([row.get("dynamic_contact_pair_count", 0) >= 3 for row in diagnostics])
+        scene.evidence["multi_body_contact_fraction"] = float(fraction)
+        if len(pairs) < 15 or fraction < 0.5:
+            raise RuntimeError(f"Rigid pile lacks sustained object-object collisions: {len(pairs)} pairs, {fraction=}")
+    if scene.joint_amplitude is not None:
+        moving = model.joint_type.numpy() == int(newton.JointType.REVOLUTE)
+        coordinates = model.joint_q_start.numpy()[:-1][moving]
+        excursions = np.ptp(np.unwrap(arrays["joint_q"][:, coordinates], axis=0), axis=0)
+        scene.evidence.update(
+            revolute_joints=int(moving.sum()),
+            moving_joints=int((excursions > 0.1).sum()),
+            joint_excursion_rad=excursions.tolist(),
+            load_n=scene.case["load_n"],
+            peak_applied_force_n=float(np.linalg.norm(arrays["body_f"][:, scene.load_body, :3], axis=-1).max()),
+        )
+        if scene.evidence["moving_joints"] < 6:
+            raise RuntimeError("Robot workload did not exercise at least six dynamic revolute joints")
+        if scene.evidence["peak_applied_force_n"] < 0.95 * scene.case["load_n"]:
+            raise RuntimeError("Robot workload did not apply its declared load to the selected link")
+        anchor_gap = max(row.get("joint_anchor_gap_m", 0) for row in diagnostics)
+        scene.evidence["max_joint_anchor_gap_m"] = anchor_gap
+        if anchor_gap > 0.005:
+            raise RuntimeError(f"Robot state generator separated joint anchors by {anchor_gap} m")
+        if scene.case["workload"] == "anymal_disturbance" and contact_fraction < 0.5:
+            raise RuntimeError("Quadruped workload did not maintain ground contact")
+    if scene.case["family"] == "m12":
+        angles = np.unwrap(2 * np.arctan2(arrays["body_q"][:, 0, 5], arrays["body_q"][:, 0, 6]))
+        turns = (angles[-1] - angles[0]) / (2 * np.pi)
+        travel = arrays["body_q"][-1, 0, 2] - arrays["body_q"][0, 0, 2]
+        scene.evidence.update(
+            nut_turns=float(turns),
+            axial_travel_m=float(travel),
+            travel_per_turn_m=float(travel / turns) if abs(turns) > 0.01 else None,
+            total_turns=float(np.abs(np.diff(angles)).sum() / (2 * np.pi)),
+            turn_span=float(np.ptp(angles) / (2 * np.pi)),
+            thread_lead_error_m=float(
+                np.abs(
+                    arrays["body_q"][:, 0, 2] - arrays["body_q"][0, 0, 2] - 0.00175 * (angles - angles[0]) / (2 * np.pi)
+                ).max()
+            ),
+            peak_applied_force_n=float(np.linalg.norm(arrays["body_f"][:, 0, :3], axis=-1).max()),
+            peak_applied_torque_nm=float(np.abs(arrays["body_f"][:, 0, 5]).max()),
+        )
+        if scene.case.get("minimum_turns", 0) > scene.evidence["total_turns"]:
+            raise RuntimeError("Threading workload did not complete the required accumulated turns")
+        if scene.case.get("minimum_turns", 0) and scene.evidence["turn_span"] < 1.5:
+            raise RuntimeError("Threading workload only oscillated locally instead of completing full turns")
+        if scene.case.get("minimum_turns", 0) and (
+            scene.evidence["thread_lead_error_m"] > 0.002 or contact_fraction < 0.9
+        ):
+            raise RuntimeError("Threading workload rotated without sustained thread engagement")
+        if scene.evidence["peak_applied_force_n"] < 0.95 * scene.case.get("load_n", 0):
+            raise RuntimeError("Threaded workload did not apply its declared axial/lateral load")
     if output is not None:
         output.mkdir(parents=True, exist_ok=True)
-        scene.evidence = {"case": scene.case, "duration_seconds": steps * scene.dt, "states": len(saved)}
-        arrays = {name: np.stack([state[name].numpy() for _, state in saved]) for name in saved[0][1]}
-        arrays["time"] = np.asarray([t for t, _ in saved])
-        if scene.case["family"] == "m12":
-            angles = np.unwrap(2 * np.arctan2(arrays["body_q"][:, 0, 5], arrays["body_q"][:, 0, 6]))
-            turns = (angles[-1] - angles[0]) / (2 * np.pi)
-            travel = arrays["body_q"][-1, 0, 2] - arrays["body_q"][0, 0, 2]
-            scene.evidence.update(
-                nut_turns=float(turns),
-                axial_travel_m=float(travel),
-                travel_per_turn_m=float(travel / turns) if abs(turns) > 0.01 else None,
-            )
         (output / "coverage.json").write_text(json.dumps(scene.evidence, indent=2) + "\n")
+        for i, mesh in enumerate(model.shape_source):
+            if isinstance(mesh, newton.Mesh):
+                arrays[f"mesh_vertices_{i}"] = np.asarray(mesh.vertices)
+                arrays[f"mesh_indices_{i}"] = np.asarray(mesh.indices)
         np.savez_compressed(output / "states.npz", **arrays)
     return saved
 
@@ -503,12 +605,15 @@ def rollout(scene, solver, steps):
         }
     model = scene.model
     a, b, control = model.state(), model.state(), model.control()
+    if model.joint_count:
+        newton.eval_fk(model, model.joint_q, model.joint_qd, a)
+        b.assign(a)
     pipeline = newton.CollisionPipeline(model)
     contacts = pipeline.contacts()
     failures, peak, threshold_failures = None, {}, set()
     poses = [a.body_q.numpy()[0].copy()] if scene.case["family"] == "m12" else []
     graph = None
-    if scene.case["family"] == "m12":
+    if scene.case["family"] == "m12" or scene.case.get("workload"):
         initial = snapshot(a)
         scene.prepare(a, 0, control)
         pipeline.collide(a, contacts)
@@ -556,12 +661,15 @@ def rollout(scene, solver, steps):
         travel = poses[-1, 2] - poses[0, 2]
         threading = {
             "nut_turns": float(turns),
+            "total_turns": float(np.abs(np.diff(angle)).sum() / (2 * np.pi)),
             "axial_travel_m": float(travel),
             "travel_per_turn_m": float(travel / turns) if abs(turns) > 0.01 else None,
             "thread_lead_error_m": float(
                 np.max(np.abs(poses[:, 2] - poses[0, 2] - 0.00175 * (angle - angle[0]) / (2 * np.pi)))
             ),
         }
+        if scene.case.get("thread_speed_rad_s") and threading["thread_lead_error_m"] > 0.002:
+            threshold_failures.add("thread_lead_error_m")
     return {
         "failed_at_step": failures,
         "completed_steps": step + 1,

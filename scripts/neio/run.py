@@ -10,6 +10,7 @@ import os
 import subprocess
 import sys
 import time
+from datetime import timedelta
 from pathlib import Path
 
 import tomllib
@@ -156,7 +157,12 @@ def validate(network, study, device, sweeps, banks=None):
     scores, rows = [], []
     banks = {} if banks is None else banks
     for case in study["validation"]:
-        case = {**case, "acceptance": study["acceptance"][case["family"]]}
+        limits = dict(study["acceptance"][case["family"]])
+        if case.get("thread_speed_rad_s"):
+            # Multi-turn engagement permits axial travel; the rollout checks
+            # travel against the authored pitch, as well as lateral escape.
+            limits.pop("m12_axial_displacement_m", None)
+        case = {**case, "acceptance": limits}
         if case["name"] not in banks:
             scene = make_scene(case, study["seeds"]["validation"][0], device)
             banks[case["name"]] = scene, reference_states(scene, 16, 16)
@@ -259,7 +265,7 @@ def train(args, study, network, device, rank, ranks, output, metadata, tracking,
         restore(a, saved, control)
         restore(b, saved, control)
         solver.reset(a, flags=0)
-        scene.prepare(a, sample_time, control)
+        scene.prepare(a, sample_time, control, sampled=True)
         pipeline.collide(a, contacts)
         optimizer.zero_grad(set_to_none=True)
         solver.residuals.clear()
@@ -387,7 +393,10 @@ def evaluate(args, study, network, device, output, tracking):
             raise ValueError(f"Unknown {args.split} cases: {selected}")
         cases = [case for case in cases if case["name"] in selected]
     for case in cases:
-        case = {**case, "acceptance": study["acceptance"][case["family"]]}
+        limits = dict(study["acceptance"][case["family"]])
+        if case.get("thread_speed_rad_s"):
+            limits.pop("m12_axial_displacement_m", None)
+        case = {**case, "acceptance": limits}
         for seed in study["seeds"][args.split][: args.eval_seeds]:
             try:
                 scene = make_scene(case, seed, device)
@@ -605,11 +614,16 @@ def main():
     if args.mode in ("train", "eval") and study["status"] != "validated":
         parser.error("The scene suite needs verified replacement workloads before launching training or evaluation.")
     if args.mode in ("train", "eval", "verify") and any(
-        ("example" not in case and case["family"] != "m12") or case.get("duration", 0) < 0.5
+        (
+            "example" not in case
+            and case["family"] != "m12"
+            and case.get("workload") not in ("rigid_pile", "franka_payload", "anymal_disturbance")
+        )
+        or case.get("duration", 0) < 0.5
         for split in ("train", "validation", "test")
         for case in study[split]
     ):
-        parser.error("Production workloads must use native examples or threaded M12 geometry and a full duration")
+        parser.error("Production workloads must use full native, collision-pile, robot, or threaded M12 scenes")
     args.solvers = args.solvers.strip("[]")
     args.cases = args.cases.strip("[]") if args.cases else None
     if set(args.solvers.split(",")) - set(study["sweeps"]):
@@ -636,7 +650,9 @@ def main():
     wp.set_device(device)
     torch.manual_seed(args.seed)
     if ranks > 1:
-        dist.init_process_group("nccl", device_id=torch.device(device))
+        # A rank can generate a full threaded-contact bank while its peer waits
+        # at the next gradient reduction. Keep that deliberate work within timeout.
+        dist.init_process_group("nccl", device_id=torch.device(device), timeout=timedelta(minutes=60))
     if args.mode == "train" and (output / "latest.pt").exists() and not args.resume:
         raise ValueError("The run already has a checkpoint; choose a new run name or resume it")
     output.mkdir(parents=True, exist_ok=True)

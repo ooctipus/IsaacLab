@@ -18,7 +18,7 @@ fixtures. Small fixtures remain only in numerical and logging tests.
 Workloads and data
 ------------------
 
-Production scenes instantiate the pinned Newton examples directly. Their meshes,
+Deformable scenes instantiate the pinned Newton examples directly. Their meshes,
 controllers, articulated mechanisms, self-contact and native time integration
 produce complete trajectories. No example methods, dependency files or global
 solver factories are patched. The measured material multiplier modifies model
@@ -43,23 +43,57 @@ the scene uses its buffers; discarding it invalidates subsequent GPU execution.
 * Hanging soft bodies: four tetrahedral beams with different damping, 6 seconds.
 * Soft-body/cloth impact: a tetrahedral body falls onto a 40-by-40 cloth grid;
   coupled deformation and self-contact continue for 6 seconds.
-* Rigid shape bin: mesh, cone, sphere, box, capsule and cylinder collisions and
-  settling in a container, 6 seconds.
+* Dense rigid pile: 36 training / 54 test bodies, including the native bear mesh,
+  cones, spheres, boxes, capsules and cylinders. Eight seconds of gravity and
+  alternating horizontal acceleration produce sustained multi-body contact.
+  Require at least 15 distinct dynamic body pairs and at least three simultaneous
+  pairs in half the sampled frames. Floor contact alone cannot satisfy this gate.
 * Cable cross-slide: a closed cable loop, passive pulleys and two articulated
   slides. Only two input pulleys are commanded. Run beyond a full 16-second
   rectangle, retaining the native tracking-error check.
+  This is cable coverage, not a substitute for a robot articulation workload.
+* Franka FR3: the actual imported arm, seven driven revolute joints and two
+  prismatic fingers, a tool mass and a 30 N downward wrist load (60 N held out).
+  Position targets drive dynamic links; link poses are not prescribed.
+* ANYmal D: floating base, twelve driven leg joints, unequal foot support heights,
+  and an oscillating lateral load of 80 N (160 N held out). Both robot workloads
+  run for eight seconds and must exercise at least six revolute joints by 0.1 rad;
+  the quadruped must also spend at least half its samples in ground contact.
+  MJWarp generates both robot banks; require joint-anchor separation below 5 mm.
+  NeIO and VBD still solve the same held-out states during evaluation. The initial
+  VBD robot generator was rejected because its loaded arm separated joint anchors
+  by about 10 cm; valid joint geometry cannot be inferred from finite coordinates.
 * Loaded cloth bag: rigid shapes settle inside a deformable bag, which is lifted
   while supporting their weight, 7 seconds of two-way coupling.
 * M12: authored NIST threaded nut and bolt collision meshes at 0.1 mm SDF voxel
-  resolution. A bounded torque controller turns the free six-DOF nut; axial motion
-  must emerge from thread contact. No helical joint or prescribed insertion is
-  used. Low-load turning enters mixed training. Faster turning and 200/400 N axial
-  and lateral loads are test cases. Record turns, axial travel, travel per turn,
+  resolution. A bounded PI torque controller turns the nut in an aligned spindle
+  that permits axial sliding and rotation; axial motion must emerge from thread
+  contact. The initial nut is raised 10.5 mm from the authored assembly position
+  so the stroke stays within the usable thread instead of hitting its runout.
+  No helical joint or prescribed insertion is used. The separate static
+  axial/lateral stress cases retain a free six-DOF nut. Reversing every three
+  seconds, eight-second training / twelve-second test
+  trajectories use 20 N preload and must accumulate at least four turns. The
+  engagement gates require contact in 90% of samples and axial travel within
+  2 mm of the 1.75 mm thread lead throughout the trajectory. Separate
+  eight-second turning tests apply 200/400 N with a 2 N m torque limit, in addition
+  to the axial/lateral static stress cases. Record net and accumulated turns,
+  axial travel, travel per turn,
   penetration and escape; a completed trajectory is not automatically successful
   engagement. Test loads do not enter training.
+  The motor integral belongs to the scene controller during trajectory generation
+  and rollouts. Cold timestep probes retain the recorded torque/force command and
+  do not advance that controller. Large explicit proportional gains were rejected
+  because they caused discrete-time torque oscillation rather than threading.
 
-Each native trajectory supplies approximately 96 sampled timestep problems,
-covering early motion and late difficult interactions. Save positions, velocities,
+Each native trajectory supplies approximately 96 sampled timestep problems;
+the new rigid and robot workloads sample at least 30 Hz to capture impacts and
+avoid rotation aliasing. Export unprojected recorded body poses alongside the
+common IK/FK-projected probe states. Rigid replay geometry uses pose interpolation,
+not linear interpolation of rotating world-space vertices. The cloth example's
+kinematic particle rollers are also reconstructed as rigid transforms.
+
+Samples cover early motion and late difficult interactions. Save positions, velocities,
 external forces and controller arrays together. The native solver generates the
 state distribution; it supplies no target solution or supervised label. Reset
 optimizer history, hold the sampled command for one timestep, predict displacements,
@@ -82,7 +116,8 @@ Ownership
 
 ``run.py`` is the composition root: config, distributed processes, network, AdamW,
 scene-bank cache, checkpoints, W&B and outputs. ``scenes.py`` constructs native
-examples and M12 geometry/forcing; native examples own their prescribed motion.
+examples, dense-pile/robot geometry and their controls, and M12 geometry/forcing;
+native examples own their prescribed motion.
 ``optimizer.py`` owns shared-vector encoding and the force-to-weight derivative.
 ``benchmark.py`` owns trajectory sampling, coverage checks, equal-state probes and
 full native rollouts. ``study.json`` owns the experiment matrix. ``test_study.py``
@@ -91,7 +126,8 @@ and experiment identity. No secondary launcher or trainable scene-local network.
 
 The source snapshot under ``_source/`` is a pinned read-only dependency. Its
 revision, package versions and file hashes are checked before use. The image
-contains the snapshot and authored M12 assets; they are excluded from Git.
+contains the snapshot, authored M12 assets, and pinned robot meshes/URDF/USD files;
+they are excluded from Git and checked against the asset hash manifest.
 
 Verification and evaluation
 ----------------------------

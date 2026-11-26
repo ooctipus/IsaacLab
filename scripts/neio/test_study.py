@@ -114,36 +114,45 @@ def test_training_records_metrics_and_checkpoint_tracking_identity(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "family,example,duration",
+    "name",
     [
-        ("cloth", "cloth.example_cloth_twist", 12),
-        ("rigid", "vbd.example_vbd_rigid_rigid_contact", 6),
+        "cloth_twist_train",
+        "rigid_dense_pile_train",
+        "franka_payload_train",
+        "anymal_disturbance_train",
+        "m12_threading_train",
     ],
 )
-def test_native_bank_preserves_difficult_states_and_supports_learning(tmp_path, family, example, duration):
+def test_bank_requires_physical_interactions_and_supports_learning(tmp_path, name):
     from benchmark import probe, reference_states, restore
 
+    study = json.loads((ROOT / "study.json").read_text())
+    case = dict(next(case for case in study["train"] if case["name"] == name))
+    if case.get("workload"):
+        case["duration"] = 2.0
+    if case["family"] == "m12":
+        case.update(duration=2.0, minimum_turns=1)
+    family, duration = case["family"], case["duration"]
     wp.init()
     with wp.ScopedDevice(DEVICE):
-        scene = make_scene(
-            {
-                "name": "native_bank",
-                "family": family,
-                "example": example,
-                "duration": duration,
-                "bank_samples": 24,
-                "material_range": [1.1, 1.1],
-            },
-            101,
-            DEVICE,
-        )
-        states = reference_states(scene, 0, 1, tmp_path)
+        scene = make_scene(case, 101, DEVICE)
+        states = reference_states(scene, round(duration / scene.dt), max(1, round(1 / (30 * scene.dt))), tmp_path)
         if family == "cloth":
             assert scene.evidence["self_contact_observed"]
+            assert scene.evidence["native_test_pass"]
+        elif family == "rigid":
+            assert scene.evidence["distinct_dynamic_pairs"] >= 15
+            assert scene.evidence["multi_body_contact_fraction"] >= 0.5
+        elif family == "m12":
+            assert scene.evidence["total_turns"] >= 1
+            assert scene.evidence["thread_lead_error_m"] < 0.002
+            assert scene.evidence["peak_applied_force_n"] == case["load_n"]
         else:
-            positions = states[-1][1]["body_q"].numpy()[:, :3]
-            assert abs(positions - scene.model.body_q.numpy()[:, :3]).max() > 0.1
-        assert scene.evidence["native_test_pass"]
+            assert scene.evidence["revolute_joints"] >= 7
+            assert scene.evidence["moving_joints"] >= 6
+            # Prismatic gripper joints must not break geometric diagnostics.
+            values, _ = probe(scene, make_solver(scene, "vbd", 4), states[-2][1], states[-2][0], repeats=1)
+            assert values["finite"] and values["joint_anchor_gap_m"] >= 0
         assert states[-1][0] >= duration - 1e-6
         # A late, folded state must still furnish finite nonzero learning gradients.
         a, b, control = scene.model.state(), scene.model.state(), scene.model.control()
@@ -271,13 +280,29 @@ def test_capture_matches_eager_and_rigid_probe_coordinates_are_consistent():
 def test_m12_uses_thread_contacts_without_vbd_list_truncation():
     wp.init()
     with wp.ScopedDevice(DEVICE):
-        scene = make_scene({"family": "m12", "load_n": 400}, 20001, DEVICE)
+        scene = make_scene(
+            {
+                "family": "m12",
+                "load_n": 400,
+                "thread_speed_rad_s": -6.28,
+                "torque_integral_gain": 0.02,
+                "torque_limit_nm": 2.0,
+                "guided": True,
+                "thread_start_height_m": 0.0105,
+            },
+            20001,
+            DEVICE,
+        )
         model = scene.model
         solver = make_solver(scene, "vbd", 4)
         a, b, control = model.state(), model.state(), model.control()
         pipeline = newton.CollisionPipeline(model)
         contacts = pipeline.contacts()
-        scene.prepare(a, 0.1, control)
+        scene.prepare(a, 0.5, control)
+        command = a.body_f.numpy().copy()
+        assert command[0, 2] == -400 and -2 <= command[0, 5] < 0
+        scene.prepare(a, 2.0, control, sampled=True)
+        assert (a.body_f.numpy() == command).all(), "Cold probes must freeze the recorded motor/load command"
         pipeline.collide(a, contacts)
         solver.step(a, b, control, contacts, scene.dt)
         count = solver.body_body_contact_counts.numpy().max()

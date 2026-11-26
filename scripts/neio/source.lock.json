@@ -11,6 +11,16 @@
     "bolt": {
       "url": "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/6.2/Isaac/IsaacLab/Factory/NIST/bolt_m12.usd",
       "preparation": "USD Stage.Flatten exported to assets/bolt_m12.usda"
+    },
+    "franka_emika_panda": {
+      "repository": "https://github.com/newton-physics/newton-assets",
+      "revision": "f8fb7abcbeba2318814a74f3eeb02780ad7925d6",
+      "path": "assets/robots/franka_emika_panda"
+    },
+    "anybotics_anymal_d": {
+      "repository": "https://github.com/newton-physics/newton-assets",
+      "revision": "f8fb7abcbeba2318814a74f3eeb02780ad7925d6",
+      "path": "assets/robots/anybotics_anymal_d"
     }
   }
 }

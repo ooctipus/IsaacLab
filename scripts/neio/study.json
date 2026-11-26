@@ -173,19 +173,19 @@
       ]
     },
     {
-      "name": "rigid_shape_bin_test",
+      "name": "rigid_dense_pile_test",
       "family": "rigid",
-      "example": "vbd.example_vbd_rigid_rigid_contact",
-      "duration": 6,
-      "bank_samples": 96,
-      "material_range": [
-        1.4,
-        1.6
-      ]
+      "workload": "rigid_pile",
+      "count": 54,
+      "shake_acceleration": 12,
+      "stiffness_scale": 1,
+      "friction": 0.6,
+      "dt": 0.001,
+      "duration": 8
     },
     {
       "name": "cable_cross_slide_test",
-      "family": "articulation",
+      "family": "cable",
       "example": "cable.example_cable_cross_slide_table",
       "duration": 25,
       "bank_samples": 96,
@@ -210,11 +210,17 @@
       "family": "m12",
       "stiffness_scale": 1,
       "friction": 0.15,
-      "load_n": 10,
+      "load_n": 20,
       "thread_speed_rad_s": -6.28,
-      "torque_limit_nm": 0.1,
+      "torque_limit_nm": 0.3,
       "dt": 0.0005,
-      "duration": 2
+      "duration": 12,
+      "reverse_seconds": 3,
+      "torque_gain": 0.002,
+      "minimum_turns": 4,
+      "torque_integral_gain": 0.02,
+      "guided": true,
+      "thread_start_height_m": 0.0105
     },
     {
       "name": "m12_axial_200n",
@@ -290,6 +296,74 @@
         -1.5,
         -1.3
       ]
+    },
+    {
+      "name": "franka_payload_test",
+      "family": "articulation",
+      "workload": "franka_payload",
+      "duration": 8,
+      "dt": 0.001,
+      "stiffness_scale": 1,
+      "friction": 0.75,
+      "drive_frequency": 2.0,
+      "motion_scale": 1.4,
+      "load_n": 60,
+      "load_direction": [
+        0,
+        0,
+        -1
+      ],
+      "generator": "mjwarp"
+    },
+    {
+      "name": "anymal_disturbance_test",
+      "family": "articulation",
+      "workload": "anymal_disturbance",
+      "duration": 8,
+      "dt": 0.001,
+      "stiffness_scale": 1,
+      "friction": 0.75,
+      "drive_frequency": 3.0,
+      "motion_scale": 1.4,
+      "load_n": 160,
+      "load_direction": [
+        0,
+        1,
+        0
+      ],
+      "generator": "mjwarp"
+    },
+    {
+      "name": "m12_turning_200n",
+      "family": "m12",
+      "stiffness_scale": 1,
+      "friction": 0.15,
+      "load_n": 200,
+      "thread_speed_rad_s": -6.28,
+      "torque_limit_nm": 2,
+      "torque_gain": 0.002,
+      "reverse_seconds": 3,
+      "dt": 0.0005,
+      "duration": 8,
+      "torque_integral_gain": 0.2,
+      "guided": true,
+      "thread_start_height_m": 0.0105
+    },
+    {
+      "name": "m12_turning_400n",
+      "family": "m12",
+      "stiffness_scale": 1,
+      "friction": 0.15,
+      "load_n": 400,
+      "thread_speed_rad_s": -6.28,
+      "torque_limit_nm": 2,
+      "torque_gain": 0.002,
+      "reverse_seconds": 3,
+      "dt": 0.0005,
+      "duration": 8,
+      "torque_integral_gain": 0.2,
+      "guided": true,
+      "thread_start_height_m": 0.0105
     }
   ],
   "acceptance": {
@@ -417,19 +491,19 @@
       ]
     },
     {
-      "name": "rigid_shape_bin_train",
+      "name": "rigid_dense_pile_train",
       "family": "rigid",
-      "example": "vbd.example_vbd_rigid_rigid_contact",
-      "duration": 6,
-      "bank_samples": 96,
-      "material_range": [
-        0.85,
-        1.15
-      ]
+      "workload": "rigid_pile",
+      "count": 36,
+      "shake_acceleration": 6,
+      "stiffness_scale": 1,
+      "friction": 0.6,
+      "dt": 0.001,
+      "duration": 8
     },
     {
       "name": "cable_cross_slide_train",
-      "family": "articulation",
+      "family": "cable",
       "example": "cable.example_cable_cross_slide_table",
       "duration": 17,
       "bank_samples": 96,
@@ -454,11 +528,53 @@
       "family": "m12",
       "stiffness_scale": 1,
       "friction": 0.15,
-      "load_n": 5,
-      "thread_speed_rad_s": -3.14,
-      "torque_limit_nm": 0.05,
+      "load_n": 20,
+      "thread_speed_rad_s": -6.28,
+      "torque_limit_nm": 0.3,
       "dt": 0.0005,
-      "duration": 1.5
+      "duration": 8,
+      "reverse_seconds": 3,
+      "torque_gain": 0.002,
+      "minimum_turns": 4,
+      "torque_integral_gain": 0.02,
+      "guided": true,
+      "thread_start_height_m": 0.0105
+    },
+    {
+      "name": "franka_payload_train",
+      "family": "articulation",
+      "workload": "franka_payload",
+      "duration": 8,
+      "dt": 0.001,
+      "stiffness_scale": 1,
+      "friction": 0.75,
+      "drive_frequency": 2.0,
+      "motion_scale": 1,
+      "load_n": 30,
+      "load_direction": [
+        0,
+        0,
+        -1
+      ],
+      "generator": "mjwarp"
+    },
+    {
+      "name": "anymal_disturbance_train",
+      "family": "articulation",
+      "workload": "anymal_disturbance",
+      "duration": 8,
+      "dt": 0.001,
+      "stiffness_scale": 1,
+      "friction": 0.75,
+      "drive_frequency": 3.0,
+      "motion_scale": 1,
+      "load_n": 80,
+      "load_direction": [
+        0,
+        1,
+        0
+      ],
+      "generator": "mjwarp"
     }
   ]
 }
