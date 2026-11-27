@@ -17,6 +17,7 @@ prerelease-mode = "allow"
 
 [manifest]
 overrides = [
+    { name = "coacd", specifier = ">=1.0.14" },
     { name = "fsspec", specifier = ">=2026.6.0" },
     { name = "mujoco", specifier = "~=3.17.0" },
     { name = "mujoco-usd-converter", specifier = "==0.7.0" },
@@ -723,15 +724,15 @@ wheels = [
 
 [[package]]
 name = "coacd"
-version = "1.0.7"
+version = "1.0.14"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ef/60/abb74859e0c11ea302ef9e5ba7a4d4538c932f55cc6fd14b879eca854617/coacd-1.0.7-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:99fda62b598cea3bfd6233eab1bf9693668763694f8062dd4349409bc6591798", size = 2572570, upload-time = "2025-05-02T17:52:38.481Z" },
-    { url = "https://files.pythonhosted.org/packages/f8/52/92b11b909686bef993819720c518cb38318a16acae038b70f64a3c35582a/coacd-1.0.7-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:d1d330c03cdd3f5a571677d5cbb991a51d96bd0e157a34b0fb3623d7ed3b1886", size = 2638545, upload-time = "2025-05-02T17:52:40.126Z" },
-    { url = "https://files.pythonhosted.org/packages/45/7b/286fc9520088889aaddc40aed6ffe2737fe79931ecba01002f4e7c632dd2/coacd-1.0.7-cp39-abi3-win_amd64.whl", hash = "sha256:8bfeb23aecc0265baea2d5c446ceaa1c117ba4fd112843944fb78f5bb9626a7b", size = 1460297, upload-time = "2025-05-02T17:52:41.924Z" },
+    { url = "https://files.pythonhosted.org/packages/d6/3e/e930a366ec69a966f1a55307b52d036d266314e2f6c58e72e212fdc09182/coacd-1.0.14-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:1242941fc9d49ebcb0368c68f31c86e278b9a6f1a255d11da2f1668797e2626e", size = 2584591, upload-time = "2026-08-28T21:53:33.537Z" },
+    { url = "https://files.pythonhosted.org/packages/88/7c/ec7edfc77c48fe97434ae813eca7614103289105bb546952ed9a0a266ce8/coacd-1.0.14-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:6c135b717af096523bbebf1fd8d326e8950c024237fe9806ad46dedd8b4c31f0", size = 2651838, upload-time = "2026-08-28T21:53:34.776Z" },
+    { url = "https://files.pythonhosted.org/packages/5f/28/edbc4d6766fb3504bf15dabe7340e5686c72b9e3be030b3c8c40469e7af6/coacd-1.0.14-cp39-abi3-win_amd64.whl", hash = "sha256:6b548f44d9a4694cde594dc8cc8fefa678fb7c88153583be4e8b2c707de8fbbd", size = 1487726, upload-time = "2026-08-28T21:53:36.6Z" },
 ]
 
 [[package]]
@@ -2088,7 +2089,7 @@ requires-dist = [
     { name = "autodocsumm", marker = "extra == 'dev'" },
     { name = "av", marker = "extra == 'rlinf'", specifier = ">=12.3.0" },
     { name = "botocore" },
-    { name = "coacd", specifier = ">=1.0.7" },
+    { name = "coacd", specifier = ">=1.0.14" },
     { name = "coverage", marker = "extra == 'test'", specifier = ">=7.6.1" },
     { name = "daqp", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')", specifier = "==0.8.5" },
     { name = "decord2", marker = "extra == 'rlinf'" },
