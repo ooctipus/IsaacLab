@@ -170,7 +170,9 @@ def metrics(scene, state, pipeline, contacts, contact_geometry=False):
         body0 = shape_body[wp.to_torch(contacts.rigid_contact_shape0)[:n].long()]
         body1 = shape_body[wp.to_torch(contacts.rigid_contact_shape1)[:n].long()]
         active = gap < 0
-        inverse_mass = torch.cat((wp.to_torch(model.body_inv_mass), torch.zeros(1, device=device)))
+        inverse_mass = wp.to_torch(model.body_inv_mass).clone()
+        inverse_mass[wp.to_torch(model.body_flags) & int(newton.BodyFlags.KINEMATIC) != 0] = 0
+        inverse_mass = torch.cat((inverse_mass, torch.zeros(1, device=device)))
         dynamic = active & (body0 != body1) & (inverse_mass[body0] > 0) & (inverse_mass[body1] > 0)
         pairs = torch.stack((body0[dynamic], body1[dynamic]), -1).sort(-1).values.unique(dim=0)
         result["active_rigid_contacts"] = int(active.sum())
@@ -204,6 +206,13 @@ def metrics(scene, state, pipeline, contacts, contact_geometry=False):
         displacement = state.body_q.numpy()[:, :3] - model.body_q.numpy()[:, :3]
         result["m12_axial_displacement_m"] = float(np.abs(displacement[:, 2]).max())
         result["m12_lateral_displacement_m"] = float(np.linalg.norm(displacement[:, :2], axis=-1).max())
+    if scene.case.get("workload") == "rigid_pile":
+        dynamic = (model.body_inv_mass.numpy() > 0) & (model.body_flags.numpy() & int(newton.BodyFlags.KINEMATIC) == 0)
+        velocity = state.body_qd.numpy()[dynamic, :3]
+        result["rigid_rms_speed_m_s"] = float(np.sqrt(np.square(velocity).sum(-1).mean()))
+        result["rigid_translation_energy_j"] = float(
+            0.5 * (model.body_mass.numpy()[dynamic] * np.square(velocity).sum(-1)).sum()
+        )
     if model.joint_count:
         parent, child = wp.to_torch(model.joint_parent).long(), wp.to_torch(model.joint_child).long()
         xp, xc = wp.to_torch(model.joint_X_p), wp.to_torch(model.joint_X_c)
@@ -518,6 +527,12 @@ def reference_states(scene, steps, stride, output=None):
         scene.evidence["multi_body_contact_fraction"] = float(fraction)
         if len(pairs) < 15 or fraction < 0.5:
             raise RuntimeError(f"Rigid pile lacks sustained object-object collisions: {len(pairs)} pairs, {fraction=}")
+        scene.evidence.update(
+            pusher_excursion_m=float(np.ptp(arrays["body_q_recorded"][:, scene.pusher_body, 0])),
+            peak_external_force_n=float(np.linalg.norm(arrays["body_f"][..., :3], axis=-1).max()),
+            final_rms_speed_m_s=diagnostics[-1]["rigid_rms_speed_m_s"],
+            final_translation_energy_j=diagnostics[-1]["rigid_translation_energy_j"],
+        )
     if scene.joint_amplitude is not None:
         moving = model.joint_type.numpy() == int(newton.JointType.REVOLUTE)
         coordinates = model.joint_q_start.numpy()[:-1][moving]
@@ -631,6 +646,7 @@ def rollout(scene, solver, steps, capture=True):
     diagnostic_pipeline = newton.CollisionPipeline(model)
     diagnostic_contacts = diagnostic_pipeline.contacts()
     failures, peak, threshold_failures = None, {}, set()
+    settling = {}
     poses = [a.body_q.numpy()[0].copy()] if scene.case["family"] == "m12" else []
     graph = None
     if capture and (scene.case["family"] == "m12" or scene.case.get("workload")):
@@ -662,6 +678,11 @@ def rollout(scene, solver, steps, capture=True):
             if poses:
                 poses.append(a.body_q.numpy()[0].copy())
             threshold_failures.update(values.get("physical_threshold_failures", []))
+            if scene.case.get("workload") == "rigid_pile" and step * scene.dt >= scene.case["duration"] - 1:
+                for key in ("rigid_rms_speed_m_s", "rigid_translation_energy_j"):
+                    settling[key] = max(settling.get(key, 0), values[key])
+                if values["rigid_rms_speed_m_s"] > scene.case["settling_rms_speed_m_s"]:
+                    threshold_failures.add("rigid_settling_speed")
             for key in (
                 "rigid_penetration_m",
                 "soft_penetration_m",
@@ -698,4 +719,5 @@ def rollout(scene, solver, steps, capture=True):
         "sampled_peaks": peak,
         "physical_threshold_failures": sorted(threshold_failures),
         "threading": threading,
+        "settling": settling,
     }

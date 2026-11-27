@@ -95,22 +95,26 @@ def log_checkpoint(tracking, output, step):
 
 def log_training(tracking, row):
     """Publish scalar learning curves; retain detailed sampling records in JSONL."""
-    tracking.log(
-        {f"train/{key}": value for key, value in row.items() if key != "rank_metrics"}
-        | {
-            f"train/{values['workload']}/rank_{index}/{key}": value
-            for index, values in enumerate(row.get("rank_metrics", []))
-            for key, value in values.items()
-            if key
-            in (
-                "particle_residual_ratio",
-                "body_residual_ratio",
-                "residual_loss",
-                "rejected_updates",
-                "gradient_norm_before_clipping",
-            )
-        }
-    )
+    values = {f"train/{key}": value for key, value in row.items() if key != "rank_metrics"}
+    samples = {}
+    for index, measured in enumerate(row.get("rank_metrics", [])):
+        rank = measured.get("rank", index)  # Historical uploads contain one sample per rank.
+        for key, value in measured.items():
+            if (
+                key
+                in (
+                    "particle_residual_ratio",
+                    "body_residual_ratio",
+                    "residual_loss",
+                    "rejected_updates",
+                    "gradient_norm_before_clipping",
+                )
+                or "last_sweep_" in key
+            ):
+                samples.setdefault(f"train/{measured['workload']}/rank_{rank}/{key}", []).append(value)
+    for key, sampled in samples.items():
+        values[key] = float(np.mean(sampled)) if all(value is not None for value in sampled) else None
+    tracking.log(values)
 
 
 def upload_existing(args, output):
@@ -165,6 +169,10 @@ def source_provenance():
     return {
         "source": lock,
         "manifest_sha256": hashlib.sha256((ROOT / "source.manifest.json").read_bytes()).hexdigest(),
+        "implementation_sha256": {
+            path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in sorted([*ROOT.glob("*.py"), ROOT / "study.json"])
+        },
         "packages": {p: importlib.metadata.version(p) for p in ("torch", "warp-lang", "mujoco", "mujoco-warp")},
         "workflow_id": os.environ.get("ISAACLAB_WORKFLOW_ID"),
         "image_tag": "lab",
@@ -227,9 +235,17 @@ def log_validation(tracking, output, step, score, rows):
     with (output / "validation.jsonl").open("a") as log:
         log.write(json.dumps(record, allow_nan=False) + "\n")
     values = {"step": step, "selection_score": score}
+    identity_by_family = {}
     for case in sorted({row["case"] for row in rows}):
         measured = [row for row in rows if row["case"] == case]
         values[f"{case}/residual_score"] = float(np.mean([row["score"] for row in measured]))
+        # With no correction, an active residual has ratio one. Use the same
+        # workload/family weighting as checkpoint selection, including solved states.
+        gradients = [row["neio_objective_gradient"] for row in measured]
+        active = [max(g["particle_initial_n"] or 0, g["body_initial_mixed_units"] or 0) > 1e-12 for g in gradients]
+        identity = float(np.mean(active) * np.log(2))
+        identity_by_family.setdefault(measured[0]["family"], []).append(identity)
+        values[f"{case}/improvement_over_no_update"] = identity - values[f"{case}/residual_score"]
         for kind in ("particle", "body"):
             ratios = [
                 row[f"{kind}_residual_ratio"] for row in measured if row.get(f"{kind}_residual_ratio") is not None
@@ -272,12 +288,44 @@ def log_validation(tracking, output, step, score, rows):
         if row.get(key) is not None
     ]
     values["residual_reduction_fraction"] = float(np.mean(np.asarray(ratios) < 1)) if ratios else 0.0
+    values["no_update_score"] = float(np.mean([np.mean(v) for v in identity_by_family.values()]))
+    values["improvement_over_no_update"] = values["no_update_score"] - score
+    values["substantial_residual_reduction_fraction"] = float(np.mean(np.asarray(ratios) < 0.9)) if ratios else 0.0
     tracking.log({f"validation/{key}": value for key, value in values.items()})
+
+
+class TrainingTrajectory:
+    """Own the evolving simulator state between samples of one training workload."""
+
+    def __init__(self, scene, states, solver):
+        self.scene, self.states, self.solver = scene, states, solver
+        self.a, self.b = scene.model.state(), scene.model.state()
+        self.control = scene.model.control()
+        self.pipeline = newton.CollisionPipeline(scene.model, contact_matching="latest")
+        self.contacts = self.pipeline.contacts()
+        self.step = 0
+
+    def prepare(self, seed, horizon):
+        if self.step == 0 or self.step >= horizon:
+            rng = np.random.default_rng(seed)
+            self.time, self.saved = self.states[int(rng.integers(len(self.states)))]
+            restore(self.a, self.saved, self.control)
+            restore(self.b, self.saved, self.control)
+            self.solver.reset(self.a, flags=0)
+            self.pipeline.reset_contact_matching()
+            self.step = 0
+        # Hold the recorded command over the short trajectory. Its positions and
+        # velocities after the first timestep come from the learned solver.
+        for name in self.saved.keys() & {"body_f", "particle_f"}:
+            getattr(self.a, name).assign(self.saved[name])
+        self.scene.prepare(self.a, self.time + self.step * self.scene.dt, self.control, sampled=True)
+        self.pipeline.collide(self.a, self.contacts)
 
 
 def train(args, study, network, device, rank, ranks, output, metadata, tracking, checkpoint=None):
     config = study["training"]
     optimizer = torch.optim.AdamW(network.parameters(), lr=config["learning_rate"])
+    parameters = list(network.parameters())
     start_step, best_step, best, best_network = 0, 0, float("inf"), None
     if checkpoint:
         network.load_state_dict(checkpoint["network"])
@@ -288,7 +336,7 @@ def train(args, study, network, device, rank, ranks, output, metadata, tracking,
         torch.set_rng_state(checkpoint["rng"][rank]["cpu"].cpu())
         torch.cuda.set_rng_state(checkpoint["rng"][rank]["cuda"].cpu(), device)
     families = study["arms"][args.arm]
-    episode_steps = config["episode_steps"]
+    batch_size = config["samples_per_step"]
     begin = time.perf_counter()
     nodes, oracle_calls, backward_calls, rejected = 0, 0, 0, 0
     banks, validation_banks = {}, {}
@@ -298,12 +346,15 @@ def train(args, study, network, device, rank, ranks, output, metadata, tracking,
         best_network = {k: v.detach().cpu().clone() for k, v in network.state_dict().items()}
         log_validation(tracking, output, 0, score, validation)
     for step in range(start_step, args.steps):
-        within = step % episode_steps
-        if within == 0:
-            episode = step // episode_steps
-            family = families[(episode * ranks + rank) % len(families)]
+        horizon = max(length for begin_step, length in config["trajectory_curriculum"] if step >= begin_step)
+        accumulated = [torch.zeros_like(parameter) for parameter in parameters]
+        bad = torch.zeros((), dtype=torch.int32, device=device)
+        sample_metrics, gradient_norms = [], []
+        for sample in range(batch_size):
+            index = (step * batch_size + sample) * ranks + rank
+            family = families[index % len(families)]
             cases = [case for case in study["train"] if case["family"] == family]
-            case = cases[(episode // len(families)) % len(cases)]
+            case = cases[(index // len(families)) % len(cases)]
             scene_seed = args.seed + 100000 * rank
             if case["name"] not in banks:
                 scene = make_scene(case, scene_seed, device, args.worlds)
@@ -313,109 +364,102 @@ def train(args, study, network, device, rank, ranks, output, metadata, tracking,
                 solver = make_solver(
                     scene, "shared", args.sweeps, network, history=config["history_at_step_start"], learn=True
                 )
-                banks[case["name"]] = scene, states, solver
-                if rank == 0 and scene.evidence:
-                    tracking.log(
-                        {
-                            f"data/{case['name']}/states": len(states),
-                            f"data/{case['name']}/duration_seconds": scene.evidence["duration_seconds"],
-                        }
-                    )
+                banks[case["name"]] = TrainingTrajectory(scene, states, solver)
                 print(json.dumps({"bank_ready": case["name"], "rank": rank, "samples": len(states)}), flush=True)
-            scene, states, solver = banks[case["name"]]
-            model = scene.model
-            a, b, control = model.state(), model.state(), model.control()
-            pipeline = newton.CollisionPipeline(model, contact_matching="latest")
-            contacts = pipeline.contacts()
-        trajectory_step = within % config["trajectory_steps"]
-        if trajectory_step == 0:
-            rng = np.random.default_rng(args.seed + 1009 * step + 100000 * rank)
-            sample_time, saved = states[int(rng.integers(len(states)))]
-            restore(a, saved, control)
-            restore(b, saved, control)
-            solver.reset(a, flags=0)
-            pipeline.reset_contact_matching()
-        # Keep the sampled external command fixed over this short trajectory;
-        # positions and velocities after its first step are the model's own.
-        for name in saved.keys() & {"body_f", "particle_f"}:
-            getattr(a, name).assign(saved[name])
-        scene.prepare(a, sample_time + trajectory_step * scene.dt, control, sampled=True)
-        pipeline.collide(a, contacts)
-        optimizer.zero_grad(set_to_none=True)
-        solver.residuals.clear()
-        solver.losses.clear()
-        solver.record_convergence = (step + 1) % 8 == 0 or step + 1 == args.steps
-        solver.convergence_slot = 0
-        before = solver.failed_updates
-        solver.step(a, b, control, contacts, scene.dt)
-        bad = torch.tensor(int(solver.failed_updates > before), device=device)
-        for parameter in network.parameters():
-            if parameter.grad is None:
-                bad.fill_(1)
+            trajectory = banks[case["name"]]
+            scene, solver = trajectory.scene, trajectory.solver
+            trajectory.prepare(args.seed + 1009 * index, horizon)
+            optimizer.zero_grad(set_to_none=True)
+            solver.residuals.clear()
+            solver.losses.clear()
+            solver.record_convergence = (step + 1) % 8 == 0 or step + 1 == args.steps
+            solver.convergence_slot = 0
+            before = solver.failed_updates
+            solver.step(trajectory.a, trajectory.b, trajectory.control, trajectory.contacts, scene.dt)
+            valid = solver.failed_updates == before and all(
+                parameter.grad is not None and bool(torch.isfinite(parameter.grad).all()) for parameter in parameters
+            )
+            if valid:
+                norm = float(torch.nn.utils.clip_grad_norm_(parameters, 1.0))
+                gradient_norms.append(norm)
+                for total, parameter in zip(accumulated, parameters):
+                    total.add_(parameter.grad)
             else:
-                bad = torch.maximum(bad, (~torch.isfinite(parameter.grad).all()).int())
+                bad.fill_(1)
+                norm = None
+            nodes += scene.model.particle_count + 2 * scene.model.body_count
+            oracle_calls += 2 * args.sweeps + int(solver.record_convergence)
+            backward_calls += args.sweeps
+            if solver.record_convergence:
+                convergence = solver.convergence_buffer[0].tolist()
+                measured = {
+                    "rank": rank,
+                    "family": family,
+                    "workload": case["name"],
+                    "sample_time_seconds": trajectory.time + trajectory.step * scene.dt,
+                    "trajectory_step": trajectory.step,
+                    "bank_states": len(trajectory.states),
+                    "scene_seed": scene_seed,
+                    "residual_loss": float(np.mean(solver.losses))
+                    if solver.losses and np.isfinite(solver.losses).all()
+                    else None,
+                    "gradient_norm_before_clipping": norm,
+                    "processed_nodes": nodes,
+                    "oracle_calls": oracle_calls,
+                    "oracle_backward_calls": backward_calls,
+                }
+                for kind, initial, final in (("particle", *convergence[:2]), ("body", *convergence[2:])):
+                    if initial > 1e-12 and np.isfinite(initial) and np.isfinite(final):
+                        measured[f"{kind}_residual_ratio"] = final / initial
+                for adapter in (solver.particle_optimizer, solver.rigid_optimizer):
+                    if adapter is not None and bool(adapter.graph.free.any()):
+                        applied = adapter.last_update[adapter.graph.free]
+                        measured[f"{adapter.kind}_last_sweep_update_rms_m"] = float(applied.square().mean().sqrt())
+                        measured[f"{adapter.kind}_last_sweep_zero_fraction"] = float(
+                            (applied == 0).all(-1).float().mean()
+                        )
+                sample_metrics.append(measured)
+            trajectory.a, trajectory.b = trajectory.b, trajectory.a
+            trajectory.step = trajectory.step + 1 if valid else 0
         if ranks > 1:
             dist.all_reduce(bad, op=dist.ReduceOp.MAX)
         if not bool(bad):
-            # Limit each scene before averaging so a stiff cable cannot erase
-            # the update supplied by its cloth/robot peer. Small signals stay small.
-            grad_norm = float(torch.nn.utils.clip_grad_norm_(network.parameters(), 1.0))
-            if ranks > 1:
-                for parameter in network.parameters():
-                    dist.all_reduce(parameter.grad)
-                    parameter.grad.div_(ranks)
+            for parameter, total in zip(parameters, accumulated):
+                if ranks > 1:
+                    dist.all_reduce(total)
+                parameter.grad = total / (batch_size * ranks)
             optimizer.step()
         else:
             rejected += 1
-            grad_norm = None
-        a, b = b, a
-        nodes += model.particle_count + 2 * model.body_count
-        oracle_calls += 2 * args.sweeps + int(solver.record_convergence)
-        backward_calls += args.sweeps
         if (step + 1) % 8 == 0 or step + 1 == args.steps:
-            convergence = solver.convergence_buffer[0].tolist()
-            local_metrics = {
-                "family": family,
-                "workload": case["name"],
-                "sample_time_seconds": sample_time,
-                "bank_states": len(states),
-                "scene_seed": scene_seed,
-                "trajectory_step": trajectory_step,
-                "post_update_gradient_proxy": solver.residuals[-1]
-                if solver.residuals and np.isfinite(solver.residuals[-1])
-                else None,
-                "residual_loss": float(np.mean(solver.losses))
-                if solver.losses and np.isfinite(solver.losses).all()
-                else None,
-                "rejected_updates": rejected,
-                "processed_nodes": nodes,
-                "oracle_calls": oracle_calls,
-                "oracle_backward_calls": backward_calls,
-                "gradient_norm_before_clipping": grad_norm,
-            }
-            for kind, initial, final in (("particle", *convergence[:2]), ("body", *convergence[2:])):
-                if initial > 1e-12 and np.isfinite(initial) and np.isfinite(final):
-                    local_metrics[f"{kind}_residual_ratio"] = final / initial
-            rank_metrics = [None] * ranks
+            gathered = [None] * ranks
             if ranks > 1:
-                dist.all_gather_object(rank_metrics, local_metrics)
+                dist.all_gather_object(gathered, sample_metrics)
             else:
-                rank_metrics = [local_metrics]
-        if rank == 0 and ((step + 1) % 8 == 0 or step + 1 == args.steps):
-            row = {
-                "step": step + 1,
-                "loss": float(np.mean([m["residual_loss"] for m in rank_metrics]))
-                if all(m["residual_loss"] is not None for m in rank_metrics)
-                else None,
-                "gradient_norm_before_clipping": grad_norm,
-                "elapsed_seconds": time.perf_counter() - begin,
-                "rank_metrics": rank_metrics,
-            }
-            with (output / "training.jsonl").open("a") as log:
-                log.write(json.dumps(row, allow_nan=False) + "\n")
-            print(json.dumps(row), flush=True)
-            log_training(tracking, row)
-        if (step + 1) % episode_steps == 0 or step + 1 == args.steps:
+                gathered = [sample_metrics]
+            if rank == 0:
+                rank_metrics = [measured for samples in gathered for measured in samples]
+                row = {
+                    "step": step + 1,
+                    "sampled_timesteps": (step + 1) * batch_size * ranks,
+                    "trajectory_horizon": horizon,
+                    "rejected_updates": rejected,
+                    "loss": float(np.mean([m["residual_loss"] for m in rank_metrics]))
+                    if all(m["residual_loss"] is not None for m in rank_metrics)
+                    else None,
+                    "gradient_norm_before_clipping": float(np.mean(gradient_norms)) if gradient_norms else None,
+                    "elapsed_seconds": time.perf_counter() - begin,
+                    "rank_metrics": rank_metrics,
+                }
+                with (output / "training.jsonl").open("a") as log:
+                    log.write(json.dumps(row, allow_nan=False) + "\n")
+                print(json.dumps(row), flush=True)
+                log_training(tracking, row)
+        if (step + 1) % config["checkpoint_every"] == 0 or step + 1 == args.steps:
+            # Resuming a checkpoint starts the same next reference sample without
+            # serializing simulator internals, contact caches, or hidden history.
+            for trajectory in banks.values():
+                trajectory.step = 0
             rng = {"cpu": torch.get_rng_state(), "cuda": torch.cuda.get_rng_state(device)}
             all_rng = [None] * ranks
             if ranks > 1:
@@ -447,12 +491,11 @@ def train(args, study, network, device, rank, ranks, output, metadata, tracking,
                 }
                 torch.save(checkpoint, output / "latest.pt.tmp")
                 (output / "latest.pt.tmp").replace(output / "latest.pt")
-                if best_network is not None:
-                    torch.save(
-                        {"network": best_network, "score": best, "step": best_step, "provenance": metadata},
-                        output / "best.pt.tmp",
-                    )
-                    (output / "best.pt.tmp").replace(output / "best.pt")
+                torch.save(
+                    {"network": best_network, "score": best, "step": best_step, "study": study, "provenance": metadata},
+                    output / "best.pt.tmp",
+                )
+                (output / "best.pt.tmp").replace(output / "best.pt")
                 if (step + 1) % 256 == 0 or step + 1 == args.steps:
                     log_checkpoint(tracking, output, step + 1)
             if ranks > 1:
@@ -469,6 +512,8 @@ def train(args, study, network, device, rank, ranks, output, metadata, tracking,
 def evaluate(args, study, network, device, output, tracking):
     if args.checkpoint:
         checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=False)
+        if checkpoint.get("study") != study:
+            raise ValueError("Evaluation requires a checkpoint from this study, including its update parameterization")
         network.load_state_dict(checkpoint["network"])
         tracking.summary["evaluation/checkpoint_step"] = checkpoint["step"]
     elif "shared" in args.solvers.split(","):
@@ -623,7 +668,7 @@ def log_evaluation(tracking, row):
     values.update(
         {
             f"rollout/{key}": value
-            for key, value in trajectory.get("threading", {}).items()
+            for key, value in (trajectory.get("threading", {}) | trajectory.get("settling", {})).items()
             if value is not None and np.isfinite(value)
         }
     )
@@ -669,8 +714,8 @@ def load_training_checkpoint(args, study, device, ranks, metadata):
                 raise ValueError(f"Resume changes {key}; start a new run instead")
         if checkpoint["study"] != study or checkpoint["provenance"]["source"] != metadata["source"]:
             raise ValueError("Resume changes the study or source revision")
-        if checkpoint["step"] % study["training"]["episode_steps"]:
-            raise ValueError("Resume requires an episode-boundary checkpoint")
+        if checkpoint["step"] % study["training"]["checkpoint_every"]:
+            raise ValueError("Resume requires a completed optimizer checkpoint")
     return checkpoint
 
 
@@ -727,8 +772,8 @@ def main():
         parser.error("Use one complete native scene per GPU process (--worlds=1)")
     if min(args.steps, args.worlds, args.sweeps, args.eval_seeds, args.probe_steps) <= 0 or args.rollout_steps < 0:
         parser.error("Counts must be positive and rollout steps must be nonnegative")
-    if args.mode == "train" and args.steps % study["training"]["episode_steps"]:
-        parser.error("Training steps must end at an episode boundary (multiple of 32)")
+    if args.mode == "train" and args.steps % study["training"]["checkpoint_every"]:
+        parser.error("Training steps must end at a checkpoint boundary (multiple of 32)")
     if args.mode == "train" and args.seed not in study["seeds"]["train"]:
         parser.error("Training must use a registered training seed")
     rank, ranks = int(os.environ.get("RANK", 0)), int(os.environ.get("WORLD_SIZE", 1))

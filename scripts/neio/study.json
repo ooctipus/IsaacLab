@@ -1,5 +1,5 @@
 {
-  "schema": 6,
+  "schema": 9,
   "status": "validated",
   "seeds": {
     "train": [
@@ -37,18 +37,36 @@
     ]
   },
   "training": {
-    "steps": 9984,
+    "steps": 4096,
     "sweeps": 4,
     "worlds": 1,
-    "episode_steps": 32,
-    "learning_rate": 0.0003,
-    "sampling": "reference_starts_then_eight_model_timesteps",
-    "trajectory_steps": 8,
+    "learning_rate": 0.0005,
+    "sampling": "balanced_reference_warmup_then_model_trajectories",
     "history_at_step_start": "clear",
     "objective": "log_normalized_gradient_residual_v1",
-    "derivative": "warp_reverse_frozen_contacts_v2",
-    "network": "shared_vector_physical_context_v2",
-    "gradient_aggregation": "clip_each_scene_then_mean"
+    "derivative": "warp_reverse_stable_inertia_v3",
+    "network": "shared_vector_node_scale_descent_v3",
+    "gradient_aggregation": "clip_each_sample_then_batch_and_rank_mean",
+    "samples_per_step": 7,
+    "checkpoint_every": 32,
+    "trajectory_curriculum": [
+      [
+        0,
+        1
+      ],
+      [
+        512,
+        2
+      ],
+      [
+        1024,
+        8
+      ],
+      [
+        2048,
+        32
+      ]
+    ]
   },
   "sweeps": {
     "shared": [
@@ -166,11 +184,14 @@
       "family": "rigid",
       "workload": "rigid_pile",
       "count": 36,
-      "shake_acceleration": 6,
       "stiffness_scale": 1,
       "friction": 0.6,
       "dt": 0.001,
-      "duration": 8
+      "duration": 8,
+      "pusher_start_s": 1.0,
+      "pusher_duration_s": 2.0,
+      "pusher_stroke_m": 0.06,
+      "settling_rms_speed_m_s": 0.02
     },
     {
       "name": "cable_cross_slide_validation",
@@ -325,11 +346,14 @@
       "family": "rigid",
       "workload": "rigid_pile",
       "count": 54,
-      "shake_acceleration": 12,
       "stiffness_scale": 1,
       "friction": 0.6,
       "dt": 0.001,
-      "duration": 8
+      "duration": 8,
+      "pusher_start_s": 1.0,
+      "pusher_duration_s": 2.0,
+      "pusher_stroke_m": 0.09,
+      "settling_rms_speed_m_s": 0.02
     },
     {
       "name": "cable_cross_slide_test",
@@ -643,11 +667,14 @@
       "family": "rigid",
       "workload": "rigid_pile",
       "count": 36,
-      "shake_acceleration": 6,
       "stiffness_scale": 1,
       "friction": 0.6,
       "dt": 0.001,
-      "duration": 8
+      "duration": 8,
+      "pusher_start_s": 1.0,
+      "pusher_duration_s": 2.0,
+      "pusher_stroke_m": 0.06,
+      "settling_rms_speed_m_s": 0.02
     },
     {
       "name": "cable_cross_slide_train",

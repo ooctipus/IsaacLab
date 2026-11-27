@@ -23,8 +23,47 @@ def rotation_quaternion(rotation):
     return torch.cat((0.5 * torch.sinc(angle / (2 * torch.pi)) * rotation, torch.cos(0.5 * angle)), -1)
 
 
+def body_inertia_pullback(solver, pose, force_seed, torque_seed):
+    """Differentiate the rotation vector jointly, including its limit at zero angle.
+
+    The port forms axis * angle through two separate Warp outputs. Their
+    individual derivatives are singular at zero although their product is smooth.
+    Keep the port's forward force and replace only this operator's adjoint.
+    """
+    model, dt = solver.model, solver._data.dt
+    with torch.enable_grad():
+        pose = pose.detach().requires_grad_()
+        rotation = pose[:, 3:]
+        target = wp.to_torch(solver.body_inertia_q)
+        com = wp.to_torch(model.body_com)
+        force = target[:, :3] + quat_rotate(target[:, 3:], com) - pose[:, :3] - quat_rotate(rotation, com)
+        force = force * wp.to_torch(model.body_mass)[:, None] / dt**2
+        inverse = torch.cat((-rotation[:, :3], rotation[:, 3:]), -1)
+        delta = quaternion_product(inverse, target[:, 3:])
+        delta = torch.where(delta[:, 3:] < 0, -delta, delta)
+        vector, scalar = delta[:, :3], delta[:, 3:]
+        squared = vector.square().sum(-1, keepdim=True)
+        length = squared.clamp_min(1e-12).sqrt()
+        # The clamped unselected branch must also have a finite derivative.
+        regular = 2 * torch.atan2(length, scalar) / length
+        scalar = scalar.clamp_min(1e-6)
+        series = 2 / scalar - 2 * squared / (3 * scalar**3)
+        rotation_vector = vector * torch.where(squared < 1e-8, series, regular)
+        torque = quat_rotate(rotation, (wp.to_torch(model.body_inertia) @ rotation_vector[:, :, None]).squeeze(-1))
+        torque = torque / dt**2
+        free = (wp.to_torch(solver.body_inv_mass_effective) > 0)[:, None]
+        return torch.autograd.grad((force, torque), pose, (force_seed * free, torque_seed * free))[0].detach()
+
+
 def new_network(device, width=96):
-    return NeIONetwork(12, width, 3, 1, initial_scale=1e-4).to(device)
+    network = NeIONetwork(12, width, 3, 1, initial_scale=1e-4).to(device)
+    # Start with a gradient step. A random displacement lets the scale head
+    # lower the loss by suppressing every direction before it can learn.
+    torch.nn.init.zeros_(network.direction_head[-1].weight)
+    torch.nn.init.zeros_(network.direction_head[-1].bias)
+    torch.nn.init.zeros_(network.scale_head[-1].weight)
+    torch.nn.init.zeros_(network.scale_head[-1].bias)
+    return network
 
 
 class SharedOptimizer(NeIODeformable):
@@ -51,7 +90,7 @@ class SharedOptimizer(NeIODeformable):
         model = solver.model
         device = next(self.network.parameters()).device
         n = model.body_count
-        free = wp.to_torch(model.body_inv_mass) > 0
+        free = wp.to_torch(solver.body_inv_mass_effective) > 0
         world = wp.to_torch(model.body_world).long()
         _, group = torch.unique(world, sorted=True, return_inverse=True)
         parent, child = model.joint_parent.numpy(), model.joint_child.numpy()
@@ -81,31 +120,43 @@ class SharedOptimizer(NeIODeformable):
         if self.kind == "particle":
             gradient = wp.to_torch(self.solver.particle_forces)
             mass = wp.to_torch(model.particle_mass)
+            kind = torch.zeros_like(mass)
         else:
             gradient = torch.stack(
                 (wp.to_torch(self.solver.body_forces), wp.to_torch(self.solver.body_torques) / self.length[:, None]), 1
             ).flatten(0, 1)
             mass = wp.to_torch(model.body_mass).repeat_interleave(2)
+            kind = torch.ones_like(mass)
+            kind[1::2] = -1
         gradient = gradient.masked_fill(~graph.free[:, None], 0)
         # Normalized direction alone erases the force and inertial scales needed
         # to distinguish stiff cables from cloth. Context uses physical units;
-        # no scene identity, target solution, or separate task network is supplied.
+        # The node role distinguishes particle motion, translation and rotation;
+        # it does not identify the scene or provide a target solution.
         rms = self._gradient_rms(gradient).detach() * unit
         context = torch.cat(
             (
                 torch.log10(rms.clamp_min(1e-20)) / 10,
                 torch.log10((mass / dt**2).clamp_min(1e-20))[:, None] / 10,
-                self.log_scale[graph.group] / 10,
+                kind[:, None],
             ),
             -1,
         )
         hidden = network.trunk(torch.cat((features, context), -1), graph.source, graph.target, graph.inv_degree)
-        direction = torch.tanh(network.direction_head(hidden))
-        pooled = group_sum(hidden, graph.group, graph.group_count) * graph.inv_group_size
-        # Allow a large scale correction in the first sweep, with the same final
-        # physical bound at every training and inference sweep budget.
-        scale = self.log_scale.clone() + network.scale_head(pooled)
-        return direction, scale.clamp(np.log(1e-10), np.log(1e-2))
+        magnitude = features[:, :3].norm(dim=-1, keepdim=True)
+        neighbourhood = torch.maximum(magnitude, graph.neighbour_mean(magnitude)).clamp(max=1)
+        correction = 2 * torch.tanh(network.direction_head(hidden)) * neighbourhood
+        direction = -features[:, :3] / magnitude.clamp_min(1) + correction
+        # Each vector predicts its own absolute physical scale. A stiff rod's
+        # rotation must not shrink every cloth or translation update, and the
+        # predicted scale must not be multiplied again on every sweep.
+        scale = (network.initial_log_scale + network.scale_head(hidden)).clamp(np.log(1e-10), np.log(1e-2))
+        # The inherited particle protocol multiplies by a group scale and uses
+        # it to normalize history. Keep that reference fixed at 1e-4 m; the
+        # complete learned per-node displacement is in the first return value.
+        return direction * (scale - network.initial_log_scale).exp(), torch.full_like(
+            self.log_scale, network.initial_log_scale
+        )
 
     def iterate(self, data, clear_history):
         with torch.set_grad_enabled(self.learn):
@@ -221,6 +272,12 @@ class StudySolver(SolverNeIO):
         try:
             with wp.Tape() as tape:
                 self._evaluate_forces(*self.step_arguments)
+            if body is not None:
+                # Tape owns this local force evaluation. The other operators
+                # retain Warp AD; the inertia operator receives its smooth VJP below.
+                tape.launches = [
+                    launch for launch in tape.launches if launch[0] is not kernels.evaluate_body_inertia_force
+                ]
             optimizers = [o for o in (particle, body) if o is not None]
             final_gradients = self._vector_gradients()
             if not all(bool(torch.isfinite(g).all()) for g in final_gradients):
@@ -248,6 +305,13 @@ class StudySolver(SolverNeIO):
                     (-vector[:, 1] / body.length[:, None]).contiguous(), dtype=wp.vec3
                 )
             tape.backward(grads=seeds)
+            if body is not None:
+                inertia_derivative = body_inertia_pullback(
+                    self,
+                    wp.to_torch(state_in.body_q),
+                    -vector[:, 0],
+                    -vector[:, 1] / body.length[:, None],
+                )
             outputs, gradients = [], []
             with torch.enable_grad():
                 if particle is not None:
@@ -268,7 +332,7 @@ class StudySolver(SolverNeIO):
                     # moves the COM. Pull back through that offset and the rotation.
                     position = body.proposal[:, :3] - quat_rotate(q, wp.to_torch(self.model.body_com))
                     outputs.append(torch.cat((position, q), -1))
-                    derivative = wp.to_torch(state_in.body_q.grad).clone().detach()
+                    derivative = wp.to_torch(state_in.body_q.grad).clone().detach() + inertia_derivative
                     # These rows have a constant zero proposal. Their exact
                     # weight derivative is zero, even if an axis-angle adjoint
                     # overflows at an effectively zero inertial rotation.

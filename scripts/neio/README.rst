@@ -45,8 +45,11 @@ the scene uses its buffers; discarding it invalidates subsequent GPU execution.
 * Soft-body/cloth impact: a tetrahedral body falls onto a 40-by-40 cloth grid;
   coupled deformation and self-contact continue for 6 seconds.
 * Dense rigid pile: 36 training / 54 test bodies, including the native bear mesh,
-  cones, spheres, boxes, capsules and cylinders. Eight seconds of gravity and
-  alternating horizontal acceleration produce sustained multi-body contact.
+  cones, spheres, boxes, capsules and cylinders. Gravity drops them into a bin.
+  One visible wall advances and retracts between seconds one and three (6 cm in
+  training, 9 cm in testing), followed by five seconds with no drive. No external
+  force is applied directly to the objects. Measure speed and translational kinetic
+  energy; reject rollouts with RMS speed above 2 cm/s in the final second.
   Require at least 15 distinct dynamic body pairs and at least three simultaneous
   pairs in half the sampled frames. Floor contact alone cannot satisfy this gate.
 * Cable cross-slide: a closed cable loop, passive pulleys and two articulated
@@ -100,14 +103,17 @@ kinematic particle rollers are also reconstructed as rigid transforms.
 
 Samples cover early motion and late difficult interactions. Save positions, velocities,
 external forces and controller arrays together. The native solver generates the
-state distribution; it supplies no target solution or supervised label. Each sampled
-state starts eight consecutive timesteps driven by the learned solver, with the
-sampled external command held fixed. Intermediate positions and velocities come
-from the model, so training includes its own accumulated errors. Optimizer memory
-resets at each timestep in both training and evaluation; it persists across the
-sweeps within that timestep. The recurrent step scale is bounded between 1e-10
-and 1e-2 meters in the shared vector coordinates in both modes; rotational
-vectors use the body's radius of gyration to convert angles to lengths.
+state distribution; it supplies no target solution or supervised label. Each
+training sample initially solves one independently sampled timestep from the full trajectory.
+Every optimizer update averages seven scene samples per GPU, balanced across the
+arm's families and then workloads. This avoids long consecutive updates on one
+family. After 512 optimizer updates, training continues from its own predicted state
+for two timesteps, increasing to eight at update 1024 and 32 at update 2048. The
+recorded external command stays fixed over each short trajectory. This curriculum
+exposes accumulated errors after the initial learning stage. Every checkpoint boundary
+resets the trajectories so resume requires no hidden simulator state. Full rollouts
+separately measure stability with the actual changing controllers. Optimizer history
+resets for each timestep and persists across its sweeps.
 
 The experimental trainer minimizes ``log(1 + ||g_after||² / ||g_before||²)`` per
 sweep and world, with a 1e-12 floor on the denominator. Rigid torques are divided
@@ -119,9 +125,11 @@ also suffered from finite probe size on stiff cables. The reverse pass includes
 particle/body coupling and pulls body-origin pose derivatives through the learned
 COM displacement and quaternion update. Kinematic rows and worlds whose proposal
 is forced to zero also have an exactly zero weight derivative. Mask their pose
-adjoints before the neural pullback: the underlying axis-angle adjoint can overflow
-at a tiny rotation even with a zero cotangent, which must not reject an unrelated
-cloth update. Active-coordinate nonfinite derivatives still reject the update.
+adjoints before the neural pullback. The rigid inertia term uses a smooth analytic
+Torch pullback of the combined rotation vector: the source's separate axis/angle
+adjoints lose the zero-angle derivative and can overflow near zero. The source's
+forward force is unchanged; all other force operators retain Warp AD. Active-coordinate
+nonfinite derivatives still reject the complete optimizer update.
 Collision topology, planar truncation
 coefficients, history and preceding timesteps remain detached. This is an explicit
 residual objective, not the author's unavailable training recipe or a scalar
@@ -132,14 +140,17 @@ separately recorded diagnostics. No finite-difference physics probes run in trai
 Cloth-only, deformables (cloth/cable/volume), and mixed (also rigid/articulated/
 rigid-soft/threaded) arms share architecture, initialization per seed, update budget
 and optimizer. Independent GPU processes sample complete scenes and average model
-gradients. ``--worlds=1`` is required; the former tiny replicated worlds are gone.
-Each scene gradient is clipped to norm one before averaging across GPUs; this
-prevents a stiff scene from dominating its peer without amplifying tiny gradients.
-The shared model adds three physical context inputs to the nine normalized
-vector/history inputs: log force RMS in physical units, log mass/dt², and the
-current log step scale. Its controller can change the scale by more than three
-log units in one sweep; the final 1e-10 to 1e-2 m bound still applies. These are
-experimental extensions and do not modify the supplied NeIO baseline.
+gradients. ``--worlds=1`` is required. Each sample gradient is clipped to norm one
+before averaging across the batch and GPUs, without amplifying tiny gradients.
+The shared network receives nine normalized gradient/history values and three
+context values: log physical force RMS, log mass/dt², and vector role (particle,
+body translation, or body rotation). Its correction head starts at zero around a
+normalized negative-gradient step. Corrections vanish in force-free graph
+neighborhoods. Each vector predicts an absolute scale between 1e-10 and 1e-2 meters;
+rotational vectors use the body's radius of gyration to convert angles to lengths.
+The scale is not multiplied by the preceding sweep's scale. Displacement history
+uses a fixed 1e-4-meter normalization. These are experimental extensions to the
+shared model; the supplied NeIO baseline retains its own architecture.
 Family rotation balances training; within each family it rotates workloads. Seeds
 101/202/303 control initialization, material variation and sampled times. Validation
 and test have separate seeds and declared material/motion ranges. Report any fixed
@@ -211,6 +222,10 @@ A ratio below one means the solver reduced the residual; it does not prove minim
 energy. ``train/loss`` is the explicit normalized residual objective above; about
 0.693 means no residual improvement on a sweep. Training residual ratios are separated by
 workload and GPU, because raw magnitudes from different physics cannot be compared.
+Last-sweep update magnitudes and zero-update fractions expose stalled predictions.
+Validation also reports the score for leaving each residual unchanged and the
+fraction reduced by at least 10%; decreasing loss from a random initialization
+alone is insufficient evidence of learning.
 Evaluation publishes physical error, reference distance, failure and timing curves
 against sweep count directly to W&B, alongside the detailed JSON artifact.
 Single-timestep physical passes and full-rollout failures have separate curves.
@@ -220,7 +235,8 @@ Workload names, sample times and accounting remain in the raw logs. Every 32 upd
 checkpoint; at validation (256 updates) and completion upload latest/best model
 artifacts with provenance and logs. The untrained baseline participates in best
 checkpoint selection, and evaluation loads the best checkpoint and records its
-training step. Checkpoints preserve W&B identity for resume.
+training step. Both checkpoints include the exact study configuration; evaluation rejects
+weights from a different update parameterization. Checkpoints preserve W&B identity for resume.
 Full training banks and evaluation reports are also artifacts. Offline mode is
 explicit and intended for local tests.
 

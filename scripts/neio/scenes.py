@@ -112,9 +112,17 @@ def drive_robot(
 
 
 @wp.kernel
-def shake_bodies(force: wp.array(dtype=wp.spatial_vector), mass: wp.array(dtype=float), acceleration: wp.vec3):
-    i = wp.tid()
-    force[i] = wp.spatial_vector(mass[i] * acceleration, wp.vec3(0.0))
+def drive_pusher(
+    pose: wp.array(dtype=wp.transform),
+    velocity: wp.array(dtype=wp.spatial_vector),
+    rest: wp.array(dtype=wp.transform),
+    body: int,
+    displacement: float,
+    speed: float,
+):
+    position = wp.transform_get_translation(rest[body]) + wp.vec3(displacement, 0.0, 0.0)
+    pose[body] = wp.transform(position, wp.transform_get_rotation(rest[body]))
+    velocity[body] = wp.spatial_vector(wp.vec3(speed, 0.0, 0.0), wp.vec3(0.0))
 
 
 @wp.kernel
@@ -135,6 +143,7 @@ class Scene:
     retained_graphs: list = field(default_factory=list)
     joint_amplitude: wp.array | None = None
     load_body: int = -1
+    pusher_body: int = -1
     motor_integral: wp.array | None = None
 
     def prepare(self, state, time, control, *, sampled=False):
@@ -163,8 +172,16 @@ class Scene:
             wp.launch(load_tool, 1, [state.body_f, self.load_body, wp.vec3(*load)])
             return
         if self.case.get("workload") == "rigid_pile":
-            acceleration = self.case["shake_acceleration"] * np.array([np.sin(5 * time), np.cos(3 * time), 0])
-            wp.launch(shake_bodies, self.model.body_count, [state.body_f, self.model.body_mass, wp.vec3(*acceleration)])
+            phase = np.clip((time - self.case["pusher_start_s"]) / self.case["pusher_duration_s"], 0, 1)
+            stroke = self.case["pusher_stroke_m"]
+            displacement = stroke * np.sin(np.pi * phase) ** 2
+            speed = stroke * np.pi / self.case["pusher_duration_s"] * np.sin(2 * np.pi * phase)
+            wp.launch(
+                drive_pusher,
+                1,
+                [state.body_q, state.body_qd, self.rest_bodies, self.pusher_body, displacement, speed],
+            )
+            return
         if self.case.get("drive", False):
             wp.launch(
                 drive_joints, control.joint_target_q.size, [control.joint_target_q, control.joint_target_qd, time]
@@ -214,7 +231,7 @@ class Scene:
 
 
 def add_rigid_pile(b, case, rng, cfg):
-    """Add a mixed-geometry collision bed, including its containing walls."""
+    """Add a mixed-geometry collision bed and return its visible moving wall."""
     r = 0.035
     bin_cfg = cfg.copy()
     bin_cfg.ke, bin_cfg.kd, bin_cfg.mu = 5e3, 5, 0.6
@@ -225,9 +242,14 @@ def add_rigid_pile(b, case, rng, cfg):
             pos[axis] = sign * 0.16
             half = [0.18, 0.18, 0.20]
             half[axis] = 0.02
+            transform = wp.transform(wp.vec3(*pos), wp.quat_identity())
+            body = -1
+            if axis == 0 and sign == -1:
+                body = pusher = b.add_body(xform=transform, is_kinematic=True, label="pile_pusher")
+                transform = wp.transform_identity()
             b.add_shape_box(
-                -1,
-                xform=wp.transform(wp.vec3(*pos), wp.quat_identity()),
+                body,
+                xform=transform,
                 hx=half[0],
                 hy=half[1],
                 hz=half[2],
@@ -265,6 +287,7 @@ def add_rigid_pile(b, case, rng, cfg):
             b.add_shape_capsule(body, radius=r * 0.5, half_height=r * 0.5, cfg=shape_cfg)
         else:
             b.add_shape_cylinder(body, radius=r, half_height=r * 0.7, cfg=shape_cfg)
+    return pusher
 
 
 def add_robot(b, case, cfg):
@@ -459,7 +482,7 @@ def make_scene(case, seed, device="cuda:0", worlds=1):
     cfg = newton.ModelBuilder.ShapeConfig(
         ke=3e4 * scale, kd=0, mu=float(case.get("friction", rng.uniform(0.2, 1))), margin=0.001, gap=0.003
     )
-    joint_amplitude, load_body = None, -1
+    joint_amplitude, load_body, pusher_body = None, -1, -1
     for world in range(worlds):
         b.begin_world(label=f"world_{world}")
         material = scale * float(10 ** rng.uniform(-0.2, 0.2))
@@ -529,7 +552,9 @@ def make_scene(case, seed, device="cuda:0", worlds=1):
             b.body_inertia[first] = b.body_inv_inertia[first] = wp.mat33(0)
             b.add_ground_plane(cfg=cfg)
         elif case.get("workload") == "rigid_pile":
-            add_rigid_pile(b, case, rng, cfg)
+            if worlds != 1:
+                raise ValueError("Rigid pile workloads require one complete collision bed per process")
+            pusher_body = add_rigid_pile(b, case, rng, cfg)
         elif case.get("workload") in ("franka_payload", "anymal_disturbance"):
             if worlds != 1:
                 raise ValueError("Robot workloads require one complete mechanism per process")
@@ -596,5 +621,6 @@ def make_scene(case, seed, device="cuda:0", worlds=1):
         wp.clone(model.body_q) if model.body_count else None,
         joint_amplitude=wp.array(joint_amplitude, device=device) if joint_amplitude is not None else None,
         load_body=load_body,
+        pusher_body=pusher_body,
         motor_integral=wp.zeros(model.body_count, device=device) if case.get("thread_speed_rad_s") else None,
     )
