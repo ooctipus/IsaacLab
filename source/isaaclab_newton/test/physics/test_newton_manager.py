@@ -644,7 +644,7 @@ def test_collision_decimation_recollides_between_substeps_except_after_the_last(
 ):
     events = []
     backend = _recording_backend(events, num_substeps=8, collision_decimation=collision_decimation)
-    backend.collision_pipeline = SimpleNamespace(collide=lambda state, contacts: events.append(("collide",)))
+    backend.collision_pipeline = SimpleNamespace(collide=lambda state, contacts, dt: events.append(("collide",)))
     backend.contacts = object()
 
     backend.step()
